@@ -197,6 +197,8 @@ install_brew_packages() {
 
         fi
 
+        # Shared lifecycle flag is read by the calling module wrapper.
+        # shellcheck disable=SC2034
         MODULE_CHANGED=true
 
         if ! is_brew_package_installed "$package"; then

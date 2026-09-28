@@ -192,6 +192,8 @@ preview_defaults_config() {
         [[ $record_result -ne 2 ]] || return 2
         [[ $record_result -ne 0 ]] || continue
 
+        # Shared state is read by another sourced module.
+        # shellcheck disable=SC2034
         DEFAULTS_PREVIEW_CHANGED=true
 
         if [[ "$domain" == com.apple.WindowManager && "$key" == HideDesktop ]]; then
@@ -263,6 +265,8 @@ apply_defaults_record() {
         error "Failed to configure macOS preference: $domain $key"
         return 2
     fi
+    # Shared lifecycle flag is read by the calling module wrapper.
+    # shellcheck disable=SC2034
     MODULE_CHANGED=true
     DEFAULTS_RECORD_CHANGED=true
     if ! check_defaults_record "$domain" "$key" "$type" "$value"; then
@@ -282,6 +286,8 @@ apply_defaults_config() {
         [[ -z "${domain// /}" ]] && continue
         apply_defaults_record "$domain" "$key" "$type" "$value"
         record_result=$?
+        # Shared state is read by another sourced module.
+        # shellcheck disable=SC2034
         [[ "$DEFAULTS_RECORD_CHANGED" != true ]] || DEFAULTS_CONFIG_CHANGED=true
         [[ $record_result -eq 0 ]] || return 2
     done < "$config_file"

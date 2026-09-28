@@ -45,6 +45,8 @@ configure_bs_launcher() {
         return 2
     fi
 
+    # Shared lifecycle flag is read by the calling module wrapper.
+    # shellcheck disable=SC2034
     MODULE_CHANGED=true
     success "bs launcher installed and verified"
     return 0

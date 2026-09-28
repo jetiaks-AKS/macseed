@@ -71,6 +71,7 @@ class BundleTests(unittest.TestCase):
         observed = b""
         transcript = b""
         deadline = time.monotonic() + 20
+        reached_eof = False
         try:
             while proc.poll() is None and time.monotonic() < deadline:
                 ready, _, _ = select.select([master], [], [], .2)
@@ -78,17 +79,41 @@ class BundleTests(unittest.TestCase):
                     try:
                         chunk = os.read(master, 65536)
                     except OSError:
+                        reached_eof = True
+                        break
+                    if not chunk:
+                        reached_eof = True
                         break
                     observed += chunk
                     transcript += chunk
                 if pending and pending[0][0] in observed:
                     os.write(master, pending.pop(0)[1] + b"\n")
                     observed = b""
+            if reached_eof and proc.poll() is None:
+                try:
+                    proc.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    pass
             if proc.poll() is None:
-                os.killpg(proc.pid, signal.SIGTERM)
-            proc.wait(timeout=3)
+                reason = "PTY closed before process exit" if reached_eof else "PTY dialogue timed out"
+                next_prompt = pending[0][0] if pending else b"<process exit>"
+                raise AssertionError(f"{reason}; waiting for {next_prompt!r}")
+            proc.wait()
         finally:
             os.close(master)
+            if proc.poll() is None:
+                try:
+                    os.killpg(proc.pid, signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
+                try:
+                    proc.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    try:
+                        os.killpg(proc.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                    proc.wait()
         self.assertFalse(pending, "expected prompt was not reached")
         self.assertNotIn(b"BEGIN OPENSSH PRIVATE KEY", transcript)
         return proc.returncode, transcript

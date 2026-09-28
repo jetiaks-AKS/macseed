@@ -16,6 +16,8 @@ screenshots_load_destination() {
     validate_defaults_config "$SCREENSHOTS_CONFIG" screenshots || return 2
     while IFS='|' read -r domain key type value || [[ -n "$domain$key$type$value" ]]; do
         [[ -n "${domain// /}" ]] || continue
+        # The literal tilde is config input expanded by the consumer.
+        # shellcheck disable=SC2088
         case "$value" in
             '~/'*) value="$HOME/${value#\~/}" ;;
         esac
@@ -132,6 +134,8 @@ apply_screenshots_settings() {
             error "Failed to create screenshots destination: $SCREENSHOTS_DESTINATION"
             return 2
         fi
+        # Shared lifecycle flag is read by the calling module wrapper.
+        # shellcheck disable=SC2034
         MODULE_CHANGED=true
         if ! screenshots_directory_state; then
             error "Failed to verify screenshots destination: $SCREENSHOTS_DESTINATION"

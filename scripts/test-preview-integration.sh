@@ -126,7 +126,7 @@ defaults() {
 SPIES
 
 reset_fixture() {
-    rm -rf "$FIXTURE/config/generated" "$TEST_ROOT/home"
+    rm -rf "${FIXTURE:?}/config/generated" "${TEST_ROOT:?}/home"
     rm -f "$FIXTURE/config/blueprint.conf"
     mkdir -p "$FIXTURE/config/generated/"{vscode,workspace,macos} \
         "$TEST_ROOT/launcher-bin" \

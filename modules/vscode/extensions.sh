@@ -185,6 +185,8 @@ install_vscode_extensions() {
             return 2
         fi
 
+        # Shared lifecycle flag is read by the calling module wrapper.
+        # shellcheck disable=SC2034
         MODULE_CHANGED=true
 
         if ! is_vscode_extension_installed "$extension"; then

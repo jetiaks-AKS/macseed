@@ -6,6 +6,8 @@
 
 BLUEPRINT_FILE="${BLUEPRINT_FILE:-config/blueprint.conf}"
 BLUEPRINT_GENERATED_DIR="${BLUEPRINT_GENERATED_DIR:-config/generated}"
+# Shared state is read by another sourced module.
+# shellcheck disable=SC2034
 BLUEPRINT_BOOTSTRAP_SUMMARY=false
 
 # ==========================================

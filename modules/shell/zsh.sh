@@ -22,7 +22,7 @@ zsh_snapshot_hash() {
 
 zsh_snapshot_validate() {
     local file="${1:-$ZSH_SNAPSHOT_FILE}"
-    local line schema status reason length hash separator actual total offset digest
+    local schema status reason length hash separator actual total offset digest
     local LC_ALL=C
 
     ZSH_SNAPSHOT_STATUS=""
@@ -316,6 +316,8 @@ bootstrap_zsh() {
         error "Failed to publish Zsh configuration"
         return 2
     fi
+    # Shared lifecycle flag is read by the calling module wrapper.
+    # shellcheck disable=SC2034
     MODULE_CHANGED=true
     if ! rm -f "$temporary"; then
         error "Failed to clean up Zsh staging file"

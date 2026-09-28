@@ -297,6 +297,8 @@ if [[ "$current_branch" != "$expected_branch" ]]; then
         return 2
     fi
 
+    # Shared lifecycle flag is read by the calling module wrapper.
+    # shellcheck disable=SC2034
     MODULE_CHANGED=true
 
     if ! current_branch=$(repository_branch "$path"); then

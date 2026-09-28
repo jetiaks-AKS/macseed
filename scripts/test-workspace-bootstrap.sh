@@ -459,6 +459,8 @@ for clone_case in success failure missing-destination worktree-error remote-erro
     reset_observation
     rmdir "$HOME/Projects/example/.git" "$HOME/Projects/example"
     expected=2
+    # Hyphenated values are literal test scenario names.
+    # shellcheck disable=SC2100
     case "$clone_case" in
         success) expected=0 ;;
         failure) CLONE_STATUS=128 ;;
@@ -491,6 +493,8 @@ for checkout_case in success failure verify-mismatch verify-error detached; do
     reset_observation
     OBSERVED_BRANCH=other
     expected=2
+    # Hyphenated values are literal test scenario names.
+    # shellcheck disable=SC2100
     case "$checkout_case" in
         success) expected=0 ;;
         failure) CHECKOUT_STATUS=128 ;;

@@ -92,6 +92,7 @@ Use:
 
 Use the focused regression harnesses relevant to the changed area.
 Run the complete local regression suite with `scripts/test.sh`.
+Run ShellCheck for maintained Bash scripts with `scripts/lint.sh`.
 
 Existing coverage includes Blueprint, Discovery, applications, Git, Workspace,
 and macOS consumer behavior. Do not create a new test script solely to mirror

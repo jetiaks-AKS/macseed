@@ -252,6 +252,8 @@ bootstrap_ssh_configuration() {
         if [[ -e "$target" || -L "$target" ]]; then warning "SSH target appeared during publication"; return 1; fi
         error "Failed to publish SSH configuration"; return 2
     fi
+    # Shared lifecycle flag is read by the calling module wrapper.
+    # shellcheck disable=SC2034
     MODULE_CHANGED=true
     rm -f "$temporary" || { rm -f "$payload"; error "Failed to clean SSH staging file"; return 2; }
     ssh_target_inspect "$payload"; result=$?

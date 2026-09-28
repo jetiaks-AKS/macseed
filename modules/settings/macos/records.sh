@@ -116,6 +116,8 @@ macos_read_scalar() {
         rm -f "$value_file"
         return 2
     fi
+    # Shared state is read by another sourced module.
+    # shellcheck disable=SC2034
     IFS= read -r MACOS_DEFAULTS_VALUE < "$value_file" || :
     rm -f "$value_file" || return 2
     return 0

@@ -140,6 +140,8 @@ apply_vscode_settings() {
             error "Failed to create VS Code settings directory"
             return 2
         fi
+        # Shared lifecycle flag is read by the calling module wrapper.
+        # shellcheck disable=SC2034
         MODULE_CHANGED=true
     fi
 

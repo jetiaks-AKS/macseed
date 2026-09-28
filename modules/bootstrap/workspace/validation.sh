@@ -30,6 +30,8 @@ workspace_read_bootstrap_folders() {
         ($2 != "system" && $2 != "user" && $2 != "workspace") { exit 2 }
         { print }
     ' "$config_file")" || return 2
+    # Read both fields to preserve the Workspace record format.
+    # shellcheck disable=SC2034
     while IFS='|' read -r folder classification; do
         [[ -n "$folder" ]] || continue
         blueprint_item_selected workspace-folders "$folder" || continue

@@ -134,6 +134,8 @@ bootstrap_workspace_folders() {
             return 2
         fi
 
+        # Shared lifecycle flag is read by the calling module wrapper.
+        # shellcheck disable=SC2034
         MODULE_CHANGED=true
 
         if ! workspace_folder_state "$folder"; then

@@ -94,7 +94,7 @@ check_homebrew() {
 
     warning "Homebrew is not installed"
 
-    read -p "Install Homebrew? (y/n): " answer
+    read -r -p "Install Homebrew? (y/n): " answer
 
     if [[ "$answer" != "y" ]]; then
         warning "Installation cancelled by user"
@@ -105,6 +105,8 @@ check_homebrew() {
         error "Homebrew installer failed"
         return 2
     fi
+    # Shared lifecycle flag is read by the calling module wrapper.
+    # shellcheck disable=SC2034
     MODULE_CHANGED=true
 
     homebrew_availability

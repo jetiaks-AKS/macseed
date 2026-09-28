@@ -55,6 +55,8 @@ action() {
 
 # Record an existing Preview decision without changing inspection status.
 preview_action() {
+    # Shared state is read by another sourced module.
+    # shellcheck disable=SC2034
     PREVIEW_HAS_CHANGES=true
     action "$1"
 }
