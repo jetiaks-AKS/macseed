@@ -15,9 +15,11 @@ Macseed discovers supported parts of an existing Mac, stores
 that state as local configuration, lets the user select a restoration scope,
 previews the resulting changes, and applies them on a target Mac.
 
-It captures supported state, rebuilds it on another Mac, and maintains the
-supported working environment through later runs. It does not clone the source
-Mac or serve as a backup, Migration Assistant, or general data/system migration tool.
+It captures the reproducible parts of an existing working Mac, selectively
+rebuilds the supported working environment on a clean Mac, and verifies what
+was restored where the current modules can observe it. It does not clone the
+source Mac or serve as a backup, Migration Assistant replacement, or universal
+application-state migration system.
 
 ```text
 Discovery → Generated Configuration → Blueprint → Preview → Bootstrap

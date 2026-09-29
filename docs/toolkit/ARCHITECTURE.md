@@ -206,9 +206,9 @@ errors. Command success alone does not establish environment-level conformity.
 
 A native SwiftUI macOS application is planned as a presentation and
 orchestration layer. It will consume a stable machine-readable structured Core
-interface, planned alongside Global Verification in the preceding stage, rather
-than parse human CLI output or logs. The interface will expose Discovery,
-planning/Preview, verification, and operation results. Core remains
+interface rather than parse human CLI output or logs. The interface will expose
+Discovery, selected environment, planning/Preview, verification, and operation
+results. Core remains
 authoritative for validation, planning, and mutation; the GUI does not
 reimplement Discovery, Blueprint, Preview, Bootstrap, Capture, or Restore in
 Swift. The interface format and GUI UX remain to be designed.
