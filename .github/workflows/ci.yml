@@ -24,8 +24,12 @@ jobs:
               brew install "$tool"
             fi
           done
+          if ! command -v rg >/dev/null 2>&1; then
+            brew install ripgrep
+          fi
           shellcheck --version
           age --version
+          rg --version
 
       - name: ShellCheck
         run: ./scripts/lint.sh
