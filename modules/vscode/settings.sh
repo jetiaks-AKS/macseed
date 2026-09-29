@@ -207,3 +207,24 @@ preview_vscode_settings() {
             ;;
     esac
 }
+
+# Opaque supported payload equality; no assertion about editor runtime state.
+verify_vscode_settings() {
+    verification_category_selected vscode-settings || return 0
+    local source_file="$BLUEPRINT_GENERATED_DIR/vscode/settings.json"
+    local target_dir="$HOME/Library/Application Support/Code/User" result
+    validate_vscode_settings_source "$source_file"
+    result=$?
+    case "$result" in
+        1)
+            verification_coverage vscode-settings scope unresolved unknown
+            verification_diagnostic "$GV_LAST_REF" selected_input_unresolved warning scope
+            return 0 ;;
+        0) ;;
+        *) verification_input_error vscode-settings; return 0 ;;
+    esac
+    verification_coverage vscode-settings settings.json resolved unknown
+    inspect_vscode_settings_target "$source_file" "$target_dir" "$target_dir/settings.json"
+    result=$?
+    verification_result vscode-settings settings.json file_content "$result"
+}

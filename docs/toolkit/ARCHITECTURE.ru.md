@@ -196,19 +196,31 @@ Conditional Bootstrap
 режим сохраняет собственную ответственность, проверку, логирование, Summary и
 публичную семантику статусов. Перед фактическим Apply входные данные повторно
 проверяются там, где это требуется. Состояние между Preview и подтверждением не
-замораживается; Global Verification сейчас не входит в Workflow.
+замораживается. Global Verification наблюдает выбранное состояние после
+Bootstrap или после Preview, когда Bootstrap не запускается.
 
 ## Граница проверки
 
-Локальный Verify остаётся частью жизненного цикла модулей. Первый batch Global
-Verification добавляет read-only проверку после Bootstrap, включая Restore
+Локальный Verify остаётся частью жизненного цикла модулей. Global
+Verification выполняет read-only проверку после Bootstrap, включая Restore
 Bootstrap, и после Preview в Workflow, когда Bootstrap не запускается.
-Проверяются выбранные Homebrew formulae, прямые global-значения Git,
-поддерживаемый payload SSH config и worktree/origin/branch репозиториев.
-Для остальных выбранных областей явно показано отсутствие поддержки проверки;
-SSH identities пока остаются вне покрытия. При отказе Restore prerequisite
+Проверяются выбранные Homebrew formulae и casks, App Store application IDs,
+прямые global-значения Git, поддерживаемые payload SSH и Zsh config,
+VS Code extension IDs и settings payload, Workspace folders и
+worktree/origin/branch репозиториев, generated settings Finder, Dock, Windows,
+Keyboard, Trackpad и Screenshots. SSH identities остаются вне покрытия.
+При отказе Restore prerequisite
 отчёт также строится. Ошибки startup validation/preflight и отмена до Preview
 сохраняют прежний ранний выход без verification pass.
+
+Predicates сохраняют семантику production readers: установка не подтверждает
+работоспособность приложения, равенство файлов не доказывает применение
+настроек приложением, а macOS checks подтверждают сохранённые значения и типы
+preferences, без проверки UI effect. Location preference и destination
+directory Screenshots наблюдаются независимо. Отсутствие `mas` или `code`
+оставляет выбранные items unverified; verifier не устанавливает зависимости.
+Zsh сохраняет границы ownership snapshot и не добавляет требований к permissions
+для идентичного содержимого target.
 
 Поток данных:
 

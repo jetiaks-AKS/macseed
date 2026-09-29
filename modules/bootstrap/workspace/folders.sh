@@ -152,3 +152,17 @@ bootstrap_workspace_folders() {
     return 0
 
 }
+
+verify_workspace_folders() {
+    verification_items_selected workspace-folders || return 0
+    local records folder result
+    records="$(workspace_read_bootstrap_folders "$(blueprint_generated_file workspace-folders)")" || {
+        verification_input_error workspace-folders; return 0;
+    }
+    verification_select_subjects workspace-folders "$records" || return 2
+    for folder in "${GV_SUBJECTS[@]}"; do
+        workspace_folder_state "$folder"
+        result=$?
+        verification_result workspace-folders "$folder" directory "$result" || return 2
+    done
+}

@@ -12,8 +12,8 @@ unset GIT_CONFIG_GLOBAL
 BLUEPRINT_GENERATED_DIR="$TEST_ROOT/generated"
 BLUEPRINT_FILE="$TEST_ROOT/blueprint.conf"
 VERBOSE=false
-REAL_GIT="$(command -v git)"
-command mkdir -p "$HOME" "$BLUEPRINT_GENERATED_DIR/workspace" "$BLUEPRINT_GENERATED_DIR/ssh" "$BLUEPRINT_GENERATED_DIR/macos"
+REAL_GIT="$(builtin command -v git)"
+builtin command mkdir -p "$HOME" "$BLUEPRINT_GENERATED_DIR/workspace" "$BLUEPRINT_GENERATED_DIR/ssh" "$BLUEPRINT_GENERATED_DIR/macos"
 source modules/core/common/common.sh
 source modules/core/config/config.sh
 source modules/core/verification/verification.sh
@@ -35,10 +35,24 @@ FAILURES=0
 CASES=0
 BREW_STATE=present
 GIT_STATE=normal
+CASK_STATE=present
+MAS_STATE=present
+CODE_STATE=present
+DEFAULTS_STATE=match
+DEFAULTS_NUMBER=64.0
 MUTATIONS="$TEST_ROOT/mutations"
 : > "$MUTATIONS"
 mutate() { printf '%s\n' "$*" >> "$MUTATIONS"; return 99; }
 brew() {
+    case "$*" in
+        'list --cask')
+            case "$CASK_STATE" in absent) return 0 ;; error) return 2 ;; esac
+            printf 'example\n'; return 0 ;;
+        'info --json=v2 --cask example')
+            [[ "$CASK_STATE" != metadata-error ]] || return 2
+            printf '{"casks":[{"artifacts":[{"target":"%s"}]}]}\n' "$HOME/cask-app"
+            return 0 ;;
+    esac
     if [[ "$*" != 'list --formula --full-name' ]]; then mutate "brew $*"; return 99; fi
     case "$BREW_STATE" in
         present) printf 'git\n' ;;
@@ -55,7 +69,38 @@ git() {
     if [[ "$GIT_STATE" == error && "$*" == *--show-origin* ]]; then return 2; fi
     "$REAL_GIT" "$@"
 }
-defaults() { mutate "defaults $*"; }
+mas() {
+    [[ "$*" == list ]] || { mutate "mas $*"; return 99; }
+    case "$MAS_STATE" in present) printf '123 Example (1.0)\n' ;; absent) : ;; *) return 2 ;; esac
+}
+code() {
+    [[ "$*" == --list-extensions ]] || { mutate "code $*"; return 99; }
+    case "$CODE_STATE" in present) printf 'example.extension\n' ;; absent) : ;; *) return 2 ;; esac
+}
+# Deterministic missing dependencies even on a developer Mac with mas/code.
+command() {
+    if [[ "${1:-}" == -v ]]; then
+        [[ "${2:-}" != mas || "$MAS_STATE" != missing ]] || return 1
+        [[ "${2:-}" != code || "$CODE_STATE" != missing ]] || return 1
+    fi
+    builtin command "$@"
+}
+defaults() {
+    case "${1:-}" in read|read-type) ;; *) mutate "defaults $*"; return 99 ;; esac
+    [[ "$DEFAULTS_STATE" != error ]] || return 2
+    if [[ "$DEFAULTS_STATE" == missing ]]; then printf 'does not exist\n'; return 1; fi
+    if [[ "$1" == read-type ]]; then
+        if [[ "$DEFAULTS_STATE" == wrong-type ]]; then printf 'Type is array\n'
+        elif [[ "$3" == location ]]; then printf 'Type is string\n'
+        elif [[ "$3" == tilesize ]]; then printf 'Type is float\n'
+        else printf 'Type is boolean\n'; fi
+    elif [[ "$3" == location ]]; then
+        if [[ "$DEFAULTS_STATE" == mismatch ]]; then printf '%s/other\n' "$HOME"
+        else printf '%s/Screenshots\n' "$HOME"; fi
+    elif [[ "$3" == tilesize ]]; then printf '%s\n' "$DEFAULTS_NUMBER"
+    elif [[ "$DEFAULTS_STATE" == mismatch ]]; then printf '0\n'
+    else printf '1\n'; fi
+}
 killall() { mutate "killall $*"; }
 sudo() { mutate "sudo $*"; }
 repository_clone() { mutate clone; }
@@ -289,7 +334,8 @@ assert has_code input_changed
 find "$HOME" -type f -exec shasum -a 256 {} \; | sort > "$TEST_ROOT/after"
 assert cmp -s "$TEST_ROOT/before" "$TEST_ROOT/after"
 assert test ! -s "$MUTATIONS"
-# Coverage-only casks never call a cask reader/installer on the target.
+# Casks now use the existing production installation predicate.
+command mkdir "$HOME/cask-app"
 BREW_STATE=present
 printf 'example\n' > "$BLUEPRINT_GENERATED_DIR/brew-casks.conf"
 sed '/^\[homebrew-casks\]/a\
@@ -298,8 +344,202 @@ example
 command mv "$TEST_ROOT/blueprint-new" "$BLUEPRINT_FILE"
 verification_reset bootstrap
 verification_run > "$TEST_ROOT/uncovered-report"
-assert record_is example installed unverified
-assert test "$GV_UNSUPPORTED" -eq 1
+assert record_is example installed verified
+assert test "$GV_UNSUPPORTED" -eq 0
+assert test ! -s "$MUTATIONS"
+
+# Batch 2 adapters with no Blueprint: generated requirements are the scope.
+command rm "$BLUEPRINT_FILE"
+for state in present absent error metadata-error; do
+    CASK_STATE="$state"
+    verification_reset bootstrap
+    verify_brew_casks
+    case "$state" in present) expected=verified ;; absent) expected=mismatch ;; *) expected=unverified ;; esac
+    assert record_is example installed "$expected"
+done
+CASK_STATE=present
+command rmdir "$HOME/cask-app"
+verification_reset bootstrap
+verify_brew_casks
+assert record_is example installed mismatch
+command mkdir "$HOME/cask-app"
+
+printf '123|Example\n' > "$BLUEPRINT_GENERATED_DIR/appstore.conf"
+printf 'example.extension\n' > "$BLUEPRINT_GENERATED_DIR/vscode-extensions.conf"
+for state in present absent missing error; do
+    MAS_STATE="$state" CODE_STATE="$state"
+    case "$state" in present) expected=verified ;; absent) expected=mismatch ;; *) expected=unverified ;; esac
+    verification_reset bootstrap
+    verify_appstore_apps
+    assert record_is 123 installed "$expected"
+    if [[ "$state" == missing ]]; then assert has_code dependency_unavailable; fi
+    verification_reset bootstrap
+    verify_vscode_extensions
+    assert record_is example.extension installed "$expected"
+    if [[ "$state" == missing ]]; then assert has_code dependency_unavailable; fi
+done
+MAS_STATE=present CODE_STATE=present
+
+command mkdir -p "$BLUEPRINT_GENERATED_DIR/shell"
+printf '# standalone fixture\n' > "$TEST_ROOT/zsh-payload"
+write_zsh_fixture() (
+    chmod() { command chmod "$@"; }
+    zsh_snapshot_write "$ZSH_SNAPSHOT_FILE" "$@"
+)
+write_zsh_fixture eligible - "$TEST_ROOT/zsh-payload"
+command cp "$TEST_ROOT/zsh-payload" "$HOME/.zshrc"
+command chmod 644 "$HOME/.zshrc"
+verification_reset bootstrap
+verify_zsh
+assert record_is .zshrc file_content verified
+printf '# different\n' >> "$HOME/.zshrc"
+verification_reset bootstrap
+verify_zsh
+assert record_is .zshrc file_content mismatch
+command rm "$HOME/.zshrc"
+verification_reset bootstrap
+verify_zsh
+assert record_is .zshrc file_content mismatch
+command ln -s "$TEST_ROOT/zsh-payload" "$HOME/.zshrc"
+verification_reset bootstrap
+verify_zsh
+assert record_is .zshrc file_content unverified
+assert has_code observation_failed
+command rm "$HOME/.zshrc"
+command mkdir "$HOME/.zshrc"
+verification_reset bootstrap
+verify_zsh
+assert record_is .zshrc file_content unverified
+command rmdir "$HOME/.zshrc"
+write_zsh_fixture excluded external-owner
+verification_reset bootstrap
+verify_zsh
+assert has_code external_management
+assert test "${#GV_V[@]}" -eq 0
+write_zsh_fixture absent -
+verification_reset bootstrap
+verify_zsh
+assert test "${GV_C[2]}" = no_requirement
+assert test "${GV_C[3]}" = observed_absent
+assert test "${#GV_V[@]}" -eq 0
+write_zsh_fixture eligible - "$TEST_ROOT/zsh-payload"
+command cp "$TEST_ROOT/zsh-payload" "$HOME/.zshrc"
+
+settings_dir="$HOME/Library/Application Support/Code/User"
+command mkdir -p "$settings_dir" "$BLUEPRINT_GENERATED_DIR/vscode"
+printf '{"editor.fontSize":14}\n' > "$BLUEPRINT_GENERATED_DIR/vscode/settings.json"
+command cp "$BLUEPRINT_GENERATED_DIR/vscode/settings.json" "$settings_dir/settings.json"
+verification_reset bootstrap
+verify_vscode_settings
+assert record_is settings.json file_content verified
+printf '{}\n' > "$settings_dir/settings.json"
+verification_reset bootstrap
+verify_vscode_settings
+assert record_is settings.json file_content mismatch
+command rm "$settings_dir/settings.json"
+command mkdir "$settings_dir/settings.json"
+verification_reset bootstrap
+verify_vscode_settings
+assert record_is settings.json file_content unverified
+assert has_code observation_failed
+command rmdir "$settings_dir/settings.json"
+command cp "$BLUEPRINT_GENERATED_DIR/vscode/settings.json" "$settings_dir/settings.json"
+
+printf 'Projects|workspace\n' > "$BLUEPRINT_GENERATED_DIR/workspace/folders.conf"
+verification_reset bootstrap
+verify_workspace_folders
+assert record_is Projects directory mismatch
+command mkdir "$HOME/Projects"
+verification_reset bootstrap
+verify_workspace_folders
+assert record_is Projects directory verified
+printf '../escape|workspace\n' > "$BLUEPRINT_GENERATED_DIR/workspace/folders.conf"
+verification_reset bootstrap
+verify_workspace_folders
+assert has_code input_invalid
+assert test "${#GV_V[@]}" -eq 0
+printf 'Projects|workspace\n' > "$BLUEPRINT_GENERATED_DIR/workspace/folders.conf"
+command rmdir "$HOME/Projects"
+printf 'not a directory\n' > "$HOME/Projects"
+verification_reset bootstrap
+verify_workspace_folders
+assert has_code input_invalid
+assert test "${#GV_V[@]}" -eq 0
+command rm "$HOME/Projects"
+command mkdir "$HOME/Projects"
+
+printf 'com.apple.finder|ShowPathbar|bool|true\n' > "$FINDER_CONFIG"
+for state in match mismatch missing error wrong-type; do
+    DEFAULTS_STATE="$state"
+    verification_reset bootstrap
+    verify_macos_scalar_category finder "$FINDER_CONFIG"
+    case "$state" in match) expected=verified ;; mismatch|missing) expected=mismatch ;; *) expected=unverified ;; esac
+    assert record_is com.apple.finder/ShowPathbar stored_preference "$expected"
+    if [[ "$expected" == unverified ]]; then assert has_code observation_failed; fi
+done
+DEFAULTS_STATE=match
+printf 'com.apple.dock|tilesize|int|64\n' > "$DOCK_CONFIG"
+verification_reset bootstrap
+verify_macos_scalar_category dock "$DOCK_CONFIG"
+assert record_is com.apple.dock/tilesize stored_preference verified
+printf 'com.apple.dock|tilesize|float|64.00\n' > "$DOCK_CONFIG"
+verification_reset bootstrap
+verify_macos_scalar_category dock "$DOCK_CONFIG"
+assert record_is com.apple.dock/tilesize stored_preference verified
+DEFAULTS_NUMBER=65.0
+verification_reset bootstrap
+verify_macos_scalar_category dock "$DOCK_CONFIG"
+assert record_is com.apple.dock/tilesize stored_preference mismatch
+DEFAULTS_NUMBER=64.0
+printf 'NSGlobalDomain|NSCloseAlwaysConfirmsChanges|bool|true\n' > "$WINDOWS_CONFIG"
+printf 'NSGlobalDomain|ApplePressAndHoldEnabled|bool|true\n' > "$KEYBOARD_CONFIG"
+printf 'com.apple.AppleMultitouchTrackpad|Clicking|bool|true\n' > "$TRACKPAD_CONFIG"
+# shellcheck disable=SC2088
+printf '%s\n' 'com.apple.screencapture|location|string|~/Screenshots/' > "$SCREENSHOTS_CONFIG"
+verification_reset bootstrap
+verify_screenshots
+assert record_is com.apple.screencapture/location stored_preference verified
+assert record_is destination directory mismatch
+command mkdir "$HOME/Screenshots"
+verification_reset bootstrap
+verify_screenshots
+assert record_is destination directory verified
+DEFAULTS_STATE=error
+verification_reset bootstrap
+verify_screenshots
+assert record_is com.apple.screencapture/location stored_preference unverified
+assert record_is destination directory verified
+DEFAULTS_STATE=match
+command rmdir "$HOME/Screenshots"
+command mkdir "$TEST_ROOT/outside"
+command ln -s "$TEST_ROOT/outside" "$HOME/Screenshots"
+verification_reset bootstrap
+verify_screenshots
+assert record_is com.apple.screencapture/location stored_preference verified
+assert record_is destination directory unverified
+assert has_code observation_failed
+command rm "$HOME/Screenshots"
+command mkdir "$HOME/Screenshots"
+
+# All normal domains together, with independent operation history and secure gap.
+find "$HOME" -type f -exec shasum -a 256 {} \; | sort > "$TEST_ROOT/batch2-before"
+verification_reset restore
+verification_operation app-store 123 install failure
+BUNDLE_RESTORE_SECURE_FILE="$TEST_ROOT/opaque-secure.age"
+verification_run > "$TEST_ROOT/batch2-report"
+assert test "$GV_STATUS" = complete
+assert test "$GV_TOTAL" -eq 20
+assert test "$GV_VERIFIED" -eq 16
+assert test "$GV_MISMATCH" -eq 4
+assert record_is jq installed mismatch
+assert test "$GV_UNVERIFIED" -eq 0
+assert test "$GV_UNSUPPORTED" -eq 0
+assert test "$GV_UNRESOLVED" -eq 1
+assert has_code operation_failed
+assert has_code unsupported_predicate
+assert grep -q 'SSH identities are outside Global Verification coverage' "$TEST_ROOT/batch2-report"
+find "$HOME" -type f -exec shasum -a 256 {} \; | sort > "$TEST_ROOT/batch2-after"
+assert cmp -s "$TEST_ROOT/batch2-before" "$TEST_ROOT/batch2-after"
 assert test ! -s "$MUTATIONS"
 
 printf 'Global Verification focused: %s assertions, %s failures\n' "$CASES" "$FAILURES"

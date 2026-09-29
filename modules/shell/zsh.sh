@@ -333,3 +333,35 @@ bootstrap_zsh() {
     success "Zsh configuration restored"
     return 0
 }
+
+# Use the existing snapshot/content contract, including its existing-target
+# behavior: no extra ownership/mode requirements on an identical regular file.
+verify_zsh() {
+    verification_category_selected shell-zsh || return 0
+    local result
+    zsh_snapshot_validate
+    result=$?
+    if [[ $result -eq 1 ]] && ! blueprint_exists; then
+        verification_coverage shell-zsh scope no_requirement unknown
+        return 0
+    fi
+    if [[ $result -ne 0 ]]; then verification_input_error shell-zsh; return 0; fi
+    case "$ZSH_SNAPSHOT_STATUS" in
+        absent)
+            verification_coverage shell-zsh scope no_requirement observed_absent
+            return 0 ;;
+        excluded)
+            verification_coverage shell-zsh scope unresolved partial
+            if [[ "$ZSH_SNAPSHOT_REASON" == external-owner ]]; then
+                verification_diagnostic "$GV_LAST_REF" external_management warning scope
+            else
+                verification_diagnostic "$GV_LAST_REF" unsupported_predicate warning scope
+            fi
+            return 0 ;;
+    esac
+    verification_coverage shell-zsh .zshrc resolved observed_present
+    zsh_snapshot_inspect_target
+    result=$?
+    [[ $result -ne 3 ]] || result=1 # Production reader: different regular file.
+    verification_result shell-zsh .zshrc file_content "$result"
+}

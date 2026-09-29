@@ -293,3 +293,23 @@ apply_defaults_config() {
     done < "$config_file"
     return 0
 }
+
+# Only generated records in a selected category, never the entire allowlist.
+verify_macos_scalar_category() {
+    local category="$1" config_file="$2" domain key type expected result any=false
+    verification_category_selected "macos-$category" || return 0
+    if ! validate_defaults_config "$config_file" "$category"; then
+        verification_input_error "macos-$category"
+        return 0
+    fi
+    while IFS='|' read -r domain key type expected || [[ -n "$domain$key$type$expected" ]]; do
+        [[ -n "${domain// /}" ]] || continue
+        any=true
+        verification_coverage "macos-$category" "$domain/$key" resolved unknown
+        check_defaults_record "$domain" "$key" "$type" "$expected"
+        result=$?
+        verification_result "macos-$category" "$domain/$key" stored_preference "$result" || return 2
+    done < "$config_file"
+    [[ "$any" == true ]] || verification_coverage "macos-$category" scope no_requirement unknown
+    return 0
+}

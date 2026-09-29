@@ -156,3 +156,23 @@ apply_screenshots_settings() {
     success "Screenshots configured successfully"
     return 0
 }
+
+# Production readers independently establish stored location and usable folder.
+# A directory error must not hide an observable preference, or vice versa.
+verify_screenshots() {
+    verification_category_selected macos-screenshots || return 0
+    local result
+    if ! screenshots_load_destination; then verification_input_error macos-screenshots; return 0; fi
+    if [[ -z "$SCREENSHOTS_DESTINATION" ]]; then
+        verification_coverage macos-screenshots scope no_requirement unknown
+        return 0
+    fi
+    verification_coverage macos-screenshots com.apple.screencapture/location resolved unknown
+    check_defaults_record com.apple.screencapture location string "$SCREENSHOTS_DESTINATION"
+    result=$?
+    verification_result macos-screenshots com.apple.screencapture/location stored_preference "$result" || return 2
+    verification_coverage macos-screenshots destination resolved unknown
+    screenshots_directory_state
+    result=$?
+    verification_result macos-screenshots destination directory "$result"
+}

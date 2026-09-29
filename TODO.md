@@ -6,8 +6,6 @@
 
 ## Этап 13 — Reporting & Global Verification
 
-- [ ] Расширить проверяемое покрытие за пределы formulae, Git configuration,
-  SSH configuration и Workspace repositories через существующие domain readers.
 - [ ] Определить передачу verification evidence Secure Migration без повторного
   импорта и без credentials в обычных result records.
 - [ ] Определить совместимое сохранение Capture coverage/provenance для различения

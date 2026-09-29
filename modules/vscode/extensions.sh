@@ -209,3 +209,23 @@ install_vscode_extensions() {
     success "VS Code Extensions are ready"
 
 }
+
+# Installed ID only, not version, enablement or runtime behavior.
+verify_vscode_extensions() {
+    verification_items_selected vscode-extensions || return 0
+    local records item result
+    records="$(read_vscode_extensions_configuration "$(blueprint_generated_file vscode-extensions)")" || {
+        verification_input_error vscode-extensions; return 0;
+    }
+    verification_select_subjects vscode-extensions "$records" || return 2
+    for item in "${GV_SUBJECTS[@]}"; do
+        if ! command -v code >/dev/null 2>&1; then
+            verification_record vscode-extensions "$item" installed unverified supported "" || return 2
+            verification_diagnostic "$GV_LAST_REF" dependency_unavailable warning observation
+            continue
+        fi
+        is_vscode_extension_installed "$item"
+        result=$?
+        verification_result vscode-extensions "$item" installed "$result" || return 2
+    done
+}

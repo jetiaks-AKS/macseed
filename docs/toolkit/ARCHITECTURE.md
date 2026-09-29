@@ -190,20 +190,30 @@ When changes are planned, Bootstrap requires explicit user confirmation; zero
 planned changes do not invoke Bootstrap. Each underlying mode retains its own
 responsibility, validation, logging, Summary, and public status semantics.
 Inputs are revalidated before actual Apply where required. State is not frozen
-between Preview and confirmation, and Global Verification is not currently part
-of Workflow.
+between Preview and confirmation. Global Verification observes the selected
+state after Bootstrap or after Preview when Bootstrap is not run.
 
 ## Verification boundary
 
-Local Verify remains part of module lifecycles. Global Verification Batch 1
+Local Verify remains part of module lifecycles. Global Verification
 adds a read-only observation pass after Bootstrap (including Restore Bootstrap)
 and after Workflow Preview when Bootstrap is not run. It verifies selected
-Homebrew formula presence, direct global Git values, the supported SSH config
-payload, and repository worktree/origin/branch. Other selected domains expose
-unsupported verification predicates; SSH identities remain outside coverage.
+Homebrew formula and cask installation predicates, App Store application IDs,
+direct global Git values, supported SSH and Zsh config payloads, VS Code
+extension IDs and settings payload, Workspace folders and repository
+worktree/origin/branch, and generated settings for Finder, Dock, Windows,
+Keyboard, Trackpad and Screenshots. SSH identities remain outside coverage.
 A failed Restore prerequisite still produces a report for the selected scope.
 Startup validation/preflight failures and cancellation before Preview retain
 existing early exits without a verification pass.
+
+These predicates retain production reader semantics: installation does not
+prove application runtime health, file equality does not prove effective app
+settings, and macOS checks confirm stored preference values/types, not UI effects.
+Screenshots location preference and destination directory are independently
+observed. Missing `mas` or `code` leaves selected items unverified; verification
+never installs dependencies. Zsh preserves snapshot ownership boundaries and
+does not add permission requirements to identical target content.
 
 The internal flow is:
 

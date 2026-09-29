@@ -287,3 +287,18 @@ install_brew_casks() {
     success "Homebrew Casks are ready"
 
 }
+
+# Registered cask and the artifact paths observed by the production reader.
+verify_brew_casks() {
+    verification_items_selected homebrew-casks || return 0
+    local records item result
+    records="$(read_brew_casks_configuration "$(blueprint_generated_file homebrew-casks)")" || {
+        verification_input_error homebrew-casks; return 0;
+    }
+    verification_select_subjects homebrew-casks "$records" || return 2
+    for item in "${GV_SUBJECTS[@]}"; do
+        is_cask_installed "$item"
+        result=$?
+        verification_result homebrew-casks "$item" installed "$result" || return 2
+    done
+}

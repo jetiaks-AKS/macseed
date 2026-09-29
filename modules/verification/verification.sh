@@ -78,7 +78,7 @@ verification_unsupported() {
     verification_diagnostic "$GV_LAST_REF" unsupported_predicate warning scope
 }
 
-# Explicit known inputs only, including coverage-only domains. Hash bytes and
+# Explicit known inputs only. Hash bytes and
 # absence markers, not values re-serialized through a second configuration model.
 verification_input_identity() (
     set -o pipefail
@@ -117,84 +117,6 @@ verification_hash_input() {
     fi
 }
 
-# No target inspection for domains outside Batch 1. Enumerate known input
-# predicates solely to make missing verification coverage visible.
-verification_uncovered_scope() {
-    local domain file records item category value key type result
-    for domain in homebrew-casks app-store vscode-extensions workspace-folders; do
-        verification_items_selected "$domain" || continue
-        file="$(blueprint_generated_file "$domain")"
-        case "$domain" in
-            homebrew-casks) records="$(read_brew_casks_configuration "$file")"; result=$? ;;
-            app-store) records="$(read_appstore_configuration "$file")"; result=$? ;;
-            vscode-extensions) records="$(read_vscode_extensions_configuration "$file")"; result=$? ;;
-            workspace-folders)
-                records="$(blueprint_workspace_folder_candidates "$file")"; result=$? ;;
-        esac
-        if [[ $result -ne 0 ]]; then verification_input_error "$domain"; continue; fi
-        if [[ "$domain" == app-store ]]; then records="$(cut -d '|' -f 1 <<< "$records")"; fi
-        verification_select_subjects "$domain" "$records" || return 2
-        for item in "${GV_SUBJECTS[@]}"; do
-            if [[ "$domain" == workspace-folders ]]; then
-                verification_unsupported "$domain" "$item" directory
-            else
-                verification_unsupported "$domain" "$item" installed
-            fi
-        done
-    done
-    for category in finder dock windows keyboard trackpad screenshots; do
-        domain="macos-$category"
-        verification_category_selected "$domain" || continue
-        file="$BLUEPRINT_GENERATED_DIR/macos/$category.conf"
-        if ! validate_defaults_config "$file" "$category"; then verification_input_error "$domain"; continue; fi
-        local any=false
-        # Coverage uses record identity only; values stay with the domain reader.
-        # shellcheck disable=SC2034
-        while IFS='|' read -r item key type value; do
-            [[ -n "${item// /}" ]] || continue
-            any=true
-            verification_coverage "$domain" "$item/$key" resolved unknown
-            verification_unsupported "$domain" "$item/$key" stored_preference
-            if [[ "$category" == screenshots ]]; then
-                verification_unsupported "$domain" destination directory
-            fi
-        done < "$file"
-        [[ "$any" == true ]] || verification_coverage "$domain" scope no_requirement unknown
-    done
-    if verification_category_selected vscode-settings; then
-        validate_vscode_settings_source "$BLUEPRINT_GENERATED_DIR/vscode/settings.json"
-        result=$?
-        case "$result" in
-            0)
-                verification_coverage vscode-settings settings.json resolved unknown
-                verification_unsupported vscode-settings settings.json file_content ;;
-            1)
-                verification_coverage vscode-settings scope unresolved unknown
-                verification_diagnostic "$GV_LAST_REF" selected_input_unresolved warning scope ;;
-            *) verification_input_error vscode-settings ;;
-        esac
-    fi
-    if verification_category_selected shell-zsh; then
-        zsh_snapshot_validate
-        result=$?
-        if [[ $result -eq 1 ]] && ! blueprint_exists; then
-            verification_coverage shell-zsh scope no_requirement unknown
-        elif [[ $result -ne 0 ]]; then
-            verification_input_error shell-zsh
-        else
-            case "$ZSH_SNAPSHOT_STATUS" in
-                eligible)
-                    verification_coverage shell-zsh .zshrc resolved observed_present
-                    verification_unsupported shell-zsh .zshrc file_content ;;
-                absent) verification_coverage shell-zsh scope no_requirement observed_absent ;;
-                *)
-                    verification_coverage shell-zsh scope unresolved partial
-                    verification_diagnostic "$GV_LAST_REF" unsupported_predicate warning scope ;;
-            esac
-        fi
-    fi
-}
-
 # Run context is consumed by the separately sourced Core collector/report.
 # shellcheck disable=SC2034
 verification_run() {
@@ -210,7 +132,18 @@ verification_run() {
         verify_git_configuration || verification_input_error git-configuration
         verify_ssh_configuration || verification_input_error ssh-configuration
         verify_workspace_repositories || verification_input_error git-repositories
-        verification_uncovered_scope || verification_input_error uncovered-scope
+        verify_brew_casks || verification_input_error homebrew-casks
+        verify_appstore_apps || verification_input_error app-store
+        verify_zsh || verification_input_error shell-zsh
+        verify_vscode_extensions || verification_input_error vscode-extensions
+        verify_vscode_settings || verification_input_error vscode-settings
+        verify_workspace_folders || verification_input_error workspace-folders
+        verify_macos_scalar_category finder "$FINDER_CONFIG" || verification_input_error macos-finder
+        verify_macos_scalar_category dock "$DOCK_CONFIG" || verification_input_error macos-dock
+        verify_macos_scalar_category windows "$WINDOWS_CONFIG" || verification_input_error macos-windows
+        verify_macos_scalar_category keyboard "$KEYBOARD_CONFIG" || verification_input_error macos-keyboard
+        verify_macos_scalar_category trackpad "$TRACKPAD_CONFIG" || verification_input_error macos-trackpad
+        verify_screenshots || verification_input_error macos-screenshots
         if [[ -n "${BUNDLE_RESTORE_SECURE_FILE:-}" ]]; then
             verification_coverage ssh-identities secure-selection unresolved unknown
             verification_diagnostic "$GV_LAST_REF" unsupported_predicate warning scope
@@ -222,7 +155,7 @@ verification_run() {
     fi
     GV_FINISHED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     verification_report
-    # Internal facts do not redefine existing command exit codes in Batch 1.
+    # Internal facts do not redefine existing command exit codes.
     return 0
 }
 

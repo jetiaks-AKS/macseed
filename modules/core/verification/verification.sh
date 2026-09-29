@@ -116,7 +116,7 @@ verification_aggregate() {
 
 verification_report() {
     verification_aggregate
-    section "Global Verification (Batch 1)"
+    section "Global Verification"
     info "Origin: $GV_ORIGIN; observation: $GV_STARTED_AT — $GV_FINISHED_AT; run: $GV_STATUS"
     if [[ "$GV_STATUS" != complete ]]; then
         warning "Incomplete verification; counts do not confirm one unchanged selected input."

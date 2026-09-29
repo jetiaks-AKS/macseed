@@ -207,3 +207,24 @@ install_appstore_apps() {
     success "App Store applications are ready"
 
 }
+
+# Inventory presence only; unavailable mas does not imply an absent app.
+verify_appstore_apps() {
+    verification_items_selected app-store || return 0
+    local records item result
+    records="$(read_appstore_configuration "$(blueprint_generated_file app-store)")" || {
+        verification_input_error app-store; return 0;
+    }
+    records="$(cut -d '|' -f 1 <<< "$records")" || return 2
+    verification_select_subjects app-store "$records" || return 2
+    for item in "${GV_SUBJECTS[@]}"; do
+        if ! command -v mas >/dev/null 2>&1; then
+            verification_record app-store "$item" installed unverified supported "" || return 2
+            verification_diagnostic "$GV_LAST_REF" dependency_unavailable warning observation
+            continue
+        fi
+        is_appstore_app_installed "$item"
+        result=$?
+        verification_result app-store "$item" installed "$result" || return 2
+    done
+}
