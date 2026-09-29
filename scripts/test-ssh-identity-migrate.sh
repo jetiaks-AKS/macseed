@@ -41,7 +41,12 @@ cp "$HOME/.ssh/id_ed25519.pub" "$HOME/.ssh/id_hard.pub"
 check hardlink_excluded 0 bash "$CLI" list
 grep -q 'id_hard ssh-' "$TEST_ROOT/out" && { printf 'FAIL hardlink listed\n'; failed=$((failed+1)); }
 rm "$HOME/.ssh/id_hard" "$HOME/.ssh/id_hard.pub" "$HOME/.ssh/id_link" "$HOME/.ssh/id_link.pub"
-check dependency_without_age 2 bash "$CLI" export --output "$TEST_ROOT/package.age"
+mkdir -m 700 "$TEST_ROOT/no-age-bin" || exit 2
+for tool in cat dirname python3 ssh-keygen tar; do
+    ln -s "$(command -v "$tool")" "$TEST_ROOT/no-age-bin/$tool" || exit 2
+done
+check dependency_without_age 2 /usr/bin/env PATH="$TEST_ROOT/no-age-bin" /bin/bash "$CLI" export --output "$TEST_ROOT/package.age"
+grep -Fq 'age required' "$TEST_ROOT/out" || { printf 'FAIL dependency_without_age reason\n'; failed=$((failed+1)); }
 ssh-keygen -q -t rsa -b 2048 -N '' -f "$HOME/.ssh/id_rsa" >/dev/null 2>&1 || exit 2
 ssh-keygen -q -t ecdsa -b 256 -N '' -f "$HOME/.ssh/id_ecdsa" >/dev/null 2>&1 || exit 2
 mkdir -m 700 "$TEST_ROOT/mock-bin"

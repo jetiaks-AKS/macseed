@@ -169,10 +169,13 @@ def validate_pair(private, public):
                 staged.write(raw_private)
             for attempt in range(1, 4):
                 wrong_passphrase = False
-                child = subprocess.Popen(['ssh-keygen', '-y', '-f', validated_private], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                child = subprocess.Popen(
+                    ['ssh-keygen', '-y', '-f', validated_private],
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
                 def prompt_filter():
                     nonlocal wrong_passphrase
                     seen = b''
+                    prompt_started = False
                     try:
                         while True:
                             chunk = child.stderr.read(1)
@@ -182,7 +185,10 @@ def validate_pair(private, public):
                             if b'incorrect passphrase' in seen:
                                 wrong_passphrase = True
                             if seen.endswith(b'Enter passphrase'):
+                                prompt_started = True
+                            if prompt_started and seen.endswith(b': '):
                                 say('SSH key passphrase: ')
+                                prompt_started = False
                     except OSError:
                         pass
                 reader = threading.Thread(target=prompt_filter, daemon=True)
