@@ -217,6 +217,7 @@ bootstrap_ssh_configuration() {
     ssh_configuration_inspect "$payload"; result=$?
     if [[ $result -ne 0 ]]; then rm -f "$payload"; [[ $result -ne 3 ]] || return 0; return "$result"; fi
     if [[ "$SSH_TARGET_STATUS" == identical ]]; then
+        declare -F verification_operation_hook >/dev/null && verification_operation_hook ssh-configuration config create noop
         rm -f "$payload"; success "SSH configuration already matches"
         [[ "$SSH_SOURCE_PARTIAL" != true ]] || return 1
         return 0
@@ -255,11 +256,64 @@ bootstrap_ssh_configuration() {
     # Shared lifecycle flag is read by the calling module wrapper.
     # shellcheck disable=SC2034
     MODULE_CHANGED=true
+    declare -F verification_operation_hook >/dev/null && verification_operation_hook ssh-configuration config create success
     rm -f "$temporary" || { rm -f "$payload"; error "Failed to clean SSH staging file"; return 2; }
     ssh_target_inspect "$payload"; result=$?
     rm -f "$payload"
-    [[ $result -eq 0 && "$SSH_TARGET_STATUS" == identical ]] || { error "SSH configuration verification failed"; return 2; }
+    if [[ $result -ne 0 || "$SSH_TARGET_STATUS" != identical ]]; then
+        local verify_result=1
+        [[ $result -eq 0 ]] || verify_result=2
+        declare -F verification_post_hook >/dev/null && verification_post_hook "$verify_result"
+        error "SSH configuration verification failed"
+        return 2
+    fi
     success "SSH configuration restored"
     [[ "$SSH_SOURCE_PARTIAL" != true ]] || return 1
     return 0
+}
+
+# Preserve the production reader's combined content/ownership predicate.
+verify_ssh_configuration() {
+    verification_category_selected ssh-configuration || return 0
+    local payload result
+    payload="$(mktemp)" || { verification_input_error ssh-configuration; return 0; }
+    ssh_snapshot_validate "$payload"
+    result=$?
+    if [[ $result -eq 1 ]] && ! blueprint_exists; then
+        verification_coverage ssh-configuration scope no_requirement unknown
+        rm -f "$payload"
+        return 0
+    fi
+    if [[ $result -ne 0 ]]; then
+        verification_input_error ssh-configuration
+        rm -f "$payload"
+        return 0
+    fi
+    case "$SSH_SNAPSHOT_STATUS" in
+        absent-directory|absent-config|empty)
+            verification_coverage ssh-configuration scope no_requirement observed_absent
+            rm -f "$payload"; return 0 ;;
+        unsupported|external)
+            verification_coverage ssh-configuration scope unresolved partial
+            verification_diagnostic "$GV_LAST_REF" unsupported_predicate warning scope
+            rm -f "$payload"; return 0 ;;
+        partial)
+            verification_coverage ssh-configuration config resolved partial
+            verification_diagnostic "$GV_LAST_REF" partial_source_coverage warning scope ;;
+        ready) verification_coverage ssh-configuration config resolved observed_present ;;
+    esac
+    ssh_target_inspect "$payload"
+    result=$?
+    rm -f "$payload"
+    if [[ $result -eq 2 ]]; then
+        verification_result ssh-configuration config supported_config_match 2
+    else
+        case "$SSH_TARGET_STATUS" in
+            identical) verification_result ssh-configuration config supported_config_match 0 ;;
+            different|absent-directory|absent-config)
+                verification_result ssh-configuration config supported_config_match 1 ;;
+            external) verification_result ssh-configuration config supported_config_match 2 external_management ;;
+            *) verification_result ssh-configuration config supported_config_match 2 ;;
+        esac
+    fi
 }

@@ -321,18 +321,23 @@ configure_git() {
         expected_path="$GIT_GLOBAL_WRITE_PATH"
         action "Configuring Git setting: $key"
         if ! git config --global --add "$key" "${GIT_CONFIGURATION_VALUES[$index]}"; then
+            declare -F verification_operation_hook >/dev/null && verification_operation_hook git-configuration "$key" create failure
             error "Failed to configure Git setting: $key"
             return 2
         fi
         # Shared lifecycle flag is read by the calling module wrapper.
         # shellcheck disable=SC2034
         MODULE_CHANGED=true
+        declare -F verification_operation_hook >/dev/null && verification_operation_hook git-configuration "$key" create success
         git_global_observe
         result=$?
         if [[ $result -ne 0 || "$GIT_GLOBAL_WRITE_PATH" != "$expected_path" ||
               ${GIT_GLOBAL_COUNTS[$index]} -ne 1 ||
               "${GIT_GLOBAL_ORIGINS[$index]}" != "$expected_path" ||
               "${GIT_GLOBAL_VALUES[$index]}" != "${GIT_CONFIGURATION_VALUES[$index]}" ]]; then
+            local verify_result=1
+            [[ $result -eq 0 ]] || verify_result=2
+            declare -F verification_post_hook >/dev/null && verification_post_hook "$verify_result"
             error "Git configuration verification failed: $key"
             return 2
         fi
@@ -340,4 +345,37 @@ configure_git() {
     [[ "$warnings" == false ]] || return 1
     success "Git configuration verified"
     return 0
+}
+
+# Compare direct global values using the production provenance reader. Source
+# mode omits target writability gates; mutation policy continues using target.
+verify_git_configuration() {
+    verification_category_selected git-configuration || return 0
+    local keys="" index key result
+    if ! git_configuration_scope_selected; then
+        verification_coverage git-configuration scope excluded unknown
+        return 0
+    fi
+    load_git_configuration || { verification_input_error git-configuration; return 0; }
+    for index in 0 1 2 3 4 5 6; do
+        [[ "${GIT_CONFIGURATION_SET[$index]}" != true ]] || keys="${keys}${keys:+$'\n'}${GIT_CONFIGURATION_KEYS[$index]}"
+    done
+    verification_select_subjects git-configuration "$keys" || return 2
+    [[ ${#GV_SUBJECTS[@]} -gt 0 ]] || return 0
+    git_global_observe source
+    result=$?
+    for key in "${GV_SUBJECTS[@]}"; do
+        index="$(git_configuration_index "$key")" || return 2
+        case "$result" in
+            1) verification_result git-configuration "$key" direct_global_value 2 external_management ;;
+            0)
+                if [[ ${GIT_GLOBAL_COUNTS[$index]} -eq 1 &&
+                      "${GIT_GLOBAL_VALUES[$index]}" == "${GIT_CONFIGURATION_VALUES[$index]}" ]]; then
+                    verification_result git-configuration "$key" direct_global_value 0
+                else
+                    verification_result git-configuration "$key" direct_global_value 1
+                fi ;;
+            *) verification_result git-configuration "$key" direct_global_value 2 ;;
+        esac
+    done
 }

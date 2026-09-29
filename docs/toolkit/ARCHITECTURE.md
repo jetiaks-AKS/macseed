@@ -195,12 +195,45 @@ of Workflow.
 
 ## Verification boundary
 
-Local Verify is part of current module lifecycles. Planned Global Verification
-will aggregate observable results for the selected desired environment after
-normal Bootstrap/Workflow and, where applicable, Restore. It builds on local
-Verify without replacing or duplicating it, and distinguishes verified state,
-mismatch, warnings or unsupported state, and observation or verification
-errors. Command success alone does not establish environment-level conformity.
+Local Verify remains part of module lifecycles. Global Verification Batch 1
+adds a read-only observation pass after Bootstrap (including Restore Bootstrap)
+and after Workflow Preview when Bootstrap is not run. It verifies selected
+Homebrew formula presence, direct global Git values, the supported SSH config
+payload, and repository worktree/origin/branch. Other selected domains expose
+unsupported verification predicates; SSH identities remain outside coverage.
+A failed Restore prerequisite still produces a report for the selected scope.
+Startup validation/preflight failures and cancellation before Preview retain
+existing early exits without a verification pass.
+
+The internal flow is:
+
+```text
+Generated + Blueprint → resolved scope + unresolved references
+                      → production domain readers → collector → report
+```
+
+`modules/core/verification/verification.sh` owns process-local Verification,
+Coverage, Operation and Diagnostic records and deterministic counters. Domain
+consumers own comparisons; `modules/verification/verification.sh` resolves scope
+and dispatches them. Records contain subject/predicate identities, not desired
+values. They are internal Bash data, not a public interface or persisted API.
+
+Conformity (`verified`, `mismatch`, `unverified`), verification support,
+coverage and diagnostics are independent. Operations retain their own outcomes;
+an earlier operation failure can coexist with a verified final observation.
+Partial SSH source coverage does not invalidate a matching supported payload.
+Stale references stay unresolved; absent requirements never become verified.
+Legacy source provenance remains unknown unless the snapshot explicitly records it.
+
+The run binds records to an origin, input digest, observation interval and
+operation context. Input identity is checked before and after the pass; change
+or invalid input makes the report incomplete. Target observations are sequential,
+not an atomic snapshot. Resolved predicate counts partition by conformity;
+unsupported is a subset of unverified, while unresolved references and diagnostic
+counts are separate. There is no readiness verdict. Existing public exit codes
+continue to describe command execution; they are not environment conformity.
+The verifier never invokes Discovery publication, installers, clone/checkout,
+preference writes or process restarts. Temporary validation files are permitted.
 
 ## Planned Core/GUI boundary
 

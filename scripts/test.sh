@@ -20,6 +20,7 @@ SUITES=(
     scripts/test-discovery-summary.sh
     scripts/test-dry-run-cli.sh
     scripts/test-git-generated-state.sh
+    scripts/test-global-verification.sh
     scripts/test-homebrew-discovery.sh
     scripts/test-homebrew-preflight.sh
     scripts/test-macos-bootstrap.sh

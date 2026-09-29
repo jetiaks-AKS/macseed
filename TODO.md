@@ -4,12 +4,14 @@
 Направления развития описаны в `ROADMAP.md`, архитектурные решения — в
 `docs/toolkit/ARCHITECTURE.md`, завершённые изменения — в `CHANGELOG.md`.
 
-## Подготовка этапа 13 — Reporting & Global Verification
+## Этап 13 — Reporting & Global Verification
 
-- [ ] Определить источник и представление результатов локального Verify для
-  сводного отчёта о выбранном поддерживаемом окружении.
-- [ ] Зафиксировать различие между подтверждённым соответствием, расхождением,
-  предупреждением или неподдерживаемой областью и ошибкой наблюдения или проверки.
+- [ ] Расширить проверяемое покрытие за пределы formulae, Git configuration,
+  SSH configuration и Workspace repositories через существующие domain readers.
+- [ ] Определить передачу verification evidence Secure Migration без повторного
+  импорта и без credentials в обычных result records.
+- [ ] Определить совместимое сохранение Capture coverage/provenance для различения
+  наблюдаемого отсутствия и неполученного source inventory после переноса Bundle.
 
 ## Отложено до фактического перехода на macOS 27
 

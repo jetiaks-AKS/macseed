@@ -13,6 +13,7 @@ source modules/core/terminal/terminal.sh
 source modules/core/launcher/launcher.sh
 source modules/core/preflight/preflight.sh
 source modules/core/config/config.sh
+source modules/core/verification/verification.sh
 
 # ==========================================
 # Blueprint
@@ -68,6 +69,7 @@ source modules/discovery/workspace.sh
 
 source modules/bootstrap/workspace/workspace.sh
 source modules/bundle/commands.sh
+source modules/verification/verification.sh
 
 # ==========================================
 # Toolkit Configuration
@@ -499,6 +501,7 @@ run_workflow() {
     # Internal Preview signals: no plans, with success (3) or warnings (4).
     if [[ $result -eq 3 || $result -eq 4 ]]; then
         [[ $result -ne 4 ]] || workflow_result=1
+        run_mode --verification-internal Verification not_run
         info "Workflow finished."
         return "$workflow_result"
     fi
@@ -511,6 +514,7 @@ run_workflow() {
         [[ $result -le 1 ]] || return "$result"
         [[ $result -eq 0 ]] || workflow_result=1
     else
+        run_mode --verification-internal Verification skipped
         info "Workflow finished without applying changes."
     fi
     return "$workflow_result"
@@ -522,11 +526,25 @@ MODE="$1"
 MODE_NAME="$2"
 PREVIEW_HAS_CHANGES=false
 
+verification_reset bootstrap
+if [[ "${BUNDLE_RESTORE_ACTIVE:-false}" == true ]]; then
+    GV_ORIGIN=restore
+elif [[ "${WORKFLOW_ACTIVE:-false}" == true ]]; then
+    GV_ORIGIN=workflow
+fi
+
 # ==========================================
 # Initialize Logger
 # ==========================================
 
 init_logger
+
+if [[ "$MODE" == --verification-internal ]]; then
+    verification_operation orchestration bootstrap execute "${3:-not_run}"
+    verification_run
+    close_logger
+    exit 0
+fi
 
 info "Mode: $MODE_NAME"
 
@@ -625,6 +643,8 @@ case "$MODE" in
             run_module "Restore SSH Prerequisites" bundle_restore_prerequisites
             prerequisite_result=$?
             if [[ $prerequisite_result -ne 0 ]]; then
+                verification_operation orchestration bootstrap execute skipped prerequisite_failed
+                verification_run
                 show_summary
                 toolkit_exit_code
                 prerequisite_result=$?
@@ -688,6 +708,17 @@ case "$MODE" in
         ;;
 
 esac
+
+if [[ "$MODE" == --bootstrap ]]; then
+    toolkit_exit_code
+    bootstrap_operation_result=$?
+    if [[ $bootstrap_operation_result -eq 2 ]]; then
+        verification_operation orchestration bootstrap execute failure
+    else
+        verification_operation orchestration bootstrap execute success
+    fi
+    verification_run
+fi
 
 show_summary
 

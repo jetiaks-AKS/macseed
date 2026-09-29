@@ -12,6 +12,9 @@ workspace_bootstrap_path_valid() {
         [[ "$component" != . && "$component" != .. ]] || return 2
         current="$current/$component"
         if [[ -e "$current" || -L "$current" ]]; then
+            if [[ "${2:-}" == observation && "$relative" != */* && -f "$current" && ! -L "$current" ]]; then
+                return 0 # A safe leaf conflict is observable, not malformed input.
+            fi
             [[ -d "$current" ]] || return 2
             physical="$(cd "$current" && pwd -P)" || return 2
             [[ "$physical" == "$root"/* ]] || return 2
@@ -58,7 +61,7 @@ workspace_read_bootstrap_repositories() {
         [[ "$name$path$remote$branch" != *[[:cntrl:]]* &&
            "$name$path$remote$branch" != *'"'* ]] || return 2
         [[ "$path" == "$HOME"/* ]] || return 2
-        workspace_bootstrap_path_valid "${path#"$HOME"/}" || return 2
+        workspace_bootstrap_path_valid "${path#"$HOME"/}" "${2:-}" || return 2
         [[ "$remote" != -* && "$remote" != [[:space:]]* && "$remote" != *[[:space:]] ]] || return 2
         case "$remote" in
             *://*) [[ "${remote#*://}" != "" && "${remote%%://*}" != "" ]] || return 2 ;;

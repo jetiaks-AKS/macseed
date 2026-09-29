@@ -194,7 +194,9 @@ repository_verify() {
     local expected_remote="$2"
     local expected_branch="$3"
 
+    local repository_subject="${4:-$path}"
     local repository_cloned=false
+    local repository_checked_out=false
 
     local inspection_result
     repository_exists "$path"
@@ -209,16 +211,19 @@ repository_verify() {
         action "Cloning repository..."
 
         if ! repository_clone "$expected_remote" "$path"; then
+            declare -F verification_operation_hook >/dev/null && verification_operation_hook git-repositories "$repository_subject" clone failure
             error "Failed to clone repository"
             return 2
         fi
 
         MODULE_CHANGED=true
         repository_cloned=true
+        declare -F verification_operation_hook >/dev/null && verification_operation_hook git-repositories "$repository_subject" clone success
 
         repository_exists "$path"
         inspection_result=$?
         if [[ $inspection_result -ne 0 ]]; then
+            declare -F verification_post_hook >/dev/null && verification_post_hook "$inspection_result"
             error "Failed to verify cloned repository destination"
             return 2
         fi
@@ -237,6 +242,7 @@ repository_verify() {
     fi
     if [[ $inspection_result -eq 1 ]]; then
         if [[ "$repository_cloned" == true ]]; then
+            declare -F verification_post_hook >/dev/null && verification_post_hook 1
             error "Cloned destination is not a usable Git repository"
             return 2
         fi
@@ -255,6 +261,7 @@ repository_verify() {
 
     if [[ "$current_remote" != "$expected_remote" ]]; then
         if [[ "$repository_cloned" == true ]]; then
+            declare -F verification_post_hook >/dev/null && verification_post_hook 1
             error "Cloned repository origin verification failed"
             return 2
         fi
@@ -293,6 +300,7 @@ if [[ "$current_branch" != "$expected_branch" ]]; then
     action "Restoring branch..."
 
     if ! repository_checkout "$path" "$expected_branch"; then
+        declare -F verification_operation_hook >/dev/null && verification_operation_hook git-repositories "$repository_subject" checkout failure
         error "Failed to restore branch"
         return 2
     fi
@@ -300,6 +308,8 @@ if [[ "$current_branch" != "$expected_branch" ]]; then
     # Shared lifecycle flag is read by the calling module wrapper.
     # shellcheck disable=SC2034
     MODULE_CHANGED=true
+    repository_checked_out=true
+    declare -F verification_operation_hook >/dev/null && verification_operation_hook git-repositories "$repository_subject" checkout success
 
     if ! current_branch=$(repository_branch "$path"); then
         error "Failed to observe repository branch"
@@ -307,6 +317,7 @@ if [[ "$current_branch" != "$expected_branch" ]]; then
     fi
 
     if [[ "$current_branch" != "$expected_branch" ]]; then
+        declare -F verification_post_hook >/dev/null && verification_post_hook 1
         error "Branch verification failed"
         return 2
     fi
@@ -315,8 +326,47 @@ if [[ "$current_branch" != "$expected_branch" ]]; then
 
 fi
 
+if [[ "$repository_cloned" == false && "$repository_checked_out" == false ]]; then
+    declare -F verification_operation_hook >/dev/null && verification_operation_hook git-repositories "$repository_subject" restore noop
+fi
 success "Branch verified"
 
 return 0
 
+}
+
+# Shared read-only inspection. Results: 0 match, 1 mismatch, 2 observation
+# error, 3 dependent predicate not observed. Origin and branch are independent.
+# shellcheck disable=SC2034
+repository_inspect() {
+    local path="$1" expected_remote="$2" expected_branch="$3" result value
+    REPOSITORY_WORKTREE_RESULT=2
+    REPOSITORY_ORIGIN_RESULT=3
+    REPOSITORY_BRANCH_RESULT=3
+    if [[ -f "$path" && ! -L "$path" ]]; then
+        REPOSITORY_WORKTREE_RESULT=1
+        return 0
+    fi
+    repository_exists "$path"
+    result=$?
+    if [[ $result -eq 1 ]]; then
+        REPOSITORY_WORKTREE_RESULT=1
+        return 0
+    fi
+    [[ $result -eq 0 ]] || return 0
+    repository_is_git "$path"
+    result=$?
+    REPOSITORY_WORKTREE_RESULT=$result
+    [[ $result -eq 0 ]] || return 0
+    REPOSITORY_ORIGIN_RESULT=2
+    if value="$(repository_origin "$path")" && [[ -n "$value" ]]; then
+        REPOSITORY_ORIGIN_RESULT=1
+        [[ "$value" != "$expected_remote" ]] || REPOSITORY_ORIGIN_RESULT=0
+    fi
+    REPOSITORY_BRANCH_RESULT=2
+    if value="$(repository_branch "$path")"; then
+        REPOSITORY_BRANCH_RESULT=1
+        [[ "$value" != "$expected_branch" ]] || REPOSITORY_BRANCH_RESULT=0
+    fi
+    return 0
 }

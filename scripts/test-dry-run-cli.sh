@@ -40,6 +40,11 @@ write_fixture_file() {
     printf '%s\n' "$@" > "$FIXTURE_ROOT/$relative_path"
 }
 
+write_fixture_file modules/core/verification/verification.sh \
+    'verification_reset() { :; }' \
+    'verification_operation() { :; }' \
+    'verification_run() { :; }'
+
 write_fixture_file config/toolkit.conf \
     'TOOLKIT_NAME="Mac Bootstrap Toolkit Test"' \
     'TOOLKIT_VERSION="test"' \

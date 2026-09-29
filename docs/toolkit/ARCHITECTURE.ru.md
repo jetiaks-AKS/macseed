@@ -200,13 +200,46 @@ Conditional Bootstrap
 
 ## Граница проверки
 
-Локальный Verify входит в текущий жизненный цикл модулей. Запланированная Global
-Verification сводит наблюдаемые результаты для выбранного поддерживаемого
-окружения после Bootstrap/Workflow и, где применимо, Restore. Она опирается на
-локальный Verify и различает подтверждённое соответствие, расхождение,
-предупреждение или неподдерживаемую область и ошибку наблюдения или проверки.
-Успешный код завершения команды сам по себе не подтверждает соответствие
-окружения.
+Локальный Verify остаётся частью жизненного цикла модулей. Первый batch Global
+Verification добавляет read-only проверку после Bootstrap, включая Restore
+Bootstrap, и после Preview в Workflow, когда Bootstrap не запускается.
+Проверяются выбранные Homebrew formulae, прямые global-значения Git,
+поддерживаемый payload SSH config и worktree/origin/branch репозиториев.
+Для остальных выбранных областей явно показано отсутствие поддержки проверки;
+SSH identities пока остаются вне покрытия. При отказе Restore prerequisite
+отчёт также строится. Ошибки startup validation/preflight и отмена до Preview
+сохраняют прежний ранний выход без verification pass.
+
+Поток данных:
+
+```text
+Generated + Blueprint → resolved scope + unresolved references
+                      → production domain readers → collector → report
+```
+
+`modules/core/verification/verification.sh` хранит внутренние Verification,
+Coverage, Operation и Diagnostic records и считает детерминированные агрегаты.
+Сравнения принадлежат consumers; `modules/verification/verification.sh`
+разрешает scope и вызывает readers. Records содержат идентичность subject и
+predicate, без копирования desired values. Это данные текущего Bash-процесса,
+не публичный API и не постоянное хранилище результатов.
+
+Conformity (`verified`, `mismatch`, `unverified`), поддержка проверки, coverage и
+diagnostics независимы. Ошибка операции может сочетаться с подтверждённым
+конечным состоянием. Partial source warning SSH не отменяет совпадение
+поддерживаемого payload. Stale references остаются unresolved; отсутствие
+requirement не становится verified. Происхождение старых source inventory
+остаётся unknown, если snapshot явно его не описывает.
+
+Контекст связывает records с origin, digest ввода, интервалом наблюдений и
+операциями. Идентичность ввода проверяется до и после прохода; изменение или
+невалидный ввод делает отчёт incomplete. Наблюдение target последовательно,
+а не атомарно. Resolved predicates делятся по conformity; unsupported —
+подмножество unverified, unresolved references и diagnostics считаются отдельно.
+Вердикта готовности нет. Публичные exit codes сохраняют семантику выполнения
+команды и не доказывают соответствие окружения. Verifier не запускает Discovery
+publication, установку, clone/checkout, запись preferences или restart процессов.
+Временные файлы для валидации допустимы.
 
 ## Планируемая граница Core/GUI
 

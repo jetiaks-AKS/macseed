@@ -161,6 +161,7 @@ install_brew_packages() {
 
         if [[ $inspection_result -eq 0 ]]; then
 
+            declare -F verification_operation_hook >/dev/null && verification_operation_hook homebrew-packages "$package" install noop
             detail "$package is already installed"
             continue
 
@@ -190,7 +191,9 @@ install_brew_packages() {
 
         fi
 
-        if [[ $? -ne 0 ]]; then
+        local install_result=$?
+        if [[ $install_result -ne 0 ]]; then
+            declare -F verification_operation_hook >/dev/null && verification_operation_hook homebrew-packages "$package" install failure
 
             error "Failed to install $package"
             return 2
@@ -201,7 +204,11 @@ install_brew_packages() {
         # shellcheck disable=SC2034
         MODULE_CHANGED=true
 
-        if ! is_brew_package_installed "$package"; then
+        declare -F verification_operation_hook >/dev/null && verification_operation_hook homebrew-packages "$package" install success
+        is_brew_package_installed "$package"
+        inspection_result=$?
+        declare -F verification_post_hook >/dev/null && verification_post_hook "$inspection_result"
+        if [[ $inspection_result -ne 0 ]]; then
             error "Failed to verify Homebrew formula: $package"
             return 2
         fi
@@ -221,4 +228,19 @@ install_brew_packages() {
     echo
     success "Homebrew Packages are ready"
 
+}
+
+# Read-only Global Verification: presence only, never install/version/health.
+verify_brew_packages() {
+    verification_items_selected homebrew-packages || return 0
+    local packages package result
+    packages="$(read_brew_packages_configuration "$(blueprint_generated_file homebrew-packages)")" || {
+        verification_input_error homebrew-packages; return 0;
+    }
+    verification_select_subjects homebrew-packages "$packages" || return 2
+    for package in "${GV_SUBJECTS[@]}"; do
+        is_brew_package_installed "$package"
+        result=$?
+        verification_result homebrew-packages "$package" installed "$result"
+    done
 }
