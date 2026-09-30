@@ -377,7 +377,7 @@ Status   : Interrupted
 
 `--dry-run` является отдельным execution mode. Одновременно можно выбрать
 ровно один из `--check`, `--bootstrap`, `--discover`, `--blueprint`,
-`--dry-run`, `--workflow`, `--capture` и `--restore <bundle>`; отсутствие mode
+`--dry-run`, `--compare`, `--workflow`, `--capture` и `--restore <bundle>`; отсутствие mode
 или конфликтующие mode-флаги
 возвращают `1`.
 
@@ -471,12 +471,27 @@ Discovery
 Blueprint
 Bootstrap
 Preview (`--dry-run`)
+Environment Comparison (`--compare`)
 Guided Workflow (`--workflow`)
 Capture (`--capture`)
 Restore (`--restore <bundle>`)
 ```
 
-Global Verification относится к Future / Optional.
+`bs compare` / `./bootstrap.sh --compare` явно сравнивает выбранное эталонное
+окружение с текущим Mac. Режим использует текущие Blueprint и
+`config/generated/`, проецирует существующие Verification/Coverage facts и
+ничего не применяет или не удаляет. Discovery, Bootstrap Apply и
+административный preflight не запускаются; Blueprint, Generated Configuration
+и target state не изменяются. Общая инфраструктура создаёт лог.
+
+Отчёт различает `matching`, `missing`, `differing`, `unverified` и поддерживаемые
+`extra`. Последние доступны для Homebrew casks, App Store IDs и VS Code
+extension IDs только при полной provenance исходного inventory и успешном
+наблюдении target inventory. Лишние Homebrew formulae не определяются:
+исходный inventory формул не является полным списком установленных формул.
+Comparison не запускается автоматически после Bootstrap, Workflow или Restore.
+Код `0` означает завершённый observation pass независимо от verdict; `2` —
+неполный run, `1` — ошибку CLI.
 
 ---
 
@@ -505,7 +520,8 @@ Apply these changes with Bootstrap? [y/N]
 ```
 
 Warning status Preview при этом сохраняется как итоговый status `1`. Global
-Verification не входит в Guided Workflow и относится к Future / Optional.
+Verification наблюдает выбранное состояние после Bootstrap или после Preview,
+когда Bootstrap не запускается; отдельная Comparison остаётся явной командой.
 
 ---
 
@@ -522,6 +538,7 @@ bs restore <bundle> → bootstrap.sh --restore <bundle>
 bs discover   → bootstrap.sh --discover
 bs blueprint  → bootstrap.sh --blueprint
 bs preview    → bootstrap.sh --dry-run
+bs compare    → bootstrap.sh --compare
 bs bootstrap  → bootstrap.sh --bootstrap
 bs check      → bootstrap.sh --check
 ```
@@ -540,8 +557,8 @@ setup с lifecycle `Check → Apply → Verify`. Корректный `bs` ос�
 Исключение для Restore без Homebrew: отсутствующий launcher откладывается с
 предупреждением `1`; используйте `./bootstrap.sh` из корня репозитория.
 
-Discovery, Blueprint и Preview не запускают installer. Workflow, завершившийся
-после zero-change Preview, также не устанавливает `bs`. Ручная установка и
+Discovery, Blueprint, Preview и Comparison не запускают installer. Workflow,
+завершившийся после zero-change Preview, также не устанавливает `bs`. Ручная установка и
 repair остаются доступны. Launcher self-setup не отображается как domain
 Preview plan: это отдельная Bootstrap self-setup операция.
 

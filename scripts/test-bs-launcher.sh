@@ -66,6 +66,7 @@ workflow|--workflow
 discover|--discover
 blueprint|--blueprint
 preview|--dry-run
+compare|--compare
 bootstrap|--bootstrap
 check|--check
 MAPPINGS
@@ -81,6 +82,10 @@ fi
 BS_TEST_STATUS=2 run_bs preview
 [[ $BS_STATUS -eq 2 ]] && pass "production exit status is preserved" ||
     fail "production exit status was changed"
+
+BS_TEST_STATUS=2 run_bs compare
+[[ $BS_STATUS -eq 2 ]] && pass "compare exit status is preserved" ||
+    fail "compare exit status was changed"
 
 PATH="$INSTALL_DIR:/usr/bin:/bin" BS_INSTALL_DIR="$INSTALL_DIR" \
     "$FIXTURE/scripts/install-bs.sh" --check

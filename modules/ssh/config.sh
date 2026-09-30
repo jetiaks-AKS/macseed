@@ -172,6 +172,41 @@ ssh_target_inspect() {
     return 0
 }
 
+# Verification may accept a partial snapshot when every captured Host block
+# matches; Bootstrap and Preview continue to use the exact-byte inspector.
+ssh_partial_target_verify() {
+    local payload="$1" target="$HOME/.ssh/config" canonical metrics before after result
+    before="$(stat -f '%d:%i:%z:%m:%c:%Lp' "$target" 2>/dev/null)" || return 2
+    canonical="$(mktemp)" || return 2
+    metrics="$(ssh_config_parse "$target" "$canonical" source)" || { rm -f "$canonical"; return 2; }
+    after="$(stat -f '%d:%i:%z:%m:%c:%Lp' "$target" 2>/dev/null)" || { rm -f "$canonical"; return 2; }
+    if [[ "$before" != "$after" || -L "$target" ]]; then rm -f "$canonical"; return 2; fi
+    local structural="${metrics##* }"
+    if [[ "$structural" != 0 ]]; then rm -f "$canonical"; return 2; fi
+    LC_ALL=C awk '
+        function finish() {
+            if (host == "") return
+            if (block_file == ARGV[1]) expected[host] = block
+            else if (host in expected && expected[host] == block) matched[host] = 1
+        }
+        /^Host / {
+            finish()
+            host = substr($0, 6)
+            block_file = FILENAME
+            block = $0 "\n"
+            next
+        }
+        { block = block $0 "\n" }
+        END {
+            finish()
+            for (host in expected) if (!(host in matched)) exit 1
+        }
+    ' "$payload" "$canonical"
+    result=$?
+    rm -f "$canonical"
+    return "$result"
+}
+
 ssh_configuration_inspect() {
     local payload="$1" result
     SSH_SOURCE_PARTIAL=false
@@ -304,6 +339,15 @@ verify_ssh_configuration() {
     esac
     ssh_target_inspect "$payload"
     result=$?
+    if [[ $result -eq 0 && "$SSH_SNAPSHOT_STATUS" == partial && "$SSH_TARGET_STATUS" == different ]]; then
+        ssh_partial_target_verify "$payload"
+        result=$?
+        case $result in
+            0) SSH_TARGET_STATUS=identical ;;
+            1) SSH_TARGET_STATUS=different; result=0 ;;
+            *) result=2 ;;
+        esac
+    fi
     rm -f "$payload"
     if [[ $result -eq 2 ]]; then
         verification_result ssh-configuration config supported_config_match 2

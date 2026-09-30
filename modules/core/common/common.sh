@@ -179,7 +179,7 @@ run_inspection() {
     local inspection_name="$1"
     local inspection_function="$2"
 
-    section "$inspection_name"
+    [[ "${3:-}" == no-heading ]] || section "$inspection_name"
     ((MODULES_CHECKED++))
     log "[MODULE] START: $inspection_name"
 
@@ -369,6 +369,9 @@ show_summary() {
             --dry-run)
                 error "Preview completed with errors"
                 ;;
+            --compare)
+                error "Comparison observation incomplete"
+                ;;
 
         esac
 
@@ -390,6 +393,9 @@ show_summary() {
 
             --dry-run)
                 warning "Preview completed with warnings"
+                ;;
+            --compare)
+                warning "Comparison completed with warnings"
                 ;;
 
         esac
@@ -413,6 +419,9 @@ show_summary() {
             --dry-run)
                 success "Preview completed successfully"
                 ;;
+            --compare)
+                success "Comparison observation completed"
+                ;;
 
         esac
 
@@ -432,7 +441,7 @@ show_summary() {
         log "Modules Processed : $MODULES_CHECKED"
         log "Warnings          : $WARNING_COUNT"
         log "Errors            : $ERROR_COUNT"
-    elif [[ "$MODE" == "--dry-run" ]]; then
+    elif [[ "$MODE" == "--dry-run" || "$MODE" == "--compare" ]]; then
         echo "Modules Inspected : $MODULES_CHECKED"
         echo "Warnings          : $WARNING_COUNT"
         echo "Errors            : $ERROR_COUNT"

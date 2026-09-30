@@ -81,7 +81,7 @@ comparison_extra() {
                 homebrew-casks) target="$(brew list --cask)" && state=available ;;
                 app-store)
                     if command -v mas >/dev/null 2>&1; then
-                        target="$(MAS_NO_AUTO_INDEX=1 mas list)" && state=available
+                        target="$(env MAS_NO_AUTO_INDEX=1 mas list)" && state=available
                     else reason=dependency_unavailable; fi ;;
                 vscode-extensions)
                     if command -v code >/dev/null 2>&1; then
@@ -95,7 +95,8 @@ comparison_extra() {
                     [[ -n "$item" ]] || continue
                     case "$domain" in
                         homebrew-casks) identity="$item"; [[ "$identity" =~ ^[A-Za-z0-9][A-Za-z0-9+_.@-]*$ ]] ;;
-                        app-store) identity="${item%% *}"; [[ "$item" == *' '* && "$identity" =~ ^[0-9]+$ ]] ;;
+                        app-store)
+                            [[ "$item" =~ ^[[:blank:]]*([0-9]+)[[:blank:]]+[^[:blank:]].*$ ]] && identity="${BASH_REMATCH[1]}" ;;
                         vscode-extensions) identity="$item"; [[ "$identity" =~ ^[A-Za-z0-9][A-Za-z0-9_-]*\.[A-Za-z0-9][A-Za-z0-9_-]*$ ]] ;;
                     esac
                     if [[ $? -ne 0 ]]; then state=unavailable reason=invalid_target_inventory; break; fi

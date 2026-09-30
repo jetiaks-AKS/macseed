@@ -32,6 +32,10 @@ Discovery → Generated Configuration → Blueprint → Preview → Bootstrap
 - **Bootstrap** applies the selected supported state idempotently and verifies
   results where the current module can observe them.
 
+Global Verification reports the selected requirements after Bootstrap, Workflow,
+and applicable Restore runs. `bs compare` explicitly compares the selected
+environment with the current Mac without changing it.
+
 Without a Blueprint, the full supported generated scope is processed.
 
 ## Capabilities
@@ -86,8 +90,8 @@ use an encrypted Secure Credentials payload. See
 ## Project Status
 
 Version 3.3.0 includes Stage 12 Bootstrap Bundle Capture & Restore and secure
-SSH identity migration. Global Verification of the selected environment is
-planned for Bootstrap/Workflow and Restore.
+SSH identity migration. Current development also includes Global Verification
+and the public `bs compare` command.
 
 See [ROADMAP.md](ROADMAP.md) for current development direction.
 

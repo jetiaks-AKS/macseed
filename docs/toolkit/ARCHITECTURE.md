@@ -279,8 +279,10 @@ preference writes or process restarts. Temporary validation files are permitted.
 
 ## Environment Comparison
 
-The internal read-only Comparison operation reuses the selected scope, production
-inspectors, and process-local Verification/Coverage facts. It projects a resolved
+The read-only Comparison operation is exposed explicitly through `bs compare`
+and `./bootstrap.sh --compare`. It compares the selected reference environment
+with the current Mac, reusing production inspectors and process-local
+Verification/Coverage facts. It projects a resolved
 predicate to `matching`, `missing`, `differing`, or `unverified`. A mismatch is
 `missing` or `differing` only when the inspector supplies a typed observation;
 an unknown mismatch is unverified for Comparison. Unsupported remains a subset
@@ -299,8 +301,8 @@ support extra. Only trusted Restore importer
 evidence can compare SSH identities. The default report shows typed differences
 without expected/actual values, private content, or remote URLs. Comparison does
 not Apply, remove, or plan cleanup, and is not automatically run by Bootstrap,
-Workflow, or Restore. This transient internal operation is not a public CLI or
-persisted interface.
+Workflow, or Restore. Its facts remain transient; there is no persisted
+Comparison interface.
 
 ## Planned Core/GUI boundary
 

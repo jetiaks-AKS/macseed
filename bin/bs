@@ -11,6 +11,7 @@ Commands:
   discover    Discover current Mac state
   blueprint   Configure restore selection
   preview     Preview planned changes
+  compare     Compare selected environment with this Mac
   bootstrap   Apply selected configuration
   check       Check toolkit prerequisites
 EOF
@@ -45,6 +46,7 @@ case "${1:-}" in
     discover) mode=--discover ;;
     blueprint) mode=--blueprint ;;
     preview) mode=--dry-run ;;
+    compare) mode=--compare ;;
     bootstrap) mode=--bootstrap ;;
     check) mode=--check ;;
     *)

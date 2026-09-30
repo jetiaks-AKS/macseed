@@ -288,8 +288,10 @@ publication, установку, clone/checkout, запись preferences или
 
 ## Environment Comparison
 
-Внутренняя read-only операция Comparison использует выбранный scope, production
-inspectors и process-local Verification/Coverage facts. Для разрешённого
+Неизменяющая операция Comparison доступна явно через `bs compare` и
+`./bootstrap.sh --compare`. Она сравнивает выбранное эталонное окружение с
+текущим Mac, используя production inspectors и process-local
+Verification/Coverage facts. Для разрешённого
 predicate она выводит `matching`, `missing`, `differing` или `unverified`.
 Mismatch становится `missing` либо `differing` только при typed observation от
 inspector; неизвестный тип различия остаётся unverified для Comparison.
@@ -309,8 +311,8 @@ scalar/payload/Workspace domains extra неприменим. SSH identities ср
 во время Restore. Обычный отчёт показывает typed differences без expected/actual
 values, приватного содержимого или remote URLs. Comparison не выполняет Apply,
 удаление или планирование cleanup и не запускается автоматически в Bootstrap,
-Workflow и Restore. Эта временная внутренняя операция пока не является публичным
-CLI или постоянным интерфейсом.
+Workflow и Restore. Её facts остаются временными; постоянного интерфейса
+Comparison нет.
 
 ## Планируемая граница Core/GUI
 

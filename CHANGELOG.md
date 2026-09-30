@@ -15,6 +15,8 @@ The format is based on the principles of **Keep a Changelog**.
   projection, typed differences, per-domain digest-bound source completeness,
   and informational extra inventory comparison for casks, App Store IDs, and
   VS Code extension IDs. Legacy inventory remains compatible with extra unknown.
+  Added public `bs compare` and `./bootstrap.sh --compare` entrypoints; comparison
+  remains explicit and never removes extra items.
 
 * Completed Stage 13 human-readable Global Verification reporting with four
   scope-aware readiness verdicts, actionable typed reasons, separate operation
@@ -22,6 +24,10 @@ The format is based on the principles of **Keep a Changelog**.
 
 ### Fixed
 
+* Verify supported SSH profiles in a partial snapshot against matching target
+  profiles without weakening Bootstrap/Preview configuration conflict protection.
+* Accept App Store inventory rows with aligned numeric IDs, prevent `mas list`
+  Spotlight auto-indexing during comparison, and print the Comparison heading once.
 * Accept a clean Mac without an SSH directory, and prepare selected SSH
   configuration and explicitly confirmed identities before Restore clones
   Workspace repositories, after full Preview and input validation.

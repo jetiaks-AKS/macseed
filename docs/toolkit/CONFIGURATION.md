@@ -683,17 +683,20 @@ Configuration, а не дублироваться как фиксированн�
 эту проверку до preflight и Core checks; пустой item scope и отключённая
 категория не добавляют проверку несвязанного файла.
 
-## Preview и будущие потребители
+## Preview и потребители выбранной конфигурации
 
-Dry-run / Preview реализован; Global Verification относится к Future / Optional.
+Dry-run / Preview, Global Verification и явный Environment Comparison
+используют выбранный Blueprint и Generated Configuration.
 
 - **Dry-run / Preview** является неизменяющим режимом Bootstrap и использует
   те же Generated Configuration и Blueprint Desired Selection.
   Он не является источником конфигурации и не владеет Desired Selection.
-- **Global Verification** может стать optional aggregate post-Bootstrap проверкой выбранного
-  итогового состояния. Она отличается от текущего локального
-  `Check → Apply → Verify`, уже используемого модулями там, где проверка
-  результата поддерживается.
+- **Global Verification** выполняет read-only проверку выбранного итогового
+  состояния после Bootstrap/Workflow и применимого Restore. Она отличается от
+  локального `Check → Apply → Verify`, используемого модулями.
+- **Environment Comparison** явно сопоставляет выбранное эталонное окружение с
+  текущим Mac через существующие Verification/Coverage facts. Оно не создаёт
+  вторую модель конфигурации и не изменяет target state.
 
 ## Основные принципы
 

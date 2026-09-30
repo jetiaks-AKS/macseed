@@ -70,6 +70,7 @@ source modules/discovery/workspace.sh
 source modules/bootstrap/workspace/workspace.sh
 source modules/bundle/commands.sh
 source modules/verification/verification.sh
+source modules/verification/comparison.sh
 
 # ==========================================
 # Toolkit Configuration
@@ -140,6 +141,12 @@ for arg in "$@"; do
             ((EXECUTION_MODE_COUNT++))
             ;;
 
+        --compare)
+
+            MODE="--compare"
+            ((EXECUTION_MODE_COUNT++))
+            ;;
+
         -v|--verbose)
 
             VERBOSE=true
@@ -176,6 +183,9 @@ Usage:
 
   ./bootstrap.sh --dry-run
       Preview selected Bootstrap changes without target mutation
+
+  ./bootstrap.sh --compare
+      Compare selected environment with this Mac without target mutation
 
   ./bootstrap.sh --workflow
       Guide Discovery, Blueprint, Preview, and confirmed Bootstrap
@@ -252,6 +262,9 @@ case "$MODE" in
 
     --dry-run)
         MODE_NAME="Preview"
+        ;;
+    --compare)
+        MODE_NAME="Environment Comparison"
         ;;
     --capture)
         MODE_NAME="Capture"
@@ -520,6 +533,12 @@ run_workflow() {
     return "$workflow_result"
 }
 
+comparison_operation() {
+    comparison_run || return 2
+    [[ "$GV_STATUS" == complete ]] || return 2
+    return 0
+}
+
 # Subshells keep each production stage's logger, traps and counters independent.
 run_mode() (
 MODE="$1"
@@ -570,6 +589,15 @@ if [[ "$MODE" == "--blueprint" ]]; then
         exit 3 # Internal cancellation signal; standalone selector is unchanged.
     fi
     exit "$blueprint_result"
+fi
+
+if [[ "$MODE" == "--compare" ]]; then
+    run_inspection "Environment Comparison" comparison_operation no-heading
+    show_summary
+    toolkit_exit_code
+    result=$?
+    close_logger
+    exit "$result"
 fi
 
 if [[ "$MODE" == "--bootstrap" || "$MODE" == "--dry-run" ]]; then

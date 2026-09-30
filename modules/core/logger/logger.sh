@@ -40,6 +40,9 @@ init_logger() {
         --dry-run)
             LOG_PREFIX="preview"
             ;;
+        --compare)
+            LOG_PREFIX="compare"
+            ;;
         *)
             LOG_PREFIX="unknown"
             ;;
@@ -72,6 +75,9 @@ init_logger() {
             ;;
         --dry-run)
             log "Mode     : Preview"
+            ;;
+        --compare)
+            log "Mode     : Environment Comparison"
             ;;
         *)
             log "Mode     : Unknown"

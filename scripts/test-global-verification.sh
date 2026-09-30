@@ -75,7 +75,18 @@ git() {
 }
 mas() {
     [[ "$*" == list ]] || { mutate "mas $*"; return 99; }
-    case "$MAS_STATE" in present) printf '123 Example (1.0)\n' ;; extra) printf '123 Example (1.0)\n456 Other (2.0)\n' ;; absent) : ;; *) return 2 ;; esac
+    case "$MAS_STATE" in
+        present) printf '123 Example (1.0)\n' ;;
+        extra) printf '123 Example (1.0)\n456 Other (2.0)\n' ;;
+        indexing-warning)
+            if [[ "${MAS_NO_AUTO_INDEX:-}" != 1 ]]; then
+                mutate 'mas Spotlight indexing'
+                printf 'Warning: Found a likely App Store app that is not indexed in Spotlight ...\nIndexing now...\n'
+            fi
+            printf '123 Example (1.0)\n456 Other (2.0)\n' ;;
+        absent) : ;;
+        *) return 2 ;;
+    esac
 }
 code() {
     [[ "$*" == --list-extensions ]] || { mutate "code $*"; return 99; }
@@ -223,7 +234,16 @@ verification_reset bootstrap
 verify_ssh_configuration
 assert record_is config supported_config_match verified
 assert has_code partial_source_coverage
-printf '# different\n' >> "$HOME/.ssh/config"
+printf 'Host excluded\n    HostName excluded.invalid\n    IdentityFile ~/.ssh/id_excluded\n\n' >> "$HOME/.ssh/config"
+printf 'Host another\n    HostName another.invalid\n    IdentityFile ~/.ssh/id_another\n' >> "$HOME/.ssh/config"
+CV_KIND=() CV_ACTIVE=true
+verification_reset comparison
+verify_ssh_configuration
+comparison_project
+assert record_is config supported_config_match verified
+assert test "$CV_MATCHING" -eq 1
+CV_ACTIVE=false
+sed -i '' 's/HostName example.invalid/HostName changed.invalid/' "$HOME/.ssh/config"
 verification_reset bootstrap
 verify_ssh_configuration
 assert record_is config supported_config_match mismatch
@@ -701,6 +721,28 @@ assert test ! -s "$MUTATIONS"
 assert test "$CV_UNSUPPORTED" -eq 0
 
 # Complete inventory markers prove zero and extras without promoting exclusions.
+command mkdir -p "$TEST_ROOT/mock-bin"
+cat > "$TEST_ROOT/mock-bin/mas" <<'MAS'
+#!/bin/bash
+[[ "$*" == list ]] || exit 2
+case "$MAS_STATE" in
+    present) printf '123 Example (1.0)\n' ;;
+    extra|indexing-warning)
+        if [[ "$MAS_STATE" == indexing-warning && "${MAS_NO_AUTO_INDEX:-}" != 1 ]]; then
+            printf 'indexing\n' >> "$MAS_INDEX_MARKER"
+            printf 'Warning: Found a likely App Store app that is not indexed in Spotlight ...\nIndexing now...\n'
+        fi
+        printf '123 Example (1.0)\n456 Other (2.0)\n' ;;
+    aligned) printf ' 937984704  Amphetamine (5.3.2)\n6504287215  Happ (5.9.0)\n' ;;
+    malformed-warning) printf 'Warning: inventory diagnostic\n' ;;
+    malformed-id) printf ' app-id  Name (1.0)\n' ;;
+    malformed-row) printf ' 937984704  \n' ;;
+    absent) : ;;
+    *) exit 2 ;;
+esac
+MAS
+command chmod 700 "$TEST_ROOT/mock-bin/mas"
+export MAS_STATE MAS_INDEX_MARKER="$TEST_ROOT/mas-indexing" PATH="$TEST_ROOT/mock-bin:$PATH"
 printf 'example\n' > "$BLUEPRINT_GENERATED_DIR/brew-casks.conf"
 printf '123|Example\n' > "$BLUEPRINT_GENERATED_DIR/appstore.conf"
 printf 'example.extension\n' > "$BLUEPRINT_GENERATED_DIR/vscode-extensions.conf"
@@ -727,6 +769,24 @@ assert grep -q 'extra: homebrew-casks / additional' "$TEST_ROOT/comparison"
 assert grep -q 'extra: app-store / 456' "$TEST_ROOT/comparison"
 assert grep -q 'extra: vscode-extensions / other.extension' "$TEST_ROOT/comparison"
 assert test "$(grep -Ec 'Example|Other \(' "$TEST_ROOT/comparison")" -eq 0
+MAS_STATE=indexing-warning
+comparison_report > "$TEST_ROOT/comparison"
+assert grep -q 'app-store: 1' "$TEST_ROOT/comparison"
+assert grep -q 'extra: app-store / 456' "$TEST_ROOT/comparison"
+assert test ! -e "$MAS_INDEX_MARKER"
+assert test ! -s "$MUTATIONS"
+MAS_STATE=aligned
+comparison_report > "$TEST_ROOT/comparison"
+assert grep -q 'app-store: 2' "$TEST_ROOT/comparison"
+assert grep -q 'extra: app-store / 937984704' "$TEST_ROOT/comparison"
+assert grep -q 'extra: app-store / 6504287215' "$TEST_ROOT/comparison"
+for malformed_state in malformed-warning malformed-id malformed-row; do
+    MAS_STATE="$malformed_state"
+    comparison_report > "$TEST_ROOT/comparison"
+    assert grep -q 'app-store: unavailable — invalid_target_inventory' "$TEST_ROOT/comparison"
+    assert test "${CV_EXTRA_STATES[1]}" = unavailable
+done
+MAS_STATE=extra
 CASK_STATE=error
 comparison_report > "$TEST_ROOT/comparison"
 assert grep -q 'homebrew-casks: unavailable' "$TEST_ROOT/comparison"

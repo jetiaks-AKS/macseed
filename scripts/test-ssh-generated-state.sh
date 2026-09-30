@@ -193,6 +193,11 @@ PLAN=""; WARNINGS=0
 expect 'partial Preview' 1 preview_ssh_configuration
 [[ "$PLAN" == 'Would restore SSH configuration: 1 eligible profiles' && $WARNINGS -eq 1 ]] && pass 'partial Preview aggregate warning and plan' || fail 'partial Preview output'
 [[ "$PLAN" != *example* && "$PLAN" != *excluded* && ! -e "$HOME/.ssh" ]] && pass 'Preview privacy and non-mutation' || fail 'Preview leaked or mutated'
+source_config "$valid_profile"$'\nHost excluded\n HostName excluded.invalid\n IdentityFile private\n'
+cp "$HOME/.ssh/config" "$TEST_ROOT/partial-target-before"
+expect 'partial Preview preserves existing target conflict' 1 preview_ssh_configuration
+expect 'partial Bootstrap preserves existing target conflict' 1 bootstrap_ssh_configuration
+cmp -s "$HOME/.ssh/config" "$TEST_ROOT/partial-target-before" && pass 'partial target bytes preserved' || fail 'partial target overwritten'
 
 reset_fixture
 source_config "$valid_profile"

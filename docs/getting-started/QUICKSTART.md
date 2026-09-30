@@ -365,13 +365,15 @@ destination blocks that selected Bundle category. Preview reports
 directory-only changes without a process restart. See
 [Configuration](../toolkit/CONFIGURATION.md) for the complete path policy.
 
-## Not implemented yet
+## Compare with this Mac
 
-The current workflow does not yet include:
-
-- aggregate post-Bootstrap Verification
-
-This is a Future / Optional extension of the existing workflow.
+Global Verification reports selected requirements after Bootstrap, Workflow,
+and applicable Restore runs. To check the selected reference environment against
+the current Mac later, run `bs compare` or `./bootstrap.sh --compare` from the
+repository root. Comparison is read-only, reports supported extra casks, App
+Store IDs, and VS Code extension IDs when source inventory completeness is
+known, and does not remove extra items. It does not run automatically after
+Bootstrap, Workflow, or Restore.
 
 Other future capabilities are tracked in the project
 [Roadmap](../../ROADMAP.md).
