@@ -1,9 +1,17 @@
 #!/usr/bin/env python3
-"""Stage 15B: one capabilities request and JSON Lines response."""
+"""Small JSON Lines adapter for supported Core operations."""
 
 import json
+import os
+from pathlib import Path
 import re
+import stat
 import sys
+import tarfile
+
+sys.dont_write_bytecode = True
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "bundle"))
+import bundle
 
 PROTOCOL_VERSION = 1
 MAX_REQUEST = 4096
@@ -36,9 +44,7 @@ def request():
     if not raw or len(raw) > MAX_REQUEST:
         raise ValueError("empty or oversized request")
     value = json.loads(raw.decode("utf-8"), object_pairs_hook=unique_object)
-    if not isinstance(value, dict) or set(value) != {
-        "protocol_version", "operation_id", "operation"
-    }:
+    if not isinstance(value, dict):
         raise ValueError("invalid request shape")
     return value
 
@@ -57,19 +63,54 @@ def main(version):
             return 2
         if not isinstance(value["operation"], str):
             raise ValueError("invalid operation")
-        if value["operation"] != "capabilities":
+        operation = value["operation"]
+        required = {"protocol_version", "operation_id", "operation"}
+        if operation == "capabilities":
+            if set(value) != required:
+                raise ValueError("invalid capabilities request")
+        elif operation == "bundle_inspect":
+            if set(value) != required | {"parameters"}:
+                raise ValueError("invalid Bundle request")
+            parameters = value["parameters"]
+            if not isinstance(parameters, dict) or set(parameters) != {"path"}:
+                raise ValueError("invalid Bundle parameters")
+            path = parameters["path"]
+            if not isinstance(path, str) or not path.startswith("/") or "\0" in path:
+                raise ValueError("invalid Bundle path")
+        else:
             emit(1, "failed", operation_id, {"code": "unsupported_operation"})
             return 2
-    except (ValueError, UnicodeError, json.JSONDecodeError):
+    except (KeyError, ValueError, UnicodeError):
         emit(1, "failed", operation_id, {"code": "invalid_request"})
         return 2
 
     emit(1, "started", operation_id)
-    emit(2, "result", operation_id, {
-        "protocol_version": PROTOCOL_VERSION,
-        "product_version": version,
-        "operations": ["capabilities"],
-    })
+    if operation == "capabilities":
+        result = {
+            "protocol_version": PROTOCOL_VERSION,
+            "product_version": version,
+            "operations": ["capabilities", "bundle_inspect"],
+        }
+    else:
+        try:
+            input_path = Path(path)
+            mode = input_path.lstat().st_mode
+            if not stat.S_ISREG(mode):
+                raise bundle.Invalid("unsafe Bundle input")
+            result = bundle.inspect_bundle(input_path, os.environ["HOME"])
+        except bundle.Unsupported:
+            emit(2, "failed", operation_id, {"code": "unsupported_bundle"})
+            return 2
+        except (FileNotFoundError, PermissionError):
+            emit(2, "failed", operation_id, {"code": "bundle_unavailable"})
+            return 2
+        except (bundle.Invalid, tarfile.TarError, ValueError, TypeError, KeyError, UnicodeError):
+            emit(2, "failed", operation_id, {"code": "bundle_invalid"})
+            return 2
+        except Exception:
+            emit(2, "failed", operation_id, {"code": "internal_error"})
+            return 2
+    emit(2, "result", operation_id, result)
     emit(3, "completed", operation_id)
     return 0
 

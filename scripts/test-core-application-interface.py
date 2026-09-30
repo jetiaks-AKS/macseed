@@ -1,13 +1,20 @@
 #!/usr/bin/env python3
-"""Focused, read-only Stage 15B protocol checks."""
+"""Focused Stage 15B/15C structured Core checks."""
 
+import io
 import json
 import pathlib
 import subprocess
+import sys
+import tarfile
+import tempfile
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 CORE = ROOT / "modules/core/application-interface/core.sh"
+sys.dont_write_bytecode = True
+sys.path.insert(0, str(ROOT / "modules/bundle"))
+import bundle
 
 
 def invoke(payload):
@@ -31,7 +38,7 @@ class CoreInterfaceTests(unittest.TestCase):
         self.assertEqual(records[1]["data"], {
             "protocol_version": 1,
             "product_version": "3.3.0",
-            "operations": ["capabilities"],
+            "operations": ["capabilities", "bundle_inspect"],
         })
         self.assertEqual(sum(row["type"] in ("completed", "failed") for row in records), 1)
         self.assertEqual(records[-1]["type"], "completed")
@@ -68,6 +75,111 @@ class CoreInterfaceTests(unittest.TestCase):
                 )
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertIn(expected, result.stdout.decode())
+
+    def test_bundle_inspect(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            stage = root / "stage"
+            stage.mkdir()
+            output = root / "demo bundle é.mbt"
+            categories = {name: False for name in bundle.CATEGORY_FLAGS}
+            categories["vscode-settings"] = True
+            blueprint = ("[categories]\n" +
+                         "".join(f'{name}="{str(enabled).lower()}"\n'
+                                 for name, enabled in categories.items()) +
+                         "".join(f"\n[{name}]\n" +
+                                 ("demo-app\n" if name == "homebrew-casks" else "")
+                                 for name in bundle.ITEMS)).encode()
+            bundle.write_file(stage / "blueprint.conf", blueprint)
+            bundle.write_file(stage / "generated/brew-casks.conf", b"demo-app\n")
+            private = b'{"private-setting":"not-for-protocol"}'
+            bundle.write_file(stage / "generated/vscode/settings.json", private)
+            bundle.write_file(stage / "secure.age", b"age-encryption.org/v1\nprivate-ciphertext")
+            bundle.pack(stage, output, "/Users/source")
+            original = output.read_bytes()
+
+            def inspect(path):
+                return invoke(json.dumps({
+                    "protocol_version": 1, "operation_id": "inspect-1",
+                    "operation": "bundle_inspect", "parameters": {"path": str(path)},
+                }).encode())
+
+            response = inspect(output)
+            self.assertEqual(response.returncode, 0, response.stderr)
+            events = [json.loads(line) for line in response.stdout.splitlines()]
+            self.assertEqual([event["type"] for event in events], ["started", "result", "completed"])
+            self.assertEqual([event["sequence"] for event in events], [1, 2, 3])
+            self.assertEqual(events[1]["data"], {
+                "format_version": 1,
+                "selected_categories": ["vscode-settings"],
+                "selected_item_counts": {name: 1 if name == "homebrew-casks" else 0
+                                         for name in bundle.ITEMS},
+                "secure_component": True,
+            })
+            self.assertEqual(events[-1]["type"], "completed")
+            self.assertNotIn(str(output).encode(), response.stdout)
+            self.assertNotIn(private, response.stdout)
+            self.assertNotIn(b"private-ciphertext", response.stdout)
+            self.assertEqual(output.read_bytes(), original)
+            self.assertEqual({path.name for path in root.iterdir()}, {"stage", output.name})
+
+            missing = inspect(root / "missing.mbt")
+            self.assertEqual(json.loads(missing.stdout.splitlines()[-1])["data"]["code"],
+                             "bundle_unavailable")
+            malformed = root / "malformed.mbt"
+            malformed.write_bytes(b"not a Bundle")
+            self.assertEqual(json.loads(inspect(malformed).stdout.splitlines()[-1])["data"]["code"],
+                             "bundle_invalid")
+            self.assertEqual(json.loads(inspect(stage).stdout.splitlines()[-1])["data"]["code"],
+                             "bundle_invalid")
+            linked = root / "linked.mbt"
+            linked.symlink_to(output)
+            self.assertEqual(json.loads(inspect(linked).stdout.splitlines()[-1])["data"]["code"],
+                             "bundle_invalid")
+
+            unsupported = root / "unsupported.mbt"
+            with tarfile.open(output) as source, tarfile.open(unsupported, "w") as target:
+                for member in source.getmembers():
+                    data = source.extractfile(member).read()
+                    if member.name == "manifest.json":
+                        manifest = json.loads(data)
+                        manifest["version"] = 2
+                        data = json.dumps(manifest).encode()
+                    member.size = len(data)
+                    target.addfile(member, io.BytesIO(data))
+            self.assertEqual(json.loads(inspect(unsupported).stdout.splitlines()[-1])["data"]["code"],
+                             "unsupported_bundle")
+
+            tampered = root / "tampered.mbt"
+            with tarfile.open(output) as source, tarfile.open(tampered, "w") as target:
+                for member in source.getmembers():
+                    data = source.extractfile(member).read()
+                    if member.name == "generated/brew-casks.conf":
+                        data = b"other-app\n"
+                    member.size = len(data)
+                    target.addfile(member, io.BytesIO(data))
+            with self.assertRaises(bundle.Invalid):
+                bundle.unpack(tampered, root / "unpacked", "/Users/target")
+            failure = inspect(tampered)
+            failure_events = [json.loads(line) for line in failure.stdout.splitlines()]
+            self.assertNotEqual(failure.returncode, 0)
+            self.assertEqual([event["type"] for event in failure_events], ["started", "failed"])
+            self.assertEqual(failure_events[-1]["data"]["code"], "bundle_invalid")
+            self.assertFalse((root / "unpacked").exists())
+
+    def test_bundle_request_validation(self):
+        for parameters in ({"path": "relative.mbt"}, {"path": 7}, {},
+                           {"path": "/tmp/example.mbt", "extra": 1}):
+            with self.subTest(parameters=parameters):
+                response = invoke(json.dumps({
+                    "protocol_version": 1, "operation_id": "inspect-2",
+                    "operation": "bundle_inspect", "parameters": parameters,
+                }).encode())
+                self.assertNotEqual(response.returncode, 0)
+                events = [json.loads(line) for line in response.stdout.splitlines()]
+                self.assertEqual(len(events), 1)
+                self.assertEqual(events[0]["type"], "failed")
+                self.assertEqual(events[0]["data"]["code"], "invalid_request")
 
 
 if __name__ == "__main__":

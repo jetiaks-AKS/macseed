@@ -59,6 +59,10 @@ class Invalid(Exception):
     pass
 
 
+class Unsupported(Invalid):
+    pass
+
+
 def checked_file(path, limit=MAX_MEMBER):
     if path.is_symlink() or not path.is_file() or path.stat().st_size > limit:
         raise Invalid("unsafe or oversized input file")
@@ -369,7 +373,7 @@ def validate_archive(path):
     except (ValueError, UnicodeDecodeError) as exc:
         raise Invalid("invalid Bundle manifest") from exc
     if not isinstance(manifest, dict) or manifest.get("format") != "mac-bootstrap-bundle" or manifest.get("version") != 1:
-        raise Invalid("unsupported Bundle version")
+        raise Unsupported("unsupported Bundle version")
     expected = required_paths(files["blueprint.conf"])
     for domain, inventory in COMPLETE_INVENTORIES.items():
         marker = "generated/provenance/" + domain + ".sha256"
@@ -399,6 +403,19 @@ def unpack(bundle, stage, home):
     (stage / "generated").mkdir(mode=0o700, exist_ok=True)
     for name, data in files.items():
         write_file(stage / name, data)
+
+
+def inspect_bundle(bundle, home):
+    """Validate as Restore does, then return only UI-safe selection metadata."""
+    files = validate_archive(bundle)
+    target_paths(files, home)
+    sections, categories = parse_blueprint(files["blueprint.conf"])
+    return {
+        "format_version": 1,
+        "selected_categories": sorted(name for name, enabled in categories.items() if enabled),
+        "selected_item_counts": {name: len(sections[name]) for name in ITEMS},
+        "secure_component": "secure.age" in files,
+    }
 
 
 def narrow(stage, groups):
