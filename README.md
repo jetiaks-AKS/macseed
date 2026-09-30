@@ -4,8 +4,8 @@
 
 English | [Русский](README.ru.md)
 
-A modular Bash toolkit for reproducibly preparing and restoring a macOS
-working environment.
+A Bash-based tool today, with a native macOS application planned around its
+existing core for capturing, rebuilding, and verifying a working environment.
 
 **Current version: 3.3.0 Stable**
 

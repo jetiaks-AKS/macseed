@@ -306,11 +306,11 @@ Comparison interface.
 
 ## Planned Core/GUI boundary
 
-A native SwiftUI macOS application is planned as a presentation and
-orchestration layer. It will consume a stable machine-readable structured Core
-interface rather than parse human CLI output or logs. The interface will expose
-Discovery, selected environment, planning/Preview, verification, and operation
-results. Core remains
+A native macOS application, expected to use SwiftUI, is planned as a
+presentation and orchestration layer. It will consume a stable machine-readable
+structured Core interface rather than parse human CLI output or logs. The interface will expose
+Discovery, selected environment, planning/Preview, Verification, Comparison, and
+operation results. Core remains
 authoritative for validation, planning, and mutation; the GUI does not
 reimplement Discovery, Blueprint, Preview, Bootstrap, Capture, or Restore in
 Swift. The interface format and GUI UX remain to be designed.
