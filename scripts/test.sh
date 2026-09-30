@@ -29,6 +29,7 @@ SUITES=(
     scripts/test-preview-applications.sh
     scripts/test-preview-integration.sh
     scripts/test-restore-prerequisites.py
+    scripts/test-restore-prepare.py
     scripts/test-shell-zsh.sh
     scripts/test-ssh-generated-state.sh
     scripts/test-ssh-identity-evidence.py

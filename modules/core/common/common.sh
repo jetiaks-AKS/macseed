@@ -16,6 +16,7 @@ ERROR_COUNT=0
 
 MODULE_CHANGED=false
 PREVIEW_HAS_CHANGES=false
+PREVIEW_ACTION_COUNT=0
 
 # ==========================================
 # Information Message
@@ -58,6 +59,7 @@ preview_action() {
     # Shared state is read by another sourced module.
     # shellcheck disable=SC2034
     PREVIEW_HAS_CHANGES=true
+    ((PREVIEW_ACTION_COUNT++))
     action "$1"
 }
 
@@ -178,6 +180,7 @@ run_inspection() {
 
     local inspection_name="$1"
     local inspection_function="$2"
+    local previous_actions="$PREVIEW_ACTION_COUNT"
 
     [[ "${3:-}" == no-heading ]] || section "$inspection_name"
     ((MODULES_CHECKED++))
@@ -185,6 +188,15 @@ run_inspection() {
 
     "$inspection_function"
     local result=$?
+
+    if [[ "${PREVIEW_SUMMARY_FILE:-}" != "" && "$MODE" == --dry-run ]]; then
+        local planned=false
+        [[ "$PREVIEW_ACTION_COUNT" -eq "$previous_actions" ]] || planned=true
+        printf '%s\t%s\t%s\n' "$inspection_function" "$result" "$planned" >> "$PREVIEW_SUMMARY_FILE" || {
+            ((ERROR_COUNT++))
+            return 2
+        }
+    fi
 
     case $result in
         0)

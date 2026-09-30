@@ -38,7 +38,7 @@ class CoreInterfaceTests(unittest.TestCase):
         self.assertEqual(records[1]["data"], {
             "protocol_version": 1,
             "product_version": "3.3.0",
-            "operations": ["capabilities", "bundle_inspect"],
+            "operations": ["capabilities", "bundle_inspect", "restore_prepare"],
         })
         self.assertEqual(sum(row["type"] in ("completed", "failed") for row in records), 1)
         self.assertEqual(records[-1]["type"], "completed")
