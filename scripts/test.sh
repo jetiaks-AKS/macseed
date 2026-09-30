@@ -17,6 +17,7 @@ SUITES=(
     scripts/test-bundle-publication-safety.py
     scripts/test-configuration-preview.sh
     scripts/test-core-lifecycle.sh
+    scripts/test-core-application-interface.py
     scripts/test-discovery-summary.sh
     scripts/test-dry-run-cli.sh
     scripts/test-git-generated-state.sh
