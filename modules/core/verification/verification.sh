@@ -10,6 +10,7 @@
 # shellcheck disable=SC2034
 verification_reset() {
     GV_V=() GV_C=() GV_O=() GV_D=()
+    GV_SECURE_ROWS=() GV_SECURE_STATE=not_run GV_SECURE_ATTEMPT="" GV_SECURE_EXIT=""
     GV_RUN_ID="$$-$(date -u +%Y%m%dT%H%M%SZ)-${RANDOM}"
     GV_OPERATION_CONTEXT="$GV_RUN_ID"
     GV_ORIGIN="${1:-bootstrap}"
@@ -141,6 +142,8 @@ verification_report() {
     for ((i=0; i<${#GV_D[@]}; i+=4)); do
         info "${GV_D[i+2]}: ${GV_D[i+1]} (${GV_D[i+3]}, ${GV_D[i]})"
     done
-    info "SSH identities are outside Global Verification coverage; import success is not a verification record."
+    if [[ -n "${BUNDLE_RESTORE_SECURE_FILE:-}" ]]; then
+        info "SSH identity evidence is from this Restore importer at its observation time; identities are not rechecked by Global Verification."
+    fi
     info "Sequential observations of supported predicates; no environment readiness verdict."
 }

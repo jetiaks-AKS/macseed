@@ -30,6 +30,7 @@ SUITES=(
     scripts/test-restore-prerequisites.py
     scripts/test-shell-zsh.sh
     scripts/test-ssh-generated-state.sh
+    scripts/test-ssh-identity-evidence.py
     scripts/test-ssh-identity-migrate.sh
     scripts/test-vscode-settings.sh
     scripts/test-workspace-bootstrap.sh

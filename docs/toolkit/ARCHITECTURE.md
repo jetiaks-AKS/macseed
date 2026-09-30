@@ -202,7 +202,7 @@ Homebrew formula and cask installation predicates, App Store application IDs,
 direct global Git values, supported SSH and Zsh config payloads, VS Code
 extension IDs and settings payload, Workspace folders and repository
 worktree/origin/branch, and generated settings for Finder, Dock, Windows,
-Keyboard, Trackpad and Screenshots. SSH identities remain outside coverage.
+Keyboard, Trackpad and Screenshots. Selected Secure Restore SSH identities use terminal evidence from the importer.
 A failed Restore prerequisite still produces a report for the selected scope.
 Startup validation/preflight failures and cancellation before Preview retain
 existing early exits without a verification pass.
@@ -214,6 +214,25 @@ Screenshots location preference and destination directory are independently
 observed. Missing `mas` or `code` leaves selected items unverified; verification
 never installs dependencies. Zsh preserves snapshot ownership boundaries and
 does not add permission requirements to identical target content.
+
+Secure Restore adds `identity_pair_matches_package` evidence only after the
+existing importer finishes validation or rollback. It means byte equality with
+the validated package pair, pair correspondence and existing filesystem safety
+checks, at the importer observation time. It does not verify authentication,
+agent, Keychain or network state. Bootstrap/Workflow without Secure Restore have
+no managed identity requirement.
+
+The opt-in importer publishes versioned non-secret terminal records to a private
+0700 directory / 0600 file. A strict reader validates ownership, file identity,
+framing, attempt binding and child status, then removes the transport and passes
+records through a dedicated fd to the existing collector. Records contain target
+basenames, conformity, timestamps and typed reasons; no keys, fingerprints,
+passphrases, hashes or plaintext paths. The collector never rereads private keys
+or decrypts the package. Missing/invalid evidence leaves coverage unresolved and
+the report incomplete without changing the importer exit code. Rollback
+invalidates preliminary positive evidence. The observation interval includes
+importer timestamps; later target changes are not rechecked. Signal/power-loss
+cleanup limitations of Secure Migration remain unchanged.
 
 The internal flow is:
 

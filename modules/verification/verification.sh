@@ -1,5 +1,7 @@
 #!/bin/bash
 
+source modules/verification/ssh-identities.sh
+
 # Scope/dispatch only. Comparisons remain with production domain readers.
 verification_result() {
     local domain="$1" subject="$2" predicate="$3" result="$4" code="${5:-}" conformity
@@ -84,7 +86,7 @@ verification_input_identity() (
     set -o pipefail
     {
         printf '%s\0' "$HOME" "${BLUEPRINT_FILE:-config/blueprint.conf}" \
-            "${BUNDLE_RESTORE_SECURE_FILE:+secure-selected}"
+            "${BUNDLE_RESTORE_SECURE_FILE:+secure-selected}" "${GV_SECURE_ATTEMPT:-}"
         local path domain
         verification_hash_input "${BLUEPRINT_FILE:-config/blueprint.conf}" || exit 2
         for domain in homebrew-packages homebrew-casks app-store vscode-extensions workspace-folders git-repositories; do
@@ -144,10 +146,7 @@ verification_run() {
         verify_macos_scalar_category keyboard "$KEYBOARD_CONFIG" || verification_input_error macos-keyboard
         verify_macos_scalar_category trackpad "$TRACKPAD_CONFIG" || verification_input_error macos-trackpad
         verify_screenshots || verification_input_error macos-screenshots
-        if [[ -n "${BUNDLE_RESTORE_SECURE_FILE:-}" ]]; then
-            verification_coverage ssh-identities secure-selection unresolved unknown
-            verification_diagnostic "$GV_LAST_REF" unsupported_predicate warning scope
-        fi
+        verify_ssh_identity_evidence
         if ! final_identity="$(verification_input_identity)" || [[ "$final_identity" != "$GV_INPUT_ID" ]]; then
             GV_STATUS=incomplete
             verification_diagnostic run input_changed error scope

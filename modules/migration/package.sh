@@ -22,7 +22,11 @@ MAX_ITEMS = 32
 NAME = re.compile(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,79}\Z', re.ASCII)
 TYPES = {'ssh-ed25519', 'ssh-rsa', 'ecdsa-sha2-nistp256',
          'ecdsa-sha2-nistp384', 'ecdsa-sha2-nistp521'}
+sys.dont_write_bytecode = True
+sys.path.insert(0, sys.argv.pop(1))
+from evidence import Evidence
 mode, *args = sys.argv[1:]
+evidence = Evidence(args[2], args[4]) if mode == 'import' and len(args) == 5 else Evidence()
 home = os.environ.get('HOME', '')
 ssh = os.path.join(home, '.ssh')
 uid = os.getuid()
@@ -422,6 +426,7 @@ def target_plan(records):
         try:
             _, _, current_private, current_public = validate_pair(p, q)
             if current_private != private or current_public != public:
+                evidence.different(name)
                 raise Conflict('different target pair')
         except (Invalid, OSError):
             raise Conflict('unsafe target pair')
@@ -629,20 +634,25 @@ def run():
         with open(archive, 'xb') as out:
             os.chmod(archive, 0o600)
             input_fd = encrypted_in.fileno()
+            evidence.reason = 'decrypt_failed'
             result = subprocess.run(['age', '-d', '/dev/fd/' + str(input_fd)], stdout=out, pass_fds=(input_fd,))
             if result.returncode:
                 raise Invalid('decryption failed')
+        evidence.reason = 'input_invalid'
         records = archive_validate(archive, stage)
+        evidence.selected([r[0] for r in records])
         plan = target_plan(records)
         for (name, kind, fp, _, _), status in zip(records, plan):
             print(f'{status}: {name} {kind} {fp}')
         if 'create' not in plan:
+            evidence.matched('noop')
             print('All identities already match')
             return
         if ask('Type import to confirm: ') != 'import':
             raise Cancel()
         if target_plan(records) != plan:
             raise Conflict('target changed')
+        evidence.phase = 'apply'
         created = []
         made_ssh = False
         homefd = None
@@ -661,9 +671,11 @@ def run():
             for (name, _, _, private, public), status in zip(records, plan):
                 if status == 'create':
                     publish_pair(name, private, public, created, dirfd)
+            evidence.phase = 'post_apply'
             target_dir_still_visible(dirfd)
             if target_plan(records) != ['identical'] * len(records):
                 raise Invalid('post-publication verification failed')
+            evidence.matched('success')
             print('Import verified')
         except BaseException:
             for relative, device, inode in reversed(created):
@@ -688,21 +700,35 @@ def run():
             if homefd is not None:
                 os.close(homefd)
 
+status = 0
 try:
     run()
 except Cancel:
     say('Cancelled')
-    sys.exit(1)
+    evidence.failed('cancelled', 'cancelled')
+    status = 1
 except Conflict as exc:
     say('Conflict: ' + str(exc))
-    sys.exit(1)
+    if evidence.phase in ('apply', 'post_apply'):
+        evidence.failed('failure', 'post_validation_failed' if evidence.phase == 'post_apply' else 'operation_failed')
+    else:
+        evidence.failed('skipped', 'target_conflict')
+    status = 1
 except (Invalid, OSError, tarfile.TarError, subprocess.SubprocessError) as exc:
     say('Migration failed: ' + (str(exc) if isinstance(exc, Invalid) else 'operation failed'))
-    sys.exit(2)
+    reason = 'post_validation_failed' if evidence.phase == 'post_apply' else ('operation_failed' if evidence.phase == 'apply' else (evidence.reason if evidence.reason in ('decrypt_failed', 'input_invalid') else 'operation_failed'))
+    evidence.failed('failure', reason)
+    status = 2
 except KeyboardInterrupt:
     say('Interrupted')
-    sys.exit(130)
+    evidence.failed('cancelled', 'cancelled')
+    status = 130
+try:
+    evidence.publish()
+except (OSError, ValueError, KeyboardInterrupt):
+    pass # Evidence transport never changes the standalone import result.
+sys.exit(status)
 PY
 )" || return 2
-    exec python3 -c "$migration_code" "$@"
+    exec python3 -c "$migration_code" "$SCRIPT_ROOT/modules/migration" "$@"
 }

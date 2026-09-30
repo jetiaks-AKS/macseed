@@ -208,7 +208,7 @@ Bootstrap, и после Preview в Workflow, когда Bootstrap не запу
 прямые global-значения Git, поддерживаемые payload SSH и Zsh config,
 VS Code extension IDs и settings payload, Workspace folders и
 worktree/origin/branch репозиториев, generated settings Finder, Dock, Windows,
-Keyboard, Trackpad и Screenshots. SSH identities остаются вне покрытия.
+Keyboard, Trackpad и Screenshots. Выбранные SSH identities Secure Restore используют terminal evidence importer.
 При отказе Restore prerequisite
 отчёт также строится. Ошибки startup validation/preflight и отмена до Preview
 сохраняют прежний ранний выход без verification pass.
@@ -221,6 +221,25 @@ directory Screenshots наблюдаются независимо. Отсутс�
 оставляет выбранные items unverified; verifier не устанавливает зависимости.
 Zsh сохраняет границы ownership snapshot и не добавляет требований к permissions
 для идентичного содержимого target.
+
+Secure Restore добавляет `identity_pair_matches_package` на основе evidence,
+сформированного после проверки или rollback importer. Predicate подтверждает
+побайтное равенство валидированной паре package, соответствие private/public и
+существующие проверки безопасности файлов на момент наблюдения importer.
+Аутентификация, agent, Keychain и сеть не проверяются. Bootstrap/Workflow без
+Secure Restore не имеют managed identity requirement.
+
+Opt-in importer публикует versioned non-secret terminal records в private
+каталог 0700 / файл 0600. Строгий reader проверяет владельца, идентичность файла,
+формат, привязку к попытке и child status, удаляет transport и передаёт records
+через выделенный fd существующему collector. Records содержат target basenames,
+conformity, timestamps и typed reasons; ключей, fingerprints, passphrases,
+hashes и plaintext paths в них нет. Collector не читает private keys и не
+расшифровывает package. Отсутствующий или невалидный evidence оставляет coverage
+unresolved и report incomplete, не меняя exit code importer. Rollback отменяет
+предварительный положительный evidence. Интервал наблюдения учитывает timestamps
+importer; последующие изменения target не перепроверяются. Прежние ограничения
+cleanup Secure Migration при сигналах и отключении питания сохраняются.
 
 Поток данных:
 

@@ -155,7 +155,7 @@ bundle_restore_prerequisites() {
         result=$?
         [[ $result -eq 0 ]] || return "$result"
         info "Secure Credentials: enter the Bundle passphrase created during Capture, not an SSH-key passphrase."
-        ./scripts/ssh-identity-migrate.sh import --input "$BUNDLE_RESTORE_SECURE_FILE"
+        secure_verification_import
         result=$?
         if [[ $result -ne 0 ]]; then
             warning "Secure SSH import did not complete; dependent restoration stopped"

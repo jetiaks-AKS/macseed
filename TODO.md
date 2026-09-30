@@ -6,8 +6,6 @@
 
 ## Этап 13 — Reporting & Global Verification
 
-- [ ] Определить передачу verification evidence Secure Migration без повторного
-  импорта и без credentials в обычных result records.
 - [ ] Определить совместимое сохранение Capture coverage/provenance для различения
   наблюдаемого отсутствия и неполученного source inventory после переноса Bundle.
 

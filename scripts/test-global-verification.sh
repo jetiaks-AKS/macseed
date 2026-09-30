@@ -536,8 +536,8 @@ assert test "$GV_UNVERIFIED" -eq 0
 assert test "$GV_UNSUPPORTED" -eq 0
 assert test "$GV_UNRESOLVED" -eq 1
 assert has_code operation_failed
-assert has_code unsupported_predicate
-assert grep -q 'SSH identities are outside Global Verification coverage' "$TEST_ROOT/batch2-report"
+assert has_code prerequisite_unmet
+assert grep -q 'SSH identity evidence is from this Restore importer' "$TEST_ROOT/batch2-report"
 find "$HOME" -type f -exec shasum -a 256 {} \; | sort > "$TEST_ROOT/batch2-after"
 assert cmp -s "$TEST_ROOT/batch2-before" "$TEST_ROOT/batch2-after"
 assert test ! -s "$MUTATIONS"

@@ -510,7 +510,7 @@ class BundleTests(unittest.TestCase):
         self.pack()
 
         fixture = self.root / "runtime"
-        for folder in ("modules/bundle", "modules/migration", "scripts", "config/generated"):
+        for folder in ("modules/bundle", "modules/migration", "modules/verification", "scripts", "config/generated"):
             (fixture / folder).mkdir(parents=True, exist_ok=True)
         for original, target in (
             (MODULE, fixture / "modules/bundle/bundle.py"),
@@ -520,8 +520,12 @@ class BundleTests(unittest.TestCase):
              fixture / "modules/migration/ssh-identities.sh"),
             (migration.parents[1] / "modules/migration/package.sh",
              fixture / "modules/migration/package.sh"),
+            (migration.parents[1] / "modules/migration/evidence.py",
+             fixture / "modules/migration/evidence.py"),
         ):
             shutil.copy2(original, target)
+        shutil.copy2(migration.parents[1] / "modules/verification/ssh-identities.sh",
+                     fixture / "modules/verification/ssh-identities.sh")
         (fixture / "config/generated/old").write_text("previous state")
         (fixture / "config/blueprint.conf").write_text("previous selection")
         bootstrap = fixture / "bootstrap.sh"
@@ -533,7 +537,8 @@ class BundleTests(unittest.TestCase):
             '  --bootstrap) [[ -z "${BLUEPRINT_FILE:-}" && -f config/blueprint.conf && '
             '-f config/generated/workspace/repositories.conf ]] || exit 2; '
             'echo bootstrap >> calls; [[ -z "${BUNDLE_TEST_BOOTSTRAP_FAIL:-}" ]] || exit 2; '
-            'source modules/bundle/commands.sh; '
+            'source modules/bundle/commands.sh; source modules/verification/ssh-identities.sh; '
+            'GV_RUN_ID=bundle-fixture; '
             'blueprint_category_enabled(){ return 1; }; '
             'info(){ printf "%s\\n" "$1"; }; warning(){ :; }; '
             'bundle_restore_prerequisites ;;\n'
@@ -649,6 +654,8 @@ class BundleTests(unittest.TestCase):
              fixture / "modules/migration/ssh-identities.sh"),
             (migration.parents[1] / "modules/migration/package.sh",
              fixture / "modules/migration/package.sh"),
+            (migration.parents[1] / "modules/migration/evidence.py",
+             fixture / "modules/migration/evidence.py"),
         ):
             shutil.copy2(original, target)
         bootstrap = fixture / "bootstrap.sh"
