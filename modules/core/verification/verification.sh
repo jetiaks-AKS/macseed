@@ -115,35 +115,86 @@ verification_aggregate() {
     done
 }
 
-verification_report() {
+verification_verdict() {
     verification_aggregate
-    section "Global Verification"
-    info "Origin: $GV_ORIGIN; observation: $GV_STARTED_AT — $GV_FINISHED_AT; run: $GV_STATUS"
-    if [[ "$GV_STATUS" != complete ]]; then
-        warning "Incomplete verification; counts do not confirm one unchanged selected input."
+    GV_VERDICT='Verification incomplete'
+    GV_INCOMPLETE_COVERAGE=false
+    [[ "$GV_STATUS" == complete ]] || return 0
+    if (( GV_MISMATCH > 0 )); then
+        GV_VERDICT='Differences detected'
+        if (( GV_UNVERIFIED > 0 || GV_UNRESOLVED > 0 )); then
+            GV_INCOMPLETE_COVERAGE=true
+        fi
+    elif (( GV_UNVERIFIED > 0 || GV_UNRESOLVED > 0 )); then
+        :
+    elif (( GV_TOTAL > 0 )); then
+        GV_VERDICT='Selected requirements verified'
+    else
+        # An unknown empty inventory cannot prove that nothing was managed.
+        local i
+        ((${#GV_C[@]} > 0)) || return 0
+        for ((i=0; i<${#GV_C[@]}; i+=4)); do
+            case "${GV_C[i+2]}:${GV_C[i+3]}" in
+                excluded:*|no_requirement:observed_absent) ;;
+                *) return 0 ;;
+            esac
+        done
+        GV_VERDICT='No managed requirements'
     fi
-    info "Resolved requirements: $GV_TOTAL; verified: $GV_VERIFIED; mismatch: $GV_MISMATCH; unverified: $GV_UNVERIFIED"
+}
+
+verification_reason() {
+    local owner="$1" i
+    GV_REASON=unknown GV_PHASE=''
+    for ((i=0; i<${#GV_D[@]}; i+=4)); do
+        if [[ "${GV_D[i]}" == "$owner" ]]; then
+            GV_REASON="${GV_D[i+1]}"
+            GV_PHASE="${GV_D[i+3]}"
+            return 0
+        fi
+    done
+}
+
+verification_report() {
+    verification_verdict
+    section "Global Verification"
+    info "Verdict: $GV_VERDICT"
+    [[ "$GV_INCOMPLETE_COVERAGE" != true ]] || info 'Verification also incomplete.'
+    info "Run: $GV_STATUS; origin: $GV_ORIGIN; observation: $GV_STARTED_AT — $GV_FINISHED_AT"
+    info "Resolved: $GV_TOTAL; verified: $GV_VERIFIED; mismatch: $GV_MISMATCH; unverified: $GV_UNVERIFIED"
     info "Unsupported subset: $GV_UNSUPPORTED; unresolved selected references: $GV_UNRESOLVED"
-    info "Diagnostics: warnings: $GV_WARNINGS; errors: $GV_ERRORS (independent of conformity)"
+    info "Diagnostics: $GV_WARNINGS warning(s), $GV_ERRORS error(s)"
     local i
     for ((i=0; i<${#GV_V[@]}; i+=6)); do
-        if [[ "${GV_V[i+4]}" == unsupported ]]; then
-            info "Uncovered: ${GV_V[i]} / ${GV_V[i+1]} (${GV_V[i+2]})"
-        elif [[ "${GV_V[i+3]}" != verified ]]; then
-            info "${GV_V[i+3]}: ${GV_V[i]} / ${GV_V[i+1]} (${GV_V[i+2]})"
-        fi
+        [[ "${GV_V[i+3]}" != verified ]] || continue
+        verification_reason "v:$i"
+        info "${GV_V[i]} / ${GV_V[i+1]} / ${GV_V[i+2]}: ${GV_V[i+3]} (${GV_V[i+4]}); $GV_REASON${GV_PHASE:+; phase=$GV_PHASE}"
     done
     for ((i=0; i<${#GV_C[@]}; i+=4)); do
         detail "Coverage: ${GV_C[i]} / ${GV_C[i+1]}: ${GV_C[i+2]}, source=${GV_C[i+3]}"
         if [[ "${GV_C[i+2]}" == unresolved ]]; then
-            info "Unresolved: ${GV_C[i]} / ${GV_C[i+1]}"
+            verification_reason "c:$i"
+            info "${GV_C[i]} / ${GV_C[i+1]}: unresolved selected reference; $GV_REASON${GV_PHASE:+; phase=$GV_PHASE}"
         fi
     done
     for ((i=0; i<${#GV_D[@]}; i+=4)); do
-        info "${GV_D[i+2]}: ${GV_D[i+1]} (${GV_D[i+3]}, ${GV_D[i]})"
+        case "${GV_D[i]}" in
+            run) info "${GV_D[i+2]}: ${GV_D[i+1]} (phase=${GV_D[i+3]})" ;;
+            *) [[ "${GV_D[i+1]}" != partial_source_coverage ]] || info "Warning: partial_source_coverage (${GV_D[i+3]})" ;;
+        esac
     done
+    for ((i=0; i<${#GV_O[@]}; i+=5)); do
+        case "${GV_O[i+3]}" in
+            failure|skipped|cancelled|not_run)
+                info "Operation: ${GV_O[i]} / ${GV_O[i+1]} / ${GV_O[i+2]}: ${GV_O[i+3]}${GV_O[i+4]:+; reason=${GV_O[i+4]}}" ;;
+            success)
+                [[ "$GV_MISMATCH" -eq 0 ]] || info "Operation: ${GV_O[i]} / ${GV_O[i+1]} / ${GV_O[i+2]}: success; final differences detected" ;;
+        esac
+    done
+    if [[ "$GV_ORIGIN" == workflow ]] && ((${#GV_O[@]} == 0)); then info 'Apply: not run'; fi
+    info 'Source inventory provenance: unknown unless explicitly recorded; empty unknown inventory does not prove source absence.'
     if [[ -n "${BUNDLE_RESTORE_SECURE_FILE:-}" ]]; then
         info "SSH identity evidence is from this Restore importer at its observation time; identities are not rechecked by Global Verification."
     fi
-    info "Sequential observations of supported predicates; no environment readiness verdict."
+    detail 'Target observations are sequential, not an atomic snapshot.'
 }

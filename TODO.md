@@ -4,7 +4,7 @@
 Направления развития описаны в `ROADMAP.md`, архитектурные решения — в
 `docs/toolkit/ARCHITECTURE.md`, завершённые изменения — в `CHANGELOG.md`.
 
-## Этап 13 — Reporting & Global Verification
+## Future hardening — Capture provenance
 
 - [ ] Определить совместимое сохранение Capture coverage/provenance для различения
   наблюдаемого отсутствия и неполученного source inventory после переноса Bundle.

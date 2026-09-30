@@ -527,7 +527,7 @@ verification_reset restore
 verification_operation app-store 123 install failure
 BUNDLE_RESTORE_SECURE_FILE="$TEST_ROOT/opaque-secure.age"
 verification_run > "$TEST_ROOT/batch2-report"
-assert test "$GV_STATUS" = complete
+assert test "$GV_STATUS" = incomplete
 assert test "$GV_TOTAL" -eq 20
 assert test "$GV_VERIFIED" -eq 16
 assert test "$GV_MISMATCH" -eq 4
@@ -541,6 +541,80 @@ assert grep -q 'SSH identity evidence is from this Restore importer' "$TEST_ROOT
 find "$HOME" -type f -exec shasum -a 256 {} \; | sort > "$TEST_ROOT/batch2-after"
 assert cmp -s "$TEST_ROOT/batch2-before" "$TEST_ROOT/batch2-after"
 assert test ! -s "$MUTATIONS"
+
+# Stage 13 verdict and renderer cases use only process-local records.
+verification_reset bootstrap
+GV_STATUS=complete
+verification_coverage demo item resolved observed_present
+verification_record demo item installed verified supported now
+verification_report > "$TEST_ROOT/verdict"
+assert test "$GV_VERDICT" = 'Selected requirements verified'
+assert grep -q 'Verdict: Selected requirements verified' "$TEST_ROOT/verdict"
+assert test "$(grep -c 'demo / item / installed' "$TEST_ROOT/verdict")" -eq 0
+verification_diagnostic run partial_source_coverage warning scope
+verification_operation demo item install failure
+verification_report > "$TEST_ROOT/verdict"
+assert test "$GV_VERDICT" = 'Selected requirements verified'
+assert grep -q 'Operation: demo / item / install: failure' "$TEST_ROOT/verdict"
+verification_reset bootstrap
+GV_STATUS=complete
+verification_record demo one installed mismatch supported now
+verification_diagnostic "$GV_LAST_REF" confirmed_mismatch warning observation
+verification_record demo two installed unverified supported ''
+verification_diagnostic "$GV_LAST_REF" observation_failed error observation
+verification_operation demo one install success
+verification_report > "$TEST_ROOT/verdict"
+assert test "$GV_VERDICT" = 'Differences detected'
+assert test "$GV_INCOMPLETE_COVERAGE" = true
+assert grep -q 'Verification also incomplete' "$TEST_ROOT/verdict"
+assert grep -q 'confirmed_mismatch; phase=observation' "$TEST_ROOT/verdict"
+assert grep -q 'final differences detected' "$TEST_ROOT/verdict"
+verification_reset bootstrap
+GV_STATUS=complete
+verification_record demo item installed unverified supported ''
+verification_diagnostic "$GV_LAST_REF" observation_failed error observation
+verification_report > "$TEST_ROOT/verdict"
+assert test "$GV_VERDICT" = 'Verification incomplete'
+verification_reset bootstrap
+GV_STATUS=complete
+verification_unsupported demo item installed
+verification_coverage demo stale unresolved unknown
+verification_diagnostic "$GV_LAST_REF" selected_input_unresolved warning scope
+verification_report > "$TEST_ROOT/verdict"
+assert test "$GV_VERDICT" = 'Verification incomplete'
+assert test "$GV_TOTAL" -eq 1
+assert test "$GV_UNVERIFIED" -eq 1
+assert test "$GV_UNSUPPORTED" -eq 1
+assert test "$GV_UNRESOLVED" -eq 1
+assert grep -q 'stale: unresolved selected reference; selected_input_unresolved; phase=scope' "$TEST_ROOT/verdict"
+verification_reset bootstrap
+GV_STATUS=complete
+verification_coverage demo scope no_requirement observed_absent
+verification_report > "$TEST_ROOT/verdict"
+assert test "$GV_VERDICT" = 'No managed requirements'
+verification_reset bootstrap
+GV_STATUS=complete
+verification_coverage demo scope no_requirement unknown
+verification_report > "$TEST_ROOT/verdict"
+assert test "$GV_VERDICT" = 'Verification incomplete'
+assert grep -q 'provenance: unknown' "$TEST_ROOT/verdict"
+verification_reset bootstrap
+GV_STATUS=cancelled
+verification_record demo item installed mismatch supported now
+verification_report > "$TEST_ROOT/verdict"
+assert test "$GV_VERDICT" = 'Verification incomplete'
+verification_reset workflow
+GV_STATUS=complete
+verification_coverage demo scope excluded unknown
+verification_report > "$TEST_ROOT/verdict"
+assert grep -q 'Apply: not run' "$TEST_ROOT/verdict"
+verification_reset restore
+GV_STATUS=complete
+BUNDLE_RESTORE_SECURE_FILE="$TEST_ROOT/opaque-secure.age"
+verify_ssh_identity_evidence
+verification_report > "$TEST_ROOT/verdict"
+assert test "$GV_VERDICT" = 'Verification incomplete'
+assert grep -q 'secure-selection: unresolved selected reference' "$TEST_ROOT/verdict"
 
 printf 'Global Verification focused: %s assertions, %s failures\n' "$CASES" "$FAILURES"
 [[ "$FAILURES" -eq 0 ]]

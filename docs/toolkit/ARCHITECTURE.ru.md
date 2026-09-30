@@ -267,7 +267,21 @@ requirement не становится verified. Происхождение ст�
 невалидный ввод делает отчёт incomplete. Наблюдение target последовательно,
 а не атомарно. Resolved predicates делятся по conformity; unsupported —
 подмножество unverified, unresolved references и diagnostics считаются отдельно.
-Вердикта готовности нет. Публичные exit codes сохраняют семантику выполнения
+Человекочитаемый отчёт начинается с одного из четырёх verdicts:
+`Verification incomplete`, если run неполон либо selected requirements остались
+unverified/unresolved; `Differences detected` при подтверждённом mismatch в
+полном run (с отдельным указанием неполного coverage, если оно есть);
+`Selected requirements verified`, когда все разрешённые выбранные predicates
+verified и нет unresolved references; `No managed requirements`, когда coverage
+подтверждает пустой выбранный scope. Пустой inventory с неизвестной provenance
+не доказывает отсутствие исходного состояния. Legacy provenance остаётся unknown
+и показывается как ограничение scope, не блокируя verdict по выбранным требованиям.
+Diagnostics и результаты операций выводятся отдельно от conformity.
+`Selected requirements verified` относится только к выбранным поддерживаемым
+требованиям Macseed, наблюдавшимся во время этого run. Это не подтверждение
+идентичности всего Mac, работоспособности приложений, визуального применения
+настроек macOS, удалённого SSH или неизменности target после последовательного
+прохода. Публичные exit codes сохраняют семантику выполнения
 команды и не доказывают соответствие окружения. Verifier не запускает Discovery
 publication, установку, clone/checkout, запись preferences или restart процессов.
 Временные файлы для валидации допустимы.

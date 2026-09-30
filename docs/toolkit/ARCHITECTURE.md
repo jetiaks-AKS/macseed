@@ -259,7 +259,20 @@ operation context. Input identity is checked before and after the pass; change
 or invalid input makes the report incomplete. Target observations are sequential,
 not an atomic snapshot. Resolved predicate counts partition by conformity;
 unsupported is a subset of unverified, while unresolved references and diagnostic
-counts are separate. There is no readiness verdict. Existing public exit codes
+counts are separate. The human-readable report starts with one of four verdicts:
+`Verification incomplete` when the run is incomplete or selected requirements
+remain unverified/unresolved; `Differences detected` for a complete run with a
+confirmed mismatch (also noting incomplete coverage when present);
+`Selected requirements verified` when every resolved selected predicate is
+verified and no selected reference is unresolved; or `No managed requirements`
+when coverage proves the selected scope is empty. Unknown empty source inventory
+cannot prove absence. Legacy source provenance remains unknown and is shown as a
+scope caveat; it does not prevent a verdict for actually selected requirements.
+Diagnostics and operation outcomes are reported separately from conformity.
+`Selected requirements verified` refers only to selected supported Macseed
+requirements observed during this run. It does not establish whole-Mac identity,
+application runtime health, effective visual macOS settings, remote SSH access,
+or an unchanged target after the sequential observation pass. Existing public exit codes
 continue to describe command execution; they are not environment conformity.
 The verifier never invokes Discovery publication, installers, clone/checkout,
 preference writes or process restarts. Temporary validation files are permitted.

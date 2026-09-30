@@ -50,6 +50,7 @@ verify_ssh_identity_evidence() {
     local tag version attempt selection count outcome reason name conformity observed phase row
     if [[ "${GV_SECURE_STATE:-not_run}" != received ]]; then
         verification_coverage ssh-identities secure-selection unresolved unobserved
+        GV_STATUS=incomplete
         if [[ "${GV_SECURE_STATE:-not_run}" == not_run ]]; then
             verification_diagnostic "$GV_LAST_REF" prerequisite_unmet warning orchestration
             verification_operation ssh-identities secure-selection import not_run prerequisite_unmet

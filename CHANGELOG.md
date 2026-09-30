@@ -9,6 +9,12 @@ The format is based on the principles of **Keep a Changelog**.
 
 ## Unreleased
 
+### Added
+
+* Completed Stage 13 human-readable Global Verification reporting with four
+  scope-aware readiness verdicts, actionable typed reasons, separate operation
+  outcomes, and unchanged public command exit codes.
+
 ### Fixed
 
 * Accept a clean Mac without an SSH directory, and prepare selected SSH
