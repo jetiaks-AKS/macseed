@@ -97,7 +97,7 @@ bootstrap_workspace_repositories() {
 
 verify_workspace_repositories() {
     verification_items_selected git-repositories || return 0
-    local file candidates records repository path remote branch result predicate
+    local file candidates records repository path remote branch result predicate kind
     file="$(blueprint_generated_file git-repositories)"
     # The existing input reader applies Blueprint selection and path safety.
     if ! records="$(workspace_read_bootstrap_repositories "$file" observation)" ||
@@ -109,14 +109,15 @@ verify_workspace_repositories() {
     while IFS=$'\t' read -r repository path remote branch; do
         [[ -n "$repository" ]] || continue
         repository_inspect "$path" "$remote" "$branch"
-        verification_result git-repositories "$repository" worktree "$REPOSITORY_WORKTREE_RESULT"
+        verification_result git-repositories "$repository" worktree "$REPOSITORY_WORKTREE_RESULT" '' "$REPOSITORY_WORKTREE_KIND"
         for predicate in origin branch; do
             if [[ "$predicate" == origin ]]; then result=$REPOSITORY_ORIGIN_RESULT; else result=$REPOSITORY_BRANCH_RESULT; fi
             if [[ $result -eq 3 ]]; then
                 verification_record git-repositories "$repository" "$predicate" unverified supported ""
                 verification_diagnostic "$GV_LAST_REF" prerequisite_unmet warning observation
             else
-                verification_result git-repositories "$repository" "$predicate" "$result"
+                if [[ "$predicate" == origin ]]; then kind=$REPOSITORY_ORIGIN_KIND; else kind=$REPOSITORY_BRANCH_KIND; fi
+                verification_result git-repositories "$repository" "$predicate" "$result" '' "$kind"
             fi
         done
     done <<< "$records"

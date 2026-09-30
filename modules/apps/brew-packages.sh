@@ -241,6 +241,6 @@ verify_brew_packages() {
     for package in "${GV_SUBJECTS[@]}"; do
         is_brew_package_installed "$package"
         result=$?
-        verification_result homebrew-packages "$package" installed "$result"
+        verification_result homebrew-packages "$package" installed "$result" '' absent
     done
 }

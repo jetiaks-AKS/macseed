@@ -310,8 +310,10 @@ verify_ssh_configuration() {
     else
         case "$SSH_TARGET_STATUS" in
             identical) verification_result ssh-configuration config supported_config_match 0 ;;
-            different|absent-directory|absent-config)
-                verification_result ssh-configuration config supported_config_match 1 ;;
+            different)
+                verification_result ssh-configuration config supported_config_match 1 '' different ;;
+            absent-directory|absent-config)
+                verification_result ssh-configuration config supported_config_match 1 '' absent ;;
             external) verification_result ssh-configuration config supported_config_match 2 external_management ;;
             *) verification_result ssh-configuration config supported_config_match 2 ;;
         esac

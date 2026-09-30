@@ -4,11 +4,6 @@
 Направления развития описаны в `ROADMAP.md`, архитектурные решения — в
 `docs/toolkit/ARCHITECTURE.md`, завершённые изменения — в `CHANGELOG.md`.
 
-## Future hardening — Capture provenance
-
-- [ ] Определить совместимое сохранение Capture coverage/provenance для различения
-  наблюдаемого отсутствия и неполученного source inventory после переноса Bundle.
-
 ## Отложено до фактического перехода на macOS 27
 
 - [ ] Повторно проверить приватные контракты `Clicking` и

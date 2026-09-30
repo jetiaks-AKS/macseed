@@ -163,6 +163,12 @@ verify_workspace_folders() {
     for folder in "${GV_SUBJECTS[@]}"; do
         workspace_folder_state "$folder"
         result=$?
-        verification_result workspace-folders "$folder" directory "$result" || return 2
+        local kind=unknown
+        if [[ $result -eq 1 ]]; then kind=absent
+        elif [[ "${CV_ACTIVE:-false}" == true && $result -eq 2 &&
+                -f "$HOME/$folder" && ! -L "$HOME/$folder" ]]; then
+            result=1 kind=different
+        fi
+        verification_result workspace-folders "$folder" directory "$result" '' "$kind" || return 2
     done
 }

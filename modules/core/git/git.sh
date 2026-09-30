@@ -373,7 +373,11 @@ verify_git_configuration() {
                       "${GIT_GLOBAL_VALUES[$index]}" == "${GIT_CONFIGURATION_VALUES[$index]}" ]]; then
                     verification_result git-configuration "$key" direct_global_value 0
                 else
-                    verification_result git-configuration "$key" direct_global_value 1
+                    if [[ ${GIT_GLOBAL_COUNTS[$index]} -eq 0 ]]; then
+                        verification_result git-configuration "$key" direct_global_value 1 '' absent
+                    else
+                        verification_result git-configuration "$key" direct_global_value 1 '' different
+                    fi
                 fi ;;
             *) verification_result git-configuration "$key" direct_global_value 2 ;;
         esac

@@ -237,12 +237,24 @@ CASK_MODE=normal
 export_brew_casks >/dev/null
 cask_status=$?
 if [[ $cask_status -eq 0 ]] &&
+   provenance_complete homebrew-casks &&
    grep -Fxq 'list --cask' "$BREW_CALLS" &&
    [[ "$(cat config/generated/brew-casks.conf)" == $'firefox\nvisual-studio-code' ]] &&
    [[ "$SUCCESS_MESSAGES" == *'2 Casks exported'* ]]; then
     pass "cask Discovery command and generated format remain unchanged"
 else
     fail "cask Discovery behavior changed"
+fi
+
+# A failed later enumeration leaves the previous complete snapshot intact.
+before_marker="$(cat config/generated/provenance/homebrew-casks.sha256)"
+CASK_MODE=failure
+export_brew_casks >/dev/null
+if [[ $? -eq 2 && "$(cat config/generated/provenance/homebrew-casks.sha256)" == "$before_marker" ]] &&
+   provenance_complete homebrew-casks; then
+    pass "failed cask enumeration cannot publish false completeness"
+else
+    fail "failed cask enumeration changed completeness"
 fi
 
 reset_fixture

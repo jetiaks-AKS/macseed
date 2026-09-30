@@ -11,6 +11,11 @@ The format is based on the principles of **Keep a Changelog**.
 
 ### Added
 
+* Completed Stage 14 Environment Comparison with read-only selected-requirement
+  projection, typed differences, per-domain digest-bound source completeness,
+  and informational extra inventory comparison for casks, App Store IDs, and
+  VS Code extension IDs. Legacy inventory remains compatible with extra unknown.
+
 * Completed Stage 13 human-readable Global Verification reporting with four
   scope-aware readiness verdicts, actionable typed reasons, separate operation
   outcomes, and unchanged public command exit codes.

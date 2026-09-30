@@ -362,6 +362,8 @@ verify_zsh() {
     verification_coverage shell-zsh .zshrc resolved observed_present
     zsh_snapshot_inspect_target
     result=$?
+    local kind=unknown
+    case "$result" in 1) kind=absent ;; 3) kind=different ;; esac
     [[ $result -ne 3 ]] || result=1 # Production reader: different regular file.
-    verification_result shell-zsh .zshrc file_content "$result"
+    verification_result shell-zsh .zshrc file_content "$result" '' "$kind"
 }

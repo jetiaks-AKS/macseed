@@ -11,6 +11,9 @@ verification_result() {
         *) conformity=unverified; code="${code:-observation_failed}" ;;
     esac
     verification_record "$domain" "$subject" "$predicate" "$conformity" supported "$(date -u +%Y-%m-%dT%H:%M:%SZ)" || return 2
+    if declare -F comparison_note >/dev/null; then
+        comparison_note "${6:-unknown}" "$GV_LAST_REF"
+    fi
     if [[ -n "$code" ]]; then
         local severity=error
         [[ "$result" != 1 && "$code" != external_management ]] || severity=warning

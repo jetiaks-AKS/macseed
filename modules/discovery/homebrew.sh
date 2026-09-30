@@ -76,6 +76,8 @@ export_brew_casks() {
         return 2
     fi
 
+    provenance_publish homebrew-casks || return 2
+
     local cask_count=0
 
     while IFS= read -r cask; do

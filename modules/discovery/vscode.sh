@@ -56,6 +56,8 @@ export_vscode_extensions() {
         return 2
     fi
 
+    provenance_publish vscode-extensions || return 2
+
     local extension_count
     extension_count=$(wc -l < "$output_file" | tr -d ' ')
 

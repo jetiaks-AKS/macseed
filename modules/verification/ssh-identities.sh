@@ -86,6 +86,10 @@ verify_ssh_identity_evidence() {
         verification_coverage ssh-identities "$name" resolved observed_present
         [[ "$observed" != - ]] || observed=""
         verification_record ssh-identities "$name" identity_pair_matches_package "$conformity" supported "$observed"
+        if [[ "$conformity" == mismatch && "$reason" == different_pair ]] &&
+           declare -F comparison_note >/dev/null; then
+            comparison_note different "$GV_LAST_REF"
+        fi
         if [[ -n "$observed" && "$observed" < "$GV_STARTED_AT" ]]; then GV_STARTED_AT="$observed"; fi
         case "$conformity" in
             mismatch) verification_diagnostic "$GV_LAST_REF" confirmed_mismatch warning observation ;;

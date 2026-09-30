@@ -96,6 +96,7 @@ check_defaults_record() {
 
     DEFAULTS_OBSERVED_PRESENT=false
     DEFAULTS_OBSERVED_VALUE=""
+    DEFAULTS_OBSERVATION_KIND=unknown
 
     expected_native_type="$(defaults_native_type "$type")" || return 2
 
@@ -104,6 +105,7 @@ check_defaults_record() {
 
     if [[ $type_result -ne 0 ]]; then
         if [[ "$native_type" == *"does not exist"* ]]; then
+            DEFAULTS_OBSERVATION_KIND=absent
             return 1
         fi
         error "Failed to inspect macOS preference: $domain $key"
@@ -113,10 +115,12 @@ check_defaults_record() {
     if [[ "$type" == float || ( "$type" == int && "$domain" == com.apple.dock &&
           ( "$key" == tilesize || "$key" == largesize ) ) ]]; then
         if [[ "$native_type" != 'Type is float' && "$native_type" != 'Type is integer' ]]; then
+            DEFAULTS_OBSERVATION_KIND=different
             error "Incompatible macOS preference type: $domain $key"
             return 2
         fi
     elif [[ "$native_type" != "$expected_native_type" ]]; then
+        DEFAULTS_OBSERVATION_KIND=different
         error "Incompatible macOS preference type: $domain $key"
         return 2
     fi
@@ -143,6 +147,7 @@ check_defaults_record() {
         error "Invalid observed macOS preference value: $domain $key"
     fi
 
+    [[ $comparison_result -ne 1 ]] || DEFAULTS_OBSERVATION_KIND=different
     return "$comparison_result"
 }
 
@@ -308,7 +313,9 @@ verify_macos_scalar_category() {
         verification_coverage "macos-$category" "$domain/$key" resolved unknown
         check_defaults_record "$domain" "$key" "$type" "$expected"
         result=$?
-        verification_result "macos-$category" "$domain/$key" stored_preference "$result" || return 2
+        if [[ "${CV_ACTIVE:-false}" == true && $result -eq 2 &&
+              "$DEFAULTS_OBSERVATION_KIND" == different ]]; then result=1; fi
+        verification_result "macos-$category" "$domain/$key" stored_preference "$result" '' "$DEFAULTS_OBSERVATION_KIND" || return 2
     done < "$config_file"
     [[ "$any" == true ]] || verification_coverage "macos-$category" scope no_requirement unknown
     return 0

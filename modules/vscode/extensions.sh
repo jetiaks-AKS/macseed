@@ -226,6 +226,6 @@ verify_vscode_extensions() {
         fi
         is_vscode_extension_installed "$item"
         result=$?
-        verification_result vscode-extensions "$item" installed "$result" || return 2
+        verification_result vscode-extensions "$item" installed "$result" '' absent || return 2
     done
 }

@@ -343,29 +343,43 @@ repository_inspect() {
     REPOSITORY_WORKTREE_RESULT=2
     REPOSITORY_ORIGIN_RESULT=3
     REPOSITORY_BRANCH_RESULT=3
+    REPOSITORY_WORKTREE_KIND=unknown
+    REPOSITORY_ORIGIN_KIND=unknown
+    REPOSITORY_BRANCH_KIND=unknown
     if [[ -f "$path" && ! -L "$path" ]]; then
         REPOSITORY_WORKTREE_RESULT=1
+        REPOSITORY_WORKTREE_KIND=different
         return 0
     fi
     repository_exists "$path"
     result=$?
     if [[ $result -eq 1 ]]; then
         REPOSITORY_WORKTREE_RESULT=1
+        REPOSITORY_WORKTREE_KIND=absent
         return 0
     fi
     [[ $result -eq 0 ]] || return 0
     repository_is_git "$path"
     result=$?
     REPOSITORY_WORKTREE_RESULT=$result
+    [[ $result -ne 1 ]] || REPOSITORY_WORKTREE_KIND=different
     [[ $result -eq 0 ]] || return 0
     REPOSITORY_ORIGIN_RESULT=2
     if value="$(repository_origin "$path")" && [[ -n "$value" ]]; then
         REPOSITORY_ORIGIN_RESULT=1
+        REPOSITORY_ORIGIN_KIND=different
         [[ "$value" != "$expected_remote" ]] || REPOSITORY_ORIGIN_RESULT=0
+    elif git -C "$path" config --local --get remote.origin.url >/dev/null 2>&1; then
+        : # Failed origin observation remains unknown.
+    elif [[ $? -eq 1 ]]; then
+        REPOSITORY_ORIGIN_RESULT=1
+        REPOSITORY_ORIGIN_KIND=absent
     fi
     REPOSITORY_BRANCH_RESULT=2
     if value="$(repository_branch "$path")"; then
         REPOSITORY_BRANCH_RESULT=1
+        REPOSITORY_BRANCH_KIND=different
+        [[ -n "$value" ]] || REPOSITORY_BRANCH_KIND=absent
         [[ "$value" != "$expected_branch" ]] || REPOSITORY_BRANCH_RESULT=0
     fi
     return 0

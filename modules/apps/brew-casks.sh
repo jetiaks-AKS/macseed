@@ -299,6 +299,10 @@ verify_brew_casks() {
     for item in "${GV_SUBJECTS[@]}"; do
         is_cask_installed "$item"
         result=$?
-        verification_result homebrew-casks "$item" installed "$result" || return 2
+        local kind=unknown
+        if [[ $result -eq 1 ]]; then
+            if [[ "$CASK_REINSTALL_REQUIRED" == true ]]; then kind=different; else kind=absent; fi
+        fi
+        verification_result homebrew-casks "$item" installed "$result" '' "$kind" || return 2
     done
 }

@@ -286,6 +286,32 @@ Diagnostics и результаты операций выводятся отде
 publication, установку, clone/checkout, запись preferences или restart процессов.
 Временные файлы для валидации допустимы.
 
+## Environment Comparison
+
+Внутренняя read-only операция Comparison использует выбранный scope, production
+inspectors и process-local Verification/Coverage facts. Для разрешённого
+predicate она выводит `matching`, `missing`, `differing` или `unverified`.
+Mismatch становится `missing` либо `differing` только при typed observation от
+inspector; неизвестный тип различия остаётся unverified для Comparison.
+Unsupported остаётся подмножеством unverified, а unresolved selection — пробелом
+Coverage. Результат операции не определяет категорию сравнения.
+
+Собственный verdict Comparison — `Differences detected`, `Comparison incomplete`,
+`No differences detected` или `No comparable requirements`. Подтверждённое
+различие в полном run имеет приоритет, а неполный coverage указывается отдельно.
+Сравнение extra использует полные captured inventories Homebrew casks, App Store
+IDs и VS Code extension IDs с digest-bound marker для каждого domain. Элементы,
+захваченные, но исключённые Blueprint, не становятся extra. Отсутствующий или
+устаревший marker означает неизвестную полноту source: extra недоступен, а не
+равен нулю. Formula Discovery экспортирует только requested formulae; для
+scalar/payload/Workspace domains extra неприменим. SSH identities сравниваются
+только по trusted evidence importer
+во время Restore. Обычный отчёт показывает typed differences без expected/actual
+values, приватного содержимого или remote URLs. Comparison не выполняет Apply,
+удаление или планирование cleanup и не запускается автоматически в Bootstrap,
+Workflow и Restore. Эта временная внутренняя операция пока не является публичным
+CLI или постоянным интерфейсом.
+
 ## Планируемая граница Core/GUI
 
 Нативное приложение на SwiftUI будет слоем представления и оркестрации над

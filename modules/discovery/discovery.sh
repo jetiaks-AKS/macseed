@@ -4,6 +4,8 @@
 # Discovery Controller
 # ==========================================
 
+source "$(dirname "${BASH_SOURCE[0]}")/../verification/provenance.sh"
+
 discovery_publish_file() {
 
     local output_file="$1"

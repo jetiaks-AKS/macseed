@@ -138,9 +138,11 @@ discover_appstore >/dev/null
 app_status=$?
 expected_apps=$'222|Second Application\n111|First Application (Preview)'
 if [[ $app_status -eq 0 &&
+      -f config/generated/provenance/app-store.sha256 &&
       "$(cat config/generated/appstore.conf)" == "$expected_apps" &&
       "$(cat "$MAS_CALLS")" == '1|list' &&
-      "$SUCCESS_MESSAGES" == *'2 App Store application(s) exported'* ]]; then
+      "$SUCCESS_MESSAGES" == *'2 App Store application(s) exported'* ]] &&
+   provenance_complete app-store; then
     pass "App Store publishes the existing ordered ID/name format"
 else
     fail "App Store populated format, ordering, command, or count changed"
@@ -153,7 +155,8 @@ app_empty_status=$?
 if [[ $app_empty_status -eq 0 &&
       -f config/generated/appstore.conf &&
       ! -s config/generated/appstore.conf &&
-      "$SUCCESS_MESSAGES" == *'0 App Store application(s) exported'* ]]; then
+      "$SUCCESS_MESSAGES" == *'0 App Store application(s) exported'* ]] &&
+   provenance_complete app-store; then
     pass "empty App Store observation publishes a valid empty file"
 else
     fail "empty App Store observation semantics changed"

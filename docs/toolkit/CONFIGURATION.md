@@ -449,6 +449,18 @@ SystemUIServer перезапускается только после измен
 
 ### Остальные application generated inputs
 
+После успешной полной публикации `brew-casks.conf`, `appstore.conf` или
+`vscode-extensions.conf` Discovery публикует отдельный
+`config/generated/provenance/<domain>.sha256` с записью
+`complete <sha256>` для байтов соответствующего полного inventory. Пустой файл
+inventory тоже может быть complete. Отсутствующий, повреждённый или не
+совпадающий с inventory marker означает unknown completeness; legacy Generated
+Configuration остаётся совместимой. Capture переносит эти пары через Bundle v1,
+сохраняя полный inventory даже при более узком Blueprint, чтобы исключённые
+элементы не становились ложными extra. Без marker Bundle сохраняет прежний
+selected-only перенос. Formulae не получают marker: Discovery экспортирует
+только installed-on-request subset.
+
 Homebrew casks, App Store и VS Code extensions используют отдельные форматы.
 Каждый обязательный файл полностью читается и проверяется до наблюдения или
 установки; поздняя некорректная запись не допускает частичного применения

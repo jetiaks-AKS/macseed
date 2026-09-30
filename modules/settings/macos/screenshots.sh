@@ -170,9 +170,13 @@ verify_screenshots() {
     verification_coverage macos-screenshots com.apple.screencapture/location resolved unknown
     check_defaults_record com.apple.screencapture location string "$SCREENSHOTS_DESTINATION"
     result=$?
-    verification_result macos-screenshots com.apple.screencapture/location stored_preference "$result" || return 2
+    if [[ "${CV_ACTIVE:-false}" == true && $result -eq 2 &&
+          "$DEFAULTS_OBSERVATION_KIND" == different ]]; then result=1; fi
+    verification_result macos-screenshots com.apple.screencapture/location stored_preference "$result" '' "$DEFAULTS_OBSERVATION_KIND" || return 2
     verification_coverage macos-screenshots destination resolved unknown
     screenshots_directory_state
     result=$?
-    verification_result macos-screenshots destination directory "$result"
+    local kind=unknown
+    [[ $result -ne 1 ]] || kind=absent
+    verification_result macos-screenshots destination directory "$result" '' "$kind"
 }

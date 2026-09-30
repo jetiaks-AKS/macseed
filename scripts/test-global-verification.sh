@@ -27,9 +27,11 @@ source modules/vscode/settings.sh
 source modules/ssh/config.sh
 source modules/shell/zsh.sh
 source modules/discovery/workspace.sh
+source modules/discovery/discovery.sh
 source modules/bootstrap/workspace/workspace.sh
 source modules/settings/macos/macos.sh
 source modules/verification/verification.sh
+source modules/verification/comparison.sh
 log() { :; }
 FAILURES=0
 CASES=0
@@ -47,7 +49,9 @@ brew() {
     case "$*" in
         'list --cask')
             case "$CASK_STATE" in absent) return 0 ;; error) return 2 ;; esac
-            printf 'example\n'; return 0 ;;
+            printf 'example\n'
+            [[ "$CASK_STATE" != extra ]] || printf 'additional\n'
+            return 0 ;;
         'info --json=v2 --cask example')
             [[ "$CASK_STATE" != metadata-error ]] || return 2
             printf '{"casks":[{"artifacts":[{"target":"%s"}]}]}\n' "$HOME/cask-app"
@@ -71,11 +75,11 @@ git() {
 }
 mas() {
     [[ "$*" == list ]] || { mutate "mas $*"; return 99; }
-    case "$MAS_STATE" in present) printf '123 Example (1.0)\n' ;; absent) : ;; *) return 2 ;; esac
+    case "$MAS_STATE" in present) printf '123 Example (1.0)\n' ;; extra) printf '123 Example (1.0)\n456 Other (2.0)\n' ;; absent) : ;; *) return 2 ;; esac
 }
 code() {
     [[ "$*" == --list-extensions ]] || { mutate "code $*"; return 99; }
-    case "$CODE_STATE" in present) printf 'example.extension\n' ;; absent) : ;; *) return 2 ;; esac
+    case "$CODE_STATE" in present) printf 'example.extension\n' ;; extra) printf 'example.extension\nother.extension\n' ;; absent) : ;; *) return 2 ;; esac
 }
 # Deterministic missing dependencies even on a developer Mac with mas/code.
 command() {
@@ -615,6 +619,146 @@ verify_ssh_identity_evidence
 verification_report > "$TEST_ROOT/verdict"
 assert test "$GV_VERDICT" = 'Verification incomplete'
 assert grep -q 'secure-selection: unresolved selected reference' "$TEST_ROOT/verdict"
+
+# Comparison consumes the same transient facts; typed observations never carry values.
+CV_KIND=() CV_ACTIVE=true
+verification_reset comparison
+GV_STATUS=complete
+verification_record demo a installed verified supported now
+verification_record demo b installed mismatch supported now
+comparison_note absent "$GV_LAST_REF"
+verification_record demo c installed mismatch supported now
+comparison_note different "$GV_LAST_REF"
+verification_record demo d installed mismatch supported now
+verification_record demo e installed unverified supported ''
+verification_unsupported demo f installed
+verification_coverage demo stale unresolved unknown
+comparison_report > "$TEST_ROOT/comparison"
+assert test "$CV_MATCHING" -eq 1
+assert test "$CV_MISSING" -eq 1
+assert test "$CV_DIFFERING" -eq 1
+assert test "$CV_UNVERIFIED" -eq 3
+assert test "$CV_UNSUPPORTED" -eq 1
+assert test "$CV_UNRESOLVED" -eq 1
+assert test "$CV_UNKNOWN_DIFFERENCE" -eq 1
+assert test "$CV_VERDICT" = 'Differences detected'
+assert test "$CV_ALSO_INCOMPLETE" = true
+assert grep -q 'reference_inventory_completeness_unknown' "$TEST_ROOT/comparison"
+assert grep -q 'unknown_difference' "$TEST_ROOT/comparison"
+CV_KIND=()
+verification_reset comparison
+GV_STATUS=complete
+verification_record demo a installed verified supported now
+comparison_report > "$TEST_ROOT/comparison"
+assert test "$CV_VERDICT" = 'No differences detected'
+CV_KIND=()
+verification_reset comparison
+GV_STATUS=complete
+verification_coverage demo scope excluded unknown
+comparison_report > "$TEST_ROOT/comparison"
+assert test "$CV_VERDICT" = 'No comparable requirements'
+CV_KIND=()
+verification_reset comparison
+GV_STATUS=complete
+verification_coverage demo scope no_requirement unknown
+comparison_report > "$TEST_ROOT/comparison"
+assert test "$CV_VERDICT" = 'Comparison incomplete'
+CV_KIND=()
+verification_reset comparison
+GV_STATUS=incomplete
+verification_record demo a installed mismatch supported now
+comparison_note absent "$GV_LAST_REF"
+comparison_report > "$TEST_ROOT/comparison"
+assert test "$CV_VERDICT" = 'Comparison incomplete'
+CV_ACTIVE=false
+
+# Real selected readers retain their classifications and do not expose values.
+CV_KIND=() CV_ACTIVE=true
+verification_reset comparison
+GIT_STATE=normal
+printf '[user]\nname = Secret Identity\n' > "$GIT_CONFIGURATION_FILE"
+printf '[user]\nname = Other Secret\n' > "$HOME/.gitconfig"
+verify_git_configuration
+comparison_report > "$TEST_ROOT/comparison"
+assert grep -q 'differing: git-configuration / user.name' "$TEST_ROOT/comparison"
+assert test "$(grep -Ec 'Secret Identity|Other Secret' "$TEST_ROOT/comparison")" -eq 0
+printf '[user]\n' > "$HOME/.gitconfig"
+CV_KIND=()
+verification_reset comparison
+verify_git_configuration
+comparison_report > "$TEST_ROOT/comparison"
+assert grep -q 'missing: git-configuration / user.name' "$TEST_ROOT/comparison"
+CV_ACTIVE=false
+
+# The internal entrypoint uses the full existing pass without target mutations.
+BREW_STATE=present
+GIT_STATE=normal
+DEFAULTS_STATE=match
+command rm "$BLUEPRINT_FILE" 2>/dev/null
+comparison_run > "$TEST_ROOT/comparison"
+assert grep -q 'Environment Comparison' "$TEST_ROOT/comparison"
+assert test ! -s "$MUTATIONS"
+assert test "$CV_UNSUPPORTED" -eq 0
+
+# Complete inventory markers prove zero and extras without promoting exclusions.
+printf 'example\n' > "$BLUEPRINT_GENERATED_DIR/brew-casks.conf"
+printf '123|Example\n' > "$BLUEPRINT_GENERATED_DIR/appstore.conf"
+printf 'example.extension\n' > "$BLUEPRINT_GENERATED_DIR/vscode-extensions.conf"
+command mkdir -p "$BLUEPRINT_GENERATED_DIR/provenance"
+for domain in homebrew-casks app-store vscode-extensions; do
+    provenance_paths "$domain"
+    digest="$(shasum -a 256 "$PROVENANCE_INVENTORY")"
+    printf 'complete %s\n' "${digest%% *}" > "$PROVENANCE_MARKER"
+done
+assert provenance_complete homebrew-casks
+CASK_STATE=present MAS_STATE=present CODE_STATE=present
+CV_KIND=() CV_ACTIVE=true
+verification_reset comparison
+GV_STATUS=complete
+verification_record demo item installed verified supported now
+comparison_report > "$TEST_ROOT/comparison"
+assert test "$CV_EXTRA_TOTAL" -eq 0
+assert grep -q 'homebrew-casks: 0' "$TEST_ROOT/comparison"
+CASK_STATE=extra MAS_STATE=extra CODE_STATE=extra
+comparison_report > "$TEST_ROOT/comparison"
+assert test "$CV_EXTRA_TOTAL" -eq 3
+assert test "$CV_VERDICT" = 'Differences detected'
+assert grep -q 'extra: homebrew-casks / additional' "$TEST_ROOT/comparison"
+assert grep -q 'extra: app-store / 456' "$TEST_ROOT/comparison"
+assert grep -q 'extra: vscode-extensions / other.extension' "$TEST_ROOT/comparison"
+assert test "$(grep -Ec 'Example|Other \(' "$TEST_ROOT/comparison")" -eq 0
+CASK_STATE=error
+comparison_report > "$TEST_ROOT/comparison"
+assert grep -q 'homebrew-casks: unavailable' "$TEST_ROOT/comparison"
+assert test "$CV_EXTRA_TOTAL" -eq 2
+CASK_STATE=present MAS_STATE=present CODE_STATE=present
+printf 'tampered\n' > "$BLUEPRINT_GENERATED_DIR/brew-casks.conf"
+comparison_report > "$TEST_ROOT/comparison"
+assert grep -q 'homebrew-casks: unavailable' "$TEST_ROOT/comparison"
+assert test "$CV_VERDICT" = 'No differences detected'
+
+# Full captured inventory is the exclusion baseline, even with a narrow Blueprint.
+printf 'example\nadditional\n' > "$BLUEPRINT_GENERATED_DIR/brew-casks.conf"
+provenance_paths homebrew-casks
+digest="$(shasum -a 256 "$PROVENANCE_INVENTORY")"
+printf 'complete %s\n' "${digest%% *}" > "$PROVENANCE_MARKER"
+printf '[homebrew-casks]\nexample\n' > "$BLUEPRINT_FILE"
+CASK_STATE=extra
+comparison_report > "$TEST_ROOT/comparison"
+assert grep -q 'homebrew-casks: 0' "$TEST_ROOT/comparison"
+assert test "$(grep -c 'extra: homebrew-casks' "$TEST_ROOT/comparison")" -eq 0
+command rm "$BLUEPRINT_FILE"
+
+# A complete empty reference inventory is distinct from an unknown empty one.
+: > "$BLUEPRINT_GENERATED_DIR/brew-casks.conf"
+provenance_paths homebrew-casks
+digest="$(shasum -a 256 "$PROVENANCE_INVENTORY")"
+printf 'complete %s\n' "${digest%% *}" > "$PROVENANCE_MARKER"
+CASK_STATE=present
+comparison_report > "$TEST_ROOT/comparison"
+assert grep -q 'homebrew-casks: 1' "$TEST_ROOT/comparison"
+assert test "$CV_VERDICT" = 'Differences detected'
+CV_ACTIVE=false
 
 printf 'Global Verification focused: %s assertions, %s failures\n' "$CASES" "$FAILURES"
 [[ "$FAILURES" -eq 0 ]]

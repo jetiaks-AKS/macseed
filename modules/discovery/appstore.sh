@@ -49,6 +49,8 @@ discover_appstore() {
         return 2
     fi
 
+    provenance_publish app-store || return 2
+
     local app_count
     app_count=$(wc -l < "$output_file" | tr -d ' ')
 

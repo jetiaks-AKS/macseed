@@ -225,6 +225,6 @@ verify_appstore_apps() {
         fi
         is_appstore_app_installed "$item"
         result=$?
-        verification_result app-store "$item" installed "$result" || return 2
+        verification_result app-store "$item" installed "$result" '' absent || return 2
     done
 }

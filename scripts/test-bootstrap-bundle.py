@@ -152,6 +152,30 @@ class BundleTests(unittest.TestCase):
         self.assertEqual(files["generated/brew-packages.conf"], b"selected\n")
         self.assertNotIn(b"[other]", files["generated/workspace/repositories.conf"])
 
+    def test_complete_inventory_keeps_excluded_items_for_comparison(self):
+        inventory = b"selected\nexcluded\n"
+        selected = self.stage / "blueprint.conf"
+        selected.write_bytes(selected.read_bytes().replace(
+            b"[homebrew-casks]\n", b"[homebrew-casks]\nselected\n"))
+        bundle.write_file(self.stage / "generated/brew-casks.conf", inventory)
+        marker = ("complete " + bundle.digest(inventory) + "\n").encode()
+        bundle.write_file(self.stage / "generated/provenance/homebrew-casks.sha256", marker)
+        self.pack()
+        files = bundle.validate_archive(self.bundle)
+        self.assertEqual(files["generated/brew-casks.conf"], inventory)
+        self.assertEqual(files["generated/provenance/homebrew-casks.sha256"], marker)
+        target = self.root / "target"
+        target.mkdir()
+        bundle.unpack(self.bundle, target, "/Users/target")
+        self.assertEqual((target / "generated/brew-casks.conf").read_bytes(), inventory)
+
+    def test_invalid_completeness_marker_rejected(self):
+        bundle.write_file(self.stage / "generated/brew-casks.conf", b"example\n")
+        bundle.write_file(self.stage / "generated/provenance/homebrew-casks.sha256",
+                          b"complete " + b"0" * 64 + b"\n")
+        with self.assertRaises(bundle.Invalid):
+            self.pack()
+
     def test_only_selected_git_values_are_carried(self):
         path = self.stage / "blueprint.conf"
         path.write_bytes(path.read_bytes().replace(

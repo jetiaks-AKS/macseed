@@ -226,5 +226,9 @@ verify_vscode_settings() {
     verification_coverage vscode-settings settings.json resolved unknown
     inspect_vscode_settings_target "$source_file" "$target_dir" "$target_dir/settings.json"
     result=$?
-    verification_result vscode-settings settings.json file_content "$result"
+    local kind=unknown
+    if [[ $result -eq 1 ]]; then
+        if [[ -e "$target_dir/settings.json" || -L "$target_dir/settings.json" ]]; then kind=different; else kind=absent; fi
+    fi
+    verification_result vscode-settings settings.json file_content "$result" '' "$kind"
 }

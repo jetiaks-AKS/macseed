@@ -277,6 +277,31 @@ continue to describe command execution; they are not environment conformity.
 The verifier never invokes Discovery publication, installers, clone/checkout,
 preference writes or process restarts. Temporary validation files are permitted.
 
+## Environment Comparison
+
+The internal read-only Comparison operation reuses the selected scope, production
+inspectors, and process-local Verification/Coverage facts. It projects a resolved
+predicate to `matching`, `missing`, `differing`, or `unverified`. A mismatch is
+`missing` or `differing` only when the inspector supplies a typed observation;
+an unknown mismatch is unverified for Comparison. Unsupported remains a subset
+of unverified, and unresolved selections remain Coverage gaps. Operations do not
+determine comparison categories.
+
+Comparison has its own verdict: `Differences detected`, `Comparison incomplete`,
+`No differences detected`, or `No comparable requirements`. Confirmed differences
+take precedence in a complete run, with incomplete coverage stated separately.
+Extra comparison uses complete, digest-bound captured inventories for Homebrew
+casks, App Store IDs, and VS Code extension IDs. It excludes items captured but
+not selected by Blueprint. A missing or stale per-domain marker means unknown
+source completeness, so extra is unavailable rather than zero. Formula Discovery
+exports only requested formulae, and scalar/payload/Workspace domains do not
+support extra. Only trusted Restore importer
+evidence can compare SSH identities. The default report shows typed differences
+without expected/actual values, private content, or remote URLs. Comparison does
+not Apply, remove, or plan cleanup, and is not automatically run by Bootstrap,
+Workflow, or Restore. This transient internal operation is not a public CLI or
+persisted interface.
+
 ## Planned Core/GUI boundary
 
 A native SwiftUI macOS application is planned as a presentation and
