@@ -253,6 +253,7 @@ install_brew_cask() {
         }
     fi
 
+    declare -F verification_applying_hook >/dev/null && verification_applying_hook homebrew-casks "$cask" "$install_command"
     action "Installing $cask..."
 
     if [[ "$VERBOSE" == true ]]; then
@@ -268,6 +269,7 @@ install_brew_cask() {
     local install_result=$?
 
     if [[ $install_result -ne 0 ]]; then
+        declare -F verification_application_operation_hook >/dev/null && verification_application_operation_hook homebrew-casks "$cask" "$install_command" failure
         error "Failed to install $cask"
         return 2
     fi
@@ -276,7 +278,11 @@ install_brew_cask() {
     # shellcheck disable=SC2034
     MODULE_CHANGED=true
 
-    if ! is_cask_installed "$cask"; then
+    declare -F verification_application_operation_hook >/dev/null && verification_application_operation_hook homebrew-casks "$cask" "$install_command" success
+    is_cask_installed "$cask"
+    local verify_result=$?
+    declare -F verification_application_post_hook >/dev/null && verification_application_post_hook "$verify_result"
+    if [[ $verify_result -ne 0 ]]; then
         error "Failed to verify Homebrew cask: $cask"
         return 2
     fi
@@ -327,6 +333,7 @@ install_brew_casks() {
 
         if [[ $inspection_result -eq 0 ]]; then
 
+            declare -F verification_application_operation_hook >/dev/null && verification_application_operation_hook homebrew-casks "$cask" install noop
             detail "$cask is already installed"
             continue
 

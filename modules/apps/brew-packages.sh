@@ -127,6 +127,7 @@ preview_brew_packages() {
 # ==========================================
 
 brew_install_formula() {
+    declare -F verification_applying_hook >/dev/null && verification_applying_hook homebrew-packages "$1" install
     if [[ "${MACSEED_APPLICATION_EXECUTION:-false}" == true ]]; then
         HOMEBREW_NO_ENV_HINTS=1 HOMEBREW_NO_SUDO=1 \
             HOMEBREW_NO_INSTALL_CLEANUP=1 HOMEBREW_NO_INSTALL_UPGRADE=1 \

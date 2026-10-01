@@ -205,6 +205,16 @@ class SecureRestoreTests(unittest.TestCase):
         self.assertEqual(data['secure_restore_status'], 'completed')
         self.assertTrue(data['target_mutation_may_have_started'])
         self.assertEqual(data['verification']['verified_count'], 1, data)
+        details = data['verification']['details']
+        self.assertEqual(details['status'], 'complete')
+        self.assertTrue(any(row['domain'] == 'secure-ssh-identities' and
+                            row['predicate'] == 'identity_pair_matches_package' and
+                            row['conformity'] == 'verified' for row in details['verification_records']))
+        transport = json.dumps(events)
+        self.assertNotIn('id_disposable', transport)
+        self.assertNotIn('PRIVATE KEY', transport)
+        self.assertNotIn('bundle-passphrase', transport)
+
         ssh = self.home / '.ssh'
         self.assertEqual((ssh / 'id_disposable').read_bytes(), private)
         self.assertEqual((ssh / 'id_disposable.pub').read_bytes(), public)
@@ -281,6 +291,10 @@ class SecureRestoreTests(unittest.TestCase):
         bundle.write_file(ssh / 'id_disposable', b'preserved existing identity')
         status, events, _ = self.peer()
         self.assertEqual(events[-1]['data']['code'], 'secure_target_conflict', events)
+        self.assertEqual(events[-1]['data']['verification']['details']['status'], 'complete')
+        self.assertTrue(any(row['outcome'] == 'skipped' and row['reason'] == 'target_conflict' for row in
+                            events[-1]['data']['verification']['details']['operation_records']))
+
         self.assertEqual((ssh / 'id_disposable').read_bytes(), b'preserved existing identity')
         self.assertEqual(events[-1]['data']['verification']['status'], 'complete', events)
         self.assertFalse(events[-1]['data']['target_mutation_may_have_started'])

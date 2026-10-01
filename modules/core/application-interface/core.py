@@ -20,6 +20,7 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "bundle"))
 import bundle
 from execution import OwnedBootstrap
+from reporting import opaque
 from secure import launch_channel, import_secure, SecureError
 
 PROTOCOL_VERSION = 1
@@ -366,7 +367,9 @@ def restore_execute(operation_id, path, disabled_groups, include_secure, expecte
              "publication_started": False, "publication_occurred": False,
              "target_mutation_may_have_started": False, "bootstrap_status": "not_started",
              "secure_restore_status": "selected_pending" if include_secure else "not_selected",
-             "verification": {"status": "not_run", "verdict": "incomplete"},
+             "verification": {"status": "not_run", "verdict": "incomplete", "details": {
+                 "status": "not_run", "verification_records": [], "coverage_records": [],
+                 "operation_records": [], "diagnostics": [], "module_outcomes": []}},
              "warning_count": 0, "error_count": 0}
     owned = None
 
@@ -374,6 +377,10 @@ def restore_execute(operation_id, path, disabled_groups, include_secure, expecte
         nonlocal sequence
         sequence += 1
         emit(sequence, kind, operation_id, data)
+
+    def record_event(kind, record):
+        # Record events are additive; only completed/failed terminate an operation.
+        event("execution_event" if kind == "lifecycle" else kind + "_record", record)
 
     def failure(code, exit_status=2, selected_item_index=None):
         state["execution_status"] = ("failed_after_mutation_may_have_started"
@@ -443,7 +450,9 @@ def restore_execute(operation_id, path, disabled_groups, include_secure, expecte
                     previous_mask = signal.pthread_sigmask(signal.SIG_BLOCK,
                                                             {signal.SIGINT, signal.SIGTERM})
                     try:
-                        owned = OwnedBootstrap(ROOT, environment, secure_evidence)
+                        identities = {opaque(subject): str(index) for index, subject in
+                                      enumerate(sections["git-repositories"], 1)}
+                        owned = OwnedBootstrap(ROOT, environment, secure_evidence, record_event, identities)
                     finally:
                         signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
                     bootstrap_exit = owned.wait()
@@ -451,6 +460,7 @@ def restore_execute(operation_id, path, disabled_groups, include_secure, expecte
                     if owned is not None:
                         owned.cancel()
                         state["target_mutation_may_have_started"] |= owned.mutation_may_have_started
+                        state["verification"]["details"] = owned.details
                     raise
                 state["target_mutation_may_have_started"] |= owned.mutation_may_have_started
                 state["bootstrap_status"] = ({0: "success", 1: "warning"}.get(bootstrap_exit, "failure"))
@@ -462,7 +472,11 @@ def restore_execute(operation_id, path, disabled_groups, include_secure, expecte
                 elif bootstrap_exit in (0, 1):
                     state["verification"] = {"status": "unavailable", "verdict": "incomplete"}
                     state["warning_count"] = 1 if bootstrap_exit == 1 else 0
+                state["verification"]["details"] = owned.details
                 if bootstrap_exit not in (0, 1):
+                    # Preserve typed authoritative outcomes alongside the compatible code.
+                    state["operation_failures"] = [row for row in owned.details["operation_records"]
+                                                   if row["outcome"] == "failure"]
                     raise ExecuteFailed("bootstrap_failed")
                 event("phase_completed", {"phase": "bootstrap"})
                 state["execution_status"] = "completed"
@@ -479,15 +493,17 @@ def restore_execute(operation_id, path, disabled_groups, include_secure, expecte
                 environment.pop(name, None)
             try:
                 with restore_signals():
-                    observer = OwnedBootstrap(ROOT, environment, receipt)
+                    observer = OwnedBootstrap(ROOT, environment, receipt, record_event)
                     try:
                         observer.wait()
                     except BaseException:
                         observer.cancel()
+                        state["verification"]["details"] = observer.details
                         raise
                 if observer.verification is not None:
                     state["verification"] = {key: value for key, value in observer.verification.items()
                                              if not key.startswith("bootstrap_")}
+                state["verification"]["details"] = observer.details
             except Cancelled:
                 state["secure_restore_status"] = "cancelled"
                 return failure("cancelled", 130)
@@ -519,7 +535,8 @@ def main(version, channel=None):
     operation_id = None
     for name in ("MACSEED_APPLICATION_SECURE_READY", "MACSEED_APPLICATION_SECURE_ONLY",
                  "MACSEED_APPLICATION_SECURE_VERIFY_ONLY", "MACSEED_SECURE_EVIDENCE_FD",
-                 "MACSEED_SECURE_ATTEMPT", "MACSEED_SECURE_EXIT"):
+                 "MACSEED_SECURE_ATTEMPT", "MACSEED_SECURE_EXIT", "MACSEED_REPORT_FD",
+                 "MACSEED_REPORT_COUNT", "MACSEED_REPORT_INVALID"):
         os.environ.pop(name, None)
     try:
         value = request()

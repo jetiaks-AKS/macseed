@@ -256,8 +256,11 @@ production Restore consumers с последующей Global Verification. ID �
 по выбранным доменам. Интернет, CLT и sudo не блокируют не зависящие от них планы;
 внешняя подготовка требует Check Again и подтверждения нового `prepared_plan_id`.
 Секретный канал остаётся отдельным требованием запуска Execute.
-Следующие задачи этапа — структурированные Capture, Compare/Environment Status
-и подробные execution/Verification результаты. Runtime compatibility и подключение
+Application execution теперь передаёт lifecycle events и подробные production
+Verification/Coverage/Operation records вместе с прежними агрегатами; исход операции
+отделён от соответствия, а сбой и отмена сохраняют доступные частичные records.
+Следующие задачи этапа — структурированные Capture и Compare/Environment Status.
+Runtime compatibility и подключение
 GUI относятся к интеграции Desktop, без второго движка Restore.
 
 Создать стабильную структурированную границу между существующим детерминированным

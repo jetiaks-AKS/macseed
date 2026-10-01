@@ -221,6 +221,7 @@ install_vscode_extensions() {
 
         if [[ $inspection_result -eq 0 ]]; then
 
+            declare -F verification_application_operation_hook >/dev/null && verification_application_operation_hook vscode-extensions "$extension" install noop
             detail "$extension is already installed"
             continue
 
@@ -240,17 +241,23 @@ install_vscode_extensions() {
 
         fi
 
+        declare -F verification_applying_hook >/dev/null && verification_applying_hook vscode-extensions "$extension" install
         install_vscode_extension "$extension"
 
         if [[ $? -ne 0 ]]; then
+            declare -F verification_application_operation_hook >/dev/null && verification_application_operation_hook vscode-extensions "$extension" install failure
             return 2
         fi
+        declare -F verification_application_operation_hook >/dev/null && verification_application_operation_hook vscode-extensions "$extension" install success
 
         # Shared lifecycle flag is read by the calling module wrapper.
         # shellcheck disable=SC2034
         MODULE_CHANGED=true
 
-        if ! is_vscode_extension_installed "$extension"; then
+        is_vscode_extension_installed "$extension"
+        inspection_result=$?
+        declare -F verification_application_post_hook >/dev/null && verification_application_post_hook "$inspection_result"
+        if [[ $inspection_result -ne 0 ]]; then
             error "Failed to verify VS Code extension: $extension"
             return 2
         fi

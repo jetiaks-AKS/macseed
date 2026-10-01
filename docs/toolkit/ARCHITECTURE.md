@@ -34,7 +34,7 @@ controlling terminal, Macseed does not ask its own questions, and sudo uses
 non-interactive authorization. External tools or macOS may still create
 independent GUI dialogs. A separate descriptor marks when target mutation may
 start, and the owned process group can be cancelled without changing the
-human CLI path. Production Global Verification provides aggregate conformity
+human CLI path. Production Global Verification provides aggregate and detailed conformity
 facts separately from execution status. Failure after the mutation boundary
 may leave partial target changes; publication recovery is not a transactional
 rollback of Bootstrap.
@@ -82,7 +82,45 @@ Readiness, selected requirements and Preview records bind `prepared_plan_id`.
 External preparation is followed by Check Again/re-prepare and confirmation of the
 new plan. Execute repeats preparation, rejects stale IDs, rechecks actual launch
 readiness and blocks unresolved Preview errors before publication. There is no
-transaction/resume database. Execution reporting remains aggregate Verification.
+transaction/resume database. Execution reporting projects existing production Verification records.
+
+### Structured execution and Verification
+
+Application Bootstrap emits machine records through a dedicated non-secret owned
+pipe. Core drains it during execution; ordinary stdout/stderr remain suppressed.
+The existing module lifecycle, impending Apply hooks and production
+VerificationRecord, CoverageRecord, OperationRecord and diagnostics are the source.
+Reporting does not inspect target state, parse logs or implement another verifier.
+
+Protocol V1 adds `execution_event`, `operation_record`, `verification_record`,
+`coverage_record`, and `diagnostic_record`. Lifecycle data uses public `domain`,
+`item_id`, `action`, `state`, nullable typed `reason`, and module `changed` where
+available. States include `started`, `applying`, `changed`, `already_satisfied`,
+`warning`, `failed`, and `verifying`. Unselected application modules are omitted.
+No percentages or internal function/filename identifiers are exposed.
+
+The compatible final aggregate `verification` adds `details`: `status`,
+`verification_records`, `coverage_records`, `operation_records`, `diagnostics`,
+and `module_outcomes`. Requirement records contain `record_id`, domain/item,
+`predicate`, `conformity`, `support`, and nullable `observed_at`. Coverage retains
+`disposition` and `source_status`; excluded scope is omitted. Operations retain
+`action`, `outcome`, and nullable typed `reason`. Diagnostics reference their owning
+opaque run-local `record_id` (or `run`) with `code`, `severity`, and `phase`.
+Operation success never implies verified conformity. A compatible `bootstrap_failed`
+result also carries detailed operation failures rather than discarding their facts.
+
+Safe inventory IDs/managed keys are retained. Repository subjects map to preparation
+indexes; SSH identity names and other private subjects use opaque IDs. Values,
+remote URLs, raw output, key material and secret-channel payloads are excluded.
+The reporting pipe never receives the credential channel. Secure evidence is
+projected only through the existing validated production Verification path.
+
+Individual machine records are limited to 4096 bytes and at most 8192 records are
+accepted per owned subprocess. Final details indicate `complete`, `partial`,
+`truncated`, `invalid`, or `not_run`; truncation cannot claim complete detail.
+Cancellation drains available records, stops the owned group and preserves mutation
+risk. Handled operation paths retain exactly one terminal `completed` or `failed`
+event. Reporting is application-only and does not alter human CLI output/exit codes.
 
 ### Application Secure SSH Restore
 

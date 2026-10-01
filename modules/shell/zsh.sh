@@ -294,7 +294,9 @@ bootstrap_zsh() {
     result=$?
     case "$result" in
         0) success "Zsh configuration already matches"; return 0 ;;
-        3) warning "Existing .zshrc differs; no replacement made"; return 1 ;;
+        3)
+            declare -F verification_application_operation_hook >/dev/null && verification_application_operation_hook shell-zsh zshrc restore skipped target_conflict
+            warning "Existing .zshrc differs; no replacement made"; return 1 ;;
         1) ;;
         *) error "Failed to inspect Zsh destination"; return 2 ;;
     esac

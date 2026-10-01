@@ -313,8 +313,20 @@ configure_git() {
     [[ $result -eq 0 ]] || warnings=true
     local planned=("${GIT_CONFIGURATION_ACTIONS[@]}")
     for index in 0 1 2 3 4 5 6; do
-        [[ "${planned[$index]:-skip}" == create ]] || continue
         key="${GIT_CONFIGURATION_KEYS[$index]}"
+        if [[ "${planned[$index]:-skip}" != create ]]; then
+            if [[ "${MACSEED_APPLICATION_EXECUTION:-false}" == true && "${GIT_CONFIGURATION_SET[$index]}" == true && "${GIT_CONFIGURATION_SELECTED[$index]}" == true ]]; then
+                if [[ ${GIT_GLOBAL_COUNTS[$index]} -eq 0 ]]; then
+                    verification_application_operation_hook git-configuration "$key" create skipped dependency_unavailable
+                elif [[ "$GIT_GLOBAL_EXTERNAL" == true || ${GIT_GLOBAL_COUNTS[$index]} -gt 1 ||
+                      "${GIT_GLOBAL_VALUES[$index]}" != "${GIT_CONFIGURATION_VALUES[$index]}" ]]; then
+                    verification_application_operation_hook git-configuration "$key" create skipped target_conflict
+                else
+                    verification_application_operation_hook git-configuration "$key" create noop
+                fi
+            fi
+            continue
+        fi
         git_global_observe
         result=$?
         if [[ $result -eq 1 ]]; then

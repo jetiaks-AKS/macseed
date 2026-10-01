@@ -321,6 +321,122 @@ class RestorePrepareTests(unittest.TestCase):
         result = self.plan_result()
         self.assertTrue(any(row['status'] == 'unsupported' for row in result['readiness']['conditions']), result)
 
+    def test_execution_events_changed_noop_and_detailed_records(self):
+        self.vscode_fixture()
+        self.pack()
+        plan = self.plan_result()['prepared_plan_id']
+        result, events = self.execute(plan)
+        self.assertEqual(result.returncode, 0, events)
+        self.assertEqual([row['sequence'] for row in events], list(range(1, len(events) + 1)))
+        operations = [row['data'] for row in events if row['type'] == 'operation_record']
+        self.assertTrue(any(row['item_id'] == 'publisher.fixture' and row['outcome'] == 'success' for row in operations))
+        self.assertTrue(any(row['item_id'] == 'already.extension' and row['outcome'] == 'noop' for row in operations))
+        lifecycle = [row['data'] for row in events if row['type'] == 'execution_event']
+        self.assertTrue(any(row['domain'] == 'vscode-extensions' and row['state'] == 'started' for row in lifecycle))
+        self.assertTrue(any(row['domain'] == 'vscode-extensions' and row['state'] == 'changed' for row in lifecycle))
+        self.assertFalse(any(row['domain'] == 'app-store' for row in lifecycle))
+        detail = events[-2]['data']['verification']['details']
+        self.assertEqual(detail['status'], 'complete')
+        self.assertTrue(any(row['item_id'] == 'publisher.fixture' and row['conformity'] == 'verified'
+                            for row in detail['verification_records']))
+        self.assertTrue(all(row['support'] == 'supported' for row in detail['verification_records']))
+        next_plan = self.plan_result()['prepared_plan_id']
+        _, repeated = self.execute(next_plan)
+        self.assertTrue(any(row['type'] == 'execution_event' and row['data']['domain'] == 'vscode-extensions'
+                            and row['data']['state'] == 'already_satisfied' for row in repeated))
+        self.assertNotIn(str(self.home).encode(), result.stdout)
+        self.assertNotIn(b'install_vscode_extensions', result.stdout)
+        self.assertLess(len(events), 150)
+
+    def test_detailed_execution_failure_and_mutation_risk(self):
+        self.vscode_fixture()
+        self.environment['TEST_EXTENSION_FAIL'] = 'true'
+        self.pack()
+        result, events = self.execute(self.plan_result()['prepared_plan_id'])
+        self.assertEqual(result.returncode, 2)
+        state = events[-1]['data']
+        self.assertTrue(state['target_mutation_may_have_started'])
+        failures = state['operation_failures']
+        self.assertTrue(any(row['domain'] == 'vscode-extensions' and row['outcome'] == 'failure' for row in failures))
+        self.assertTrue(any(row['code'] == 'operation_failed' for row in state['verification']['details']['diagnostics']))
+
+    def test_production_record_projection_mismatch_unsupported_and_operation_separation(self):
+        self.allow_application_bootstrap()
+        entry = self.project / 'bootstrap.sh'
+        marker = 'source modules/bootstrap/workspace/workspace.sh\n'
+        entry.write_text(entry.read_text().replace(marker, marker + '''
+bootstrap_workspace_folders() {
+    verification_operation_hook workspace-folders Projects create success
+    return 0
+}
+verify_workspace_folders() {
+    verification_coverage workspace-folders Projects resolved unknown
+    verification_record workspace-folders Projects directory mismatch supported "2026-10-01T00:00:00Z"
+    verification_diagnostic "$GV_LAST_REF" confirmed_mismatch warning observation
+    verification_record workspace-folders opaque-scope unsupported_fixture unverified unsupported ""
+    verification_diagnostic "$GV_LAST_REF" unsupported_predicate warning scope
+}
+'''))
+        self.pack()
+        result, events = self.execute(self.plan_result()['prepared_plan_id'])
+        self.assertEqual(result.returncode, 0, events)
+        state = events[-2]['data']
+        self.assertEqual(state['execution_status'], 'completed')
+        self.assertEqual(state['verification']['verdict'], 'differences_detected')
+        details = state['verification']['details']
+        self.assertTrue(any(row['outcome'] == 'success' and row['domain'] == 'workspace-folders' for row in details['operation_records']))
+        self.assertEqual({row['conformity'] for row in details['verification_records']}, {'mismatch', 'unverified'})
+        self.assertTrue(any(row['support'] == 'unsupported' for row in details['verification_records']))
+        self.assertEqual({row['code'] for row in details['diagnostics']}, {'confirmed_mismatch', 'unsupported_predicate'})
+
+    def test_conflict_preservation_has_typed_operation_and_conformity(self):
+        self.allow_application_bootstrap()
+        blueprint = self.stage / 'blueprint.conf'
+        blueprint.write_text(blueprint.read_text().replace('git-configuration="false"', 'git-configuration="true"')
+                             .replace('[git-configuration]\n', '[git-configuration]\nuser.name\n'))
+        bundle.write_file(self.stage / 'generated/git.conf', b'[user]\nname = PRIVATE_SOURCE_IDENTITY\n')
+        target = self.home / '.gitconfig'
+        target.write_text('[user]\nname = PRIVATE_TARGET_IDENTITY\n')
+        self.pack()
+        result, events = self.execute(self.plan_result()['prepared_plan_id'])
+        self.assertEqual(result.returncode, 0, events)
+        details = events[-2]['data']['verification']['details']
+        self.assertTrue(any(row['domain'] == 'git-configuration' and row['reason'] == 'target_conflict'
+                            and row['outcome'] == 'skipped' for row in details['operation_records']))
+        self.assertTrue(any(row['domain'] == 'git-configuration' and row['conformity'] == 'mismatch'
+                            for row in details['verification_records']))
+        self.assertEqual(target.read_text(), '[user]\nname = PRIVATE_TARGET_IDENTITY\n')
+        for private in (b'PRIVATE_SOURCE_IDENTITY', b'PRIVATE_TARGET_IDENTITY'):
+            self.assertNotIn(private, result.stdout + result.stderr)
+
+    def test_reporting_live_drain_bound_and_privacy(self):
+        sys.path.insert(0, str(ROOT / 'modules/core/application-interface'))
+        import execution
+        from reporting import opaque, project
+        self.assertNotIn('user:SECRET', json.dumps(project(['operation', 'o:0', 'git-repositories',
+                              'https://user:SECRET@example.test/private', 'clone', 'failure', 'operation_failed'])))
+        self.assertNotIn('SECRET_COMMAND', json.dumps(project(['diagnostic', 'run', 'SECRET_COMMAND', 'error', 'apply'])))
+        fixture = self.root / 'report-child'
+        fixture.mkdir()
+        script = fixture / 'bootstrap.sh'
+        script.write_text('''#!/usr/bin/env python3
+import json, os
+fd = int(os.environ['MACSEED_REPORT_FD'])
+for index in range(8300):
+    row = {'kind':'operation','record_id':str(index),'domain':'workspace-folders',
+           'item_id':'Projects','action':'create','outcome':'noop','reason':None}
+    os.write(fd, (json.dumps(row)+'\\n').encode())
+os.write(fd, b'{"kind":"details_complete"}\\n')
+''')
+        script.chmod(0o700)
+        records = []
+        child = execution.OwnedBootstrap(fixture, self.environment, on_record=lambda kind, row: records.append(row))
+        self.assertEqual(child.wait(), 0)
+        self.assertLessEqual(len(records), 8192)
+        self.assertEqual(child.details['status'], 'truncated')
+        self.assertEqual(len(child.details['operation_records']), 8192)
+        self.assertEqual(opaque('private-name'), opaque('private-name'))
+
     def test_prepare_plan_and_recomputation(self):
         self.pack()
         before = self.archive.read_bytes()
@@ -511,9 +627,13 @@ exit 0
         self.assertTrue(Path(self.environment["TEST_CASK_STATE"] + ".formula").exists())
         self.assertEqual(events[-2]["data"]["verification"]["verdict"],
                          "selected_requirements_verified")
-        self.assertNotIn(b"fixture-cask", result.stdout)
+        self.assertNotIn(b"Would install", result.stdout)
         next_plan = self.invoke()[1][1]["data"]["prepared_plan_id"]
-        self.assertEqual(self.execute(next_plan)[0].returncode, 0)
+        repeated, repeated_events = self.execute(next_plan)
+        self.assertEqual(repeated.returncode, 0)
+        self.assertTrue(any(row["type"] == "operation_record" and
+                            row["data"]["domain"] == "homebrew-casks" and
+                            row["data"]["outcome"] == "noop" for row in repeated_events))
         self.assertEqual(Path(self.environment["TEST_CASK_LOG"]).read_text(), "install\n")
 
     def test_cask_failure_preserves_mutation_boundary(self):
@@ -584,7 +704,7 @@ exit 0
         self.assertFalse(Path(self.environment["TEST_CASK_STATE"] + ".formula").exists())
         self.assertIn("fixture-formula", (self.stage / "blueprint.conf").read_text())
         self.assertIn("fixture-cask", (self.stage / "blueprint.conf").read_text())
-        self.assertNotIn(b"fixture-cask", result.stdout)
+        self.assertNotIn(b"Would install", result.stdout)
 
     def test_cask_metadata_artifact_boundary(self):
         metadata = self.cask_fixture()
@@ -690,7 +810,7 @@ exit 0
         final = events[-2]["data"]
         self.assertEqual(final["verification"]["verdict"], "selected_requirements_verified")
         self.assertTrue(final["target_mutation_may_have_started"])
-        self.assertNotIn(b"publisher.fixture", result.stdout)
+        self.assertNotIn(b"Would install", result.stdout)
         self.assertNotIn(str(self.home).encode(), result.stdout)
         next_plan = self.invoke()[1][1]["data"]["prepared_plan_id"]
         self.assertEqual(self.execute(next_plan)[0].returncode, 0)
@@ -738,7 +858,7 @@ exit 0
             self.assertFalse(events[-1]["data"]["publication_started"])
             self.assertFalse(Path(self.environment["TEST_EXTENSION_LOG"]).exists())
             self.assertIn("publisher.fixture", (self.stage / "blueprint.conf").read_text())
-            self.assertNotIn(b"publisher.fixture", result.stdout)
+            self.assertNotIn(b"Would install", result.stdout)
         code.write_text(original)
         code.chmod(0o700)
         blueprint = self.stage / "blueprint.conf"
@@ -1113,7 +1233,7 @@ esac
         result, events = self.execute(prepared)
         self.assertEqual(result.returncode, 0, events)
         self.assertTrue((self.root / "formula-installed").exists())
-        self.assertNotIn(b"fixture-formula", result.stdout)
+        self.assertNotIn(b"Would install", result.stdout)
         self.assertTrue(events[-2]["data"]["target_mutation_may_have_started"])
         self.assertEqual(events[-2]["data"]["verification"]["verdict"],
                          "selected_requirements_verified")
@@ -1150,7 +1270,8 @@ esac
         self.assertEqual(success.returncode, 0, success.stderr)
         self.assertEqual(events[-1]["type"], "completed")
         self.assertEqual([row["sequence"] for row in events], list(range(1, len(events) + 1)))
-        self.assertEqual([row["type"] for row in events],
+        self.assertEqual([row["type"] for row in events if row["type"] not in {
+                            "execution_event", "operation_record", "verification_record", "coverage_record", "diagnostic_record"}],
                          ["started", "phase_started", "phase_completed", "phase_started",
                           "phase_completed", "phase_started", "phase_completed", "result", "completed"])
         final = events[-2]["data"]
@@ -1323,6 +1444,8 @@ esac
         core.stdout.close()
         core.stderr.close()
         self.assertEqual(core.returncode, 130)
+        self.assertEqual(sum(row['type'] in ('completed', 'failed') for row in events), 1)
+        self.assertEqual(events[-1]['data']['verification']['details']['status'], 'partial')
         self.assertEqual(events[-1]["type"], "failed")
         self.assertEqual(events[-1]["data"]["code"], "cancelled")
         self.assertTrue(events[-1]["data"]["publication_occurred"])

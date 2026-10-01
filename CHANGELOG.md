@@ -16,6 +16,10 @@ The format is based on the principles of **Keep a Changelog**.
   Restore reuses production Preview and Bootstrap, rejects stale plans, supports
   cancellation of owned processes, and reports mutation risk separately from
   production Global Verification.
+* Added application Restore lifecycle events and detailed production Verification,
+  Coverage and Operation records alongside existing aggregates. Operation outcomes
+  remain separate from conformity; bounded, privacy-conscious reporting retains
+  partial records on failure/cancellation without parsing terminal output.
 * Added structured selected-item/action Restore plans and preparation-time
   readiness to `restore_prepare`, with typed dispositions, conflicts and
   prerequisite outcomes. Plans retain deterministic IDs and require re-preparation

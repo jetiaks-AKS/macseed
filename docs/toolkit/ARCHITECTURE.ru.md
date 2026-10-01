@@ -59,7 +59,45 @@ Readiness, выбранные требования и записи Preview вх�
 После внешнего действия выполняются Check Again/повторная подготовка и
 подтверждение нового плана. Execute повторяет подготовку, отклоняет устаревший ID,
 проверяет реальные условия запуска и блокирует ошибки Preview до публикации.
-Транзакционной базы resume нет. Execution reporting сохраняет агрегат Verification.
+Транзакционной базы resume нет. Execution reporting проецирует существующие production Verification records.
+
+## Структурированное выполнение и Verification
+
+Application Bootstrap передаёт машинные записи по отдельному несекретному pipe,
+которым владеет Core. Core читает его во время выполнения; обычные stdout/stderr
+не попадают в протокол. Источники — существующий lifecycle модулей, hooks перед
+Apply и production VerificationRecord, CoverageRecord, OperationRecord и diagnostics.
+Reporting не наблюдает целевую систему, не разбирает логи и не создаёт второй verifier.
+
+Protocol V1 добавляет `execution_event`, `operation_record`, `verification_record`,
+`coverage_record`, `diagnostic_record`. Lifecycle data содержит публичные `domain`,
+`item_id`, `action`, `state`, типизированный `reason` либо null и `changed` для
+модуля, когда он доступен. Состояния: `started`, `applying`, `changed`,
+`already_satisfied`, `warning`, `failed`, `verifying`. Невыбранные application
+модули пропускаются. Проценты и внутренние имена функций/файлов не передаются.
+
+Прежний агрегат `verification` дополнен `details`: `status`, `verification_records`,
+`coverage_records`, `operation_records`, `diagnostics`, `module_outcomes`.
+Требования имеют `record_id`, domain/item, `predicate`, `conformity`, `support` и
+`observed_at` либо null. Coverage сохраняет `disposition`, `source_status` и исключает
+невыбранный scope. Операции сохраняют `action`, `outcome`, типизированный `reason`
+либо null. Diagnostics ссылаются на непрозрачный `record_id` владельца внутри
+операции (либо `run`) и содержат `code`, `severity`, `phase`. Успех операции не
+означает подтверждённое соответствие. Совместимый `bootstrap_failed` также
+возвращает подробные неуспешные операции, сохраняя их факты.
+
+Допустимые inventory IDs и ключи настроек сохраняются; репозитории используют
+индексы подготовки. Имена SSH identities и другие приватные subjects получают
+непрозрачные IDs. Значения, remote URLs, сырой вывод, ключи и payload канала
+секретов исключены. Reporting pipe не получает канал credentials. Secure evidence
+проецируется только через существующую проверенную production Verification.
+
+Машинная запись ограничена 4096 байтами, принимается не более 8192 записей на
+owned subprocess. Статус details: `complete`, `partial`, `truncated`, `invalid`,
+`not_run`; усечённые данные не объявляются полными. При отмене сохраняются
+полученные записи, останавливается owned group и сохраняется mutation risk.
+Обработанные пути завершаются ровно одним terminal `completed` или `failed`.
+Reporting действует только в application mode; вывод и exit codes human CLI сохранены.
 
 ## Secure SSH Restore в режиме приложения
 

@@ -267,7 +267,12 @@ bootstrap_ssh_configuration() {
     local payload result target="$HOME/.ssh/config" directory="$HOME/.ssh" temporary
     payload="$(mktemp)" || return 2
     ssh_configuration_inspect "$payload"; result=$?
-    if [[ $result -ne 0 ]]; then rm -f "$payload"; [[ $result -ne 3 ]] || return 0; return "$result"; fi
+    if [[ $result -ne 0 ]]; then
+        if [[ $result -eq 1 ]]; then
+            declare -F verification_application_operation_hook >/dev/null && verification_application_operation_hook ssh-configuration config create skipped target_or_source_conflict
+        fi
+        rm -f "$payload"; [[ $result -ne 3 ]] || return 0; return "$result"
+    fi
     if [[ "$SSH_TARGET_STATUS" == identical ]]; then
         declare -F verification_operation_hook >/dev/null && verification_operation_hook ssh-configuration config create noop
         rm -f "$payload"; success "SSH configuration already matches"

@@ -125,6 +125,7 @@ verification_hash_input() {
 # Run context is consumed by the separately sourced Core collector/report.
 # shellcheck disable=SC2034
 verification_run() {
+    application_record module verification_run verifying '' false
     GV_STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     GV_STATUS=complete
     local final_identity

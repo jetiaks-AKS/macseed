@@ -118,7 +118,7 @@ section() {
 # Run Module
 # ==========================================
 
-run_module() {
+run_module_body() {
 
     local module_name="$1"
     local module_function="$2"
@@ -226,7 +226,7 @@ run_inspection() {
 # Run Configuration
 # ==========================================
 
-run_configuration() {
+run_configuration_body() {
 
     local module_name="$1"
     local check_function="$2"
@@ -508,4 +508,54 @@ preview_record() {
         [[ "$field" != *$'\t'* && "$field" != *$'\n'* && "$field" != *$'\r'* ]] || return 2
     done
     printf '%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "${5:-none}" >> "$PREVIEW_PLAN_FILE"
+}
+
+# Application-only records; no CLI/log output is interpreted by this channel.
+application_record() {
+    [[ "${MACSEED_APPLICATION_EXECUTION:-false}" == true &&
+       "${MACSEED_REPORT_FD:-}" =~ ^[0-9]+$ ]] || return 0
+    MACSEED_REPORT_COUNT=$((${MACSEED_REPORT_COUNT:-0} + 1))
+    if [[ "$MACSEED_REPORT_COUNT" -gt 8193 ]]; then return 0; fi
+    if [[ "$MACSEED_REPORT_COUNT" -eq 8193 ]]; then set -- truncated; fi
+    if [[ "${MACSEED_REPORT_INVALID:-false}" == true && "$1" == complete ]]; then set -- reporting_failed; fi
+    printf '%s\0' "$@" | python3 modules/core/application-interface/reporting.py \
+        1>&"$MACSEED_REPORT_FD" 2>/dev/null || MACSEED_REPORT_INVALID=true
+    return 0
+}
+
+run_module() {
+    application_module_record "$2" started '' false
+    run_module_body "$@"
+    local status=$?
+    application_module_record "$2" finished "$status" "$MODULE_CHANGED"
+    return "$status"
+}
+
+run_configuration() {
+    application_module_record "$2" started '' false
+    run_configuration_body "$@"
+    local status=$?
+    application_module_record "$2" finished "$status" "$MODULE_CHANGED"
+    return "$status"
+}
+
+application_module_record() {
+    [[ "${MACSEED_APPLICATION_EXECUTION:-false}" == true &&
+       "${MACSEED_REPORT_FD:-}" =~ ^[0-9]+$ ]] || return 0
+    case "$1" in
+        install_brew_packages) bootstrap_item_scope_selected homebrew-packages || return 0 ;;
+        install_brew_casks) bootstrap_item_scope_selected homebrew-casks || return 0 ;;
+        install_appstore_apps) bootstrap_item_scope_selected app-store || return 0 ;;
+        install_vscode_extensions) bootstrap_item_scope_selected vscode-extensions || return 0 ;;
+        bootstrap_workspace)
+            bootstrap_item_scope_selected workspace-folders || bootstrap_item_scope_selected git-repositories || return 0 ;;
+        configure_git) blueprint_category_enabled git-configuration && git_configuration_scope_selected || return 0 ;;
+        apply_vscode_settings) blueprint_category_enabled vscode-settings || return 0 ;;
+        bootstrap_zsh) blueprint_category_enabled shell-zsh || return 0 ;;
+        bootstrap_ssh_configuration|bundle_restore_prerequisites)
+            blueprint_category_enabled ssh-configuration || [[ -n "${BUNDLE_RESTORE_SECURE_FILE:-}" ]] || return 0 ;;
+        check_finder|check_dock|check_windows|check_keyboard|check_trackpad|check_screenshots)
+            blueprint_category_enabled "macos-${1#check_}" || return 0 ;;
+    esac
+    application_record module "$@"
 }

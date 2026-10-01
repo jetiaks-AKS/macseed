@@ -215,6 +215,7 @@ install_appstore_apps() {
 
         if [[ $inspection_result -eq 0 ]]; then
 
+            declare -F verification_application_operation_hook >/dev/null && verification_application_operation_hook app-store "$app_id" install noop
             detail "$app_name is already installed"
             continue
 
@@ -234,17 +235,23 @@ install_appstore_apps() {
 
         fi
 
+        declare -F verification_applying_hook >/dev/null && verification_applying_hook app-store "$app_id" install
         install_appstore_app "$app_id" "$app_name"
 
         if [[ $? -ne 0 ]]; then
+            declare -F verification_application_operation_hook >/dev/null && verification_application_operation_hook app-store "$app_id" install failure
             return 2
         fi
+        declare -F verification_application_operation_hook >/dev/null && verification_application_operation_hook app-store "$app_id" install success
 
         # Shared lifecycle flag is read by the calling module wrapper.
         # shellcheck disable=SC2034
         MODULE_CHANGED=true
 
-        if ! is_appstore_app_installed "$app_id"; then
+        is_appstore_app_installed "$app_id"
+        inspection_result=$?
+        declare -F verification_application_post_hook >/dev/null && verification_application_post_hook "$inspection_result"
+        if [[ $inspection_result -ne 0 ]]; then
             error "Failed to verify App Store application: $app_name"
             return 2
         fi

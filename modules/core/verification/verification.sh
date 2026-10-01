@@ -32,6 +32,8 @@ verification_diagnostic() {
            "${GV_D[i+2]}" != "$severity" || "${GV_D[i+3]}" != "$phase" ]] || return 0
     done
     GV_D+=("$owner" "$code" "$severity" "$phase")
+    declare -F application_record >/dev/null && application_record diagnostic "$owner" "$code" "$severity" "$phase"
+    return 0
 }
 
 verification_record() {
@@ -47,6 +49,8 @@ verification_record() {
     done
     GV_LAST_REF="v:${#GV_V[@]}"
     GV_V+=("$domain" "$subject" "$predicate" "$conformity" "$support" "$observed")
+    declare -F application_record >/dev/null && application_record verification "$GV_LAST_REF" "$domain" "$subject" "$predicate" "$conformity" "$support" "$observed"
+    return 0
 }
 
 verification_coverage() {
@@ -61,6 +65,8 @@ verification_coverage() {
     done
     GV_LAST_REF="c:${#GV_C[@]}"
     GV_C+=("$1" "$2" "$3" "$4")
+    declare -F application_record >/dev/null && application_record coverage "$GV_LAST_REF" "$1" "$2" "$3" "$4"
+    return 0
 }
 
 verification_operation() {
@@ -68,9 +74,11 @@ verification_operation() {
     case "$4" in success|failure|noop|skipped|cancelled|not_run) ;; *) return 2 ;; esac
     GV_LAST_REF="o:${#GV_O[@]}"
     GV_O+=("$1" "$2" "$3" "$4" "${5:-}")
+    declare -F application_record >/dev/null && application_record operation "$GV_LAST_REF" "$1" "$2" "$3" "$4" "${5:-}"
     if [[ "$4" == failure ]]; then
         verification_diagnostic "$GV_LAST_REF" operation_failed error apply
     fi
+    return 0
 }
 
 # Optional production hook. It must never change the caller's public status.
@@ -199,11 +207,12 @@ verification_report() {
     detail 'Target observations are sequential, not an atomic snapshot.'
 }
 
-# Aggregate-only side channel for an owned application Bootstrap subprocess.
+# Aggregate side channel for an owned application Bootstrap subprocess.
 # This projects existing records and never serializes desired or observed values.
 verification_application_summary() {
     [[ "${MACSEED_APPLICATION_EXECUTION:-false}" == true &&
        "${MACSEED_VERIFICATION_FD:-}" =~ ^[0-9]+$ ]] || return 0
+    application_record complete
     local verdict=incomplete
     case "$GV_VERDICT" in
         'Selected requirements verified') verdict=selected_requirements_verified ;;
@@ -215,4 +224,21 @@ verification_application_summary() {
         "$GV_UNVERIFIED" "$GV_UNRESOLVED" "$GV_WARNINGS" "$GV_ERRORS" \
         "$WARNING_COUNT" "$ERROR_COUNT" \
         >&"$MACSEED_VERIFICATION_FD" || :
+}
+
+# Expose an actual impending Apply, without adding a running OperationRecord.
+verification_applying_hook() {
+    declare -F application_record >/dev/null && application_record item "$1" "$2" "$3" applying ''
+    return 0
+}
+
+# Additional operation coverage belongs to the application projection.
+verification_application_operation_hook() {
+    [[ "${MACSEED_APPLICATION_EXECUTION:-false}" == true ]] || return 0
+    verification_operation_hook "$@"
+}
+
+verification_application_post_hook() {
+    [[ "${MACSEED_APPLICATION_EXECUTION:-false}" == true ]] || return 0
+    verification_post_hook "$@"
 }
