@@ -123,7 +123,8 @@ def prepared_restore(path, disabled_groups, include_secure):
         os.close(descriptor)
         environment = dict(os.environ, BLUEPRINT_FILE=str(stage / "blueprint.conf"),
                            BLUEPRINT_GENERATED_DIR=str(stage / "generated"),
-                           BUNDLE_RESTORE_PREVIEW="true", PREVIEW_SUMMARY_FILE=str(summary_file))
+                           BUNDLE_RESTORE_PREVIEW="true", PREVIEW_SUMMARY_FILE=str(summary_file),
+                           MACSEED_APPLICATION_EXECUTION="true")
         preview = subprocess.Popen(["./bootstrap.sh", "--dry-run"], cwd=ROOT, env=environment,
                                    stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                                    stderr=subprocess.DEVNULL, start_new_session=True)
@@ -208,6 +209,7 @@ def readiness(stage, include_secure):
     elif len(fields) != 1 or status in cask_conditions:
         raise ExecuteFailed("readiness_failed")
     allowed = {"ready", "authorization_required", "unsupported_interactive_operation",
+               "vscode_cli_required", "vscode_cli_unavailable", "vscode_cli_ambiguous",
                "homebrew_installation_requires_interaction", "homebrew_unavailable",
                "missing_required_dependency", "secure_bridge_required", "invalid_selected_input"}
     allowed |= cask_conditions

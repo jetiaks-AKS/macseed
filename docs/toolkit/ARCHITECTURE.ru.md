@@ -53,8 +53,34 @@ install cleanup и install upgrade, под существующим owned proces
 mutation boundary. Production inspection и Global Verification остаются
 авторитетными. Отказ может оставить частичные изменения; независимые диалоги
 macOS/vendor не подавляются. CLI сохраняет прежнее поведение. Отсутствие Homebrew
-остаётся предпосылкой; MAS, extensions, клонирование и Secure Restore пока
+остаётся предпосылкой; MAS, клонирование и Secure Restore пока
 блокируются.
+
+## Покрытие VS Code extensions в режиме приложения
+
+Выбранные расширения используют существующие IDs, Preview, production installer
+и Global Verification. В application context приоритет имеет `code` из PATH.
+При его отсутствии можно вызвать официальный CLI stable VS Code по пути
+`Contents/Resources/app/bin/code` внутри `/Applications/Visual Studio Code.app`
+или `$HOME/Applications/Visual Studio Code.app`. Две копии без явного выбора
+через PATH дают `vscode_cli_ambiguous`; другие каталоги и варианты требуют
+явного `code` в PATH. Shell profiles, symlinks и постоянный PATH не меняются.
+
+CLI требуется только выбранной работе с расширениями. До публикации отсутствие
+возвращает `vscode_cli_required`, а неисправный launcher или сбой production
+inventory — `vscode_cli_unavailable`. Structured Preview сохраняет эти условия
+как warnings, чтобы readiness мог вернуть типизированную предпосылку.
+Пояснения Desktop и Check Again пока планируются. Работающий CLI должен уже
+существовать до публикации, в том числе если в плане выбран cask VS Code.
+
+Обычный `--install-extension <ID>` устанавливает отсутствующие IDs; удовлетворённые
+пропускаются, без force, update-all, uninstall и новых правил версий. Обработка
+зависимостей и extension packs самим CLI сохраняет production-поведение.
+Действуют существующие owned stdin/TTY/process semantics и mutation boundary;
+сбой Marketplace или сети — ошибка выполнения, а не предварительный отказ
+в поддержке возможности. Production inspection проверяет installed IDs, а не
+версии, enablement или runtime расширений. VS Code settings и PATH-поведение
+human CLI не меняются. Отдельные inventory и verifier не создаются.
 
 ## Предпосылки Restore
 

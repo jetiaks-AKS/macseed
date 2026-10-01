@@ -233,8 +233,10 @@ Bootstrap/Workflow и, где применимо, Restore. Результат д
 Протокол v1 поддерживает `capabilities`, read-only `bundle_inspect`,
 `restore_prepare` и первый mutating `restore_execute` для временного
 ограниченного application-safe scope, включая выбранные Homebrew formulae при
-работающем Homebrew и отсутствующие app-only casks, прошедшие проверку metadata
-и каталога назначения. Уже установленные casks проходят как no-op; остальные
+работающем Homebrew, отсутствующие app-only casks, прошедшие проверку metadata
+и каталога назначения, и выбранные VS Code extensions при доступном CLI.
+Для расширений application context может использовать официальный bundled CLI
+stable VS Code без установки `code` в PATH. Уже установленные casks проходят как no-op; остальные
 требования установки и repair/reinstall блокируются до публикации. Установка
 самого Homebrew остаётся внешней предпосылкой. Execute заново строит production Preview,
 сравнивает `prepared_plan_id`, проверяет readiness до публикации и запускает

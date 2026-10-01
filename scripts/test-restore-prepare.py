@@ -345,8 +345,7 @@ exit 0
         module.write_text(module.read_text().replace('/opt/homebrew', str(self.root / 'absent'))
                           .replace('/usr/local', str(self.root / 'absent')))
         self.assertEqual(check(), b"homebrew_installation_requires_interaction")
-        for category, item in (("app-store", "123"), ("vscode-extensions", "publisher.extension"),
-                               ("git-repositories", "repo")):
+        for category, item in (("app-store", "123"), ("git-repositories", "repo")):
             blueprint.write_text(selected.replace(f"[{category}]\n", f"[{category}]\n{item}\n"))
             self.assertEqual(check(), b"unsupported_interactive_operation")
         blueprint.write_text(selected)
@@ -407,6 +406,160 @@ exit 0
         Path(self.environment["TEST_CASK_TARGET"]).rmdir()
         (self.home / "Applications").rmdir()
         self.assertEqual(check(metadata), "cask_authorization_required")
+
+    def vscode_fixture(self, bundled=False, mixed=False):
+        if mixed:
+            self.cask_fixture(mixed=True)
+            (self.root / "bin/jq").symlink_to(shutil.which("jq"))
+        else:
+            self.allow_application_bootstrap()
+            brew = self.root / "bin/brew"
+            brew.write_text("#!/bin/bash\necho /opt/homebrew\n")
+            brew.chmod(0o700)
+        self.environment.update(TEST_EXTENSION_STATE=str(self.root / "extension-state"),
+                                TEST_EXTENSION_LOG=str(self.root / "extension-log"),
+                                TEST_BOUNDARY=str(self.root / "boundary"),
+                                PATH=str(self.root / "bin") + ":/usr/bin:/bin:/usr/sbin:/sbin")
+        # Replace only the standard system bundle location in this isolated copy.
+        system_app = self.root / "Applications/Visual Studio Code.app"
+        module = self.project / "modules/vscode/extensions.sh"
+        module.write_text(module.read_text().replace('"/Applications/Visual Studio Code.app"',
+                                                    '"' + str(system_app) + '"'))
+        if bundled:
+            code = system_app / "Contents/Resources/app/bin/code"
+            code.parent.mkdir(parents=True)
+        else:
+            code = self.root / "bin/code"
+        code.write_text('''#!/bin/bash
+case "$*" in
+  --list-extensions)
+    [[ "${TEST_EXTENSION_OBSERVATION_FAIL:-false}" != true ]] || exit 2
+    echo already.extension
+    [[ ! -f "$TEST_EXTENSION_STATE" ]] || echo publisher.fixture ;;
+  "--install-extension publisher.fixture")
+    if [[ "${MACSEED_APPLICATION_EXECUTION:-false}" == true ]]; then
+      [[ ! -t 0 && ! -t 1 && -f "$TEST_BOUNDARY" ]] || exit 2
+      if (: </dev/tty) 2>/dev/null; then exit 2; fi
+      read -r input && exit 2
+    fi
+    echo "$*" >> "$TEST_EXTENSION_LOG"
+    [[ "${TEST_EXTENSION_FAIL:-false}" != true ]] || exit 2
+    touch "$TEST_EXTENSION_STATE" ;;
+  *) exit 2 ;;
+esac
+exit 0
+''')
+        code.chmod(0o700)
+        entrypoint = self.project / "bootstrap.sh"
+        entrypoint.write_text(entrypoint.read_text().replace(
+            "    printf 'mutation_may_have_started\\n'", '    touch "$TEST_BOUNDARY"\n' +
+            "    printf 'mutation_may_have_started\\n'"))
+        blueprint = self.stage / "blueprint.conf"
+        blueprint.write_text(blueprint.read_text().replace('[vscode-extensions]\n',
+                             '[vscode-extensions]\nalready.extension\npublisher.fixture\n'))
+        bundle.write_file(self.stage / "generated/vscode-extensions.conf",
+                          b"already.extension\npublisher.fixture\n")
+        return code
+
+    def test_vscode_restore_production_and_convergence(self):
+        self.vscode_fixture(mixed=True)
+        settings = self.home / "Library/Application Support/Code/User/settings.json"
+        settings.parent.mkdir(parents=True)
+        settings.write_text('{"unchanged":true}')
+        self.pack()
+        plan = self.invoke()[1][1]["data"]["prepared_plan_id"]
+        result, events = self.execute(plan)
+        self.assertEqual(result.returncode, 0, events)
+        self.assertTrue(Path(self.environment["TEST_EXTENSION_STATE"]).exists())
+        self.assertTrue(Path(self.environment["TEST_CASK_STATE"]).exists())
+        self.assertTrue(Path(self.environment["TEST_CASK_STATE"] + ".formula").exists())
+        final = events[-2]["data"]
+        self.assertEqual(final["verification"]["verdict"], "selected_requirements_verified")
+        self.assertTrue(final["target_mutation_may_have_started"])
+        self.assertNotIn(b"publisher.fixture", result.stdout)
+        self.assertNotIn(str(self.home).encode(), result.stdout)
+        next_plan = self.invoke()[1][1]["data"]["prepared_plan_id"]
+        self.assertEqual(self.execute(next_plan)[0].returncode, 0)
+        self.assertEqual(Path(self.environment["TEST_EXTENSION_LOG"]).read_text(),
+                         "--install-extension publisher.fixture\n")
+        self.assertEqual(settings.read_text(), '{"unchanged":true}')
+
+    def test_vscode_bundled_cli_without_path(self):
+        self.vscode_fixture(bundled=True)
+        self.pack()
+        result, prepared = self.invoke()
+        self.assertEqual(result.returncode, 0, prepared)
+        self.assertTrue(any(row["module"] == "preview_vscode_extensions" and row["planned"]
+                            for row in prepared[1]["data"]["modules"]))
+        result, events = self.execute(prepared[1]["data"]["prepared_plan_id"])
+        self.assertEqual(result.returncode, 0, events)
+        self.assertEqual(events[-2]["data"]["verification"]["verdict"],
+                         "selected_requirements_verified")
+        self.assertFalse((self.root / "bin/code").exists())
+        # Without application context, the original CLI PATH-only policy remains.
+        human = subprocess.run(['bash', '-c', 'warning() { :; }; '
+                                'source modules/vscode/extensions.sh; check_vscode_cli'],
+                               cwd=self.project, env=self.environment, stdout=subprocess.PIPE,
+                               check=False)
+        self.assertEqual(human.returncode, 1)
+
+    def test_vscode_prerequisites_before_publication(self):
+        code = self.vscode_fixture()
+        self.pack()
+        for state, expected in (("missing", "vscode_cli_required"),
+                                ("broken", "vscode_cli_unavailable")):
+            if state == "missing":
+                original = code.read_text()
+                code.unlink()
+            else:
+                code.write_text("#!/bin/bash\nexit 2\n")
+                code.chmod(0o700)
+            prepared_result, prepared = self.invoke()
+            self.assertEqual(prepared_result.returncode, 0, prepared)
+            result, events = self.execute(prepared[1]["data"]["prepared_plan_id"])
+            self.assertEqual(result.returncode, 2)
+            self.assertEqual(events[-1]["data"]["code"], expected)
+            self.assertFalse(events[-1]["data"]["publication_started"])
+            self.assertFalse(Path(self.environment["TEST_EXTENSION_LOG"]).exists())
+            self.assertIn("publisher.fixture", (self.stage / "blueprint.conf").read_text())
+            self.assertNotIn(b"publisher.fixture", result.stdout)
+        code.write_text(original)
+        code.chmod(0o700)
+        blueprint = self.stage / "blueprint.conf"
+        contents = blueprint.read_text()
+        blueprint.write_text(contents.replace("already.extension\n", "").replace("publisher.fixture\n", ""))
+        self.environment["TEST_EXTENSION_OBSERVATION_FAIL"] = "true"
+        self.archive = self.root / "no-extensions.mbt"
+        self.pack()
+        prepared = self.invoke()[1][1]["data"]["prepared_plan_id"]
+        self.assertEqual(self.execute(prepared)[0].returncode, 0)
+
+    def test_vscode_install_failure_preserves_mutation(self):
+        self.vscode_fixture()
+        self.environment["TEST_EXTENSION_FAIL"] = "true"
+        self.pack()
+        plan = self.invoke()[1][1]["data"]["prepared_plan_id"]
+        result, events = self.execute(plan)
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(events[-1]["data"]["code"], "bootstrap_failed")
+        self.assertTrue(events[-1]["data"]["target_mutation_may_have_started"])
+        self.assertFalse(Path(self.environment["TEST_EXTENSION_STATE"]).exists())
+
+    def test_vscode_bundle_ambiguity_and_broken_launcher(self):
+        code = self.vscode_fixture(bundled=True)
+        user_app = self.home / "Applications/Visual Studio Code.app"
+        user_app.mkdir(parents=True)
+        self.pack()
+        plan = self.invoke()[1][1]["data"]["prepared_plan_id"]
+        result, events = self.execute(plan)
+        self.assertEqual(events[-1]["data"]["code"], "vscode_cli_ambiguous")
+        self.assertFalse(events[-1]["data"]["publication_started"])
+        user_app.rmdir()
+        code.chmod(0o600)
+        plan = self.invoke()[1][1]["data"]["prepared_plan_id"]
+        result, events = self.execute(plan)
+        self.assertEqual(events[-1]["data"]["code"], "vscode_cli_unavailable")
+        self.assertFalse(events[-1]["data"]["publication_started"])
 
     def test_execute_selected_formula_through_production_module(self):
         blueprint = self.stage / "blueprint.conf"

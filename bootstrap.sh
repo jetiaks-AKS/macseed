@@ -433,7 +433,7 @@ bootstrap_application_readiness() (
         return 2
     fi
     local category result prefix
-    for category in app-store vscode-extensions git-repositories; do
+    for category in app-store git-repositories; do
         if bootstrap_item_scope_selected "$category"; then
             echo unsupported_interactive_operation
             return 2
@@ -508,6 +508,27 @@ bootstrap_application_readiness() (
                 return 2
             fi
         done <<< "$casks"
+    fi
+    if bootstrap_item_scope_selected vscode-extensions; then
+        if ! vscode_cli_resolve; then
+            echo "$VSCODE_CLI_CONDITION"
+            return 2
+        fi
+        local extension extensions
+        extensions="$(read_vscode_extensions_configuration "$(blueprint_generated_file vscode-extensions)")" || {
+            echo invalid_selected_input
+            return 2
+        }
+        while IFS= read -r extension || [[ -n "$extension" ]]; do
+            [[ -n "$extension" && "$extension" != \#* ]] || continue
+            blueprint_item_selected vscode-extensions "$extension" || continue
+            is_vscode_extension_installed "$extension"
+            result=$?
+            if [[ $result -ne 0 && $result -ne 1 ]]; then
+                echo vscode_cli_unavailable
+                return 2
+            fi
+        done <<< "$extensions"
     fi
     if blueprint_category_enabled git-configuration && git_configuration_scope_selected &&
        ! command -v git >/dev/null 2>&1; then

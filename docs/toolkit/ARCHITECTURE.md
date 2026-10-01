@@ -22,7 +22,7 @@ readiness or publication. The ID identifies the plan confirmed by the caller;
 it is not authorization. Its read-only readiness gate accepts selected Homebrew
 formulae when Homebrew is usable, including an installation under the supported
 architecture prefix that needs process PATH activation. It rejects absent or
-broken Homebrew, and selected App Store apps, VS Code extensions, Git
+broken Homebrew, and selected App Store apps, Git
 repositories, or secure identity work before publication, without silently
 omitting selected work. Automatic Homebrew installation is currently unavailable;
 guided prerequisite handling is the required 4.0 baseline. The current subset
@@ -77,7 +77,33 @@ owned stdin/process semantics and the existing mutation boundary apply.
 Production cask inspection and Global Verification remain authoritative. Failures
 may leave partial changes; independent macOS/vendor GUI dialogs are not suppressed.
 Ordinary CLI cask behavior is unchanged. Homebrew absence retains its prerequisite
-condition; MAS, extensions, repository cloning and Secure Restore remain blocked.
+condition; MAS, repository cloning and Secure Restore remain blocked.
+
+### Application VS Code extension coverage
+
+Selected extensions use the existing ID configuration, Preview, installation
+consumer and Global Verification. Application context prefers `code` from PATH;
+if absent, it can directly use stable VS Code's documented
+`Contents/Resources/app/bin/code` under `/Applications/Visual Studio Code.app`
+or `$HOME/Applications/Visual Studio Code.app`. Two bundles without an explicit
+PATH choice produce `vscode_cli_ambiguous`; custom locations and variants require
+an explicit `code` in PATH. No shell profile, symlink or permanent PATH is changed.
+
+Only selected extension work requires the CLI. Before publication,
+`vscode_cli_required` reports absence and `vscode_cli_unavailable` reports an
+unusable launcher or failed production inventory. Structured Preview preserves
+such conditions as warnings so readiness can return the typed prerequisite;
+future Desktop guidance and Check Again remain planned. A usable CLI must already
+exist before publication, including when the plan also contains a VS Code cask.
+
+The ordinary `--install-extension <ID>` command installs missing IDs; satisfied
+IDs are skipped without force, update-all, uninstall or new version semantics.
+CLI dependency/extension-pack handling remains its existing production behavior.
+Owned stdin/TTY/process semantics and the existing mutation boundary apply;
+Marketplace or network failure is an execution failure, not a prior capability
+rejection. Production inspection verifies installed IDs, not versions, enablement
+or extension runtime behavior. VS Code settings and human CLI PATH behavior are
+unchanged. No separate extension inventory or verifier is introduced.
 
 ## Restore prerequisites
 
