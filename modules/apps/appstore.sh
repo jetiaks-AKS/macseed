@@ -114,6 +114,11 @@ preview_appstore_apps() {
 
         is_appstore_app_installed "$app_id"
         inspection_result=$?
+        case $inspection_result in
+            0) preview_record app-store "$app_id" none satisfied ;;
+            1) preview_record app-store "$app_id" install planned ;;
+            *) preview_record app-store "$app_id" install blocked observation_failed ;;
+        esac
 
         case $inspection_result in
             0) detail "$app_name is already installed" ;;

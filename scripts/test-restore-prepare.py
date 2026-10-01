@@ -107,6 +107,220 @@ class RestorePrepareTests(unittest.TestCase):
         (self.root / "bin/bs").symlink_to(self.project / "bin/bs")
         self.environment["BS_INSTALL_DIR"] = str(self.root / "bin")
 
+    def plan_result(self, **selection):
+        result, events = self.invoke(**selection)
+        self.assertEqual(result.returncode, 0, events)
+        return events[1]["data"]
+
+    def select_formula(self):
+        blueprint = self.stage / "blueprint.conf"
+        blueprint.write_text(blueprint.read_text().replace('[homebrew-packages]\n',
+                                                          '[homebrew-packages]\nfixture-formula\n'))
+        bundle.write_file(self.stage / "generated/brew-packages.conf", b"fixture-formula\n")
+        self.environment["PATH"] = str(self.root / "bin") + ":/usr/bin:/bin:/usr/sbin:/sbin"
+        module = self.project / "modules/core/homebrew/homebrew.sh"
+        module.write_text(module.read_text().replace('/opt/homebrew', str(self.root / 'absent-brew'))
+                          .replace('/usr/local', str(self.root / 'absent-brew')))
+
+    def formula_cli(self):
+        brew = self.root / "bin/brew"
+        brew.write_text('#!/bin/bash\ncase "$*" in\n'
+                        ' --prefix) echo /opt/homebrew ;;\n'
+                        ' "list --formula --full-name") exit 0 ;;\n'
+                        ' *) exit 2 ;;\nesac\n')
+        brew.chmod(0o700)
+
+    def test_structured_folder_actions_and_selected_scope(self):
+        self.pack()
+        first = self.plan_result()
+        self.assertIn({"domain": "workspace-folders", "item_id": "Projects",
+                       "action": "create_directory", "disposition": "planned", "reason": None}, first["plan"])
+        self.assertEqual(first["selected_groups"], ["Workspace"])
+        self.assertTrue(first["readiness"]["ready"])
+        self.assertEqual(first["readiness"]["conditions"], [])
+        (self.home / "Projects").mkdir()
+        second = self.plan_result()
+        self.assertEqual(second["plan"][0]["disposition"], "satisfied")
+        self.assertNotEqual(first["prepared_plan_id"], second["prepared_plan_id"])
+
+    def test_settings_without_unrelated_application_preflight(self):
+        self.allow_application_bootstrap()
+        self.environment['PATH'] = str(self.root / 'bin') + ':/usr/bin:/bin:/usr/sbin:/sbin'
+        blueprint = self.stage / "blueprint.conf"
+        blueprint.write_text(blueprint.read_text().replace('vscode-settings="false"', 'vscode-settings="true"'))
+        bundle.write_file(self.stage / "generated/vscode/settings.json", b'{"opaque":"PRIVATE_SETTINGS_VALUE"}')
+        for tool in ("curl", "xcode-select", "sudo"):
+            (self.root / "bin" / tool).write_text('#!/bin/bash\necho ' + tool + ' >> "$TEST_MUTATIONS"\nexit 2\n')
+        self.pack()
+        first = self.plan_result()
+        self.assertTrue(first["readiness"]["ready"])
+        self.assertNotIn("PRIVATE_SETTINGS_VALUE", json.dumps(first))
+        self.assertIn({"domain": "vscode-settings", "item_id": "settings.json", "action": "replace_with_backup",
+                       "disposition": "planned", "reason": None}, first["plan"])
+        result, events = self.execute(first["prepared_plan_id"])
+        self.assertEqual(result.returncode, 0, events)
+        self.assertFalse((self.root / "mutations").exists())
+
+    def test_macos_scalar_projection_without_values_or_global_dependencies(self):
+        blueprint = self.stage / "blueprint.conf"
+        blueprint.write_text(blueprint.read_text().replace('macos-windows="false"', 'macos-windows="true"'))
+        bundle.write_file(self.stage / "generated/macos/windows.conf",
+                          b"NSGlobalDomain|AppleActionOnDoubleClick|string|Maximize\n")
+        defaults = self.root / 'bin/defaults'
+        defaults.write_text('#!/bin/bash\necho "does not exist" >&2\nexit 1\n')
+        defaults.chmod(0o700)
+        for tool in ('sudo', 'curl', 'xcode-select'):
+            (self.root / 'bin' / tool).write_text('#!/bin/bash\necho ' + tool + ' >> "$TEST_MUTATIONS"\nexit 1\n')
+        self.pack()
+        result = self.plan_result()
+        self.assertTrue(result['readiness']['ready'])
+        self.assertIn({"domain": "macos-windows", "item_id": "NSGlobalDomain/AppleActionOnDoubleClick",
+                       "action": "set_preference", "disposition": "planned", "reason": None}, result['plan'])
+        self.assertNotIn('Maximize', json.dumps(result))
+        self.assertFalse((self.root / 'mutations').exists())
+        defaults.write_text('#!/bin/bash\necho "unavailable" >&2\nexit 2\n')
+        failed_observation = self.plan_result()
+        self.assertFalse(failed_observation['readiness']['ready'])
+        self.assertTrue(any(row['reason'] == 'observation_failed' for row in failed_observation['plan']))
+        rejected, events = self.execute(failed_observation['prepared_plan_id'])
+        self.assertEqual(rejected.returncode, 2)
+        self.assertEqual(events[-1]['data']['code'], 'preview_observation_failed')
+        self.assertFalse(events[-1]['data']['publication_started'])
+
+
+    def test_git_identity_values_redacted_and_conflict_typed(self):
+        blueprint = self.stage / "blueprint.conf"
+        blueprint.write_text(blueprint.read_text().replace('git-configuration="false"', 'git-configuration="true"')
+                             .replace('[git-configuration]\n', '[git-configuration]\nuser.name\n'))
+        bundle.write_file(self.stage / "generated/git.conf", b'[user]\nname = PRIVATE_SOURCE_IDENTITY\n')
+        (self.home / '.gitconfig').write_text('[user]\nname = PRIVATE_TARGET_IDENTITY\n')
+        self.pack()
+        result = self.plan_result()
+        self.assertIn({"domain": "git-configuration", "item_id": "user.name", "action": "none",
+                       "disposition": "conflict", "reason": "target_conflict"}, result["plan"])
+        self.assertNotIn("PRIVATE_SOURCE_IDENTITY", json.dumps(result))
+        self.assertNotIn("PRIVATE_TARGET_IDENTITY", json.dumps(result))
+
+    def test_formula_prerequisites_and_reentry(self):
+        self.select_formula()
+        self.pack()
+        missing = self.plan_result()
+        self.assertFalse(missing['readiness']['ready'])
+        self.assertEqual(missing['readiness']['conditions'][0]['code'], 'homebrew_installation_requires_interaction')
+        self.assertEqual(missing['readiness']['conditions'][0]['status'], 'external_action_required')
+        self.assertTrue(any(row['reason'] == 'homebrew_installation_requires_interaction' for row in missing['plan']))
+        self.formula_cli()
+        resolved = self.plan_result()
+        self.assertTrue(resolved['readiness']['ready'])
+        self.assertNotEqual(missing['prepared_plan_id'], resolved['prepared_plan_id'])
+        rejected, events = self.execute(missing['prepared_plan_id'])
+        self.assertEqual(rejected.returncode, 2)
+        self.assertEqual(events[-1]['data']['code'], 'stale_plan')
+        self.assertFalse((self.project / 'config/blueprint.conf').exists())
+        (self.root / 'bin/xcode-select').write_text('#!/bin/bash\nexit 1\n')
+        clt = self.plan_result()
+        self.assertEqual(clt['readiness']['conditions'][0]['code'], 'command_line_tools_required')
+        (self.root / 'bin/xcode-select').write_text('#!/bin/bash\nexit 0\n')
+        (self.root / 'bin/curl').write_text('#!/bin/bash\nexit 1\n')
+        self.assertEqual(self.plan_result()['readiness']['conditions'][0]['code'], 'internet_required')
+
+    def test_installed_homebrew_activation_is_projected_consistently(self):
+        self.select_formula()
+        self.formula_cli()
+        prefix = self.root / 'absent-brew'
+        (prefix / 'bin').mkdir(parents=True)
+        brew = prefix / 'bin/brew'
+        (self.root / 'bin/brew').rename(brew)
+        brew.write_text('#!/bin/bash\ncase "$*" in\n'
+                        ' --prefix) echo "$TEST_ACTIVATED_PREFIX" ;;\n'
+                        ' "list --formula --full-name") echo fixture-formula ;;\n'
+                        ' *) exit 2 ;;\nesac\n')
+        self.environment['TEST_ACTIVATED_PREFIX'] = str(prefix)
+        for tool in ('sudo', 'curl', 'xcode-select'):
+            (self.root / 'bin' / tool).write_text('#!/bin/bash\necho ' + tool + ' >> "$TEST_MUTATIONS"\nexit 1\n')
+        self.pack()
+        result = self.plan_result()
+        self.assertTrue(result['readiness']['ready'])
+        self.assertIn({'domain': 'homebrew-packages', 'code': 'homebrew_path_activation',
+                       'status': 'safely_satisfiable'}, result['readiness']['conditions'])
+        self.assertIn({'domain': 'homebrew-packages', 'item_id': 'fixture-formula', 'action': 'none',
+                       'disposition': 'satisfied', 'reason': None}, result['plan'])
+        self.assertFalse((self.root / 'mutations').exists())
+
+    def test_repository_readiness_and_private_projection(self):
+        self.repository_fixture()
+        self.environment['TEST_GIT_BROKEN'] = 'true'
+        self.pack()
+        result = self.plan_result()
+        self.assertEqual(result['readiness']['conditions'][0]['code'], 'git_unavailable')
+        self.assertNotIn('https://example.test', json.dumps(result))
+        self.environment.pop('TEST_GIT_BROKEN')
+        ready = self.plan_result()
+        self.assertTrue(any(row['domain'] == 'git-repositories' and row['action'] == 'clone'
+                            for row in ready['plan']))
+
+    def test_vscode_prerequisites_and_safe_resolution(self):
+        code = self.vscode_fixture()
+        code.write_text('#!/bin/bash\nexit 2\n')
+        self.pack()
+        result = self.plan_result()
+        self.assertFalse(result['readiness']['ready'])
+        self.assertEqual(result['readiness']['conditions'][0]['code'], 'vscode_cli_unavailable')
+        self.assertEqual({row['item_id'] for row in result['plan'] if row['domain'] == 'vscode-extensions'},
+                         {'already.extension', 'publisher.fixture'})
+        code.unlink()
+        self.assertEqual(self.plan_result()['readiness']['conditions'][0]['code'], 'vscode_cli_required')
+
+    def test_mas_prepare_prerequisites_and_authorization(self):
+        mas = self.mas_fixture()
+        self.pack()
+        (self.root / 'bin/sudo').write_text('#!/bin/bash\nexit 1\n')
+        denied = self.plan_result()
+        self.assertEqual(denied['readiness']['conditions'][0]['code'], 'authorization_required')
+        (self.root / 'mas-state').touch()
+        satisfied = self.plan_result()
+        self.assertTrue(satisfied['readiness']['ready'], satisfied)
+        self.environment['TEST_MAS_BROKEN'] = 'true'
+        broken = self.plan_result()
+        self.assertEqual(broken['readiness']['conditions'][0]['code'], 'mas_unavailable')
+        mas.unlink()
+        absent = self.plan_result()
+        self.assertEqual(absent['readiness']['conditions'][0]['code'], 'mas_required')
+
+    def test_secure_prepare_launch_requirement_and_no_unrelated_preflight(self):
+        self.pack(secure=True)
+        for tool in ('sudo', 'curl', 'xcode-select'):
+            (self.root / 'bin' / tool).write_text('#!/bin/bash\necho ' + tool + ' >> "$TEST_MUTATIONS"\nexit 1\n')
+        (self.root / 'bin/age').write_text('#!/bin/bash\nexit 0\n')
+        result = self.plan_result(secure=True, groups=tuple(bundle.GROUPS))
+        conditions = result['readiness']['conditions']
+        self.assertTrue(any(row['domain'] == 'secure-ssh-identities' and row['code'] == 'ready' for row in conditions))
+        self.assertTrue(any(row['code'] == 'secure_bridge_required' and row['scope'] == 'execution_launch' for row in conditions))
+        self.assertEqual(result['plan'][0]['disposition'], 'pending_unlock')
+        self.assertFalse((self.root / 'mutations').exists())
+        self.environment['PATH'] = str(self.root / 'bin') + ':/usr/bin:/bin:/usr/sbin:/sbin'
+        (self.root / 'bin/age').unlink()
+        missing = self.plan_result(secure=True, groups=tuple(bundle.GROUPS))
+        self.assertTrue(any(row['code'] == 'age_required' for row in missing['readiness']['conditions']))
+
+    def test_mixed_prepare_reports_independent_blockers(self):
+        self.mas_fixture(mixed=True)
+        self.environment['TEST_MAS_BROKEN'] = 'true'
+        self.environment['TEST_GIT_BROKEN'] = 'true'
+        self.pack()
+        result = self.plan_result()
+        codes = {row['code'] for row in result['readiness']['conditions']}
+        self.assertTrue({'mas_unavailable', 'git_unavailable'} <= codes, result)
+        self.assertNotIn('private-account@example.test', json.dumps(result))
+
+    def test_cask_unsupported_classification_in_prepare(self):
+        self.cask_fixture()
+        Path(self.environment['TEST_CASK_METADATA']).write_text(json.dumps({'casks': [{'token': 'fixture-cask',
+            'artifacts': [{'pkg': ['fixture.pkg']}], 'tap': 'homebrew/cask', 'disabled': False}]}))
+        self.pack()
+        result = self.plan_result()
+        self.assertTrue(any(row['status'] == 'unsupported' for row in result['readiness']['conditions']), result)
+
     def test_prepare_plan_and_recomputation(self):
         self.pack()
         before = self.archive.read_bytes()
@@ -114,7 +328,7 @@ class RestorePrepareTests(unittest.TestCase):
         self.assertEqual(first.returncode, 0, first.stderr)
         self.assertEqual([event["type"] for event in events], ["started", "result", "completed"])
         plan = events[1]["data"]
-        self.assertEqual(plan["preview_detail_level"], "module_summary")
+        self.assertEqual(plan["preview_detail_level"], "selected_requirements")
         self.assertTrue(plan["has_planned_changes"])
         self.assertFalse(plan["include_secure"])
         self.assertEqual(plan["secure_restore_status"], "not_selected")
@@ -149,7 +363,7 @@ class RestorePrepareTests(unittest.TestCase):
         self.assertEqual(selected.returncode, 0, selected.stderr)
         self.assertEqual(selected_events[1]["data"]["secure_restore_status"], "selected_pending")
         self.assertNotIn(b"private-ciphertext", selected.stdout)
-        self.assertFalse((self.root / "mutations").exists())
+        self.assertEqual((self.root / "mutations").read_text(), "age")
         excluded, excluded_events = self.invoke(secure=False)
         self.assertEqual(excluded.returncode, 0, excluded.stderr)
         self.assertNotEqual(selected_events[1]["data"]["prepared_plan_id"],
@@ -171,8 +385,8 @@ class RestorePrepareTests(unittest.TestCase):
                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
 
         denied = check()
-        self.assertEqual(denied.returncode, 2)
-        self.assertEqual(denied.stdout.strip(), b"authorization_required")
+        self.assertEqual(denied.returncode, 0)
+        self.assertEqual(denied.stdout.strip(), b"ready")
         self.assertFalse((self.project / "config/generated").exists())
         self.assertFalse((self.project / "config/blueprint.conf").exists())
         (self.root / "bin/sudo").write_text("#!/bin/bash\nexit 0\n")
@@ -491,6 +705,8 @@ exit 0
         self.assertEqual(result.returncode, 0, prepared)
         self.assertTrue(any(row["module"] == "preview_vscode_extensions" and row["planned"]
                             for row in prepared[1]["data"]["modules"]))
+        self.assertIn({"domain": "vscode-extensions", "code": "vscode_bundled_cli",
+                       "status": "safely_satisfiable"}, prepared[1]["data"]["readiness"]["conditions"])
         result, events = self.execute(prepared[1]["data"]["prepared_plan_id"])
         self.assertEqual(result.returncode, 0, events)
         self.assertEqual(events[-2]["data"]["verification"]["verdict"],
@@ -978,13 +1194,6 @@ esac
         self.assertFalse(events[-1]["data"]["target_mutation_may_have_started"])
         self.assertFalse((self.project / "config/blueprint.conf").exists())
 
-        ordinary_id = self.invoke()[1][1]["data"]["prepared_plan_id"]
-        denied, events = self.execute(ordinary_id)
-        self.assertEqual(denied.returncode, 2)
-        self.assertEqual(events[-1]["data"]["code"], "authorization_required")
-        self.assertFalse((self.project / "config/blueprint.conf").exists())
-        self.assertFalse((self.home / "Projects").exists())
-
         blueprint = self.stage / "blueprint.conf"
         blueprint.write_text(blueprint.read_text().replace("[git-repositories]\n", "[git-repositories]\nrepo\n"))
         bundle.write_file(self.stage / "generated/workspace/repositories.conf",
@@ -1000,10 +1209,11 @@ esac
         logs = "\n".join(p.read_text() for p in (self.project / "logs/history").glob("preview-*.log"))
         self.assertEqual(prepared_result.returncode, 0,
                          (prepared_events, [line for line in logs.splitlines() if "[ERROR]" in line]))
-        unsupported_id = prepared_events[1]["data"]["prepared_plan_id"]
+        (self.root / "bin/curl").write_text("#!/bin/bash\nexit 1\n")
+        unsupported_id = self.invoke()[1][1]["data"]["prepared_plan_id"]
         rejected, events = self.execute(unsupported_id)
         self.assertEqual(rejected.returncode, 2)
-        self.assertEqual(events[-1]["data"]["code"], "authorization_required")
+        self.assertEqual(events[-1]["data"]["code"], "internet_required")
         self.assertFalse((self.project / "config/blueprint.conf").exists())
 
     def test_execute_verification_and_partial_failure_states(self):
@@ -1038,14 +1248,12 @@ esac
     def test_execute_failure_after_publication_before_mutation(self):
         self.pack()
         self.allow_application_bootstrap()
-        sudo_count = self.root / "sudo-count"
-        (self.root / "bin/sudo").write_text(
-            "#!/bin/bash\n"
-            'count=$(cat "$TEST_SUDO_COUNT" 2>/dev/null || echo 0)\n'
-            'count=$((count+1))\n'
-            'printf "%s" "$count" > "$TEST_SUDO_COUNT"\n'
-            '[[ "$count" -eq 1 ]]\n')
-        self.environment["TEST_SUDO_COUNT"] = str(sudo_count)
+        bootstrap = self.project / "bootstrap.sh"
+        bootstrap.write_text(bootstrap.read_text().replace(
+            "source modules/core/preflight/preflight.sh\n",
+            "source modules/core/preflight/preflight.sh\n" +
+            "original_check_macos() { sw_vers >/dev/null; }\n" +
+            "check_macos() { [[ \"$MODE\" != --bootstrap ]]; }\n"))
         prepared = self.invoke()[1][1]["data"]["prepared_plan_id"]
         failed, events = self.execute(prepared)
         self.assertEqual(failed.returncode, 2)
@@ -1188,10 +1396,12 @@ esac
         environment = dict(self.environment, BLUEPRINT_FILE=str(self.stage / "blueprint.conf"),
                            BLUEPRINT_GENERATED_DIR=str(self.stage / "generated"),
                            BUNDLE_RESTORE_ACTIVE="true", BS_INSTALL_DIR=str(self.root / "bin"))
+        (self.root / "bin/sw_vers").write_text("#!/bin/bash\necho 0\n")
         denied = execution.OwnedBootstrap(self.project, environment)
         self.assertEqual(denied.wait(), 2)
         self.assertFalse(denied.mutation_may_have_started)
         self.assertFalse((self.home / "Projects").exists())
+        (self.root / "bin/sw_vers").write_text("#!/bin/bash\necho 99\n")
         (self.root / "bin/sudo").write_text("#!/bin/bash\nexit 0\n")
         (self.project / "scripts").mkdir()
         (self.project / "bin").mkdir()
@@ -1276,7 +1486,7 @@ esac
         invalid, events = self.invoke(secure=True)
         self.assertNotEqual(invalid.returncode, 0)
         self.assertEqual(events[-1]["data"]["code"], "invalid_selection")
-        (self.root / "bin/curl").write_text("#!/bin/bash\nexit 2\n")
+        (self.root / "bin/sw_vers").write_text("#!/bin/bash\nexit 2\n")
         failed, failed_events = self.invoke()
         self.assertNotEqual(failed.returncode, 0)
         self.assertEqual(failed_events[-1]["data"]["code"], "preview_failed")
@@ -1284,7 +1494,7 @@ esac
 
     def test_cancellation_cleans_stage(self):
         self.pack()
-        (self.root / "bin/curl").write_text("#!/bin/bash\nsleep 20\n")
+        (self.root / "bin/sw_vers").write_text("#!/bin/bash\nsleep 20\n")
         request = {"protocol_version": 1, "operation_id": "cancel-1",
                    "operation": "restore_prepare",
                    "parameters": {"path": str(self.archive), "disabled_groups": [],

@@ -23,6 +23,7 @@ preview_macos_category() {
     preview_defaults_config "$config_file" "${3:-}" || return 2
 
     if [[ "$DEFAULTS_PREVIEW_CHANGED" == true && -n "$restart_process" ]]; then
+        preview_record "macos-${3:-settings}" "$restart_process" restart_process planned
         preview_action "Would restart process: $restart_process"
     fi
 

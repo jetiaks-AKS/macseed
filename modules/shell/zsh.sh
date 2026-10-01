@@ -261,15 +261,15 @@ preview_zsh() {
         return 0
     fi
     case "$ZSH_SNAPSHOT_STATUS" in
-        absent) warning "Zsh configuration absent from source"; return 1 ;;
-        excluded) warning "Zsh configuration excluded: $ZSH_SNAPSHOT_REASON"; return 1 ;;
+        absent) preview_record shell-zsh .zshrc none warning source_absent; warning "Zsh configuration absent from source"; return 1 ;;
+        excluded) preview_record shell-zsh .zshrc none warning source_excluded; warning "Zsh configuration excluded: $ZSH_SNAPSHOT_REASON"; return 1 ;;
     esac
     zsh_snapshot_inspect_target
     result=$?
     case "$result" in
-        0) success "Zsh configuration already matches"; return 0 ;;
-        1) preview_action "Would restore Zsh configuration"; return 0 ;;
-        3) warning "Existing .zshrc differs; no replacement planned"; return 1 ;;
+        0) preview_record shell-zsh .zshrc none satisfied; success "Zsh configuration already matches"; return 0 ;;
+        1) preview_record shell-zsh .zshrc create planned; preview_action "Would restore Zsh configuration"; return 0 ;;
+        3) preview_record shell-zsh .zshrc none conflict target_conflict; warning "Existing .zshrc differs; no replacement planned"; return 1 ;;
         *) error "Failed to inspect Zsh destination"; return 2 ;;
     esac
 }

@@ -13,8 +13,10 @@ preview_workspace_repositories() {
 
     if [[ "${MACSEED_APPLICATION_EXECUTION:-false}" == true ]] &&
        ! repository_application_readiness; then
-        warning "Repository readiness requires attention"
-        return 1
+        if [[ "$REPOSITORY_APPLICATION_CONDITION" != repository_target_conflict ]]; then
+            warning "Repository readiness requires attention"
+            return 1
+        fi
     fi
 
     local config_file
@@ -28,11 +30,12 @@ preview_workspace_repositories() {
 
     local has_warnings=false
     local repository_result
-    local repository path remote branch
+    local repository path remote branch preview_repository_index=0
 
     while IFS=$'\t' read -r repository path remote branch; do
         [[ -n "$repository" ]] || continue
 
+        ((preview_repository_index++))
         repository_preview "$repository" "$path" "$remote" "$branch"
         repository_result=$?
         if [[ $repository_result -eq 2 ]]; then

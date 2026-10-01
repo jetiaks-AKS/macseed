@@ -436,7 +436,12 @@ bootstrap_run_startup_validation() {
 # Internal, read-only gate for a future structured Restore caller. It must run
 # against the same staged Blueprint and generated inputs used by Preview.
 bootstrap_application_readiness() (
-    if [[ "${MACSEED_APPLICATION_SECURE_SELECTED:-false}" == true ||
+    local focus="${1:-all}" needs_network=false needs_clt=false needs_authorization=false
+    application_scope_selected() {
+        [[ "$focus" == all || "$focus" == "$1" ]] && bootstrap_item_scope_selected "$1"
+    }
+    if [[ "$focus" == all || "$focus" == secure-ssh-identities ]] &&
+       [[ "${MACSEED_APPLICATION_SECURE_SELECTED:-false}" == true ||
           -n "${BUNDLE_RESTORE_SECURE_FILE:-}" ]]; then
         if [[ "${MACSEED_APPLICATION_SECURE_READY:-false}" != true ]]; then
             echo secure_bridge_required
@@ -467,23 +472,46 @@ bootstrap_application_readiness() (
         return 2
     fi
     local result prefix
-    if bootstrap_item_scope_selected git-repositories; then
+    if application_scope_selected git-repositories; then
         if ! repository_application_readiness >/dev/null 2>&1; then
             echo "$REPOSITORY_APPLICATION_CONDITION"
             return 2
         fi
+        local repositories repository path remote branch
+        repositories="$(workspace_read_bootstrap_repositories "$(blueprint_generated_file git-repositories)" observation)" || return 2
+        while IFS=$'\t' read -r repository path remote branch; do
+            [[ -n "$repository" ]] || continue
+            repository_exists "$path"
+            [[ $? -ne 1 ]] || needs_network=true
+        done <<< "$repositories"
     fi
     if ! bootstrap_run_startup_validation >/dev/null 2>&1; then
         echo invalid_selected_input
         return 2
     fi
-    if bootstrap_item_scope_selected app-store; then
+    if application_scope_selected app-store; then
         if ! mas_application_readiness >/dev/null 2>&1; then
             echo "$MAS_APPLICATION_CONDITION"
             return 2
         fi
+        local applications app_id app_name
+        applications="$(read_appstore_configuration "$(blueprint_generated_file app-store)")" || return 2
+        while IFS='|' read -r app_id app_name; do
+            [[ -n "$app_id" && "$app_id" != \#* ]] || continue
+            blueprint_item_selected app-store "$app_id" || continue
+            is_appstore_app_installed "$app_id"
+            result=$?
+            if [[ $result -eq 2 ]]; then
+                echo mas_unavailable
+                return 2
+            fi
+            if [[ $result -eq 1 ]]; then
+                needs_network=true
+                needs_authorization=true
+            fi
+        done <<< "$applications"
     fi
-    if bootstrap_item_scope_selected homebrew-packages || bootstrap_item_scope_selected homebrew-casks; then
+    if application_scope_selected homebrew-packages || application_scope_selected homebrew-casks; then
         if ! command -v brew >/dev/null 2>&1; then
             homebrew_activate_installed >/dev/null 2>&1 || {
                 prefix="$(homebrew_expected_prefix)" || {
@@ -504,7 +532,7 @@ bootstrap_application_readiness() (
             return 2
         fi
     fi
-    if bootstrap_item_scope_selected homebrew-packages; then
+    if application_scope_selected homebrew-packages; then
         local package packages
         packages="$(read_brew_packages_configuration "$(blueprint_generated_file homebrew-packages)")" || {
             echo invalid_selected_input
@@ -515,13 +543,14 @@ bootstrap_application_readiness() (
             blueprint_item_selected homebrew-packages "$package" || continue
             is_brew_package_installed "$package"
             result=$?
+            if [[ $result -eq 1 ]]; then needs_network=true; needs_clt=true; fi
             if [[ $result -ne 0 && $result -ne 1 ]]; then
                 echo homebrew_unavailable
                 return 2
             fi
         done <<< "$packages"
     fi
-    if bootstrap_item_scope_selected homebrew-casks; then
+    if application_scope_selected homebrew-casks; then
         command -v jq >/dev/null 2>&1 || { echo missing_required_dependency; return 2; }
         local cask casks index=0
         casks="$(read_brew_casks_configuration "$(blueprint_generated_file homebrew-casks)")" || {
@@ -543,13 +572,15 @@ bootstrap_application_readiness() (
                 printf 'cask_repair_not_supported\t%s\n' "$index"
                 return 2
             fi
+            needs_network=true
+            needs_clt=true
             if ! cask_application_readiness "$cask" >/dev/null 2>&1; then
                 printf '%s\t%s\n' "$CASK_APPLICATION_CONDITION" "$index"
                 return 2
             fi
         done <<< "$casks"
     fi
-    if bootstrap_item_scope_selected vscode-extensions; then
+    if application_scope_selected vscode-extensions; then
         if ! vscode_cli_resolve; then
             echo "$VSCODE_CLI_CONDITION"
             return 2
@@ -564,25 +595,61 @@ bootstrap_application_readiness() (
             blueprint_item_selected vscode-extensions "$extension" || continue
             is_vscode_extension_installed "$extension"
             result=$?
+            [[ $result -ne 1 ]] || needs_network=true
             if [[ $result -ne 0 && $result -ne 1 ]]; then
                 echo vscode_cli_unavailable
                 return 2
             fi
         done <<< "$extensions"
     fi
-    if blueprint_category_enabled git-configuration && git_configuration_scope_selected &&
+    if [[ "$focus" == all || "$focus" == git-configuration ]] &&
+       blueprint_category_enabled git-configuration && git_configuration_scope_selected &&
        ! command -v git >/dev/null 2>&1; then
         echo missing_required_dependency
         return 2
     fi
-    if [[ "${MACSEED_APPLICATION_SECURE_ONLY:-false}" != true ]] &&
-       ! sudo -n true >/dev/null 2>&1; then
+    if [[ "$needs_clt" == true ]] && ! check_xcode >/dev/null 2>&1; then
+        echo command_line_tools_required
+        return 2
+    fi
+    if [[ "$needs_network" == true ]] && ! check_internet >/dev/null 2>&1; then
+        echo internet_required
+        return 2
+    fi
+    if [[ "$needs_authorization" == true ]] && ! sudo -n true >/dev/null 2>&1; then
         echo authorization_required
         return 2
     fi
     echo ready
     return 0
 )
+
+# Each selected domain runs the same production gate in isolation. A failed
+# dependency stops that domain's dependent checks; subsequent domains continue.
+bootstrap_application_readiness_report() {
+    local domain condition
+    for domain in homebrew-packages homebrew-casks app-store vscode-extensions git-repositories git-configuration; do
+        if [[ "$domain" == git-configuration ]]; then
+            blueprint_category_enabled "$domain" && git_configuration_scope_selected || continue
+        else
+            bootstrap_item_scope_selected "$domain" || continue
+        fi
+        condition="$(bootstrap_application_readiness "$domain")"
+        if [[ "$condition" == ready ]]; then
+            if [[ "$domain" == homebrew-* ]] && ! command -v brew >/dev/null 2>&1; then
+                condition=homebrew_path_activation
+            elif [[ "$domain" == vscode-extensions ]] && ! command -v code >/dev/null 2>&1; then
+                condition=vscode_bundled_cli
+            fi
+        fi
+        printf '%s\t%s\n' "$domain" "$condition"
+    done
+    if [[ "${MACSEED_APPLICATION_SECURE_SELECTED:-false}" == true ]]; then
+        condition="$(bootstrap_application_readiness secure-ssh-identities)"
+        printf 'secure-ssh-identities\t%s\n' "$condition"
+    fi
+    return 0
+}
 
 # A dedicated descriptor, supplied by the owned application subprocess, carries
 # the conservative transition. Normal CLI runs have no descriptor and no output.
@@ -724,6 +791,14 @@ MODE="$1"
 MODE_NAME="$2"
 PREVIEW_HAS_CHANGES=false
 
+if [[ "$MODE" == --dry-run && "${MACSEED_APPLICATION_EXECUTION:-false}" == true ]] &&
+   { bootstrap_item_scope_selected homebrew-packages || bootstrap_item_scope_selected homebrew-casks; } &&
+   ! command -v brew >/dev/null 2>&1; then
+    # Use the same process-local activation as readiness, so Preview observes
+    # the installation Core can safely make available; never install here.
+    homebrew_activate_installed >/dev/null 2>&1 || :
+fi
+
 if [[ "$MODE" == --bootstrap && "${MACSEED_APPLICATION_EXECUTION:-false}" == true ]]; then
     if bootstrap_item_scope_selected homebrew-casks; then
         # Formula installation in a mixed plan must not refresh cask definitions.
@@ -825,7 +900,10 @@ fi
 # Preflight Checks
 # ==========================================
 
-if [[ "$MODE" == "--dry-run" ]]; then
+if [[ "${MACSEED_APPLICATION_EXECUTION:-false}" == true ]]; then
+    # Work-specific dependencies are checked by application readiness.
+    check_macos
+elif [[ "$MODE" == "--dry-run" ]]; then
     run_read_only_preflight_checks
 else
     run_preflight_checks
@@ -846,7 +924,10 @@ fi
 # ==========================================
 
 if [[ "$MODE" == "--dry-run" ]]; then
-    run_inspection "Homebrew" check_homebrew_read_only
+    if [[ "${MACSEED_APPLICATION_EXECUTION:-false}" != true ]] ||
+       bootstrap_item_scope_selected homebrew-packages || bootstrap_item_scope_selected homebrew-casks; then
+        run_inspection "Homebrew" check_homebrew_read_only
+    fi
 elif [[ "$MODE" == "--discover" ]]; then
     run_module "Homebrew" check_homebrew_read_only
 elif [[ "$MODE" == "--bootstrap" && "${BUNDLE_RESTORE_ACTIVE:-false}" == true &&
@@ -857,13 +938,17 @@ else
     run_module "Homebrew" check_homebrew
 fi
 if [[ "$MODE" == "--dry-run" ]]; then
-    run_inspection "Git" check_git
-    run_inspection "SSH" check_ssh
-    run_inspection "Terminal" check_terminal
+    if [[ "${MACSEED_APPLICATION_EXECUTION:-false}" != true ]]; then
+        run_inspection "Git" check_git
+        run_inspection "SSH" check_ssh
+        run_inspection "Terminal" check_terminal
+    fi
 else
-    run_module "Git" check_git
-    run_module "SSH" check_ssh
-    run_module "Terminal" check_terminal
+    if [[ "${MACSEED_APPLICATION_EXECUTION:-false}" != true ]]; then
+        run_module "Git" check_git
+        run_module "SSH" check_ssh
+        run_module "Terminal" check_terminal
+    fi
 fi
 
 
@@ -988,6 +1073,10 @@ exit "$result"
 )
 
 if [[ "$MODE" == "--application-readiness" ]]; then
+    if [[ "${MACSEED_APPLICATION_READINESS_REPORT:-false}" == true ]]; then
+        bootstrap_application_readiness_report
+        exit $?
+    fi
     bootstrap_application_readiness
 elif [[ "$MODE" == "--capture" ]]; then
     bundle_capture

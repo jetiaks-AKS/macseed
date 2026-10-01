@@ -67,6 +67,11 @@ preview_workspace_folders() {
 
         workspace_folder_state "$folder"
         inspection_result=$?
+        case $inspection_result in
+            0) preview_record workspace-folders "$folder" none satisfied ;;
+            1) preview_record workspace-folders "$folder" create_directory planned ;;
+            *) preview_record workspace-folders "$folder" create_directory blocked target_conflict ;;
+        esac
 
         case $inspection_result in
             0)

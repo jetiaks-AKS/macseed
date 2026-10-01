@@ -244,6 +244,7 @@ inspect_git_configuration() {
     git_global_observe
     result=$?
     if [[ $result -eq 1 ]]; then
+        preview_record git-configuration scope none conflict external_management
         warning "Global Git configuration is externally managed"
         return 1
     fi
@@ -256,18 +257,24 @@ inspect_git_configuration() {
            "${GIT_CONFIGURATION_SELECTED[$index]}" == true ]] || continue
         key="${GIT_CONFIGURATION_KEYS[$index]}"
         if [[ ${GIT_GLOBAL_COUNTS[$index]} -gt 1 ]]; then
+            preview_record git-configuration "$key" none conflict multiple_values
             warning "Multiple direct global Git values: $key"
             warnings=true
         elif [[ ${GIT_GLOBAL_COUNTS[$index]} -eq 1 ]]; then
             if [[ "${GIT_GLOBAL_VALUES[$index]}" != "${GIT_CONFIGURATION_VALUES[$index]}" ]]; then
+                preview_record git-configuration "$key" none conflict target_conflict
                 warning "Existing Git setting differs; preserving: $key"
                 warnings=true
+            else
+                preview_record git-configuration "$key" none satisfied
             fi
         elif [[ "$key" == core.editor ]] &&
              ! git_configuration_editor_available "${GIT_CONFIGURATION_VALUES[$index]}"; then
+            preview_record git-configuration "$key" set_setting blocked editor_unavailable
             warning "Git editor dependency unavailable: $key"
             warnings=true
         else
+            preview_record git-configuration "$key" set_setting planned
             GIT_CONFIGURATION_ACTIONS[$index]=create
         fi
     done

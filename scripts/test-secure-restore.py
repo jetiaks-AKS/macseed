@@ -302,6 +302,11 @@ class SecureRestoreTests(unittest.TestCase):
         path.unlink()
         path.write_text('#!/bin/bash\nexit 2\n')
         path.chmod(0o700)
+        _, stale, _ = self.peer()
+        self.assertEqual(stale[-1]['data']['code'], 'stale_plan')
+        result, prepared = self.invoke(secure=True)
+        self.assertEqual(result.returncode, 0, prepared)
+        self.plan = prepared[1]['data']['prepared_plan_id']
         _, events, challenges = self.peer()
         self.assertEqual(events[-1]['data']['code'], 'age_unavailable')
         self.assertFalse(challenges)

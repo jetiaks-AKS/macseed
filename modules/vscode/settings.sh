@@ -192,6 +192,11 @@ preview_vscode_settings() {
 
     inspect_vscode_settings_target "$source_file" "$target_dir" "$target_file"
     inspection_result=$?
+    case $inspection_result in
+        0) preview_record vscode-settings settings.json none satisfied ;;
+        1) preview_record vscode-settings settings.json replace_with_backup planned ;;
+        *) preview_record vscode-settings settings.json replace_with_backup blocked target_conflict ;;
+    esac
 
     case $inspection_result in
         0)

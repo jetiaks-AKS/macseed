@@ -238,11 +238,28 @@ preview_ssh_configuration() {
     payload="$(mktemp)" || return 2
     ssh_configuration_inspect "$payload"; result=$?
     if [[ $result -eq 0 && "$SSH_TARGET_STATUS" == absent-* ]]; then
+        preview_record ssh-configuration config create planned
+    elif [[ $result -eq 0 ]]; then
+        preview_record ssh-configuration config none satisfied
+    elif [[ $result -eq 3 ]]; then
+        preview_record ssh-configuration config none warning source_absent
+    elif [[ $result -eq 1 ]]; then
+        case "$SSH_SNAPSHOT_STATUS" in
+            unsupported|external) preview_record ssh-configuration config none warning source_excluded ;;
+            *) preview_record ssh-configuration config none conflict target_conflict ;;
+        esac
+    else
+        preview_record ssh-configuration config none blocked observation_failed
+    fi
+    if [[ $result -eq 0 && "$SSH_TARGET_STATUS" == absent-* ]]; then
         preview_action "Would restore SSH configuration: $SSH_SNAPSHOT_COUNT eligible profiles"
     fi
     rm -f "$payload"
     [[ $result -ne 3 ]] || return 0
-    [[ $result -ne 0 || "$SSH_SOURCE_PARTIAL" != true ]] || return 1
+    if [[ $result -eq 0 && "$SSH_SOURCE_PARTIAL" == true ]]; then
+        preview_record ssh-configuration scope none warning partial_source_coverage
+        return 1
+    fi
     return "$result"
 }
 

@@ -193,6 +193,11 @@ preview_defaults_config() {
 
         check_defaults_record "$domain" "$key" "$type" "$desired"
         record_result=$?
+        case $record_result in
+            0) preview_record "macos-${2:-settings}" "$domain/$key" none satisfied ;;
+            1) preview_record "macos-${2:-settings}" "$domain/$key" set_preference planned ;;
+            *) preview_record "macos-${2:-settings}" "$domain/$key" set_preference blocked observation_failed ;;
+        esac
 
         [[ $record_result -ne 2 ]] || return 2
         [[ $record_result -ne 0 ]] || continue

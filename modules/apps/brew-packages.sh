@@ -86,6 +86,7 @@ preview_brew_packages() {
         while IFS= read -r package || [[ -n "$package" ]]; do
             [[ -n "$package" && "$package" != \#* ]] || continue
             blueprint_item_selected homebrew-packages "$package" || continue
+            preview_record homebrew-packages "$package" install blocked homebrew_installation_requires_interaction
             preview_action "Would install Homebrew formula after setup: $package"
         done <<< "$packages"
         return 0
@@ -101,6 +102,11 @@ preview_brew_packages() {
 
         is_brew_package_installed "$package"
         inspection_result=$?
+        case $inspection_result in
+            0) preview_record homebrew-packages "$package" none satisfied ;;
+            1) preview_record homebrew-packages "$package" install planned ;;
+            *) preview_record homebrew-packages "$package" install blocked observation_failed ;;
+        esac
 
         case $inspection_result in
             0) detail "$package is already installed" ;;

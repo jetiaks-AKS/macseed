@@ -497,3 +497,15 @@ show_summary() {
     fi
 
 }
+
+# Private machine projection emitted at production Preview decision points.
+# Values, commands and diagnostics are deliberately not accepted by this API.
+preview_record() {
+    [[ "${MACSEED_APPLICATION_EXECUTION:-false}" == true &&
+       "${MODE:-}" == --dry-run && -n "${PREVIEW_PLAN_FILE:-}" ]] || return 0
+    local field
+    for field in "$@"; do
+        [[ "$field" != *$'\t'* && "$field" != *$'\n'* && "$field" != *$'\r'* ]] || return 2
+    done
+    printf '%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "${5:-none}" >> "$PREVIEW_PLAN_FILE"
+}

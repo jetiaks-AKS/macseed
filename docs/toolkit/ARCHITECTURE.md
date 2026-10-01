@@ -52,6 +52,38 @@ defines the current component responsibilities, state flow, boundaries, and
 architectural invariants. Development sequencing belongs in the Roadmap;
 configuration formats and value-level contracts belong in Configuration.
 
+### Structured Restore preparation
+
+`restore_prepare` returns the production Preview projection in `plan`: each row
+has `domain`, `item_id`, `action`, `disposition`, and a nullable typed `reason`.
+Disposition is `satisfied`, `planned`, `blocked`, `conflict`, `warning`, `unknown`,
+or `pending_unlock`. Unavailable inspection never becomes an Apply decision.
+Selected categories and item counts accompany the retained module summary;
+`selected_groups` contains only groups with selected requirements. Production
+Preview decision points emit private machine records; Core never parses human
+output or performs a second planning pass.
+
+Application/package IDs, selected relative Workspace folders and managed setting
+keys can identify work. Repository IDs are selection indexes, with a display name
+only for a conservative safe label. Remote URLs, absolute target paths, Git identity
+values, SSH profiles, settings payloads and key material are not included. Secure
+identities remain an encrypted set pending unlock; preparation never decrypts it.
+
+`readiness` contains `ready`, `ready_scope=environment`, `conditions`,
+`check_policy=first_blocker_per_domain`, and `reentry=restore_prepare`. Conditions
+carry `domain`, stable `code`, and `status`: `satisfied`, `safely_satisfiable`,
+`external_action_required`, or `unsupported`; cask conditions can carry a selected
+item index. Independent selected domains are checked, but each domain stops at its
+first blocker. Secure `secure_bridge_required` has `scope=execution_launch`: it
+requires a launcher-provided channel at Execute and is excluded from environment
+readiness. Preparing never consumes a secret channel. `ready` is not authorization.
+
+Readiness, selected requirements and Preview records bind `prepared_plan_id`.
+External preparation is followed by Check Again/re-prepare and confirmation of the
+new plan. Execute repeats preparation, rejects stale IDs, rechecks actual launch
+readiness and blocks unresolved Preview errors before publication. There is no
+transaction/resume database. Execution reporting remains aggregate Verification.
+
 ### Application Secure SSH Restore
 
 The future Desktop launcher creates one anonymous connected Unix stream socket
@@ -109,7 +141,7 @@ the ordinary Bootstrap prerequisites and SSH configuration consumer, and thus
 precedes Workspace cloning. The terminal CLI keeps its existing ordering and UX.
 Secure-only application execution bypasses generic administrator preflight;
 user SSH identity import needs no administrator authorization. Mixed plans
-retain their existing authorization requirements.
+require authorization only for selected work that needs it.
 
 Passphrases are transient process/PTY memory only: no secret argv, environment,
 JSON, generated state, logs or files are introduced. Python and OS memory do not
@@ -260,12 +292,14 @@ bootstrap is optional pending Desktop authorization design; a privileged
 helper/XPC subsystem is not required solely for it.
 
 `age` is a prerequisite only for selected Secure Restore work that needs it.
-With a valid secret channel, readiness returns `age_required` when absent and
-`age_unavailable` when unusable, before publication. Application mode never
+Preparation reports `age_required` when absent and `age_unavailable` when
+unusable. Execute also checks the actual secret channel before publication. Application mode never
 installs it interactively. Desktop prerequisite guidance and a possible safe
-formula installation remain future work. Command Line Tools likewise belong to operations that
-need them; external installation should lead to guidance and re-check. Current
-CLI preflight checks CLT broadly; the plan-sensitive model is intended behavior.
+formula installation remain future work. Application readiness requires internet
+only for missing installs/clones, Command Line Tools for missing Homebrew installs,
+and non-interactive administrator authorization for missing MAS apps. Settings and
+Secure-only preparation/execution have none of those unrelated requirements.
+Human CLI preflight retains its existing broad checks.
 
 External prerequisite installation is acceptable when automation would add
 disproportionate privileged-system complexity. It does not narrow Restore

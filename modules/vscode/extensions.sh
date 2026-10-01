@@ -125,6 +125,11 @@ preview_vscode_extensions() {
 
         is_vscode_extension_installed "$extension"
         inspection_result=$?
+        case $inspection_result in
+            0) preview_record vscode-extensions "$extension" none satisfied ;;
+            1) preview_record vscode-extensions "$extension" install planned ;;
+            *) preview_record vscode-extensions "$extension" install blocked observation_failed ;;
+        esac
 
         case $inspection_result in
             0) detail "$extension is already installed" ;;

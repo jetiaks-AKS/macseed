@@ -124,10 +124,12 @@ def prepared_restore(path, disabled_groups, include_secure):
         summary_file = private / "preview.summary"
         descriptor = os.open(summary_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         os.close(descriptor)
+        plan_file = private / "preview.plan"
+        plan_file.touch(mode=0o600)
         environment = dict(os.environ, BLUEPRINT_FILE=str(stage / "blueprint.conf"),
                            BLUEPRINT_GENERATED_DIR=str(stage / "generated"),
                            BUNDLE_RESTORE_PREVIEW="true", PREVIEW_SUMMARY_FILE=str(summary_file),
-                           MACSEED_APPLICATION_EXECUTION="true")
+                           MACSEED_APPLICATION_EXECUTION="true", PREVIEW_PLAN_FILE=str(plan_file))
         preview = subprocess.Popen(["./bootstrap.sh", "--dry-run"], cwd=ROOT, env=environment,
                                    stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                                    stderr=subprocess.DEVNULL, start_new_session=True)
@@ -147,7 +149,7 @@ def prepared_restore(path, disabled_groups, include_secure):
             raise
         if bundle.RECOVERY.exists() or bundle.RECOVERY.is_symlink():
             raise RecoveryRequired()
-        if preview_status not in (0, 1) or bundle.fingerprint(stage) != stage_identity:
+        if preview_status not in (0, 1, 2) or bundle.fingerprint(stage) != stage_identity:
             raise PreviewFailed()
         if bundle.fingerprint(input_path) != source_identity:
             raise bundle.Invalid("Bundle changed during preparation")
@@ -158,17 +160,87 @@ def prepared_restore(path, disabled_groups, include_secure):
                 raise PreviewFailed()
             modules.append({"module": fields[0], "status": {"0": "success", "1": "warning", "2": "error"}[fields[1]],
                             "planned": fields[2] == "true"})
-        if not modules or any(item["status"] == "error" for item in modules):
+        if preview_status == 2 and not any(item["status"] == "error" for item in modules):
             raise PreviewFailed()
+        if not modules or any(item["status"] == "error" and not item["module"].startswith("preview_")
+                              for item in modules):
+            raise PreviewFailed()
+        sections, categories = bundle.parse_blueprint((stage / "blueprint.conf").read_bytes())
+        requirements = prepared_requirements(stage, include_secure)
+        records = []
+        domains = set(bundle.ITEMS) | set(bundle.CATEGORIES) | {"secure-ssh-identities"}
+        for line in plan_file.read_text().splitlines():
+            fields = line.split("\t")
+            if len(fields) != 5 or fields[0] not in domains:
+                raise PreviewFailed()
+            domain, item, action, disposition, reason = fields
+            if action not in {"none", "install", "reinstall", "create_directory", "replace_with_backup",
+                              "set_preference", "restart_process", "set_setting", "create", "clone", "switch_branch"} or disposition not in {
+                              "satisfied", "planned", "blocked", "conflict", "warning"}:
+                raise PreviewFailed()
+            records.append({"domain": domain, "item_id": item, "action": action,
+                            "disposition": disposition, "reason": None if reason == "none" else reason})
+        # Selected inventory is read by the existing validated Bundle parser.
+        # Fill unobservable items, never invent an Apply decision from missing inspection.
+        for domain in bundle.ITEMS:
+            items = sections[domain]
+            for index, item in enumerate(items, 1):
+                identity = str(index) if domain == "git-repositories" else item
+                if any(row["domain"] == domain and row["item_id"] == identity for row in records):
+                    continue
+                records.append({"domain": domain, "item_id": identity, "action": "inspect",
+                                "disposition": "unknown", "reason": "inspection_unavailable"})
+        for domain, enabled in categories.items():
+            if enabled and (domain != "git-configuration" or sections[domain]) and not any(row["domain"] == domain for row in records):
+                records.append({"domain": domain, "item_id": "scope", "action": "inspect",
+                                "disposition": "unknown", "reason": "inspection_unavailable"})
+        if include_secure:
+            records.append({"domain": "secure-ssh-identities", "item_id": "encrypted_identity_set",
+                            "action": "validate_and_import", "disposition": "pending_unlock",
+                            "reason": "secure_unlock_required"})
+        for row in records:
+            if row["domain"] == "git-repositories":
+                label = sections["git-repositories"][int(row["item_id"]) - 1]
+                if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_. -]{0,127}", label, re.ASCII):
+                    row["display_name"] = label
+        # Attach typed readiness reasons to dependent actions without changing Preview decisions.
+        for condition in requirements["conditions"]:
+            if condition["status"] in ("external_action_required", "unsupported"):
+                for row in records:
+                    selected_index = condition.get("selected_item_index")
+                    if selected_index is not None and row["item_id"] != sections[condition["domain"]][selected_index - 1]:
+                        continue
+                    if row["domain"] == condition["domain"] and row["disposition"] in ("planned", "unknown", "blocked"):
+                        row["disposition"] = "blocked"
+                        row["reason"] = condition["code"]
+        module_domains = {"preview_brew_packages": "homebrew-packages", "preview_brew_casks": "homebrew-casks",
+                          "preview_appstore_apps": "app-store", "preview_vscode_extensions": "vscode-extensions",
+                          "preview_git_configuration": "git-configuration", "preview_vscode_settings": "vscode-settings",
+                          "preview_zsh": "shell-zsh", "preview_ssh_configuration": "ssh-configuration",
+                          "preview_workspace_folders": "workspace-folders", "preview_workspace_repositories": "git-repositories",
+                          "preview_macos_settings": "macOS Settings"}
+        for module in modules:
+            if module["status"] == "error":
+                domain = module_domains[module["module"]]
+                if not any(row["disposition"] == "blocked" for row in records) and requirements["ready"]:
+                    raise PreviewFailed()
+                requirements["ready"] = False
+                requirements["conditions"].append({"domain": domain,
+                    "code": "preview_observation_failed", "status": "external_action_required"})
         summary = {
-            "selected_groups": [name for name in bundle.GROUPS if name not in disabled_groups],
+            "selected_groups": [name for name, members in bundle.GROUPS.items()
+                                if any(categories.get(member, False) or sections.get(member) for member in members)],
+            "selected_categories": sorted(domain for domain, enabled in categories.items() if enabled),
+            "selected_item_counts": {domain: len(sections[domain]) for domain in bundle.ITEMS},
             "include_secure": include_secure,
             "secure_restore_status": "selected_pending" if include_secure else "not_selected",
             "modules": modules,
-            "has_planned_changes": any(item["planned"] for item in modules),
+            "plan": records,
+            "readiness": requirements,
+            "has_planned_changes": any(item["planned"] for item in modules) or include_secure,
             "warning_count": sum(item["status"] == "warning" for item in modules),
-            "error_count": 0,
-            "preview_detail_level": "module_summary",
+            "error_count": sum(item["status"] == "error" for item in modules),
+            "preview_detail_level": "selected_requirements",
         }
         identity = {"bundle": source_identity, "stage": stage_identity,
                     "disabled_groups": sorted(disabled_groups), "summary": summary}
@@ -177,6 +249,72 @@ def prepared_restore(path, disabled_groups, include_secure):
         # This identifies observed inputs and this module summary, never authorizes Apply.
         # Future Execute must rebuild and revalidate Preview before mutation.
         yield summary, stage, source_identity, stage_identity
+
+
+READINESS_CODES = {
+    "ready", "authorization_required", "unsupported_interactive_operation",
+    "vscode_cli_required", "vscode_cli_unavailable", "vscode_cli_ambiguous",
+    "git_required", "git_unavailable", "repository_target_conflict",
+    "mas_required", "mas_unavailable", "age_required", "age_unavailable",
+    "homebrew_installation_requires_interaction", "homebrew_unavailable",
+    "missing_required_dependency", "secure_bridge_required", "invalid_selected_input",
+    "cask_metadata_unavailable", "cask_execution_requirements_unsupported",
+    "cask_target_conflict", "cask_authorization_required", "cask_repair_not_supported",
+    "internet_required", "command_line_tools_required",
+}
+
+
+def prepared_requirements(stage, include_secure):
+    environment = dict(os.environ, BLUEPRINT_FILE=str(stage / "blueprint.conf"),
+                       BLUEPRINT_GENERATED_DIR=str(stage / "generated"),
+                       BUNDLE_RESTORE_ACTIVE="true", BUNDLE_RESTORE_SECURE_FILE="",
+                       MACSEED_APPLICATION_EXECUTION="true",
+                       MACSEED_APPLICATION_READINESS_REPORT="true",
+                       MACSEED_APPLICATION_SECURE_SELECTED=str(include_secure).lower(),
+                       MACSEED_APPLICATION_SECURE_READY="true")
+    child = subprocess.Popen(["./bootstrap.sh", "--application-readiness"], cwd=ROOT,
+                             env=environment, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                             stderr=subprocess.DEVNULL, start_new_session=True)
+    try:
+        output, _ = child.communicate(timeout=180)
+    except BaseException as exc:
+        if child.poll() is None:
+            os.killpg(child.pid, signal.SIGTERM)
+            try:
+                child.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                os.killpg(child.pid, signal.SIGKILL)
+                child.wait()
+        if isinstance(exc, subprocess.TimeoutExpired):
+            raise PreviewFailed() from None
+        raise
+    if child.returncode != 0:
+        raise PreviewFailed()
+    conditions = []
+    for line in output.decode("ascii").splitlines():
+        fields = line.split("\t")
+        if len(fields) not in (2, 3) or fields[1] not in READINESS_CODES | {"homebrew_path_activation", "vscode_bundled_cli"}:
+            raise PreviewFailed()
+        domain, code = fields[:2]
+        if code == "invalid_selected_input":
+            raise PreviewFailed()
+        status = ("satisfied" if code == "ready" else "safely_satisfiable" if code in {
+                  "homebrew_path_activation", "vscode_bundled_cli"} else "unsupported" if code in {
+                  "unsupported_interactive_operation", "cask_execution_requirements_unsupported",
+                  "cask_repair_not_supported"} else "external_action_required")
+        condition = {"domain": domain, "code": code, "status": status}
+        if len(fields) == 3:
+            condition["selected_item_index"] = int(fields[2])
+        conditions.append(condition)
+    if include_secure:
+        # This is a launcher capability requirement, not a probe of an execution secret FD.
+        # Preparation never consumes secrets or depends on an ephemeral channel's presence.
+        conditions.append({"domain": "secure-ssh-identities", "code": "secure_bridge_required",
+                           "status": "external_action_required", "scope": "execution_launch"})
+    ready = all(row["status"] in ("satisfied", "safely_satisfiable") or
+                row.get("scope") == "execution_launch" for row in conditions)
+    return {"ready": ready, "ready_scope": "environment", "conditions": conditions,
+            "check_policy": "first_blocker_per_domain", "reentry": "restore_prepare"}
 
 
 def readiness(stage, include_secure, secure_ready=False, secure_only=False):
@@ -192,7 +330,7 @@ def readiness(stage, include_secure, secure_ready=False, secure_only=False):
                                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                                start_new_session=True)
     try:
-        output, _ = process.communicate(timeout=30 if include_secure else None)
+        output, _ = process.communicate(timeout=180)
     except BaseException as exc:
         if process.poll() is None:
             os.killpg(process.pid, signal.SIGTERM)
@@ -202,7 +340,7 @@ def readiness(stage, include_secure, secure_ready=False, secure_only=False):
                 os.killpg(process.pid, signal.SIGKILL)
                 process.wait()
         if isinstance(exc, subprocess.TimeoutExpired):
-            raise ExecuteFailed("age_unavailable" if include_secure else "readiness_failed") from None
+            raise ExecuteFailed("readiness_failed") from None
         raise
     fields = output.decode("ascii", errors="replace").strip().split("\t")
     status = fields[0]
@@ -215,13 +353,7 @@ def readiness(stage, include_secure, secure_ready=False, secure_only=False):
             raise ExecuteFailed("readiness_failed")
     elif len(fields) != 1 or status in cask_conditions:
         raise ExecuteFailed("readiness_failed")
-    allowed = {"ready", "authorization_required", "unsupported_interactive_operation",
-               "vscode_cli_required", "vscode_cli_unavailable", "vscode_cli_ambiguous",
-               "git_required", "git_unavailable", "repository_target_conflict",
-               "mas_required", "mas_unavailable", "age_required", "age_unavailable",
-               "homebrew_installation_requires_interaction", "homebrew_unavailable",
-               "missing_required_dependency", "secure_bridge_required", "invalid_selected_input"}
-    allowed |= cask_conditions
+    allowed = READINESS_CODES
     if status not in allowed or (process.returncode == 0) != (status == "ready"):
         raise ExecuteFailed("readiness_failed")
     if status != "ready":
@@ -270,6 +402,8 @@ def restore_execute(operation_id, path, disabled_groups, include_secure, expecte
                         raise SecureError("secure_cancelled" if not channel.recv(1, socket.MSG_PEEK)
                                           else "secure_channel_invalid")
                 readiness(stage, include_secure, channel is not None, secure_only)
+                if plan["error_count"]:
+                    raise ExecuteFailed("preview_observation_failed")
                 if (bundle.fingerprint(stage) != stage_id or
                     bundle.fingerprint(Path(path)) != source_id):
                     raise ExecuteFailed("stale_plan")

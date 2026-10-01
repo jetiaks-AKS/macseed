@@ -116,6 +116,7 @@ preview_brew_casks() {
         while IFS= read -r cask || [[ -n "$cask" ]]; do
             [[ -n "$cask" && "$cask" != \#* ]] || continue
             blueprint_item_selected homebrew-casks "$cask" || continue
+            preview_record homebrew-casks "$cask" install blocked homebrew_installation_requires_interaction
             preview_action "Would install Homebrew cask after setup: $cask"
         done <<< "$casks"
         return 0
@@ -133,6 +134,7 @@ preview_brew_casks() {
         inspection_result=$?
 
         if [[ $inspection_result -eq 0 ]]; then
+            preview_record homebrew-casks "$cask" none satisfied
             detail "$cask is already installed"
             continue
         fi
@@ -143,8 +145,10 @@ preview_brew_casks() {
         fi
 
         if [[ "${CASK_REINSTALL_REQUIRED:-false}" == true ]]; then
+            preview_record homebrew-casks "$cask" reinstall blocked cask_repair_not_supported
             preview_action "Would reinstall Homebrew cask: $cask"
         else
+            preview_record homebrew-casks "$cask" install planned
             preview_action "Would install Homebrew cask: $cask"
         fi
     done <<< "$casks"

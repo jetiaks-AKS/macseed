@@ -111,10 +111,16 @@ check_screenshots() {
 
 preview_screenshots_settings() {
     inspect_screenshots_settings || return 2
+    if [[ "$SCREENSHOTS_DIRECTORY_MISSING" != true && "$SCREENSHOTS_PREFERENCE_CHANGED" != true ]]; then
+        preview_record macos-screenshots com.apple.screencapture/location none satisfied
+    fi
     if [[ "$SCREENSHOTS_DIRECTORY_MISSING" == true ]]; then
+        preview_record macos-screenshots destination create_directory planned
         preview_action "Would create screenshots directory: $SCREENSHOTS_DESTINATION"
     fi
     if [[ "$SCREENSHOTS_PREFERENCE_CHANGED" == true ]]; then
+        preview_record macos-screenshots com.apple.screencapture/location set_preference planned
+        preview_record macos-screenshots SystemUIServer restart_process planned
         local current=absent
         [[ "$DEFAULTS_OBSERVED_PRESENT" != true ]] || current="$DEFAULTS_OBSERVED_VALUE"
         preview_action "Would change macOS setting: com.apple.screencapture/location ($current -> $SCREENSHOTS_DESTINATION)"

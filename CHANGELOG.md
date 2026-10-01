@@ -16,6 +16,10 @@ The format is based on the principles of **Keep a Changelog**.
   Restore reuses production Preview and Bootstrap, rejects stale plans, supports
   cancellation of owned processes, and reports mutation risk separately from
   production Global Verification.
+* Added structured selected-item/action Restore plans and preparation-time
+  readiness to `restore_prepare`, with typed dispositions, conflicts and
+  prerequisite outcomes. Plans retain deterministic IDs and require re-preparation
+  after prerequisite resolution without persistent resume state.
 * Added plan-sensitive application Restore readiness checks before publication.
   Missing or unusable prerequisites and unsupported execution requirements block
   the selected plan; Homebrew and age are not installed interactively in this mode.
@@ -48,6 +52,11 @@ The format is based on the principles of **Keep a Changelog**.
 
 ### Fixed
 
+* Make application Restore prerequisites depend on selected work: settings and
+  Secure-only plans no longer require unrelated internet, Command Line Tools or
+  administrator authorization. Missing installs/clones retain network checks,
+  Homebrew installs retain Command Line Tools checks, and missing MAS apps retain
+  non-interactive authorization. Terminal CLI preflight remains unchanged.
 * Verify supported SSH profiles in a partial snapshot against matching target
   profiles without weakening Bootstrap/Preview configuration conflict protection.
 * Accept App Store inventory rows with aligned numeric IDs, prevent `mas list`
