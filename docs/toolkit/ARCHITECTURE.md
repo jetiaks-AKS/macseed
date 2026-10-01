@@ -24,8 +24,9 @@ formulae when Homebrew is usable, including an installation under the supported
 architecture prefix that needs process PATH activation. It rejects absent or
 broken Homebrew, and selected casks, App Store apps, VS Code extensions, Git
 repositories, or secure identity work before publication, without silently
-omitting selected work. Homebrew installation itself remains a temporary coverage
-gap. The current subset also includes ordinary settings and Workspace folders;
+omitting selected work. Automatic Homebrew installation is currently unavailable;
+guided prerequisite handling is the required 4.0 baseline. The current subset
+also includes ordinary settings and Workspace folders;
 application coverage must grow toward
 the existing practical CLI Restore capabilities before native app Restore is
 considered complete. Secure Restore awaits a dedicated credential bridge.
@@ -51,6 +52,41 @@ reproducing supported parts of a macOS working environment. This document
 defines the current component responsibilities, state flow, boundaries, and
 architectural invariants. Development sequencing belongs in the Roadmap;
 configuration formats and value-level contracts belong in Configuration.
+
+## Restore prerequisites
+
+The accepted Core/Desktop model distinguishes unsupported Restore work from a
+supported capability with an unsatisfied prerequisite. Checks depend on the
+selected plan: continue when satisfied; safely satisfy and verify a prerequisite
+when supported; otherwise return a typed condition for Desktop guidance and
+external action. Re-entry uses **re-inspect → recompute Preview → rerun idempotent
+work**, without transactional resume. This model is a product contract to
+implement, not a claim that every prerequisite flow exists today.
+
+Homebrew must not be required merely to launch Macseed, inspect a Bundle,
+Preview, restore unrelated categories, Verify or Compare. It is required only
+for selected work that depends on it. Today usable Homebrew permits supported
+formula restoration; absence returns `homebrew_installation_requires_interaction`
+before publication, while broken or partial installations retain
+`homebrew_unavailable`. For 4.0, Desktop must explain the selected work's need
+for Homebrew and offer installation instructions and **Check Again**. Automatic
+bootstrap is optional pending Desktop authorization design; a privileged
+helper/XPC subsystem is not required solely for it.
+
+`age` is a prerequisite only for selected Secure Restore work that needs it.
+The intended flow continues if it is available, or may install and verify it
+through the safe formula path when Homebrew is usable. If both are unavailable,
+Desktop should explain the prerequisite chain. This does not enable structured
+Secure Restore today: its credential bridge and prerequisite orchestration
+remain to be implemented. Command Line Tools likewise belong to operations that
+need them; external installation should lead to guidance and re-check. Current
+CLI preflight checks CLT broadly; the plan-sensitive model is intended behavior.
+
+External prerequisite installation is acceptable when automation would add
+disproportionate privileged-system complexity. It does not narrow Restore
+coverage: casks, MAS apps, VS Code extensions, Git repositories and Secure SSH
+Restore remain Macseed execution responsibilities as their paths become
+application-safe.
 
 ## Current architecture
 
