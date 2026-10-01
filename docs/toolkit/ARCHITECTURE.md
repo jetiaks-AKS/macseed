@@ -22,8 +22,8 @@ readiness or publication. The ID identifies the plan confirmed by the caller;
 it is not authorization. Its read-only readiness gate accepts selected Homebrew
 formulae when Homebrew is usable, including an installation under the supported
 architecture prefix that needs process PATH activation. It rejects absent or
-broken Homebrew, and selected App Store apps, Git
-repositories, or secure identity work before publication, without silently
+broken Homebrew, and selected App Store apps or secure identity work before
+publication, without silently
 omitting selected work. Automatic Homebrew installation is currently unavailable;
 guided prerequisite handling is the required 4.0 baseline. The current subset
 also includes ordinary settings and Workspace folders;
@@ -77,7 +77,7 @@ owned stdin/process semantics and the existing mutation boundary apply.
 Production cask inspection and Global Verification remain authoritative. Failures
 may leave partial changes; independent macOS/vendor GUI dialogs are not suppressed.
 Ordinary CLI cask behavior is unchanged. Homebrew absence retains its prerequisite
-condition; MAS, repository cloning and Secure Restore remain blocked.
+condition; MAS and Secure Restore remain blocked.
 
 ### Application VS Code extension coverage
 
@@ -104,6 +104,39 @@ Marketplace or network failure is an execution failure, not a prior capability
 rejection. Production inspection verifies installed IDs, not versions, enablement
 or extension runtime behavior. VS Code settings and human CLI PATH behavior are
 unchanged. No separate extension inventory or verifier is introduced.
+
+### Application repository reconstruction
+
+Selected Git repositories use the existing Workspace configuration, portable
+source-HOME → target-HOME mapping, Preview, clone/branch consumer and Global
+Verification. Reconstruction clones the recorded remote; it does not migrate
+working trees or `.git` directories. Existing repositories are never pulled,
+updated or assigned a different remote. A clean branch mismatch retains the
+production checkout behavior; tracked/staged changes prevent checkout.
+
+Git is required only for selected repository work. Local readiness returns
+`git_required`, `git_unavailable` or `repository_target_conflict` before
+publication. Existing non-repositories, mismatched origins and unsafe branch
+changes are preserved. Structured Preview retains these conditions as warnings
+for the typed readiness gate. Invalid or unsafe selected input remains blocked.
+No network authentication is attempted during readiness.
+
+Application clone disables terminal/askpass prompting and credential helpers
+for that command only; Macseed supplies no credentials. HTTPS public remotes
+can clone; authenticated remotes fail if authorization is unavailable through
+this constrained execution. SSH uses existing configuration and agent identities
+with BatchMode, StrictHostKeyChecking=yes, UpdateHostKeys=no and CheckHostIP=no;
+unknown/changed host keys fail rather than being accepted or added. Explicit
+application SSH command options override Git SSH launcher overrides. No global
+Git/SSH configuration is changed. Credential-bearing HTTP(S) URLs and URL
+query/fragment metadata are rejected; clone output is suppressed to keep remote
+URLs out of logs. Owned stdin, process cancellation and mutation boundaries apply.
+
+Remote/network/authentication failures are execution failures after mutation may
+have started. Failed clones can leave partial directories; no automatic cleanup
+or rollback is performed. Re-entry recomputes Preview and inspects that state.
+Global Verification retains worktree/origin/branch predicates. Human CLI clone
+behavior is unchanged; MAS and Secure Restore remain blocked.
 
 ## Restore prerequisites
 

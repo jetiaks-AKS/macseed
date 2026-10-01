@@ -225,6 +225,14 @@ load_git_configuration() {
 is_git_installed() { command -v git >/dev/null 2>&1; }
 check_git() {
     if is_git_installed; then success "Git already installed"; return 0; fi
+    if [[ "${MACSEED_APPLICATION_EXECUTION:-false}" == true ]]; then
+        if [[ "${MODE:-}" == --dry-run ]] ||
+           { ! bootstrap_item_scope_selected git-repositories &&
+             { ! blueprint_category_enabled git-configuration || ! git_configuration_scope_selected; }; }; then
+            warning "Git is not available for inspection"
+            return 1
+        fi
+    fi
     error "Git is not installed"
     return 2
 }

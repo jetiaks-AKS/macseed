@@ -432,13 +432,17 @@ bootstrap_application_readiness() (
         echo unsupported_interactive_operation
         return 2
     fi
-    local category result prefix
-    for category in app-store git-repositories; do
-        if bootstrap_item_scope_selected "$category"; then
-            echo unsupported_interactive_operation
+    local result prefix
+    if bootstrap_item_scope_selected app-store; then
+        echo unsupported_interactive_operation
+        return 2
+    fi
+    if bootstrap_item_scope_selected git-repositories; then
+        if ! repository_application_readiness >/dev/null 2>&1; then
+            echo "$REPOSITORY_APPLICATION_CONDITION"
             return 2
         fi
-    done
+    fi
     if ! bootstrap_run_startup_validation >/dev/null 2>&1; then
         echo invalid_selected_input
         return 2

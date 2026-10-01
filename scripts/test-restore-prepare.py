@@ -191,7 +191,7 @@ class RestorePrepareTests(unittest.TestCase):
                            'HAS_VSCODE_FOLDER="false"\nHAS_SETTINGS="false"\n'
                            'HAS_TASKS="false"\nHAS_LAUNCH="false"\n'
                            'HAS_EXTENSIONS="false"\n').encode())
-        self.assertEqual(check().stdout.strip(), b"unsupported_interactive_operation")
+        self.assertEqual(check().stdout.strip(), b"invalid_selected_input")
         self.assertFalse((self.project / "config/.bundle-publication").exists())
 
     def test_formula_readiness_keeps_casks_separate(self):
@@ -345,7 +345,7 @@ exit 0
         module.write_text(module.read_text().replace('/opt/homebrew', str(self.root / 'absent'))
                           .replace('/usr/local', str(self.root / 'absent')))
         self.assertEqual(check(), b"homebrew_installation_requires_interaction")
-        for category, item in (("app-store", "123"), ("git-repositories", "repo")):
+        for category, item in (("app-store", "123"),):
             blueprint.write_text(selected.replace(f"[{category}]\n", f"[{category}]\n{item}\n"))
             self.assertEqual(check(), b"unsupported_interactive_operation")
         blueprint.write_text(selected)
@@ -561,6 +561,181 @@ exit 0
         self.assertEqual(events[-1]["data"]["code"], "vscode_cli_unavailable")
         self.assertFalse(events[-1]["data"]["publication_started"])
 
+    def repository_fixture(self, remote="https://example.test/public.git", mixed=False):
+        if mixed:
+            self.vscode_fixture(mixed=True)
+        else:
+            self.allow_application_bootstrap()
+        self.environment.update(TEST_REPO_LOG=str(self.root / "repo-log"),
+                                TEST_REPO_REMOTE=remote,
+                                TEST_BOUNDARY=str(self.root / "boundary"))
+        entrypoint = self.project / "bootstrap.sh"
+        entrypoint.write_text(entrypoint.read_text().replace(
+            "    printf 'mutation_may_have_started\\n'", '    touch "$TEST_BOUNDARY"\n' +
+            "    printf 'mutation_may_have_started\\n'"))
+        git = self.root / "bin/git"
+        git.write_text('''#!/bin/bash
+[[ "${TEST_GIT_BROKEN:-false}" != true ]] || exit 2
+case "$1" in
+ --version) echo 'git version fixture'; exit 0 ;;
+ clone) echo "human:$*" >> "$TEST_REPO_LOG"; exit 0 ;;
+ check-ref-format) echo "${@: -1}"; exit 0 ;;
+ -c)
+   [[ "$GIT_TERMINAL_PROMPT" == 0 && "$GIT_ASKPASS" == /usr/bin/false ]] || exit 2
+   [[ "$SSH_ASKPASS_REQUIRE" == never && "$GIT_SSH_COMMAND" == *'BatchMode=yes'* &&
+      "$GIT_SSH_COMMAND" == *'StrictHostKeyChecking=yes'* &&
+      "$GIT_SSH_COMMAND" == *'UpdateHostKeys=no'* ]] || exit 2
+   [[ "$*" == *'credential.helper= -c credential.interactive=false clone'* ]] || exit 2
+   [[ ! -t 0 && ! -t 1 && -f "$TEST_BOUNDARY" ]] || exit 2
+   if (: </dev/tty) 2>/dev/null; then exit 2; fi
+   read -r input && exit 2
+   target="${@: -1}"
+   echo clone >> "$TEST_REPO_LOG"
+   mkdir -p "$target"
+   [[ "${TEST_CLONE_FAIL:-false}" != true ]] || exit 2
+   mkdir "$target/.git"
+   echo default > "$target/.branch"
+   exit 0 ;;
+ -C)
+   target="$2"; shift 2
+   case "$1" in
+     rev-parse) echo true ;;
+     remote) echo "${TEST_ORIGIN:-$TEST_REPO_REMOTE}" ;;
+     branch) cat "$target/.branch" ;;
+     diff) [[ "${TEST_DIRTY:-false}" != true ]] || exit 1 ;;
+     checkout) [[ "${TEST_CHECKOUT_FAIL:-false}" != true ]] || exit 2; echo "$2" > "$target/.branch"; echo checkout >> "$TEST_REPO_LOG" ;;
+     *) exit 2 ;;
+   esac
+   exit 0 ;;
+ *) exit 0 ;;
+esac
+''')
+        git.chmod(0o700)
+        blueprint = self.stage / "blueprint.conf"
+        blueprint.write_text(blueprint.read_text().replace('[git-repositories]\n',
+                                                              '[git-repositories]\nrepo\n'))
+        bundle.write_file(self.stage / "generated/workspace/repositories.conf",
+                          ('[repo]\nNAME="repo"\nPATH="/Users/source/Projects/repo"\n'
+                           f'REMOTE="{remote}"\nDEFAULT_BRANCH="main"\n'
+                           'CURRENT_BRANCH="main"\nHAS_UNCOMMITTED_CHANGES="false"\n'
+                           'HAS_VSCODE_FOLDER="false"\nHAS_SETTINGS="false"\n'
+                           'HAS_TASKS="false"\nHAS_LAUNCH="false"\n'
+                           'HAS_EXTENSIONS="false"\n').encode())
+        return self.home / "Projects/repo"
+
+    def test_repository_clone_convergence_and_existing_coverage(self):
+        target = self.repository_fixture(mixed=True)
+        self.pack()
+        plan = self.invoke()[1][1]["data"]["prepared_plan_id"]
+        result, events = self.execute(plan)
+        self.assertEqual(result.returncode, 0, events)
+        self.assertEqual((target / ".branch").read_text().strip(), "main")
+        self.assertEqual(events[-2]["data"]["verification"]["verdict"],
+                         "selected_requirements_verified")
+        self.assertNotIn(str(target).encode(), result.stdout)
+        self.assertNotIn(b"example.test", result.stdout)
+        plan = self.invoke()[1][1]["data"]["prepared_plan_id"]
+        self.assertEqual(self.execute(plan)[0].returncode, 0)
+        self.assertEqual((self.root / "repo-log").read_text(), "clone\ncheckout\n")
+        self.assertTrue(Path(self.environment["TEST_CASK_STATE"]).exists())
+        self.assertTrue(Path(self.environment["TEST_CASK_STATE"] + ".formula").exists())
+        self.assertTrue(Path(self.environment["TEST_EXTENSION_STATE"]).exists())
+
+    def test_repository_conflicts_before_publication(self):
+        target = self.repository_fixture()
+        target.parent.mkdir(parents=True)
+        self.pack()
+        for kind in ("file", "directory", "wrong-origin", "dirty"):
+            if kind == "file":
+                target.write_text("user data")
+            else:
+                target.mkdir(exist_ok=True)
+            if kind in ("wrong-origin", "dirty"):
+                (target / ".git").mkdir(exist_ok=True)
+                (target / ".branch").write_text("other")
+                self.environment["TEST_ORIGIN"] = ("wrong" if kind == "wrong-origin"
+                                                   else self.environment["TEST_REPO_REMOTE"])
+                self.environment["TEST_DIRTY"] = "true"
+            result, prepared = self.invoke()
+            self.assertEqual(result.returncode, 0, prepared)
+            result, events = self.execute(prepared[1]["data"]["prepared_plan_id"])
+            self.assertEqual(events[-1]["data"]["code"], "repository_target_conflict")
+            self.assertFalse(events[-1]["data"]["publication_started"])
+            self.assertFalse((self.root / "repo-log").exists())
+            if kind == "file":
+                self.assertEqual(target.read_text(), "user data")
+                target.unlink()
+
+    def test_repository_git_prerequisites(self):
+        self.repository_fixture()
+        self.pack()
+        for state, expected in (("broken", "git_unavailable"), ("missing", "git_required")):
+            if state == "broken":
+                self.environment["TEST_GIT_BROKEN"] = "true"
+            else:
+                # Simulate absence in the isolated capability probe without host fallback.
+                module = self.project / "modules/bootstrap/workspace/repositories-helpers.sh"
+                module.write_text(module.read_text().replace('$(command -v git)', '$(false)').replace('<<< "$PATH"', '<<< "/nonexistent"'))
+            result, prepared = self.invoke()
+            self.assertEqual(result.returncode, 0, prepared)
+            result, events = self.execute(prepared[1]["data"]["prepared_plan_id"])
+            self.assertEqual(events[-1]["data"]["code"], expected)
+            self.assertFalse(events[-1]["data"]["publication_started"])
+            self.assertIn("repo", (self.stage / "blueprint.conf").read_text())
+
+    def test_repository_partial_failure_and_ssh_boundary(self):
+        target = self.repository_fixture(remote="git@example.test:public.git")
+        self.environment["TEST_CLONE_FAIL"] = "true"
+        self.pack()
+        plan = self.invoke()[1][1]["data"]["prepared_plan_id"]
+        result, events = self.execute(plan)
+        self.assertEqual(result.returncode, 2, events)
+        self.assertTrue(events[-1]["data"]["target_mutation_may_have_started"])
+        self.assertTrue(target.is_dir())
+        self.assertFalse((target / ".git").exists())
+        plan = self.invoke()[1][1]["data"]["prepared_plan_id"]
+        result, events = self.execute(plan)
+        self.assertEqual(events[-1]["data"]["code"], "repository_target_conflict")
+        self.assertEqual((self.root / "repo-log").read_text(), "clone\n")
+
+    def test_repository_unselected_and_human_clone(self):
+        self.repository_fixture()
+        result = subprocess.run(["bash", "-c",
+            'source modules/bootstrap/workspace/repositories-helpers.sh; '
+            'repository_clone "$TEST_REPO_REMOTE" "$HOME/disposable"'],
+            cwd=self.project, env=self.environment, check=False)
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual((self.root / "repo-log").read_text(),
+                         f"human:clone {self.environment['TEST_REPO_REMOTE']} {self.home}/disposable\n")
+        blueprint = self.stage / "blueprint.conf"
+        blueprint.write_text(blueprint.read_text().replace('[git-repositories]\nrepo\n',
+                                                          '[git-repositories]\n'))
+        self.environment["TEST_GIT_BROKEN"] = "true"
+        self.pack()
+        result, prepared = self.invoke()
+        self.assertEqual(result.returncode, 0, prepared)
+        self.assertEqual(self.execute(prepared[1]["data"]["prepared_plan_id"])[0].returncode, 0)
+
+    def test_repository_unavailable_branch_is_execution_failure(self):
+        target = self.repository_fixture()
+        self.environment["TEST_CHECKOUT_FAIL"] = "true"
+        self.pack()
+        plan = self.invoke()[1][1]["data"]["prepared_plan_id"]
+        result, events = self.execute(plan)
+        self.assertEqual(result.returncode, 2, events)
+        self.assertEqual(events[-1]["data"]["code"], "bootstrap_failed")
+        self.assertTrue(events[-1]["data"]["target_mutation_may_have_started"])
+        self.assertEqual((target / ".branch").read_text().strip(), "default")
+
+    def test_repository_credentials_rejected_privately(self):
+        self.repository_fixture(remote="https://user:secret@example.test/private.git")
+        self.pack()
+        result, events = self.invoke()
+        self.assertEqual(result.returncode, 2)
+        self.assertNotIn(b"secret", result.stdout + result.stderr)
+        logs = b"".join(p.read_bytes() for p in (self.project / "logs").rglob("*.log"))
+        self.assertNotIn(b"secret", logs)
+
     def test_execute_selected_formula_through_production_module(self):
         blueprint = self.stage / "blueprint.conf"
         blueprint.write_text(blueprint.read_text().replace(
@@ -698,7 +873,7 @@ esac
         unsupported_id = prepared_events[1]["data"]["prepared_plan_id"]
         rejected, events = self.execute(unsupported_id)
         self.assertEqual(rejected.returncode, 2)
-        self.assertEqual(events[-1]["data"]["code"], "unsupported_interactive_operation")
+        self.assertEqual(events[-1]["data"]["code"], "authorization_required")
         self.assertFalse((self.project / "config/blueprint.conf").exists())
 
     def test_execute_verification_and_partial_failure_states(self):

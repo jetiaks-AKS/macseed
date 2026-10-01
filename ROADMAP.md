@@ -234,7 +234,8 @@ Bootstrap/Workflow и, где применимо, Restore. Результат д
 `restore_prepare` и первый mutating `restore_execute` для временного
 ограниченного application-safe scope, включая выбранные Homebrew formulae при
 работающем Homebrew, отсутствующие app-only casks, прошедшие проверку metadata
-и каталога назначения, и выбранные VS Code extensions при доступном CLI.
+и каталога назначения, выбранные VS Code extensions при доступном CLI и Git-репозитории,
+восстанавливаемые из сохранённого remote без интерактивной авторизации.
 Для расширений application context может использовать официальный bundled CLI
 stable VS Code без установки `code` в PATH. Уже установленные casks проходят как no-op; остальные
 требования установки и repair/reinstall блокируются до публикации. Установка

@@ -4,6 +4,54 @@
 # Repository Helpers
 # ==========================================
 
+# Local capability only; never contacts a remote.
+repository_git_readiness() {
+    REPOSITORY_APPLICATION_CONDITION=git_required
+    local executable directory
+    executable="$(command -v git)" || {
+        local directories
+        IFS=: read -r -a directories <<< "$PATH"
+        for directory in "${directories[@]}"; do
+            [[ ! -e "${directory:-.}/git" && ! -L "${directory:-.}/git" ]] ||
+                REPOSITORY_APPLICATION_CONDITION=git_unavailable
+        done
+        return 2
+    }
+    REPOSITORY_APPLICATION_CONDITION=git_unavailable
+    # Apple's shim can offer to install developer tools; do not invoke it
+    # without an already selected developer directory.
+    if [[ "$executable" == /usr/bin/git ]]; then
+        xcode-select -p >/dev/null 2>&1 || return 2
+    fi
+    git --version >/dev/null 2>&1 || return 2
+    return 0
+}
+
+# Result is consumed by bootstrap.sh.
+# shellcheck disable=SC2034
+repository_application_readiness() {
+    local records repository path remote branch result
+    repository_git_readiness || return 2
+    records="$(workspace_read_bootstrap_repositories "$(blueprint_generated_file git-repositories)" observation)" || {
+        REPOSITORY_APPLICATION_CONDITION=invalid_selected_input
+        return 2
+    }
+    while IFS=$'\t' read -r repository path remote branch; do
+        [[ -n "$repository" ]] || continue
+        repository_inspect "$path" "$remote" "$branch"
+        [[ "$REPOSITORY_WORKTREE_KIND" != absent ]] || continue
+        REPOSITORY_APPLICATION_CONDITION=repository_target_conflict
+        [[ $REPOSITORY_WORKTREE_RESULT -eq 0 && $REPOSITORY_ORIGIN_RESULT -eq 0 &&
+           $REPOSITORY_BRANCH_RESULT -le 1 ]] || return 2
+        if [[ $REPOSITORY_BRANCH_RESULT -ne 0 ]]; then
+            repository_is_clean "$path"
+            result=$?
+            [[ $result -eq 0 ]] || return 2
+        fi
+    done <<< "$records"
+    return 0
+}
+
 # ==========================================
 # Repository Exists (0 present, 1 absent, 2 observation error)
 # ==========================================
@@ -76,7 +124,16 @@ repository_clone() {
     local remote="$1"
     local path="$2"
 
-    git clone "$remote" "$path"
+    if [[ "${MACSEED_APPLICATION_EXECUTION:-false}" == true ]]; then
+        # Disable helper/UI prompting for this command only. Existing ssh-agent
+        # identities and SSH config remain available; unknown hosts fail closed.
+        GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=/usr/bin/false SSH_ASKPASS=/usr/bin/false \
+        SSH_ASKPASS_REQUIRE=never GIT_SSH_VARIANT=ssh \
+        GIT_SSH_COMMAND='ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o UpdateHostKeys=no -o CheckHostIP=no' \
+            git -c credential.helper= -c credential.interactive=false clone "$remote" "$path" </dev/null >/dev/null 2>&1
+    else
+        git clone "$remote" "$path"
+    fi
 
 }
 

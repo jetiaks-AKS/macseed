@@ -53,7 +53,7 @@ install cleanup и install upgrade, под существующим owned proces
 mutation boundary. Production inspection и Global Verification остаются
 авторитетными. Отказ может оставить частичные изменения; независимые диалоги
 macOS/vendor не подавляются. CLI сохраняет прежнее поведение. Отсутствие Homebrew
-остаётся предпосылкой; MAS, клонирование и Secure Restore пока
+остаётся предпосылкой; MAS и Secure Restore пока
 блокируются.
 
 ## Покрытие VS Code extensions в режиме приложения
@@ -81,6 +81,38 @@ inventory — `vscode_cli_unavailable`. Structured Preview сохраняет э
 в поддержке возможности. Production inspection проверяет installed IDs, а не
 версии, enablement или runtime расширений. VS Code settings и PATH-поведение
 human CLI не меняются. Отдельные inventory и verifier не создаются.
+
+## Восстановление Git-репозиториев в режиме приложения
+
+Выбранные репозитории используют существующую конфигурацию Workspace, перенос
+путей source-HOME → target-HOME, Preview, clone/branch consumer и Global
+Verification. Восстановление выполняет clone сохранённого remote, а не перенос
+рабочего дерева или `.git`. Существующие репозитории не получают pull/update
+или новый remote. Для чистого репозитория сохраняется production checkout;
+tracked/staged изменения блокируют переключение ветки.
+
+Git требуется только выбранной работе с репозиториями. Readiness возвращает
+`git_required`, `git_unavailable` или `repository_target_conflict` до публикации.
+Чужие файлы, несовпадающий origin и небезопасное переключение ветки сохраняются.
+Structured Preview оставляет эти условия как warnings для типизированного gate.
+Некорректный или небезопасный ввод блокируется. Проверок сети и авторизации
+при readiness нет.
+
+Application clone отключает terminal/askpass prompts и credential helpers только
+для этой команды; Macseed не передаёт credentials. Публичный HTTPS remote может
+клонироваться; авторизованный remote завершится ошибкой, если доступ недоступен
+в этом ограниченном режиме. SSH использует существующую конфигурацию и ключи ssh-agent с BatchMode, StrictHostKeyChecking=yes, UpdateHostKeys=no и
+CheckHostIP=no. Неизвестные или изменённые host keys не принимаются и не
+добавляются. Явные параметры SSH приложения имеют приоритет над Git SSH launcher
+overrides. Глобальная конфигурация Git/SSH не меняется. HTTP(S) URLs с credentials
+и URL query/fragment отклоняются; вывод clone подавляется, чтобы remote не попал
+в логи. Сохраняются owned stdin, отмена процессов и mutation boundary.
+
+Ошибки remote, сети, авторизации или trust являются execution failures после
+возможного начала мутаций. Частичный каталог не удаляется автоматически;
+rollback нет. Повторный запуск заново строит Preview и наблюдает состояние.
+Global Verification сохраняет predicates worktree/origin/branch. Human CLI clone
+не изменён; MAS и Secure Restore остаются заблокированы.
 
 ## Предпосылки Restore
 

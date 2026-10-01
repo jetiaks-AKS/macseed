@@ -11,6 +11,12 @@ preview_workspace_repositories() {
         return 0
     fi
 
+    if [[ "${MACSEED_APPLICATION_EXECUTION:-false}" == true ]] &&
+       ! repository_application_readiness; then
+        warning "Repository readiness requires attention"
+        return 1
+    fi
+
     local config_file
     config_file="$(blueprint_generated_file git-repositories)"
 
