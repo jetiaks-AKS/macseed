@@ -433,7 +433,7 @@ bootstrap_application_readiness() (
         return 2
     fi
     local category
-    for category in homebrew-packages homebrew-casks app-store vscode-extensions git-repositories; do
+    for category in homebrew-casks app-store vscode-extensions git-repositories; do
         if bootstrap_item_scope_selected "$category"; then
             echo unsupported_interactive_operation
             return 2
@@ -442,6 +442,42 @@ bootstrap_application_readiness() (
     if ! bootstrap_run_startup_validation >/dev/null 2>&1; then
         echo invalid_selected_input
         return 2
+    fi
+    if bootstrap_item_scope_selected homebrew-packages; then
+        if ! command -v brew >/dev/null 2>&1; then
+            homebrew_activate_installed >/dev/null 2>&1 || {
+                prefix="$(homebrew_expected_prefix)" || {
+                    echo homebrew_unavailable
+                    return 2
+                }
+                if [[ -e "$prefix/bin/brew" ]]; then
+                    echo homebrew_unavailable
+                else
+                    echo homebrew_installation_requires_interaction
+                fi
+                return 2
+            }
+        fi
+        if ! brew --prefix >/dev/null 2>&1 ||
+           ! brew list --formula --full-name >/dev/null 2>&1; then
+            echo homebrew_unavailable
+            return 2
+        fi
+        local package result packages
+        packages="$(read_brew_packages_configuration "$(blueprint_generated_file homebrew-packages)")" || {
+            echo invalid_selected_input
+            return 2
+        }
+        while IFS= read -r package || [[ -n "$package" ]]; do
+            [[ -n "$package" && "$package" != \#* ]] || continue
+            blueprint_item_selected homebrew-packages "$package" || continue
+            is_brew_package_installed "$package"
+            result=$?
+            if [[ $result -ne 0 && $result -ne 1 ]]; then
+                echo homebrew_unavailable
+                return 2
+            fi
+        done <<< "$packages"
     fi
     if blueprint_category_enabled git-configuration && git_configuration_scope_selected &&
        ! command -v git >/dev/null 2>&1; then
@@ -598,6 +634,10 @@ PREVIEW_HAS_CHANGES=false
 
 if [[ "$MODE" == --bootstrap && "${MACSEED_APPLICATION_EXECUTION:-false}" == true ]]; then
     bootstrap_application_readiness || exit 2
+    if bootstrap_item_scope_selected homebrew-packages &&
+       ! command -v brew >/dev/null 2>&1; then
+        homebrew_activate_installed || exit 2
+    fi
 fi
 
 verification_reset bootstrap

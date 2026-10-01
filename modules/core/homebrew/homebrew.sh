@@ -23,13 +23,17 @@ is_homebrew_installed() {
 }
 
 # The installer runs in a child shell; activate its prefix in this process.
-homebrew_activate_installed() {
-    local prefix observed
+homebrew_expected_prefix() {
     case "$(uname -m)" in
-        arm64) prefix=/opt/homebrew ;;
-        x86_64) prefix=/usr/local ;;
+        arm64) printf '%s\n' /opt/homebrew ;;
+        x86_64) printf '%s\n' /usr/local ;;
         *) return 2 ;;
     esac
+}
+
+homebrew_activate_installed() {
+    local prefix observed
+    prefix="$(homebrew_expected_prefix)" || return 2
     [[ -f "$prefix/bin/brew" && -x "$prefix/bin/brew" ]] || return 2
     observed="$("$prefix/bin/brew" --prefix)" || return 2
     [[ "$observed" == "$prefix" ]] || return 2

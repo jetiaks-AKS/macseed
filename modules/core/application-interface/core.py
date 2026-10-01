@@ -197,6 +197,7 @@ def readiness(stage, include_secure):
         raise
     status = output.decode("ascii", errors="replace").strip()
     allowed = {"ready", "authorization_required", "unsupported_interactive_operation",
+               "homebrew_installation_requires_interaction", "homebrew_unavailable",
                "missing_required_dependency", "secure_bridge_required", "invalid_selected_input"}
     if status not in allowed or (process.returncode == 0) != (status == "ready"):
         raise ExecuteFailed("readiness_failed")

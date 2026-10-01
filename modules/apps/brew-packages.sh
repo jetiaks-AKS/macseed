@@ -120,6 +120,16 @@ preview_brew_packages() {
 # Install Homebrew Packages
 # ==========================================
 
+brew_install_formula() {
+    if [[ "${MACSEED_APPLICATION_EXECUTION:-false}" == true ]]; then
+        HOMEBREW_NO_ENV_HINTS=1 HOMEBREW_NO_SUDO=1 \
+            HOMEBREW_NO_INSTALL_CLEANUP=1 HOMEBREW_NO_INSTALL_UPGRADE=1 \
+            brew install "$1"
+    else
+        HOMEBREW_NO_ENV_HINTS=1 brew install "$1"
+    fi
+}
+
 install_brew_packages() {
 
     if blueprint_exists &&
@@ -183,11 +193,11 @@ install_brew_packages() {
 
         if [[ "$VERBOSE" == true ]]; then
 
-            HOMEBREW_NO_ENV_HINTS=1 brew install "$package"
+            brew_install_formula "$package"
 
         else
 
-            HOMEBREW_NO_ENV_HINTS=1 brew install "$package" >/dev/null 2>&1
+            brew_install_formula "$package" >/dev/null 2>&1
 
         fi
 

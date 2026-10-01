@@ -194,6 +194,90 @@ class RestorePrepareTests(unittest.TestCase):
         self.assertEqual(check().stdout.strip(), b"unsupported_interactive_operation")
         self.assertFalse((self.project / "config/.bundle-publication").exists())
 
+    def test_formula_readiness_keeps_casks_separate(self):
+        blueprint = self.stage / "blueprint.conf"
+        blueprint.write_text(blueprint.read_text().replace(
+            'homebrew-packages="false"', 'homebrew-packages="true"').replace(
+            '[homebrew-packages]\n', '[homebrew-packages]\nfixture-formula\n'))
+        bundle.write_file(self.stage / "generated/brew-packages.conf", b"fixture-formula\n")
+        brew = self.root / "bin/brew"
+        brew.write_text('#!/bin/bash\ncase "$*" in\n'
+                        '  --prefix) echo /opt/homebrew ;;\n'
+                        '  "list --formula --full-name") exit 0 ;;\n'
+                        '  *) exit 2 ;;\nesac\n')
+        brew.chmod(0o700)
+        (self.root / "bin/sudo").write_text("#!/bin/bash\nexit 0\n")
+        environment = dict(self.environment, BLUEPRINT_FILE=str(blueprint),
+                           BLUEPRINT_GENERATED_DIR=str(self.stage / "generated"),
+                           BUNDLE_RESTORE_ACTIVE="true", MACSEED_APPLICATION_EXECUTION="true",
+                           PATH=str(self.root / "bin") + ":/usr/bin:/bin:/usr/sbin:/sbin")
+
+        def check():
+            return subprocess.run(["bash", "./bootstrap.sh", "--application-readiness"],
+                                  cwd=self.project, env=environment, stdout=subprocess.PIPE,
+                                  stderr=subprocess.PIPE, check=False)
+
+        self.assertEqual(check().stdout.strip(), b"ready")
+        brew.write_text('#!/bin/bash\nexit 2\n')
+        self.assertEqual(check().stdout.strip(), b"homebrew_unavailable")
+        brew.unlink()
+        # The fixture gives the production prefix lookup a nonexistent prefix.
+        module = self.project / "modules/core/homebrew/homebrew.sh"
+        module.write_text(module.read_text().replace(
+            '/opt/homebrew', str(self.root / 'absent-homebrew')))
+        self.assertEqual(check().stdout.strip(), b"homebrew_installation_requires_interaction")
+        blueprint.write_text(blueprint.read_text().replace(
+            '[homebrew-casks]\n', '[homebrew-casks]\nfixture-cask\n'))
+        bundle.write_file(self.stage / "generated/brew-casks.conf", b"fixture-cask\n")
+        self.assertEqual(check().stdout.strip(), b"unsupported_interactive_operation")
+
+    def test_execute_selected_formula_through_production_module(self):
+        blueprint = self.stage / "blueprint.conf"
+        blueprint.write_text(blueprint.read_text().replace(
+            'homebrew-packages="false"', 'homebrew-packages="true"').replace(
+            '[homebrew-packages]\n', '[homebrew-packages]\nfixture-formula\n'))
+        bundle.write_file(self.stage / "generated/brew-packages.conf", b"fixture-formula\n")
+        brew = self.root / "bin/brew"
+        brew.write_text('''#!/bin/bash
+case "$*" in
+  --prefix) echo /opt/homebrew ;;
+  "list --formula --full-name")
+    [[ ! -f "$TEST_FORMULA_INSTALLED" ]] || echo fixture-formula ;;
+  "install fixture-formula")
+    [[ "$MACSEED_APPLICATION_EXECUTION" == true && "$HOMEBREW_NO_SUDO" == 1 &&
+       "$HOMEBREW_NO_INSTALL_CLEANUP" == 1 && ! -t 0 && ! -t 1 ]] || exit 2
+    echo install >> "$TEST_FORMULA_LOG"
+    [[ "${TEST_FORMULA_FAIL:-false}" != true ]] || exit 2
+    touch "$TEST_FORMULA_INSTALLED" ;;
+  *) exit 2 ;;
+esac
+''')
+        brew.chmod(0o700)
+        self.environment["TEST_FORMULA_INSTALLED"] = str(self.root / "formula-installed")
+        self.environment["TEST_FORMULA_LOG"] = str(self.root / "formula-log")
+        self.environment["PATH"] = str(self.root / "bin") + ":/usr/bin:/bin:/usr/sbin:/sbin"
+        self.allow_application_bootstrap()
+        self.pack()
+        prepared = self.invoke()[1][1]["data"]["prepared_plan_id"]
+        result, events = self.execute(prepared)
+        self.assertEqual(result.returncode, 0, events)
+        self.assertTrue((self.root / "formula-installed").exists())
+        self.assertNotIn(b"fixture-formula", result.stdout)
+        self.assertTrue(events[-2]["data"]["target_mutation_may_have_started"])
+        self.assertEqual(events[-2]["data"]["verification"]["verdict"],
+                         "selected_requirements_verified")
+        repeated_plan = self.invoke()[1][1]["data"]["prepared_plan_id"]
+        repeated, _ = self.execute(repeated_plan)
+        self.assertEqual(repeated.returncode, 0)
+        self.assertEqual((self.root / "formula-log").read_text().splitlines(), ["install"])
+        (self.root / "formula-installed").unlink()
+        self.environment["TEST_FORMULA_FAIL"] = "true"
+        failed_plan = self.invoke()[1][1]["data"]["prepared_plan_id"]
+        failed, events = self.execute(failed_plan)
+        self.assertEqual(failed.returncode, 2)
+        self.assertEqual(events[-1]["data"]["code"], "bootstrap_failed")
+        self.assertTrue(events[-1]["data"]["target_mutation_may_have_started"])
+
     def test_execute_repreviews_and_publishes_only_after_gates(self):
         self.pack()
         self.allow_application_bootstrap()

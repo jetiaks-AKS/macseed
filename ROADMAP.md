@@ -232,7 +232,9 @@ Bootstrap/Workflow и, где применимо, Restore. Результат д
 
 Протокол v1 поддерживает `capabilities`, read-only `bundle_inspect`,
 `restore_prepare` и первый mutating `restore_execute` для временного
-ограниченного application-safe scope. Execute заново строит production Preview,
+ограниченного application-safe scope, включая выбранные Homebrew formulae при
+работающем Homebrew. Установка самого Homebrew и casks пока блокируется до
+публикации. Execute заново строит production Preview,
 сравнивает `prepared_plan_id`, проверяет readiness до публикации и запускает
 production Bootstrap с последующей Global Verification. ID связывает
 подтверждённый план, но не является авторизацией; при изменении плана требуется

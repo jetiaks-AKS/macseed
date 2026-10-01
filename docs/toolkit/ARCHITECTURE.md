@@ -19,10 +19,14 @@ The structured Core interface now supports `restore_execute` for a temporary,
 limited application-safe subset. It repeats Bundle validation, narrowing and
 production Preview, recomputes `prepared_plan_id`, and rejects stale plans before
 readiness or publication. The ID identifies the plan confirmed by the caller;
-it is not authorization. Its read-only readiness gate rejects secure selection and selected Homebrew
-packages, casks, App Store apps, VS Code extensions, or Git repositories before
-publication, without silently omitting selected work. The initial subset is
-ordinary settings and Workspace folders; application coverage must grow toward
+it is not authorization. Its read-only readiness gate accepts selected Homebrew
+formulae when Homebrew is usable, including an installation under the supported
+architecture prefix that needs process PATH activation. It rejects absent or
+broken Homebrew, and selected casks, App Store apps, VS Code extensions, Git
+repositories, or secure identity work before publication, without silently
+omitting selected work. Homebrew installation itself remains a temporary coverage
+gap. The current subset also includes ordinary settings and Workspace folders;
+application coverage must grow toward
 the existing practical CLI Restore capabilities before native app Restore is
 considered complete. Secure Restore awaits a dedicated credential bridge.
 Owned Bootstrap children have no interactive stdin or
