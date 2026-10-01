@@ -28,6 +28,73 @@ Macseed — модульная Bash-система для обнаружения
 архитектурные инварианты. Последовательность развития описывается в Roadmap, а
 форматы и контракты значений — в Configuration.
 
+## Secure SSH Restore в режиме приложения
+
+Будущий launcher Desktop создаёт анонимную соединённую пару Unix stream sockets
+и передаёт endpoint Core как унаследованный FD больше 2:
+`modules/core/application-interface/core.sh --secure-fd N`. Это launch metadata,
+а не параметр JSON. Core проверяет FD и отключает наследование; дочерние утилиты
+определения путей закрывают его до запуска. Без корректного канала сохраняется
+`secure_bridge_required`. Обычные JSON stdin и JSONL stdout передают только
+данные операции и безопасные события.
+
+Кадр приватного канала начинается с четырёхбайтовой unsigned длины body в
+big-endian (1–2048 bytes). Challenge содержит JSON только с метаданными:
+`type=challenge`, `protocol_version=1`, `operation_id`, новый `challenge_id`
+из 32 hex digits, `kind` и `attempt` (1–3). Типы: `bundle_unlock`,
+`ssh_key_unlock`, `import_confirmation`. Ответ бинарный: 16 bytes challenge ID,
+затем `S` и UTF-8 passphrase, только `Y` для подтверждения либо только `C` для
+отмены. Passphrase ограничен 128 bytes, управляющие символы запрещены.
+JSON-ответ, чужой ID, незапрошенный ввод, неверная длина, EOF и timeout блокируют
+операцию. Полный ответ ожидается не более 120 секунд, secret-consuming tool —
+30 секунд. Peer сохраняет endpoint открытым до закрытия Core либо намеренной
+отмены. Постоянный listener и filesystem IPC для секретов не создаются.
+
+Execute повторяет Prepare, проверяет ожидаемый план и readiness, повторно
+сверяет fingerprints source/stage и публикует обычную пару перед импортом
+`secure.age` именно из staging текущей операции. Core запускает существующий
+importer Stage 12 в отдельной process group и передаёт challenges через вторую
+анонимную socket pair. Только importer наследует этот внутренний FD. Дочерний
+secret-consuming tool получает только отдельный PTY и, для age, pinned ciphertext
+FD. Echo выключен до записи секрета; PTY не становится controlling TTY Core,
+его prompts/output не попадают в JSONL или логи. Bundle unlock и unlock отдельного
+защищённого ключа различаются; каждый ограничен тремя попытками. Шифрование ключей
+и их проверка сохраняются. Подтверждение import использует приватный канал;
+полностью совпадающий план не требует подтверждения или публикации.
+
+Сохраняются protected staging Stage 12, проверки payload и key pair, target plan,
+conflict checks, no-clobber publication, permissions и cleanup. Непосредственно
+перед созданием `.ssh` либо первой публикацией identity в существующий каталог
+importer требует от Core подтверждения mutation boundary. Ввод passphrase,
+расшифровка и валидация сами по себе не означают target mutation. После boundary
+флаг остаётся true даже при удалении importer только собственных новых файлов.
+EOF peer, отмена и SIGTERM Core останавливают owned process group. Cleanup после
+SIGKILL или потери питания не гарантируется. На время удаления приватного
+staging сигналы отмены откладываются.
+
+Core проверяет существующее evidence importer с привязкой к attempt и закрывает
+secret channel до обычного Bootstrap. Bootstrap получает только non-secret
+evidence через анонимный временный файловый FD, читает и закрывает его до запуска
+других children. Production Global Verification сохраняет
+`identity_pair_matches_package`, без утверждений о remote authentication,
+Keychain или agent. При типизированном сбое importer evidence также используется
+для Verification, если доступно; transport failure может оставить её not run.
+Неуспешный secure import останавливает dependent restoration. Успешный импорт
+предшествует обычным prerequisites Bootstrap и consumer SSH configuration,
+следовательно — клонированию Workspace. Терминальный CLI сохраняет прежний порядок
+и UX. Secure-only execution обходит общий administrator preflight: импорт
+пользовательских SSH identities не требует администратора. Mixed plans сохраняют
+существующие требования авторизации.
+
+Passphrases существуют только временно в памяти процессов и PTY: новые secret argv,
+environment, JSON, generated state, логи и файлы не создаются. Python и ОС не
+гарантируют zeroization или исключение swap/crash dumps. Protected keys могут
+снова запрашивать unlock при production revalidation; passphrases не кэшируются
+между identities или операциями. Bridge зависит от terminal input age и stdin
+fallback `ssh-keygen -y` (`RP_ALLOW_STDIN`, имеется в OpenSSH 8.1). Desktop не
+реализован; упаковка runtime и проверки на поддерживаемых версиях macOS,
+age и OpenSSH ещё необходимы.
+
 ## Покрытие casks в режиме приложения
 
 При работающем Homebrew уже удовлетворённые выбранные casks не устанавливаются
@@ -53,7 +120,7 @@ install cleanup и install upgrade, под существующим owned proces
 mutation boundary. Production inspection и Global Verification остаются
 авторитетными. Отказ может оставить частичные изменения; независимые диалоги
 macOS/vendor не подавляются. CLI сохраняет прежнее поведение. Отсутствие Homebrew
-остаётся предпосылкой; Secure Restore пока блокируется.
+остаётся предпосылкой; Secure Restore требует отдельного канала секретов.
 
 ## Покрытие VS Code extensions в режиме приложения
 
@@ -111,7 +178,7 @@ overrides. Глобальная конфигурация Git/SSH не меняе
 возможного начала мутаций. Частичный каталог не удаляется автоматически;
 rollback нет. Повторный запуск заново строит Preview и наблюдает состояние.
 Global Verification сохраняет predicates worktree/origin/branch. Human CLI clone
-не изменён; Secure Restore остаётся заблокирован.
+не изменён; Secure Restore требует отдельного канала секретов.
 
 ## Восстановление приложений Mac App Store в режиме приложения
 
@@ -145,7 +212,7 @@ macOS/App Store не подавляются. Вывод mas и stderr inventory 
 оставляет `target_mutation_may_have_started=true`, без rollback или uninstall.
 Production post-install inspection и Global Verification проверяют наличие IDs
 с существующими ограничениями Spotlight. Повторный Restore пропускает
-удовлетворённые IDs. Human CLI MAS не изменён; Secure Restore остаётся заблокирован.
+удовлетворённые IDs. Human CLI MAS не изменён; Secure Restore требует отдельного канала секретов.
 
 ## Предпосылки Restore
 
@@ -169,11 +236,10 @@ Preview, Restore других категорий, Verify или Compare. Он н
 Desktop; создавать privileged helper/XPC только ради неё сейчас не требуется.
 
 `age` — предпосылка только выбранного Secure Restore, которому он нужен.
-Планируемый сценарий продолжает выполнение при наличии `age` или может
-установить и проверить его через безопасный formula path при работающем
-Homebrew. Если отсутствуют оба, Desktop должен объяснять цепочку предпосылок.
-Это пока не включает structured Secure Restore: credential bridge и такая
-оркестрация предпосылок ещё требуют реализации. Command Line Tools аналогично
+При корректном канале секретов readiness возвращает `age_required`, если `age`
+отсутствует, и `age_unavailable`, если он неработоспособен, до публикации.
+Режим приложения не устанавливает его интерактивно. Подсказки Desktop и возможная
+безопасная установка через formula path остаются будущей работой. Command Line Tools аналогично
 относятся к операциям, которым они нужны; внешняя установка должна вести к
 пояснению и повторной проверке. Текущий CLI preflight проверяет CLT широко;
 зависимость проверки от плана описывает целевое поведение.

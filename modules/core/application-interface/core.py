@@ -8,6 +8,8 @@ import os
 from pathlib import Path
 import re
 import signal
+import select
+import socket
 import stat
 import subprocess
 import sys
@@ -18,6 +20,7 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "bundle"))
 import bundle
 from execution import OwnedBootstrap
+from secure import launch_channel, import_secure, SecureError
 
 PROTOCOL_VERSION = 1
 MAX_REQUEST = 4096
@@ -176,19 +179,21 @@ def prepared_restore(path, disabled_groups, include_secure):
         yield summary, stage, source_identity, stage_identity
 
 
-def readiness(stage, include_secure):
+def readiness(stage, include_secure, secure_ready=False, secure_only=False):
     environment = dict(os.environ, BLUEPRINT_FILE=str(stage / "blueprint.conf"),
                        BLUEPRINT_GENERATED_DIR=str(stage / "generated"),
                        BUNDLE_RESTORE_ACTIVE="true", BUNDLE_RESTORE_SECURE_FILE="",
                        MACSEED_APPLICATION_EXECUTION="true",
-                       MACSEED_APPLICATION_SECURE_SELECTED=str(include_secure).lower())
+                       MACSEED_APPLICATION_SECURE_SELECTED=str(include_secure).lower(),
+                       MACSEED_APPLICATION_SECURE_READY=str(secure_ready).lower(),
+                       MACSEED_APPLICATION_SECURE_ONLY=str(secure_only).lower())
     process = subprocess.Popen(["./bootstrap.sh", "--application-readiness"], cwd=ROOT,
                                env=environment, stdin=subprocess.DEVNULL,
                                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                                start_new_session=True)
     try:
-        output, _ = process.communicate()
-    except BaseException:
+        output, _ = process.communicate(timeout=30 if include_secure else None)
+    except BaseException as exc:
         if process.poll() is None:
             os.killpg(process.pid, signal.SIGTERM)
             try:
@@ -196,6 +201,8 @@ def readiness(stage, include_secure):
             except subprocess.TimeoutExpired:
                 os.killpg(process.pid, signal.SIGKILL)
                 process.wait()
+        if isinstance(exc, subprocess.TimeoutExpired):
+            raise ExecuteFailed("age_unavailable" if include_secure else "readiness_failed") from None
         raise
     fields = output.decode("ascii", errors="replace").strip().split("\t")
     status = fields[0]
@@ -211,7 +218,7 @@ def readiness(stage, include_secure):
     allowed = {"ready", "authorization_required", "unsupported_interactive_operation",
                "vscode_cli_required", "vscode_cli_unavailable", "vscode_cli_ambiguous",
                "git_required", "git_unavailable", "repository_target_conflict",
-               "mas_required", "mas_unavailable",
+               "mas_required", "mas_unavailable", "age_required", "age_unavailable",
                "homebrew_installation_requires_interaction", "homebrew_unavailable",
                "missing_required_dependency", "secure_bridge_required", "invalid_selected_input"}
     allowed |= cask_conditions
@@ -221,7 +228,7 @@ def readiness(stage, include_secure):
         raise ExecuteFailed(status, item_index)
 
 
-def restore_execute(operation_id, path, disabled_groups, include_secure, expected_id):
+def restore_execute(operation_id, path, disabled_groups, include_secure, expected_id, channel=None):
     sequence = 1  # started has already been emitted by main().
     state = {"prepared_plan_id": None, "execution_status": "not_started",
              "publication_started": False, "publication_occurred": False,
@@ -255,7 +262,14 @@ def restore_execute(operation_id, path, disabled_groups, include_secure, expecte
                 if plan["prepared_plan_id"] != expected_id:
                     raise ExecuteFailed("stale_plan")
                 state["prepared_plan_id"] = plan["prepared_plan_id"]
-                readiness(stage, include_secure)
+                sections, categories = bundle.parse_blueprint((stage / "blueprint.conf").read_bytes())
+                secure_only = include_secure and not any(categories.values()) and not any(
+                    sections[name] for name in bundle.ITEMS)
+                if include_secure and channel is not None:
+                    if select.select([channel], [], [], 0)[0]:
+                        raise SecureError("secure_cancelled" if not channel.recv(1, socket.MSG_PEEK)
+                                          else "secure_channel_invalid")
+                readiness(stage, include_secure, channel is not None, secure_only)
                 if (bundle.fingerprint(stage) != stage_id or
                     bundle.fingerprint(Path(path)) != source_id):
                     raise ExecuteFailed("stale_plan")
@@ -271,8 +285,22 @@ def restore_execute(operation_id, path, disabled_groups, include_secure, expecte
                 finally:
                     signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
                 event("phase_completed", {"phase": "publication"})
+                secure_evidence = None
+                if include_secure:
+                    def secure_mutation():
+                        state["target_mutation_may_have_started"] = True
+                        event("secure_publication_started")
+                    state["secure_restore_status"] = "running"
+                    secure_evidence = import_secure(ROOT, stage / "secure.age", channel,
+                                                    operation_id, event, secure_mutation)
+                    state["secure_restore_status"] = "completed"
                 environment = dict(os.environ, BUNDLE_RESTORE_ACTIVE="true",
-                                   BUNDLE_RESTORE_SECURE_FILE="")
+                                   BUNDLE_RESTORE_SECURE_FILE="application-evidence" if include_secure else "",
+                                   MACSEED_APPLICATION_SECURE_SELECTED=str(include_secure).lower(),
+                                   MACSEED_APPLICATION_SECURE_READY=str(include_secure).lower(),
+                                   MACSEED_APPLICATION_SECURE_ONLY=str(secure_only).lower())
+                environment.pop("MACSEED_SECURE_EVIDENCE_FD", None)
+                environment.pop("MACSEED_APPLICATION_SECURE_VERIFY_ONLY", None)
                 for name in ("BLUEPRINT_FILE", "BLUEPRINT_GENERATED_DIR",
                              "SSH_SNAPSHOT_FILE", "ZSH_SNAPSHOT_FILE"):
                     environment.pop(name, None)
@@ -281,16 +309,16 @@ def restore_execute(operation_id, path, disabled_groups, include_secure, expecte
                     previous_mask = signal.pthread_sigmask(signal.SIG_BLOCK,
                                                             {signal.SIGINT, signal.SIGTERM})
                     try:
-                        owned = OwnedBootstrap(ROOT, environment)
+                        owned = OwnedBootstrap(ROOT, environment, secure_evidence)
                     finally:
                         signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
                     bootstrap_exit = owned.wait()
                 except BaseException:
                     if owned is not None:
                         owned.cancel()
-                        state["target_mutation_may_have_started"] = owned.mutation_may_have_started
+                        state["target_mutation_may_have_started"] |= owned.mutation_may_have_started
                     raise
-                state["target_mutation_may_have_started"] = owned.mutation_may_have_started
+                state["target_mutation_may_have_started"] |= owned.mutation_may_have_started
                 state["bootstrap_status"] = ({0: "success", 1: "warning"}.get(bootstrap_exit, "failure"))
                 if owned.verification is not None:
                     state["verification"] = {key: value for key, value in owned.verification.items()
@@ -307,6 +335,32 @@ def restore_execute(operation_id, path, disabled_groups, include_secure, expecte
                 event("result", state)
                 event("completed")
                 return 0
+    except SecureError as exc:
+        receipt = getattr(exc, "evidence", None)
+        if receipt is not None:
+            environment = dict(os.environ, BUNDLE_RESTORE_ACTIVE="true",
+                               BUNDLE_RESTORE_SECURE_FILE="application-evidence",
+                               MACSEED_APPLICATION_SECURE_VERIFY_ONLY="true")
+            for name in ("BLUEPRINT_FILE", "BLUEPRINT_GENERATED_DIR", "MACSEED_SECURE_EVIDENCE_FD"):
+                environment.pop(name, None)
+            try:
+                with restore_signals():
+                    observer = OwnedBootstrap(ROOT, environment, receipt)
+                    try:
+                        observer.wait()
+                    except BaseException:
+                        observer.cancel()
+                        raise
+                if observer.verification is not None:
+                    state["verification"] = {key: value for key, value in observer.verification.items()
+                                             if not key.startswith("bootstrap_")}
+            except Cancelled:
+                state["secure_restore_status"] = "cancelled"
+                return failure("cancelled", 130)
+            except Exception:
+                pass  # Missing verification cannot turn a failed import into success.
+        state["secure_restore_status"] = "cancelled" if exc.code == "secure_cancelled" else "failed"
+        return failure(exc.code, 130 if exc.code == "secure_cancelled" else 2)
     except ExecuteFailed as exc:
         return failure(exc.code, selected_item_index=exc.selected_item_index)
     except RecoveryRequired:
@@ -327,8 +381,12 @@ def restore_execute(operation_id, path, disabled_groups, include_secure, expecte
         return failure("internal_error")
 
 
-def main(version):
+def main(version, channel=None):
     operation_id = None
+    for name in ("MACSEED_APPLICATION_SECURE_READY", "MACSEED_APPLICATION_SECURE_ONLY",
+                 "MACSEED_APPLICATION_SECURE_VERIFY_ONLY", "MACSEED_SECURE_EVIDENCE_FD",
+                 "MACSEED_SECURE_ATTEMPT", "MACSEED_SECURE_EXIT"):
+        os.environ.pop(name, None)
     try:
         value = request()
         candidate = value["operation_id"]
@@ -374,6 +432,9 @@ def main(version):
         emit(1, "failed", operation_id, {"code": "invalid_request"})
         return 2
 
+    if channel is not None and (operation != "restore_execute" or not include_secure):
+        channel.close()
+        channel = None
     emit(1, "started", operation_id)
     if operation == "restore_execute":
         if len(disabled_groups) != len(set(disabled_groups)) or any(item not in bundle.GROUPS for item in disabled_groups):
@@ -381,7 +442,7 @@ def main(version):
                                                "publication_occurred": False,
                                                "target_mutation_may_have_started": False})
             return 2
-        return restore_execute(operation_id, path, disabled_groups, include_secure, expected_id)
+        return restore_execute(operation_id, path, disabled_groups, include_secure, expected_id, channel)
     if operation == "capabilities":
         result = {
             "protocol_version": PROTOCOL_VERSION,
@@ -430,4 +491,10 @@ def main(version):
 
 
 if __name__ == "__main__":
-    sys.exit(main(sys.argv[1]))
+    channel = launch_channel(sys.argv[2:])
+    try:
+        result = main(sys.argv[1], channel)
+    finally:
+        if channel is not None:
+            channel.close()
+    sys.exit(result)

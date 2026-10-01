@@ -22,14 +22,13 @@ readiness or publication. The ID identifies the plan confirmed by the caller;
 it is not authorization. Its read-only readiness gate accepts selected Homebrew
 formulae when Homebrew is usable, including an installation under the supported
 architecture prefix that needs process PATH activation. It rejects absent or
-broken Homebrew, and secure identity work before
-publication, without silently
-omitting selected work. Automatic Homebrew installation is currently unavailable;
+broken Homebrew before publication, without silently omitting selected work.
+Selected secure identity work requires the separate inherited secret channel. Automatic Homebrew installation is currently unavailable;
 guided prerequisite handling is the required 4.0 baseline. The current subset
 also includes ordinary settings and Workspace folders;
 application coverage must grow toward
 the existing practical CLI Restore capabilities before native app Restore is
-considered complete. Secure Restore awaits a dedicated credential bridge.
+considered complete. Secure Restore uses the existing importer through a transient credential bridge.
 Owned Bootstrap children have no interactive stdin or
 controlling terminal, Macseed does not ask its own questions, and sudo uses
 non-interactive authorization. External tools or macOS may still create
@@ -52,6 +51,74 @@ reproducing supported parts of a macOS working environment. This document
 defines the current component responsibilities, state flow, boundaries, and
 architectural invariants. Development sequencing belongs in the Roadmap;
 configuration formats and value-level contracts belong in Configuration.
+
+### Application Secure SSH Restore
+
+The future Desktop launcher creates one anonymous connected Unix stream socket
+pair and passes only Core's endpoint as an inherited descriptor greater than 2:
+`modules/core/application-interface/core.sh --secure-fd N`. This is launch
+metadata, not a JSON parameter. Core validates the descriptor and disables
+inheritance; path-resolution children close it before running external tools.
+Callers without a valid channel still receive `secure_bridge_required`.
+Structured JSON stdin and JSONL stdout carry only operation data and safe events.
+
+Each private frame starts with an unsigned four-byte big-endian body length
+(1–2048 bytes). Core challenges contain JSON **metadata only**: `type=challenge`,
+`protocol_version=1`, `operation_id`, a fresh 32-hex-digit `challenge_id`, `kind`,
+and `attempt` (1–3). Kinds are `bundle_unlock`, `ssh_key_unlock`, and
+`import_confirmation`. Responses are binary: the 16-byte decoded challenge ID,
+then `S` plus a UTF-8 passphrase, `Y` alone to confirm, or `C` alone to cancel.
+Passphrases are limited to 128 bytes and exclude control characters. Response
+JSON, mismatched IDs, unsolicited input, invalid lengths, EOF and timeout fail
+closed. A complete response has a 120-second deadline; secret tools have a
+30-second deadline. The peer keeps its endpoint open until Core closes it or
+explicit cancellation is intended. No listener or filesystem secret IPC is created.
+
+Execute fully re-prepares, checks the expected plan and readiness, rechecks
+source/stage fingerprints, and publishes the ordinary pair before importing
+**that operation's staged** `secure.age`. Core owns the existing Stage 12 importer
+in a separate process group and relays challenges over a second anonymous socket
+pair. Only the importer receives that internal descriptor. Secret-consuming
+children receive only their isolated PTY and, for age, the pinned ciphertext FD.
+The PTY has echo disabled before any secret is written, is never Core's
+controlling TTY, and its prompts/output never enter JSONL or logs. Bundle unlock
+and individual protected-key unlock are separate interactions, each with at
+most three attempts. Keys retain their original encryption and validation.
+The existing import confirmation is adapted to the private channel; an identical
+identity plan needs neither confirmation nor publication.
+
+The importer retains Stage 12 protected staging, payload/pair validation,
+conflict checks, no-clobber publication, permission checks and cleanup. It asks
+Core to acknowledge the mutation boundary immediately before creating `.ssh`
+or publishing the first identity in an existing directory. Reading a secret,
+decrypting and validating do not mark target mutation. Failures after this
+boundary remain conservative even if the importer removes its own new files.
+Peer EOF, explicit cancellation and Core SIGTERM stop the owned process group;
+Cancellation signals are deferred while private staging is removed; cleanup after
+SIGKILL or power loss is not guaranteed.
+
+Core validates the existing attempt-bound importer evidence and closes the
+secret channel before ordinary Bootstrap. Only non-secret evidence reaches
+Bootstrap through an anonymous temporary file descriptor, consumed and closed
+before other children run. Production Global Verification retains
+`identity_pair_matches_package`; it does not claim remote authentication or
+Keychain/agent state. Typed importer failures also use this evidence for
+Verification when available. A transport failure may leave Verification not run.
+A failed secure import stops dependent restoration. A successful import precedes
+the ordinary Bootstrap prerequisites and SSH configuration consumer, and thus
+precedes Workspace cloning. The terminal CLI keeps its existing ordering and UX.
+Secure-only application execution bypasses generic administrator preflight;
+user SSH identity import needs no administrator authorization. Mixed plans
+retain their existing authorization requirements.
+
+Passphrases are transient process/PTY memory only: no secret argv, environment,
+JSON, generated state, logs or files are introduced. Python and OS memory do not
+provide a guaranteed zeroization, swap or crash-dump exclusion. Protected keys
+may request unlock again during later production revalidation; passphrases are
+not cached between identities or operations. The bridge depends on age terminal
+input and OpenSSH `ssh-keygen -y` stdin fallback (`RP_ALLOW_STDIN`, present in
+OpenSSH 8.1). Desktop is not implemented; runtime packaging and testing across
+supported macOS/age/OpenSSH versions remain required.
 
 ### Application cask coverage
 
@@ -77,7 +144,7 @@ owned stdin/process semantics and the existing mutation boundary apply.
 Production cask inspection and Global Verification remain authoritative. Failures
 may leave partial changes; independent macOS/vendor GUI dialogs are not suppressed.
 Ordinary CLI cask behavior is unchanged. Homebrew absence retains its prerequisite
-condition; Secure Restore remains blocked.
+condition; Secure Restore requires its separate secret channel.
 
 ### Application VS Code extension coverage
 
@@ -136,7 +203,7 @@ Remote/network/authentication failures are execution failures after mutation may
 have started. Failed clones can leave partial directories; no automatic cleanup
 or rollback is performed. Re-entry recomputes Preview and inspects that state.
 Global Verification retains worktree/origin/branch predicates. Human CLI clone
-behavior is unchanged; Secure Restore remains blocked.
+behavior is unchanged; Secure Restore requires its separate secret channel.
 
 ### Application Mac App Store coverage
 
@@ -170,7 +237,7 @@ Owned stdin/TTY/cancellation and the existing mutation boundary apply. Failed
 installation preserves `target_mutation_may_have_started=true`, without rollback
 or uninstall. Post-install production inspection and Global Verification retain
 numeric-ID presence semantics and Spotlight limitations. Repeated Restore skips
-satisfied IDs. Human CLI MAS behavior is unchanged; Secure Restore remains blocked.
+satisfied IDs. Human CLI MAS behavior is unchanged; Secure Restore requires its separate secret channel.
 
 ## Restore prerequisites
 
@@ -193,11 +260,10 @@ bootstrap is optional pending Desktop authorization design; a privileged
 helper/XPC subsystem is not required solely for it.
 
 `age` is a prerequisite only for selected Secure Restore work that needs it.
-The intended flow continues if it is available, or may install and verify it
-through the safe formula path when Homebrew is usable. If both are unavailable,
-Desktop should explain the prerequisite chain. This does not enable structured
-Secure Restore today: its credential bridge and prerequisite orchestration
-remain to be implemented. Command Line Tools likewise belong to operations that
+With a valid secret channel, readiness returns `age_required` when absent and
+`age_unavailable` when unusable, before publication. Application mode never
+installs it interactively. Desktop prerequisite guidance and a possible safe
+formula installation remain future work. Command Line Tools likewise belong to operations that
 need them; external installation should lead to guidance and re-check. Current
 CLI preflight checks CLT broadly; the plan-sensitive model is intended behavior.
 

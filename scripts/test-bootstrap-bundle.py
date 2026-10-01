@@ -546,6 +546,8 @@ class BundleTests(unittest.TestCase):
              fixture / "modules/migration/package.sh"),
             (migration.parents[1] / "modules/migration/evidence.py",
              fixture / "modules/migration/evidence.py"),
+            (migration.parents[1] / "modules/migration/secret_input.py",
+             fixture / "modules/migration/secret_input.py"),
         ):
             shutil.copy2(original, target)
         shutil.copy2(migration.parents[1] / "modules/verification/ssh-identities.sh",
@@ -582,7 +584,10 @@ class BundleTests(unittest.TestCase):
         def run_restore(home, answers):
             home.mkdir(mode=0o700)
             return self.run_pty(command, answers, cwd=fixture,
-                                env=dict(os.environ, HOME=str(home), TMPDIR=str(private_tmp)))
+                                env=dict(os.environ, HOME=str(home), TMPDIR=str(private_tmp),
+                                         MACSEED_APPLICATION_EXECUTION="false",
+                                         MACSEED_APPLICATION_SECURE_READY="true",
+                                         MACSEED_APPLICATION_SECURE_VERIFY_ONLY="true"))
 
         target = self.root / "target-home"
         status, restore_transcript = run_restore(target, [(b"Enter=continue", b""),
@@ -680,6 +685,8 @@ class BundleTests(unittest.TestCase):
              fixture / "modules/migration/package.sh"),
             (migration.parents[1] / "modules/migration/evidence.py",
              fixture / "modules/migration/evidence.py"),
+            (migration.parents[1] / "modules/migration/secret_input.py",
+             fixture / "modules/migration/secret_input.py"),
         ):
             shutil.copy2(original, target)
         bootstrap = fixture / "bootstrap.sh"

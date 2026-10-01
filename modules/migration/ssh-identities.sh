@@ -13,6 +13,12 @@ migration_main() {
             "$4" == --internal-evidence && "$5" == /* && "$6" == --attempt &&
             "$7" =~ ^[a-zA-Z0-9_-]+$ ]]; then
         migration_run import "$3" "$4" "$5" "$6" "$7"
+    elif [[ $# -eq 11 && "$1" == import && "$2" == --input && "$3" == /* &&
+            "$4" == --internal-evidence && "$5" == /* && "$6" == --attempt &&
+            "$7" =~ ^[a-zA-Z0-9_-]+$ && "$8" == --application-channel-fd &&
+            "$9" =~ ^[0-9]+$ && "${10}" == --operation-id &&
+            "${11}" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+        migration_run import "$3" "$4" "$5" "$6" "$7" "$8" "$9" "${10}" "${11}"
     else
         printf 'Usage: %s {list|export --output /absolute/path/file.age|import --input /absolute/path/file.age}\n' "$0" >&2
         return 2

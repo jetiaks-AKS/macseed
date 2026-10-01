@@ -2,7 +2,12 @@
 migration_run() {
     command -v python3 >/dev/null 2>&1 || { printf 'Python 3 required\n' >&2; return 2; }
     local migration_code
-    migration_code="$(cat <<'PY'
+    migration_code="$(
+        # Do not lend the application channel to the heredoc reader.
+        if [[ $# -eq 10 && "$7" == --application-channel-fd && "$8" =~ ^[0-9]+$ && "$8" -gt 2 ]]; then
+            eval "exec ${8}<&-"
+        fi
+        cat <<'PY'
 import hashlib
 import os
 import re
@@ -25,8 +30,15 @@ TYPES = {'ssh-ed25519', 'ssh-rsa', 'ecdsa-sha2-nistp256',
 sys.dont_write_bytecode = True
 sys.path.insert(0, sys.argv.pop(1))
 from evidence import Evidence
+from secret_input import Input, SecureError, PrivateTemporaryDirectory, decrypt, key_public
 mode, *args = sys.argv[1:]
+interaction = None
+if mode == 'import' and len(args) == 9:
+    interaction = Input(int(args[6]), args[8])
+    args = args[:5]
 evidence = Evidence(args[2], args[4]) if mode == 'import' and len(args) == 5 else Evidence()
+secure_code = None
+private_temporary = PrivateTemporaryDirectory if interaction is not None else tempfile.TemporaryDirectory
 home = os.environ.get('HOME', '')
 ssh = os.path.join(home, '.ssh')
 uid = os.getuid()
@@ -164,64 +176,67 @@ def validate_pair(private, public):
         hidden[3] &= ~termios.ECHO
         termios.tcsetattr(0, termios.TCSANOW, hidden)
     try:
-        with tempfile.TemporaryDirectory(prefix='ssh-migrate-', dir=local_tempbase()) as validation_dir:
+        with private_temporary(prefix='ssh-migrate-', dir=local_tempbase()) as validation_dir:
             os.chmod(validation_dir, 0o700)
             validated_private = os.path.join(validation_dir, 'identity')
             fd = os.open(validated_private, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
             with os.fdopen(fd, 'wb') as staged:
                 os.fchmod(staged.fileno(), 0o600)
                 staged.write(raw_private)
-            for attempt in range(1, 4):
-                wrong_passphrase = False
-                child = subprocess.Popen(
-                    ['ssh-keygen', '-y', '-f', validated_private],
-                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
-                def prompt_filter():
-                    nonlocal wrong_passphrase
-                    seen = b''
-                    prompt_started = False
-                    try:
-                        while True:
-                            chunk = child.stderr.read(1)
-                            if not chunk:
-                                break
-                            seen = (seen + chunk)[-96:]
-                            if b'incorrect passphrase' in seen:
-                                wrong_passphrase = True
-                            if seen.endswith(b'Enter passphrase'):
-                                prompt_started = True
-                            if prompt_started and seen.endswith(b': '):
-                                say('SSH key passphrase: ')
-                                prompt_started = False
-                    except OSError:
-                        pass
-                reader = threading.Thread(target=prompt_filter, daemon=True)
-                reader.start()
-                try:
-                    public_output = child.stdout.read(MAX_KEY + 1)
-                    if len(public_output) > MAX_KEY and child.poll() is None:
-                        child.kill()
-                    child.wait()
-                    reader.join()
-                finally:
-                    if child.poll() is None:
-                        child.terminate()
+            if interaction is not None:
+                public_output = key_public(validated_private, interaction)
+            else:
+                for attempt in range(1, 4):
+                    wrong_passphrase = False
+                    child = subprocess.Popen(
+                        ['ssh-keygen', '-y', '-f', validated_private],
+                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
+                    def prompt_filter():
+                        nonlocal wrong_passphrase
+                        seen = b''
+                        prompt_started = False
                         try:
-                            child.wait(timeout=2)
-                        except subprocess.TimeoutExpired:
+                            while True:
+                                chunk = child.stderr.read(1)
+                                if not chunk:
+                                    break
+                                seen = (seen + chunk)[-96:]
+                                if b'incorrect passphrase' in seen:
+                                    wrong_passphrase = True
+                                if seen.endswith(b'Enter passphrase'):
+                                    prompt_started = True
+                                if prompt_started and seen.endswith(b': '):
+                                    say('SSH key passphrase: ')
+                                    prompt_started = False
+                        except OSError:
+                            pass
+                    reader = threading.Thread(target=prompt_filter, daemon=True)
+                    reader.start()
+                    try:
+                        public_output = child.stdout.read(MAX_KEY + 1)
+                        if len(public_output) > MAX_KEY and child.poll() is None:
                             child.kill()
-                            child.wait()
-                    child.stdout.close()
-                    child.stderr.close()
-                if child.returncode == 0 and len(public_output) <= MAX_KEY:
-                    break
-                if not wrong_passphrase or len(public_output) > MAX_KEY:
-                    raise Invalid('private key validation failed')
-                if not os.isatty(0):
-                    raise UnlockFailed('SSH key could not be unlocked')
-                if attempt == 3:
-                    raise UnlockFailed('SSH key could not be unlocked after 3 attempts')
-                say('SSH key passphrase was not accepted; try again')
+                        child.wait()
+                        reader.join()
+                    finally:
+                        if child.poll() is None:
+                            child.terminate()
+                            try:
+                                child.wait(timeout=2)
+                            except subprocess.TimeoutExpired:
+                                child.kill()
+                                child.wait()
+                        child.stdout.close()
+                        child.stderr.close()
+                    if child.returncode == 0 and len(public_output) <= MAX_KEY:
+                        break
+                    if not wrong_passphrase or len(public_output) > MAX_KEY:
+                        raise Invalid('private key validation failed')
+                    if not os.isatty(0):
+                        raise UnlockFailed('SSH key could not be unlocked')
+                    if attempt == 3:
+                        raise UnlockFailed('SSH key could not be unlocked after 3 attempts')
+                    say('SSH key passphrase was not accepted; try again')
     finally:
         if tty_settings is not None:
             termios.tcsetattr(0, termios.TCSANOW, tty_settings)
@@ -275,6 +290,9 @@ def capture_candidates():
     return found
 
 def ask(prompt):
+    if interaction is not None:
+        interaction.ask('import_confirmation')
+        return 'import'
     try:
         sys.stderr.write(prompt)
         sys.stderr.flush()
@@ -509,7 +527,7 @@ def run():
         return
     if not shutil.which('age'):
         raise Invalid('age required')
-    if not os.isatty(0):
+    if not os.isatty(0) and interaction is None:
         raise Invalid('interactive terminal required')
     if mode in ('export', 'capture-export'):
         output = args[0]
@@ -568,7 +586,7 @@ def run():
             export_parent_still_visible(parent_fd, parent)
             if os.path.lexists(output):
                 raise Conflict('export destination exists')
-            with tempfile.TemporaryDirectory(prefix='ssh-migrate-', dir=local_tempbase()) as temp, tempfile.TemporaryDirectory(prefix='.ssh-migrate-', dir=parent) as cipher_temp:
+            with private_temporary(prefix='ssh-migrate-', dir=local_tempbase()) as temp, private_temporary(prefix='.ssh-migrate-', dir=parent) as cipher_temp:
                 os.chmod(temp, 0o700)
                 os.chmod(cipher_temp, 0o700)
                 stage = os.path.join(temp, 'stage')
@@ -626,7 +644,7 @@ def run():
         raise Invalid('package path contains symlink')
     tempbase = local_tempbase()
     package_fd = open_checked_package(source)
-    with os.fdopen(package_fd, 'rb') as encrypted_in, tempfile.TemporaryDirectory(prefix='ssh-migrate-', dir=tempbase) as temp:
+    with os.fdopen(package_fd, 'rb') as encrypted_in, private_temporary(prefix='ssh-migrate-', dir=tempbase) as temp:
         os.chmod(temp, 0o700)
         archive = os.path.join(temp, 'payload.tar')
         stage = os.path.join(temp, 'stage')
@@ -635,9 +653,12 @@ def run():
             os.chmod(archive, 0o600)
             input_fd = encrypted_in.fileno()
             evidence.reason = 'decrypt_failed'
-            result = subprocess.run(['age', '-d', '/dev/fd/' + str(input_fd)], stdout=out, pass_fds=(input_fd,))
-            if result.returncode:
-                raise Invalid('decryption failed')
+            if interaction is not None:
+                decrypt(input_fd, out, interaction)
+            else:
+                result = subprocess.run(['age', '-d', '/dev/fd/' + str(input_fd)], stdout=out, pass_fds=(input_fd,))
+                if result.returncode:
+                    raise Invalid('decryption failed')
         evidence.reason = 'input_invalid'
         records = archive_validate(archive, stage)
         evidence.selected([r[0] for r in records])
@@ -655,11 +676,15 @@ def run():
         evidence.phase = 'apply'
         created = []
         made_ssh = False
+        mutation_recorded = False
         homefd = None
         dirfd = None
         try:
             homefd = open_home_dir()
             if not os.path.lexists(ssh):
+                if interaction is not None:
+                    interaction.mutation()
+                    mutation_recorded = True
                 try:
                     os.mkdir('.ssh', 0o700, dir_fd=homefd)
                 except FileExistsError:
@@ -670,6 +695,9 @@ def run():
                 raise Conflict('target changed')
             for (name, _, _, private, public), status in zip(records, plan):
                 if status == 'create':
+                    if interaction is not None and not mutation_recorded:
+                        interaction.mutation()
+                        mutation_recorded = True
                     publish_pair(name, private, public, created, dirfd)
             evidence.phase = 'post_apply'
             target_dir_still_visible(dirfd)
@@ -703,12 +731,21 @@ def run():
 status = 0
 try:
     run()
+except SecureError as exc:
+    secure_code = exc.code
+    if secure_code == 'secure_payload_invalid' and evidence.phase in ('apply', 'post_apply'):
+        secure_code = 'secure_import_failed'
+    evidence.failed('cancelled' if exc.code == 'secure_cancelled' else 'failure',
+                    'cancelled' if exc.code == 'secure_cancelled' else 'operation_failed')
+    status = 1 if exc.code == 'secure_cancelled' else 2
 except Cancel:
     say('Cancelled')
     evidence.failed('cancelled', 'cancelled')
     status = 1
 except Conflict as exc:
     say('Conflict: ' + str(exc))
+    if interaction is not None:
+        secure_code = 'secure_target_conflict'
     if evidence.phase in ('apply', 'post_apply'):
         evidence.failed('failure', 'post_validation_failed' if evidence.phase == 'post_apply' else 'operation_failed')
     else:
@@ -727,6 +764,16 @@ try:
     evidence.publish()
 except (OSError, ValueError, KeyboardInterrupt):
     pass # Evidence transport never changes the standalone import result.
+if interaction is not None:
+    if secure_code is None:
+        secure_code = ('success' if status == 0 else
+                       'secure_cancelled' if evidence.reason == 'cancelled' else
+                       'secure_target_conflict' if evidence.reason == 'target_conflict' else
+                       'secure_payload_invalid' if evidence.phase not in ('apply', 'post_apply') else 'secure_import_failed')
+    try:
+        interaction.finish(secure_code)
+    except (SecureError, OSError):
+        pass
 sys.exit(status)
 PY
 )" || return 2

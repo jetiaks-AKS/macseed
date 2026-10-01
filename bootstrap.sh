@@ -1,5 +1,19 @@
 #!/bin/bash
 
+# Consume Core-validated non-secret evidence and close its descriptor before
+# sourcing modules or starting any children. The external secret FD is never here.
+APPLICATION_SECURE_ROWS=()
+if [[ "${MACSEED_APPLICATION_EXECUTION:-false}" == true &&
+      "${MACSEED_SECURE_EVIDENCE_FD:-}" =~ ^[0-9]+$ &&
+      "${MACSEED_SECURE_EVIDENCE_FD}" -gt 2 ]]; then
+    while IFS= read -r -u "$MACSEED_SECURE_EVIDENCE_FD" line; do
+        APPLICATION_SECURE_ROWS+=("$line")
+    done
+    # Numeric descriptor only, validated above; compatible with macOS Bash 3.2.
+    eval "exec ${MACSEED_SECURE_EVIDENCE_FD}<&-"
+    unset MACSEED_SECURE_EVIDENCE_FD
+fi
+
 # ==========================================
 # Core
 # ==========================================
@@ -424,8 +438,28 @@ bootstrap_run_startup_validation() {
 bootstrap_application_readiness() (
     if [[ "${MACSEED_APPLICATION_SECURE_SELECTED:-false}" == true ||
           -n "${BUNDLE_RESTORE_SECURE_FILE:-}" ]]; then
-        echo secure_bridge_required
-        return 2
+        if [[ "${MACSEED_APPLICATION_SECURE_READY:-false}" != true ]]; then
+            echo secure_bridge_required
+            return 2
+        fi
+        if ! command -v age >/dev/null 2>&1; then
+            local age_directory old_ifs="$IFS"
+            IFS=:
+            for age_directory in $PATH; do
+                if [[ -e "${age_directory:-.}/age" || -L "${age_directory:-.}/age" ]]; then
+                    IFS="$old_ifs"
+                    echo age_unavailable
+                    return 2
+                fi
+            done
+            IFS="$old_ifs"
+            echo age_required
+            return 2
+        fi
+        if ! age --version >/dev/null 2>&1; then
+            echo age_unavailable
+            return 2
+        fi
     fi
     if [[ "${MACSEED_APPLICATION_EXECUTION:-false}" != true ||
           "${BUNDLE_RESTORE_ACTIVE:-false}" != true ]]; then
@@ -541,7 +575,8 @@ bootstrap_application_readiness() (
         echo missing_required_dependency
         return 2
     fi
-    if ! sudo -n true >/dev/null 2>&1; then
+    if [[ "${MACSEED_APPLICATION_SECURE_ONLY:-false}" != true ]] &&
+       ! sudo -n true >/dev/null 2>&1; then
         echo authorization_required
         return 2
     fi
@@ -694,7 +729,9 @@ if [[ "$MODE" == --bootstrap && "${MACSEED_APPLICATION_EXECUTION:-false}" == tru
         # Formula installation in a mixed plan must not refresh cask definitions.
         export HOMEBREW_NO_AUTO_UPDATE=1
     fi
-    bootstrap_application_readiness || exit 2
+    if [[ "${MACSEED_APPLICATION_SECURE_VERIFY_ONLY:-false}" != true ]]; then
+        bootstrap_application_readiness || exit 2
+    fi
     if { bootstrap_item_scope_selected homebrew-packages || bootstrap_item_scope_selected homebrew-casks; } &&
        ! command -v brew >/dev/null 2>&1; then
         homebrew_activate_installed || exit 2
@@ -702,6 +739,12 @@ if [[ "$MODE" == --bootstrap && "${MACSEED_APPLICATION_EXECUTION:-false}" == tru
 fi
 
 verification_reset bootstrap
+if [[ "${MACSEED_APPLICATION_EXECUTION:-false}" == true && ${#APPLICATION_SECURE_ROWS[@]} -ge 2 ]]; then
+    GV_SECURE_ROWS=("${APPLICATION_SECURE_ROWS[@]}")
+    GV_SECURE_ATTEMPT="$MACSEED_SECURE_ATTEMPT"
+    GV_SECURE_EXIT="$MACSEED_SECURE_EXIT"
+    GV_SECURE_STATE=received
+fi
 if [[ "${BUNDLE_RESTORE_ACTIVE:-false}" == true ]]; then
     GV_ORIGIN=restore
 elif [[ "${WORKFLOW_ACTIVE:-false}" == true ]]; then
@@ -714,7 +757,9 @@ fi
 
 init_logger
 
-if [[ "$MODE" == --verification-internal ]]; then
+if [[ "$MODE" == --verification-internal ||
+      ( "${MACSEED_APPLICATION_EXECUTION:-false}" == true &&
+        "${MACSEED_APPLICATION_SECURE_VERIFY_ONLY:-false}" == true ) ]]; then
     verification_operation orchestration bootstrap execute "${3:-not_run}"
     verification_run
     close_logger
@@ -764,6 +809,17 @@ if [[ "$MODE" == "--bootstrap" || "$MODE" == "--dry-run" ]]; then
     fi
 fi
 
+
+if [[ "$MODE" == --bootstrap && "${MACSEED_APPLICATION_EXECUTION:-false}" == true &&
+      "${MACSEED_APPLICATION_SECURE_ONLY:-false}" == true ]]; then
+    [[ "${GV_SECURE_STATE:-}" == received ]] || { close_logger; exit 2; }
+    verification_run
+    show_summary
+    toolkit_exit_code
+    result=$?
+    close_logger
+    exit "$result"
+fi
 
 # ==========================================
 # Preflight Checks

@@ -11,10 +11,29 @@ The format is based on the principles of **Keep a Changelog**.
 
 ### Added
 
-* Added Protocol V1 `restore_execute` for the initial application-safe Restore
-  subset. It re-previews and rejects stale plans, checks execution readiness
-  before publication, runs production Bootstrap in an owned process group, and
-  reports mutation risk separately from aggregate Global Verification.
+* Added the Protocol V1 Core application interface with capability reporting,
+  read-only Bundle inspection, `restore_prepare`, and `restore_execute`.
+  Restore reuses production Preview and Bootstrap, rejects stale plans, supports
+  cancellation of owned processes, and reports mutation risk separately from
+  production Global Verification.
+* Added plan-sensitive application Restore readiness checks before publication.
+  Missing or unusable prerequisites and unsupported execution requirements block
+  the selected plan; Homebrew and age are not installed interactively in this mode.
+* Expanded application Restore to Homebrew formulae with usable Homebrew,
+  supported safe app-only Homebrew casks, and missing VS Code extensions.
+  VS Code CLI discovery prefers PATH and can use the official bundled macOS CLI
+  when PATH does not contain `code`; satisfied items remain no-op.
+* Added non-interactive Git repository reconstruction from recorded remotes and
+  Mac App Store Restore through the existing `mas` inventory and installation
+  consumer. Existing repository conflict protection is retained; App Store
+  installation relies on existing account, entitlement and authorization state.
+* Integrated Secure SSH identity Restore in application mode through the existing
+  validated, conflict-safe no-clobber importer, before dependent repository clones.
+  A dedicated inherited secret channel keeps passphrases and import confirmation
+  separate from JSON/JSONL. Bundle unlock uses age through an isolated PTY;
+  protected SSH keys have a separate unlock interaction and retain encryption.
+  Production Global Verification checks imported identity pairs, and repeated
+  identical Restore performs no identity writes. Terminal CLI behavior is preserved.
 
 * Completed Stage 14 Environment Comparison with read-only selected-requirement
   projection, typed differences, per-domain digest-bound source completeness,

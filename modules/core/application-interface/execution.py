@@ -3,28 +3,43 @@
 import os
 import signal
 import subprocess
+import tempfile
 
 
 class OwnedBootstrap:
-    def __init__(self, root, environment):
+    def __init__(self, root, environment, secure_evidence=None):
         read_fd, write_fd = os.pipe()
         verification_read, verification_write = os.pipe()
         child_env = dict(environment)
         child_env.update(MACSEED_APPLICATION_EXECUTION="true",
                          MACSEED_EXECUTION_SIGNAL_FD=str(write_fd),
                          MACSEED_VERIFICATION_FD=str(verification_write))
+        receipt = None
+        descriptors = (write_fd, verification_write)
+        if secure_evidence is not None:
+            raw, attempt, status = secure_evidence
+            receipt = tempfile.TemporaryFile(dir='/private/tmp')
+            receipt.write(raw)
+            receipt.seek(0)
+            child_env.update(MACSEED_SECURE_EVIDENCE_FD=str(receipt.fileno()),
+                             MACSEED_SECURE_ATTEMPT=attempt, MACSEED_SECURE_EXIT=str(status))
+            descriptors += (receipt.fileno(),)
         try:
             self.process = subprocess.Popen(
                 ["./bootstrap.sh", "--bootstrap"], cwd=root, env=child_env,
                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL, start_new_session=True,
-                pass_fds=(write_fd, verification_write))
+                pass_fds=descriptors)
         except BaseException:
+            if receipt is not None:
+                receipt.close()
             os.close(read_fd)
             os.close(write_fd)
             os.close(verification_read)
             os.close(verification_write)
             raise
+        if receipt is not None:
+            receipt.close()
         os.close(write_fd)
         os.close(verification_write)
         self.signal_fd = read_fd

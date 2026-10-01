@@ -151,7 +151,9 @@ bundle_restore_prerequisites() {
             return 2
         fi
     fi
-    if [[ -n "${BUNDLE_RESTORE_SECURE_FILE:-}" ]]; then
+    if [[ -n "${BUNDLE_RESTORE_SECURE_FILE:-}" &&
+          ( "${MACSEED_APPLICATION_EXECUTION:-false}" != true ||
+            "${MACSEED_APPLICATION_SECURE_READY:-false}" != true ) ]]; then
         bundle_offer_age
         result=$?
         [[ $result -eq 0 ]] || return "$result"

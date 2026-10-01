@@ -237,16 +237,23 @@ Bootstrap/Workflow и, где применимо, Restore. Результат д
 и каталога назначения, выбранные VS Code extensions при доступном CLI и Git-репозитории,
 восстанавливаемые из сохранённого remote без интерактивной авторизации, а также
 выбранные MAS apps при работающем `mas` и существующем target-side App Store
-account/entitlement state. Macseed не управляет Apple ID credentials.
+account/entitlement state. Выбранный Secure SSH Restore использует существующий
+importer Stage 12 через отдельный унаследованный secret FD, transient PTY adapter
+и существующее evidence/Global Verification. Без корректного канала сохраняется
+`secure_bridge_required`; `age` проверяется только при secure selection, без
+интерактивной установки. Bundle passphrase и SSH-key unlock различаются; импорт
+пользовательских identities не требует администратора. Будущий Desktop должен
+поставлять этот FD и отвечать на bounded challenges. Macseed не управляет Apple ID credentials.
 Для расширений application context может использовать официальный bundled CLI
 stable VS Code без установки `code` в PATH. Уже установленные casks проходят как no-op; остальные
 требования установки и repair/reinstall блокируются до публикации. Установка
 самого Homebrew остаётся внешней предпосылкой. Execute заново строит production Preview,
 сравнивает `prepared_plan_id`, проверяет readiness до публикации и запускает
-production Bootstrap с последующей Global Verification. ID связывает
+production Restore consumers с последующей Global Verification. ID связывает
 подтверждённый план, но не является авторизацией; при изменении плана требуется
 повторная подготовка и подтверждение. Следующие задачи этапа — расширять
-application-safe выполнение существующих Restore-возможностей и подключать GUI,
+проверить private-channel lifecycle и runtime compatibility на поддерживаемых macOS,
+расширять application-safe выполнение существующих Restore-возможностей и подключать GUI,
 не создавая второго движка Restore.
 
 Создать стабильную структурированную границу между существующим детерминированным
