@@ -28,6 +28,34 @@ Macseed — модульная Bash-система для обнаружения
 архитектурные инварианты. Последовательность развития описывается в Roadmap, а
 форматы и контракты значений — в Configuration.
 
+## Покрытие casks в режиме приложения
+
+При работающем Homebrew уже удовлетворённые выбранные casks не устанавливаются
+повторно. Отсутствующие принимаются, только если Homebrew JSON описывает
+app-only установку из `homebrew/cask`: artifacts `app`, необязательные неактивные
+`uninstall`/`zap`, без install hooks, дополнительных зависимостей кроме
+macOS/архитектуры, caveats (включая Rosetta), container override и rename.
+Все app targets должны отсутствовать непосредственно в доступном для записи
+`/Applications`. Disabled casks и остальные artifacts, включая `pkg`, `installer`,
+`binary` и `suite`, пока не входят в этот scope. Зарегистрированный cask с
+отсутствующим target требует repair и блокируется; режим приложения не выполняет
+reinstall.
+
+Проверяется только выбранная работа до публикации; production installer повторно
+проверяет отсутствующий cask перед установкой. Типизированные условия
+`cask_execution_requirements_unsupported`, `cask_metadata_unavailable`,
+`cask_authorization_required`, `cask_target_conflict` и `cask_repair_not_supported`
+сохраняют полный план. Structured failure содержит `category` и
+`selected_item_index` — номер с единицы в порядке выбранных валидированных
+generated records, без tokens, путей и вывода installer. Обычный cask consumer
+устанавливает принятые casks в `/Applications` без sudo, ask mode, автообновления,
+install cleanup и install upgrade, под существующим owned process lifecycle и
+mutation boundary. Production inspection и Global Verification остаются
+авторитетными. Отказ может оставить частичные изменения; независимые диалоги
+macOS/vendor не подавляются. CLI сохраняет прежнее поведение. Отсутствие Homebrew
+остаётся предпосылкой; MAS, extensions, клонирование и Secure Restore пока
+блокируются.
+
 ## Предпосылки Restore
 
 Принятая модель Core/Desktop различает неподдерживаемое действие Restore и

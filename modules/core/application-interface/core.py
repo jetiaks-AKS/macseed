@@ -43,8 +43,9 @@ class Cancelled(Exception):
 
 
 class ExecuteFailed(Exception):
-    def __init__(self, code):
+    def __init__(self, code, selected_item_index=None):
         self.code = code
+        self.selected_item_index = selected_item_index
 
 
 def emit(sequence, kind, operation_id, data=None):
@@ -195,14 +196,25 @@ def readiness(stage, include_secure):
                 os.killpg(process.pid, signal.SIGKILL)
                 process.wait()
         raise
-    status = output.decode("ascii", errors="replace").strip()
+    fields = output.decode("ascii", errors="replace").strip().split("\t")
+    status = fields[0]
+    cask_conditions = {"cask_metadata_unavailable", "cask_execution_requirements_unsupported",
+                       "cask_target_conflict", "cask_authorization_required", "cask_repair_not_supported"}
+    item_index = None
+    if len(fields) == 2 and status in cask_conditions and fields[1].isascii() and fields[1].isdigit():
+        item_index = int(fields[1])
+        if item_index < 1:
+            raise ExecuteFailed("readiness_failed")
+    elif len(fields) != 1 or status in cask_conditions:
+        raise ExecuteFailed("readiness_failed")
     allowed = {"ready", "authorization_required", "unsupported_interactive_operation",
                "homebrew_installation_requires_interaction", "homebrew_unavailable",
                "missing_required_dependency", "secure_bridge_required", "invalid_selected_input"}
+    allowed |= cask_conditions
     if status not in allowed or (process.returncode == 0) != (status == "ready"):
         raise ExecuteFailed("readiness_failed")
     if status != "ready":
-        raise ExecuteFailed(status)
+        raise ExecuteFailed(status, item_index)
 
 
 def restore_execute(operation_id, path, disabled_groups, include_secure, expected_id):
@@ -220,12 +232,15 @@ def restore_execute(operation_id, path, disabled_groups, include_secure, expecte
         sequence += 1
         emit(sequence, kind, operation_id, data)
 
-    def failure(code, exit_status=2):
+    def failure(code, exit_status=2, selected_item_index=None):
         state["execution_status"] = ("failed_after_mutation_may_have_started"
                                      if state["target_mutation_may_have_started"]
                                      else "failed_before_mutation")
         state["error_count"] = max(1, state["error_count"])
-        event("failed", dict(state, code=code))
+        data = dict(state, code=code)
+        if selected_item_index is not None:
+            data.update(category="homebrew-casks", selected_item_index=selected_item_index)
+        event("failed", data)
         return exit_status
 
     try:
@@ -289,7 +304,7 @@ def restore_execute(operation_id, path, disabled_groups, include_secure, expecte
                 event("completed")
                 return 0
     except ExecuteFailed as exc:
-        return failure(exc.code)
+        return failure(exc.code, selected_item_index=exc.selected_item_index)
     except RecoveryRequired:
         return failure("recovery_required")
     except InvalidSelection:

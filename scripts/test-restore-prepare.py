@@ -229,7 +229,184 @@ class RestorePrepareTests(unittest.TestCase):
         blueprint.write_text(blueprint.read_text().replace(
             '[homebrew-casks]\n', '[homebrew-casks]\nfixture-cask\n'))
         bundle.write_file(self.stage / "generated/brew-casks.conf", b"fixture-cask\n")
-        self.assertEqual(check().stdout.strip(), b"unsupported_interactive_operation")
+        self.assertEqual(check().stdout.strip(), b"homebrew_installation_requires_interaction")
+
+    def cask_fixture(self, mixed=False):
+        self.allow_application_bootstrap()
+        destination = self.home / "Applications"
+        destination.mkdir()
+        module = self.project / "modules/apps/brew-casks.sh"
+        module.write_text(module.read_text().replace('/Applications', str(destination)))
+        self.environment.update(TEST_CASK_METADATA=str(self.root / "cask.json"),
+                                TEST_CASK_STATE=str(self.root / "cask-state"),
+                                TEST_CASK_LOG=str(self.root / "cask-log"),
+                                TEST_CASK_TARGET=str(destination / "Fixture.app"),
+                                TEST_BOUNDARY=str(self.root / "boundary"))
+        metadata = {"casks": [{"token": "fixture-cask", "tap": "homebrew/cask",
+                               "disabled": False, "caveats": None, "caveats_rosetta": None,
+                               "depends_on": {"macos": {}}, "container": None, "rename": [],
+                               "artifacts": [{"app": ["Fixture.app"],
+                                              "target": self.environment["TEST_CASK_TARGET"]}]}]}
+        Path(self.environment["TEST_CASK_METADATA"]).write_text(json.dumps(metadata))
+        brew = self.root / "bin/brew"
+        brew.write_text('''#!/bin/bash
+case "$*" in
+  --prefix) echo /opt/homebrew ;;
+  "list --formula --full-name") [[ ! -f "$TEST_CASK_STATE.formula" ]] || echo fixture-formula ;;
+  "list --cask") [[ ! -f "$TEST_CASK_STATE" ]] || echo fixture-cask ;;
+  "info --json=v2 --cask fixture-cask") cat "$TEST_CASK_METADATA" ;;
+  "install fixture-formula") touch "$TEST_CASK_STATE.formula" ;;
+  install\ --cask\ --appdir=*\ fixture-cask)
+    [[ "$MACSEED_APPLICATION_EXECUTION" == true && "$HOMEBREW_NO_SUDO" == 1 &&
+       "$HOMEBREW_NO_AUTO_UPDATE" == 1 && "$HOMEBREW_NO_INSTALL_CLEANUP" == 1 &&
+       "$HOMEBREW_NO_INSTALL_UPGRADE" == 1 && "$HOMEBREW_NO_ASK" == 1 &&
+       ! -t 0 && ! -t 1 && -f "$TEST_BOUNDARY" ]] || exit 2
+    if (: </dev/tty) 2>/dev/null; then exit 2; fi
+    read -r input && exit 2
+    echo install >> "$TEST_CASK_LOG"
+    [[ "${TEST_CASK_FAIL:-false}" != true ]] || exit 2
+    touch "$TEST_CASK_STATE"
+    mkdir "$TEST_CASK_TARGET" ;;
+  *) exit 2 ;;
+esac
+exit 0
+''')
+        brew.chmod(0o700)
+        entrypoint = self.project / "bootstrap.sh"
+        entrypoint.write_text(entrypoint.read_text().replace(
+            "    printf 'mutation_may_have_started\\n'", '    touch "$TEST_BOUNDARY"\n' +
+            "    printf 'mutation_may_have_started\\n'"))
+        blueprint = self.stage / "blueprint.conf"
+        contents = blueprint.read_text().replace(
+            '[homebrew-casks]\n', '[homebrew-casks]\nfixture-cask\n')
+        if mixed:
+            contents = contents.replace('[homebrew-packages]\n',
+                                        '[homebrew-packages]\nfixture-formula\n')
+            bundle.write_file(self.stage / "generated/brew-packages.conf", b"fixture-formula\n")
+        blueprint.write_text(contents)
+        bundle.write_file(self.stage / "generated/brew-casks.conf", b"fixture-cask\n")
+        return metadata
+
+    def test_cask_execution_and_convergence(self):
+        self.cask_fixture(mixed=True)
+        self.pack()
+        plan = self.invoke()[1][1]["data"]["prepared_plan_id"]
+        result, events = self.execute(plan)
+        self.assertEqual(result.returncode, 0, events)
+        self.assertTrue(Path(self.environment["TEST_CASK_STATE"]).exists())
+        self.assertTrue(Path(self.environment["TEST_CASK_STATE"] + ".formula").exists())
+        self.assertEqual(events[-2]["data"]["verification"]["verdict"],
+                         "selected_requirements_verified")
+        self.assertNotIn(b"fixture-cask", result.stdout)
+        next_plan = self.invoke()[1][1]["data"]["prepared_plan_id"]
+        self.assertEqual(self.execute(next_plan)[0].returncode, 0)
+        self.assertEqual(Path(self.environment["TEST_CASK_LOG"]).read_text(), "install\n")
+
+    def test_cask_failure_preserves_mutation_boundary(self):
+        self.cask_fixture()
+        self.environment["TEST_CASK_FAIL"] = "true"
+        self.pack()
+        plan = self.invoke()[1][1]["data"]["prepared_plan_id"]
+        result, events = self.execute(plan)
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(events[-1]["data"]["code"], "bootstrap_failed")
+        self.assertTrue(events[-1]["data"]["target_mutation_may_have_started"])
+
+    def test_cask_readiness_states_and_other_categories(self):
+        metadata = self.cask_fixture()
+        blueprint = self.stage / "blueprint.conf"
+        environment = dict(self.environment, BLUEPRINT_FILE=str(blueprint),
+                           BLUEPRINT_GENERATED_DIR=str(self.stage / "generated"),
+                           BUNDLE_RESTORE_ACTIVE="true", MACSEED_APPLICATION_EXECUTION="true")
+        def check():
+            return subprocess.run(["bash", "./bootstrap.sh", "--application-readiness"],
+                                  cwd=self.project, env=environment, stdin=subprocess.DEVNULL,
+                                  stdout=subprocess.PIPE, check=False).stdout.strip()
+        self.assertEqual(check(), b"ready")
+        # Already satisfied casks bypass the installation artifact classifier.
+        metadata["casks"][0]["artifacts"].append({"pkg": ["Fixture.pkg"]})
+        Path(self.environment["TEST_CASK_METADATA"]).write_text(json.dumps(metadata))
+        Path(self.environment["TEST_CASK_STATE"]).touch()
+        target = Path(self.environment["TEST_CASK_TARGET"])
+        target.mkdir()
+        self.assertEqual(check(), b"ready")
+        target.rmdir()
+        self.assertEqual(check(), b"cask_repair_not_supported\t1")
+        brew = self.root / "bin/brew"
+        brew.write_text("#!/bin/bash\nexit 2\n")
+        self.assertEqual(check(), b"homebrew_unavailable")
+        selected = blueprint.read_text()
+        blueprint.write_text(selected.replace("fixture-cask\n", ""))
+        self.assertEqual(check(), b"ready")
+        blueprint.write_text(selected)
+        brew.unlink()
+        environment["PATH"] = str(self.root / "bin") + ":/usr/bin:/bin:/usr/sbin:/sbin"
+        module = self.project / "modules/core/homebrew/homebrew.sh"
+        module.write_text(module.read_text().replace('/opt/homebrew', str(self.root / 'absent'))
+                          .replace('/usr/local', str(self.root / 'absent')))
+        self.assertEqual(check(), b"homebrew_installation_requires_interaction")
+        for category, item in (("app-store", "123"), ("vscode-extensions", "publisher.extension"),
+                               ("git-repositories", "repo")):
+            blueprint.write_text(selected.replace(f"[{category}]\n", f"[{category}]\n{item}\n"))
+            self.assertEqual(check(), b"unsupported_interactive_operation")
+        blueprint.write_text(selected)
+        environment["MACSEED_APPLICATION_SECURE_SELECTED"] = "true"
+        self.assertEqual(check(), b"secure_bridge_required")
+        self.assertFalse(Path(self.environment["TEST_CASK_LOG"]).exists())
+        self.assertFalse((self.project / "config/.bundle-publication").exists())
+
+    def test_blocked_cask_prevents_mixed_plan_publication(self):
+        metadata = self.cask_fixture(mixed=True)
+        metadata["casks"][0]["artifacts"].append({"pkg": ["Fixture.pkg"]})
+        Path(self.environment["TEST_CASK_METADATA"]).write_text(json.dumps(metadata))
+        self.pack()
+        plan = self.invoke()[1][1]["data"]["prepared_plan_id"]
+        result, events = self.execute(plan)
+        self.assertEqual(result.returncode, 2)
+        final = events[-1]["data"]
+        self.assertEqual(final["code"], "cask_execution_requirements_unsupported")
+        self.assertEqual(final["selected_item_index"], 1)
+        self.assertFalse(final["publication_started"])
+        self.assertFalse(final["target_mutation_may_have_started"])
+        self.assertFalse(Path(self.environment["TEST_CASK_STATE"] + ".formula").exists())
+        self.assertIn("fixture-formula", (self.stage / "blueprint.conf").read_text())
+        self.assertIn("fixture-cask", (self.stage / "blueprint.conf").read_text())
+        self.assertNotIn(b"fixture-cask", result.stdout)
+
+    def test_cask_metadata_artifact_boundary(self):
+        metadata = self.cask_fixture()
+        path = Path(self.environment["TEST_CASK_METADATA"])
+        command = ['bash', '-c', 'source modules/apps/brew-casks.sh; '
+                   'cask_application_readiness fixture-cask >/dev/null 2>&1; '
+                   'printf "%s" "$CASK_APPLICATION_CONDITION"']
+        def check(value):
+            path.write_text(json.dumps(value))
+            return subprocess.run(command, cwd=self.project, env=self.environment,
+                                  stdout=subprocess.PIPE, check=False).stdout.decode()
+        self.assertEqual(check(metadata), "ready")
+        for artifact in ("pkg", "installer", "binary", "suite", "preflight", "postflight",
+                         "preflight_steps", "postflight_steps", "generated_script", "service",
+                         "unknown"):
+            value = json.loads(json.dumps(metadata))
+            value["casks"][0]["artifacts"].append({artifact: None})
+            with self.subTest(artifact=artifact):
+                self.assertEqual(check(value), "cask_execution_requirements_unsupported")
+        for artifact in ("zap", "uninstall"):
+            value = json.loads(json.dumps(metadata))
+            value["casks"][0]["artifacts"].append({artifact: [{}]})
+            self.assertEqual(check(value), "ready")
+        for key, value in (("caveats", "EULA"), ("caveats_rosetta", True),
+                           ("depends_on", {"formula": ["helper"]}), ("container", {"type": "pkg"}),
+                           ("disabled", True), ("tap", "third-party/tap"), ("rename", ["something"])):
+            candidate = json.loads(json.dumps(metadata))
+            candidate["casks"][0][key] = value
+            self.assertEqual(check(candidate), "cask_execution_requirements_unsupported")
+        self.assertEqual(check({"casks": []}), "cask_metadata_unavailable")
+        Path(self.environment["TEST_CASK_TARGET"]).mkdir()
+        self.assertEqual(check(metadata), "cask_target_conflict")
+        Path(self.environment["TEST_CASK_TARGET"]).rmdir()
+        (self.home / "Applications").rmdir()
+        self.assertEqual(check(metadata), "cask_authorization_required")
 
     def test_execute_selected_formula_through_production_module(self):
         blueprint = self.stage / "blueprint.conf"

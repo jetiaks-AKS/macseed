@@ -36,6 +36,11 @@ is_cask_installed() {
     local metadata
     local app_paths
     local app_path
+    local HOMEBREW_NO_AUTO_UPDATE="${HOMEBREW_NO_AUTO_UPDATE:-}"
+    if [[ "${MACSEED_APPLICATION_EXECUTION:-false}" == true ]]; then
+        HOMEBREW_NO_AUTO_UPDATE=1
+        export HOMEBREW_NO_AUTO_UPDATE
+    fi
 
     CASK_REINSTALL_REQUIRED=false
 
@@ -148,6 +153,67 @@ preview_brew_casks() {
 
 }
 
+# A conservative metadata-only gate. Installed casks need no installer gate.
+# Do not evaluate vendor scripts or duplicate Homebrew's artifact implementation.
+cask_application_readiness() {
+    local cask="$1" metadata targets target
+    CASK_APPLICATION_CONDITION=cask_metadata_unavailable
+    metadata="$(HOMEBREW_NO_AUTO_UPDATE=1 brew info --json=v2 --cask "$cask")" || return 2
+    jq -e --arg token "$cask" '
+        (.casks | type == "array" and length == 1) and
+        (.casks[0] | .token == $token and (.artifacts | type == "array"))
+    ' <<< "$metadata" >/dev/null || return 2
+    CASK_APPLICATION_CONDITION=cask_execution_requirements_unsupported
+    targets="$(jq -er '
+        .casks[0] |
+        select(.tap == "homebrew/cask" and .disabled == false and
+               (.caveats == null or .caveats == "") and .caveats_rosetta != true and
+               (.depends_on | type == "object" and
+                 (keys - ["macos", "arch"] | length == 0)) and
+               (.container == null) and (.rename == []) and
+               (.artifacts | length > 0)) |
+        .artifacts |
+        select(all(.[]; type == "object" and
+                   (keys - ["app", "target", "uninstall", "zap"] | length == 0) and
+                   ([has("app"), has("uninstall"), has("zap")] | map(select(.)) | length == 1))) |
+        map(select(has("app"))) |
+        select(length > 0) |
+        map(select((.app | type == "array" and length > 0) and
+                   (.target | type == "string" and
+                     test("^/Applications/[^/]+\\.app$") and
+                     (explode | all(. >= 32 and . != 127))))) |
+        select(length > 0) | .[].target
+    ' <<< "$metadata")" || return 2
+    # Every app artifact must have passed the target validation above.
+    local expected actual
+    expected="$(jq '[.casks[0].artifacts[] | select(has("app"))] | length' <<< "$metadata")" || return 2
+    actual="$(printf '%s\n' "$targets" | wc -l | tr -d ' ')"
+    [[ "$actual" == "$expected" ]] || return 2
+    while IFS= read -r target; do
+        if [[ -e "$target" || -L "$target" ]]; then
+            CASK_APPLICATION_CONDITION=cask_target_conflict
+            return 2
+        fi
+        if [[ ! -d "${target%/*}" || ! -w "${target%/*}" || ! -x "${target%/*}" ]]; then
+            CASK_APPLICATION_CONDITION=cask_authorization_required
+            return 2
+        fi
+    done <<< "$targets"
+    CASK_APPLICATION_CONDITION=ready
+    return 0
+}
+
+brew_install_cask_command() {
+    if [[ "${MACSEED_APPLICATION_EXECUTION:-false}" == true ]]; then
+        HOMEBREW_NO_ENV_HINTS=1 HOMEBREW_NO_SUDO=1 HOMEBREW_NO_ASK=1 \
+            HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1 \
+            HOMEBREW_NO_INSTALL_UPGRADE=1 HOMEBREW_CASK_OPTS='' \
+            brew "$1" --cask --appdir=/Applications "$2"
+    else
+        HOMEBREW_NO_ENV_HINTS=1 brew "$1" --cask "$2"
+    fi
+}
+
 install_brew_cask() {
 
     local cask="$1"
@@ -172,15 +238,26 @@ install_brew_cask() {
         fi
     fi
 
+    if [[ "${MACSEED_APPLICATION_EXECUTION:-false}" == true ]]; then
+        if [[ "$install_command" != install ]]; then
+            error "cask_repair_not_supported"
+            return 2
+        fi
+        cask_application_readiness "$cask" || {
+            error "$CASK_APPLICATION_CONDITION"
+            return 2
+        }
+    fi
+
     action "Installing $cask..."
 
     if [[ "$VERBOSE" == true ]]; then
 
-        HOMEBREW_NO_ENV_HINTS=1 brew "$install_command" --cask "$cask"
+        brew_install_cask_command "$install_command" "$cask"
 
     else
 
-        HOMEBREW_NO_ENV_HINTS=1 brew "$install_command" --cask "$cask" >/dev/null 2>&1
+        brew_install_cask_command "$install_command" "$cask" >/dev/null 2>&1
 
     fi
 

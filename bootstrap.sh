@@ -432,8 +432,8 @@ bootstrap_application_readiness() (
         echo unsupported_interactive_operation
         return 2
     fi
-    local category
-    for category in homebrew-casks app-store vscode-extensions git-repositories; do
+    local category result prefix
+    for category in app-store vscode-extensions git-repositories; do
         if bootstrap_item_scope_selected "$category"; then
             echo unsupported_interactive_operation
             return 2
@@ -443,7 +443,7 @@ bootstrap_application_readiness() (
         echo invalid_selected_input
         return 2
     fi
-    if bootstrap_item_scope_selected homebrew-packages; then
+    if bootstrap_item_scope_selected homebrew-packages || bootstrap_item_scope_selected homebrew-casks; then
         if ! command -v brew >/dev/null 2>&1; then
             homebrew_activate_installed >/dev/null 2>&1 || {
                 prefix="$(homebrew_expected_prefix)" || {
@@ -463,7 +463,9 @@ bootstrap_application_readiness() (
             echo homebrew_unavailable
             return 2
         fi
-        local package result packages
+    fi
+    if bootstrap_item_scope_selected homebrew-packages; then
+        local package packages
         packages="$(read_brew_packages_configuration "$(blueprint_generated_file homebrew-packages)")" || {
             echo invalid_selected_input
             return 2
@@ -478,6 +480,34 @@ bootstrap_application_readiness() (
                 return 2
             fi
         done <<< "$packages"
+    fi
+    if bootstrap_item_scope_selected homebrew-casks; then
+        command -v jq >/dev/null 2>&1 || { echo missing_required_dependency; return 2; }
+        local cask casks index=0
+        casks="$(read_brew_casks_configuration "$(blueprint_generated_file homebrew-casks)")" || {
+            echo invalid_selected_input
+            return 2
+        }
+        while IFS= read -r cask || [[ -n "$cask" ]]; do
+            [[ -n "$cask" && "$cask" != \#* ]] || continue
+            blueprint_item_selected homebrew-casks "$cask" || continue
+            ((index++))
+            is_cask_installed "$cask"
+            result=$?
+            [[ $result -ne 0 ]] || continue
+            if [[ $result -ne 1 ]]; then
+                echo homebrew_unavailable
+                return 2
+            fi
+            if [[ "$CASK_REINSTALL_REQUIRED" == true ]]; then
+                printf 'cask_repair_not_supported\t%s\n' "$index"
+                return 2
+            fi
+            if ! cask_application_readiness "$cask" >/dev/null 2>&1; then
+                printf '%s\t%s\n' "$CASK_APPLICATION_CONDITION" "$index"
+                return 2
+            fi
+        done <<< "$casks"
     fi
     if blueprint_category_enabled git-configuration && git_configuration_scope_selected &&
        ! command -v git >/dev/null 2>&1; then
@@ -633,8 +663,12 @@ MODE_NAME="$2"
 PREVIEW_HAS_CHANGES=false
 
 if [[ "$MODE" == --bootstrap && "${MACSEED_APPLICATION_EXECUTION:-false}" == true ]]; then
+    if bootstrap_item_scope_selected homebrew-casks; then
+        # Formula installation in a mixed plan must not refresh cask definitions.
+        export HOMEBREW_NO_AUTO_UPDATE=1
+    fi
     bootstrap_application_readiness || exit 2
-    if bootstrap_item_scope_selected homebrew-packages &&
+    if { bootstrap_item_scope_selected homebrew-packages || bootstrap_item_scope_selected homebrew-casks; } &&
        ! command -v brew >/dev/null 2>&1; then
         homebrew_activate_installed || exit 2
     fi

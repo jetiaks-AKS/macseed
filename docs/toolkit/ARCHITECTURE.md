@@ -22,7 +22,7 @@ readiness or publication. The ID identifies the plan confirmed by the caller;
 it is not authorization. Its read-only readiness gate accepts selected Homebrew
 formulae when Homebrew is usable, including an installation under the supported
 architecture prefix that needs process PATH activation. It rejects absent or
-broken Homebrew, and selected casks, App Store apps, VS Code extensions, Git
+broken Homebrew, and selected App Store apps, VS Code extensions, Git
 repositories, or secure identity work before publication, without silently
 omitting selected work. Automatic Homebrew installation is currently unavailable;
 guided prerequisite handling is the required 4.0 baseline. The current subset
@@ -52,6 +52,32 @@ reproducing supported parts of a macOS working environment. This document
 defines the current component responsibilities, state flow, boundaries, and
 architectural invariants. Development sequencing belongs in the Roadmap;
 configuration formats and value-level contracts belong in Configuration.
+
+### Application cask coverage
+
+With usable Homebrew, already satisfied selected casks require no installation.
+Missing casks are accepted only when Homebrew JSON identifies an official
+`homebrew/cask` app-only install: `app` artifacts, optional inactive `uninstall`
+or `zap` metadata, no install hooks, extra dependencies beyond macOS/architecture,
+caveats (including Rosetta), container override or rename steps. Every app target
+must be absent directly under writable `/Applications`. Disabled casks and all
+other artifact classes, including `pkg`, `installer`, `binary` and `suite`, are
+outside this initial subset. Registered casks with missing targets need repair
+and are blocked; application mode does not reinstall them.
+
+The gate inspects only selected work before publication and rechecks missing
+casks in the production installer. `cask_execution_requirements_unsupported`,
+`cask_metadata_unavailable`, `cask_authorization_required`, `cask_target_conflict`
+and `cask_repair_not_supported` preserve the complete plan. Structured failures
+include `category` and a one-based `selected_item_index` in validated generated
+selection order, without exposing tokens, paths or installer output.
+Accepted installs use the ordinary cask consumer with explicit `/Applications`
+placement, no sudo, ask mode, auto-update, install cleanup or install upgrade;
+owned stdin/process semantics and the existing mutation boundary apply.
+Production cask inspection and Global Verification remain authoritative. Failures
+may leave partial changes; independent macOS/vendor GUI dialogs are not suppressed.
+Ordinary CLI cask behavior is unchanged. Homebrew absence retains its prerequisite
+condition; MAS, extensions, repository cloning and Secure Restore remain blocked.
 
 ## Restore prerequisites
 
