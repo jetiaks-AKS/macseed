@@ -4,6 +4,7 @@ BUNDLE_HELPER="modules/bundle/bundle.py"
 
 bundle_prompt() {
     local answer
+    [[ "${MACSEED_APPLICATION_EXECUTION:-false}" != true ]] || return 2
     printf '%s ' "$1"
     IFS= read -r answer || return 1
     [[ "$answer" == [yY] || "$answer" == [yY][eE][sS] ]]

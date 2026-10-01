@@ -15,6 +15,26 @@ Credentials importer before Workspace cloning. A prerequisite failure stops
 dependent restoration; later failures do not roll back imported identities. The Bundle
 is transport only, so later Workflow runs from local state.
 
+The structured Core interface now supports `restore_execute` for a temporary,
+limited application-safe subset. It repeats Bundle validation, narrowing and
+production Preview, recomputes `prepared_plan_id`, and rejects stale plans before
+readiness or publication. The ID identifies the plan confirmed by the caller;
+it is not authorization. Its read-only readiness gate rejects secure selection and selected Homebrew
+packages, casks, App Store apps, VS Code extensions, or Git repositories before
+publication, without silently omitting selected work. The initial subset is
+ordinary settings and Workspace folders; application coverage must grow toward
+the existing practical CLI Restore capabilities before native app Restore is
+considered complete. Secure Restore awaits a dedicated credential bridge.
+Owned Bootstrap children have no interactive stdin or
+controlling terminal, Macseed does not ask its own questions, and sudo uses
+non-interactive authorization. External tools or macOS may still create
+independent GUI dialogs. A separate descriptor marks when target mutation may
+start, and the owned process group can be cancelled without changing the
+human CLI path. Production Global Verification provides aggregate conformity
+facts separately from execution status. Failure after the mutation boundary
+may leave partial target changes; publication recovery is not a transactional
+rollback of Bootstrap.
+
 The ordinary path reconstructs selected state supported by Bootstrap consumers.
 Applications are installed, repositories are cloned, and supported settings
 are configured; working trees and user data are not copied. SSH Configuration

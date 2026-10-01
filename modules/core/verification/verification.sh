@@ -198,3 +198,21 @@ verification_report() {
     fi
     detail 'Target observations are sequential, not an atomic snapshot.'
 }
+
+# Aggregate-only side channel for an owned application Bootstrap subprocess.
+# This projects existing records and never serializes desired or observed values.
+verification_application_summary() {
+    [[ "${MACSEED_APPLICATION_EXECUTION:-false}" == true &&
+       "${MACSEED_VERIFICATION_FD:-}" =~ ^[0-9]+$ ]] || return 0
+    local verdict=incomplete
+    case "$GV_VERDICT" in
+        'Selected requirements verified') verdict=selected_requirements_verified ;;
+        'Differences detected') verdict=differences_detected ;;
+        'No managed requirements') verdict=no_managed_requirements ;;
+    esac
+    printf 'v1\t%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\n' \
+        "$GV_STATUS" "$verdict" "$GV_TOTAL" "$GV_VERIFIED" "$GV_MISMATCH" \
+        "$GV_UNVERIFIED" "$GV_UNRESOLVED" "$GV_WARNINGS" "$GV_ERRORS" \
+        "$WARNING_COUNT" "$ERROR_COUNT" \
+        >&"$MACSEED_VERIFICATION_FD" || :
+}

@@ -157,6 +157,7 @@ verification_run() {
     fi
     GV_FINISHED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     verification_report
+    verification_application_summary
     # Internal facts do not redefine existing command exit codes.
     return 0
 }

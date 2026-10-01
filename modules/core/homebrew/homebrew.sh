@@ -94,6 +94,11 @@ check_homebrew() {
 
     warning "Homebrew is not installed"
 
+    if [[ "${MACSEED_APPLICATION_EXECUTION:-false}" == true ]]; then
+        error "unsupported_interactive_operation: Homebrew setup requires a CLI decision"
+        return 2
+    fi
+
     read -r -p "Install Homebrew? (y/n): " answer
 
     if [[ "$answer" != "y" ]]; then

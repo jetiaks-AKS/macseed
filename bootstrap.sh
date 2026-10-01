@@ -107,6 +107,11 @@ for arg in "$@"; do
             ((EXECUTION_MODE_COUNT++))
             ;;
 
+        --application-readiness)
+            MODE="--application-readiness"
+            ((EXECUTION_MODE_COUNT++))
+            ;;
+
         --discover)
 
             MODE="--discover"
@@ -414,6 +419,51 @@ bootstrap_run_startup_validation() {
 
 }
 
+# Internal, read-only gate for a future structured Restore caller. It must run
+# against the same staged Blueprint and generated inputs used by Preview.
+bootstrap_application_readiness() (
+    if [[ "${MACSEED_APPLICATION_SECURE_SELECTED:-false}" == true ||
+          -n "${BUNDLE_RESTORE_SECURE_FILE:-}" ]]; then
+        echo secure_bridge_required
+        return 2
+    fi
+    if [[ "${MACSEED_APPLICATION_EXECUTION:-false}" != true ||
+          "${BUNDLE_RESTORE_ACTIVE:-false}" != true ]]; then
+        echo unsupported_interactive_operation
+        return 2
+    fi
+    local category
+    for category in homebrew-packages homebrew-casks app-store vscode-extensions git-repositories; do
+        if bootstrap_item_scope_selected "$category"; then
+            echo unsupported_interactive_operation
+            return 2
+        fi
+    done
+    if ! bootstrap_run_startup_validation >/dev/null 2>&1; then
+        echo invalid_selected_input
+        return 2
+    fi
+    if blueprint_category_enabled git-configuration && git_configuration_scope_selected &&
+       ! command -v git >/dev/null 2>&1; then
+        echo missing_required_dependency
+        return 2
+    fi
+    if ! sudo -n true >/dev/null 2>&1; then
+        echo authorization_required
+        return 2
+    fi
+    echo ready
+    return 0
+)
+
+# A dedicated descriptor, supplied by the owned application subprocess, carries
+# the conservative transition. Normal CLI runs have no descriptor and no output.
+bootstrap_application_mutation_boundary() {
+    [[ "${MACSEED_APPLICATION_EXECUTION:-false}" == true ]] || return 0
+    [[ "${MACSEED_EXECUTION_SIGNAL_FD:-}" =~ ^[0-9]+$ ]] || return 2
+    printf 'mutation_may_have_started\n' >&"$MACSEED_EXECUTION_SIGNAL_FD"
+}
+
 run_preview() {
 
     # Continue later read-only inspections; run_inspection retains every status.
@@ -465,6 +515,7 @@ workflow_generated_ready() (
 
 workflow_confirm() {
     local input
+    [[ "${MACSEED_APPLICATION_EXECUTION:-false}" != true ]] || return 2
     while true; do
         printf '%s ' "$1"
         IFS= read -r input || return 1
@@ -544,6 +595,10 @@ run_mode() (
 MODE="$1"
 MODE_NAME="$2"
 PREVIEW_HAS_CHANGES=false
+
+if [[ "$MODE" == --bootstrap && "${MACSEED_APPLICATION_EXECUTION:-false}" == true ]]; then
+    bootstrap_application_readiness || exit 2
+fi
 
 verification_reset bootstrap
 if [[ "${BUNDLE_RESTORE_ACTIVE:-false}" == true ]]; then
@@ -667,6 +722,14 @@ case "$MODE" in
 
     --bootstrap)
 
+        bootstrap_application_mutation_boundary || {
+            error "Application execution signal unavailable; Bootstrap stopped before mutation"
+            ((ERROR_COUNT++))
+            show_summary
+            close_logger
+            exit 2
+        }
+
         if [[ "${BUNDLE_RESTORE_ACTIVE:-false}" == true ]]; then
             run_module "Restore SSH Prerequisites" bundle_restore_prerequisites
             prerequisite_result=$?
@@ -767,7 +830,9 @@ exit "$result"
 
 )
 
-if [[ "$MODE" == "--capture" ]]; then
+if [[ "$MODE" == "--application-readiness" ]]; then
+    bootstrap_application_readiness
+elif [[ "$MODE" == "--capture" ]]; then
     bundle_capture
 elif [[ "$MODE" == "--restore" ]]; then
     bundle_restore "$RESTORE_BUNDLE"

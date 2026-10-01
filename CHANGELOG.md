@@ -11,6 +11,11 @@ The format is based on the principles of **Keep a Changelog**.
 
 ### Added
 
+* Added Protocol V1 `restore_execute` for the initial application-safe Restore
+  subset. It re-previews and rejects stale plans, checks execution readiness
+  before publication, runs production Bootstrap in an owned process group, and
+  reports mutation risk separately from aggregate Global Verification.
+
 * Completed Stage 14 Environment Comparison with read-only selected-requirement
   projection, typed differences, per-domain digest-bound source completeness,
   and informational extra inventory comparison for casks, App Store IDs, and

@@ -230,13 +230,15 @@ Bootstrap/Workflow и, где применимо, Restore. Результат д
 
 **Статус: In progress**
 
-Начат минимальный структурированный subprocess-контракт: протокол v1 поддерживает
-`capabilities`, read-only `bundle_inspect` и `restore_prepare` через production
-Preview. Prepare не меняет целевое состояние и не применяет pending recovery.
-Его `prepared_plan_id` связывает проверенный ввод, выбор и модульную сводку
-Preview, но не разрешает Apply; будущий Execute должен пересчитать Preview и
-запросить новое подтверждение при изменении плана. Остальные операции и
-интеграция с GUI остаются планом этого этапа.
+Протокол v1 поддерживает `capabilities`, read-only `bundle_inspect`,
+`restore_prepare` и первый mutating `restore_execute` для временного
+ограниченного application-safe scope. Execute заново строит production Preview,
+сравнивает `prepared_plan_id`, проверяет readiness до публикации и запускает
+production Bootstrap с последующей Global Verification. ID связывает
+подтверждённый план, но не является авторизацией; при изменении плана требуется
+повторная подготовка и подтверждение. Следующие задачи этапа — расширять
+application-safe выполнение существующих Restore-возможностей и подключать GUI,
+не создавая второго движка Restore.
 
 Создать стабильную структурированную границу между существующим детерминированным
 Core и его клиентами, включая будущий GUI. Интерфейс должен быть машиночитаемым,

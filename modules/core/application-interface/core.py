@@ -3,6 +3,7 @@
 
 import json
 import hashlib
+from contextlib import contextmanager
 import os
 from pathlib import Path
 import re
@@ -16,10 +17,12 @@ import tempfile
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "bundle"))
 import bundle
+from execution import OwnedBootstrap
 
 PROTOCOL_VERSION = 1
 MAX_REQUEST = 4096
 OPERATION_ID = re.compile(r"[A-Za-z0-9_-]{1,64}\Z", re.ASCII)
+PREPARED_PLAN_ID = re.compile(r"[0-9a-f]{64}\Z", re.ASCII)
 ROOT = Path(__file__).resolve().parents[3]
 
 
@@ -37,6 +40,11 @@ class PreviewFailed(Exception):
 
 class Cancelled(Exception):
     pass
+
+
+class ExecuteFailed(Exception):
+    def __init__(self, code):
+        self.code = code
 
 
 def emit(sequence, kind, operation_id, data=None):
@@ -70,20 +78,27 @@ def request():
     return value
 
 
-def restore_prepare(path, disabled_groups, include_secure):
+@contextmanager
+def restore_signals():
     def cancel(_signum, _frame):
         raise Cancelled()
 
     previous_int = signal.signal(signal.SIGINT, cancel)
     previous_term = signal.signal(signal.SIGTERM, cancel)
     try:
-        return _restore_prepare(path, disabled_groups, include_secure)
+        yield
     finally:
         signal.signal(signal.SIGINT, previous_int)
         signal.signal(signal.SIGTERM, previous_term)
 
 
-def _restore_prepare(path, disabled_groups, include_secure):
+def restore_prepare(path, disabled_groups, include_secure):
+    with restore_signals(), prepared_restore(path, disabled_groups, include_secure) as (summary, _stage, _source, _staged):
+        return summary
+
+
+@contextmanager
+def prepared_restore(path, disabled_groups, include_secure):
     if bundle.RECOVERY.exists() or bundle.RECOVERY.is_symlink():
         raise RecoveryRequired()
     input_path = Path(path)
@@ -156,7 +171,140 @@ def _restore_prepare(path, disabled_groups, include_secure):
                                          separators=(",", ":")).encode()).hexdigest()
         # This identifies observed inputs and this module summary, never authorizes Apply.
         # Future Execute must rebuild and revalidate Preview before mutation.
-        return summary
+        yield summary, stage, source_identity, stage_identity
+
+
+def readiness(stage, include_secure):
+    environment = dict(os.environ, BLUEPRINT_FILE=str(stage / "blueprint.conf"),
+                       BLUEPRINT_GENERATED_DIR=str(stage / "generated"),
+                       BUNDLE_RESTORE_ACTIVE="true", BUNDLE_RESTORE_SECURE_FILE="",
+                       MACSEED_APPLICATION_EXECUTION="true",
+                       MACSEED_APPLICATION_SECURE_SELECTED=str(include_secure).lower())
+    process = subprocess.Popen(["./bootstrap.sh", "--application-readiness"], cwd=ROOT,
+                               env=environment, stdin=subprocess.DEVNULL,
+                               stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                               start_new_session=True)
+    try:
+        output, _ = process.communicate()
+    except BaseException:
+        if process.poll() is None:
+            os.killpg(process.pid, signal.SIGTERM)
+            try:
+                process.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                os.killpg(process.pid, signal.SIGKILL)
+                process.wait()
+        raise
+    status = output.decode("ascii", errors="replace").strip()
+    allowed = {"ready", "authorization_required", "unsupported_interactive_operation",
+               "missing_required_dependency", "secure_bridge_required", "invalid_selected_input"}
+    if status not in allowed or (process.returncode == 0) != (status == "ready"):
+        raise ExecuteFailed("readiness_failed")
+    if status != "ready":
+        raise ExecuteFailed(status)
+
+
+def restore_execute(operation_id, path, disabled_groups, include_secure, expected_id):
+    sequence = 1  # started has already been emitted by main().
+    state = {"prepared_plan_id": None, "execution_status": "not_started",
+             "publication_started": False, "publication_occurred": False,
+             "target_mutation_may_have_started": False, "bootstrap_status": "not_started",
+             "secure_restore_status": "selected_pending" if include_secure else "not_selected",
+             "verification": {"status": "not_run", "verdict": "incomplete"},
+             "warning_count": 0, "error_count": 0}
+    owned = None
+
+    def event(kind, data=None):
+        nonlocal sequence
+        sequence += 1
+        emit(sequence, kind, operation_id, data)
+
+    def failure(code, exit_status=2):
+        state["execution_status"] = ("failed_after_mutation_may_have_started"
+                                     if state["target_mutation_may_have_started"]
+                                     else "failed_before_mutation")
+        state["error_count"] = max(1, state["error_count"])
+        event("failed", dict(state, code=code))
+        return exit_status
+
+    try:
+        with restore_signals():
+            event("phase_started", {"phase": "preparation"})
+            with prepared_restore(path, disabled_groups, include_secure) as (plan, stage, source_id, stage_id):
+                event("phase_completed", {"phase": "preparation"})
+                if plan["prepared_plan_id"] != expected_id:
+                    raise ExecuteFailed("stale_plan")
+                state["prepared_plan_id"] = plan["prepared_plan_id"]
+                readiness(stage, include_secure)
+                if (bundle.fingerprint(stage) != stage_id or
+                    bundle.fingerprint(Path(path)) != source_id):
+                    raise ExecuteFailed("stale_plan")
+                if bundle.RECOVERY.exists() or bundle.RECOVERY.is_symlink():
+                    raise RecoveryRequired()
+                event("phase_started", {"phase": "publication"})
+                state["publication_started"] = True
+                previous_mask = signal.pthread_sigmask(signal.SIG_BLOCK,
+                                                        {signal.SIGINT, signal.SIGTERM})
+                try:
+                    bundle.publish(stage)
+                    state["publication_occurred"] = True
+                finally:
+                    signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
+                event("phase_completed", {"phase": "publication"})
+                environment = dict(os.environ, BUNDLE_RESTORE_ACTIVE="true",
+                                   BUNDLE_RESTORE_SECURE_FILE="")
+                for name in ("BLUEPRINT_FILE", "BLUEPRINT_GENERATED_DIR",
+                             "SSH_SNAPSHOT_FILE", "ZSH_SNAPSHOT_FILE"):
+                    environment.pop(name, None)
+                event("phase_started", {"phase": "bootstrap"})
+                try:
+                    previous_mask = signal.pthread_sigmask(signal.SIG_BLOCK,
+                                                            {signal.SIGINT, signal.SIGTERM})
+                    try:
+                        owned = OwnedBootstrap(ROOT, environment)
+                    finally:
+                        signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
+                    bootstrap_exit = owned.wait()
+                except BaseException:
+                    if owned is not None:
+                        owned.cancel()
+                        state["target_mutation_may_have_started"] = owned.mutation_may_have_started
+                    raise
+                state["target_mutation_may_have_started"] = owned.mutation_may_have_started
+                state["bootstrap_status"] = ({0: "success", 1: "warning"}.get(bootstrap_exit, "failure"))
+                if owned.verification is not None:
+                    state["verification"] = {key: value for key, value in owned.verification.items()
+                                             if not key.startswith("bootstrap_")}
+                    state["warning_count"] = owned.verification["bootstrap_warning_count"]
+                    state["error_count"] = owned.verification["bootstrap_error_count"]
+                elif bootstrap_exit in (0, 1):
+                    state["verification"] = {"status": "unavailable", "verdict": "incomplete"}
+                    state["warning_count"] = 1 if bootstrap_exit == 1 else 0
+                if bootstrap_exit not in (0, 1):
+                    raise ExecuteFailed("bootstrap_failed")
+                event("phase_completed", {"phase": "bootstrap"})
+                state["execution_status"] = "completed"
+                event("result", state)
+                event("completed")
+                return 0
+    except ExecuteFailed as exc:
+        return failure(exc.code)
+    except RecoveryRequired:
+        return failure("recovery_required")
+    except InvalidSelection:
+        return failure("invalid_selection")
+    except PreviewFailed:
+        return failure("preview_failed")
+    except Cancelled:
+        return failure("cancelled", 130)
+    except bundle.Unsupported:
+        return failure("unsupported_bundle")
+    except (FileNotFoundError, PermissionError):
+        return failure("bundle_unavailable")
+    except (bundle.Invalid, tarfile.TarError, ValueError, TypeError, KeyError, UnicodeError):
+        return failure("publication_failed" if state["publication_started"] else "bundle_invalid")
+    except Exception:
+        return failure("internal_error")
 
 
 def main(version):
@@ -178,21 +326,27 @@ def main(version):
         if operation == "capabilities":
             if set(value) != required:
                 raise ValueError("invalid capabilities request")
-        elif operation in ("bundle_inspect", "restore_prepare"):
+        elif operation in ("bundle_inspect", "restore_prepare", "restore_execute"):
             if set(value) != required | {"parameters"}:
                 raise ValueError("invalid Bundle request")
             parameters = value["parameters"]
             expected = {"path"} if operation == "bundle_inspect" else {"path", "disabled_groups", "include_secure"}
+            if operation == "restore_execute":
+                expected = expected | {"expected_prepared_plan_id"}
             if not isinstance(parameters, dict) or set(parameters) != expected:
                 raise ValueError("invalid Bundle parameters")
             path = parameters["path"]
             if not isinstance(path, str) or not path.startswith("/") or "\0" in path:
                 raise ValueError("invalid Bundle path")
-            if operation == "restore_prepare":
+            if operation in ("restore_prepare", "restore_execute"):
                 disabled_groups = parameters["disabled_groups"]
                 include_secure = parameters["include_secure"]
                 if not isinstance(disabled_groups, list) or not all(isinstance(item, str) for item in disabled_groups) or type(include_secure) is not bool:
                     raise ValueError("invalid Restore selection types")
+                if operation == "restore_execute":
+                    expected_id = parameters["expected_prepared_plan_id"]
+                    if not isinstance(expected_id, str) or not PREPARED_PLAN_ID.fullmatch(expected_id):
+                        raise ValueError("invalid prepared plan ID")
         else:
             emit(1, "failed", operation_id, {"code": "unsupported_operation"})
             return 2
@@ -201,11 +355,18 @@ def main(version):
         return 2
 
     emit(1, "started", operation_id)
+    if operation == "restore_execute":
+        if len(disabled_groups) != len(set(disabled_groups)) or any(item not in bundle.GROUPS for item in disabled_groups):
+            emit(2, "failed", operation_id, {"code": "invalid_selection",
+                                               "publication_occurred": False,
+                                               "target_mutation_may_have_started": False})
+            return 2
+        return restore_execute(operation_id, path, disabled_groups, include_secure, expected_id)
     if operation == "capabilities":
         result = {
             "protocol_version": PROTOCOL_VERSION,
             "product_version": version,
-            "operations": ["capabilities", "bundle_inspect", "restore_prepare"],
+            "operations": ["capabilities", "bundle_inspect", "restore_prepare", "restore_execute"],
         }
     else:
         try:

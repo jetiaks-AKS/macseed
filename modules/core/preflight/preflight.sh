@@ -116,6 +116,11 @@ check_admin() {
 
     fi
 
+    if [[ "${MACSEED_APPLICATION_EXECUTION:-false}" == true ]]; then
+        error "authorization_required: administrator privileges are unavailable non-interactively"
+        return 2
+    fi
+
     info "Administrator authentication required..."
 
     if sudo -v; then
