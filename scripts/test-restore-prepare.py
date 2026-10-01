@@ -347,7 +347,7 @@ exit 0
         self.assertEqual(check(), b"homebrew_installation_requires_interaction")
         for category, item in (("app-store", "123"),):
             blueprint.write_text(selected.replace(f"[{category}]\n", f"[{category}]\n{item}\n"))
-            self.assertEqual(check(), b"unsupported_interactive_operation")
+            self.assertEqual(check(), b"invalid_selected_input")
         blueprint.write_text(selected)
         environment["MACSEED_APPLICATION_SECURE_SELECTED"] = "true"
         self.assertEqual(check(), b"secure_bridge_required")
@@ -735,6 +735,136 @@ esac
         self.assertNotIn(b"secret", result.stdout + result.stderr)
         logs = b"".join(p.read_bytes() for p in (self.project / "logs").rglob("*.log"))
         self.assertNotIn(b"secret", logs)
+
+    def mas_fixture(self, mixed=False):
+        if mixed:
+            self.repository_fixture(mixed=True)
+        else:
+            self.allow_application_bootstrap()
+            self.environment["TEST_BOUNDARY"] = str(self.root / "boundary")
+            entrypoint = self.project / "bootstrap.sh"
+            entrypoint.write_text(entrypoint.read_text().replace(
+                "    printf 'mutation_may_have_started\\n'", '    touch "$TEST_BOUNDARY"\n' +
+                "    printf 'mutation_may_have_started\\n'"))
+        self.environment.update(TEST_MAS_STATE=str(self.root / "mas-state"),
+                                TEST_MAS_LOG=str(self.root / "mas-log"),
+                                PATH=str(self.root / "bin") + ":/usr/bin:/bin:/usr/sbin:/sbin")
+        sudo = self.root / "bin/sudo"
+        sudo.write_text('''#!/bin/bash
+[[ "$1" == -n ]] || exit 2
+[[ "$2" != true ]] || exit 0
+[[ "$2" == /usr/bin/env && "$3" == MAS_NO_AUTO_INDEX=1 ]] || exit 2
+shift
+exec "$@"
+''')
+        mas = self.root / "bin/mas"
+        mas.write_text('''#!/bin/bash
+[[ "$MAS_NO_AUTO_INDEX" == 1 ]] || exit 2
+case "$1" in
+ version)
+   [[ "${TEST_MAS_BROKEN:-false}" != true ]] || exit 2
+   echo 3.0.0 ;;
+ list)
+   [[ "${TEST_MAS_OBSERVATION_FAIL:-false}" != true ]] || {
+     echo 'private-account@example.test' >&2; exit 2;
+   }
+   echo '111 Installed Fixture (1.0)'
+   [[ ! -f "$TEST_MAS_STATE" ]] || echo '222 Missing Fixture (1.0)' ;;
+ install)
+   [[ "$2" == 222 && "$#" == 2 && -f "$TEST_BOUNDARY" ]] || exit 2
+   [[ ! -t 0 && ! -t 1 ]] || exit 2
+   if (: </dev/tty) 2>/dev/null; then exit 2; fi
+   read -r input && exit 2
+   echo "install:$2" >> "$TEST_MAS_LOG"
+   echo 'private-account@example.test' >&2
+   [[ "${TEST_MAS_AUTH_FAIL:-false}" != true ]] || exit 2
+   touch "$TEST_MAS_STATE" ;;
+ *) exit 2 ;;
+esac
+exit 0
+''')
+        mas.chmod(0o700)
+        blueprint = self.stage / "blueprint.conf"
+        blueprint.write_text(blueprint.read_text().replace('[app-store]\n',
+                                                          '[app-store]\n111\n222\n'))
+        bundle.write_file(self.stage / "generated/appstore.conf",
+                          b"111|Installed Fixture\n222|Missing Fixture\n")
+        return mas
+
+    def test_mas_production_install_and_convergence(self):
+        self.mas_fixture(mixed=True)
+        self.pack()
+        plan = self.invoke()[1][1]["data"]["prepared_plan_id"]
+        result, events = self.execute(plan)
+        self.assertEqual(result.returncode, 0, events)
+        self.assertEqual(events[-2]["data"]["verification"]["verdict"],
+                         "selected_requirements_verified")
+        self.assertTrue(events[-2]["data"]["target_mutation_may_have_started"])
+        plan = self.invoke()[1][1]["data"]["prepared_plan_id"]
+        self.assertEqual(self.execute(plan)[0].returncode, 0)
+        self.assertEqual((self.root / "mas-log").read_text(), "install:222\n")
+        for state in ("TEST_CASK_STATE", "TEST_EXTENSION_STATE"):
+            self.assertTrue(Path(self.environment[state]).exists())
+        self.assertTrue(Path(self.environment["TEST_CASK_STATE"] + ".formula").exists())
+        self.assertTrue((self.home / "Projects/repo/.git").is_dir())
+        self.assertNotIn(b"private-account", result.stdout + result.stderr)
+        logs = b"".join(p.read_bytes() for p in (self.project / "logs").rglob("*.log"))
+        self.assertNotIn(b"private-account", logs)
+
+    def test_mas_local_prerequisites_before_publication(self):
+        mas = self.mas_fixture()
+        self.pack()
+        for condition, expected in (("missing", "mas_required"), ("broken", "mas_unavailable"),
+                                    ("inventory", "mas_unavailable")):
+            if condition == "missing":
+                contents = mas.read_text()
+                mas.unlink()
+            elif condition == "broken":
+                mas.write_text(contents)
+                mas.chmod(0o700)
+                self.environment["TEST_MAS_BROKEN"] = "true"
+            else:
+                self.environment.pop("TEST_MAS_BROKEN")
+                self.environment["TEST_MAS_OBSERVATION_FAIL"] = "true"
+            result, prepared = self.invoke()
+            self.assertEqual(result.returncode, 0, prepared)
+            result, events = self.execute(prepared[1]["data"]["prepared_plan_id"])
+            self.assertEqual(events[-1]["data"]["code"], expected)
+            self.assertFalse(events[-1]["data"]["publication_started"])
+            self.assertFalse((self.root / "mas-log").exists())
+            self.assertIn('[app-store]\n111\n222\n', (self.stage / "blueprint.conf").read_text())
+            self.assertNotIn(b"private-account", result.stdout + result.stderr)
+
+    def test_mas_authorization_failure_is_runtime_failure(self):
+        self.mas_fixture()
+        self.environment["TEST_MAS_AUTH_FAIL"] = "true"
+        self.pack()
+        result, prepared = self.invoke()
+        self.assertEqual(result.returncode, 0, prepared)
+        result, events = self.execute(prepared[1]["data"]["prepared_plan_id"])
+        self.assertEqual(result.returncode, 2, events)
+        self.assertEqual(events[-1]["data"]["code"], "bootstrap_failed")
+        self.assertTrue(events[-1]["data"]["publication_occurred"])
+        self.assertTrue(events[-1]["data"]["target_mutation_may_have_started"])
+        self.assertEqual((self.root / "mas-log").read_text(), "install:222\n")
+        self.assertFalse(Path(self.environment["TEST_MAS_STATE"]).exists())
+        self.assertNotIn(b"private-account", result.stdout + result.stderr)
+
+    def test_mas_installed_and_unselected(self):
+        mas = self.mas_fixture()
+        blueprint = self.stage / "blueprint.conf"
+        blueprint.write_text(blueprint.read_text().replace('[app-store]\n111\n222\n',
+                                                          '[app-store]\n111\n'))
+        self.pack()
+        plan = self.invoke()[1][1]["data"]["prepared_plan_id"]
+        self.assertEqual(self.execute(plan)[0].returncode, 0)
+        self.assertFalse((self.root / "mas-log").exists())
+        blueprint.write_text(blueprint.read_text().replace('[app-store]\n111\n', '[app-store]\n'))
+        mas.unlink()
+        self.archive = self.root / "no-mas.mbt"
+        self.pack()
+        plan = self.invoke()[1][1]["data"]["prepared_plan_id"]
+        self.assertEqual(self.execute(plan)[0].returncode, 0)
 
     def test_execute_selected_formula_through_production_module(self):
         blueprint = self.stage / "blueprint.conf"

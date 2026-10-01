@@ -22,7 +22,7 @@ readiness or publication. The ID identifies the plan confirmed by the caller;
 it is not authorization. Its read-only readiness gate accepts selected Homebrew
 formulae when Homebrew is usable, including an installation under the supported
 architecture prefix that needs process PATH activation. It rejects absent or
-broken Homebrew, and selected App Store apps or secure identity work before
+broken Homebrew, and secure identity work before
 publication, without silently
 omitting selected work. Automatic Homebrew installation is currently unavailable;
 guided prerequisite handling is the required 4.0 baseline. The current subset
@@ -77,7 +77,7 @@ owned stdin/process semantics and the existing mutation boundary apply.
 Production cask inspection and Global Verification remain authoritative. Failures
 may leave partial changes; independent macOS/vendor GUI dialogs are not suppressed.
 Ordinary CLI cask behavior is unchanged. Homebrew absence retains its prerequisite
-condition; MAS and Secure Restore remain blocked.
+condition; Secure Restore remains blocked.
 
 ### Application VS Code extension coverage
 
@@ -136,7 +136,41 @@ Remote/network/authentication failures are execution failures after mutation may
 have started. Failed clones can leave partial directories; no automatic cleanup
 or rollback is performed. Re-entry recomputes Preview and inspects that state.
 Global Verification retains worktree/origin/branch predicates. Human CLI clone
-behavior is unchanged; MAS and Secure Restore remain blocked.
+behavior is unchanged; Secure Restore remains blocked.
+
+### Application Mac App Store coverage
+
+Selected App Store applications use the existing numeric-ID configuration,
+Preview, MAS install consumer and Global Verification. A usable PATH `mas` is
+required for selected work because production `mas list` is also the authoritative
+installed-state observer; no replacement inventory is added. No selected apps
+means no MAS prerequisite. Installed selected IDs are skipped, while missing IDs
+use `mas install <ID>` without force, purchase/get, or global upgrade.
+
+Local readiness returns `mas_required` for absence or `mas_unavailable` for an
+unusable executable/version command or failed production inventory, before Bundle
+publication. Structured Preview retains inventory failures as warnings so the
+typed readiness gate can report them. Installing `mas` through Homebrew is an
+external prerequisite in this path, even if the plan also selects that formula;
+no second package pass or automatic Homebrew bootstrap is introduced. Desktop
+can explain the prerequisite and offer Check Again after external preparation.
+
+Current mas documents root privileges and an existing signed-in App Store Apple
+Account for installation. Application install uses `sudo -n` with the resolved
+CLI and `MAS_NO_AUTO_INDEX=1`, preserving mas's invoking-user context and preventing
+password fallback if local authorization expires. The existing local authorization
+gate remains in place. No supported reliable account/entitlement preflight is
+used; Macseed does not inspect private account databases or manage Apple ID login.
+Account, purchase, storefront and network failures remain runtime execution
+failures rather than an unsupported capability. Independent macOS/App Store GUI
+dialogs are not suppressed. Vendor output is hidden in application context,
+including inventory stderr, to avoid exposing account information in logs.
+
+Owned stdin/TTY/cancellation and the existing mutation boundary apply. Failed
+installation preserves `target_mutation_may_have_started=true`, without rollback
+or uninstall. Post-install production inspection and Global Verification retain
+numeric-ID presence semantics and Spotlight limitations. Repeated Restore skips
+satisfied IDs. Human CLI MAS behavior is unchanged; Secure Restore remains blocked.
 
 ## Restore prerequisites
 

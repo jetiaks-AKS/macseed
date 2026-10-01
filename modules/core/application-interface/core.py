@@ -211,6 +211,7 @@ def readiness(stage, include_secure):
     allowed = {"ready", "authorization_required", "unsupported_interactive_operation",
                "vscode_cli_required", "vscode_cli_unavailable", "vscode_cli_ambiguous",
                "git_required", "git_unavailable", "repository_target_conflict",
+               "mas_required", "mas_unavailable",
                "homebrew_installation_requires_interaction", "homebrew_unavailable",
                "missing_required_dependency", "secure_bridge_required", "invalid_selected_input"}
     allowed |= cask_conditions

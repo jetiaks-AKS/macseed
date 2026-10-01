@@ -235,7 +235,9 @@ Bootstrap/Workflow и, где применимо, Restore. Результат д
 ограниченного application-safe scope, включая выбранные Homebrew formulae при
 работающем Homebrew, отсутствующие app-only casks, прошедшие проверку metadata
 и каталога назначения, выбранные VS Code extensions при доступном CLI и Git-репозитории,
-восстанавливаемые из сохранённого remote без интерактивной авторизации.
+восстанавливаемые из сохранённого remote без интерактивной авторизации, а также
+выбранные MAS apps при работающем `mas` и существующем target-side App Store
+account/entitlement state. Macseed не управляет Apple ID credentials.
 Для расширений application context может использовать официальный bundled CLI
 stable VS Code без установки `code` в PATH. Уже установленные casks проходят как no-op; остальные
 требования установки и repair/reinstall блокируются до публикации. Установка

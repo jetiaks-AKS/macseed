@@ -433,10 +433,6 @@ bootstrap_application_readiness() (
         return 2
     fi
     local result prefix
-    if bootstrap_item_scope_selected app-store; then
-        echo unsupported_interactive_operation
-        return 2
-    fi
     if bootstrap_item_scope_selected git-repositories; then
         if ! repository_application_readiness >/dev/null 2>&1; then
             echo "$REPOSITORY_APPLICATION_CONDITION"
@@ -446,6 +442,12 @@ bootstrap_application_readiness() (
     if ! bootstrap_run_startup_validation >/dev/null 2>&1; then
         echo invalid_selected_input
         return 2
+    fi
+    if bootstrap_item_scope_selected app-store; then
+        if ! mas_application_readiness >/dev/null 2>&1; then
+            echo "$MAS_APPLICATION_CONDITION"
+            return 2
+        fi
     fi
     if bootstrap_item_scope_selected homebrew-packages || bootstrap_item_scope_selected homebrew-casks; then
         if ! command -v brew >/dev/null 2>&1; then

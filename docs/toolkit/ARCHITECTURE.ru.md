@@ -53,8 +53,7 @@ install cleanup и install upgrade, под существующим owned proces
 mutation boundary. Production inspection и Global Verification остаются
 авторитетными. Отказ может оставить частичные изменения; независимые диалоги
 macOS/vendor не подавляются. CLI сохраняет прежнее поведение. Отсутствие Homebrew
-остаётся предпосылкой; MAS и Secure Restore пока
-блокируются.
+остаётся предпосылкой; Secure Restore пока блокируется.
 
 ## Покрытие VS Code extensions в режиме приложения
 
@@ -112,7 +111,41 @@ overrides. Глобальная конфигурация Git/SSH не меняе
 возможного начала мутаций. Частичный каталог не удаляется автоматически;
 rollback нет. Повторный запуск заново строит Preview и наблюдает состояние.
 Global Verification сохраняет predicates worktree/origin/branch. Human CLI clone
-не изменён; MAS и Secure Restore остаются заблокированы.
+не изменён; Secure Restore остаётся заблокирован.
+
+## Восстановление приложений Mac App Store в режиме приложения
+
+Выбранные приложения используют существующие numeric IDs, Preview, MAS consumer
+и Global Verification. Для выбранной работы требуется работающий `mas` из PATH:
+production `mas list` служит также источником проверки установленного состояния.
+Другой inventory не добавляется. Без выбранных приложений предпосылки MAS нет.
+Установленные IDs пропускаются; отсутствующие устанавливаются через
+`mas install <ID>`, без force, purchase/get или глобального upgrade.
+
+До публикации readiness возвращает `mas_required` при отсутствии CLI и
+`mas_unavailable` при неисправном executable/version command или сбое inventory.
+Structured Preview сохраняет ошибки inventory как warnings для типизированного
+readiness gate. Установка `mas` через Homebrew остаётся внешней предпосылкой,
+даже если эта formula выбрана в плане. Второго прохода установки пакетов и
+автоматического Homebrew bootstrap нет. Desktop может объяснить предпосылку и
+предложить Check Again после внешней подготовки.
+
+Текущий mas требует root privileges и уже выполненного входа в App Store Apple
+Account. Application install использует `sudo -n`, найденный CLI и
+`MAS_NO_AUTO_INDEX=1`: сохраняется контекст вызывающего пользователя mas,
+password fallback исключён при истечении локальной авторизации. Существующий
+локальный authorization gate сохранён. Надёжная поддерживаемая проверка
+account/entitlement до установки не используется; Macseed не читает частные
+account databases и не управляет Apple ID login. Ошибки account, purchase,
+storefront или сети являются runtime execution failures. Независимые GUI-диалоги
+macOS/App Store не подавляются. Вывод mas и stderr inventory скрыты в режиме
+приложения, чтобы account information не попадала в логи.
+
+Сохраняются owned stdin/TTY/cancellation и mutation boundary. Ошибка установки
+оставляет `target_mutation_may_have_started=true`, без rollback или uninstall.
+Production post-install inspection и Global Verification проверяют наличие IDs
+с существующими ограничениями Spotlight. Повторный Restore пропускает
+удовлетворённые IDs. Human CLI MAS не изменён; Secure Restore остаётся заблокирован.
 
 ## Предпосылки Restore
 

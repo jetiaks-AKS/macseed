@@ -1,5 +1,42 @@
 #!/bin/bash
 
+# Application prerequisites are local only: no account or network probing.
+# shellcheck disable=SC2034
+mas_application_cli_readiness() {
+    MAS_APPLICATION_CONDITION=mas_required
+    MAS_APPLICATION_COMMAND="$(type -P mas)" || {
+        local directory directories
+        IFS=: read -r -a directories <<< "$PATH"
+        for directory in "${directories[@]}"; do
+            [[ ! -e "${directory:-.}/mas" && ! -L "${directory:-.}/mas" ]] ||
+                MAS_APPLICATION_CONDITION=mas_unavailable
+        done
+        return 2
+    }
+    MAS_APPLICATION_CONDITION=mas_unavailable
+    MAS_NO_AUTO_INDEX=1 "$MAS_APPLICATION_COMMAND" version >/dev/null 2>&1 || return 2
+    return 0
+}
+
+# The production observer needs mas even to prove that selected apps exist.
+# shellcheck disable=SC2034
+mas_application_readiness() {
+    local applications app_id app_name result
+    mas_application_cli_readiness || return 2
+    applications="$(read_appstore_configuration "$(blueprint_generated_file app-store)")" || {
+        MAS_APPLICATION_CONDITION=invalid_selected_input
+        return 2
+    }
+    while IFS='|' read -r app_id app_name; do
+        [[ -n "$app_id" && "$app_id" != \#* ]] || continue
+        blueprint_item_selected app-store "$app_id" || continue
+        is_appstore_app_installed "$app_id"
+        result=$?
+        [[ $result -eq 0 || $result -eq 1 ]] || return 2
+    done <<< "$applications"
+    return 0
+}
+
 # ==========================================
 # Install App Store Application
 # ==========================================
@@ -28,7 +65,11 @@ read_appstore_configuration() {
 is_appstore_app_installed() {
 
     local inventory
-    inventory="$(MAS_NO_AUTO_INDEX=1 mas list)" || return 2
+    if [[ "${MACSEED_APPLICATION_EXECUTION:-false}" == true ]]; then
+        inventory="$(MAS_NO_AUTO_INDEX=1 mas list 2>/dev/null)" || return 2
+    else
+        inventory="$(MAS_NO_AUTO_INDEX=1 mas list)" || return 2
+    fi
     # Prefix both operands to prevent awk from comparing IDs numerically.
     LC_ALL=C awk -v app_id="$1" '
         { if (("id:" $1) == ("id:" app_id)) found=1 }
@@ -78,6 +119,10 @@ preview_appstore_apps() {
             0) detail "$app_name is already installed" ;;
             1) preview_action "Would install App Store app: $app_name ($app_id)" ;;
             *)
+                if [[ "${MACSEED_APPLICATION_EXECUTION:-false}" == true ]]; then
+                    warning "App Store inspection requires attention"
+                    return 1
+                fi
                 error "Failed to inspect App Store application: $app_name"
                 return 2
                 ;;
@@ -95,7 +140,13 @@ install_appstore_app() {
 
     action "Installing $app_name..."
 
-    if [[ "$VERBOSE" == true ]]; then
+    if [[ "${MACSEED_APPLICATION_EXECUTION:-false}" == true ]]; then
+        mas_application_cli_readiness || return 2
+        # Current mas supports sudo invocation and retains the invoking user's
+        # App Store context. -n prevents password fallback even if authorization
+        # expires after readiness. Never emit vendor account/error output.
+        sudo -n /usr/bin/env MAS_NO_AUTO_INDEX=1 "$MAS_APPLICATION_COMMAND" install "$app_id" </dev/null >/dev/null 2>&1
+    elif [[ "$VERBOSE" == true ]]; then
 
     MAS_NO_AUTO_INDEX=1 mas install "$app_id"
 
@@ -141,6 +192,7 @@ install_appstore_apps() {
 
     if ! command -v mas >/dev/null 2>&1; then
         warning "mas is not installed"
+        [[ "${MACSEED_APPLICATION_EXECUTION:-false}" != true ]] || return 2
         return 1
     fi
 
