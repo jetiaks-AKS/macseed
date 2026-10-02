@@ -2,8 +2,17 @@
 migration_run() {
     command -v python3 >/dev/null 2>&1 || { printf 'Python 3 required\n' >&2; return 2; }
     local migration_code
-    migration_code="$(cat <<'PY'
+    migration_code="$(
+        # Do not lend the application channel to the heredoc reader.
+        if [[ $# -eq 10 && "$7" == --application-channel-fd && "$8" =~ ^[0-9]+$ && "$8" -gt 2 ]]; then
+            eval "exec ${8}<&-"
+        fi
+        if [[ $# -eq 7 && "$4" == --application-channel-fd && "$5" =~ ^[0-9]+$ && "$5" -gt 2 ]]; then
+            eval "exec ${5}<&-"
+        fi
+        cat <<'PY'
 import hashlib
+import json
 import os
 import re
 import shutil
@@ -22,7 +31,21 @@ MAX_ITEMS = 32
 NAME = re.compile(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,79}\Z', re.ASCII)
 TYPES = {'ssh-ed25519', 'ssh-rsa', 'ecdsa-sha2-nistp256',
          'ecdsa-sha2-nistp384', 'ecdsa-sha2-nistp521'}
+sys.dont_write_bytecode = True
+sys.path.insert(0, sys.argv.pop(1))
+from evidence import Evidence
+from secret_input import Input, SecureError, PrivateTemporaryDirectory, decrypt, key_public, encrypt
 mode, *args = sys.argv[1:]
+interaction = None
+if mode == 'import' and len(args) == 9:
+    interaction = Input(int(args[6]), args[8])
+    args = args[:5]
+if mode == 'application-export' and len(args) == 6:
+    interaction = Input(int(args[3]), args[5])
+    args = args[:2]
+evidence = Evidence(args[2], args[4]) if mode == 'import' and len(args) == 5 else Evidence()
+secure_code = None
+private_temporary = PrivateTemporaryDirectory if interaction is not None else tempfile.TemporaryDirectory
 home = os.environ.get('HOME', '')
 ssh = os.path.join(home, '.ssh')
 uid = os.getuid()
@@ -160,58 +183,67 @@ def validate_pair(private, public):
         hidden[3] &= ~termios.ECHO
         termios.tcsetattr(0, termios.TCSANOW, hidden)
     try:
-        with tempfile.TemporaryDirectory(prefix='ssh-migrate-', dir=local_tempbase()) as validation_dir:
+        with private_temporary(prefix='ssh-migrate-', dir=local_tempbase()) as validation_dir:
             os.chmod(validation_dir, 0o700)
             validated_private = os.path.join(validation_dir, 'identity')
             fd = os.open(validated_private, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
             with os.fdopen(fd, 'wb') as staged:
                 os.fchmod(staged.fileno(), 0o600)
                 staged.write(raw_private)
-            for attempt in range(1, 4):
-                wrong_passphrase = False
-                child = subprocess.Popen(['ssh-keygen', '-y', '-f', validated_private], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                def prompt_filter():
-                    nonlocal wrong_passphrase
-                    seen = b''
-                    try:
-                        while True:
-                            chunk = child.stderr.read(1)
-                            if not chunk:
-                                break
-                            seen = (seen + chunk)[-96:]
-                            if b'incorrect passphrase' in seen:
-                                wrong_passphrase = True
-                            if seen.endswith(b'Enter passphrase'):
-                                say('SSH key passphrase: ')
-                    except OSError:
-                        pass
-                reader = threading.Thread(target=prompt_filter, daemon=True)
-                reader.start()
-                try:
-                    public_output = child.stdout.read(MAX_KEY + 1)
-                    if len(public_output) > MAX_KEY and child.poll() is None:
-                        child.kill()
-                    child.wait()
-                    reader.join()
-                finally:
-                    if child.poll() is None:
-                        child.terminate()
+            if interaction is not None:
+                public_output = key_public(validated_private, interaction)
+            else:
+                for attempt in range(1, 4):
+                    wrong_passphrase = False
+                    child = subprocess.Popen(
+                        ['ssh-keygen', '-y', '-f', validated_private],
+                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
+                    def prompt_filter():
+                        nonlocal wrong_passphrase
+                        seen = b''
+                        prompt_started = False
                         try:
-                            child.wait(timeout=2)
-                        except subprocess.TimeoutExpired:
+                            while True:
+                                chunk = child.stderr.read(1)
+                                if not chunk:
+                                    break
+                                seen = (seen + chunk)[-96:]
+                                if b'incorrect passphrase' in seen:
+                                    wrong_passphrase = True
+                                if seen.endswith(b'Enter passphrase'):
+                                    prompt_started = True
+                                if prompt_started and seen.endswith(b': '):
+                                    say('SSH key passphrase: ')
+                                    prompt_started = False
+                        except OSError:
+                            pass
+                    reader = threading.Thread(target=prompt_filter, daemon=True)
+                    reader.start()
+                    try:
+                        public_output = child.stdout.read(MAX_KEY + 1)
+                        if len(public_output) > MAX_KEY and child.poll() is None:
                             child.kill()
-                            child.wait()
-                    child.stdout.close()
-                    child.stderr.close()
-                if child.returncode == 0 and len(public_output) <= MAX_KEY:
-                    break
-                if not wrong_passphrase or len(public_output) > MAX_KEY:
-                    raise Invalid('private key validation failed')
-                if not os.isatty(0):
-                    raise UnlockFailed('SSH key could not be unlocked')
-                if attempt == 3:
-                    raise UnlockFailed('SSH key could not be unlocked after 3 attempts')
-                say('SSH key passphrase was not accepted; try again')
+                        child.wait()
+                        reader.join()
+                    finally:
+                        if child.poll() is None:
+                            child.terminate()
+                            try:
+                                child.wait(timeout=2)
+                            except subprocess.TimeoutExpired:
+                                child.kill()
+                                child.wait()
+                        child.stdout.close()
+                        child.stderr.close()
+                    if child.returncode == 0 and len(public_output) <= MAX_KEY:
+                        break
+                    if not wrong_passphrase or len(public_output) > MAX_KEY:
+                        raise Invalid('private key validation failed')
+                    if not os.isatty(0):
+                        raise UnlockFailed('SSH key could not be unlocked')
+                    if attempt == 3:
+                        raise UnlockFailed('SSH key could not be unlocked after 3 attempts')
+                    say('SSH key passphrase was not accepted; try again')
     finally:
         if tty_settings is not None:
             termios.tcsetattr(0, termios.TCSANOW, tty_settings)
@@ -264,7 +296,28 @@ def capture_candidates():
             say('Excluded: unsuitable identity')
     return found
 
+def application_candidates():
+    if not ssh_check(allow_missing=True):
+        return {'status': 'unavailable', 'reason': 'source_absent', 'items': []}
+    entries = []
+    for name, kind, fp in capture_candidates():
+        states = []
+        for suffix in ('', '.pub'):
+            metadata = os.lstat(os.path.join(ssh, name + suffix))
+            states.append((metadata.st_dev, metadata.st_ino, metadata.st_size, metadata.st_mtime_ns,
+                           metadata.st_ctime_ns, metadata.st_mode, metadata.st_uid))
+        stamp = hashlib.sha256(json.dumps(states).encode()).hexdigest()
+        item_id = hashlib.sha256((name + ':' + fp).encode()).hexdigest()
+        entries.append({'item_id': item_id, 'label': name, 'key_type': kind, 'fingerprint': fp,
+                        'validation': 'candidate_requires_pair_validation', '_stamp': stamp, '_name': name})
+    if len(entries) > MAX_ITEMS:
+        raise Invalid('too many candidates')
+    return {'status': 'present' if entries else 'unavailable', 'reason': None if entries else 'no_eligible_identities', 'items': entries}
+
 def ask(prompt):
+    if interaction is not None:
+        interaction.ask('import_confirmation')
+        return 'import'
     try:
         sys.stderr.write(prompt)
         sys.stderr.flush()
@@ -416,6 +469,7 @@ def target_plan(records):
         try:
             _, _, current_private, current_public = validate_pair(p, q)
             if current_private != private or current_public != public:
+                evidence.different(name)
                 raise Conflict('different target pair')
         except (Invalid, OSError):
             raise Conflict('unsafe target pair')
@@ -492,15 +546,18 @@ def run():
     for dependency in ('ssh-keygen', 'tar', 'python3'):
         if not shutil.which(dependency):
             raise Invalid('required tool missing: ' + dependency)
+    if mode == 'application-list':
+        print(json.dumps(application_candidates(), sort_keys=True))
+        return
     if mode == 'list':
         for index, (name, kind, fp) in enumerate(candidates(), 1):
             print(f'{index}. {name} {kind} {fp}')
         return
     if not shutil.which('age'):
         raise Invalid('age required')
-    if not os.isatty(0):
+    if not os.isatty(0) and interaction is None:
         raise Invalid('interactive terminal required')
-    if mode in ('export', 'capture-export'):
+    if mode in ('export', 'capture-export', 'application-export'):
         output = args[0]
         if os.path.lexists(output) or os.path.islink(output):
             raise Conflict('export destination exists')
@@ -508,40 +565,54 @@ def run():
         owned(parent, 'dir', 0o700)
         if os.path.realpath(parent) != parent:
             raise Invalid('export parent contains symlink')
-        items = capture_candidates() if mode == 'capture-export' else candidates()
-        if not items:
+        if mode == 'application-export':
+            selected = json.loads(data(args[1]))
+            current = {entry['item_id']: entry for entry in application_candidates()['items']}
+            if (not isinstance(selected, list) or not 1 <= len(selected) <= MAX_ITEMS or
+                    len({entry['item_id'] for entry in selected}) != len(selected) or
+                    any(current.get(entry['item_id']) != entry for entry in selected)):
+                raise Conflict('selected identity changed')
+            chosen = sorted(entry['_name'] for entry in selected)
+            candidate_details = {entry['_name']: (entry['key_type'], entry['fingerprint']) for entry in selected}
+        else:
+            items = capture_candidates() if mode == 'capture-export' else candidates()
+            if not items:
+                if mode == 'capture-export':
+                    say('No candidate SSH identities found')
+                    return
+                raise Invalid('no eligible identities')
             if mode == 'capture-export':
-                say('No candidate SSH identities found')
-                return
-            raise Invalid('no eligible identities')
-        if mode == 'capture-export':
-            say('Select candidate SSH identities; each selected key will be fully validated before encryption.')
-        for index, (name, kind, fp) in enumerate(items, 1):
-            print(f'{index}. {name} {kind} {fp}')
-        selection = ask('Select numbers (comma separated): ')
-        if not selection:
-            raise Cancel()
-        try:
-            indices = [int(x.strip()) for x in selection.split(',')]
-            if len(indices) > MAX_ITEMS or len(indices) != len(set(indices)) or any(i < 1 or i > len(items) for i in indices):
-                raise ValueError()
-        except ValueError:
-            raise Invalid('invalid selection')
-        chosen = sorted(items[i-1][0] for i in indices)
-        candidate_details = {name: (kind, fp) for name, kind, fp in items}
-        if mode == 'capture-export':
-            for name in chosen:
-                kind, fp = candidate_details[name]
-                print(f'Candidate export: {name} {kind} {fp}')
-            print('Destination:', output)
-            if ask('Type export to confirm: ') != 'export':
+                say('Select candidate SSH identities; each selected key will be fully validated before encryption.')
+            for index, (name, kind, fp) in enumerate(items, 1):
+                print(f'{index}. {name} {kind} {fp}')
+            selection = ask('Select numbers (comma separated): ')
+            if not selection:
                 raise Cancel()
+            try:
+                indices = [int(x.strip()) for x in selection.split(',')]
+                if len(indices) > MAX_ITEMS or len(indices) != len(set(indices)) or any(i < 1 or i > len(items) for i in indices):
+                    raise ValueError()
+            except ValueError:
+                raise Invalid('invalid selection')
+            chosen = sorted(items[i-1][0] for i in indices)
+            candidate_details = {name: (kind, fp) for name, kind, fp in items}
+            if mode == 'capture-export':
+                for name in chosen:
+                    kind, fp = candidate_details[name]
+                    print(f'Candidate export: {name} {kind} {fp}')
+                print('Destination:', output)
+                if ask('Type export to confirm: ') != 'export':
+                    raise Cancel()
         records = []
         for name in chosen:
             kind, fp, private, public = validate_pair(os.path.join(ssh, name), os.path.join(ssh, name + '.pub'))
-            if mode == 'capture-export' and (kind, fp) != candidate_details[name]:
+            if mode in ('capture-export', 'application-export') and (kind, fp) != candidate_details[name]:
                 raise Conflict('selected identity changed')
             records.append((name, kind, fp, private, public))
+        if mode == 'application-export':
+            current = {entry['item_id']: entry for entry in application_candidates()['items']}
+            if any(current.get(entry['item_id']) != entry for entry in selected):
+                raise Conflict('selected identity changed')
         if sum(len(r[3]) + len(r[4]) for r in records) > MAX_PACKAGE - 65536:
             raise Invalid('selected identities exceed package limit')
         if mode == 'export':
@@ -557,7 +628,7 @@ def run():
             export_parent_still_visible(parent_fd, parent)
             if os.path.lexists(output):
                 raise Conflict('export destination exists')
-            with tempfile.TemporaryDirectory(prefix='ssh-migrate-', dir=local_tempbase()) as temp, tempfile.TemporaryDirectory(prefix='.ssh-migrate-', dir=parent) as cipher_temp:
+            with private_temporary(prefix='ssh-migrate-', dir=local_tempbase()) as temp, private_temporary(prefix='.ssh-migrate-', dir=parent) as cipher_temp:
                 os.chmod(temp, 0o700)
                 os.chmod(cipher_temp, 0o700)
                 stage = os.path.join(temp, 'stage')
@@ -579,7 +650,11 @@ def run():
                     age = None
                     try:
                         tar_fd = tar.stdout.fileno()
-                        age = subprocess.run(['age', '-p', '/dev/fd/' + str(tar_fd)], stdout=out, pass_fds=(tar_fd,))
+                        if mode == 'application-export':
+                            encrypt(tar_fd, out, interaction)
+                            age = subprocess.CompletedProcess([], 0)
+                        else:
+                            age = subprocess.run(['age', '-p', '/dev/fd/' + str(tar_fd)], stdout=out, pass_fds=(tar_fd,))
                     finally:
                         tar.stdout.close()
                         if tar.poll() is None and (age is None or age.returncode != 0):
@@ -615,7 +690,7 @@ def run():
         raise Invalid('package path contains symlink')
     tempbase = local_tempbase()
     package_fd = open_checked_package(source)
-    with os.fdopen(package_fd, 'rb') as encrypted_in, tempfile.TemporaryDirectory(prefix='ssh-migrate-', dir=tempbase) as temp:
+    with os.fdopen(package_fd, 'rb') as encrypted_in, private_temporary(prefix='ssh-migrate-', dir=tempbase) as temp:
         os.chmod(temp, 0o700)
         archive = os.path.join(temp, 'payload.tar')
         stage = os.path.join(temp, 'stage')
@@ -623,27 +698,39 @@ def run():
         with open(archive, 'xb') as out:
             os.chmod(archive, 0o600)
             input_fd = encrypted_in.fileno()
-            result = subprocess.run(['age', '-d', '/dev/fd/' + str(input_fd)], stdout=out, pass_fds=(input_fd,))
-            if result.returncode:
-                raise Invalid('decryption failed')
+            evidence.reason = 'decrypt_failed'
+            if interaction is not None:
+                decrypt(input_fd, out, interaction)
+            else:
+                result = subprocess.run(['age', '-d', '/dev/fd/' + str(input_fd)], stdout=out, pass_fds=(input_fd,))
+                if result.returncode:
+                    raise Invalid('decryption failed')
+        evidence.reason = 'input_invalid'
         records = archive_validate(archive, stage)
+        evidence.selected([r[0] for r in records])
         plan = target_plan(records)
         for (name, kind, fp, _, _), status in zip(records, plan):
             print(f'{status}: {name} {kind} {fp}')
         if 'create' not in plan:
+            evidence.matched('noop')
             print('All identities already match')
             return
         if ask('Type import to confirm: ') != 'import':
             raise Cancel()
         if target_plan(records) != plan:
             raise Conflict('target changed')
+        evidence.phase = 'apply'
         created = []
         made_ssh = False
+        mutation_recorded = False
         homefd = None
         dirfd = None
         try:
             homefd = open_home_dir()
             if not os.path.lexists(ssh):
+                if interaction is not None:
+                    interaction.mutation()
+                    mutation_recorded = True
                 try:
                     os.mkdir('.ssh', 0o700, dir_fd=homefd)
                 except FileExistsError:
@@ -654,10 +741,15 @@ def run():
                 raise Conflict('target changed')
             for (name, _, _, private, public), status in zip(records, plan):
                 if status == 'create':
+                    if interaction is not None and not mutation_recorded:
+                        interaction.mutation()
+                        mutation_recorded = True
                     publish_pair(name, private, public, created, dirfd)
+            evidence.phase = 'post_apply'
             target_dir_still_visible(dirfd)
             if target_plan(records) != ['identical'] * len(records):
                 raise Invalid('post-publication verification failed')
+            evidence.matched('success')
             print('Import verified')
         except BaseException:
             for relative, device, inode in reversed(created):
@@ -682,21 +774,56 @@ def run():
             if homefd is not None:
                 os.close(homefd)
 
+status = 0
 try:
     run()
+except SecureError as exc:
+    secure_code = exc.code
+    if secure_code == 'secure_payload_invalid' and evidence.phase in ('apply', 'post_apply'):
+        secure_code = 'secure_import_failed'
+    evidence.failed('cancelled' if exc.code == 'secure_cancelled' else 'failure',
+                    'cancelled' if exc.code == 'secure_cancelled' else 'operation_failed')
+    status = 1 if exc.code == 'secure_cancelled' else 2
 except Cancel:
     say('Cancelled')
-    sys.exit(1)
+    evidence.failed('cancelled', 'cancelled')
+    status = 1
 except Conflict as exc:
     say('Conflict: ' + str(exc))
-    sys.exit(1)
+    if interaction is not None:
+        secure_code = 'secure_target_conflict'
+    if evidence.phase in ('apply', 'post_apply'):
+        evidence.failed('failure', 'post_validation_failed' if evidence.phase == 'post_apply' else 'operation_failed')
+    else:
+        evidence.failed('skipped', 'target_conflict')
+    status = 1
 except (Invalid, OSError, tarfile.TarError, subprocess.SubprocessError) as exc:
     say('Migration failed: ' + (str(exc) if isinstance(exc, Invalid) else 'operation failed'))
-    sys.exit(2)
+    reason = 'post_validation_failed' if evidence.phase == 'post_apply' else ('operation_failed' if evidence.phase == 'apply' else (evidence.reason if evidence.reason in ('decrypt_failed', 'input_invalid') else 'operation_failed'))
+    evidence.failed('failure', reason)
+    status = 2
 except KeyboardInterrupt:
     say('Interrupted')
-    sys.exit(130)
+    evidence.failed('cancelled', 'cancelled')
+    status = 130
+try:
+    evidence.publish()
+except (OSError, ValueError, KeyboardInterrupt):
+    pass # Evidence transport never changes the standalone import result.
+if interaction is not None:
+    if mode == 'application-export' and status != 0 and secure_code is None:
+        secure_code = 'secure_cancelled' if status in (1, 130) else 'secure_export_failed'
+    if secure_code is None:
+        secure_code = ('success' if status == 0 else
+                       'secure_cancelled' if evidence.reason == 'cancelled' else
+                       'secure_target_conflict' if evidence.reason == 'target_conflict' else
+                       'secure_payload_invalid' if evidence.phase not in ('apply', 'post_apply') else 'secure_import_failed')
+    try:
+        interaction.finish(secure_code)
+    except (SecureError, OSError):
+        pass
+sys.exit(status)
 PY
 )" || return 2
-    exec python3 -c "$migration_code" "$@"
+    exec python3 -c "$migration_code" "$SCRIPT_ROOT/modules/migration" "$@"
 }

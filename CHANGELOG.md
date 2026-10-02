@@ -7,15 +7,48 @@ The format is based on the principles of **Keep a Changelog**.
 
 ---
 
-## Unreleased
+## [3.4.0] - 2026-10-02
+
+Completes the Core/CLI foundation before Stage 16 native Desktop development.
+Stages 13–15 are complete; Desktop and distribution remain planned. Macseed 1.0
+remains reserved for the first complete native Desktop product release.
+
+### Added
+
+* Global Verification with structured coverage, conformity and operation reporting,
+  scope-aware readiness verdicts and verification of restored SSH identities.
+* Explicit read-only Environment Comparison through `bs compare` and
+  `./bootstrap.sh --compare`, plus Protocol V1 `environment_compare` for Environment
+  Status. Informational extras require proven source completeness; no removal.
+* Protocol V1 application interface for capabilities, Bundle inspection and
+  structured Capture preparation/execution with inventory, selection and
+  stale-input protection.
+* Structured Restore preparation/execution with selected-item plans, plan-sensitive
+  prerequisites, stale-plan rejection, progress/events, cancellation and production
+  Verification projection. Operation outcomes remain separate from conformity.
+* Application-mode Restore for Homebrew formulae, supported app-only casks,
+  VS Code extensions, Git repositories and Mac App Store apps, using existing
+  consumers and conflict protection.
+* Secure SSH application Restore bridge with separate secret input, no-clobber
+  identity import and verification before dependent repository clones.
+
+### Changed
+
+* Rebuilt canonical English documentation around Core, CLI and planned Desktop,
+  consolidating Protocol V1 contracts and preserving historical releases.
+* Added canonical regression/lint runners and macOS GitHub Actions validation,
+  with isolated fixtures and a 35-suite regression baseline.
 
 ### Fixed
 
-* Accept a clean Mac without an SSH directory, and prepare selected SSH
-  configuration and explicitly confirmed identities before Restore clones
-  Workspace repositories, after full Preview and input validation.
-* Activate newly installed Homebrew in the running process and defer the
-  optional launcher with a warning during Homebrew-free Restore.
+* Stabilized SSH passphrase handling and verified supported partial SSH profiles
+  without weakening configuration conflict protection.
+* Hardened Restore prerequisite handling, clean-Mac SSH preparation, Homebrew PATH
+  activation and optional launcher handling.
+* Corrected App Store comparison inventory handling and prevented Spotlight
+  auto-indexing during comparison.
+* Prevented Python bytecode pollution across regression suites and subprocesses,
+  fixing the CI Environment Compare fixture failure.
 
 ## [3.3.0] - 2026-09-26
 

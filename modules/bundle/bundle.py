@@ -48,9 +48,18 @@ GROUPS = {
 MAX_ARCHIVE = 48 * 1024 * 1024
 MAX_MEMBER = 33 * 1024 * 1024
 MAX_ENTRIES = 32
+COMPLETE_INVENTORIES = {
+    "homebrew-casks": "brew-casks.conf",
+    "app-store": "appstore.conf",
+    "vscode-extensions": "vscode-extensions.conf",
+}
 
 
 class Invalid(Exception):
+    pass
+
+
+class Unsupported(Invalid):
     pass
 
 
@@ -110,6 +119,23 @@ def required_paths(blueprint):
     return result
 
 
+def completeness_files(stage):
+    """Optional, digest-bound full inventories; absent markers mean legacy unknown."""
+    result = {}
+    for domain, inventory in COMPLETE_INVENTORIES.items():
+        marker = stage / "generated/provenance" / (domain + ".sha256")
+        if not marker.exists() and not marker.is_symlink():
+            continue
+        content = checked_file(marker, 128)
+        name = "generated/" + inventory
+        data = checked_file(stage / name)
+        if content != ("complete " + digest(data) + "\n").encode():
+            raise Invalid("invalid inventory completeness marker")
+        result[name] = data
+        result["generated/provenance/" + domain + ".sha256"] = content
+    return result
+
+
 def safe_relative_home(value, home):
     home = home.rstrip("/")
     if not value.startswith(home + "/"):
@@ -157,6 +183,8 @@ def selected_payload(files, blueprint):
     sections, _ = parse_blueprint(blueprint)
     for section in ("homebrew-packages", "homebrew-casks", "app-store",
                     "vscode-extensions", "workspace-folders"):
+        if "generated/provenance/" + section + ".sha256" in files:
+            continue  # Keep the complete captured inventory as exclusion baseline.
         name = "generated/" + ITEMS[section]
         if name not in files:
             continue
@@ -242,6 +270,7 @@ def pack(stage, output, home):
     blueprint = checked_file(stage / "blueprint.conf", 65536)
     paths = required_paths(blueprint)
     files = {path: checked_file(stage / path) for path in paths}
+    files.update(completeness_files(stage))
     selected_payload(files, blueprint)
     zsh = files.get("generated/shell/zshrc.snapshot")
     if zsh is not None and not zsh.startswith(b"MBT-ZSHRC-1\nstatus=eligible\n"):
@@ -332,7 +361,9 @@ def validate_archive(path):
                 name in files or name.startswith("/") or
                 any(part in ("", ".", "..") for part in name.split("/")) or
                 name not in {"manifest.json", "blueprint.conf", "secure.age",
-                             *("generated/" + item for item in (*ITEMS.values(), *CATEGORIES.values()))}):
+                             *("generated/" + item for item in (*ITEMS.values(), *CATEGORIES.values())),
+                             *("generated/provenance/" + item + ".sha256"
+                               for item in COMPLETE_INVENTORIES)}):
                 raise Invalid("unexpected Bundle entry")
             files[name] = tar.extractfile(member).read()
     if "manifest.json" not in files or "blueprint.conf" not in files:
@@ -342,8 +373,16 @@ def validate_archive(path):
     except (ValueError, UnicodeDecodeError) as exc:
         raise Invalid("invalid Bundle manifest") from exc
     if not isinstance(manifest, dict) or manifest.get("format") != "mac-bootstrap-bundle" or manifest.get("version") != 1:
-        raise Invalid("unsupported Bundle version")
+        raise Unsupported("unsupported Bundle version")
     expected = required_paths(files["blueprint.conf"])
+    for domain, inventory in COMPLETE_INVENTORIES.items():
+        marker = "generated/provenance/" + domain + ".sha256"
+        if marker in files:
+            name = "generated/" + inventory
+            if name not in files or files[marker] != ("complete " + digest(files[name]) + "\n").encode():
+                raise Invalid("invalid inventory completeness marker")
+            expected.add(marker)
+            expected.add(name)
     if "secure.age" in files:
         if not files["secure.age"].startswith(b"age-encryption.org/v1\n"):
             raise Invalid("invalid encrypted SSH package header")
@@ -364,6 +403,19 @@ def unpack(bundle, stage, home):
     (stage / "generated").mkdir(mode=0o700, exist_ok=True)
     for name, data in files.items():
         write_file(stage / name, data)
+
+
+def inspect_bundle(bundle, home):
+    """Validate as Restore does, then return only UI-safe selection metadata."""
+    files = validate_archive(bundle)
+    target_paths(files, home)
+    sections, categories = parse_blueprint(files["blueprint.conf"])
+    return {
+        "format_version": 1,
+        "selected_categories": sorted(name for name, enabled in categories.items() if enabled),
+        "selected_item_counts": {name: len(sections[name]) for name in ITEMS},
+        "secure_component": "secure.age" in files,
+    }
 
 
 def narrow(stage, groups):

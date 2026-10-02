@@ -16,6 +16,8 @@ screenshots_load_destination() {
     validate_defaults_config "$SCREENSHOTS_CONFIG" screenshots || return 2
     while IFS='|' read -r domain key type value || [[ -n "$domain$key$type$value" ]]; do
         [[ -n "${domain// /}" ]] || continue
+        # The literal tilde is config input expanded by the consumer.
+        # shellcheck disable=SC2088
         case "$value" in
             '~/'*) value="$HOME/${value#\~/}" ;;
         esac
@@ -109,10 +111,16 @@ check_screenshots() {
 
 preview_screenshots_settings() {
     inspect_screenshots_settings || return 2
+    if [[ "$SCREENSHOTS_DIRECTORY_MISSING" != true && "$SCREENSHOTS_PREFERENCE_CHANGED" != true ]]; then
+        preview_record macos-screenshots com.apple.screencapture/location none satisfied
+    fi
     if [[ "$SCREENSHOTS_DIRECTORY_MISSING" == true ]]; then
+        preview_record macos-screenshots destination create_directory planned
         preview_action "Would create screenshots directory: $SCREENSHOTS_DESTINATION"
     fi
     if [[ "$SCREENSHOTS_PREFERENCE_CHANGED" == true ]]; then
+        preview_record macos-screenshots com.apple.screencapture/location set_preference planned
+        preview_record macos-screenshots SystemUIServer restart_process planned
         local current=absent
         [[ "$DEFAULTS_OBSERVED_PRESENT" != true ]] || current="$DEFAULTS_OBSERVED_VALUE"
         preview_action "Would change macOS setting: com.apple.screencapture/location ($current -> $SCREENSHOTS_DESTINATION)"
@@ -132,6 +140,8 @@ apply_screenshots_settings() {
             error "Failed to create screenshots destination: $SCREENSHOTS_DESTINATION"
             return 2
         fi
+        # Shared lifecycle flag is read by the calling module wrapper.
+        # shellcheck disable=SC2034
         MODULE_CHANGED=true
         if ! screenshots_directory_state; then
             error "Failed to verify screenshots destination: $SCREENSHOTS_DESTINATION"
@@ -151,4 +161,28 @@ apply_screenshots_settings() {
     fi
     success "Screenshots configured successfully"
     return 0
+}
+
+# Production readers independently establish stored location and usable folder.
+# A directory error must not hide an observable preference, or vice versa.
+verify_screenshots() {
+    verification_category_selected macos-screenshots || return 0
+    local result
+    if ! screenshots_load_destination; then verification_input_error macos-screenshots; return 0; fi
+    if [[ -z "$SCREENSHOTS_DESTINATION" ]]; then
+        verification_coverage macos-screenshots scope no_requirement unknown
+        return 0
+    fi
+    verification_coverage macos-screenshots com.apple.screencapture/location resolved unknown
+    check_defaults_record com.apple.screencapture location string "$SCREENSHOTS_DESTINATION"
+    result=$?
+    if [[ "${CV_ACTIVE:-false}" == true && $result -eq 2 &&
+          "$DEFAULTS_OBSERVATION_KIND" == different ]]; then result=1; fi
+    verification_result macos-screenshots com.apple.screencapture/location stored_preference "$result" '' "$DEFAULTS_OBSERVATION_KIND" || return 2
+    verification_coverage macos-screenshots destination resolved unknown
+    screenshots_directory_state
+    result=$?
+    local kind=unknown
+    [[ $result -ne 1 ]] || kind=absent
+    verification_result macos-screenshots destination directory "$result" '' "$kind"
 }

@@ -1,110 +1,17 @@
 # Workspace Discovery
 
-## Назначение
+Workspace Discovery describes HOME, user/workspace folders, Git repositories,
+`.code-workspace` metadata and inventory. It does not copy, archive, back up or
+transfer user content.
 
-Workspace Discovery описывает структуру рабочего пространства пользователя.
+Outputs are under `config/generated/workspace/`: independent `workspace.conf` and
+a grouped snapshot of `folders.conf`, `repositories.conf`, `vscode-workspaces.conf`,
+`inventory.conf`. Derived files use the same staged generation. Publish only
+after collecting, serializing and validating the entire group. Handled failure
+returns an error and preserves the previous group; a partial candidate is not
+successful Discovery. Cleanup failure after complete publication warns without
+rolling back the published group.
 
-Главная задача модуля — понять, как организован компьютер, а не копировать
-пользовательские данные.
-
----
-
-## Что анализируется
-
-- Корневая рабочая папка пользователя
-- Пользовательские каталоги
-- Рабочие каталоги
-- Git-репозитории
-- VS Code Workspaces (`.code-workspace`)
-- Общая структура рабочего пространства
-
----
-
-## Что НЕ делает Discovery
-
-Workspace Discovery:
-
-- не копирует файлы;
-- не архивирует данные;
-- не создаёт резервные копии;
-- не переносит пользовательский контент.
-
-Для этого предназначены:
-
-- Time Machine;
-- внешний SSD;
-- NAS;
-- rsync;
-- облачные хранилища.
-
----
-
-## Результат
-
-Workspace Discovery формирует и публикует generated-файлы:
-
-`config/generated/workspace/`
-
-- `workspace.conf`
-- `folders.conf`
-- `inventory.conf`
-- `repositories.conf`
-- `vscode-workspaces.conf`
-
----
-
-## Безопасная публикация
-
-`workspace.conf` публикуется независимо как Workspace metadata.
-
-Файлы `folders.conf`, `repositories.conf`, `vscode-workspaces.conf` и
-`inventory.conf` формируются как один связанный snapshot: производные файлы
-используют `folders.conf` той же staged-генерации, а inventory — staged-файлы
-folders и repositories.
-
-Production-файлы изменяются только после успешного формирования всего
-snapshot. Ошибка наблюдения, сериализации или публикации возвращает ошибку и
-сохраняет предыдущую группу generated-файлов; частично сформированный snapshot
-не считается успешным Discovery.
-
-Если очистка временных данных не удалась уже после полной публикации snapshot,
-зафиксированная группа не откатывается, а Discovery возвращает предупреждение.
-
----
-
-## Основная идея
-
-Toolkit восстанавливает не данные пользователя, а его рабочее окружение.
-
-Workspace Discovery создаёт описание структуры рабочего пространства.
-
-`folders.conf` сохраняет поддерживаемые видимые каталоги верхнего уровня HOME
-в формате `folder|classification`. Классификации `system`, `user` и `workspace`
-остаются частью наблюдаемого Generated Configuration.
-
-Текущий Bootstrap использует `folders.conf` и `repositories.conf` для
-создания папок, клонирования Git-репозиториев и восстановления рабочих
-веток в чистых репозиториях.
-
-`vscode-workspaces.conf` формируется Discovery, но восстановление
-`.code-workspace` текущим Bootstrap пока не реализовано.
-
-Blueprint использует записи с классификацией `workspace` как обычные кандидаты
-для выборочного восстановления структуры. Каталоги `user` и `system` остаются
-наблюдаемыми, но не предлагаются как обычные Workspace Folder choices.
-
----
-
-## Философия
-
-Discovery отвечает только на три вопроса:
-
-1. Что найдено?
-2. Где находится?
-3. Как это классифицировать?
-
-Текущий Bootstrap восстанавливает поддерживаемую структуру Workspace с учётом
-выбора Blueprint. Без Blueprint сохраняется legacy all-inclusive поведение.
-
-Благодаря такому разделению ответственности каждый модуль остаётся независимым
-и выполняет только свою задачу.
+[Configuration](../../../docs/toolkit/CONFIGURATION.md#workspace-bootstrap-actionability)
+owns formats, path/remote safety and consumer limits. `.code-workspace` metadata
+has no current restoration consumer.

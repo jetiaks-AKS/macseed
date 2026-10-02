@@ -4,6 +4,7 @@ BUNDLE_HELPER="modules/bundle/bundle.py"
 
 bundle_prompt() {
     local answer
+    [[ "${MACSEED_APPLICATION_EXECUTION:-false}" != true ]] || return 2
     printf '%s ' "$1"
     IFS= read -r answer || return 1
     [[ "$answer" == [yY] || "$answer" == [yY][eE][sS] ]]
@@ -150,12 +151,14 @@ bundle_restore_prerequisites() {
             return 2
         fi
     fi
-    if [[ -n "${BUNDLE_RESTORE_SECURE_FILE:-}" ]]; then
+    if [[ -n "${BUNDLE_RESTORE_SECURE_FILE:-}" &&
+          ( "${MACSEED_APPLICATION_EXECUTION:-false}" != true ||
+            "${MACSEED_APPLICATION_SECURE_READY:-false}" != true ) ]]; then
         bundle_offer_age
         result=$?
         [[ $result -eq 0 ]] || return "$result"
         info "Secure Credentials: enter the Bundle passphrase created during Capture, not an SSH-key passphrase."
-        ./scripts/ssh-identity-migrate.sh import --input "$BUNDLE_RESTORE_SECURE_FILE"
+        secure_verification_import
         result=$?
         if [[ $result -ne 0 ]]; then
             warning "Secure SSH import did not complete; dependent restoration stopped"

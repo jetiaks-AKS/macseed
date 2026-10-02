@@ -182,6 +182,8 @@ export_workspace_repositories() {
             fi
             if [[ "$reviewed_remote" != "$remote" ]]; then
                 warning "Repository origin URL userinfo omitted from generated snapshot"
+                # Shared state is read by another sourced module.
+                # shellcheck disable=SC2034
                 WORKSPACE_REMOTE_WARNING=true
             fi
             remote="$reviewed_remote"

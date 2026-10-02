@@ -1,0 +1,248 @@
+# Macseed Core — Protocol V1
+
+This reference owns the implemented application-facing contract. Overall
+boundaries are in [Architecture](../toolkit/ARCHITECTURE.md); the user workflow
+is in [Capture / Restore](../CAPTURE-RESTORE.md).
+
+## Launch and transport
+
+One process serves one operation:
+
+```text
+modules/core/application-interface/core.sh [--secure-fd N]
+```
+
+Send one JSON object on stdin and close it. Core emits JSONL events on stdout;
+stderr is not protocol transport. The launcher resolves the repository root;
+production children run from that root. Python 3 must be available. Installed-app
+runtime and writable-state placement are still Stage 16 work.
+
+Requests require `protocol_version: 1`, `operation_id` and `operation`.
+All operations except `capabilities` require `parameters`. Only the specified
+fields are accepted; duplicate JSON keys are rejected. The request limit is
+4096 bytes. `operation_id` is 1–64 characters matching `[A-Za-z0-9_-]`.
+Prepared IDs are 64 lowercase hexadecimal characters.
+
+```json
+{"protocol_version":1,"operation_id":"inspect-1","operation":"bundle_inspect","parameters":{"path":"/absolute/path/environment.mbt"}}
+```
+
+## Operations
+
+| `operation` | Exact `parameters` fields | Behavior |
+|---|---|---|
+| `capabilities` | Omit `parameters` | Returns `protocol_version`, `product_version`, `operations` |
+| `bundle_inspect` | `path` | Returns `format_version`, `selected_categories`, `selected_item_counts`, `secure_component`; no Apply |
+| `capture_prepare` | `selection` | Private staged observation and prepared selection |
+| `capture_execute` | `selection`, `destination`, `expected_prepared_capture_id` | Fresh observation and new Bundle publication |
+| `restore_prepare` | `path`, `disabled_groups`, `include_secure` | Bundle validation, Preview and prerequisites; no publication or Apply |
+| `restore_execute` | Restore fields plus `expected_prepared_plan_id` | Fresh preparation, local-state publication and restoration |
+| `environment_compare` | `generated_dir`, `blueprint_path` | Explicit read-only reference-to-current-Mac comparison |
+
+Bundle `path` and `generated_dir` are absolute. `blueprint_path` is absolute or
+`null`; null explicitly selects no Blueprint, without falling back to a local
+saved selection. Compare accepts Generated Configuration, not a Bundle.
+
+## Capture selection and preparation
+
+Prepare with `selection: null` discovers inventory without selecting requirements.
+Then prepare again with the chosen selection, for example:
+
+```json
+{"categories":[],"items":{"homebrew-packages":["git"]},"secure_identities":[]}
+```
+
+`categories` selects whole domains; `items` selects subsets of Blueprint item
+categories; `secure_identities` selects separate SSH candidates. Duplicates,
+unknown IDs and overlap between a whole domain and its item subset are invalid.
+Unobserved state cannot be selected for transfer.
+
+Prepare returns `prepared_capture_id`, `inventory`, `secure_identities`, canonical
+`selection` and `summary`. Inventory rows contain `domain`, `status`, nullable
+`reason`, `selection_mode` and `items` with `item_id`/`label`. Status is `present`,
+`unavailable`, `observation_error` or `unsupported`; selection mode is `items` or
+`category`. Reasons distinguish missing sources/tools from read errors. Eligible
+SSH candidates expose safe names, key types, public fingerprints and
+`candidate_requires_pair_validation`; Prepare does not unlock keys.
+Inventory limits are 2048 items per domain and 1 MiB internally.
+
+Execute requires a non-null selection and the ID from Prepare for that selection.
+It repeats Discovery and binds the ID to staged data, candidate metadata and
+selection, then uses production Preview, portability and Bundle checks.
+`stale_prepared_capture` requires fresh preparation and confirmation.
+
+`destination` must be an absolute `.mbt` path whose existing parent is canonical
+and user-owned. Existing files are never replaced. Success returns
+`publication_occurred`, `destination`, `bundle` information and
+`prepared_capture_id`. Ordinary Generated Configuration and Blueprint are unchanged.
+
+## Restore plans and re-entry
+
+`disabled_groups` is a unique list drawn from `Applications`, `VS Code Settings`,
+`Homebrew`, `macOS Settings`, `Shell`, `Git`, `SSH Configuration`, `Workspace`.
+`include_secure` is boolean; true requires `secure.age`. Selection can be narrowed
+by group, not expanded or replaced with a new item-level Restore selection.
+
+Prepare validates/unpacks into private staging, narrows selection and runs the
+production Preview. It returns:
+
+- `prepared_plan_id`, selected groups/categories and item counts;
+- `modules`, `plan`, `has_planned_changes`, `warning_count`, `error_count`;
+- `include_secure`, `secure_restore_status`, `preview_detail_level`;
+- `readiness` with environmental prerequisites.
+
+Plan rows contain `domain`, `item_id`, `action`, `disposition`, nullable `reason`;
+repository rows may have a safe `display_name`. Dispositions are `satisfied`,
+`planned`, `blocked`, `conflict`, `warning`, `unknown`, `pending_unlock`.
+An unknown observation must not become an Apply decision.
+
+Readiness contains `ready`, `ready_scope=environment`, `conditions`,
+`check_policy=first_blocker_per_domain`, `reentry=restore_prepare`. Conditions
+contain `domain`, `code`, `status`, and optionally a cask `selected_item_index`.
+Statuses are `satisfied`, `safely_satisfiable`, `external_action_required`,
+`unsupported`. Domains are checked independently; each reports its first blocker.
+`secure_bridge_required` with `scope=execution_launch` concerns Execute launch,
+not environmental readiness. Prepare accepts no secrets.
+
+Execute repeats the same preparation, compares `expected_prepared_plan_id`,
+and rechecks launch prerequisites and source/staged fingerprints. `stale_plan`
+rejects publication. After external preparation, use **Check Again → Prepare
+→ confirm the new plan**. Neither ID nor `ready` is authorization, a transaction
+or proof that target state cannot change.
+
+Pending local publication returns `recovery_required`. Prepare does not recover
+or mutate it; the existing CLI Restore owns recovery.
+
+### Plan-sensitive application execution
+
+| Selected work | Current application contract |
+|---|---|
+| Homebrew formulae | Usable Homebrew; an existing installation may be activated in the child PATH. Missing/broken Homebrew needs external action; no automatic installation |
+| Casks | Satisfied items are skipped. New installs require qualified app-only `homebrew/cask` metadata, free accessible direct `/Applications` targets, no hooks, extra dependencies, caveats, container override or rename. `pkg`/installer and repair/reinstall are blocked |
+| VS Code extensions | Usable `code` in PATH or the official stable CLI in `/Applications` or `$HOME/Applications`. Two copies without an explicit choice are ambiguous. CLI is required before publication even if VS Code's cask is selected |
+| Git repositories | Usable Git and safe destinations. Clones use recorded remotes without credential/askpass prompts; SSH uses existing config/agent and strict known-host checking. HTTP(S) credentials and URL query/fragment are prohibited |
+| App Store | Usable `mas` before publication and existing account/entitlement state; missing IDs need non-interactive `sudo -n` authorization. Core does not manage Apple ID or promise account/entitlement validation before install |
+| Secure SSH | Usable `age` and the separate secret bridge; importing user keys does not require administrator authorization |
+
+Internet is required for missing installs/clones, Command Line Tools for missing
+Homebrew formulae/casks, and administrator authorization for missing MAS apps.
+Unrelated prerequisites do not block settings-only or Secure-only plans.
+Network, Marketplace, account and clone failures can still occur during execution;
+a missing prerequisite is distinct from unsupported execution. Independent macOS
+or vendor dialogs are not suppressed. CLI retains its own preflight policy.
+
+## Events, completion and mutation
+
+Each event has `protocol_version`, `operation_id`, increasing `sequence`, `type`
+and optional `data`. Accepted operations begin with `started`; request rejection
+may emit `failed` without it. Success emits `result`, then `completed`. Failures
+carry a stable `data.code`.
+
+Progress uses `phase_started` / `phase_completed`, `capture_category`,
+`secure_packaging`, `secure_challenge_waiting`, `secure_publication_started` and
+`execution_event` where applicable. Restore also emits `operation_record`,
+`verification_record`, `coverage_record`, `diagnostic_record`.
+
+A handled operation has exactly one terminal event. Capture/Restore cancellation
+uses `failed` with `cancelled` or `secure_cancelled`; Compare uses `cancelled`.
+Process exits are `0` for completion, `2` for failure, `130` for handled cancellation.
+CLI's `0/1/2` lifecycle is a separate contract.
+
+Restore distinguishes `publication_started`, `publication_occurred`,
+`target_mutation_may_have_started`, `execution_status`, `bootstrap_status` and
+`secure_restore_status`. Results include Verification, warnings and errors;
+partial records and reasons remain available on failure. Failure after publication
+or mutation does not imply rollback. Capture cancellation after Bundle publication
+retains `publication_occurred=true`.
+
+Core owns child process groups, closes interactive stdin, isolates tool output
+from JSONL and terminates owned processes on cancellation. Private staging is
+cleaned on handled exit; SIGKILL/power loss cannot guarantee cleanup. There is no
+daemon, XPC service, persistent session/resume database or Bootstrap transaction.
+
+## Verification and Environment Status
+
+Results project existing Verification, Coverage and Operation records, without
+a second observer. `verification` contains status, verdict and counts. Restore
+places details in `verification.details`; Compare uses `records`. Detail objects
+contain `status`, `verification_records`, `coverage_records`, `operation_records`,
+`diagnostics`, `module_outcomes`.
+
+| Record | Fields / meaning |
+|---|---|
+| Verification | `record_id`, `domain`, `item_id`, `predicate`, `conformity` (`verified`, `mismatch`, `unverified`), `support`, nullable `observed_at` |
+| Coverage | `record_id`, `domain`, `item_id`, `disposition`, `source_status`; resolved/unresolved/excluded/no_requirement remain distinct. Restore omits excluded rows; Compare retains them |
+| Operation | `record_id`, `domain`, `item_id`, `action`, `outcome`, nullable `reason` |
+| Diagnostic | Record owner with `code`, `severity`, `phase` |
+
+Operation success does not prove conformity. Unsupported is part of unverified;
+unresolved is counted separately. Installation does not establish application
+health; a stored preference does not prove a visual effect. Observations are
+sequential. SSH `identity_pair_matches_package` describes local importer evidence
+at observation time, not network authentication, agent or Keychain readiness.
+
+Compare returns `read_only=true`, `publication_occurred=false`,
+`target_mutation_may_have_started=false`, `comparison`, `comparison_records`,
+`verification`, `records`, `extra`. Comparison rows contain `record_id`, `domain`,
+`item_id`, `comparison_kind`, nullable `reason`/`phase`, `support`. Kinds are
+matching/missing/differing/unverified; mismatch of unknown difference type remains
+unverified with `unknown_difference`.
+
+Comparison counts are matching, missing, differing, unverified, unsupported,
+unresolved, extra, unknown_difference. Verdicts are `incomplete`,
+`differences_detected`, `no_differences_detected`, `no_comparable_requirements`.
+`also_incomplete` preserves coverage gaps alongside proven differences. Incomplete
+run integrity takes precedence; otherwise differences precede verification gaps,
+confirmed matching requirements or proven empty scope.
+
+`extra.domains` contains status/count/reason; `extra.items` exposes safe IDs.
+Extras are supported only for casks, App Store and VS Code extensions with complete
+digest-bound source inventory and valid successful target enumeration. Excluded
+Blueprint items in the full source inventory do not become extras. Missing evidence
+means unavailable, not zero. Formulae and other domains do not gain extras or removal.
+
+Reference is never substituted. Typed failures include `reference_unavailable`,
+`reference_invalid`, `reference_changed`, `comparison_reporting_incomplete`.
+Observation errors and optional inputs retain production Coverage/Verification
+semantics. Completed comparison can still report differences or unverified state.
+
+Internal records are limited to 4096 bytes and 8192 records per subprocess;
+these are not aggregate `result` event limits. Detail status is
+complete/partial/truncated/invalid/not_run. Compare rejects incomplete record
+transfer; Restore retains available details with their actual status. Order and
+IDs derive deterministically from source records; timestamps remain actual observations.
+
+## Separate secret channel and privacy
+
+The client passes one endpoint of an anonymous connected Unix stream socket pair
+as an inherited FD greater than 2, using `--secure-fd N`. This is launch metadata,
+not a JSON field. It is required only for Execute with selected identities.
+Core validates the channel and restricts inheritance; ordinary Bootstrap children
+do not receive it. Secrets must not enter JSONL, argv, environment, Generated
+Configuration, logs or persistent secret-response files.
+
+Frames use a four-byte unsigned big-endian length followed by 1–2048 body bytes.
+Challenge JSON metadata contains `type=challenge`, `protocol_version=1`,
+`operation_id`, fresh 32-hex `challenge_id`, `kind`, `attempt` (1–3).
+Restore kinds are bundle_unlock/ssh_key_unlock/import_confirmation; Capture kinds
+are bundle_encrypt/ssh_key_unlock. A response is 16 decoded challenge-ID bytes,
+followed by:
+
+- `S` and a nonempty UTF-8 passphrase of at most 128 bytes without control characters;
+- `Y` alone for import confirmation;
+- `C` alone for cancellation.
+
+JSON responses, wrong IDs, unsolicited input, invalid sizes, EOF and timeout
+block execution. Response timeout is 120 seconds; the secret tool timeout is
+30 seconds. Keep the endpoint open until Core finishes or cancellation completes.
+Age/OpenSSH use an isolated PTY with echo disabled; PTY content never enters
+protocol/logs. Bundle and protected-key passphrases differ; keys retain their
+original encryption. Full memory/swap/crash-dump erasure is not guaranteed.
+Runtime/age/OpenSSH qualification belongs to [Desktop](../DESKTOP.md) and
+[Distribution](../DISTRIBUTION.md).
+
+Ordinary records expose safe IDs, setting keys and typed reasons, not original
+Git identities, setting contents, credentials, private keys, remote URLs or commands.
+Private subjects use opaque IDs; Restore repositories use selection indices.
+Public fingerprints appear only in Capture SSH candidate inventory. Capture's
+absolute `destination` result returns the necessary path supplied by the client.

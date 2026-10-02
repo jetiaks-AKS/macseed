@@ -1,30 +1,11 @@
 # Bootstrap Modules
 
-## Назначение
+Bootstrap combines Generated Configuration with Blueprint selection to reconstruct
+supported environment state safely and idempotently. Consumers validate required
+selected input, inspect target state, apply necessary changes and verify observable
+results: **Check → Apply → Verify**.
 
-Данный раздел содержит модули, отвечающие за восстановление рабочего
-окружения на новом Mac.
-
-Bootstrap использует Generated Configuration, сформированную Discovery,
-учитывает выбор Blueprint и применяет поддерживаемое целевое состояние
-к системе.
-
----
-
-## Основная задача
-
-Воссоздать поддерживаемую рабочую среду пользователя автоматически,
-безопасно и идемпотентно.
-
----
-
-## Принцип работы
-
-```text
-Generated Configuration
-        ↓
-Blueprint selection / validation
-        ↓
-Bootstrap
-        ↓
-Check → Apply → Verify
+Observation failures are not absence; matching state is no-op and unsafe conflicts
+preserve user data. Global Verification reports selected conformity separately
+from operation outcomes. See [Configuration](../../docs/toolkit/CONFIGURATION.md)
+for domain contracts and [Workspace](workspace/README.md) for local responsibilities.

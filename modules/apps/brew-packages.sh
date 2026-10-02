@@ -86,6 +86,7 @@ preview_brew_packages() {
         while IFS= read -r package || [[ -n "$package" ]]; do
             [[ -n "$package" && "$package" != \#* ]] || continue
             blueprint_item_selected homebrew-packages "$package" || continue
+            preview_record homebrew-packages "$package" install blocked homebrew_installation_requires_interaction
             preview_action "Would install Homebrew formula after setup: $package"
         done <<< "$packages"
         return 0
@@ -101,6 +102,11 @@ preview_brew_packages() {
 
         is_brew_package_installed "$package"
         inspection_result=$?
+        case $inspection_result in
+            0) preview_record homebrew-packages "$package" none satisfied ;;
+            1) preview_record homebrew-packages "$package" install planned ;;
+            *) preview_record homebrew-packages "$package" install blocked observation_failed ;;
+        esac
 
         case $inspection_result in
             0) detail "$package is already installed" ;;
@@ -119,6 +125,17 @@ preview_brew_packages() {
 # ==========================================
 # Install Homebrew Packages
 # ==========================================
+
+brew_install_formula() {
+    declare -F verification_applying_hook >/dev/null && verification_applying_hook homebrew-packages "$1" install
+    if [[ "${MACSEED_APPLICATION_EXECUTION:-false}" == true ]]; then
+        HOMEBREW_NO_ENV_HINTS=1 HOMEBREW_NO_SUDO=1 \
+            HOMEBREW_NO_INSTALL_CLEANUP=1 HOMEBREW_NO_INSTALL_UPGRADE=1 \
+            brew install "$1"
+    else
+        HOMEBREW_NO_ENV_HINTS=1 brew install "$1"
+    fi
+}
 
 install_brew_packages() {
 
@@ -161,6 +178,7 @@ install_brew_packages() {
 
         if [[ $inspection_result -eq 0 ]]; then
 
+            declare -F verification_operation_hook >/dev/null && verification_operation_hook homebrew-packages "$package" install noop
             detail "$package is already installed"
             continue
 
@@ -182,24 +200,32 @@ install_brew_packages() {
 
         if [[ "$VERBOSE" == true ]]; then
 
-            HOMEBREW_NO_ENV_HINTS=1 brew install "$package"
+            brew_install_formula "$package"
 
         else
 
-            HOMEBREW_NO_ENV_HINTS=1 brew install "$package" >/dev/null 2>&1
+            brew_install_formula "$package" >/dev/null 2>&1
 
         fi
 
-        if [[ $? -ne 0 ]]; then
+        local install_result=$?
+        if [[ $install_result -ne 0 ]]; then
+            declare -F verification_operation_hook >/dev/null && verification_operation_hook homebrew-packages "$package" install failure
 
             error "Failed to install $package"
             return 2
 
         fi
 
+        # Shared lifecycle flag is read by the calling module wrapper.
+        # shellcheck disable=SC2034
         MODULE_CHANGED=true
 
-        if ! is_brew_package_installed "$package"; then
+        declare -F verification_operation_hook >/dev/null && verification_operation_hook homebrew-packages "$package" install success
+        is_brew_package_installed "$package"
+        inspection_result=$?
+        declare -F verification_post_hook >/dev/null && verification_post_hook "$inspection_result"
+        if [[ $inspection_result -ne 0 ]]; then
             error "Failed to verify Homebrew formula: $package"
             return 2
         fi
@@ -219,4 +245,19 @@ install_brew_packages() {
     echo
     success "Homebrew Packages are ready"
 
+}
+
+# Read-only Global Verification: presence only, never install/version/health.
+verify_brew_packages() {
+    verification_items_selected homebrew-packages || return 0
+    local packages package result
+    packages="$(read_brew_packages_configuration "$(blueprint_generated_file homebrew-packages)")" || {
+        verification_input_error homebrew-packages; return 0;
+    }
+    verification_select_subjects homebrew-packages "$packages" || return 2
+    for package in "${GV_SUBJECTS[@]}"; do
+        is_brew_package_installed "$package"
+        result=$?
+        verification_result homebrew-packages "$package" installed "$result" '' absent
+    done
 }

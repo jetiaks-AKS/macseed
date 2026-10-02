@@ -1,13 +1,17 @@
+> English documentation is authoritative: [canonical document](../../README.md).
+> This Russian convenience copy may lag behind and describes an earlier snapshot.
+
 # Macseed
 
 **Capture. Rebuild. Continue.**
 
-[English](README.md) | Русский
+[English](../../README.md) | Русский
 
-Модульный Bash-инструмент для воспроизводимой подготовки и восстановления
-рабочего окружения macOS.
+Сегодня Macseed — инструмент на Bash; планируемый продукт — нативное приложение
+macOS на основе существующего Core для захвата, восстановления и проверки
+рабочего окружения.
 
-**Текущая версия: 3.3.0 Stable**
+**Текущая версия: 3.4.0 Stable**
 
 ## Назначение
 
@@ -16,9 +20,11 @@ Mac, сохраняет их как локальную конфигурацию,
 восстановления, предварительно показывает изменения и применяет их на целевом
 Mac.
 
-Проект фиксирует поддерживаемое состояние, воспроизводит его на другом Mac и
-поддерживает рабочее окружение при последующих запусках. Он не клонирует исходный
-Mac и не заменяет backup, Migration Assistant или общий перенос данных и системы.
+Проект фиксирует воспроизводимые части рабочего Mac, выборочно восстанавливает
+поддерживаемое рабочее окружение на чистом Mac и проверяет результат там, где
+текущие модули способны его наблюдать. Он не клонирует исходный Mac и не
+заменяет резервное копирование, Migration Assistant или универсальный перенос
+состояния приложений.
 
 ```text
 Discovery → Generated Configuration → Blueprint → Preview → Bootstrap
@@ -33,6 +39,10 @@ Discovery → Generated Configuration → Blueprint → Preview → Bootstrap
   план.
 - **Bootstrap** идемпотентно применяет выбранное поддерживаемое состояние и
   проверяет результат там, где модуль способен его наблюдать.
+
+Global Verification сообщает о выбранных требованиях после Bootstrap, Workflow
+и применимого Restore. Команда `bs compare` по запросу сравнивает выбранное
+окружение с текущим Mac без внесения изменений.
 
 Без Blueprint обрабатывается вся поддерживаемая сгенерированная конфигурация.
 
@@ -50,7 +60,7 @@ Discovery → Generated Configuration → Blueprint → Preview → Bootstrap
 
 Точные форматы, перечень поддерживаемых настроек macOS, правила проверки и
 ограничения восстановления описаны в документе
-[«Конфигурация»](docs/toolkit/CONFIGURATION.md).
+[«Конфигурация»](../toolkit/CONFIGURATION.md).
 
 ## Быстрый старт
 
@@ -72,26 +82,26 @@ bs restore /path/to/bundle.mbt       # Восстановление на нов�
 Приложения устанавливаются заново, репозитории клонируются из remotes;
 working trees и пользовательские файлы не копируются. Выбранные SSH identities
 могут переноситься в зашифрованном Secure Credentials payload. Практические
-шаги — в [«Быстром старте»](docs/getting-started/QUICKSTART.md), отдельные
-команды и их статусы — в [документации CLI](docs/toolkit/CLI.md).
+шаги — в [«Быстром старте»](../getting-started/QUICKSTART.md), отдельные
+команды и их статусы — в [документации CLI](../toolkit/CLI.md).
 
 ## Документация
 
-- [Оглавление документации](docs/README.md)
-- [Быстрый старт](docs/getting-started/QUICKSTART.md)
-- [Архитектура](docs/toolkit/ARCHITECTURE.ru.md)
-- [Конфигурация](docs/toolkit/CONFIGURATION.md)
-- [CLI](docs/toolkit/CLI.md)
-- [План развития](ROADMAP.md)
-- [История изменений](CHANGELOG.md)
+- [Оглавление документации](../README.md)
+- [Быстрый старт](../getting-started/QUICKSTART.md)
+- [Архитектура](ARCHITECTURE.md)
+- [Конфигурация](../toolkit/CONFIGURATION.md)
+- [CLI](../toolkit/CLI.md)
+- [План развития](../../ROADMAP.md)
+- [История изменений](../../CHANGELOG.md)
 
 ## Статус проекта
 
 Версия 3.3.0 включает Stage 12 Bootstrap Bundle Capture & Restore и защищённый
-перенос SSH identities. Сводная глобальная проверка остаётся необязательной
-будущей возможностью.
+перенос SSH identities. Текущая разработка также включает Global Verification
+и публичную команду `bs compare`.
 
-Текущее направление развития описано в [ROADMAP.md](ROADMAP.md).
+Текущее направление развития описано в [ROADMAP.md](../../ROADMAP.md).
 
 ## Поддержка
 
@@ -101,4 +111,4 @@ Macseed распространяется бесплатно и с открыты
 
 ## Лицензия
 
-Macseed распространяется по лицензии [MIT](LICENSE).
+Macseed распространяется по лицензии [MIT](../../LICENSE).

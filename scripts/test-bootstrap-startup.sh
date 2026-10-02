@@ -56,7 +56,11 @@ reset_case() {
     INPUT_STATUS=0
     STARTUP_STEPS=""
     BLUEPRINT_BOOTSTRAP_SUMMARY=false
+    # The fixture variable is read by sourced production code.
+    # shellcheck disable=SC2034
     ERROR_COUNT=0
+    # The fixture variable is read by sourced production code.
+    # shellcheck disable=SC2034
     MODE="--bootstrap"
 }
 

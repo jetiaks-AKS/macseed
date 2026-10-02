@@ -23,13 +23,17 @@ is_homebrew_installed() {
 }
 
 # The installer runs in a child shell; activate its prefix in this process.
-homebrew_activate_installed() {
-    local prefix observed
+homebrew_expected_prefix() {
     case "$(uname -m)" in
-        arm64) prefix=/opt/homebrew ;;
-        x86_64) prefix=/usr/local ;;
+        arm64) printf '%s\n' /opt/homebrew ;;
+        x86_64) printf '%s\n' /usr/local ;;
         *) return 2 ;;
     esac
+}
+
+homebrew_activate_installed() {
+    local prefix observed
+    prefix="$(homebrew_expected_prefix)" || return 2
     [[ -f "$prefix/bin/brew" && -x "$prefix/bin/brew" ]] || return 2
     observed="$("$prefix/bin/brew" --prefix)" || return 2
     [[ "$observed" == "$prefix" ]] || return 2
@@ -94,7 +98,12 @@ check_homebrew() {
 
     warning "Homebrew is not installed"
 
-    read -p "Install Homebrew? (y/n): " answer
+    if [[ "${MACSEED_APPLICATION_EXECUTION:-false}" == true ]]; then
+        error "unsupported_interactive_operation: Homebrew setup requires a CLI decision"
+        return 2
+    fi
+
+    read -r -p "Install Homebrew? (y/n): " answer
 
     if [[ "$answer" != "y" ]]; then
         warning "Installation cancelled by user"
@@ -105,6 +114,8 @@ check_homebrew() {
         error "Homebrew installer failed"
         return 2
     fi
+    # Shared lifecycle flag is read by the calling module wrapper.
+    # shellcheck disable=SC2034
     MODULE_CHANGED=true
 
     homebrew_availability

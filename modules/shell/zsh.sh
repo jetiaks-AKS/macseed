@@ -22,7 +22,7 @@ zsh_snapshot_hash() {
 
 zsh_snapshot_validate() {
     local file="${1:-$ZSH_SNAPSHOT_FILE}"
-    local line schema status reason length hash separator actual total offset digest
+    local schema status reason length hash separator actual total offset digest
     local LC_ALL=C
 
     ZSH_SNAPSHOT_STATUS=""
@@ -261,15 +261,15 @@ preview_zsh() {
         return 0
     fi
     case "$ZSH_SNAPSHOT_STATUS" in
-        absent) warning "Zsh configuration absent from source"; return 1 ;;
-        excluded) warning "Zsh configuration excluded: $ZSH_SNAPSHOT_REASON"; return 1 ;;
+        absent) preview_record shell-zsh .zshrc none warning source_absent; warning "Zsh configuration absent from source"; return 1 ;;
+        excluded) preview_record shell-zsh .zshrc none warning source_excluded; warning "Zsh configuration excluded: $ZSH_SNAPSHOT_REASON"; return 1 ;;
     esac
     zsh_snapshot_inspect_target
     result=$?
     case "$result" in
-        0) success "Zsh configuration already matches"; return 0 ;;
-        1) preview_action "Would restore Zsh configuration"; return 0 ;;
-        3) warning "Existing .zshrc differs; no replacement planned"; return 1 ;;
+        0) preview_record shell-zsh .zshrc none satisfied; success "Zsh configuration already matches"; return 0 ;;
+        1) preview_record shell-zsh .zshrc create planned; preview_action "Would restore Zsh configuration"; return 0 ;;
+        3) preview_record shell-zsh .zshrc none conflict target_conflict; warning "Existing .zshrc differs; no replacement planned"; return 1 ;;
         *) error "Failed to inspect Zsh destination"; return 2 ;;
     esac
 }
@@ -294,7 +294,9 @@ bootstrap_zsh() {
     result=$?
     case "$result" in
         0) success "Zsh configuration already matches"; return 0 ;;
-        3) warning "Existing .zshrc differs; no replacement made"; return 1 ;;
+        3)
+            declare -F verification_application_operation_hook >/dev/null && verification_application_operation_hook shell-zsh zshrc restore skipped target_conflict
+            warning "Existing .zshrc differs; no replacement made"; return 1 ;;
         1) ;;
         *) error "Failed to inspect Zsh destination"; return 2 ;;
     esac
@@ -316,6 +318,8 @@ bootstrap_zsh() {
         error "Failed to publish Zsh configuration"
         return 2
     fi
+    # Shared lifecycle flag is read by the calling module wrapper.
+    # shellcheck disable=SC2034
     MODULE_CHANGED=true
     if ! rm -f "$temporary"; then
         error "Failed to clean up Zsh staging file"
@@ -330,4 +334,38 @@ bootstrap_zsh() {
     fi
     success "Zsh configuration restored"
     return 0
+}
+
+# Use the existing snapshot/content contract, including its existing-target
+# behavior: no extra ownership/mode requirements on an identical regular file.
+verify_zsh() {
+    verification_category_selected shell-zsh || return 0
+    local result
+    zsh_snapshot_validate
+    result=$?
+    if [[ $result -eq 1 ]] && ! blueprint_exists; then
+        verification_coverage shell-zsh scope no_requirement unknown
+        return 0
+    fi
+    if [[ $result -ne 0 ]]; then verification_input_error shell-zsh; return 0; fi
+    case "$ZSH_SNAPSHOT_STATUS" in
+        absent)
+            verification_coverage shell-zsh scope no_requirement observed_absent
+            return 0 ;;
+        excluded)
+            verification_coverage shell-zsh scope unresolved partial
+            if [[ "$ZSH_SNAPSHOT_REASON" == external-owner ]]; then
+                verification_diagnostic "$GV_LAST_REF" external_management warning scope
+            else
+                verification_diagnostic "$GV_LAST_REF" unsupported_predicate warning scope
+            fi
+            return 0 ;;
+    esac
+    verification_coverage shell-zsh .zshrc resolved observed_present
+    zsh_snapshot_inspect_target
+    result=$?
+    local kind=unknown
+    case "$result" in 1) kind=absent ;; 3) kind=different ;; esac
+    [[ $result -ne 3 ]] || result=1 # Production reader: different regular file.
+    verification_result shell-zsh .zshrc file_content "$result" '' "$kind"
 }

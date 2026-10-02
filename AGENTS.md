@@ -1,527 +1,176 @@
-# AGENTS.md — Mac Bootstrap Toolkit
-
-## Назначение проекта
-
-Mac Bootstrap Toolkit — Bash-инструмент для воспроизводимой подготовки
-рабочего окружения macOS.
-
-Текущий контракт ветки `develop`:
-
-```text
-Discovery → Generated Configuration → Blueprint → Preview → Bootstrap
-```
-
-- **Discovery** фиксирует фактически обнаруженное состояние Mac.
-- **Generated Configuration** сохраняет это состояние локально.
-- **Blueprint** выбирает целевой scope из обнаруженного состояния.
-- **Preview** проверяет и показывает выбранные изменения без их применения.
-- **Bootstrap** использует сформированную конфигурацию для восстановления
-  поддерживаемых частей рабочего окружения.
-
-Blueprint реализован, E2E-проверен и входит в стабильные релизы начиная с
-3.0.0. Текущая версия Toolkit — 3.2.0.
-Локальный post-apply Verify уже является частью lifecycle модулей,
-когда результат наблюдаем их текущими средствами. Отдельная глобальная
-Verification-возможность пока не реализована. `--dry-run` и Preview для
-Applications, Git configuration, VS Code settings, Workspace и macOS
-реализованы.
-
-## Рабочая директория и точка входа
-
-Все команды Toolkit запускай из корня репозитория:
-
-```bash
-./bootstrap.sh --check
-./bootstrap.sh --discover
-./bootstrap.sh --blueprint
-./bootstrap.sh --bootstrap
-./bootstrap.sh --dry-run
-./bootstrap.sh --workflow
-```
-
-`bootstrap.sh` использует относительные `source`-пути и относительные
-пути к конфигурации, поэтому не рассчитывай на корректную работу при
-запуске из другого каталога.
-
-Поддерживаемые текущим CLI режимы:
-
-- `--check`
-- `--discover`
-- `--blueprint`
-- `--bootstrap`
-- `--dry-run`
-- `--workflow`
-- `--verbose`
-- `--help`
-- `--version`
-
-`--dry-run` использует read-only startup path и не должен выполнять целевые
-мутации.
-
-`bin/bs` — тонкий опциональный launcher для тех же execution modes;
-канонической production entrypoint остаётся `bootstrap.sh`. PATH symlink
-автоматически проходит `Check → Apply → Verify` только в mutating Bootstrap и
-устанавливается через `scripts/install-bs.sh`; Discovery, Blueprint, Preview и
-zero-change Workflow не запускают installer. Посторонний `bs` не заменяется.
-
-## Структура проекта
-
-```text
-bootstrap.sh                 CLI, загрузка модулей и оркестрация
-modules/core/                общая инфраструктура Toolkit
-modules/blueprint/           выбор целевого scope и интерактивный selector
-modules/discovery/           сбор Observed State
-modules/bootstrap/           восстановление Workspace
-modules/apps/                пакеты Homebrew, cask и App Store
-modules/vscode/              расширения и настройки VS Code
-modules/settings/macos/      применение настроек macOS
-config/                      статическая конфигурация Toolkit
-config/generated/            локальная machine-specific конфигурация
-settings/                    статические файлы настроек-источников
-scripts/                     focused regression harnesses и вспомогательные утилиты
-docs/                        архитектура, эксплуатация и Git-процесс
-```
-
-### Core
-
-Не помещай предметную логику окружения в `modules/core/`.
-
-- `common/common.sh` — сообщения, `run_module`, `run_configuration`,
-  статистика и Summary.
-- `logger/logger.sh` — логи запусков, `logs/latest.log`, обработка
-  `INT`/`TERM`.
-- `preflight/preflight.sh` — интернет, Xcode CLI Tools, версия macOS,
-  права администратора.
-- `config/config.sh` — существующий API чтения секционных INI-подобных
-  конфигураций, где этот формат применим: `config_sections` и `config_get`.
-- `homebrew`, `git`, `ssh`, `terminal` — общие проверки и базовая
-  настройка соответствующих компонентов.
-
-### Discovery
-
-Discovery анализирует систему и сохраняет результат в
-`config/generated/`. Он не должен устанавливать ПО, менять системные
-настройки, переключать ветки или менять пользовательские данные.
-
-Единственный допустимый domain-level побочный эффект Discovery-модулей —
-публикация локального состояния в `config/generated/`. Общая инфраструктура
-запуска при этом может создавать логи и выполнять preflight-проверки.
-
-Текущие области Discovery:
-
-- Homebrew formulae и casks;
-- приложения App Store;
-- глобальная Git-конфигурация;
-- конфигурация SSH client;
-- конфигурация Zsh;
-- расширения и настройки VS Code;
-- Finder, Dock, Keyboard, Trackpad и Screenshots;
-- Workspace: папки, Git-репозитории, метаданные, `.code-workspace`,
-  inventory.
-
-Новый discovery-компонент должен:
-
-1. читать только свою область системы;
-2. собирать, валидировать и сериализовать новое состояние до его публикации;
-3. заменять согласованный файл в `config/generated/` только после успешного
-   завершения этих этапов;
-4. при обработанной ошибке сохранять предыдущий валидный generated-файл;
-5. использовать `action`, `detail`, `success`, `warning`, `error`;
-6. быть подключён к контроллеру `modules/discovery/discovery.sh`;
-7. не дублировать логику других discovery-модулей.
-
-Четыре производных Workspace-файла (`folders.conf`, `repositories.conf`,
-`vscode-workspaces.conf`, `inventory.conf`) являются намеренным групповым
-snapshot и публикуются совместно; `workspace.conf` остаётся независимым.
-
-### Generated Configuration
-
-`config/generated/` — machine-specific локальное состояние,
-производимое Discovery. Каталог исключён из Git.
-
-Правила:
-
-- не добавляй `config/generated/` в Git и не снимай соответствующее
-  правило из `.gitignore`;
-- не добавляй в код фиксированные пользовательские значения, которые
-  должны приходить из generated-конфигурации;
-- не смешивай generated-данные со статической конфигурацией Toolkit в
-  `config/`;
-- сохраняй совместимость формата между экспортирующим Discovery-модулем
-  и потребляющим Bootstrap-модулем;
-- перед использованием generated-файла проверяй его наличие и выдавай
-  понятное `warning` или `error`;
-- считай generated-конфигурацию локальным производным вводом, а не
-  безусловно доверенным состоянием;
-- проверяй обязательный generated-ввод до первой мутации: отсутствующий,
-  нечитаемый или malformed обязательный ввод должен вернуть `2` и блокировать
-  изменение;
-- применяй warning/skip к optional-вводу только там, где это явно определено
-  существующим контрактом компонента;
-- `config/generated/git.conf` использует native Git config format и должен
-  разбираться через `git config --file ... --no-includes`, никогда через
-  `source` или `eval`.
-
-Для секционных Workspace-конфигураций используй существующий
-Configuration Engine, а не повторно реализованный парсер.
-
-### Blueprint
-
-Discovery представляет **Observed State**, а Blueprint — **Desired Selection**
-из этого обнаруженного inventory. Эти состояния не равны: Blueprint не должен
-перезаписывать Generated Configuration.
-
-- malformed Blueprint возвращает `2` и блокирует мутации Bootstrap;
-- stale selection возвращает предупреждение `1` по существующему контракту;
-- отмена selector сохраняет исходный Blueprint, а Save остаётся атомарным;
-- отсутствие Blueprint сохраняет no-Blueprint all-inclusive совместимость.
-
-### Bootstrap
-
-Bootstrap меняет систему и должен быть идемпотентным.
-
-Обычный локальный жизненный цикл модуля:
-
-```text
-Check → Apply → Verify
-```
-
-Verify здесь означает локальную post-apply проверку модуля, когда итоговое
-состояние наблюдаемо его текущими средствами. Это не отдельная будущая
-глобальная Verification-возможность.
-
-Требования к изменениям Bootstrap:
-
-- наблюдать текущее состояние до мутации и определить, требуется ли действие;
-- проверять обязательный generated-ввод до первой мутации;
-- отличать ошибку наблюдения от допустимого отсутствия или несовпадения;
-- не преобразовывать ошибку наблюдения или валидации в «apply required»;
-- не выполнять действие, если компонент уже соответствует
-  конфигурации;
-- проверять итоговое состояние после мутации, когда оно наблюдаемо текущими
-  средствами модуля; ошибка предусмотренной локальной проверки возвращает `2`
-  и не должна сопровождаться success;
-- ошибка mutating-команды возвращает `2` и не должна сопровождаться success;
-- устанавливать `MODULE_CHANGED=true` только после реального успешного
-  изменения;
-- возвращать согласованные статусы: `0` — успех, `1` — предупреждение,
-  `2` — ошибка;
-- использовать `run_module` или `run_configuration`, если их контракт
-  подходит для модуля;
-- сохранять компактный вывод по умолчанию и диагностические детали
-  выводить через `detail()`.
-
-Текущая последовательность Bootstrap в `bootstrap.sh`:
-
-1. валидация Blueprint и обязательного generated input выбранного scope;
-2. preflight;
-3. проверка Homebrew, Git, SSH и Terminal;
-4. установка и проверка `bs` launcher;
-5. восстановление Workspace;
-6. настройка Git;
-7. Homebrew packages и casks;
-8. приложения App Store;
-9. расширения и настройки VS Code;
-10. восстановление конфигурации Zsh;
-11. восстановление конфигурации SSH client;
-12. настройки macOS.
-
-Не переставляй эти шаги без необходимости: порядок отражает
-зависимости, в частности доступность Git/Homebrew и конфигурации,
-полученной Discovery.
-
-### Preview
-
-`--dry-run`: CLI → logger → Blueprint validation → selected-input validation
-→ read-only preflight → Core inspection → domain Preview → Summary → exit code.
-Startup validation/preflight errors останавливают запуск. Core/domain errors
-сохраняются в accounting, последующие read-only inspections продолжаются.
-Planned actions дают `0`, warnings — `1`, errors имеют приоритет `2`.
-Preview не использует `MODULE_CHANGED`. Summary считает вызовы inspection
-wrapper (включая Core), warnings и errors, а не установки или отдельные items.
-
-Screenshots Preview отражает текущий hard-coded `$HOME/Screenshots` при Apply;
-согласование каталога с generated location остаётся техническим долгом.
-Global Verification остаётся запланированной.
-
-### Workspace
-
-Workspace предназначен для восстановления структуры рабочего
-окружения, а не пользовательского контента.
-
-Discovery не должен копировать, архивировать или переносить файлы
-пользователя. Bootstrap Workspace сейчас:
-
-- создаёт каталоги;
-- клонирует отсутствующие Git-репозитории;
-- сверяет `origin`;
-- восстанавливает ветку, только если отсутствуют tracked/staged изменения.
-
-Git может безопасно отказать в checkout при конфликтующих untracked-файлах;
-Toolkit не удаляет их и сообщает предупреждение о необходимости ручного
-вмешательства. Remote автоматически не изменяется.
-
-Discovery метаданных `.code-workspace` и генерация
-`vscode-workspaces.conf` реализованы. Bootstrap-восстановление
-`.code-workspace` пока не реализовано и не должно сообщаться как успешное до
-появления реального consumer с подходящим `Check → Apply → Verify` lifecycle.
-
-При изменении Workspace-кода особенно защищай существующие данные:
-
-- не удаляй и не перезаписывай существующие каталоги;
-- не меняй remote без явного требования;
-- не переключай ветку репозитория с tracked/staged изменениями;
-- не удаляй и не очищай конфликтующие untracked-файлы;
-- не выполняй `git reset`, `clean`, force-push, принудительный checkout
-  или другие разрушительные Git-операции;
-- при конфликте конфигурации и существующего состояния предпочитай
-  предупреждение и остановку конкретного действия.
-
-### macOS, VS Code и приложения
-
-Операции Bootstrap имеют реальные побочные эффекты:
-
-- установка Homebrew, formulae, casks и App Store-приложений;
-- изменение глобальной Git-конфигурации;
-- создание каталогов и клонирование репозиториев;
-- копирование VS Code settings с резервной копией текущего файла;
-- `defaults write` для Finder, Dock, Keyboard, Trackpad и Screenshots;
-- перезапуск Finder, Dock и SystemUIServer через `killall`.
-
-Перед добавлением новой изменяющей операции:
-
-1. добавь проверку текущего состояния;
-2. сделай операцию идемпотентной;
-3. не уничтожай существующие данные;
-4. сообщи пользователю о заметных побочных эффектах;
-5. используй generated-конфигурацию для значений пользовательского
-   окружения;
-6. добавь парный Discovery-модуль, если область должна
-   воспроизводиться между Mac.
-
-Не запускай `--bootstrap` без явного запроса пользователя.
-Не запускай `--discover`, если пользователь просит только анализ:
-он перезаписывает локальную generated-конфигурацию.
-Даже `--check` не является полностью безвредным: он создаёт логи,
-запрашивает административную аутентификацию и при отсутствии Homebrew
-может предложить его установить. Запускай его только с учётом этих
-побочных эффектов.
-
-## Автономная работа агента
-
-Для крупных многошаговых задач сначала определи scope, затрагиваемые подсистемы
-и зависимости, затем переходи к реализации.
-
-Не расширяй scope самостоятельно. Найденные соседние проблемы, которые не
-требуются для выполнения текущей задачи, фиксируй отдельно и не исправляй
-без явной необходимости или запроса пользователя.
-
-Большие изменения выполняй логическими этапами с проверкой после каждого
-завершённого этапа, если это практически возможно.
-
-Предпочитай существующие архитектуру, API, helpers и contracts проекта.
-Не вводи новую абстракцию, если существующий механизм адекватно решает задачу.
-
-Audit и review по умолчанию являются read-only задачами. Найденные замечания
-сами по себе не являются разрешением на их реализацию, если пользователь явно
-не попросил внести изменения.
-
-После крупного изменения выполни финальный self-review diff и проверь:
-
-- отсутствие scope creep;
-- отсутствие нежелательных destructive side effects;
-- соблюдение существующих contracts;
-- отсутствие случайного добавления generated-файлов;
-- корректность exit codes;
-- необходимость обновления документации.
-
-## Политика документации
-
-Документация описывает текущий продукт и устойчивые контракты; подробная
-история реализации хранится прежде всего в `CHANGELOG.md`.
-
-- `README.md` и `README.ru.md` кратко описывают текущий продукт, основные
-  возможности и ссылки на подробные документы. Не превращай README в журнал
-  этапов, полный перечень настроек или руководство по всем режимам CLI.
-- `ROADMAP.md` содержит направления развития и крупные продуктовые решения, а
-  не подробный список завершённых фаз.
-- `TODO.md` содержит только конкретные незавершённые технические задачи.
-- `docs/toolkit/CONFIGURATION.md`, `docs/toolkit/CLI.md` и
-  `docs/getting-started/QUICKSTART.md` являются источниками текущих контрактов,
-  поведения CLI и эксплуатационного сценария соответственно.
-- Обновляй минимальный набор документов, необходимый для точности
-  пользовательского и инженерного описания. Не изменяй механически каждый
-  документ при добавлении небольшой возможности.
-- Не добавляй идентификаторы Stage/Phase в постоянное описание текущего
-  состояния, если номер этапа не имеет операционного значения.
-- Не дублируй точный перечень функций или настроек в нескольких документах:
-  ссылайся на один подробный источник.
-- Architecture описывает устойчивые границы и ответственность компонентов, а
-  не историю функций. Историю релизов и реализации сохраняй в Changelog.
-
-Русскоязычная документация использует русскую прозу по умолчанию. Не переводи
-команды, имена файлов, идентификаторы, Git, GitHub, Homebrew, VS Code, macOS и
-устоявшиеся названия компонентов Discovery, Generated Configuration,
-Blueprint, Preview и Bootstrap. В остальных случаях предпочитай естественные
-русские формулировки, если перевод не снижает техническую точность.
-
-Документация не является отчётом о ходе работы. Завершение отдельной подзадачи
-реализации само по себе не требует одновременно обновлять README, ROADMAP,
-TODO, ARCHITECTURE, CONFIGURATION и README модулей.
-
-Перед изменением документации определи, какой документ является основным
-источником для изменившегося факта, и сначала обнови его. Дополнительные
-документы изменяй только тогда, когда их существующий текст иначе станет
-неточным или вводящим в заблуждение. Для небольшой функции обычный объём
-документационных изменений — Changelog и не более одного основного документа с
-описанием текущего состояния, если поддерживаемый контракт изменился. Это
-рекомендация, а не механическое ограничение.
-
-README изменяй консервативно. Не добавляй туда историю реализации, подробности
-Stage/Phase, точные перечни preferences, внутреннее устройство lifecycle или
-заметки об отложенных исследованиях, если они не нужны для обычного понимания
-продукта. ROADMAP должен сохранять крупные завершённые этапы и общую эволюцию
-проекта: удаление дневника реализации не означает удаление исторической
-структуры основных этапов.
-
-ARCHITECTURE изменяй только при фактическом изменении архитектурной
-ответственности, инварианта, границы или потока данных. CONFIGURATION описывает
-итоговый текущий контракт, а не последовательность шагов его реализации.
-
-Перед завершением документационной задачи просмотри diff документации и убери
-изменения, которые не нужны для корректности, удобства или выполнения явно
-поставленной задачи.
-
-## Логирование и вывод
-
-Используй существующие функции из `modules/core/common/common.sh`:
-
-- `action` — выполняемое действие;
-- `success` — успешный результат;
-- `warning` — некритичная проблема;
-- `error` — ошибка;
-- `info` — информационное сообщение;
-- `detail` — подробность, показываемая только с `--verbose`.
-
-Не вводи собственный формат сообщений без необходимости. Каждый
-нормальный запуск `--check`, `--discover` или `--bootstrap` должен
-завершаться Summary через существующий общий механизм. Логи в `logs/`
-— локальные рабочие файлы и не должны попадать в Git.
-
-## Проверка изменений
-
-Объём проверки должен быть пропорционален типу и риску изменения.
-
-Для изменений только в документации по умолчанию:
-
-- не запускай regression harnesses и Bash syntax checks;
-- не проверяй реальные настройки macOS;
-- не проверяй и не сравнивай PID процессов Finder, Dock, SystemUIServer,
-  WindowManager и `cfprefsd`;
-- не запускай Bootstrap, Discovery и другие workflow, наблюдающие окружение;
-- ограничивайся минимальными подходящими статическими проверками, например
-  просмотром diff документации и `git diff --check`;
-- выполняй более широкие проверки только тогда, когда вместе с документацией
-  изменился исполняемый код, конкретное утверждение документации действительно
-  требует проверки или пользователь явно запросил расширенную валидацию.
-
-Для изменений исполняемого кода сначала запускай focused tests затронутого
-поведения. Не запускай автоматически все regression harnesses после каждого
-небольшого изменения. Полный regression suite нужен, когда это оправдано
-объёмом или риском, затронуто несколько подсистем, выполняется явный
-integration/release gate либо пользователь запросил полный прогон.
-
-Принцип проверки: **минимальная достаточная валидация**, а не максимальная
-доступная валидация.
-
-В репозитории есть focused regression harnesses для Discovery, application
-Bootstrap, Workspace, macOS, Git и Blueprint. После изменения запускай
-соответствующие существующие harnesses из `scripts/test-*.sh`, например:
-
-```bash
-scripts/test-blueprint.sh
-scripts/test-blueprint-bootstrap.sh
-scripts/test-blueprint-selector.sh
-scripts/test-homebrew-discovery.sh
-scripts/test-application-discovery.sh
-scripts/test-bootstrap-applications.sh
-scripts/test-workspace-discovery.sh
-scripts/test-workspace-folders.sh
-scripts/test-workspace-bootstrap.sh
-scripts/test-macos-discovery.sh
-scripts/test-macos-bootstrap.sh
-scripts/test-git-generated-state.sh
-```
-
-Они не являются полным автоматическим покрытием Toolkit. Единого test runner,
-CI и ShellCheck-конфигурации пока нет.
-
-Минимальная безопасная проверка после изменения Bash-кода:
+# AGENTS.md — Macseed
+
+## Working model
+
+Macseed reconstructs supported environment state: **Capture → Rebuild → Verify**.
+Core owns Discovery, Generated Configuration, Selection / Blueprint, Preview,
+Bootstrap, Verification, Comparison, Bundle and Secure Migration. The official CLI
+is implemented; native SwiftUI Desktop is planned and must consume the same Core.
+Current code version is 3.4.0; Stage 15 Protocol V1 is complete. Desktop/runtime
+integration is Stage 16; packaging and clean-Mac qualification are Stage 17.
+
+Read existing code and consumers before proposing changes. Prefer minimal safe
+changes and existing helpers over replacements or new abstractions. Follow
+**Check → Apply → Verify** and do not expand task scope to adjacent findings.
+Audit/review is read-only unless implementation is explicitly requested.
+
+## Repository and entry points
+
+Run Macseed commands from the repository root because `bootstrap.sh` sources
+relative paths. `bin/bs` is an optional launcher; `bootstrap.sh` remains the
+canonical production CLI entrypoint. See [CLI](docs/toolkit/CLI.md) for modes.
+
+- `modules/core/`: shared infrastructure and application Protocol adapter.
+- `modules/discovery/`: observation/exporters.
+- `modules/blueprint/`: selection/parser/selector.
+- `modules/bootstrap/`: Workspace consumers.
+- `modules/apps/`, `modules/vscode/`, `modules/settings/macos/`: domain consumers.
+- `modules/verification/`: production Verification/Comparison projections.
+- `modules/bundle/`, `modules/migration/`: Bundle and separate secure identity paths.
+- `config/`: static configuration; `config/generated/`: private local derived state.
+- `settings/`: source settings; `scripts/`: canonical runners and focused harnesses.
+
+Do not move domain logic into shared Core utilities. Use `config_sections` and
+`config_get` for sectional Workspace data; use native Git readers for `git.conf`.
+Desktop consumes structured Protocol V1 JSON/JSONL, never terminal/log parsing,
+interactive terminal emulation or a second Swift implementation of Core behavior.
+The adapter must reuse authoritative production paths.
+
+## Discovery and local state
+
+Discovery observes only its own domain, without installs, system writes, branch
+switches or user-file migration. Its domain side effect is publishing local
+`config/generated/`; infrastructure can write logs and run relevant preflight.
+
+Collect, validate and serialize before publication. Handled failure preserves
+previous valid state. Connect exporters to `modules/discovery/discovery.sh` and
+use existing logging helpers. Workspace `folders.conf`, `repositories.conf`,
+`vscode-workspaces.conf`, `inventory.conf` publish as one grouped snapshot;
+`workspace.conf` remains independent.
+
+Generated Configuration is derived input, not trusted executable configuration
+or a credential vault. Never `source`/`eval` generated data or hard-code user values
+that belong there. Native `git.conf` is read with
+`git config --file ... --no-includes`. Keep generated data and private Blueprint
+ignored by Git and separate from static config. Preserve producer/consumer formats.
+
+Blueprint selects without overwriting observed values. Malformed input returns
+`2` and blocks Apply; stale selection warns with `1`. Save is atomic; `q`/`Q`
+cancellation preserves the original. No Blueprint retains compatible all-inclusive
+behavior; old missing categories retain their established disabled semantics.
+
+## Mutation and verification
+
+Validate all required selected inputs before the first mutation. Missing,
+unreadable or malformed required input returns `2`; optional warning/skip is
+allowed only by its existing domain contract. Observe before Apply; observation
+error is not absence or a reason to mutate. Skip matching state, verify observable
+results and never report success after a failed mutation or required local Verify.
+
+Set `MODULE_CHANGED=true` only after real successful change. Use `run_module` /
+`run_configuration` when appropriate. Ordinary module exits are `0` success,
+`1` warning, `2` error; structured application exits have their own reference.
+Global Verification reports selected conformity separately from operation exits.
+Unsupported is a subset of unverified; unresolved scope remains distinct.
+
+Preserve Bootstrap dependency order. Restore's selected SSH configuration and
+secure identity import must precede dependent Workspace clones. Ordinary Bootstrap
+does not import identities. Do not reorder existing steps without demonstrated need.
+
+Preview validates selected input and uses read-only preflight/inspection without
+Apply, `sudo -v`, Homebrew installation or `MODULE_CHANGED`. Startup failures stop;
+Core/domain inspection errors remain counted while later inspections continue.
+Planned actions alone return `0`, warning `1`, error `2`. Summary counts inspection
+calls, not items. Comparison is explicit/read-only and never auto-runs or plans
+removal. Extras require complete digest-bound source provenance and valid enumeration.
+
+### Protect user state
+
+Workspace reconstructs folders and repositories, not contents. Never delete or
+replace existing directories, silently change remotes, switch dirty tracked/staged
+state, remove conflicting untracked files, reset, clean, force-push or force checkout.
+Warn/stop unsafe actions; Git may refuse checkout due to untracked conflicts.
+`.code-workspace` metadata is discovered but has no restoration consumer.
+
+Real Apply can install apps/packages, write global Git/macOS settings, clone
+repositories, copy VS Code settings with backup and restart affected processes.
+New mutations require current-state checks, idempotency, input validation,
+conflict protection and post-apply verification. Add paired Discovery when the
+domain should travel between Macs; explain noticeable side effects to users.
+
+### Bundle, secure input and re-entry
+
+Capture/Restore use the production `.mbt` / `MBT-BUNDLE-1` format. Normal Bundle
+configuration is private but unencrypted; checksums are not source authentication.
+Private identities use separate encrypted Secure Migration and no-clobber import.
+Secrets never enter ordinary JSONL, argv, environment, generated config or logs.
+Use disposable fixtures for secure tests rather than real `~/.ssh` mutation.
+
+Prepare is not Apply. Execute recomputes authoritative preparation and rejects
+stale plans before publication; prepared IDs are not authorization or transactions.
+Distinguish pre-publication failure, publication and possible target mutation.
+Recovery protects local configuration publication, not installs/settings/imports.
+Retry means fresh inspection/Preview and idempotency, not persistent transaction resume.
+Never infer verified identities from exit `0` without valid importer evidence.
+
+## Documentation ownership and anti-drift
+
+English is canonical for product, architecture, developer and reference documents.
+Russian documents under `docs/ru/` are optional convenience copies that may lag;
+do not create parallel Russian copies of new technical contracts.
+
+Identify the owner before editing, update it first, and touch other documents only
+when necessary for accuracy. The [documentation index](docs/README.md) maps owners:
+README introduces the product; Vision owns principles; Architecture owns stable
+boundaries; Capture / Restore owns the workflow; CLI owns terminal behavior;
+Core reference owns Protocol/execution; Configuration owns data/domain contracts;
+Desktop/Distribution own their planned boundaries.
+
+Roadmap contains major outcomes/status, not an implementation log. Architecture
+is not a changelog or API dump. TODO contains unfinished actionable work only;
+remove completed entries. CHANGELOG records completed release-visible changes.
+Never rewrite released history for current branding or language. Keep detailed
+contracts with one owner; link instead of duplicating them. Feature work does not
+require updating every major document. Prefer concise direct English and do not
+expand Roadmap/Architecture because implementation was complicated.
+
+## Logging and validation
+
+Use `action`, `success`, `warning`, `error`, `info`, `detail` from
+`modules/core/common/common.sh`. Keep default output compact; diagnostic detail
+uses `detail`. Normal lifecycle runs finish with the existing Summary. Local logs
+under `logs/` must not enter Git.
+
+Validate proportionally. Documentation-only changes use diff/link review and
+`git diff --check`; do not run regression/syntax checks, macOS preference/PID
+inspection or workflows merely for documentation. For code, run focused existing
+harnesses first. Use `scripts/test.sh` for justified full integration/release
+validation and `scripts/lint.sh` for ShellCheck. Do not replace canonical runners.
+Minimum Bash syntax verification:
 
 ```bash
 find modules scripts -type f -name '*.sh' -print0 | xargs -0 -n1 bash -n
 bash -n bootstrap.sh
 ```
 
-Для изменений, не затрагивающих локальное окружение, можно проверить
-CLI без запуска Bootstrap:
+`--help`/`--version` do not run workflows. Do not run Bootstrap without explicit
+request; do not run Discovery for read-only analysis because it replaces generated
+state. Check also creates logs, requests administrator authentication and may offer
+Homebrew installation. Real workflows require authorization for their side effects.
 
-```bash
-./bootstrap.sh --help
-./bootstrap.sh --version
-```
+Finish substantial changes with scope/contracts/security review, appropriate
+focused validation, `git diff --check`, status and documentation ownership review.
+Report validation, limitations and publication state precisely.
 
-`--check`, `--discover` и особенно `--bootstrap` выполняй только с
-учётом их побочных эффектов и по явному запросу пользователя.
-При изменении модуля обновляй соответствующую документацию проекта
-(README модуля и/или документацию в `docs/`), если изменение влияет на
-описанное поведение.
+## Git process
 
-## Git-процесс
+Check the branch before edits. Development belongs on `develop`; `main` is stable
+releases only. If not on `develop`, report and wait for a decision; never switch
+branches automatically over local changes. Preserve unrelated work.
 
-Основная разработка ведётся в `develop`; `main` содержит только
-стабильные релизы.
-
-Перед изменениями проверь текущую ветку. Не переключай ветку
-автоматически, особенно при незакоммиченных изменениях. Если текущая
-ветка не `develop`, сообщи пользователю и дождись решения.
-
-- Не работай напрямую в `main`.
-- Не смешивай несвязанные изменения в одном коммите.
-- Не добавляй generated-конфигурацию, логи, `exports/`, `.env` или
-  локальные временные файлы.
-- Перед коммитом проверь `git status` и `git diff --stat`.
-- Предпочитай добавление целевых файлов явно. `git add .` допустим
-  только после проверки, что рабочее дерево не содержит
-  generated-конфигурации, логов, `exports/`, `.env`, временных или
-  несвязанных файлов.
-- Не выполняй push, merge, tag, rebase, force-push или изменение
-  удалённого репозитория без явного запроса пользователя.
-
-Формат сообщений коммитов:
-
-```text
-type: краткое описание
-```
-
-Разрешённые типы: `feat`, `fix`, `refactor`, `docs`, `style`, `chore`,
-`release`.
-
-Сообщение должно быть на английском, кратким, с маленькой буквы после
-`type:`. Один коммит — одна логическая задача.
-
-## Принцип минимальных изменений
-
-Существующий код является рабочей основой текущей стабильной версии.
-Предпочитай маленькие, локальные и обратимо проверяемые изменения.
-
-Не выполняй широких рефакторингов, переименований, форматирования всех
-Bash-файлов или перестройки каталогов без отдельной задачи. При
-доработке конкретного модуля сохраняй его внешний контракт, существующий
-порядок Bootstrap, формат конфигурации, коды возврата и стиль вывода,
-если задача явно не требует изменения контракта.
-
-Архитектурные изменения отражай в `docs/toolkit/ARCHITECTURE.md`;
-ближайшие технические задачи — в `TODO.md`; изменение статуса этапов —
-в `ROADMAP.md`; завершённые пользовательские изменения — в
-`CHANGELOG.md`.
+Do not commit/push unless authorized. Never push, merge, tag, rebase, force-push
+or modify remote state without explicit request. Before authorized commits review
+status and diff/stat, stage explicit target files, and exclude generated state,
+logs, exports, `.env` and temporary files. One logical task per commit, with short
+English `type: lowercase description`; types: `feat`, `fix`, `refactor`, `docs`,
+`style`, `chore`, `release`. No broad rename, formatting or refactor without scope.

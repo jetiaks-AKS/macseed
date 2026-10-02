@@ -1,166 +1,46 @@
-# Vision Macseed
+# Macseed Vision
 
-## Главная цель
+Macseed helps people move a supported working environment to a new Mac with
+less manual setup and a result they can inspect: **Capture → Rebuild → Verify**.
+Users choose what matters, review the changes, and see which selected
+requirements were verified and which still need attention.
 
-Macseed создаётся для безопасного и воспроизводимого переноса
-рабочего окружения на новый Mac.
+## Product principles
 
-Цель проекта — максимально сократить ручную настройку нового компьютера:
-обнаружить существующее окружение, выбрать нужное состояние, понять
-предстоящие изменения, безопасно воспроизвести его и проверить результат.
+- Observe before changing; distinguish absence from an observation failure.
+- Make selection explicit and show a Preview before Apply.
+- Preserve existing data when safe convergence cannot be established.
+- Repeat safely: already matching supported state should converge to no-op.
+- Report execution outcomes separately from final conformity and coverage gaps.
+- Keep private identity transfer separate from ordinary reconstructable state.
+- Keep everyday flows simple and put diagnostic detail where it is needed.
 
-Toolkit автоматизирует поддерживаемое рабочее окружение, но не стремится
-управлять каждым возможным состоянием macOS.
+Verification must be honest about its scope. A verified selected requirement
+is not proof that the entire Mac is identical or that every application works.
+Comparison helps explain differences; it does not imply cleanup or removal.
 
----
+## Boundaries
 
-## Пользовательский сценарий
+Macseed reconstructs supported configuration, installs applications, and clones
+repositories. It is not a full Mac clone, backup, Migration Assistant replacement,
+arbitrary file migrator or application-session copier. Documents, libraries,
+databases and runtime state belong to dedicated transfer or backup tools.
+Selected SSH identities are the currently supported secure physical transfer.
 
-Основной сценарий проекта:
+New application adapters require a clear portable contract and enough user
+value to justify their security and maintenance cost. Macseed should remain
+focused rather than grow into a universal configuration framework or recipe
+catalog. Existing VS Code support remains part of the product.
 
-```text
-Existing Mac
-    ↓
-Discovery
-    ↓
-Generated Configuration
-    ↓
-Blueprint
-    ↓
-Preview
-    ↓
-Bootstrap
-    ↓
-Ready Working Environment
-```
+## Direction
 
-Реализованный Preview дополняет этот процесс безопасным предварительным
-просмотром изменений. Локальный Verify уже проверяет результат внутри модулей,
-когда состояние наблюдаемо; отдельная сводная глобальная проверка остаётся
-необязательным будущим направлением.
+One authoritative Core serves the official CLI and the planned native Desktop.
+Desktop should make Capture, Restore and Environment Status approachable without
+reimplementing their behavior. Missing prerequisites should lead to clear guidance
+and a fresh check, rather than being mistaken for permanent lack of support.
 
-Пользователь должен управлять прежде всего тем, **что необходимо восстановить**,
-а внутренняя техническая сложность Toolkit не должна без необходимости
-переходить в обычный workflow.
-
----
-
-## Модель проекта
-
-Основная идея Toolkit:
-
-```text
-Discover → Describe → Select → Preview → Bootstrap
-```
-
-* **Discovery** наблюдает существующее рабочее окружение.
-* **Generated Configuration** описывает обнаруженное machine-specific состояние.
-* **Blueprint** определяет, какую часть обнаруженного состояния нужно восстановить.
-* **Bootstrap** безопасно применяет поддерживаемое выбранное состояние.
-
-Каждый уровень имеет отдельную ответственность. Выбор пользователя не
-дублирует обнаруженные значения, а применение состояния не должно подменять
-его обнаружение.
-
----
-
-## Основные принципы
-
-Toolkit развивается вокруг нескольких устойчивых принципов:
-
-* **Safe by Default** — автоматизация не должна достигаться ценой безопасности
-  существующих данных.
-* **Idempotent** — повторный запуск не должен без необходимости изменять уже
-  корректное состояние.
-* **Observe Before Apply** — состояние проверяется до изменения.
-* **Verify After Apply** — выполненное изменение проверяется там, где это
-  поддерживается модулем.
-* **Predictable** — одинаковое состояние должно приводить к понятному и
-  предсказуемому поведению.
-* **Modular** — компоненты имеют ограниченные области ответственности и
-  используют общие механизмы там, где это оправдано.
-* **Quiet by Default** — обычный вывод остаётся компактным, а диагностические
-  подробности доступны при необходимости.
-
-Новая функциональность оправдана, если она заметно улучшает обнаружение,
-выбор, предварительный просмотр, безопасное применение или проверку состояния.
-
-Toolkit не должен превращаться в универсальный macOS configuration framework.
-Внутренняя сложность должна оставаться настолько небольшой и скрытой от
-пользователя, насколько позволяет решаемая задача.
-
----
-
-## Границы безопасности
-
-Toolkit восстанавливает **рабочее окружение**, а не пользовательские данные.
-
-Он не должен молча выполнять потенциально разрушительные или неоднозначные
-операции над существующим состоянием пользователя.
-
-В частности, безопасный workflow не предполагает автоматические:
-
-* `git reset --hard`;
-* `git clean`;
-* удаление пользовательских файлов;
-* перезапись существующего Git remote или локальных изменений без безопасно
-  установленного соответствия.
-
-Если безопасное приведение существующего состояния к требуемому невозможно,
-Toolkit должен сохранить пользовательское состояние и сообщить о проблеме,
-а не пытаться исправить её разрушительным способом.
-
-Перенос документов, медиатеки и других пользовательских данных остаётся
-ответственностью специализированных инструментов резервного копирования,
-синхронизации и хранения.
-
----
-
-## Долгосрочное направление
-
-Целевая модель развития:
-
-```text
-Existing Mac
-    ↓
-Discovery
-    ↓
-Observed Environment
-    ↓
-Selection
-    ↓
-Preview
-    ↓
-Safe Bootstrap
-    ↓
-Verification
-    ↓
-Ready Working Environment
-```
-
-**Preview / Dry-run** должен позволить понять предполагаемые изменения до их
-применения.
-
-**Verification** должен дать итоговое подтверждение соответствия выбранному
-состоянию после Bootstrap.
-
-Эти возможности расширяют существующую модель, а не заменяют её.
-
-Restore Engine, AI Assistant, Profiles, GUI, Plugins и другие направления могут
-появиться в будущем только при наличии практической необходимости. Они не
-являются обязательными этапами архитектуры проекта.
-
----
-
-## Границы документа
-
-Этот документ определяет долгосрочное **видение и принципы** проекта.
-
-Техническая структура системы описывается в
-[`toolkit/ARCHITECTURE.md`](toolkit/ARCHITECTURE.md).
-
-Последовательность развития определяется в
-[`../ROADMAP.md`](../ROADMAP.md).
-
-Ближайшие технические задачи находятся в
-[`../TODO.md`](../TODO.md).
+The next outcomes are a native application and a qualified signed distribution.
+The first complete Desktop release is planned as Macseed 1.0, built on the mature
+Core from the toolkit/CLI v1.x–v3.4.x line. This does not rename released history
+or change the current version. See the [Roadmap](../ROADMAP.md) for stages and
+[Architecture](toolkit/ARCHITECTURE.md) for technical boundaries.

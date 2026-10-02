@@ -71,6 +71,7 @@ class BundleTests(unittest.TestCase):
         observed = b""
         transcript = b""
         deadline = time.monotonic() + 20
+        reached_eof = False
         try:
             while proc.poll() is None and time.monotonic() < deadline:
                 ready, _, _ = select.select([master], [], [], .2)
@@ -78,17 +79,44 @@ class BundleTests(unittest.TestCase):
                     try:
                         chunk = os.read(master, 65536)
                     except OSError:
+                        reached_eof = True
+                        break
+                    if not chunk:
+                        reached_eof = True
                         break
                     observed += chunk
                     transcript += chunk
-                if pending and pending[0][0] in observed:
-                    os.write(master, pending.pop(0)[1] + b"\n")
-                    observed = b""
+                if pending:
+                    expected = pending[0][0]
+                    prompts = expected if isinstance(expected, tuple) else (expected,)
+                    if any(prompt in observed for prompt in prompts):
+                        os.write(master, pending.pop(0)[1] + b"\n")
+                        observed = b""
+            if reached_eof and proc.poll() is None:
+                try:
+                    proc.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    pass
             if proc.poll() is None:
-                os.killpg(proc.pid, signal.SIGTERM)
-            proc.wait(timeout=3)
+                reason = "PTY closed before process exit" if reached_eof else "PTY dialogue timed out"
+                next_prompt = pending[0][0] if pending else b"<process exit>"
+                raise AssertionError(f"{reason}; waiting for {next_prompt!r}")
+            proc.wait()
         finally:
             os.close(master)
+            if proc.poll() is None:
+                try:
+                    os.killpg(proc.pid, signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
+                try:
+                    proc.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    try:
+                        os.killpg(proc.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                    proc.wait()
         self.assertFalse(pending, "expected prompt was not reached")
         self.assertNotIn(b"BEGIN OPENSSH PRIVATE KEY", transcript)
         return proc.returncode, transcript
@@ -123,6 +151,30 @@ class BundleTests(unittest.TestCase):
         files = bundle.validate_archive(self.bundle)
         self.assertEqual(files["generated/brew-packages.conf"], b"selected\n")
         self.assertNotIn(b"[other]", files["generated/workspace/repositories.conf"])
+
+    def test_complete_inventory_keeps_excluded_items_for_comparison(self):
+        inventory = b"selected\nexcluded\n"
+        selected = self.stage / "blueprint.conf"
+        selected.write_bytes(selected.read_bytes().replace(
+            b"[homebrew-casks]\n", b"[homebrew-casks]\nselected\n"))
+        bundle.write_file(self.stage / "generated/brew-casks.conf", inventory)
+        marker = ("complete " + bundle.digest(inventory) + "\n").encode()
+        bundle.write_file(self.stage / "generated/provenance/homebrew-casks.sha256", marker)
+        self.pack()
+        files = bundle.validate_archive(self.bundle)
+        self.assertEqual(files["generated/brew-casks.conf"], inventory)
+        self.assertEqual(files["generated/provenance/homebrew-casks.sha256"], marker)
+        target = self.root / "target"
+        target.mkdir()
+        bundle.unpack(self.bundle, target, "/Users/target")
+        self.assertEqual((target / "generated/brew-casks.conf").read_bytes(), inventory)
+
+    def test_invalid_completeness_marker_rejected(self):
+        bundle.write_file(self.stage / "generated/brew-casks.conf", b"example\n")
+        bundle.write_file(self.stage / "generated/provenance/homebrew-casks.sha256",
+                          b"complete " + b"0" * 64 + b"\n")
+        with self.assertRaises(bundle.Invalid):
+            self.pack()
 
     def test_only_selected_git_values_are_carried(self):
         path = self.stage / "blueprint.conf"
@@ -482,7 +534,7 @@ class BundleTests(unittest.TestCase):
         self.pack()
 
         fixture = self.root / "runtime"
-        for folder in ("modules/bundle", "modules/migration", "scripts", "config/generated"):
+        for folder in ("modules/bundle", "modules/migration", "modules/verification", "scripts", "config/generated"):
             (fixture / folder).mkdir(parents=True, exist_ok=True)
         for original, target in (
             (MODULE, fixture / "modules/bundle/bundle.py"),
@@ -492,8 +544,14 @@ class BundleTests(unittest.TestCase):
              fixture / "modules/migration/ssh-identities.sh"),
             (migration.parents[1] / "modules/migration/package.sh",
              fixture / "modules/migration/package.sh"),
+            (migration.parents[1] / "modules/migration/evidence.py",
+             fixture / "modules/migration/evidence.py"),
+            (migration.parents[1] / "modules/migration/secret_input.py",
+             fixture / "modules/migration/secret_input.py"),
         ):
             shutil.copy2(original, target)
+        shutil.copy2(migration.parents[1] / "modules/verification/ssh-identities.sh",
+                     fixture / "modules/verification/ssh-identities.sh")
         (fixture / "config/generated/old").write_text("previous state")
         (fixture / "config/blueprint.conf").write_text("previous selection")
         bootstrap = fixture / "bootstrap.sh"
@@ -505,7 +563,8 @@ class BundleTests(unittest.TestCase):
             '  --bootstrap) [[ -z "${BLUEPRINT_FILE:-}" && -f config/blueprint.conf && '
             '-f config/generated/workspace/repositories.conf ]] || exit 2; '
             'echo bootstrap >> calls; [[ -z "${BUNDLE_TEST_BOOTSTRAP_FAIL:-}" ]] || exit 2; '
-            'source modules/bundle/commands.sh; '
+            'source modules/bundle/commands.sh; source modules/verification/ssh-identities.sh; '
+            'GV_RUN_ID=bundle-fixture; '
             'blueprint_category_enabled(){ return 1; }; '
             'info(){ printf "%s\\n" "$1"; }; warning(){ :; }; '
             'bundle_restore_prerequisites ;;\n'
@@ -525,7 +584,10 @@ class BundleTests(unittest.TestCase):
         def run_restore(home, answers):
             home.mkdir(mode=0o700)
             return self.run_pty(command, answers, cwd=fixture,
-                                env=dict(os.environ, HOME=str(home), TMPDIR=str(private_tmp)))
+                                env=dict(os.environ, HOME=str(home), TMPDIR=str(private_tmp),
+                                         MACSEED_APPLICATION_EXECUTION="false",
+                                         MACSEED_APPLICATION_SECURE_READY="true",
+                                         MACSEED_APPLICATION_SECURE_VERIFY_ONLY="true"))
 
         target = self.root / "target-home"
         status, restore_transcript = run_restore(target, [(b"Enter=continue", b""),
@@ -621,6 +683,10 @@ class BundleTests(unittest.TestCase):
              fixture / "modules/migration/ssh-identities.sh"),
             (migration.parents[1] / "modules/migration/package.sh",
              fixture / "modules/migration/package.sh"),
+            (migration.parents[1] / "modules/migration/evidence.py",
+             fixture / "modules/migration/evidence.py"),
+            (migration.parents[1] / "modules/migration/secret_input.py",
+             fixture / "modules/migration/secret_input.py"),
         ):
             shutil.copy2(original, target)
         bootstrap = fixture / "bootstrap.sh"
@@ -636,17 +702,20 @@ class BundleTests(unittest.TestCase):
         command = ["bash", "-c", 'source modules/bundle/commands.sh; '
                    'info(){ :; }; warning(){ :; }; error(){ :; }; success(){ :; }; '
                    'bundle_capture']
+        # ssh-keygen may prompt on the controlling PTY instead of the wrapper's
+        # stderr pipe; both forms must still request the key passphrase once.
         status, transcript = self.run_pty(
             command, [(b"Select SSH identities for encrypted", b"y"),
                       (b"Select numbers", b"1"),
                       (b"Type export", b"export"),
-                      (b"SSH key passphrase", key_phrase),
+                      ((b"SSH key passphrase:", b'/identity": '), key_phrase),
                       (b"Enter passphrase", age_phrase),
                       (b"Confirm passphrase", age_phrase)],
             cwd=fixture, env=dict(os.environ, HOME=str(source_home),
                                   TMPDIR=str(fixture / "private-tmp")))
         self.assertEqual(status, 0)
-        self.assertEqual(transcript.count(b"SSH key passphrase:"), 1)
+        self.assertEqual(transcript.count(b"SSH key passphrase:") +
+                         transcript.count(b'/identity": '), 1)
         self.assertNotIn(key_phrase, transcript)
         self.assertNotIn(age_phrase, transcript)
         output = list((fixture / "exports").glob("*.mbt"))
@@ -660,12 +729,13 @@ class BundleTests(unittest.TestCase):
             command, [(b"Select SSH identities for encrypted", b"y"),
                       (b"Select numbers", b"1"),
                       (b"Type export", b"export"),
-                      (b"SSH key passphrase", key_phrase),
+                      ((b"SSH key passphrase:", b'/identity": '), key_phrase),
                       (b"Enter passphrase", b"")],
             cwd=fixture, env=dict(os.environ, HOME=str(source_home),
                                   TMPDIR=str(fixture / "private-tmp")))
         self.assertEqual(status, 0)
-        self.assertEqual(autogenerated_transcript.count(b"SSH key passphrase:"), 1)
+        self.assertEqual(autogenerated_transcript.count(b"SSH key passphrase:") +
+                         autogenerated_transcript.count(b'/identity": '), 1)
         generated_lines = [line for line in autogenerated_transcript.splitlines()
                            if b"using autogenerated" in line]
         self.assertEqual(len(generated_lines), 1)

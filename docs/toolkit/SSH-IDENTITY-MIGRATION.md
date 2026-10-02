@@ -1,24 +1,15 @@
 # Secure SSH Identity Migration
 
-Stage 12 v1 переносит явно выбранные существующие SSH identities отдельно от
-Discovery, Generated Configuration, Blueprint и Bootstrap. Для отдельной
-команды `age` и Python 3 должны быть доступны; сама команда их не устанавливает.
+Secure Migration v1 transfers explicitly selected existing SSH identities through
+an encrypted package, separately from Discovery, Generated Configuration,
+Blueprint and ordinary Bootstrap. Recommended one-Bundle integration is described
+in [Capture / Restore](../CAPTURE-RESTORE.md). This reference owns the standalone
+commands, key eligibility and encrypted package contract.
 
-На исходном Mac сначала выполните Discovery и сохраните Blueprint. Homebrew
-Discovery включает явно установленный `age` в список formulae; выберите его
-в разделе Homebrew packages Blueprint. Если `age` установлен после последнего
-Discovery, обновите Generated Configuration. Подготовьте и передайте обычное
-локальное состояние Toolkit по [Quick Start](../getting-started/QUICKSTART.md),
-затем отдельно экспортируйте выбранные SSH identities в защищённый пакет.
+## Standalone commands
 
-На целевом Mac сначала выполните обычные Preview и Bootstrap. Выбранный `age`
-будет установлен вместе с другими Homebrew formulae, если отсутствует. После
-этого отдельно запустите import пакета. SSH private identities не входят в
-Generated Configuration, Blueprint или обычный Bootstrap; Toolkit не запускает
-import автоматически. Если `age` не был выбран, обеспечьте его наличие до
-запуска import.
-
-Из корня репозитория:
+Run from the repository root with `age` and Python 3 available; these standalone
+commands do not install prerequisites:
 
 ```bash
 ./scripts/ssh-identity-migrate.sh list
@@ -26,38 +17,44 @@ import автоматически. Если `age` не был выбран, об
 ./scripts/ssh-identity-migrate.sh import --input /absolute/path/package.age
 ```
 
-`export` показывает подходящие пары под `~/.ssh`, принимает номера через терминал,
-показывает выбор и требует точное `export`. `age` запрашивает passphrase через
-терминал. Пакет не перезаписывает существующий файл. Перед передачей пакета
-пользователь сам выбирает защищённый канал; passphrase следует передать отдельно.
-Если `ssh-keygen` подтверждает неверную passphrase защищённого SSH key, команда
-даёт до трёх интерактивных попыток и затем исключает эту пару с отдельным
-сообщением. Другие ошибки проверки не вызывают повторного запроса.
+Export lists eligible pairs under `~/.ssh`, accepts terminal selection, shows the
+selection and requires exact `export`. Existing output is never replaced.
+`age` requests a new package passphrase through the terminal. Transfer privately
+and keep the passphrase separate. Protected keys require their existing SSH-key
+passphrase during pair validation. Confirmed incorrect passphrases get up to three
+attempts before excluding that pair; other validation errors do not trigger retries.
 
-`import` запрашивает passphrase, полностью проверяет пакет и показывает план.
-Любой конфликт блокирует весь перенос. Идентичные пары не меняются. Для новых
-пар требуется точное `import`. Существующие ключи никогда не заменяются.
+Import decrypts, validates the complete package and shows a plan. Any conflict
+blocks the whole transfer. Identical pairs remain unchanged. New pairs require
+exact `import`; existing keys are never replaced. Verification checks local files
+and key pairing, not network authentication.
 
-Поддерживаются прямые файлы OpenSSH Ed25519, RSA и ECDSA nistp256/nistp384/
-nistp521 с соответствующим `.pub`, владельцем текущим пользователем и режимами
-`0600` для private и `0600` или `0644` для public; каталог `~/.ssh` должен иметь
-режим `0700`. Symlinks, hard links,
-ключи FIDO, DSA, сертификаты, agent state, known_hosts и Keychain вне v1.
+For a manual migration, prepare dependencies/configuration separately. Homebrew
+Discovery can select installed `age` as a formula; refresh Discovery if installed
+later. Ordinary Bootstrap does not import identities automatically. Integrated
+Bundle Restore instead invokes this same engine before dependent Workspace clones.
+Application mode uses the [Core secret bridge](../core/APPLICATION-INTERFACE.md),
+not terminal emulation.
 
-Пакет — age passphrase ciphertext с tar и строгим manifest версии 1. Внутри
-архива сначала идёт `manifest`, затем упорядоченные пары `keys/<name>` и
-`keys/<name>.pub`. Manifest содержит magic `toolkit-ssh-identities`, `version=1`,
-`count=N` и по одной tab-separated записи на пару: имя, тип, SHA-256 fingerprint,
-размер и SHA-256 private, размер и SHA-256 public. Максимум 32 пары, 1 MiB на
-каждый файл и 32 MiB на пакет. Открытый tar при export не создаётся;
-выбранные пары временно копируются в приватный каталог под `/private/tmp`.
-При import открытый tar временно находится там же как файл `0600`.
-Каталоги имеют режим `0700` и удаляются при завершении или SIGINT/SIGTERM.
-После SIGKILL или отключения питания могут остаться временные файлы либо
-неполная новая пара в `~/.ssh`: проверьте `/private/tmp/ssh-migrate-*` и целевые
-имена вручную. Успех Verify означает локальную проверку файлов и пары ключей;
-сетевую аутентификацию Toolkit не проверяет.
+## Keys and package
 
-Коды: `0` — успех или идентичное состояние, `1` — отмена/конфликт,
-`2` — ошибка проверки, зависимости, шифрования или публикации,
-`130` — прерывание сигналом.
+Eligible keys are direct user-owned OpenSSH Ed25519, RSA or ECDSA
+nistp256/nistp384/nistp521 private files with matching `.pub`. Required modes are
+`0600` private, `0600` or `0644` public, `0700` for `~/.ssh`. Symlinks, hard links,
+FIDO keys, DSA, certificates, agent state, known_hosts and Keychain are outside v1.
+
+The package is age passphrase ciphertext containing a tar with strict version-1
+manifest. Member order is `manifest`, then ordered `keys/<name>` and
+`keys/<name>.pub` pairs. Manifest magic is `toolkit-ssh-identities`, `version=1`,
+`count=N`; each tab-separated pair record contains name, type, SHA-256 fingerprint,
+private size/hash and public size/hash. Limits: 32 pairs, 1 MiB per file,
+32 MiB per package. Keys retain their original encryption.
+
+Export does not create a plaintext tar file; selected pairs stage privately under
+`/private/tmp`. Import temporarily writes a plaintext tar there with `0600`.
+Temporary directories are `0700` and cleaned on exit/SIGINT/SIGTERM. SIGKILL or
+power loss can leave temporary files or an incomplete new target pair; inspect
+`/private/tmp/ssh-migrate-*` and target names manually after such interruption.
+
+Exits: `0` success/identical state, `1` cancellation/conflict, `2` validation,
+dependency, encryption or publication error, `130` signal interruption.

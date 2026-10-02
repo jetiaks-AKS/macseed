@@ -1,95 +1,20 @@
 # Bootstrap Workspace
 
-## Назначение
+Restores supported folder structure and Git repositories from Workspace Discovery.
+It consumes only `folders.conf` and `repositories.conf` required by the selected
+scope. Validate required input before mkdir, clone or checkout; missing, unreadable
+or malformed input returns `2` without partial application. Empty selections do
+not require unrelated files. Without Blueprint, compatible all-inclusive behavior
+remains.
 
-Модуль отвечает за восстановление поддерживаемой структуры рабочего
-пространства пользователя.
+Create selected missing safe folders. Blueprint normally offers only
+`workspace`-classified folders; `user`/`system` observations remain generated data.
+Clone absent repositories and inspect existing worktrees, origin and branch.
+Preserve conflicting/non-Git destinations, dirty tracked/staged state, remotes and
+untracked files; Git may safely refuse checkout. Observation failures block action
+rather than becoming a mismatch. Repeat only necessary changes and verify results.
 
-Источником данных являются generated-конфигурации, сформированные
-Workspace Discovery.
-
----
-
-## Используемые конфигурации
-
-Текущий Workspace Bootstrap использует:
-
-- `folders.conf`
-- `repositories.conf`
-
-Если эти файлы требуются текущим выбором Blueprint, Bootstrap проверяет
-их наличие, читаемость и структуру до начала любых Workspace-изменений.
-
-Все требуемые входные конфигурации проходят валидацию до создания первого
-каталога, клонирования репозитория или восстановления ветки.
-
-Отсутствующий, нечитаемый или malformed обязательный input завершает
-Workspace со статусом `2` без частичного применения состояния.
-
-Без Blueprint сохраняется legacy all-inclusive обработка.
-
-`inventory.conf` и `vscode-workspaces.conf` не являются входами текущего
-Workspace Bootstrap.
-
----
-
-## Основные задачи
-
-### Folders
-
-Создание выбранной структуры каталогов пользователя.
-
-При наличии Blueprint обычными кандидатами являются записи `folders.conf`
-с классификацией `workspace`. Каталоги `user` и `system` остаются частью
-наблюдаемой Generated Configuration, но не предлагаются как обычные
-Workspace Folder choices.
-
-Без Blueprint сохраняется legacy all-inclusive поведение.
-
-### Repositories
-
-Клонирование отсутствующих Git-репозиториев и проверка существующих.
-
-Для существующего репозитория Bootstrap проверяет соответствие remote
-ожидаемой конфигурации.
-
-Если репозиторий не удаётся клонировать или проверить, remote не совпадает
-с конфигурацией либо требуемую ветку нельзя безопасно восстановить,
-Bootstrap сохраняет существующие данные, продолжает обработку остальных
-репозиториев и завершает Workspace с предупреждением.
-
-### Branches
-
-Восстановление рабочей Git-ветки выполняется только тогда, когда это можно
-сделать безопасно.
-
-Bootstrap не переключает ветку при наличии незакоммиченных изменений и
-не изменяет существующий Git remote для исправления несовпадения.
-
----
-
-## VS Code Workspaces
-
-Workspace Discovery обнаруживает VS Code Workspaces и формирует
-`vscode-workspaces.conf`.
-
-Текущий Workspace Bootstrap этот файл не потребляет. Восстановление
-`.code-workspace` и VS Code Projects пока не реализовано и отключено
-от production-оркестрации.
-
----
-
-## Принцип работы
-
-```text
-Discovery
-    ↓
-config/generated/workspace/
-    ↓
-Blueprint
-    ↓
-Input Validation
-    ↓
-Bootstrap Workspace
-    ↓
-Folders + Git Repositories
+`inventory.conf` and `vscode-workspaces.conf` are not Bootstrap inputs.
+`.code-workspace` restoration is not implemented. Exact validation, branch,
+remote and exit rules belong to
+[Configuration](../../../docs/toolkit/CONFIGURATION.md#workspace-bootstrap-actionability).

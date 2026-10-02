@@ -67,6 +67,11 @@ preview_workspace_folders() {
 
         workspace_folder_state "$folder"
         inspection_result=$?
+        case $inspection_result in
+            0) preview_record workspace-folders "$folder" none satisfied ;;
+            1) preview_record workspace-folders "$folder" create_directory planned ;;
+            *) preview_record workspace-folders "$folder" create_directory blocked target_conflict ;;
+        esac
 
         case $inspection_result in
             0)
@@ -134,6 +139,8 @@ bootstrap_workspace_folders() {
             return 2
         fi
 
+        # Shared lifecycle flag is read by the calling module wrapper.
+        # shellcheck disable=SC2034
         MODULE_CHANGED=true
 
         if ! workspace_folder_state "$folder"; then
@@ -149,4 +156,24 @@ bootstrap_workspace_folders() {
 
     return 0
 
+}
+
+verify_workspace_folders() {
+    verification_items_selected workspace-folders || return 0
+    local records folder result
+    records="$(workspace_read_bootstrap_folders "$(blueprint_generated_file workspace-folders)")" || {
+        verification_input_error workspace-folders; return 0;
+    }
+    verification_select_subjects workspace-folders "$records" || return 2
+    for folder in "${GV_SUBJECTS[@]}"; do
+        workspace_folder_state "$folder"
+        result=$?
+        local kind=unknown
+        if [[ $result -eq 1 ]]; then kind=absent
+        elif [[ "${CV_ACTIVE:-false}" == true && $result -eq 2 &&
+                -f "$HOME/$folder" && ! -L "$HOME/$folder" ]]; then
+            result=1 kind=different
+        fi
+        verification_result workspace-folders "$folder" directory "$result" '' "$kind" || return 2
+    done
 }

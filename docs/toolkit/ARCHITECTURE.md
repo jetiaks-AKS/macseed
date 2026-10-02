@@ -1,218 +1,117 @@
 # Macseed Architecture
 
-English | [Русский](ARCHITECTURE.ru.md)
-
-## Purpose
-
-Workflow uses Discovery → Blueprint → Preview → Bootstrap on the current Mac.
-Capture orchestrates those existing components in private staging on the source
-Mac and publishes a Bootstrap Bundle. Restore validates and previews staged
-input on the target Mac, then publishes the ordinary generated/Blueprint pair
-before Bootstrap. Publication recovery protects the previous local pair.
-Restore Bootstrap validates all selected input, prepares prerequisites, then
-uses the existing SSH configuration consumer and explicitly confirmed Secure
-Credentials importer before Workspace cloning. A prerequisite failure stops
-dependent restoration; later failures do not roll back imported identities. The Bundle
-is transport only, so later Workflow runs from local state.
-
-The ordinary path reconstructs selected state supported by Bootstrap consumers.
-Applications are installed, repositories are cloned, and supported settings
-are configured; working trees and user data are not copied. SSH Configuration
-is a reconstructable set of Host profiles. Only explicitly selected SSH
-private/public identities cross the separate encrypted Secure Migration
-boundary in `secure.age`. This is not general machine or data migration.
-
-Macseed is a modular Bash system for discovering and
-reproducing supported parts of a macOS working environment. This document
-defines the current component responsibilities, state flow, boundaries, and
-architectural invariants. Development sequencing belongs in the Roadmap;
-configuration formats and value-level contracts belong in Configuration.
-
-## Current architecture
+Macseed has one authoritative Core and two client boundaries. The CLI is
+implemented; native Desktop is planned.
 
 ```text
-Current Mac
-    ↓
-Discovery
-    ↓
-Generated Configuration
-    ↓
-Blueprint / Desired Selection
-    ↓
-Preview
-    ↓
-Bootstrap
-    ↓
-Target Mac
+Macseed
+├── Core
+│   ├── Discovery and Selection / Blueprint
+│   ├── Preview and Bootstrap
+│   ├── Verification and Comparison
+│   └── Bundle and Secure Migration
+├── CLI: bs / bootstrap.sh
+└── Desktop: Macseed.app (planned)
 ```
 
-Discovery records supported observed state. Generated Configuration stores
-those machine-specific values. Blueprint optionally selects the restoration
-scope. Preview reports supported changes without applying them. Bootstrap
-applies the selected supported values on the target Mac.
+These are responsibility boundaries, not a proposal to move production files.
+The current Bash/Python implementation stays in the existing repository layout.
 
-## State and responsibility model
+## State and control flow
 
-Toolkit separates observed values from desired selection:
+The product lifecycle is **Capture → Rebuild → Verify**. Internally:
 
 ```text
-Observed State
-    ↓
-Generated Configuration
-    +
-Blueprint Desired Selection
-    ↓
-Selected Supported State
-    ├── Preview
-    └── Bootstrap
+Discover → Select → Preview → Apply → Verify
+    │         │
+    ▼         ▼
+Generated   Blueprint
+Configuration (Desired Selection)
 ```
 
-- **Observed State** is supported state detected on the source Mac.
-- **Generated Configuration** is the local representation of observed values.
-- **Blueprint Desired Selection** contains categories and items included in the
-  restoration scope.
-- **Selected Supported State** is the intersection of generated values,
-  Blueprint selection, and current consumer support.
+Discovery observes supported state. Generated Configuration stores derived
+machine-specific values; Blueprint selects from that inventory without
+copying or overwriting it. Together they define selected supported requirements.
+Without Blueprint, the established all-inclusive compatibility behavior applies.
 
-Blueprint does not own, copy, or rewrite discovered values. Preview does not
-own configuration or define another desired-state model. Bootstrap does not
-discover source state. These responsibilities remain separate.
+Preview inspects those requirements without applying them. Bootstrap validates
+selected input, observes target state and uses **Check → Apply → Verify**.
+Observation errors must not become “apply required.” Global Verification then
+reports selected conformity and coverage independently of operation success.
+Comparison is an explicit observational projection of those same facts.
 
-## Current architectural contracts
+## Responsibilities and entry points
 
-### Discovery
+| Component | Responsibility / implementation |
+|---|---|
+| Discovery | Domain exporters under `modules/discovery/`; local generated publication |
+| Selection | `modules/blueprint/`; validation, filtering and terminal selector |
+| Preview / Bootstrap | Existing domain readers and consumers orchestrated by `bootstrap.sh` |
+| Verification / Comparison | `modules/verification/`; reuse domain observations, no second configuration model |
+| Bundle | `modules/bundle/`; validation, selected transport state and recoverable publication |
+| Secure Migration | `modules/migration/`; separately selected encrypted SSH identity transfer |
+| CLI | `bootstrap.sh` is the production entrypoint; `bin/bs` dispatches to it from the repository root |
+| Application interface | `modules/core/application-interface/`; Protocol V1 adapter over production paths |
+| Desktop | Planned Swift/SwiftUI client consuming structured Core events and results |
 
-Discovery observes its supported domain without mutating that domain. Its
-publication lifecycle is an architectural invariant:
+Shared utilities remain in `modules/core/`; domain behavior stays with its
+existing owner. The application adapter composes authoritative paths rather
+than replacing them. Desktop must not parse terminal/log output, emulate
+interactive CLI workflows or implement its own Capture, Restore, Verify,
+Compare or secure importer.
 
-```text
-Collect → Validate → Serialize → Safe Publication
-```
+## Publication and mutation boundaries
 
-Generated output is replaced only after the complete candidate has been
-collected, validated, and serialized successfully. A handled failure preserves
-the previous valid generated state. Discovery records configuration and
-metadata; it does not copy user documents or repository contents.
+Exporters collect, validate and serialize before replacing a generated file.
+Handled failure preserves previous valid state. The four derived Workspace
+files form a grouped snapshot; other publications retain their own boundaries.
+Generated data is parsed as data, never `source`d or `eval`uated, and is not a
+credential vault.
 
-### Generated Configuration
+Capture uses private staging and creates a validated Bundle without replacing
+the source Mac's ordinary generated state or Blueprint. Restore validates,
+narrows and previews staged input before publishing local desired state and
+applying it. Application Execute repeats preparation and rejects a stale plan
+before publication. A prepared ID is neither authorization nor a transaction.
 
-`config/generated/` contains private, local, machine-specific derived state and
-is excluded from Git. Producer and consumer formats must remain compatible,
-and generated content must always be parsed as data rather than executed.
-It is not a credential vault: producers must not knowingly publish passwords,
-tokens, private keys, or embedded URL credentials there.
+Publication recovery protects the local Generated Configuration / Blueprint
+pair where defined. It does not undo application installations, settings writes
+or imported identities. Re-entry requires re-inspection, a new Preview and
+idempotent execution; there is no persistent transaction/resume database.
+See [Capture / Restore](../CAPTURE-RESTORE.md) for the workflow.
 
-Most generated files publish independently. `workspace.conf` also publishes
-independently, while `folders.conf`, `repositories.conf`,
-`vscode-workspaces.conf`, and `inventory.conf` form one consistency group and
-publish as a single Workspace snapshot.
+## Safety and security invariants
 
-Generated state can contain personal paths, Git identity, repository URLs, and
-editor settings. Opaque VS Code and Zsh snapshots may still contain sensitive
-content; no general secret-free guarantee is implied. Generated state must be
-reviewed and protected before external transfer. Exact file
-formats and portability rules are defined in [Configuration](CONFIGURATION.md).
+- Required selected input is validated before mutation. Optional-input behavior
+  follows each domain contract; absence and observation error remain distinct.
+- Conflicts preserve existing state. No automatic remote replacement, destructive
+  checkout, Git reset/clean or deletion of untracked data is introduced.
+- Matching supported state avoids redundant changes. Verification checks what
+  the production observer can establish, not visual effects or whole-Mac identity.
+- Secure identities remain outside normal generated configuration and Bootstrap.
+  Selected Secure Restore finishes before dependent Workspace clones.
+- Passphrases and import confirmation use a separate secret channel, never
+  ordinary JSONL, argv, environment, generated state or logs.
+- Bundle checksums detect corruption, not source authenticity. Normal Bundle
+  configuration is private but unencrypted; only `secure.age` is encrypted.
+- Extras require complete source provenance and valid target enumeration;
+  Comparison is informational and never plans removal or runs automatically.
 
-### Blueprint
+## Application and runtime boundary
 
-Blueprint validates and stores Desired Selection in private local
-`config/blueprint.conf`. It selects discovered categories and items without
-duplicating their values from Generated Configuration.
+Protocol V1 supplies capabilities, Bundle inspection, Capture/Restore preparation
+and execution, and Environment Comparison / Status. Core owns request validation,
+plan-sensitive prerequisites, production execution, records and owned-process
+cancellation. Clients provide user confirmation, prerequisite guidance and
+secret input, and display Core's structured progress and results.
 
-When Blueprint is absent, consumers retain compatible all-inclusive behavior
-for the supported generated scope. A legacy Blueprint that omits a newer
-category remains valid and leaves that category disabled until explicit
-migration.
+Current execution uses the repository layout and external Python 3. Stage 16
+must implement the application runtime, writable state and controlled child
+environment contract. Stage 17 qualifies the packaged application on clean Macs.
+Neither a SwiftUI app nor signed distribution exists yet.
 
-### Preview
-
-Preview is a read-only mode of the existing restoration model. It consumes the
-same Generated Configuration, Blueprint Desired Selection, validation rules,
-and observation semantics as Bootstrap rather than introducing a second
-desired-state model.
-
-Preview reports planned supported changes, distinguishes observation failure
-from confirmed absence or mismatch, and does not mutate target state. It does
-not own or rewrite configuration. Its result can gate Bootstrap in Guided
-Workflow.
-
-### Bootstrap
-
-Bootstrap applies selected supported values through the module-level lifecycle:
-
-```text
-Check → Apply → Verify
-```
-
-Required selected input is validated before mutation. Observation failure is
-distinct from legitimate absence or mismatch and must not be converted into
-“apply required.” Modules apply only confirmed necessary changes, preserve
-existing data where safety is uncertain, and remain idempotent.
-
-Verify is a local post-apply check performed when the resulting managed state
-is observable by the module. It does not imply aggregate verification of the
-whole Mac or effective visual verification beyond the module's stated
-contract.
-
-Discovery of VS Code Workspace metadata and generation of
-`vscode-workspaces.conf` are implemented. Bootstrap restoration of
-`.code-workspace` remains intentionally disconnected until a safe restoration
-consumer is implemented.
-
-### Core boundary
-
-`modules/core/` owns shared output, logging, lifecycle orchestration, preflight,
-configuration infrastructure, and common environment services. Domain-specific
-Discovery, Preview, and Bootstrap behavior remains outside Core.
-
-macOS producers and consumers share a typed supported-record boundary.
-Screenshot restoration additionally crosses into filesystem safety; its path,
-portability, and category-specific behavior are defined in
-[Configuration](CONFIGURATION.md), not duplicated here.
-
-## Guided Workflow
-
-Guided Workflow orchestrates existing modes rather than introducing another
-configuration source or desired-state engine:
-
-```text
-Readiness / optional Discovery
-    ↓
-Blueprint
-    ↓
-Preview
-    ↓
-Conditional Bootstrap
-```
-
-Blueprint cancellation stops the workflow. Preview errors block Bootstrap.
-When changes are planned, Bootstrap requires explicit user confirmation; zero
-planned changes do not invoke Bootstrap. Each underlying mode retains its own
-responsibility, validation, logging, Summary, and public status semantics.
-Inputs are revalidated before actual Apply where required. State is not frozen
-between Preview and confirmation, and Global Verification is not currently part
-of Workflow.
-
-## Verification boundary
-
-Local Verify is part of current module lifecycles. Global Verification is a
-separate optional future capability that could evaluate the resulting selected
-state and provide an aggregate post-Bootstrap report. It is not required by the
-current architecture and does not justify a separate engine in advance.
-
-## Optional future directions
-
-A Restore Engine, AI Assistant, and other large architectural extensions remain
-optional. They should be considered only when a clear responsibility appears
-that the established model cannot cover cleanly.
-
-## Documentation ownership
-
-This document owns stable architectural responsibilities and boundaries.
-Current formats and value-level contracts are in
-[Configuration](CONFIGURATION.md), operational behavior in [CLI](CLI.md) and
-[Quick Start](../getting-started/QUICKSTART.md), development direction in
-[ROADMAP.md](../../ROADMAP.md), near-term work in [TODO.md](../../TODO.md), and
-completed history in [CHANGELOG.md](../../CHANGELOG.md).
-
-Return to the [main README](../../README.md).
+Detailed transport, readiness, mutation and reporting semantics belong to
+[Core Application Interface](../core/APPLICATION-INTERFACE.md). Data formats and
+domain safety limits belong to [Configuration](CONFIGURATION.md). Product intent,
+stages and released history belong to [Vision](../VISION.md),
+[Roadmap](../../ROADMAP.md) and [Changelog](../../CHANGELOG.md).

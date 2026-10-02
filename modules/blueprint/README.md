@@ -1,6 +1,6 @@
 # Blueprint MVP
 
-[Русская версия](README.ru.md)
+[Russian convenience copy](../../docs/ru/BLUEPRINT.md) — English is authoritative.
 
 Blueprint is the user-selection layer between Generated Configuration and
 Bootstrap. It provides parsing, validation, item-level and category/module-level
@@ -8,8 +8,9 @@ Bootstrap filtering, plus the interactive `--blueprint` selector. Stages 1–5 a
 and end-to-end verified; Blueprint is included in stable release 3.0.0.
 
 The user-specific file is `config/blueprint.conf`. It is ignored by Git and is
-never generated automatically. `config/blueprint.example.conf` contains the
-tracked neutral example.
+not an output of ordinary Discovery. Capture builds a staged Blueprint from
+its selected scope; Restore publishes the validated selected Blueprint.
+`config/blueprint.example.conf` contains the tracked neutral example.
 
 The format contains one required `[categories]` section and six required item
 sections:

@@ -1,699 +1,444 @@
-# Конфигурация Macseed
+# Macseed Configuration
 
-## Назначение
+This reference owns Generated Configuration, Blueprint, Bundle data formats and
+domain producer/consumer contracts. [Capture / Restore](../CAPTURE-RESTORE.md)
+owns the workflow; [Core](../core/APPLICATION-INTERFACE.md) owns application
+execution restrictions and Protocol V1.
 
-Конфигурационная модель Toolkit отделяет обнаруженные данные рабочего
-окружения, пользовательский выбор и логику применения:
+## State model
 
 ```text
-Discovery
-    ↓
-Generated Configuration
-    +
-Blueprint Desired Selection
-    ↓
-Selected Supported State
-    ↓
-Bootstrap
+Discovery → Generated Configuration + Blueprint Desired Selection
+          → Selected Supported State → Preview / Bootstrap / Verification
 ```
 
-Discovery наблюдает поддерживаемое текущее состояние. Generated Configuration
-хранит machine-specific обнаруженные значения. Blueprint хранит Desired
-Selection — категории и компоненты, включённые в scope восстановления.
-Bootstrap объединяет generated-значения с этим выбором и применяет выбранное
-поддерживаемое состояние.
+Observed State is discovered supported state. Generated Configuration represents
+its machine-specific values; Blueprint selects categories/items without copying
+or overwriting those values. Consumers apply only selected supported requirements.
 
 ## Bootstrap Bundle v1
 
-Capture создаёт один приватный файл `bootstrap-*.mbt` (обычный tar) с
-`manifest.json`, `blueprint.conf`, только выбранными поддерживаемыми файлами
-`generated/` и необязательным `secure.age`. В `generated/` допускаются
-инвентаризации Homebrew, App Store и VS Code extensions; выбранные Git,
-Workspace folders/repositories, SSH configuration, Zsh, VS Code settings и
-macOS settings. `workspace.conf`, `vscode-workspaces.conf` и
-`inventory.conf` исключены: для них нет Bootstrap consumer. Не выбранные
-элементы внутри общего inventory также исключаются. Программы, Git working
-trees и пользовательские файлы не копируются.
+Capture creates a private `bootstrap-*.mbt` tar archive using `MBT-BUNDLE-1`,
+with `manifest.json`, `blueprint.conf`, supported `generated/` files and optional
+`secure.age`. Manifest format version is `1`; it records file names, sizes and
+SHA-256 checksums. Validation detects corruption/incompleteness, not authenticity.
+Archive validation rejects unsafe paths, links, unexpected members and malformed
+content. Current bounds are 48 MiB per archive, 33 MiB per member and 32 entries.
 
-Capture направляет Discovery, Blueprint и Preview на приватные staged
-`generated/` и `blueprint.conf`; рабочий Blueprint исходного Mac при этом не
-переписывается. Source Blueprint задаёт максимум доступного состояния:
-Restore может отключить категории, но не добавить отсутствующие в Bundle
-категории или элементы. После Apply staged state публикуется в обычные
-локальные пути; Bundle остаётся только транспортным файлом.
-VS Code Settings имеют отдельную категорию Restore и могут быть отключены.
+Allowed generated content covers Homebrew, App Store, VS Code extension inventories
+and selected Git, Workspace folders/repositories, SSH configuration, Zsh,
+VS Code settings and macOS settings. `workspace.conf`, `vscode-workspaces.conf`
+and `inventory.conf` have no restoration consumer and are excluded. Unselected
+inventory entries are omitted unless digest-bound completeness requires retaining
+the full inventory for Comparison. Retained inventory never expands Apply.
 
-Manifest содержит версию формата `1`, список файлов, размеры и SHA-256.
-Проверка обнаруживает повреждение и неполноту, но не подтверждает подлинность
-источника. Bundle создаётся с режимом `0600`, staging — `0700`.
-Обычная часть Bundle не зашифрована и может раскрывать частную конфигурацию;
-только явно выбранные SSH identities находятся в `secure.age`. Содержимое
-`secure.age` проверяет и расшифровывает существующий Secure SSH Migration
-engine в Restore Bootstrap до Workspace. До него проверяются только наличие,
-заголовок, размер и checksum зашифрованного файла; внутренняя проверка
-невозможна без `age` и passphrase.
+Capture stages Discovery, Blueprint and Preview privately; it does not replace
+ordinary source state. Source selection is the Restore ceiling. Restore can
+disable groups, including VS Code Settings independently, but cannot add missing
+categories/items. Programs, working trees and user data are not archived.
 
-SSH Configuration — поддерживаемые Host profiles в обычном generated-снимке;
-их восстанавливает Bootstrap. SSH identities — отдельно выбранные private/public
-key pairs в `secure.age`. Для защищённого private key Capture запрашивает его
-существующий SSH-key passphrase при проверке. Новый Bundle passphrase шифрует
-`secure.age`, нужен при Restore и должен храниться отдельно от `.mbt`. Пустой
-prompt `age` создаёт passphrase автоматически и показывает его один раз.
-`age` требуется только для выбранного Secure Credentials export/import:
-Capture при отсутствии предлагает установку через Homebrew или продолжение без
-identities/отмену; Restore после подготовки Homebrew при отсутствии `age` вновь
-явно предлагает установку. Молчаливой установки нет.
+The Bundle is `0600`, staging directories `0700`. Normal configuration is
+unencrypted and may expose personal data. Only explicitly selected SSH pairs
+are encrypted in `secure.age`. Before unlocking, validation establishes ciphertext
+presence, header, size and checksum; plaintext package validity requires `age`
+and the passphrase. Keys retain their original encryption. See
+[Secure SSH Identity Migration](SSH-IDENTITY-MIGRATION.md) for package details.
 
-Полный Preview выбранного Bundle остаётся неизменяющим и выполняется до
-подтверждения Apply и публикации. Restore Bootstrap повторно валидирует весь
-выбранный ввод, выполняет preflight и подготовку Homebrew, затем существующим
-consumer восстанавливает выбранную SSH Configuration и отдельным engine
-импортирует выбранные identities с подтверждением `import`. Только после
-готовности этих prerequisites начинается Workspace. Конфликт SSH configuration,
-ошибка или отмена импорта останавливают дальнейшее применение; уже выполненные
-изменения не откатываются. Обычный Bootstrap сохраняет прежний порядок и сам
-не импортирует identities. Отсутствие `~/.ssh` — допустимое исходное состояние.
+### Paths and publication
 
-После успешной установки Homebrew его проверенный prefix добавляется в PATH
-текущего процесса и дочерних consumers. При Restore без Homebrew отсутствие
-доступного `bs` откладывает настройку этого опционального launcher с предупреждением;
-остаётся доступен `./bootstrap.sh` из корня репозитория. Конфликт с существующим
-launcher по-прежнему не разрешает его замену.
+Workspace repository paths inside source HOME become relative HOME paths in the
+Bundle and are validated under target HOME on Restore. Folders create structure;
+repositories are cloned from recorded remotes. Screenshot destinations inside
+source HOME become `~/`; an external absolute destination blocks Capture of that
+selected category. Git identity, SSH remote users and arbitrary Zsh/VS Code values
+are not rewritten. Arbitrary Zsh/VS Code content is not guaranteed portable.
 
-Пути Workspace repositories внутри HOME источника представлены в Bundle
-относительно HOME и при Restore проверенно строятся под HOME цели. Workspace
-folders создают структуру каталогов, repositories клонируются из remotes;
-содержимое working tree и `.git` не переносится. Screenshot
-destination внутри HOME использует `~/`; внешний абсолютный путь блокирует
-Capture выбранной категории. Git identity, SSH remote User и произвольные
-значения Zsh/VS Code не переписываются. Для последних двух категорий
-семантическая переносимость произвольного содержимого не гарантирована.
+Restore validates the archive and previews staged input before replacing local
+state. After confirmation, `config/generated/` and `config/blueprint.conf` are
+published with a private recovery copy and pending marker. They are two paths,
+not one filesystem transaction. Failure before committing the new pair restores
+the previous pair; after commitment, recovery removes the marker. A later CLI
+Restore recovers known state before selection/Preview, or stops on ambiguity.
+Application Prepare instead reports `recovery_required` without recovery.
 
-Restore проверяет архив и запускает Preview по staged input до замены
-локального состояния. После подтверждения Apply готовые
-`config/generated/` и `config/blueprint.conf` публикуются с приватной
-recovery-копией и маркером незавершённой публикации. Два пути не образуют
-одну файловую транзакцию: сбой до фиксации новой пары возвращает прежнюю пару;
-после фиксации recovery удаляет служебный маркер. Следующий Restore после
-прерывания восстанавливает известное состояние либо останавливается при
-неоднозначном состоянии. Recovery запускается до выбора категорий и Preview.
-После публикации Bundle больше не требуется для обычного `bs workflow`.
-Workflow использует опубликованный Blueprint для проверки частичного
-generated state: отсутствие невыбранных областей допустимо, а выбранный
-недоступный ввод блокирует продолжение до нового Discovery.
-
-## Модель состояния
-
-- **Observed State** — поддерживаемое состояние, обнаруженное на исходном Mac.
-- **Generated Configuration** — локальное представление обнаруженных значений.
-- **Blueprint Desired Selection** — выбор категорий и компонентов из
-  обнаруженного inventory.
-- **Selected Supported State** — generated-значения, входящие в выбранный
-  scope и доступные текущим Bootstrap consumers.
-
-Blueprint не владеет обнаруженными значениями, не копирует и не перезаписывает
-их. Observed State и Desired Selection остаются разными ответственностями.
+Publication recovery does not roll back target installs/settings/imports.
+After publication, ordinary Workflow uses local state and no longer needs the
+Bundle. Partial generated state is valid for the saved selection; missing
+unselected domains are allowed, selected required input blocks continuation.
 
 ## Generated Configuration
 
-`config/generated/` — локальное приватное machine-specific производное
-состояние, создаваемое Discovery. Каталог исключён из Git и может содержать
-личные пути, Git identity, repository URLs и настройки приложений.
-Это не хранилище credentials: producers не должны сознательно публиковать здесь
-пароли, токены, приватные ключи или credentials внутри URL. Непрозрачные snapshots
-VS Code и Zsh могут содержать чувствительные данные; их текущие проверки не
-доказывают отсутствие всех секретов. Перед внешним переносом generated-файлы
-нужно просматривать и защищать.
+`config/generated/` is private local derived state, excluded from Git. It may
+contain personal paths, Git identity, repository URLs and application settings.
+It is not a credential vault. Producers must not intentionally publish passwords,
+tokens, private keys or credential-bearing URLs. Opaque VS Code/Zsh snapshots
+can still contain sensitive content; their checks do not prove absence of secrets.
+Review and protect data before transferring it.
 
-Generated Configuration является источником обнаруженного inventory для Blueprint и источником применяемых значений для Bootstrap. Форматы producers и consumers должны оставаться совместимыми, а пользовательские значения не должны без необходимости дублироваться в
-Bootstrap-коде.
+Exporters use **Collect → Validate → Serialize → Safe Publication**. A generated
+file is replaced only after preparing valid new state. Handled collection,
+serialization or publication failure preserves the previous valid file.
+Most files publish independently. Workspace metadata `workspace.conf` is
+independent; `folders.conf`, `repositories.conf`, `vscode-workspaces.conf` and
+`inventory.conf` are a grouped snapshot published together.
 
-### Безопасная публикация
-
-Обычный lifecycle экспортёра:
-
-```text
-Collect → Validate → Serialize → Safe Publication
-```
-
-Generated-файл заменяется только после успешного сбора, валидации и
-сериализации нового результата. Обработанная ошибка сбора, сериализации или
-публикации сохраняет предыдущий валидный generated-файл.
-
-Большинство generated-файлов публикуются независимо. Workspace metadata в
-`workspace.conf` также публикуется отдельно. Четыре производных файла:
-
-- `folders.conf`;
-- `repositories.conf`;
-- `vscode-workspaces.conf`;
-- `inventory.conf`
-
-образуют один grouped Workspace snapshot и публикуются совместно.
+Configuration is data, never shell code: generated content is never `source`d or
+`eval`uated. Use the domain's existing reader, including the Configuration Engine
+for sectional Workspace files and native Git parsing for `git.conf`.
 
 ## Blueprint
 
-Локальный приватный `config/blueprint.conf` хранит только Desired Selection и
-исключён из Git. Нейтральная структура формата приведена в
-[blueprint.example.conf](../../config/blueprint.example.conf).
+Private `config/blueprint.conf` stores Desired Selection and is excluded from Git.
+See [blueprint.example.conf](../../config/blueprint.example.conf) and the
+[Blueprint module guide](../../modules/blueprint/README.md) for structure and
+selector behavior. Item sections select inventories; category flags select settings.
 
-Blueprint поддерживает:
+Normal Workspace Folder candidates are exactly `workspace`-classified records.
+Observed `user`/`system` folders remain generated data. Saving normalizes legacy
+choices; cancellation preserves the original Blueprint.
 
-- item-level selection для обнаруженных компонентов;
-- category/module-level selection для поддерживаемых consumers;
-- применение выбранного scope с использованием значений из Generated
-  Configuration.
+Absent Blueprint retains all-inclusive compatibility for supported generated
+scope. Malformed Blueprint returns `2` and blocks mutation; stale selection
+warns with `1`. Old Blueprints without `macos-windows`, `shell-zsh` or
+`ssh-configuration` remain valid with those categories disabled until saved anew.
 
-Для `[workspace-folders]` обычными Blueprint-кандидатами являются записи
-`folders.conf` с классификацией `workspace`. Наблюдаемые каталоги `user` и
-`system` остаются в Generated Configuration, но не предлагаются как обычные
-Workspace Folder choices.
+## Common consumer contract
 
-При отсутствии Blueprint Bootstrap сохраняет совместимое legacy
-all-inclusive-поведение для поддерживаемого generated scope. Interactive
-Blueprint selector доступен для создания и изменения локального выбора; его UX
-описывается в документации Blueprint.
+Validate all required input for the selected scope before its first mutation.
+Missing, unreadable or malformed required input returns `2`; optional input uses
+warning/skip only where defined below. Empty/disabled scope does not require
+unrelated files. Observation failure is distinct from confirmed absence or mismatch.
+Apply only confirmed actionable changes and verify them where observable.
+Matching supported state is no-op. CLI uses `0` success, `1` warning, `2` error;
+application prerequisites/exits have their own Core contract.
 
-## Контракты конфигурации
+## Shell / Zsh configuration
 
-Toolkit намеренно не требует одного универсального формата. Формат является
-контрактом конкретных producer и consumer и выбирается под представляемые
-данные.
+Only `$HOME/.zshrc` is supported. Discovery reads it as data without prompting.
+Readable eligible regular files are `eligible`, confirmed absence is `absent`.
+Symlinks, external ownership, sensitive assignments/credential URLs, absolute
+`/Users/<name>/`, `/opt/homebrew` or `/usr/local` paths, external `source` / `.`,
+`eval`, command substitution and unsupported type/content produce `excluded`.
+Reasons are `external-owner`, `sensitive-content`, `portability`, `dependency`,
+`unsupported-source`. Read/observation errors return `2` and preserve the old
+snapshot. Static checks detect known risks, not every secret/dependency/side effect.
 
-Текущие основные форматы:
+`config/generated/shell/zshrc.snapshot` contains `MBT-ZSHRC-1`, `status`, `reason`,
+`length`, `sha256`, separator `---`, then exact `.zshrc` bytes only for eligible
+state. Absent/excluded states have no payload. Length/hash are validated before
+use; a malformed selected snapshot returns `2`. Publishing absent/excluded
+replaces an earlier eligible payload. Snapshot mode is `0600`. Discovery,
+validation, Preview and Verify never execute it.
 
-- простые списки для application inventories;
-- native Git configuration для глобального Git-состояния;
-- структурированные Workspace configurations;
-- typed macOS records в формате `domain|key|type|value`.
+Blueprint category is `shell-zsh`. Without Blueprint, an older generated tree
+with no snapshot skips the domain; explicit selection requires the snapshot.
+Selected absent/excluded state warns and offers no restoration. Preview never
+prints content, commands, addresses or values.
 
-Конфигурация должна разбираться как данные. Способ чтения обязан соответствовать
-формату и не превращать generated-содержимое в выполняемый shell-код.
+Bootstrap creates `.zshrc` only for confirmed absence and safe HOME, with `0600`
+staged publication. Verify checks bytes, type, ownership and mode without Zsh.
+An identical regular target is preserved including its mode; a different file
+warns without backup, merge or replacement. Symlink/unexpected type/observation
+error blocks creation. Other Zsh startup files, sourced trees, frameworks and
+automatic HOME/Homebrew-prefix rewriting are unsupported.
 
-### Общий контракт потребителей
+## macOS settings
 
-Обязательный ввод выбранной области полностью проверяется до первой мутации.
-Ошибка наблюдения отличается от подтверждённого отсутствия или несовпадения и
-не означает автоматически, что требуется Apply. Поддерживаемые потребители
-изменяют только подтверждённо несовпадающее состояние, локально проверяют
-результат, когда он наблюдаем, и не выполняют повторных действий для уже
-совпадающего управляемого состояния. Допустимость конфигурации и выполнение её
-действий остаются разными ответственностями.
+Records are `domain|key|type|value`. Types are `bool`, `int`, `string`, with
+integer/float compatibility specifically for Dock size properties according to
+the plist. `modules/settings/macos/records.sh` supplies shared category-aware
+validation before Discovery publication, startup and consumption. File names do
+not determine allowed keys.
 
-### Shell / Zsh configuration
-
-Поддерживается только стандартный `$HOME/.zshrc`. Discovery автоматически и без
-запроса читает его как данные. Читаемый обычный файл без обнаруженных блокирующих
-признаков получает статус `eligible`; подтверждённое отсутствие — `absent`.
-Symlink, явный внешний владелец, чувствительное присваивание или URL с
-credentials, абсолютные пути `/Users/<name>/`, `/opt/homebrew`, `/usr/local`,
-внешний `source` / `.`, `eval`, command substitution и неподдерживаемый тип или
-содержимое дают `excluded` с одной причиной: `external-owner`,
-`sensitive-content`, `portability`, `dependency`, `unsupported-source`.
-Нечитаемый файл и ошибка наблюдения возвращают `2`; прежний валидный generated
-snapshot сохраняется. Статическая проверка обнаруживает известные признаки, но
-не доказывает отсутствие секретов, побочных эффектов или других зависимостей.
-
-Один файл `config/generated/shell/zshrc.snapshot` содержит заголовок
-`MBT-ZSHRC-1`, строки `status`, `reason`, `length`, `sha256`, разделитель `---`
-и затем точные байты `.zshrc` только для `eligible`. Для `absent` и `excluded`
-payload отсутствует. Длина и SHA-256 проверяются до использования; malformed
-выбранный snapshot возвращает `2`. Переход к `absent` или `excluded` атомарно
-заменяет прежний `eligible`, поэтому старые байты не остаются доступными для
-восстановления. Generated-файл имеет mode `0600`; его следует передавать как
-приватные данные. Toolkit никогда не выполняет этот файл при Discovery,
-валидации, Preview или Verify.
-
-Blueprint использует одну категорию `shell-zsh`. Старый Blueprint без неё
-остаётся валидным и отключает категорию до сохранения нового выбора. Без
-Blueprint действует обычное all-inclusive-поведение для имеющегося snapshot.
-Если новый snapshot отсутствует у существующей generated-конфигурации, без
-Blueprint область пропускается; явно выбранная категория требует snapshot.
-`absent` и `excluded` не предлагают восстановление и дают предупреждение при
-выбранной категории. Preview не выводит содержимое, команды, адреса или
-значения.
-
-Bootstrap создаёт `$HOME/.zshrc` только при подтверждённом отсутствии и
-безопасном HOME. Файл публикуется из staging-файла с mode `0600`; Verify
-проверяет байты, тип, владельца и mode без запуска Zsh. Совпадающий обычный
-файл остаётся без изменений, включая его mode. Отличающийся файл вызывает
-предупреждение: нет backup, merge или автоматической замены. Symlink,
-неожиданный тип и ошибка наблюдения блокируют действие. `.zprofile`,
-`.zshenv`, `.zlogin`, `.zlogout`, перенос sourced trees, установка frameworks и
-автоматическое переписывание HOME или Homebrew prefix не поддерживаются.
-
-### Настройки macOS
-
-Формат — `domain|key|type|value`; поддерживаются типы `bool`, `int` и `string`.
-Общая проверка в `modules/settings/macos/records.sh` используется Discovery до
-атомарной публикации, при начальной проверке входных данных и потребителями.
-Категория передаётся явно; имя файла не определяет разрешённые domain/key.
-
-Точный текущий список разрешённых записей:
-
-| Категория | Domain | Keys / type |
+| Category | Domain | Keys / type |
 |---|---|---|
 | Finder | `NSGlobalDomain` | `AppleShowAllExtensions` / bool |
 | Finder | `com.apple.finder` | `ShowPathbar`, `ShowStatusBar`, `_FXSortFoldersFirst`, `FXRemoveOldTrashItems` / bool; `FXPreferredViewStyle`, `FXDefaultSearchScope` / string |
 | Finder | `com.apple.finder` | `AppleShowAllFiles`, `ShowHardDrivesOnDesktop`, `ShowExternalHardDrivesOnDesktop`, `ShowMountedServersOnDesktop`, `FXEnableExtensionChangeWarning` / bool; `NewWindowTarget` / string enum |
-| Dock | `com.apple.dock` | `autohide`, `show-recents`, `magnification` / bool; `tilesize`, `largesize` / int или float согласно plist |
-| Dock | `com.apple.dock` | `orientation`, `mineffect` / string enum; `minimize-to-application`, `show-process-indicators` / bool |
-| Dock | `com.apple.dock` | `launchanim`, `mru-spaces` / bool |
-| Управление окнами | `NSGlobalDomain` | `AppleActionOnDoubleClick`, `AppleWindowTabbingMode` / string enum; `NSCloseAlwaysConfirmsChanges`, `NSQuitAlwaysKeepsWindows` / bool |
-| Управление окнами | `com.apple.WindowManager` | `HideDesktop` / bool |
-| Клавиатура | `NSGlobalDomain` | `KeyRepeat`, `InitialKeyRepeat` / int |
-| Клавиатура | `NSGlobalDomain` | `AppleKeyboardUIMode` / int; `ApplePressAndHoldEnabled`, `NSAutomaticCapitalizationEnabled`, `NSAutomaticSpellingCorrectionEnabled`, `NSAutomaticPeriodSubstitutionEnabled`, `NSAutomaticQuoteSubstitutionEnabled`, `NSAutomaticDashSubstitutionEnabled` / bool |
-| Трекпад | `com.apple.AppleMultitouchTrackpad` | `Clicking`, `TrackpadRightClick` / bool |
-| Снимки экрана | `com.apple.screencapture` | `location` / string, контракт пути ниже |
+| Dock | `com.apple.dock` | `autohide`, `show-recents`, `magnification` / bool; `tilesize`, `largesize` / int or float according to plist |
+| Dock | `com.apple.dock` | `orientation`, `mineffect` / string enum; `minimize-to-application`, `show-process-indicators`, `launchanim`, `mru-spaces` / bool |
+| Window Management | `NSGlobalDomain` | `AppleActionOnDoubleClick`, `AppleWindowTabbingMode` / string enum; `NSCloseAlwaysConfirmsChanges`, `NSQuitAlwaysKeepsWindows` / bool |
+| Window Management | `com.apple.WindowManager` | `HideDesktop` / bool |
+| Keyboard | `NSGlobalDomain` | `KeyRepeat`, `InitialKeyRepeat`, `AppleKeyboardUIMode` / int |
+| Keyboard | `NSGlobalDomain` | `ApplePressAndHoldEnabled`, `NSAutomaticCapitalizationEnabled`, `NSAutomaticSpellingCorrectionEnabled`, `NSAutomaticPeriodSubstitutionEnabled`, `NSAutomaticQuoteSubstitutionEnabled`, `NSAutomaticDashSubstitutionEnabled` / bool |
+| Trackpad | `com.apple.AppleMultitouchTrackpad` | `Clicking`, `TrackpadRightClick` / bool |
+| Screenshots | `com.apple.screencapture` | `location` / string with path policy below |
 
-Неизвестные или относящиеся к другой категории domain/key, неверный тип,
-дубликат domain/key, неверное число полей, управляющие ASCII-байты (включая
-NUL), разделитель в значении и многострочное скалярное значение отвергаются с
-кодом `2`. Байты проверяются до разбора оболочкой; значимый завершающий перевод
-строки не теряется незаметно. Bool допускает `0/1/true/false`; int — целое с
-необязательным минусом. Неподтверждённые диапазоны и общий numeric/float-контракт
-не вводятся.
+Unknown/cross-category keys, wrong types, duplicate domain/key pairs, wrong field
+counts, ASCII control bytes including NUL, delimiters inside values and multiline
+scalars return `2`. Bytes are checked before shell parsing, without silently
+losing meaningful trailing newlines. Bool accepts `0/1/true/false`; int accepts
+an optionally negative integer. No unproven ranges or general float contract
+are introduced.
 
-Пустые строки, строки из пробелов и пустые файлы категорий допустимы. Последняя
-запись без перевода строки обрабатывается Check, Preview и Apply. Отсутствующая
-исходная настройка не создаёт запись; отсутствие записи не удаляет целевую
-настройку. Пустая обычная строка отличается от отсутствия; пустые значения пути
-снимков экрана и enum Finder/Dock запрещены. Ошибка проверки кандидата сохраняет
-предыдущий сгенерированный файл. Generated data никогда не выполняются через
-`source` или `eval`.
+Blank/whitespace-only lines and empty category files are valid; the final record
+without newline is processed. Absent source preference creates no record;
+absent record never removes a target setting. Empty ordinary strings differ from
+absence; empty paths/enums are invalid. Validation failure preserves the previous
+snapshot. Consumers verify stored typed values, not visible application effects.
 
-Потребители macOS применяют типизированные значения и проверяют сохранённый
-результат. Такая проверка не подтверждает визуальный эффект в приложениях.
+### Finder
 
-#### Finder
+`macos-finder` accepts old seven-record files and empty files. `NewWindowTarget`
+accepts only `PfCm`, `PfVo`, `PfHm`, `PfDe`, `PfDo`, `PfAF`. `PfLo` and
+`NewWindowTargetPath` are unsupported. Consumers reject invalid enum input before
+observation/mutation. Discovery skips safe unsupported enums with warning `1`
+while publishing other valid records; read/native-type/unsafe-scalar errors return
+`2` and preserve the old file. Absent keys remain unmanaged.
+Preview plans one restart for changes; Apply restarts Finder at most once after
+successful changed writes. Matching state causes neither writes nor restart.
 
-Все записи выбираются существующей категорией Blueprint `macos-finder`.
-Старый семистрочный `finder.conf`, пустой файл и no-Blueprint all-inclusive
-поведение совместимы; формат записей не меняется.
+### Dock
 
-`NewWindowTarget` поддерживает только `PfCm`, `PfVo`, `PfHm`, `PfDe`, `PfDo`, `PfAF`.
-Потребитель отвергает другие значения, включая `PfLo` и пустую строку, до
-проверки и мутаций. Пользовательский вариант `PfLo` и парный
-`NewWindowTargetPath` не восстанавливаются. Discovery пропускает отсутствующую
-настройку без синтеза значения. Неподдерживаемое скалярное значение пропускается
-с предупреждением: остальные валидные записи Finder публикуются,
-статус — `1`. Ошибка чтения, неверный native type или небезопасный scalar возвращает
-`2` и сохраняет предыдущий снимок Finder. Весь кандидат проходит общую проверку.
-Отсутствующая запись оставляет соответствующую целевую настройку неуправляемой.
+`macos-dock` preserves old five-record and empty-file compatibility.
+`orientation` accepts `left/bottom/right`; `mineffect` accepts `genie/scale`.
+Invalid/empty enums are rejected by consumers; safe unsupported source enums
+are skipped with warning. Observation/type/scalar/candidate errors preserve the
+old snapshot with `2`. Preview plans one restart; Apply restarts Dock at most
+once after successful changed writes. Dock items (`persistent-apps`,
+`persistent-others`, `recent-apps`), hot corners and other Mission Control/Spaces
+settings are unsupported.
 
-Preview планирует один перезапуск Finder, если есть изменения. Bootstrap
-перезапускает Finder максимум один раз после успешной записи всех изменяемых
-значений; совпадающее состояние не вызывает запись или перезапуск.
+### Window Management
 
-#### Dock
+`macos-windows` uses `macos/windows.conf` for the five allowed preferences.
+`AppleActionOnDoubleClick` accepts `Minimize/Maximize/Fill/None`;
+`AppleWindowTabbingMode` accepts `manual/always/fullscreen`. Other/empty values
+are rejected by consumers; safe unsupported source enums warn and are skipped.
+`HideDesktop=true` hides standard Desktop items; false shows them. Preview uses
+semantic hide/show messages. Absent preferences remain unmanaged.
+`NSQuitAlwaysKeepsWindows` transfers without inversion; System Settings' “Close
+windows when quitting an application” switch has the inverse meaning.
+No process restart or visible-effect guarantee applies. Tiling, wallpaper-click
+Desktop behavior, Dock items and Menu Bar/Control Center configuration are unsupported.
 
-Категория `macos-dock` поддерживает записи из таблицы выше, включая
-`orientation`, `mineffect`, `minimize-to-application`,
-`show-process-indicators`, `launchanim` и `mru-spaces`. Старый пятистрочный и
-пустой `dock.conf` остаются валидными; формат записей и совместимость Blueprint
-не меняются.
+### Keyboard
 
-`orientation` допускает только `left/bottom/right`, `mineffect` — только `genie/scale`.
-Другие значения, включая пустые, отвергаются потребителем до проверки и
-мутаций. Discovery сериализует только присутствующие поддерживаемые значения;
-отсутствующие настройки остаются неуправляемыми. Неподдерживаемое значение enum
-пропускается с предупреждением: остальные валидные записи Dock
-публикуются со статусом `1`, без угадывания или замены значения. Ошибка наблюдения,
-неверный нативный тип, небезопасное скалярное значение или проверка кандидата
-возвращает `2` и сохраняет предыдущий сгенерированный снимок Dock.
+`macos-keyboard` preserves old two-record and empty-file compatibility.
+`AppleKeyboardUIMode` uses integer normalization without an added range;
+switches use bool. Discovery serializes present valid preferences and validates
+the whole candidate. It does not synthesize Apple defaults. Errors preserve the
+old file with `2`. No process restart or live-effect guarantee applies. Shortcuts,
+input sources/layouts, dictation, text replacements, per-app and hardware-specific
+keyboard configuration are unsupported.
 
-Preview планирует один перезапуск Dock, если есть изменения. Bootstrap
-перезапускает Dock максимум один раз после успешной записи всех изменяемых
-значений; совпадающее состояние не вызывает запись или перезапуск. Проверяется
-сохранённое состояние, а не визуальный эффект. Элементы Dock
-(`persistent-apps`, `persistent-others`, `recent-apps`),
-активные углы и остальные настройки Mission Control и Spaces не поддерживаются.
+### Trackpad
 
-#### Управление окнами
+`macos-trackpad` supports only Apple trackpad `Clicking` (tap-to-click) and
+`TrackpadRightClick` (secondary click) as bool. Absence remains unmanaged;
+observation/type/validation error preserves the old snapshot with `2`.
+There is no restart, immediate-effect, external Magic Trackpad, Bluetooth/ByHost
+or all-device restoration guarantee. Legacy
+`NSGlobalDomain|com.apple.trackpad.scaling|int|...` is rejected before mutation;
+refresh it through Discovery. Speed, Natural Scrolling and extra gestures lack
+a proven effective-restoration contract and are unsupported.
 
-Категория `macos-windows` использует `config/generated/macos/windows.conf`
-и содержит ровно пять записей: четыре `NSGlobalDomain` и
-`com.apple.WindowManager|HideDesktop|bool`. `AppleActionOnDoubleClick`
-допускает `Minimize`, `Maximize`, `Fill`, `None`; `AppleWindowTabbingMode` —
-`manual`, `always`, `fullscreen`. Другие и пустые значения потребитель
-отклоняет; Discovery безопасно пропускает неподдерживаемое значение enum с
-предупреждением. Два остальных ключа используют тип bool.
+### Screenshots
 
-`HideDesktop=true` скрывает стандартные элементы Desktop, а `false` показывает
-их. Отсутствующая исходная настройка остаётся неуправляемой. Preview использует
-семантические планы `Would hide Desktop items` / `Would show Desktop items` и
-не раскрывает domain, key или исходное значение bool в обычном выводе.
+The sole destination source is `location` in `macos/screenshots.conf`; there is
+no static `SCREENSHOTS_DIR` fallback. An absent record creates no directory.
 
-`NSQuitAlwaysKeepsWindows` хранится и переносится без инверсии. В System Settings
-его UI сформулирован как «Close windows when quitting an application», поэтому
-переключатель интерфейса имеет обратный смысл относительно сохранённого bool.
+- Accept absolute paths and leading `~/` resolved under current HOME; compare and
+  store the resolved absolute path.
+- Reject `$HOME`, `${HOME}`, other variable expansion, backticks, backslashes,
+  relative paths, `~otheruser`, empty values, `.`/`..`, repeated `/`, control bytes
+  and `|`. No general shell expansion occurs.
+- Create missing directories/parents only inside HOME after validating the whole
+  path and existing components. Files, inaccessible components, dangling/looping
+  symlinks and symlink escapes return `2`.
+- Existing directory symlinks inside HOME require their physical target to remain
+  inside physical HOME. Outside-HOME destinations must already resolve to an
+  accessible writable directory; external symlinks are allowed on those terms.
+- Missing `/Volumes/...` is an error, not permission to create a mount point.
+  No chmod/chown or silent `/Users/old-user` rewrite occurs.
+- Destination requires write/execute access. Observation failure is not absence;
+  path checks are not a race-free sandbox.
 
-Управление окнами не перезапускает процессы. Проверяется сохранённое значение,
-но не видимый эффект в уже открытых приложениях. Старый Blueprint без
-`macos-windows` остаётся валидным и сохраняет новую категорию выключенной до
-явной миграции/сохранения через selector; отсутствие Blueprint остаётся
-all-inclusive.
+Preview distinguishes directory creation, preference write and restart, in that
+order. Directory-only change needs no SystemUIServer restart. Prepare/verify the
+directory before writing the preference; failure blocks the write. Restart only
+after preference change. Verification does not take a real screenshot.
 
-Настройки тайлинга `com.apple.WindowManager`, показ рабочего стола щелчком по
-обоям, элементы Dock и Menu Bar / Control Center не поддерживаются. Для них не
-доказан безопасный и воспроизводимый контракт восстановления.
+## Homebrew formula generated state
 
-#### Клавиатура
+`brew-packages.conf` has one formula name per line. Names may be short or
+`owner/tap/formula`; every component starts with an ASCII letter/digit and then
+uses letters, digits, `+`, `_`, `.`, `@`, `-`. Reject whitespace, option-like
+values, paths, URLs and `.rb` references. Empty lines, comments starting with `#`
+and a final line without newline are supported.
 
-Категория `macos-keyboard` поддерживает `KeyRepeat`, `InitialKeyRepeat` и
-остальные ключи из таблицы выше.
-`AppleKeyboardUIMode` использует общий int contract и существующую числовую
-нормализацию; отдельный диапазон не задаётся. Остальные шесть новых ключей — bool
-с представлениями `0/1/true/false`. Неверный тип, нецелое значение, некорректный
-bool, дубликаты и небезопасное скалярное значение отклоняются общей проверкой.
+Validate the entire required list, including unselected entries, before install.
+Missing/unreadable/invalid files block installs; empty Blueprint scope requires
+neither this file nor Homebrew. Presence comes from successful
+`brew list --formula --full-name`: short names match a formula identity, qualified
+names match the exact tap. Ambiguous names and inventory errors block install.
+Check presence again after installation.
 
-Discovery сериализует присутствующие валидные настройки и проверяет весь
-кандидат перед публикацией. Отсутствующая настройка остаётся неуправляемой, без
-синтеза Apple defaults. Ошибка наблюдения, скалярного значения или проверки
-кандидата возвращает `2` и сохраняет предыдущий снимок Keyboard. Формат
-`domain|key|type|value`, старый двухстрочный и пустой `keyboard.conf`, Blueprint
-и поведение без Blueprint остаются совместимыми.
+## Other application generated inputs
 
-Preview показывает только необходимые изменения в порядке записей. Keyboard не
-планирует и не выполняет перезапуск процесса; проверяется сохранённое состояние,
-а не эффект в уже открытых приложениях. Сочетания клавиш, источники и раскладки ввода, диктовка,
-замены текста, настройки отдельных приложений и аппаратно-зависимая
-конфигурация клавиатуры не поддерживаются.
+After complete publication of `brew-casks.conf`, `appstore.conf` or
+`vscode-extensions.conf`, Discovery publishes
+`provenance/<domain>.sha256` containing `complete <sha256>` for the exact full
+inventory bytes. Empty inventory can be complete. Missing, invalid or mismatched
+markers mean unknown completeness; legacy state remains compatible. Capture
+retains these inventory/marker pairs even with narrower selection, preventing
+excluded source items from becoming false extras. Without a marker, transfer is
+selected-only. Formulae get no marker because Discovery exports only the
+installed-on-request subset.
 
-#### Трекпад
+All three lists accept blank lines, leading-`#` comments and final entries without
+newline. Read/validate the entire required file before observing/installing; a
+late invalid entry cannot allow partial application of earlier entries.
 
-`macos-trackpad` содержит ровно две сохраняемые настройки трекпада Apple:
-`Clicking` (касание для щелчка) и `TrackpadRightClick` (вторичный щелчок), обе
-в `com.apple.AppleMultitouchTrackpad` с типом bool. Absent source preference
-остаётся неуправляемой; ошибка наблюдения, типа или проверки кандидата
-возвращает `2` и сохраняет предыдущий сгенерированный снимок.
+| File | Entry contract |
+|---|---|
+| `brew-casks.conf` | Short token, ASCII letter/digit followed by letters/digits/`+`/`_`/`.`/`@`/`-`. No slashes, URLs, option-like tokens, tap-qualified syntax, or `.rb/.json/.sh/.bash/.zsh/.dmg/.pkg/.zip` endings |
+| `appstore.conf` | Exactly `ID\|name`; ASCII numeric ID, nonempty name without leading `-`, edge whitespace, controls or extra `\|`. Internal spaces, Unicode and punctuation remain |
+| `vscode-extensions.conf` | Exactly `publisher.extension`; each part starts with ASCII letter/digit followed by letters/digits/`_`/`-`. No paths, URLs, versions or local `.vsix` references |
 
-Preview и Bootstrap используют типизированную модель сохранённого состояния.
-Процессы не перезапускаются. Проверка подтверждает сохранённые настройки, но не немедленный
-эффект, внешний Magic Trackpad, синхронизацию Bluetooth/ByHost или
-восстановление всех устройств.
+Empty Blueprint scope needs neither the file nor CLI. Nonempty scope validates
+the whole required file before filtering; unrelated files are not required.
+Invalid input takes precedence over missing CLI. In the ordinary CLI consumer,
+missing `mas`/`code` warns; missing Homebrew errors. Application readiness is
+stricter and belongs to the Core reference.
 
-Старый `trackpad.conf` с `NSGlobalDomain|com.apple.trackpad.scaling|int|...`
-отклоняется до проверки и мутации; сгенерированное состояние следует обновить
-через Discovery. Скорость трекпада, Natural Scrolling, дополнительные жесты и
-аппаратно-зависимая синхронизация не поддерживаются: для них не доказан полный
-контракт эффективного восстановления.
+App Store presence uses exact ID, VS Code exact case-sensitive extension ID.
+Inventory errors are not absence; exact presence is verified after installation.
+Cask presence requires its exact `brew list --cask` token and all top-level
+`target` paths in `brew info --json=v2 --cask` relocated-artifact metadata.
+Missing token means install; missing target for an installed cask means reinstall
+in the CLI consumer. Targetless artifacts such as pkg/uninstall/zap get no extra
+checks. Invalid/unreadable metadata or nonabsolute/control-bearing target paths
+block Apply. Repeat the same check after install/reinstall. Application mode
+accepts a narrower safe app-only subset and blocks repair/reinstall.
 
-#### Снимки экрана
+## Workspace Bootstrap actionability
 
-Единственный источник назначения — `com.apple.screencapture/location` в
-`screenshots.conf`. Статическая `SCREENSHOTS_DIR` удалена; fallback-каталога нет.
-Отсутствующий record означает unmanaged destination: ничего не создавать.
+`workspace/folders.conf` uses `folder|classification`;
+`workspace/repositories.conf` uses sections with `NAME`, `PATH`, `REMOTE`,
+`CURRENT_BRANCH` and Discovery metadata. Apply uses `CURRENT_BRANCH`, not `BRANCH`.
+`workspace.conf` describes observed source HOME; target root remains current HOME.
 
-- Поддерживаются absolute paths и только начальный `~/`, разрешаемый в текущий
-  HOME. Preference записывается и сравнивается как разрешённый absolute path.
-- `$HOME/...`, `${HOME}/...`, другие `$VAR`, backticks, backslash, relative paths,
-  `~otheruser`, пустая строка, `.`/`..` components, повторные `/`, control bytes и
-  `|` отвергаются. General shell expansion отсутствует.
-- Внутри HOME missing directory/parents создаются только после проверки всей
-  формы пути и существующих components. Files, inaccessible components,
-  dangling/looping symlinks и symlink escape из HOME возвращают `2`.
-- Existing directory symlink внутри HOME допустим, только если physical target
-  остаётся внутри physical HOME. Внешний путь должен целиком существовать и
-  разрешаться в доступный writable directory; существующий внешний symlink
-  допускается на тех же условиях. Вне HOME никакое дерево не создаётся.
-- Missing `/Volumes/...` — ошибка, а не создание предполагаемой точки монтирования.
-  Ни chmod/chown, ни скрытой замены `/Users/old-user` не выполняется.
-- Destination должен быть directory с write/execute access. Ошибка наблюдения
-  не трактуется как отсутствие. Проверки путей не являются race-free sandbox.
+Validate both required inputs and build a full selected snapshot before any
+Workspace mutation. Use the Configuration Engine for sections/values, reading
+section IDs with spaces line by line. Final lines without newline and blank lines
+are supported; no new comment/escaping syntax is added.
 
-Проверка учитывает и preference, и directory. Preview отдельно показывает
-создание каталога, запись preference и перезапуск, если они требуются. Изменение
-только каталога не требует перезапуска SystemUIServer. Каталог подготавливается
-и проверяется до записи preference; ошибка подготовки блокирует эту запись.
-SystemUIServer перезапускается только после изменения preference. Реальный
-снимок экрана для проверки не создаётся.
+Selected folders accept simple/nested relative paths including spaces. Reject
+absolute paths, empty components, `.`/`..`, controls and existing symlink escapes
+from HOME. Repository `PATH` must be an absolute descendant of current HOME under
+the same rules; existing components must be directories.
 
-### Homebrew formula generated state
+The snapshot validator checks structure. Selected `NAME`, `REMOTE`,
+`CURRENT_BRANCH` must be nonempty; controls and ambiguous action-field quotes are
+invalid. Backslashes in section IDs are unsupported by the Configuration Engine.
+Remotes retain SSH/scp, URL and local-path forms; reject empty/option-like values,
+edge whitespace and empty URL/scp components without network requests.
+Discovery strips HTTP(S) userinfo without preserving credentials; query/fragment
+or unsupported userinfo excludes the repository with warning. Ordinary SSH/scp
+usernames remain. Workspace generated directory mode is `0700`; grouped files
+are `0600`. Validate branches locally with `git check-ref-format --branch`,
+rejecting option-like values and shorthand requiring Git expansion.
 
-`config/generated/brew-packages.conf` сохраняет формат одного имени на строку.
-Пустые строки и комментарии с `#` в начале строки игнорируются. Допускаются
-имена formulae и `owner/tap/formula`: каждый компонент начинается с ASCII-буквы
-или цифры и далее содержит только буквы, цифры, `+`, `_`, `.`, `@`, `-`.
-Пробелы, option-like значения, пути, URL и ссылки на `.rb`-файлы отвергаются.
-Последняя строка без завершающего перевода строки поддерживается.
-
-Потребитель читает и проверяет весь список до первой установки, включая записи
-вне выбранного подмножества. Отсутствующий, нечитаемый или некорректный файл
-блокирует установки. Пустая область Blueprint не требует чтения этого файла или
-обращения к Homebrew.
-
-Присутствие определяется по успешно прочитанному `brew list --formula --full-name`.
-Короткие имена Discovery сопоставляются с именем formula, полные — с точным tap.
-Неоднозначное короткое имя или ошибка inventory не означают отсутствие и
-блокируют установку. После установки присутствие проверяется повторно.
-
-### Остальные application generated inputs
-
-Homebrew casks, App Store и VS Code extensions используют отдельные форматы.
-Каждый обязательный файл полностью читается и проверяется до наблюдения или
-установки; поздняя некорректная запись не допускает частичного применения
-предыдущих записей.
-
-Для всех трёх списков поддерживаются пустые строки, комментарии с `#` в начале
-строки и последняя запись без newline. Некорректный обязательный ввод блокирует
-мутации.
-
-- **Casks — `brew-casks.conf`:** один короткий cask token на строку, начиная
-  с ASCII-буквы или цифры; далее допустимы буквы, цифры, `+`, `_`, `.`, `@`, `-`.
-  Пробелы, slash-пути, URL, option-like значения и окончания
-  `.rb`, `.json`, `.sh`, `.bash`, `.zsh`, `.dmg`, `.pkg`, `.zip` отвергаются.
-  Tap-qualified syntax не добавляется: текущий Discovery экспортирует токены.
-- **App Store — `appstore.conf`:** ровно два поля `ID|name`. ID содержит только
-  ASCII-цифры; имя непустое, не начинается с `-`, не содержит крайних пробелов,
-  управляющих символов или дополнительного `|`. Внутренние пробелы, Unicode и обычная пунктуация
-  сохраняются. Наличие приложения определяется только по точному ID из `mas list`;
-  имя используется для сообщений.
-- **VS Code — `vscode-extensions.conf`:** ровно `publisher.extension`.
-  Каждая часть начинается с ASCII-буквы или цифры и далее содержит только
-  буквы, цифры, `_`, `-`. Пути, URL, option-like значения, version suffixes
-  и локальные `.vsix`-ссылки не поддерживаются.
-
-Пустая область Blueprint не требует чтения соответствующего файла или CLI. При
-непустой области весь требуемый файл проверяется до фильтрации отдельных
-записей; файлы других потребителей не проверяются. Некорректный ввод имеет
-приоритет над отсутствием CLI. При валидном вводе отсутствие `mas` или `code`
-остаётся предупреждением, а отсутствие Homebrew — ошибкой.
-
-Для App Store присутствие определяется по точному ID, а для VS Code — по
-полному case-sensitive extension ID без нормализации регистра. Ошибка чтения
-inventory не считается отсутствием. После установки точное присутствие элемента
-проверяется повторно.
-
-Для Homebrew casks проверка требует точного
-токена в `brew list --cask` и наличия всех top-level `target` из
-`brew info --json=v2 --cask`: это разрешённые Homebrew пути relocated artifacts,
-а не только первый app target. Отсутствующий токен требует install; отсутствующий
-целевой путь установленного cask требует reinstall. Artifacts без `target`
-(например, pkg, uninstall, zap) не получают дополнительных проверок.
-Нечитаемый inventory, невалидная структура metadata или target (не абсолютная
-строка либо содержит управляющие символы) блокируют Apply. После установки или
-переустановки тот же контракт присутствия проверяется повторно.
-
-### Workspace Bootstrap actionability
-
-Bootstrap сохраняет текущие форматы: `folder|classification` для `folders.conf`
-и секции с `NAME`, `PATH`, `REMOTE`, `CURRENT_BRANCH` и Discovery metadata для
-`repositories.conf`. `CURRENT_BRANCH`, а не новый `BRANCH`, задаёт ветку Apply.
-`workspace.conf` описывает обнаруженный HOME; он не переназначает целевой root
-Bootstrap, которым остаётся текущий `$HOME`.
-
-Перед мутациями Workspace проверяет оба требуемых inputs и формирует полный
-валидированный снимок выбранных записей. Для чтения
-секций/значений используется Configuration Engine; section IDs с пробелами
-читаются построчно. Последняя запись без newline поддерживается, пустые строки
-пропускаются. Новый синтаксис комментариев или escaping не добавляется.
-
-Selected folders допускают простые и вложенные относительные пути с пробелами.
-Absolute paths, пустые компоненты, `.`/`..`, управляющие символы и существующие
-symlink-компоненты, ведущие вне HOME, отвергаются. Repository `PATH` должен быть
-абсолютным потомком текущего HOME и удовлетворять тем же правилам. Существующие
-компоненты пути должны быть каталогами.
-
-Структура repository-файла проверяется существующим snapshot validator.
-Selected `NAME`, `REMOTE`, `CURRENT_BRANCH` не могут быть пустыми; управляющие
-символы и неоднозначные кавычки в action fields отвергаются. Section IDs с
-backslash не поддерживаются существующим Configuration Engine и отклоняются.
-REMOTE сохраняет SSH/scp, URL и local-path формы; пустые/option-like значения,
-крайние пробелы и пустые части URL/scp отвергаются без сетевых запросов.
-Discovery удаляет userinfo из HTTP(S) URL перед публикацией, не восстанавливая
-credentials. URL с query/fragment или неподдерживаемым userinfo исключает
-репозиторий из snapshot с предупреждением. Обычное имя пользователя в SSH URL
-и scp-форме сохраняется. Workspace generated-каталог имеет режим `0700`, а
-файлы группового snapshot — `0600`.
-CURRENT_BRANCH проверяется локальным `git check-ref-format --branch`; option-like
-значения и сокращения, требующие расширения Git, не допускаются.
-
-Ошибка обязательного input блокирует `mkdir`, clone и checkout, включая случай
-с ошибкой в поздней записи. Пустая область Blueprint не требует
-соответствующего файла; структура требуемого файла проверяется целиком, а
-пригодность к действию — для выбранных элементов.
-
-Выбранная папка Workspace пригодна для создания только при подтверждённом
-отсутствии безопасного пути в пределах HOME. Неверный тип, небезопасная ссылка
-или ошибка доступа блокируют `mkdir -p`. После создания каталог должен быть
-доступен по тем же правилам; уже подходящий каталог не изменяется. Ошибка работы
-с папками блокирует последующее восстановление репозиториев.
+Required-input error, including a late bad entry, blocks mkdir/clone/checkout.
+Empty scope does not require its file. Validate whole-file structure and selected
+item actionability. Create folders only on confirmed safe absence; wrong type,
+unsafe links and access error block `mkdir -p`. Verify created directories; matching
+ones are unchanged. Folder failure blocks repository restoration.
 
 ### Workspace repository inspection
 
-Перед clone проверяется доступность существующего предка destination.
-Существующий каталог без `.git` считается конфликтом; `.git` directory или
-worktree-file проверяется локальным
-`git rev-parse --is-inside-work-tree`. Ошибка Git или доступа возвращает `2`.
+Check access to the existing destination ancestor before clone. An existing
+non-Git directory is a conflict. `.git` directories/worktree-files require successful
+`git rev-parse --is-inside-work-tree`; Git/access errors return `2`.
+Origin mismatch warns without replacement; failed origin read, including missing
+origin, blocks action. Successful empty `branch --show-current` means detached
+HEAD, permitting safe branch restoration after confirming clean state. Failed
+branch reads are not mismatches.
 
-Несовпадение origin остаётся предупреждением; ошибка чтения origin (включая
-отсутствующий origin) блокирует действие. Успешный `branch --show-current` с пустым выводом означает
-текущий detached HEAD: сохраняется прежняя возможность восстановить выбранную
-ветку после подтверждения clean state. Ошибка чтения ветки не считается mismatch.
+Clean-state checks use both tracked/staged `git diff --quiet` forms. Untracked
+files are not a new dirty criterion; Git may refuse conflicting checkout and
+those files remain intact. Observation errors block that repository's action.
+Clone only on confirmed absence; verify destination/worktree/exact origin.
+Checkout only on confirmed branch mismatch or detached HEAD with clean state;
+verify exact `CURRENT_BRANCH` afterwards. Failed observation or mismatch is an
+error. No reset, clean, forced checkout or automatic remote change occurs.
 
-Проверка чистого состояния учитывает только tracked/staged изменения через оба
-варианта `git diff --quiet`. Untracked-файлы не становятся новым критерием
-изменённого состояния. Любая ошибка наблюдения блокирует действие для этого
-репозитория.
+## VS Code settings lifecycle
 
-Clone выполняется только после подтверждённого отсутствия destination. После
-него должны подтверждаться наличие destination, рабочий Git worktree и точный
-origin.
+`vscode/settings.json` is an optional byte-for-byte snapshot. Missing source
+warns with `1`; existing source must be a readable regular file or returns `2`.
+Contents, including JSONC comments, are not transformed or newly JSON-parsed.
 
-Checkout выполняется только при подтверждённом несовпадении ветки или detached
-HEAD после подтверждения чистого состояния. После checkout текущая ветка должна
-точно совпадать с `CURRENT_BRANCH`; ошибка чтения или несовпадение означают
-ошибку восстановления.
+Read source fully before Apply; `cmp` distinguishes equality, absence/difference
+and observation error. Equal state changes no directories, backup or settings.
+On difference, create missing destination directories, preserve existing settings
+in `settings.json.bootstrap.bak`, then publish the new file.
+Copies stage beside destination and publish by rename, avoiding truncated files.
+Handled errors clean temporary files. Differing settings symlinks and backup
+symlinks are not replaced; an equal settings symlink remains valid no-op.
+If backup publication succeeds but settings publication fails, preserve the backup
+and intact original settings. Verify exact bytes after publication.
 
-### VS Code settings lifecycle
+## Git generated state
 
-`config/generated/vscode/settings.json` остаётся optional byte-for-byte snapshot:
-отсутствующий файл возвращает warning `1`; существующий источник должен быть
-читаемым обычным файлом, иначе `2`. Содержимое (включая комментарии JSONC)
-не преобразуется и не проверяется новым JSON-парсером.
+`git.conf` is native non-executable Git config containing only `user.name`,
+`user.email`, `init.defaultBranch`, `pull.rebase`, `core.editor`,
+`user.useConfigOnly`, `pull.ff`. Read via `git config --file ... --no-includes`;
+reject unknown/duplicate keys, never execute the file.
 
-До Apply источник полностью читается, а `cmp` различает равенство,
-отсутствие/различие и ошибку наблюдения. При равенстве каталог, backup и settings
-не изменяются. При различии создаётся недостающий destination directory,
-существующий settings сохраняется в `settings.json.bootstrap.bak`, затем
-публикуется новый settings.
+Discovery reads direct global-file entries with origin checks. `include`/
+`includeIf` in `~/.gitconfig` or XDG global files makes the category externally
+managed: Discovery publishes an empty snapshot with warning; target Preview/
+Bootstrap preserves such configuration. Included files are not transferred.
+Ambiguous keys across direct global files are excluded at source and block target
+action. `GIT_CONFIG_GLOBAL`, symlinks and foreign ownership block automatic Apply.
 
-Копии сначала пишутся во временный файл рядом с destination и публикуются через
-rename; неудачное копирование не оставляет усечённый settings или backup.
-Временные файлы удаляются при обработанной ошибке. Отличающийся settings-symlink
-и backup-symlink не заменяются; уже равный settings-symlink остаётся допустимым
-no-op. Если backup уже опубликован, а последующая публикация settings не удалась,
-backup сохраняется, а старый settings остаётся целым. После публикации содержимое
-должно полностью совпадать с источником. Выбор категории по-прежнему задаётся
-Blueprint.
+Absent key means unmanaged, not deletion. Category is `git-configuration`;
+optional same-named item section selects individual keys. An absent item section
+in an old Blueprint selects all present keys; an explicit empty section selects
+none. Stale absent-key selection warns without deletion. Without Blueprint all
+present supported keys participate.
 
-### Git generated state
+`user.name`/`user.email` must be nonempty single-line control-free strings.
+Git validates `init.defaultBranch`. `pull.rebase` accepts
+`true/false/merges/interactive`; `user.useConfigOnly` accepts `true/false`;
+`pull.ff` accepts `true/false/only`. Discovery normalizes Git-valid boolean forms.
+`core.editor` supports only `vi`, `vim`, `nano`, `nvim`, `code --wait` when the
+executable is available in PATH; it is neither run for testing nor installed.
 
-`config/generated/git.conf` использует native non-executable Git config format
-и содержит только семь поддерживаемых ключей:
+Preview shows keys, not values. Bootstrap creates only selected missing direct
+global entries and verifies value/origin. Matching state is no-op; differing or
+multiple values and unavailable editors warn and preserve the target. Observation
+failure blocks mutation; unrelated entries remain. No automatic replacement/removal.
 
-- `user.name`;
-- `user.email`;
-- `init.defaultBranch`;
-- `pull.rebase`;
-- `core.editor`;
-- `user.useConfigOnly`;
-- `pull.ff`.
+## SSH configuration
 
-Discovery читает только прямые записи global-файлов с проверкой origin. Если
-`~/.gitconfig` или XDG global-файл содержит `include` / `includeIf`, вся Git
-категория считается внешне управляемой: Discovery публикует пустой snapshot с
-предупреждением, а Preview и Bootstrap не меняют Git-конфигурацию такой цели.
-Включённые файлы не читаются для переноса. Неоднозначное повторение ключа в
-двух прямых global-файлах исключается из Discovery и блокирует действие на
-цели. `GIT_CONFIG_GLOBAL`, symlink и чужой владелец global-файла также
-блокируют автоматическое применение.
+`ssh/config.snapshot` is a `0600` versioned snapshot of canonical supported Host
+profiles. Discovery reads only `~/.ssh/config` as data and publishes atomically;
+read/parse failure preserves the previous snapshot. `Include`, `Match`, global
+settings and ambiguous Host patterns exclude the entire source. An unsupported
+directive in an independent Host block excludes that block.
 
-**Отсутствующий ключ — unmanaged**: он не создаётся и не удаляется на цели.
-Blueprint сохраняет категорию `git-configuration`; необязательная одноимённая
-item-секция выбирает ключи по отдельности. Отсутствие этой секции в старом
-Blueprint сохраняет выбор всех присутствующих ключей, а явно пустая секция
-не выбирает ни одного. Устаревший выбор отсутствующего ключа даёт
-предупреждение без удаления. Без Blueprint участвуют все присутствующие
-поддерживаемые ключи.
+Supported profiles have one literal `Host`, required `HostName`, and optional
+`User`, `Port`, `ServerAliveInterval`, `ServerAliveCountMax`, `TCPKeepAlive`,
+`ConnectTimeout`. Category is `ssh-configuration`. Preview exposes only profile
+counts/warnings, not addresses, users or aliases.
 
-`user.name` и `user.email` должны быть непустыми однострочными строками без
-управляющих символов. `init.defaultBranch` проверяется через Git;
-`pull.rebase` принимает `true`, `false`, `merges`, `interactive`.
-`user.useConfigOnly` принимает `true`/`false`, `pull.ff` — `true`/`false`/`only`;
-Git-validные boolean-написания нормализуются при Discovery. `core.editor`
-поддерживает только `vi`, `vim`, `nano`, `nvim`, `code --wait`, если исполняемая
-команда доступна в PATH. Toolkit не запускает редактор для проверки и не
-устанавливает его.
+Bootstrap creates `~/.ssh` (`0700`) and `config` (`0600`) only if target config is
+absent, using no-clobber publication and byte/metadata verification. Differing
+existing files, symlinks and foreign ownership are preserved. Keys, certificates,
+known_hosts, authorized_keys, Keychain, agent and credential references are not
+part of SSH configuration restoration; connection/authentication is not tested.
+Explicit identity transfer belongs to Secure Migration. Partial supported Host
+snapshots can verify matching target profiles without weakening Preview/Apply
+conflict rules.
 
-Preview называет ключи без значений. Bootstrap создаёт только выбранные
-отсутствующие прямые global-значения через Git и проверяет точное сохранённое
-значение и origin. Совпадение — no-op; отличающееся или множественное значение
-и недоступный редактор дают предупреждение с сохранением цели. Ошибка
-наблюдения блокирует мутации. Unrelated global-записи сохраняются; удалений
-и автоматической замены в этом контракте нет. Consumers читают generated-файл
-через `git config --file ... --no-includes`, отклоняют неизвестные и повторные
-ключи и никогда не выполняют его через `source` или `eval`.
+## Selected-state consumers
 
-### SSH configuration
-
-`config/generated/ssh/config.snapshot` — приватный файл режима `0600` с
-версионированным статусом и каноническими данными SSH Host-профилей. Discovery
-читает только `~/.ssh/config`, не выполняет его и публикует snapshot атомарно.
-При ошибке чтения или разбора прежний snapshot сохраняется. `Include`, `Match`,
-глобальные настройки и неоднозначные Host-шаблоны исключают весь источник;
-неподдерживаемая директива внутри независимого Host-блока исключает весь блок.
-
-Поддерживаются только одиночный literal `Host`, обязательный `HostName` и
-необязательные `User`, `Port`, `ServerAliveInterval`, `ServerAliveCountMax`,
-`TCPKeepAlive`, `ConnectTimeout`. Blueprint использует одну категорию
-`ssh-configuration`; в старом Blueprint она отключена, пока выбор не сохранён
-заново. Preview показывает только количество профилей и предупреждения без
-адресов, пользователей и alias.
-
-Bootstrap создаёт `~/.ssh` (`0700`) и `config` (`0600`) только при отсутствии
-целевого `config`, с no-clobber публикацией и статической проверкой байтов и
-метаданных. Существующий отличающийся файл, symlink и внешнее владение
-сохраняются. Ключи, сертификаты, `known_hosts`, `authorized_keys`, Keychain,
-ssh-agent и credential-ссылки не переносятся; подключение и аутентификация
-не проверяются.
-
-## Конфигурация и модули
-
-Конфигурация содержит данные, а модули определяют поведение для этих данных.
-Например, обнаруженный размер Dock должен поступать в Bootstrap из Generated
-Configuration, а не дублироваться как фиксированное значение в коде.
-
-Обязательный generated-ввод валидируется до мутации там, где он требуется.
-Отсутствующее, нечитаемое или malformed обязательное состояние не должно
-использоваться для частичного применения.
-В режиме Bootstrap Blueprint и обязательные inputs выбранного scope проходят
-эту проверку до preflight и Core checks; пустой item scope и отключённая
-категория не добавляют проверку несвязанного файла.
-
-## Preview и будущие потребители
-
-Dry-run / Preview реализован; Global Verification относится к Future / Optional.
-
-- **Dry-run / Preview** является неизменяющим режимом Bootstrap и использует
-  те же Generated Configuration и Blueprint Desired Selection.
-  Он не является источником конфигурации и не владеет Desired Selection.
-- **Global Verification** может стать optional aggregate post-Bootstrap проверкой выбранного
-  итогового состояния. Она отличается от текущего локального
-  `Check → Apply → Verify`, уже используемого модулями там, где проверка
-  результата поддерживается.
-
-## Основные принципы
-
-1. Обнаруженные значения и Desired Selection остаются разными
-   ответственностями.
-2. Generated Configuration остаётся локальным производным состоянием.
-3. Blueprint хранит выбор, а не копию generated-значений.
-4. Producer и consumer сохраняют совместимость формата.
-5. Предыдущее состояние заменяется только после подготовки нового валидного
-   результата.
-6. Конфигурация содержит данные; модули содержат поведение.
-
-Архитектурные границы подробнее описаны в
-[ARCHITECTURE.ru.md](ARCHITECTURE.ru.md), а этапы реализации — в
-[ROADMAP.md](../../ROADMAP.md).
+Bootstrap validates Blueprint and required selected inputs before preflight/Core
+checks. Empty scopes do not introduce unrelated requirements. Preview uses the
+same input/selection contracts without Apply. Global Verification observes selected
+results after Bootstrap/Workflow/applicable Restore. Explicit Comparison projects
+existing Verification/Coverage facts without a second configuration model or target
+mutation. Architectural responsibilities are in [Architecture](ARCHITECTURE.md).

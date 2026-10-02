@@ -1,18 +1,9 @@
-# Toolkit Documentation
+# CLI and configuration references
 
-Техническая документация Macseed.
+- [Architecture](ARCHITECTURE.md) — overall responsibility boundaries.
+- [CLI](CLI.md) — official commands, terminal behavior and logging.
+- [Configuration](CONFIGURATION.md) — generated, Blueprint and domain contracts.
+- [Secure SSH Identity Migration](SSH-IDENTITY-MIGRATION.md) — secure package and commands.
 
-## Основные документы
-
-- [Architecture](ARCHITECTURE.md) — архитектура и границы ответственности.
-- [Configuration](CONFIGURATION.md) — Generated Configuration и Blueprint.
-- [CLI](CLI.md) — пользовательский вывод, Summary и logging.
-
-## Дополнительно
-
-- [Roadmap](../../ROADMAP.md) — этапы развития.
-- [TODO](../../TODO.md) — ближайшие технические задачи.
-- [Changelog](../../CHANGELOG.md) — история изменений.
-
-Документация отдельных компонентов находится рядом с их реализацией
-в `modules/*/README.md`.
+Start at the [documentation index](../README.md) for product flows and the
+application-facing Core reference. Module READMEs live beside their implementation.

@@ -554,6 +554,8 @@ blueprint_selector_edit() {
     fi
     BLUEPRINT_SELECTOR_TEMP_FILE=""
     trap - INT TERM
+    # Shared state is read by another sourced module.
+    # shellcheck disable=SC2034
     BLUEPRINT_SELECTOR_SAVED=true
     log "[BLUEPRINT] RESULT: SAVED"
     success "Blueprint saved to $BLUEPRINT_FILE"

@@ -4,6 +4,54 @@
 # Repository Helpers
 # ==========================================
 
+# Local capability only; never contacts a remote.
+repository_git_readiness() {
+    REPOSITORY_APPLICATION_CONDITION=git_required
+    local executable directory
+    executable="$(command -v git)" || {
+        local directories
+        IFS=: read -r -a directories <<< "$PATH"
+        for directory in "${directories[@]}"; do
+            [[ ! -e "${directory:-.}/git" && ! -L "${directory:-.}/git" ]] ||
+                REPOSITORY_APPLICATION_CONDITION=git_unavailable
+        done
+        return 2
+    }
+    REPOSITORY_APPLICATION_CONDITION=git_unavailable
+    # Apple's shim can offer to install developer tools; do not invoke it
+    # without an already selected developer directory.
+    if [[ "$executable" == /usr/bin/git ]]; then
+        xcode-select -p >/dev/null 2>&1 || return 2
+    fi
+    git --version >/dev/null 2>&1 || return 2
+    return 0
+}
+
+# Result is consumed by bootstrap.sh.
+# shellcheck disable=SC2034
+repository_application_readiness() {
+    local records repository path remote branch result
+    repository_git_readiness || return 2
+    records="$(workspace_read_bootstrap_repositories "$(blueprint_generated_file git-repositories)" observation)" || {
+        REPOSITORY_APPLICATION_CONDITION=invalid_selected_input
+        return 2
+    }
+    while IFS=$'\t' read -r repository path remote branch; do
+        [[ -n "$repository" ]] || continue
+        repository_inspect "$path" "$remote" "$branch"
+        [[ "$REPOSITORY_WORKTREE_KIND" != absent ]] || continue
+        REPOSITORY_APPLICATION_CONDITION=repository_target_conflict
+        [[ $REPOSITORY_WORKTREE_RESULT -eq 0 && $REPOSITORY_ORIGIN_RESULT -eq 0 &&
+           $REPOSITORY_BRANCH_RESULT -le 1 ]] || return 2
+        if [[ $REPOSITORY_BRANCH_RESULT -ne 0 ]]; then
+            repository_is_clean "$path"
+            result=$?
+            [[ $result -eq 0 ]] || return 2
+        fi
+    done <<< "$records"
+    return 0
+}
+
 # ==========================================
 # Repository Exists (0 present, 1 absent, 2 observation error)
 # ==========================================
@@ -76,7 +124,16 @@ repository_clone() {
     local remote="$1"
     local path="$2"
 
-    git clone "$remote" "$path"
+    if [[ "${MACSEED_APPLICATION_EXECUTION:-false}" == true ]]; then
+        # Disable helper/UI prompting for this command only. Existing ssh-agent
+        # identities and SSH config remain available; unknown hosts fail closed.
+        GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=/usr/bin/false SSH_ASKPASS=/usr/bin/false \
+        SSH_ASKPASS_REQUIRE=never GIT_SSH_VARIANT=ssh \
+        GIT_SSH_COMMAND='ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o UpdateHostKeys=no -o CheckHostIP=no' \
+            git -c credential.helper= -c credential.interactive=false clone "$remote" "$path" </dev/null >/dev/null 2>&1
+    else
+        git clone "$remote" "$path"
+    fi
 
 }
 
@@ -131,6 +188,7 @@ repository_preview() {
 
     case $inspection_result in
         1)
+            preview_record git-repositories "${preview_repository_index:-0}" clone planned
             preview_action "Would clone repository: $repository"
             return 0
             ;;
@@ -147,6 +205,7 @@ repository_preview() {
         return 2
     fi
     if [[ $inspection_result -eq 1 ]]; then
+        preview_record git-repositories "${preview_repository_index:-0}" none conflict target_not_repository
         warning "Directory is not a Git repository"
         return 1
     fi
@@ -157,6 +216,7 @@ repository_preview() {
     fi
 
     if [[ "$current_remote" != "$expected_remote" ]]; then
+        preview_record git-repositories "${preview_repository_index:-0}" none conflict origin_mismatch
         warning "Remote does not match"
         return 1
     fi
@@ -166,7 +226,10 @@ repository_preview() {
         return 2
     fi
 
-    [[ "$current_branch" == "$expected_branch" ]] && return 0
+    if [[ "$current_branch" == "$expected_branch" ]]; then
+        preview_record git-repositories "${preview_repository_index:-0}" none satisfied
+        return 0
+    fi
 
     repository_is_clean "$path"
     inspection_result=$?
@@ -175,11 +238,13 @@ repository_preview() {
         return 2
     fi
     if [[ $inspection_result -eq 1 ]]; then
+        preview_record git-repositories "${preview_repository_index:-0}" switch_branch conflict dirty_worktree
         warning "Branch does not match"
         warning "Repository has uncommitted changes"
         return 1
     fi
 
+    preview_record git-repositories "${preview_repository_index:-0}" switch_branch planned
     preview_action "Would switch repository branch: $repository -> $expected_branch"
     return 0
 }
@@ -194,7 +259,9 @@ repository_verify() {
     local expected_remote="$2"
     local expected_branch="$3"
 
+    local repository_subject="${4:-$path}"
     local repository_cloned=false
+    local repository_checked_out=false
 
     local inspection_result
     repository_exists "$path"
@@ -209,16 +276,19 @@ repository_verify() {
         action "Cloning repository..."
 
         if ! repository_clone "$expected_remote" "$path"; then
+            declare -F verification_operation_hook >/dev/null && verification_operation_hook git-repositories "$repository_subject" clone failure
             error "Failed to clone repository"
             return 2
         fi
 
         MODULE_CHANGED=true
         repository_cloned=true
+        declare -F verification_operation_hook >/dev/null && verification_operation_hook git-repositories "$repository_subject" clone success
 
         repository_exists "$path"
         inspection_result=$?
         if [[ $inspection_result -ne 0 ]]; then
+            declare -F verification_post_hook >/dev/null && verification_post_hook "$inspection_result"
             error "Failed to verify cloned repository destination"
             return 2
         fi
@@ -237,6 +307,7 @@ repository_verify() {
     fi
     if [[ $inspection_result -eq 1 ]]; then
         if [[ "$repository_cloned" == true ]]; then
+            declare -F verification_post_hook >/dev/null && verification_post_hook 1
             error "Cloned destination is not a usable Git repository"
             return 2
         fi
@@ -255,6 +326,7 @@ repository_verify() {
 
     if [[ "$current_remote" != "$expected_remote" ]]; then
         if [[ "$repository_cloned" == true ]]; then
+            declare -F verification_post_hook >/dev/null && verification_post_hook 1
             error "Cloned repository origin verification failed"
             return 2
         fi
@@ -293,11 +365,16 @@ if [[ "$current_branch" != "$expected_branch" ]]; then
     action "Restoring branch..."
 
     if ! repository_checkout "$path" "$expected_branch"; then
+        declare -F verification_operation_hook >/dev/null && verification_operation_hook git-repositories "$repository_subject" checkout failure
         error "Failed to restore branch"
         return 2
     fi
 
+    # Shared lifecycle flag is read by the calling module wrapper.
+    # shellcheck disable=SC2034
     MODULE_CHANGED=true
+    repository_checked_out=true
+    declare -F verification_operation_hook >/dev/null && verification_operation_hook git-repositories "$repository_subject" checkout success
 
     if ! current_branch=$(repository_branch "$path"); then
         error "Failed to observe repository branch"
@@ -305,6 +382,7 @@ if [[ "$current_branch" != "$expected_branch" ]]; then
     fi
 
     if [[ "$current_branch" != "$expected_branch" ]]; then
+        declare -F verification_post_hook >/dev/null && verification_post_hook 1
         error "Branch verification failed"
         return 2
     fi
@@ -313,8 +391,61 @@ if [[ "$current_branch" != "$expected_branch" ]]; then
 
 fi
 
+if [[ "$repository_cloned" == false && "$repository_checked_out" == false ]]; then
+    declare -F verification_operation_hook >/dev/null && verification_operation_hook git-repositories "$repository_subject" restore noop
+fi
 success "Branch verified"
 
 return 0
 
+}
+
+# Shared read-only inspection. Results: 0 match, 1 mismatch, 2 observation
+# error, 3 dependent predicate not observed. Origin and branch are independent.
+# shellcheck disable=SC2034
+repository_inspect() {
+    local path="$1" expected_remote="$2" expected_branch="$3" result value
+    REPOSITORY_WORKTREE_RESULT=2
+    REPOSITORY_ORIGIN_RESULT=3
+    REPOSITORY_BRANCH_RESULT=3
+    REPOSITORY_WORKTREE_KIND=unknown
+    REPOSITORY_ORIGIN_KIND=unknown
+    REPOSITORY_BRANCH_KIND=unknown
+    if [[ -f "$path" && ! -L "$path" ]]; then
+        REPOSITORY_WORKTREE_RESULT=1
+        REPOSITORY_WORKTREE_KIND=different
+        return 0
+    fi
+    repository_exists "$path"
+    result=$?
+    if [[ $result -eq 1 ]]; then
+        REPOSITORY_WORKTREE_RESULT=1
+        REPOSITORY_WORKTREE_KIND=absent
+        return 0
+    fi
+    [[ $result -eq 0 ]] || return 0
+    repository_is_git "$path"
+    result=$?
+    REPOSITORY_WORKTREE_RESULT=$result
+    [[ $result -ne 1 ]] || REPOSITORY_WORKTREE_KIND=different
+    [[ $result -eq 0 ]] || return 0
+    REPOSITORY_ORIGIN_RESULT=2
+    if value="$(repository_origin "$path")" && [[ -n "$value" ]]; then
+        REPOSITORY_ORIGIN_RESULT=1
+        REPOSITORY_ORIGIN_KIND=different
+        [[ "$value" != "$expected_remote" ]] || REPOSITORY_ORIGIN_RESULT=0
+    elif git -C "$path" config --local --get remote.origin.url >/dev/null 2>&1; then
+        : # Failed origin observation remains unknown.
+    elif [[ $? -eq 1 ]]; then
+        REPOSITORY_ORIGIN_RESULT=1
+        REPOSITORY_ORIGIN_KIND=absent
+    fi
+    REPOSITORY_BRANCH_RESULT=2
+    if value="$(repository_branch "$path")"; then
+        REPOSITORY_BRANCH_RESULT=1
+        REPOSITORY_BRANCH_KIND=different
+        [[ -n "$value" ]] || REPOSITORY_BRANCH_KIND=absent
+        [[ "$value" != "$expected_branch" ]] || REPOSITORY_BRANCH_RESULT=0
+    fi
+    return 0
 }

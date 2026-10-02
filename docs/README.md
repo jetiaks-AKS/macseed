@@ -1,53 +1,29 @@
-# Documentation
+# Macseed documentation
 
-Documentation for Macseed.
+English is authoritative. Read from product purpose toward technical contracts:
 
-The documentation is intentionally kept compact. Detailed behavior should be
-documented only where it has a clear and stable responsibility.
+**README / Vision → Architecture → Capture / Restore, CLI or Desktop
+→ Core interface / Configuration → source and tests.**
 
-## Getting Started
+| Document | Owns |
+|---|---|
+| [Product README](../README.md) | Product introduction and current capabilities |
+| [Vision](VISION.md) | Purpose, principles and long-term boundaries |
+| [Architecture](toolkit/ARCHITECTURE.md) | Core, CLI and Desktop responsibilities and invariants |
+| [Capture / Restore](CAPTURE-RESTORE.md) | Bundle workflow, reconstruction and secure transfer |
+| [CLI Quick Start](getting-started/QUICKSTART.md) | Current CLI setup and recommended workflows |
+| [CLI](toolkit/CLI.md) | Commands, terminal behavior, output and exit status |
+| [Core application interface](core/APPLICATION-INTERFACE.md) | Implemented Protocol V1, execution and structured results |
+| [Configuration](toolkit/CONFIGURATION.md) | Generated, Blueprint, Bundle and domain data contracts |
+| [Secure SSH Identity Migration](toolkit/SSH-IDENTITY-MIGRATION.md) | Secure package and standalone identity commands |
+| [Desktop](DESKTOP.md) | Planned native client flows and runtime integration |
+| [Distribution](DISTRIBUTION.md) | Planned packaging and clean-Mac qualification |
+| [Roadmap](../ROADMAP.md) | Major stages, status and product outcomes |
+| [TODO](../TODO.md) | Concrete unfinished work |
+| [Changelog](../CHANGELOG.md) | Completed release-visible changes and released history |
+| [Contributing](../CONTRIBUTING.md) / [AGENTS](../AGENTS.md) | Contributor and agent workflow |
+| [Release Process](git/RELEASE-PROCESS.md) | Current repository/CLI release procedure |
 
-- [Quick Start](getting-started/QUICKSTART.md) — installation and the main
-  Discovery → Blueprint → Bootstrap workflow.
-
-## Toolkit
-
-- [Architecture](toolkit/ARCHITECTURE.md) — current architecture, component
-  responsibilities, and planned architectural extensions.
-- [Architecture — Russian](toolkit/ARCHITECTURE.ru.md) — Russian version of
-  the architecture document.
-- [Configuration](toolkit/CONFIGURATION.md) — Generated Configuration,
-  Blueprint, configuration ownership, formats, and publication rules.
-- [CLI](toolkit/CLI.md) — CLI output, logging, Summary, and status behavior.
-
-## Development and Releases
-
-- [Contributing](../CONTRIBUTING.md) — development workflow, change principles,
-  commit conventions, and validation.
-- [Release Process](git/RELEASE-PROCESS.md) — maintainer release procedure.
-- [Roadmap](../ROADMAP.md) — current development direction and major product
-  decisions.
-- [TODO](../TODO.md) — immediate technical backlog.
-- [Changelog](../CHANGELOG.md) — completed release-visible changes.
-
-## Project Direction
-
-- [Vision](VISION.md) — long-term product direction and design principles.
-
-## Documentation rules
-
-Documentation should describe stable responsibilities rather than mirror every
-source file or module.
-
-When behavior changes:
-
-- update Architecture only when architectural responsibilities or contracts
-  change;
-- update Configuration when configuration ownership or formats change;
-- update CLI when user-visible lifecycle or logging behavior changes;
-- update Quick Start when the supported user workflow changes;
-- update Roadmap or TODO when implementation status or near-term work changes;
-- record completed release-visible changes in the Changelog.
-
-Implementation details that are already clear from code and tests do not require
-a separate documentation page.
+Module READMEs describe local responsibilities and point to the owning references.
+[Russian convenience copies](ru/INDEX.md) are optional, non-authoritative and may
+lag behind. New technical documents do not require Russian counterparts.

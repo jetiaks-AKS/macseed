@@ -1,35 +1,27 @@
 # TODO
 
-Ближайшие конкретные технические задачи Macseed.
-Направления развития описаны в `ROADMAP.md`, архитектурные решения — в
-`docs/toolkit/ARCHITECTURE.md`, завершённые изменения — в `CHANGELOG.md`.
+Concrete unfinished work. Outcomes and stage status are in [Roadmap](ROADMAP.md).
 
-## Совместимость macOS
+## Stage 16 — Desktop integration
 
-- [ ] При переходе на macOS 27 повторно проверить приватные контракты
-  `Clicking` и `TrackpadRightClick`, а также другие зависящие от версии
-  поддерживаемые настройки.
+- [ ] Define and implement bundled Core/runtime layout and Python availability.
+- [ ] Move application writes to a defined user-writable state/temp location.
+- [ ] Define controlled HOME, PATH and environment for the Core child.
+- [ ] Implement the Swift Protocol V1 launcher and JSONL transport.
+- [ ] Bridge inherited secret FD input and owned-process cancellation.
+- [ ] Build Capture, Restore and Environment Status flows with structured results.
+- [ ] Implement prerequisite guidance, Check Again and fresh-plan confirmation.
+- [ ] Qualify the application Core/runtime and age/OpenSSH secure path.
 
-## CLI и удобство использования
+## Stage 17 — Distribution
 
-- [ ] Устранять подтверждённые дублирования и несогласованность сообщений.
-- [ ] Улучшать диагностику конкретных ошибок и предупреждений, сохраняя
-  компактный обычный вывод.
+- [ ] Sign the app and nested runtime with Developer ID; configure Hardened Runtime.
+- [ ] Complete notarization, stapling, DMG and downloaded-app Gatekeeper checks.
+- [ ] Qualify packaged runtime and full clean Apple Silicon Capture/Restore E2E.
+- [ ] Qualify Intel runtime and E2E before claiming Intel support, if included.
 
-## Инструменты качества
+## Maintenance and compatibility
 
-- [ ] Добавить единый запуск существующих регрессионных сценариев через
-  `scripts/test.sh`.
-- [ ] Провести ShellCheck и обзор качества Bash-кода.
-- [ ] Рассмотреть GitHub Actions для автоматического запуска набора тестов.
-
-## Документация
-
-- [ ] Добавить руководство разработчика при появлении практической необходимости.
-- [ ] Добавить руководство по разработке модулей при появлении практической
-  необходимости.
-
-## Правило списка задач
-
-TODO содержит только незавершённые исполнимые задачи. После выполнения задача
-удаляется или отражается в `CHANGELOG.md`; общие идеи переносятся в Roadmap.
+- [ ] Fix the known GitHub Actions harness failure involving Python `__pycache__`.
+- [ ] Revalidate `Clicking`, `TrackpadRightClick` and other version-dependent
+  settings when migration to macOS 27 actually occurs.

@@ -1,51 +1,15 @@
 # Discovery Engine
 
-## Назначение
+Discovery observes supported current state and publishes local Generated
+Configuration for Blueprint and Bootstrap. It does not install software, apply
+system settings or migrate user content. Domain publication is its permitted
+side effect; shared startup may write logs and check prerequisites.
 
-Discovery Engine анализирует текущий Mac и формирует описание системы.
+Exporters cover Homebrew, App Store, Git, SSH configuration, Zsh, VS Code,
+Workspace and supported macOS settings. Each observes its own domain and follows
+**Collect → Validate → Serialize → Safe Publication**. Replace generated files
+only after successful preparation; handled failure preserves previous valid state.
+Exits are `0` success, `1` warning, `2` error.
 
-Discovery не изменяет наблюдаемое состояние системы. Его допустимый побочный
-эффект — публикация локальной generated-конфигурации в `config/generated/`.
-
----
-
-## Что умеет Discovery
-
-- Анализ Homebrew
-- Анализ App Store
-- Анализ Git
-- Анализ VS Code
-- Анализ настроек macOS
-- Анализ рабочего пространства (Workspace)
-
----
-
-## Принцип работы
-
-Каждый модуль отвечает только за свою область.
-
-Например:
-
-- Homebrew экспортирует только Homebrew.
-- Git экспортирует только Git.
-- Workspace экспортирует только описание рабочего пространства.
-
-Результаты Discovery сохраняются в `config/generated/` и используются
-Blueprint для выбора целевого scope и текущим Bootstrap для восстановления
-поддерживаемых компонентов.
-
-Обычный lifecycle экспортёра:
-
-```text
-Collect → Validate → Serialize → Safe Publication
-```
-
-Generated-файл заменяется только после успешной подготовки нового состояния.
-Обработанная ошибка сохраняет предыдущий валидный результат.
-
----
-
-## Важно
-
-Discovery возвращает `0` при успехе, `1` при предупреждении и `2` при ошибке.
-Blueprint реализован в `develop`; он хранит выбор, а не обнаруженные значения.
+[Configuration](../../docs/toolkit/CONFIGURATION.md) owns formats and publication
+boundaries; [Architecture](../../docs/toolkit/ARCHITECTURE.md) owns the state flow.

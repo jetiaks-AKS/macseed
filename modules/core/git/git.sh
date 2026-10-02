@@ -225,6 +225,14 @@ load_git_configuration() {
 is_git_installed() { command -v git >/dev/null 2>&1; }
 check_git() {
     if is_git_installed; then success "Git already installed"; return 0; fi
+    if [[ "${MACSEED_APPLICATION_EXECUTION:-false}" == true ]]; then
+        if [[ "${MODE:-}" == --dry-run ]] ||
+           { ! bootstrap_item_scope_selected git-repositories &&
+             { ! blueprint_category_enabled git-configuration || ! git_configuration_scope_selected; }; }; then
+            warning "Git is not available for inspection"
+            return 1
+        fi
+    fi
     error "Git is not installed"
     return 2
 }
@@ -236,6 +244,7 @@ inspect_git_configuration() {
     git_global_observe
     result=$?
     if [[ $result -eq 1 ]]; then
+        preview_record git-configuration scope none conflict external_management
         warning "Global Git configuration is externally managed"
         return 1
     fi
@@ -248,18 +257,24 @@ inspect_git_configuration() {
            "${GIT_CONFIGURATION_SELECTED[$index]}" == true ]] || continue
         key="${GIT_CONFIGURATION_KEYS[$index]}"
         if [[ ${GIT_GLOBAL_COUNTS[$index]} -gt 1 ]]; then
+            preview_record git-configuration "$key" none conflict multiple_values
             warning "Multiple direct global Git values: $key"
             warnings=true
         elif [[ ${GIT_GLOBAL_COUNTS[$index]} -eq 1 ]]; then
             if [[ "${GIT_GLOBAL_VALUES[$index]}" != "${GIT_CONFIGURATION_VALUES[$index]}" ]]; then
+                preview_record git-configuration "$key" none conflict target_conflict
                 warning "Existing Git setting differs; preserving: $key"
                 warnings=true
+            else
+                preview_record git-configuration "$key" none satisfied
             fi
         elif [[ "$key" == core.editor ]] &&
              ! git_configuration_editor_available "${GIT_CONFIGURATION_VALUES[$index]}"; then
+            preview_record git-configuration "$key" set_setting blocked editor_unavailable
             warning "Git editor dependency unavailable: $key"
             warnings=true
         else
+            preview_record git-configuration "$key" set_setting planned
             GIT_CONFIGURATION_ACTIONS[$index]=create
         fi
     done
@@ -298,8 +313,20 @@ configure_git() {
     [[ $result -eq 0 ]] || warnings=true
     local planned=("${GIT_CONFIGURATION_ACTIONS[@]}")
     for index in 0 1 2 3 4 5 6; do
-        [[ "${planned[$index]:-skip}" == create ]] || continue
         key="${GIT_CONFIGURATION_KEYS[$index]}"
+        if [[ "${planned[$index]:-skip}" != create ]]; then
+            if [[ "${MACSEED_APPLICATION_EXECUTION:-false}" == true && "${GIT_CONFIGURATION_SET[$index]}" == true && "${GIT_CONFIGURATION_SELECTED[$index]}" == true ]]; then
+                if [[ ${GIT_GLOBAL_COUNTS[$index]} -eq 0 ]]; then
+                    verification_application_operation_hook git-configuration "$key" create skipped dependency_unavailable
+                elif [[ "$GIT_GLOBAL_EXTERNAL" == true || ${GIT_GLOBAL_COUNTS[$index]} -gt 1 ||
+                      "${GIT_GLOBAL_VALUES[$index]}" != "${GIT_CONFIGURATION_VALUES[$index]}" ]]; then
+                    verification_application_operation_hook git-configuration "$key" create skipped target_conflict
+                else
+                    verification_application_operation_hook git-configuration "$key" create noop
+                fi
+            fi
+            continue
+        fi
         git_global_observe
         result=$?
         if [[ $result -eq 1 ]]; then
@@ -321,16 +348,23 @@ configure_git() {
         expected_path="$GIT_GLOBAL_WRITE_PATH"
         action "Configuring Git setting: $key"
         if ! git config --global --add "$key" "${GIT_CONFIGURATION_VALUES[$index]}"; then
+            declare -F verification_operation_hook >/dev/null && verification_operation_hook git-configuration "$key" create failure
             error "Failed to configure Git setting: $key"
             return 2
         fi
+        # Shared lifecycle flag is read by the calling module wrapper.
+        # shellcheck disable=SC2034
         MODULE_CHANGED=true
+        declare -F verification_operation_hook >/dev/null && verification_operation_hook git-configuration "$key" create success
         git_global_observe
         result=$?
         if [[ $result -ne 0 || "$GIT_GLOBAL_WRITE_PATH" != "$expected_path" ||
               ${GIT_GLOBAL_COUNTS[$index]} -ne 1 ||
               "${GIT_GLOBAL_ORIGINS[$index]}" != "$expected_path" ||
               "${GIT_GLOBAL_VALUES[$index]}" != "${GIT_CONFIGURATION_VALUES[$index]}" ]]; then
+            local verify_result=1
+            [[ $result -eq 0 ]] || verify_result=2
+            declare -F verification_post_hook >/dev/null && verification_post_hook "$verify_result"
             error "Git configuration verification failed: $key"
             return 2
         fi
@@ -338,4 +372,41 @@ configure_git() {
     [[ "$warnings" == false ]] || return 1
     success "Git configuration verified"
     return 0
+}
+
+# Compare direct global values using the production provenance reader. Source
+# mode omits target writability gates; mutation policy continues using target.
+verify_git_configuration() {
+    verification_category_selected git-configuration || return 0
+    local keys="" index key result
+    if ! git_configuration_scope_selected; then
+        verification_coverage git-configuration scope excluded unknown
+        return 0
+    fi
+    load_git_configuration || { verification_input_error git-configuration; return 0; }
+    for index in 0 1 2 3 4 5 6; do
+        [[ "${GIT_CONFIGURATION_SET[$index]}" != true ]] || keys="${keys}${keys:+$'\n'}${GIT_CONFIGURATION_KEYS[$index]}"
+    done
+    verification_select_subjects git-configuration "$keys" || return 2
+    [[ ${#GV_SUBJECTS[@]} -gt 0 ]] || return 0
+    git_global_observe source
+    result=$?
+    for key in "${GV_SUBJECTS[@]}"; do
+        index="$(git_configuration_index "$key")" || return 2
+        case "$result" in
+            1) verification_result git-configuration "$key" direct_global_value 2 external_management ;;
+            0)
+                if [[ ${GIT_GLOBAL_COUNTS[$index]} -eq 1 &&
+                      "${GIT_GLOBAL_VALUES[$index]}" == "${GIT_CONFIGURATION_VALUES[$index]}" ]]; then
+                    verification_result git-configuration "$key" direct_global_value 0
+                else
+                    if [[ ${GIT_GLOBAL_COUNTS[$index]} -eq 0 ]]; then
+                        verification_result git-configuration "$key" direct_global_value 1 '' absent
+                    else
+                        verification_result git-configuration "$key" direct_global_value 1 '' different
+                    fi
+                fi ;;
+            *) verification_result git-configuration "$key" direct_global_value 2 ;;
+        esac
+    done
 }

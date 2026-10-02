@@ -12,6 +12,9 @@ workspace_bootstrap_path_valid() {
         [[ "$component" != . && "$component" != .. ]] || return 2
         current="$current/$component"
         if [[ -e "$current" || -L "$current" ]]; then
+            if [[ "${2:-}" == observation && "$relative" != */* && -f "$current" && ! -L "$current" ]]; then
+                return 0 # A safe leaf conflict is observable, not malformed input.
+            fi
             [[ -d "$current" ]] || return 2
             physical="$(cd "$current" && pwd -P)" || return 2
             [[ "$physical" == "$root"/* ]] || return 2
@@ -30,6 +33,8 @@ workspace_read_bootstrap_folders() {
         ($2 != "system" && $2 != "user" && $2 != "workspace") { exit 2 }
         { print }
     ' "$config_file")" || return 2
+    # Read both fields to preserve the Workspace record format.
+    # shellcheck disable=SC2034
     while IFS='|' read -r folder classification; do
         [[ -n "$folder" ]] || continue
         blueprint_item_selected workspace-folders "$folder" || continue
@@ -56,13 +61,31 @@ workspace_read_bootstrap_repositories() {
         [[ "$name$path$remote$branch" != *[[:cntrl:]]* &&
            "$name$path$remote$branch" != *'"'* ]] || return 2
         [[ "$path" == "$HOME"/* ]] || return 2
-        workspace_bootstrap_path_valid "${path#"$HOME"/}" || return 2
+        local observation="${2:-}"
+        [[ "${MACSEED_APPLICATION_EXECUTION:-false}" != true ]] || observation=observation
+        workspace_bootstrap_path_valid "${path#"$HOME"/}" "$observation" || return 2
         [[ "$remote" != -* && "$remote" != [[:space:]]* && "$remote" != *[[:space:]] ]] || return 2
         case "$remote" in
             *://*) [[ "${remote#*://}" != "" && "${remote%%://*}" != "" ]] || return 2 ;;
             *:*) [[ "${remote%%:*}" != "" && "${remote#*:}" != "" ]] || return 2 ;;
         esac
         [[ "$branch" != -* ]] || return 2
+        if [[ "${MACSEED_APPLICATION_EXECUTION:-false}" == true ]] && ! repository_git_readiness; then
+            printf '%s\t%s\t%s\t%s\n' "$repository" "$path" "$remote" "$branch"
+            continue # Readiness returns the typed local Git prerequisite.
+        fi
+        if [[ "${MACSEED_APPLICATION_EXECUTION:-false}" == true ]]; then
+            if [[ "$remote" == *://* ]]; then
+                local authority="${remote#*://}" userinfo scheme="${remote%%://*}"
+                authority="${authority%%/*}"
+                [[ "$remote" != *\?* && "$remote" != *\#* ]] || return 2
+                if [[ "$authority" == *@* ]]; then
+                    userinfo="${authority%@*}"
+                    # Preserve ordinary SSH usernames, never embedded passwords.
+                    [[ "$scheme" == ssh && "$userinfo" =~ ^[A-Za-z0-9._-]+$ ]] || return 2
+                fi
+            fi
+        fi
         checked_branch="$(git check-ref-format --branch "$branch" 2>/dev/null)" || return 2
         [[ "$checked_branch" == "$branch" ]] || return 2
         printf '%s\t%s\t%s\t%s\n' "$repository" "$path" "$remote" "$branch"

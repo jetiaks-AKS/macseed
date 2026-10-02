@@ -1173,6 +1173,8 @@ run check_screenshots
 expect_status 1 "$status" 'nested missing destination is creatable'
 assert_no_mutation 'nested Check is read-only'
 reset_case
+# The literal tilde is fixture/config input expanded by the consumer.
+# shellcheck disable=SC2088
 shots '~/Captures'
 run apply_screenshots_settings
 expect_status 0 "$status" 'leading tilde destination restored'

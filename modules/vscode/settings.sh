@@ -140,6 +140,8 @@ apply_vscode_settings() {
             error "Failed to create VS Code settings directory"
             return 2
         fi
+        # Shared lifecycle flag is read by the calling module wrapper.
+        # shellcheck disable=SC2034
         MODULE_CHANGED=true
     fi
 
@@ -190,6 +192,11 @@ preview_vscode_settings() {
 
     inspect_vscode_settings_target "$source_file" "$target_dir" "$target_file"
     inspection_result=$?
+    case $inspection_result in
+        0) preview_record vscode-settings settings.json none satisfied ;;
+        1) preview_record vscode-settings settings.json replace_with_backup planned ;;
+        *) preview_record vscode-settings settings.json replace_with_backup blocked target_conflict ;;
+    esac
 
     case $inspection_result in
         0)
@@ -204,4 +211,29 @@ preview_vscode_settings() {
             return 2
             ;;
     esac
+}
+
+# Opaque supported payload equality; no assertion about editor runtime state.
+verify_vscode_settings() {
+    verification_category_selected vscode-settings || return 0
+    local source_file="$BLUEPRINT_GENERATED_DIR/vscode/settings.json"
+    local target_dir="$HOME/Library/Application Support/Code/User" result
+    validate_vscode_settings_source "$source_file"
+    result=$?
+    case "$result" in
+        1)
+            verification_coverage vscode-settings scope unresolved unknown
+            verification_diagnostic "$GV_LAST_REF" selected_input_unresolved warning scope
+            return 0 ;;
+        0) ;;
+        *) verification_input_error vscode-settings; return 0 ;;
+    esac
+    verification_coverage vscode-settings settings.json resolved unknown
+    inspect_vscode_settings_target "$source_file" "$target_dir" "$target_dir/settings.json"
+    result=$?
+    local kind=unknown
+    if [[ $result -eq 1 ]]; then
+        if [[ -e "$target_dir/settings.json" || -L "$target_dir/settings.json" ]]; then kind=different; else kind=absent; fi
+    fi
+    verification_result vscode-settings settings.json file_content "$result" '' "$kind"
 }

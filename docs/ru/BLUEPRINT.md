@@ -1,6 +1,9 @@
+> English documentation is authoritative: [canonical document](../../modules/blueprint/README.md).
+> This Russian convenience copy may lag behind and describes an earlier snapshot.
+
 # Blueprint MVP
 
-[English version](README.md)
+[English version](../../modules/blueprint/README.md)
 
 Blueprint — слой пользовательского выбора между Generated Configuration и
 Bootstrap. Он предоставляет parser, validation, item-level и category/module-level

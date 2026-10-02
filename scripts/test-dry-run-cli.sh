@@ -40,6 +40,19 @@ write_fixture_file() {
     printf '%s\n' "$@" > "$FIXTURE_ROOT/$relative_path"
 }
 
+write_fixture_file modules/core/verification/verification.sh \
+    'verification_reset() { :; }' \
+    'verification_operation() { :; }' \
+    'verification_run() { :; }'
+
+write_fixture_file modules/verification/comparison.sh \
+    'comparison_run() {' \
+    '    printf "%s\n" comparison-inspection >> "$TEST_SPY_FILE"' \
+    '    section "Environment Comparison"' \
+    '    echo "Environment Comparison report"' \
+    '    GV_STATUS="${TEST_COMPARE_STATUS:-complete}"' \
+    '}'
+
 write_fixture_file config/toolkit.conf \
     'TOOLKIT_NAME="Mac Bootstrap Toolkit Test"' \
     'TOOLKIT_VERSION="test"' \
@@ -175,6 +188,7 @@ run_entrypoint() {
         TEST_GIT_ENABLED="${TEST_GIT_ENABLED:-true}" \
         TEST_VSCODE_SETTINGS_ENABLED="${TEST_VSCODE_SETTINGS_ENABLED:-true}" \
         TEST_DISCOVERY_REAL_HOMEBREW="${TEST_DISCOVERY_REAL_HOMEBREW:-false}" \
+        TEST_COMPARE_STATUS="${TEST_COMPARE_STATUS:-complete}" \
             ./bootstrap.sh "$@"
     ) > "$TEST_ROOT/output" 2>&1
     ENTRYPOINT_STATUS=$?
@@ -218,6 +232,28 @@ fi
 
 run_entrypoint --check --discover
 assert_status 1 "conflicting execution modes are rejected"
+
+run_entrypoint --compare
+assert_status 0 "--compare completes without encoding the comparison verdict in exit status"
+if [[ "$ENTRYPOINT_OUTPUT" == *'Environment Comparison report'* &&
+      "$ENTRYPOINT_OUTPUT" == *'Modules Inspected : 1'* &&
+      "$(grep -c '^ Environment Comparison$' <<< "$ENTRYPOINT_OUTPUT")" -eq 1 &&
+      "$ENTRYPOINT_SPY" == comparison-inspection ]]; then
+    pass "compare uses the production runtime and existing comparison operation"
+else
+    fail "compare dispatch or Summary is incorrect: $ENTRYPOINT_OUTPUT / $ENTRYPOINT_SPY"
+fi
+if [[ "$ENTRYPOINT_SPY" != *discovery* && "$ENTRYPOINT_SPY" != *launcher-setup* &&
+      "$ENTRYPOINT_SPY" != *-install* && "$ENTRYPOINT_SPY" != *-write* &&
+      "$ENTRYPOINT_SPY" != *sudo* ]]; then
+    pass "compare does not run Discovery, Apply, or admin preflight"
+else
+    fail "compare reached a mutating path: $ENTRYPOINT_SPY"
+fi
+TEST_COMPARE_STATUS=incomplete run_entrypoint --compare
+assert_status 2 "incomplete comparison observation returns operational error 2"
+run_entrypoint --compare --dry-run
+assert_status 1 "compare is exclusive with other execution modes"
 
 run_entrypoint --dry-run --dry-run
 assert_status 1 "duplicate execution modes are rejected"

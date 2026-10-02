@@ -44,11 +44,18 @@ mv() {
         mutation "mv $*"
     fi
 }
-# Git validation temporary files are allowed; targets are not.
+# Keep anonymous temporary files inside the fixture; cleanup elsewhere is a mutation.
+mktemp() {
+    if [[ $# -eq 0 ]]; then
+        command mktemp "$TEST_TEMP_DIR/tmp.XXXXXXXXXX"
+    else
+        command mktemp "$@"
+    fi
+}
 rm() {
     local arg
     for arg in "$@"; do
-        [[ "$arg" == -* || "$arg" == "$TMPDIR"/* ||
+        [[ "$arg" == -* || "$arg" == "$TEST_TEMP_DIR"/* ||
            ( ( "${TEST_MODE:-}" == --workflow || "${TEST_MODE:-}" == --blueprint ) && "$arg" == config/blueprint.conf.tmp.* ) ]] || { mutation "rm $*"; return 99; }
     done
     command rm "$@"
@@ -126,7 +133,7 @@ defaults() {
 SPIES
 
 reset_fixture() {
-    rm -rf "$FIXTURE/config/generated" "$TEST_ROOT/home"
+    rm -rf "${FIXTURE:?}/config/generated" "${TEST_ROOT:?}/home"
     rm -f "$FIXTURE/config/blueprint.conf"
     mkdir -p "$FIXTURE/config/generated/"{vscode,workspace,macos} \
         "$TEST_ROOT/launcher-bin" \
@@ -240,6 +247,7 @@ run_case() {
         env HOME="$TEST_ROOT/home" SHELL=/bin/zsh TMPDIR="$TEST_ROOT/tmp" \
             GIT_CONFIG_NOSYSTEM=1 \
             BASH_ENV="$TEST_ROOT/spies.sh" TEST_CASE="$scenario" \
+            TEST_TEMP_DIR="$TEST_ROOT/tmp" \
             BS_INSTALL_DIR="$TEST_ROOT/launcher-bin" \
             TEST_MODE="${TEST_MODE:---dry-run}" TEST_MUTATIONS="$TEST_ROOT/mutations" TEST_OBSERVATIONS="$TEST_ROOT/observations" \
             /bin/bash ./bootstrap.sh "${TEST_MODE:---dry-run}"

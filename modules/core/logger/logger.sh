@@ -5,6 +5,9 @@
 # ==========================================
 
 LOG_DIR="logs"
+if [[ "${MACSEED_APPLICATION_CAPTURE:-false}" == true && "${MACSEED_APPLICATION_EXECUTION:-false}" == true ]]; then
+    LOG_DIR="$BLUEPRINT_GENERATED_DIR/../logs"
+fi
 LOG_HISTORY_DIR="$LOG_DIR/history"
 LOG_FILE=""
 LATEST_LOG="$LOG_DIR/latest.log"
@@ -40,6 +43,9 @@ init_logger() {
         --dry-run)
             LOG_PREFIX="preview"
             ;;
+        --compare)
+            LOG_PREFIX="compare"
+            ;;
         *)
             LOG_PREFIX="unknown"
             ;;
@@ -72,6 +78,9 @@ init_logger() {
             ;;
         --dry-run)
             log "Mode     : Preview"
+            ;;
+        --compare)
+            log "Mode     : Environment Comparison"
             ;;
         *)
             log "Mode     : Unknown"
