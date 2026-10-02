@@ -376,6 +376,55 @@ Blueprint не владеет обнаруженными значениями, �
 
 ## Текущие архитектурные контракты
 
+### Структурированный application Capture
+
+Protocol V1 предоставляет `capture_prepare` и `capture_execute`. Первый scan
+принимает `selection: null`; повторный Prepare с выбранным scope формирует review.
+Production Discovery exporters пишут только в приватный staging: обычные Generated
+Configuration и сохранённый Blueprint не заменяются. Stdin закрыт, stdout/stderr
+дочерних процессов подавлены, логи удаляются вместе со staging. Category events
+приходят из structured collector, без разбора CLI output. Интернет и административная
+подготовка не входят в этот read-only scan.
+
+Результат Prepare содержит `prepared_capture_id`, `inventory`, `secure_identities`,
+`selection` и `summary`. Inventory row: `domain`, `status` (`present`, `unavailable`,
+`observation_error`, `unsupported`), nullable `reason`, `selection_mode` и `items`
+с `item_id`/`label`. Источник — production exporters и Blueprint candidate helpers;
+отсутствие не подменяет ошибку наблюдения. Не наблюдённый scope выбирать нельзя.
+Сохраняются безопасные inventory IDs и имена Git keys; repository IDs непрозрачны,
+безопасные имена используются как labels. Значения, URLs и settings contents исключены.
+Collector ограничен 2048 items на domain и 1 MiB staging inventory.
+
+Selection содержит `categories` для целых domains, `items` для существующих
+Blueprint item domains и отдельный `secure_identities`. Дубликаты и пересечение
+whole-domain/item selection запрещены. Core создаёт production Blueprint для
+валидации и Bundle writer; интерактивный selector не используется как UI protocol.
+Перед Execute требуется Prepare с выбранным scope.
+
+Execute принимает selection, `expected_prepared_capture_id` и абсолютный
+`destination` с расширением `.mbt`: parent должен существовать, быть каноническим
+и принадлежать пользователю; существующий файл не заменяется. Повторный Discovery,
+metadata candidates и canonical selection связывают deterministic ID; stale input
+блокирует публикацию. Затем используются production Preview validation, portability
+и `bundle.pack` с прежним Bundle v1 и strict validation. ID не является авторизацией
+или гарантией подлинности. No-clobber публикация атомарна; handled failures сообщают
+`publication_occurred`, отмена после публикации не заявляет rollback. Resume database нет.
+
+SSH candidates содержат ID, безопасное имя, тип, public fingerprint и
+`candidate_requires_pair_validation`. Prepare не разблокирует keys; source stamps
+связывают подготовку, выбранные пары полностью проверяет Stage 12 packager перед
+шифрованием. Secure selection отделён от Generated Configuration. Унаследованный
+secret socket сохраняет binary response framing, добавляет Capture-only
+`bundle_encrypt` и использует отдельный `ssh_key_unlock` для protected keys. Age
+получает новый Bundle passphrase через изолированный PTY с подтверждением; secrets
+не попадают в JSON, argv или logs. Age/channel требуются только при Secure selection;
+автоматической установки age нет.
+
+Capture передаёт phase/category events, безопасную challenge metadata, результат
+и ровно один handled terminal event. Отмена останавливает принадлежащие Core
+process groups и удаляет private staging. Обычный `bs capture`, его prompts,
+selection и encryption не меняются. Desktop, Compare и packaging остаются вне scope.
+
 ### Discovery
 
 Discovery наблюдает поддерживаемую область, не изменяя её. Цикл публикации

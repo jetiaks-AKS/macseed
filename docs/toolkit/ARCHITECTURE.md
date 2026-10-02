@@ -84,6 +84,58 @@ new plan. Execute repeats preparation, rejects stale IDs, rechecks actual launch
 readiness and blocks unresolved Preview errors before publication. There is no
 transaction/resume database. Execution reporting projects existing production Verification records.
 
+### Structured application Capture
+
+Protocol V1 exposes `capture_prepare` and `capture_execute`. Preparation accepts
+`selection: null` for an initial scan, or a validated selection for review. Both
+operations run production Discovery exporters into owned private staging; they
+never replace ordinary Generated Configuration or the saved local Blueprint.
+Ordinary stdin is closed, child output is suppressed, logs remain in disposable
+staging, and category progress comes from a structured collector rather than CLI
+text. Internet/admin setup is not part of this read-only application scan.
+
+Preparation returns `prepared_capture_id`, `inventory`, `secure_identities`,
+`selection` and a selected-scope `summary`. Each inventory row has `domain`,
+`status` (`present`, `unavailable`, `observation_error`, `unsupported`), nullable
+`reason`, `selection_mode` (`items` or `category`) and `items` (`item_id`, `label`).
+Rows project production exporter results and Blueprint candidate helpers. Confirmed
+absence is distinct from failed observation; unobserved categories cannot be selected.
+Safe inventory IDs and managed Git keys are visible; repository IDs are opaque,
+with safe names where available. Values, remote URLs and settings contents stay private.
+The collector is limited to 2048 items per domain and 1 MiB of staged inventory.
+
+Selection contains `categories` (whole domains), `items` (domain to selected item IDs)
+and `secure_identities` (candidate IDs). Whole-domain and item selections cannot
+repeat or overlap. Item subsets are limited to existing Blueprint item domains.
+Core writes a production Blueprint from the validated selection for validators and
+Bundle creation; no interactive selector or UI-specific Blueprint format is used.
+Call prepare again with the chosen selection before Create Bundle.
+
+Execute requires that selection, `expected_prepared_capture_id` and an absolute
+`destination` ending in `.mbt`, with an existing canonical owned parent and no
+existing destination. It rescans, recomputes the deterministic binding over staged
+Discovery inputs, candidate metadata and canonical selection, rejects stale input,
+then uses production Preview validation, portability checks and `bundle.pack`.
+The ID is neither authorization nor authenticity. Atomic no-clobber publication
+retains the existing Bundle v1 format and strict validator, including private file
+permissions. Handled failures report `publication_occurred`; cancellation after
+publication does not pretend the Bundle was rolled back. No resume database exists.
+
+Secure candidates expose ID, safe name, key type, public fingerprint and the explicit
+`candidate_requires_pair_validation` disposition. Preparation never unlocks keys.
+Metadata and source file stamps bind preparation; selected pairs are revalidated by
+the Stage 12 packager before encryption. Secure selection remains separate from
+Generated Configuration. The inherited secret socket reuses the existing binary
+response framing, adds Capture-only `bundle_encrypt`, and retains `ssh_key_unlock`
+for protected keys. Age receives the new Bundle passphrase through an isolated PTY,
+including its confirmation prompt. No secret enters JSON, argv or logs. Age and a
+valid channel are required only when identities are selected; Core never installs age.
+
+Capture emits phase/category events, safe Secure challenge metadata, a result and
+exactly one handled terminal event. Cancellation stops owned process groups and
+removes private staging. Ordinary `bs capture` selection, prompts and encryption
+behavior remain unchanged. Desktop, Compare and packaging remain separate work.
+
 ### Structured execution and Verification
 
 Application Bootstrap emits machine records through a dedicated non-secret owned

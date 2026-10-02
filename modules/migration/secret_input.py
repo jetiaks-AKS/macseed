@@ -17,7 +17,7 @@ MAX_FRAME = 2048
 MAX_SECRET = 128  # Fits the smallest supported terminal canonical input limit.
 WAIT_SECONDS = 120
 TOOL_SECONDS = 30
-KINDS = {'bundle_unlock', 'ssh_key_unlock', 'import_confirmation'}
+KINDS = {'bundle_unlock', 'ssh_key_unlock', 'import_confirmation', 'bundle_encrypt'}
 
 
 class SecureError(Exception):
@@ -142,7 +142,7 @@ class Input:
         self.channel.close()
 
 
-def tool(command, secret, stdout=None, pass_fds=()):
+def tool(command, secret, stdout=None, pass_fds=(), secret_repeats=1):
     """Only this child sees the PTY. No controlling terminal, no prompt forwarding."""
     master, slave = pty.openpty()
     child = None
@@ -164,7 +164,7 @@ def tool(command, secret, stdout=None, pass_fds=()):
         streams = [master]
         if child.stdout is not None:
             streams.append(child.stdout.fileno())
-        sent = False
+        sent = 0
         deadline = time.monotonic() + TOOL_SECONDS
         while streams:
             if time.monotonic() >= deadline:
@@ -185,10 +185,12 @@ def tool(command, secret, stdout=None, pass_fds=()):
                 target.extend(chunk)
                 if len(target) > 65536:
                     raise SecureError('secure_tool_failed')
-                if fd == master and not sent and b': ' in diagnostic:
+                if fd == master and sent < secret_repeats and b': ' in diagnostic:
                     # Write only after the tool installs its terminal input mode.
                     os.write(master, secret + b'\n')
-                    sent = True
+                    sent += 1
+                    if secret_repeats > 1:
+                        diagnostic.clear()
         return child.wait(timeout=1), bytes(output), bytes(diagnostic)
     finally:
         if child is not None:
@@ -250,3 +252,14 @@ def decrypt(input_fd, out, interaction):
         if b'incorrect passphrase' not in diagnostic and b'failed to decrypt' not in diagnostic:
             raise SecureError('secure_tool_failed')
     raise SecureError('secure_unlock_rejected')
+
+
+def encrypt(input_fd, out, interaction):
+    secret = interaction.ask('bundle_encrypt')
+    try:
+        status, _, _ = tool(['age', '-p', '/dev/fd/' + str(input_fd)], secret,
+                            stdout=out, pass_fds=(input_fd,), secret_repeats=2)
+    finally:
+        del secret
+    if status != 0:
+        raise SecureError('secure_tool_failed')

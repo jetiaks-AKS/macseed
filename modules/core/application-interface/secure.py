@@ -1,4 +1,4 @@
-"""Own the existing Stage 12 importer and relay its transient input challenges."""
+"""Own Stage 12 import/export processes and relay transient input challenges."""
 import json
 import os
 from pathlib import Path
@@ -13,7 +13,7 @@ import uuid
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'migration'))
 from evidence import read_evidence
-from secret_input import (KINDS, WAIT_SECONDS, SecureError, inherited_socket,
+from secret_input import (WAIT_SECONDS, SecureError, inherited_socket,
                           metadata, receive, response, send)
 
 
@@ -50,11 +50,12 @@ def terminate(child):
             child.wait()
 
 
-def import_secure(root, package, channel, operation_id, event, mutation):
+def import_secure(root, package, channel, operation_id, event, mutation, export_selection=None):
     child = None
     parent, endpoint = socket.socketpair()
     parent.setblocking(False)
     attempt = uuid.uuid4().hex
+    failure_code = 'secure_import_failed' if export_selection is None else 'secure_export_failed'
     try:
         with tempfile.TemporaryDirectory(prefix='macseed-evidence-', dir='/private/tmp') as temporary:
             os.chmod(temporary, 0o700)
@@ -63,6 +64,10 @@ def import_secure(root, package, channel, operation_id, event, mutation):
                 command = ['./scripts/ssh-identity-migrate.sh', 'import', '--input', str(package.parent.resolve() / package.name),
                            '--internal-evidence', evidence, '--attempt', attempt,
                            '--application-channel-fd', str(endpoint.fileno()), '--operation-id', operation_id]
+                if export_selection is not None:
+                    command = ['./scripts/ssh-identity-migrate.sh', 'application-export', '--output', str(package),
+                               '--selection', str(export_selection), '--application-channel-fd', str(endpoint.fileno()),
+                               '--operation-id', operation_id]
                 environment = dict(os.environ)
                 # Launch metadata cannot leak into secret consumer or ordinary child setup.
                 for name in ('MACSEED_APPLICATION_SECURE_READY', 'MACSEED_SECURE_EVIDENCE_FD'):
@@ -74,7 +79,7 @@ def import_secure(root, package, channel, operation_id, event, mutation):
                 endpoint.close()
                 code = None
                 deadline = time.monotonic() + WAIT_SECONDS
-                event('phase_started', {'phase': 'secure_import'})
+                event('phase_started', {'phase': 'secure_packaging' if export_selection is not None else 'secure_import'})
                 while code is None:
                     if time.monotonic() >= deadline:
                         raise SecureError('secure_channel_timeout')
@@ -86,13 +91,13 @@ def import_secure(root, package, channel, operation_id, event, mutation):
                         raise SecureError('secure_channel_invalid')
                     if parent not in ready:
                         if child.poll() is not None:
-                            raise SecureError('secure_import_failed')
+                            raise SecureError(failure_code)
                         continue
                     try:
                         message = json.loads(receive(parent, deadline).decode('ascii'))
                     except SecureError as exc:
                         if exc.code == 'secure_cancelled':
-                            raise SecureError('secure_import_failed') from None
+                            raise SecureError(failure_code) from None
                         raise
                     except (ValueError, UnicodeError):
                         raise SecureError('secure_channel_invalid') from None
@@ -102,7 +107,7 @@ def import_secure(root, package, channel, operation_id, event, mutation):
                     elif isinstance(message, dict) and message.get('type') == 'challenge':
                         if (set(message) != {'type', 'protocol_version', 'operation_id', 'challenge_id', 'kind', 'attempt'} or
                                 type(message['protocol_version']) is not int or message['protocol_version'] != 1 or message['operation_id'] != operation_id or
-                                message['kind'] not in KINDS or type(message['attempt']) is not int or
+                                message['kind'] not in ({'bundle_encrypt', 'ssh_key_unlock'} if export_selection is not None else {'bundle_unlock', 'ssh_key_unlock', 'import_confirmation'}) or type(message['attempt']) is not int or
                                 not 1 <= message['attempt'] <= 3 or
                                 not isinstance(message['challenge_id'], str) or len(message['challenge_id']) != 32):
                             raise SecureError('secure_channel_invalid')
@@ -123,31 +128,40 @@ def import_secure(root, package, channel, operation_id, event, mutation):
                           message['type'] == 'finish' and message['code'] in
                           {'success', 'secure_cancelled', 'secure_target_conflict', 'secure_payload_invalid',
                            'secure_import_failed', 'secure_tool_failed', 'secure_unlock_rejected',
-                           'secure_key_unlock_rejected', 'secure_channel_timeout', 'secure_channel_invalid'}):
+                           'secure_key_unlock_rejected', 'secure_channel_timeout', 'secure_channel_invalid',
+                           'secure_export_failed'} and
+                          (message['code'] != 'secure_export_failed' or export_selection is not None)):
                         code = message['code']
                     else:
                         raise SecureError('secure_channel_invalid')
                 try:
                     status = child.wait(timeout=3)
                 except subprocess.TimeoutExpired:
-                    raise SecureError('secure_import_failed') from None
-                raw = read_evidence(evidence, attempt, status)
+                    raise SecureError(failure_code) from None
+                raw = None if export_selection is not None else read_evidence(evidence, attempt, status)
                 if code != 'success':
                     error = SecureError(code)
-                    error.evidence = (raw, attempt, status)
+                    if export_selection is None:
+                        error.evidence = (raw, attempt, status)
                     raise error
                 if status != 0:
-                    raise SecureError('secure_import_failed')
-                event('phase_completed', {'phase': 'secure_import'})
-                return raw, attempt, status
+                    raise SecureError(failure_code)
+                event('phase_completed', {'phase': 'secure_packaging' if export_selection is not None else 'secure_import'})
+                return None if export_selection is not None else (raw, attempt, status)
             finally:
                 if child is not None:
                     terminate(child)
     except (OSError, ValueError):
-        raise SecureError('secure_import_failed') from None
+        raise SecureError(failure_code) from None
     finally:
         if child is not None:
             terminate(child)
         parent.close()
         endpoint.close()
         channel.close()
+
+
+def export_secure(root, package, selection, channel, operation_id, event):
+    def unexpected_mutation():
+        raise SecureError('secure_channel_invalid')
+    return import_secure(root, package, channel, operation_id, event, unexpected_mutation, selection)

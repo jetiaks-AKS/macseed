@@ -7,8 +7,12 @@ migration_run() {
         if [[ $# -eq 10 && "$7" == --application-channel-fd && "$8" =~ ^[0-9]+$ && "$8" -gt 2 ]]; then
             eval "exec ${8}<&-"
         fi
+        if [[ $# -eq 7 && "$4" == --application-channel-fd && "$5" =~ ^[0-9]+$ && "$5" -gt 2 ]]; then
+            eval "exec ${5}<&-"
+        fi
         cat <<'PY'
 import hashlib
+import json
 import os
 import re
 import shutil
@@ -30,12 +34,15 @@ TYPES = {'ssh-ed25519', 'ssh-rsa', 'ecdsa-sha2-nistp256',
 sys.dont_write_bytecode = True
 sys.path.insert(0, sys.argv.pop(1))
 from evidence import Evidence
-from secret_input import Input, SecureError, PrivateTemporaryDirectory, decrypt, key_public
+from secret_input import Input, SecureError, PrivateTemporaryDirectory, decrypt, key_public, encrypt
 mode, *args = sys.argv[1:]
 interaction = None
 if mode == 'import' and len(args) == 9:
     interaction = Input(int(args[6]), args[8])
     args = args[:5]
+if mode == 'application-export' and len(args) == 6:
+    interaction = Input(int(args[3]), args[5])
+    args = args[:2]
 evidence = Evidence(args[2], args[4]) if mode == 'import' and len(args) == 5 else Evidence()
 secure_code = None
 private_temporary = PrivateTemporaryDirectory if interaction is not None else tempfile.TemporaryDirectory
@@ -289,6 +296,24 @@ def capture_candidates():
             say('Excluded: unsuitable identity')
     return found
 
+def application_candidates():
+    if not ssh_check(allow_missing=True):
+        return {'status': 'unavailable', 'reason': 'source_absent', 'items': []}
+    entries = []
+    for name, kind, fp in capture_candidates():
+        states = []
+        for suffix in ('', '.pub'):
+            metadata = os.lstat(os.path.join(ssh, name + suffix))
+            states.append((metadata.st_dev, metadata.st_ino, metadata.st_size, metadata.st_mtime_ns,
+                           metadata.st_ctime_ns, metadata.st_mode, metadata.st_uid))
+        stamp = hashlib.sha256(json.dumps(states).encode()).hexdigest()
+        item_id = hashlib.sha256((name + ':' + fp).encode()).hexdigest()
+        entries.append({'item_id': item_id, 'label': name, 'key_type': kind, 'fingerprint': fp,
+                        'validation': 'candidate_requires_pair_validation', '_stamp': stamp, '_name': name})
+    if len(entries) > MAX_ITEMS:
+        raise Invalid('too many candidates')
+    return {'status': 'present' if entries else 'unavailable', 'reason': None if entries else 'no_eligible_identities', 'items': entries}
+
 def ask(prompt):
     if interaction is not None:
         interaction.ask('import_confirmation')
@@ -521,6 +546,9 @@ def run():
     for dependency in ('ssh-keygen', 'tar', 'python3'):
         if not shutil.which(dependency):
             raise Invalid('required tool missing: ' + dependency)
+    if mode == 'application-list':
+        print(json.dumps(application_candidates(), sort_keys=True))
+        return
     if mode == 'list':
         for index, (name, kind, fp) in enumerate(candidates(), 1):
             print(f'{index}. {name} {kind} {fp}')
@@ -529,7 +557,7 @@ def run():
         raise Invalid('age required')
     if not os.isatty(0) and interaction is None:
         raise Invalid('interactive terminal required')
-    if mode in ('export', 'capture-export'):
+    if mode in ('export', 'capture-export', 'application-export'):
         output = args[0]
         if os.path.lexists(output) or os.path.islink(output):
             raise Conflict('export destination exists')
@@ -537,40 +565,54 @@ def run():
         owned(parent, 'dir', 0o700)
         if os.path.realpath(parent) != parent:
             raise Invalid('export parent contains symlink')
-        items = capture_candidates() if mode == 'capture-export' else candidates()
-        if not items:
+        if mode == 'application-export':
+            selected = json.loads(data(args[1]))
+            current = {entry['item_id']: entry for entry in application_candidates()['items']}
+            if (not isinstance(selected, list) or not 1 <= len(selected) <= MAX_ITEMS or
+                    len({entry['item_id'] for entry in selected}) != len(selected) or
+                    any(current.get(entry['item_id']) != entry for entry in selected)):
+                raise Conflict('selected identity changed')
+            chosen = sorted(entry['_name'] for entry in selected)
+            candidate_details = {entry['_name']: (entry['key_type'], entry['fingerprint']) for entry in selected}
+        else:
+            items = capture_candidates() if mode == 'capture-export' else candidates()
+            if not items:
+                if mode == 'capture-export':
+                    say('No candidate SSH identities found')
+                    return
+                raise Invalid('no eligible identities')
             if mode == 'capture-export':
-                say('No candidate SSH identities found')
-                return
-            raise Invalid('no eligible identities')
-        if mode == 'capture-export':
-            say('Select candidate SSH identities; each selected key will be fully validated before encryption.')
-        for index, (name, kind, fp) in enumerate(items, 1):
-            print(f'{index}. {name} {kind} {fp}')
-        selection = ask('Select numbers (comma separated): ')
-        if not selection:
-            raise Cancel()
-        try:
-            indices = [int(x.strip()) for x in selection.split(',')]
-            if len(indices) > MAX_ITEMS or len(indices) != len(set(indices)) or any(i < 1 or i > len(items) for i in indices):
-                raise ValueError()
-        except ValueError:
-            raise Invalid('invalid selection')
-        chosen = sorted(items[i-1][0] for i in indices)
-        candidate_details = {name: (kind, fp) for name, kind, fp in items}
-        if mode == 'capture-export':
-            for name in chosen:
-                kind, fp = candidate_details[name]
-                print(f'Candidate export: {name} {kind} {fp}')
-            print('Destination:', output)
-            if ask('Type export to confirm: ') != 'export':
+                say('Select candidate SSH identities; each selected key will be fully validated before encryption.')
+            for index, (name, kind, fp) in enumerate(items, 1):
+                print(f'{index}. {name} {kind} {fp}')
+            selection = ask('Select numbers (comma separated): ')
+            if not selection:
                 raise Cancel()
+            try:
+                indices = [int(x.strip()) for x in selection.split(',')]
+                if len(indices) > MAX_ITEMS or len(indices) != len(set(indices)) or any(i < 1 or i > len(items) for i in indices):
+                    raise ValueError()
+            except ValueError:
+                raise Invalid('invalid selection')
+            chosen = sorted(items[i-1][0] for i in indices)
+            candidate_details = {name: (kind, fp) for name, kind, fp in items}
+            if mode == 'capture-export':
+                for name in chosen:
+                    kind, fp = candidate_details[name]
+                    print(f'Candidate export: {name} {kind} {fp}')
+                print('Destination:', output)
+                if ask('Type export to confirm: ') != 'export':
+                    raise Cancel()
         records = []
         for name in chosen:
             kind, fp, private, public = validate_pair(os.path.join(ssh, name), os.path.join(ssh, name + '.pub'))
-            if mode == 'capture-export' and (kind, fp) != candidate_details[name]:
+            if mode in ('capture-export', 'application-export') and (kind, fp) != candidate_details[name]:
                 raise Conflict('selected identity changed')
             records.append((name, kind, fp, private, public))
+        if mode == 'application-export':
+            current = {entry['item_id']: entry for entry in application_candidates()['items']}
+            if any(current.get(entry['item_id']) != entry for entry in selected):
+                raise Conflict('selected identity changed')
         if sum(len(r[3]) + len(r[4]) for r in records) > MAX_PACKAGE - 65536:
             raise Invalid('selected identities exceed package limit')
         if mode == 'export':
@@ -608,7 +650,11 @@ def run():
                     age = None
                     try:
                         tar_fd = tar.stdout.fileno()
-                        age = subprocess.run(['age', '-p', '/dev/fd/' + str(tar_fd)], stdout=out, pass_fds=(tar_fd,))
+                        if mode == 'application-export':
+                            encrypt(tar_fd, out, interaction)
+                            age = subprocess.CompletedProcess([], 0)
+                        else:
+                            age = subprocess.run(['age', '-p', '/dev/fd/' + str(tar_fd)], stdout=out, pass_fds=(tar_fd,))
                     finally:
                         tar.stdout.close()
                         if tar.poll() is None and (age is None or age.returncode != 0):
@@ -765,6 +811,8 @@ try:
 except (OSError, ValueError, KeyboardInterrupt):
     pass # Evidence transport never changes the standalone import result.
 if interaction is not None:
+    if mode == 'application-export' and status != 0 and secure_code is None:
+        secure_code = 'secure_cancelled' if status in (1, 130) else 'secure_export_failed'
     if secure_code is None:
         secure_code = ('success' if status == 0 else
                        'secure_cancelled' if evidence.reason == 'cancelled' else

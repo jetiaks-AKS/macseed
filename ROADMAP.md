@@ -259,7 +259,11 @@ production Restore consumers с последующей Global Verification. ID �
 Application execution теперь передаёт lifecycle events и подробные production
 Verification/Coverage/Operation records вместе с прежними агрегатами; исход операции
 отделён от соответствия, а сбой и отмена сохраняют доступные частичные records.
-Следующие задачи этапа — структурированные Capture и Compare/Environment Status.
+Application Capture теперь предоставляет structured inventory, выбор по семантике
+Blueprint и создание production Bundle с повторным Discovery и проверкой prepared ID.
+Secure SSH selection отделён от generated state; encrypted export использует тот же
+secret channel с отдельным Bundle encryption challenge и SSH-key unlock.
+Следующая задача этапа — structured Compare/Environment Status.
 Runtime compatibility и подключение
 GUI относятся к интеграции Desktop, без второго движка Restore.
 

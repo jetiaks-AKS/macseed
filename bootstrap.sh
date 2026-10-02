@@ -1030,7 +1030,12 @@ case "$MODE" in
 
     --discover)
 
-        run_discovery
+        if [[ "${MACSEED_APPLICATION_CAPTURE:-false}" == true && "${MACSEED_APPLICATION_EXECUTION:-false}" == true ]]; then
+            source modules/core/application-interface/capture-discovery.sh
+            capture_discovery || { close_logger; exit 2; }
+        else
+            run_discovery
+        fi
 
         ;;
 

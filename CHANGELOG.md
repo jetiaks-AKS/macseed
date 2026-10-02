@@ -11,6 +11,11 @@ The format is based on the principles of **Keep a Changelog**.
 
 ### Added
 
+* Added Protocol V1 application Capture preparation and Bundle creation with
+  structured Discovery inventory, Blueprint selection and stale-input protection.
+  Optional SSH identities use the existing encrypted package and a separate secret
+  channel; private staging and no-clobber publication preserve terminal Capture.
+
 * Added the Protocol V1 Core application interface with capability reporting,
   read-only Bundle inspection, `restore_prepare`, and `restore_execute`.
   Restore reuses production Preview and Bootstrap, rejects stale plans, supports

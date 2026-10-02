@@ -536,7 +536,8 @@ def main(version, channel=None):
     for name in ("MACSEED_APPLICATION_SECURE_READY", "MACSEED_APPLICATION_SECURE_ONLY",
                  "MACSEED_APPLICATION_SECURE_VERIFY_ONLY", "MACSEED_SECURE_EVIDENCE_FD",
                  "MACSEED_SECURE_ATTEMPT", "MACSEED_SECURE_EXIT", "MACSEED_REPORT_FD",
-                 "MACSEED_REPORT_COUNT", "MACSEED_REPORT_INVALID"):
+                 "MACSEED_REPORT_COUNT", "MACSEED_REPORT_INVALID", "MACSEED_APPLICATION_CAPTURE",
+                 "MACSEED_CAPTURE_INVENTORY"):
         os.environ.pop(name, None)
     try:
         value = request()
@@ -555,6 +556,16 @@ def main(version, channel=None):
         if operation == "capabilities":
             if set(value) != required:
                 raise ValueError("invalid capabilities request")
+        elif operation in ("capture_prepare", "capture_execute"):
+            if set(value) != required | {"parameters"} or not isinstance(value['parameters'], dict):
+                raise ValueError('invalid Capture parameters')
+            parameters = value['parameters']
+            expected = {'selection'} if operation == 'capture_prepare' else {'selection', 'destination', 'expected_prepared_capture_id'}
+            if set(parameters) != expected or (operation == 'capture_execute' and parameters['selection'] is None):
+                raise ValueError('invalid Capture parameters')
+            if operation == 'capture_execute' and (not isinstance(parameters['expected_prepared_capture_id'], str) or
+                    not PREPARED_PLAN_ID.fullmatch(parameters['expected_prepared_capture_id'])):
+                raise ValueError('invalid Capture prepared ID')
         elif operation in ("bundle_inspect", "restore_prepare", "restore_execute"):
             if set(value) != required | {"parameters"}:
                 raise ValueError("invalid Bundle request")
@@ -583,10 +594,24 @@ def main(version, channel=None):
         emit(1, "failed", operation_id, {"code": "invalid_request"})
         return 2
 
-    if channel is not None and (operation != "restore_execute" or not include_secure):
+    if channel is not None and operation != "capture_execute" and (operation != "restore_execute" or not include_secure):
         channel.close()
         channel = None
     emit(1, "started", operation_id)
+    if operation in ('capture_prepare', 'capture_execute'):
+        from capture import capture, CaptureError
+        sequence = 1
+        def capture_event(kind, data=None):
+            nonlocal sequence
+            sequence += 1
+            emit(sequence, kind, operation_id, data)
+        parameters['_operation_id'] = operation_id
+        try:
+            with restore_signals():
+                return capture(ROOT, operation, parameters, channel, capture_event)
+        except CaptureError as exc:
+            capture_event('failed', {'code': exc.code, 'publication_occurred': False})
+            return 2
     if operation == "restore_execute":
         if len(disabled_groups) != len(set(disabled_groups)) or any(item not in bundle.GROUPS for item in disabled_groups):
             emit(2, "failed", operation_id, {"code": "invalid_selection",
@@ -598,7 +623,7 @@ def main(version, channel=None):
         result = {
             "protocol_version": PROTOCOL_VERSION,
             "product_version": version,
-            "operations": ["capabilities", "bundle_inspect", "restore_prepare", "restore_execute"],
+            "operations": ["capabilities", "bundle_inspect", "restore_prepare", "restore_execute", "capture_prepare", "capture_execute"],
         }
     else:
         try:
