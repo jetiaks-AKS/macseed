@@ -1,106 +1,63 @@
 # Macseed
 
-**Capture. Rebuild. Continue.**
+**Capture → Rebuild → Verify**
 
-English | [Русский](README.ru.md)
+Macseed captures the supported parts of a working Mac, reconstructs them on
+another Mac, and reports what matches the selected environment. It reduces
+manual setup while preserving existing user state when safe convergence is
+not possible.
 
-A Bash-based tool today, with a native macOS application planned around its
-existing core for capturing, rebuilding, and verifying a working environment.
+Applications are installed again, repositories are cloned from remotes, and
+supported settings are restored. Macseed does not clone a Mac or transfer
+arbitrary user files, application databases, caches or sessions. Explicitly
+selected SSH identities can travel in an encrypted payload.
 
-**Current version: 3.3.0 Stable**
+## Use Macseed today
 
-## Overview
-
-Macseed discovers supported parts of an existing Mac, stores
-that state as local configuration, lets the user select a restoration scope,
-previews the resulting changes, and applies them on a target Mac.
-
-It captures the reproducible parts of an existing working Mac, selectively
-rebuilds the supported working environment on a clean Mac, and verifies what
-was restored where the current modules can observe it. It does not clone the
-source Mac or serve as a backup, Migration Assistant replacement, or universal
-application-state migration system.
-
-```text
-Discovery → Generated Configuration → Blueprint → Preview → Bootstrap
-```
-
-- **Discovery** records supported current state in `config/generated/`.
-- **Generated Configuration** is private, machine-specific derived data.
-- **Blueprint** optionally selects which discovered components to restore.
-- **Preview** inspects and reports selected changes without applying them.
-- **Bootstrap** applies the selected supported state idempotently and verifies
-  results where the current module can observe them.
-
-Global Verification reports the selected requirements after Bootstrap, Workflow,
-and applicable Restore runs. `bs compare` explicitly compares the selected
-environment with the current Mac without changing it.
-
-Without a Blueprint, the full supported generated scope is processed.
-
-## Capabilities
-
-- Homebrew formulae and casks;
-- App Store applications;
-- global Git configuration;
-- restricted SSH client configuration;
-- VS Code extensions and settings;
-- limited standalone Zsh `.zshrc` restoration;
-- Workspace folders and Git repositories;
-- macOS settings for Finder, Dock, Window Management, Keyboard, Trackpad, and
-  Screenshots.
-
-The exact configuration formats, supported macOS preferences, validation
-rules, and restoration limits are documented in
-[Configuration](docs/toolkit/CONFIGURATION.md).
-
-## Quick Start
-
-Choose the path that matches your task:
+The official CLI supports these workflows:
 
 ```bash
-bs workflow                         # Discover, select, preview and apply on this Mac
-bs capture                          # Create one private Bundle on the source Mac
-bs restore /path/to/bundle.mbt       # Reconstruct on the new Mac
+bs workflow                         # Select, preview and apply on this Mac
+bs capture                          # Create a private Bundle on the source Mac
+bs restore /path/to/environment.mbt  # Rebuild on the target Mac
+bs compare                          # Compare selected state with this Mac
 ```
 
-For a move between Macs, run `bs capture` on the old Mac, privately transfer
-the resulting `.mbt` file, then run `bs restore /path/to/bundle.mbt` on the new
-Mac. Afterwards, use `bs workflow` normally on the new Mac. Clone the Toolkit
-repository on each Mac; before `bs` is installed, use `./bootstrap.sh --workflow`,
-`./bootstrap.sh --capture`, or `./bootstrap.sh --restore /path/to/bundle.mbt`
-from its root.
+Clone the repository on each Mac. Before `bs` is installed, run the equivalent
+`./bootstrap.sh --workflow`, `--capture`, `--restore <bundle>` or `--compare`
+from its root. See the [CLI Quick Start](docs/getting-started/QUICKSTART.md).
 
-Applications are installed and Git repositories are cloned from remotes;
-working trees and user files are not copied. Optional selected SSH identities
-use an encrypted Secure Credentials payload. See
-[Quick Start](docs/getting-started/QUICKSTART.md) for the steps and
-[CLI](docs/toolkit/CLI.md) for advanced individual commands.
+Supported state includes Homebrew and App Store applications, VS Code,
+Git and SSH configuration, standalone Zsh configuration, Workspace structure
+and repositories, and selected macOS settings. Capture produces one private
+`.mbt` Bundle; its normal configuration is **not encrypted**. Review it and
+transfer it privately. Only the optional SSH identity payload is encrypted.
+
+Global Verification reports selected requirements after Apply. Explicit
+Environment Comparison reports differences and supported extras without
+removing anything. See [Capture / Restore](docs/CAPTURE-RESTORE.md) for boundaries.
+
+## Project status
+
+The current code version is **3.3.0**. `develop` also contains Global
+Verification, Environment Comparison and the completed Protocol V1 application
+interface. Macseed Core owns the behavior shared by its clients.
+
+A native SwiftUI **Macseed Desktop** is the next stage; `Macseed.app` is not
+implemented yet. The CLI remains supported. The first complete Desktop product
+release is planned as **Macseed 1.0**, preserving the toolkit/CLI release history.
 
 ## Documentation
 
-- [Documentation index](docs/README.md)
-- [Quick Start](docs/getting-started/QUICKSTART.md)
+- [Documentation index](docs/README.md) and [Vision](docs/VISION.md)
 - [Architecture](docs/toolkit/ARCHITECTURE.md)
-- [Configuration](docs/toolkit/CONFIGURATION.md)
-- [CLI](docs/toolkit/CLI.md)
-- [Roadmap](ROADMAP.md)
-- [Changelog](CHANGELOG.md)
+- [CLI](docs/toolkit/CLI.md) and [Configuration](docs/toolkit/CONFIGURATION.md)
+- [Core application interface](docs/core/APPLICATION-INTERFACE.md)
+- [Desktop](docs/DESKTOP.md) and [Distribution](docs/DISTRIBUTION.md)
+- [Roadmap](ROADMAP.md) and [Changelog](CHANGELOG.md)
+- [Russian convenience copies](docs/ru/INDEX.md) — English is authoritative
 
-## Project Status
+## Support and license
 
-Version 3.3.0 includes Stage 12 Bootstrap Bundle Capture & Restore and secure
-SSH identity migration. Current development also includes Global Verification
-and the public `bs compare` command.
-
-See [ROADMAP.md](ROADMAP.md) for current development direction.
-
-## Support
-
-Macseed is free and open source. If the project saves you time,
-you can support its continued development through a voluntary donation on
-[Boosty](https://boosty.to/jetiaks/donate).
-
-## License
-
-Macseed is available under the [MIT License](LICENSE).
+Macseed is free and open source under the [MIT License](LICENSE).
+Voluntary support is available on [Boosty](https://boosty.to/jetiaks/donate).

@@ -1,6 +1,9 @@
+> English documentation is authoritative: [canonical document](../toolkit/ARCHITECTURE.md).
+> This Russian convenience copy may lag behind and describes an earlier snapshot.
+
 # Архитектура Macseed
 
-[English](ARCHITECTURE.md) | Русский
+[English](../toolkit/ARCHITECTURE.md) | Русский
 
 ## Назначение
 
@@ -301,7 +304,7 @@ Preview, Restore других категорий, Verify или Compare. Он н
 работе, которая от него зависит. Сейчас работающий Homebrew позволяет
 восстановление поддерживаемых formulae; отсутствие возвращает
 `homebrew_installation_requires_interaction` до публикации, а неисправная или
-частичная установка — `homebrew_unavailable`. Baseline 4.0 требует, чтобы Desktop
+частичная установка — `homebrew_unavailable`. Desktop baseline требует, чтобы Desktop
 объяснял необходимость Homebrew для выбранной работы и предлагал инструкции и
 **Check Again**. Автоматическая установка необязательна до оценки авторизации
 Desktop; создавать privileged helper/XPC только ради неё сейчас не требуется.
@@ -457,7 +460,7 @@ Generated-состояние может содержать личные пути
 и настройки редактора. Непрозрачные snapshots VS Code и Zsh могут содержать
 чувствительные данные; общей гарантии отсутствия секретов нет. Generated-состояние
 необходимо проверять и защищать перед внешним переносом. Точные форматы и правила
-переносимости определены в [Configuration](CONFIGURATION.md).
+переносимости определены в [Configuration](../toolkit/CONFIGURATION.md).
 
 ### Blueprint
 
@@ -515,7 +518,7 @@ Discovery метаданных VS Code Workspace и генерация
 Производители и потребители настроек macOS используют общую границу
 типизированных поддерживаемых записей. Восстановление снимков экрана также
 затрагивает безопасность файловой системы; правила путей, переносимости и
-поведение категории определены в [Configuration](CONFIGURATION.md) и здесь не
+поведение категории определены в [Configuration](../toolkit/CONFIGURATION.md) и здесь не
 дублируются.
 
 ## Guided Workflow
@@ -687,7 +690,7 @@ resolved, unresolved, excluded и no_requirement. Успех операции о
 сохраняет доступные частичные записи. Прогресс передаётся через неизменяющие
 `execution_event`. После started/result выдаётся ровно одно терминальное событие
 completed/failed/cancelled. Схема, заключения, ошибки и точные правила описаны в
-[основном контракте](ARCHITECTURE.md#structured-environment-status).
+[основном контракте](../core/APPLICATION-INTERFACE.md#verification-and-environment-status).
 Stage 15 остаётся In progress; Desktop и поставка runtime относятся к отдельной работе.
 
 ## Планируемая граница Core/GUI
@@ -704,7 +707,7 @@ Preview, Bootstrap, Capture или Restore на Swift.
 
 Этот документ описывает устойчивые архитектурные ответственности и границы.
 Текущие форматы и контракты значений находятся в
-[Configuration](CONFIGURATION.md), эксплуатационное поведение — в [CLI](CLI.md)
+[Configuration](../toolkit/CONFIGURATION.md), эксплуатационное поведение — в [CLI](../toolkit/CLI.md)
 и [Quick Start](../getting-started/QUICKSTART.md), направление развития — в
 [ROADMAP.md](../../ROADMAP.md), ближайшие задачи — в [TODO.md](../../TODO.md), а
 история завершённых изменений — в [CHANGELOG.md](../../CHANGELOG.md).

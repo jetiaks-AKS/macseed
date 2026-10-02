@@ -1,386 +1,88 @@
-# Quick Start
+# Macseed CLI Quick Start
 
-Macseed 3.3.0 captures and rebuilds a supported macOS working environment.
-Choose the path that matches your task:
+Use the current CLI to configure this Mac or move supported state between Macs.
+Native Desktop is planned and is not needed for these workflows.
 
-```text
-This Mac:  bs workflow
-Old Mac:   bs capture → privately transfer one .mbt Bundle
-New Mac:   bs restore /path/to/bundle.mbt → then bs workflow as usual
-```
+## Prepare
 
-`bs` is installed when Bootstrap first runs. Until then, use the matching
-`./bootstrap.sh --workflow`, `./bootstrap.sh --capture`, or
-`./bootstrap.sh --restore <bundle>` from the repository root. Individual modes
-are covered under Advanced usage below.
+Current CLI prerequisites include macOS 15+, Git, Xcode Command Line Tools,
+internet and an administrator account for the workflows that need them.
+Homebrew can be offered interactively when missing. Optional application domains
+need `mas` for App Store and `code` for VS Code extensions; secure identity
+transfer needs `age`. Python 3 is needed for Bundle and secure operations.
 
-## Requirements
-
-- macOS 15 or later
-- Xcode Command Line Tools
-- Internet connection
-- Administrator account
-- Git
-
-Homebrew can be installed interactively by the Toolkit when it is missing.
-
-Some optional components require their command-line tools:
-
-- `mas` for Mac App Store applications
-- `code` for VS Code extensions
-
----
-
-## 1. Clone the repository
+Clone on each Mac:
 
 ```bash
 git clone git@github.com:jetiaks-AKS/macseed.git
 cd macseed
-```
-
-Run Toolkit commands from the repository root.
-
-To review the available CLI:
-
-```bash
 ./bootstrap.sh --help
 ./bootstrap.sh --version
 ```
 
-The repository entrypoint remains canonical. The first setup run can use:
+Run `bootstrap.sh` from this root. Bootstrap installs the optional `bs` launcher;
+after installation, `bs` works from any directory. An unrelated `bs` is not replaced.
+
+## Configure this Mac
 
 ```bash
 ./bootstrap.sh --workflow
+# After bs is installed:
+bs workflow
 ```
 
-When Workflow reaches Bootstrap, or when `./bootstrap.sh --bootstrap` is run
-directly, Bootstrap installs and verifies the optional short launcher. After
-installation, `bs workflow`, `bs capture`, `bs restore <bundle>`, and the
-individual commands dispatch to the matching `bootstrap.sh` modes
-from any working directory. Discovery, Blueprint, Preview, and zero-change
-Workflow do not install it. `./scripts/install-bs.sh` remains available for
-manual installation or repair. It accepts an existing correct symlink and
-refuses to overwrite another `bs`. Moving the repository invalidates the
-symlink; remove it and rerun the installer from the new location.
-
----
-
-## Use this Mac: guided Workflow
-
-From the repository root, run `./bootstrap.sh --workflow` on the first run or
-`bs workflow` after the launcher is installed. Workflow follows Discovery →
-Blueprint → Preview → Bootstrap. It checks local generated state, offers or
-requires Discovery, then lets you select the desired scope. Preview does not
-apply changes. A Preview error stops the run; changes require an explicit
-`Apply these changes with Bootstrap? [y/N]`. With no planned changes, Workflow
-finishes without Bootstrap. `q` or `Q` cancels at any Blueprint prompt without
-saving a new selection.
-
-## Move to a new Mac: Capture → Restore
-
-1. Clone the Toolkit on the **old/source Mac**. From its root run
-   `./bootstrap.sh --capture` (or `bs capture` if installed). Capture keeps
-   Discovery output and Blueprint selection in private staging, runs Preview,
-   and offers optional SSH identities. It creates one private
-   `exports/bootstrap-*.mbt` file only after successful validation.
-2. Transfer that one `.mbt` file privately by your chosen method. The normal
-   configuration inside is **not encrypted**; only selected SSH identities in
-   `secure.age` are encrypted. Keep the Bundle private.
-3. Clone the Toolkit on the **new/target Mac**. From its root run
-   `./bootstrap.sh --restore /absolute/path/bundle.mbt` (or
-   `bs restore /absolute/path/bundle.mbt` if installed). Restore validates the
-   Bundle, shows the source selection, lets you disable categories, and runs
-   Preview before asking `Apply this selection with Bootstrap? [y/N]`.
-   Preview itself does not apply changes; cancelling here does not publish the
-   staged Bundle. If an earlier Restore was interrupted, Toolkit may first
-   recover its previous local configuration.
-4. After explicit Apply, Restore publishes local desired state and Bootstrap
-   revalidates it. After preflight and Homebrew preparation, Restore applies
-   selected SSH configuration and offers selected Secure Credentials for
-   decrypt/import before Workspace cloning. Import still requires typing
-   `import`; a conflict, error or cancellation stops dependent restoration.
-   Later failures do not undo already imported identities. Afterwards use
-   `bs workflow` normally without the Bundle. If Homebrew is unavailable and
-   the optional launcher is deferred, use `./bootstrap.sh` from the repository root.
-
-**SSH Configuration** means supported SSH Host profiles restored by normal
-Bootstrap. **SSH identities** are optional private/public key pairs in the
-encrypted Secure Credentials payload. For a protected identity, enter its
-*existing SSH-key passphrase* once when Capture validates it. Separately,
-create a *new Secure Credentials/Bundle passphrase* for `secure.age`: it is
-needed at Restore and must be stored separately from the Bundle. If you leave
-the `age` prompt empty, `age` displays an autogenerated passphrase once;
-record it before leaving the source Mac. A missing `age` is offered through
-Homebrew when selected credentials need it; installation is never silent.
-Capture lets you continue without identities or cancel if installation is
-declined. Restore offers `age` before selected identity import and Workspace
-cloning if it is still missing; declining stops dependent restoration.
-
-Toolkit reconstructs the supported environment: applications and Homebrew
-formulae/casks are installed again; Git repositories are cloned from remotes.
-Working trees and `.git` directories are not copied. Supported settings are
-recreated by Bootstrap consumers. Documents, Downloads, Photos, arbitrary
-files, caches, sessions, application databases, and general machine state are
-not transferred. This is not a backup or Migration Assistant. Selected SSH
-private identities are the only currently supported physical secure transfer.
-Eligible Zsh and VS Code settings can contain source-specific values; review
-them before transfer. See [Configuration](../toolkit/CONFIGURATION.md) for
-portability limits.
-
----
-
-## Advanced: individual modes and manual local-state transfer
-
-The following commands are independent controls. They are **not** required
-steps before `bs capture` or `bs restore`.
-
-### Check the Mac
-
-Before Discovery or Bootstrap, check the current system:
-
-```bash
-./bootstrap.sh --check
-```
-
-For additional diagnostics:
-
-```bash
-./bootstrap.sh --check --verbose
-```
-
-The check validates the supported prerequisites and core environment before
-continuing with Toolkit workflows.
-
----
-
-### Discover the source environment
-
-Run Discovery on the Mac whose environment you want to reproduce:
-
-```bash
-./bootstrap.sh --discover
-```
-
-Discovery observes supported areas including:
-
-- Homebrew packages and casks
-- Mac App Store applications
-- Git configuration
-- SSH client configuration
-- VS Code extensions and settings
-- standalone Zsh `.zshrc`
-- Workspace folders and Git repositories
-- VS Code Workspace metadata
-- supported macOS settings
-
-The observed machine-specific state is written locally to:
-
-```text
-config/generated/
-```
-
-Generated Configuration is excluded from Git and may contain personal paths,
-Git identity, repository URLs, editor settings, and other machine-specific
-information.
-
-Review it before transferring it to another Mac.
-
-Discovery does not install discovered applications or apply discovered system
-settings. Its expected state-changing side effect is publication of local
-Generated Configuration.
-
----
-
-### Select the restoration scope
-
-After Discovery, create or edit the local Blueprint:
-
-```bash
-./bootstrap.sh --blueprint
-```
-
-Blueprint determines which supported parts of Generated Configuration should
-be restored.
-
-The interactive selector supports item-level selection for areas such as
-applications, Homebrew packages and casks, VS Code extensions, Workspace
-folders, and Git repositories, as well as category-level selection for
-supported settings.
-
-The resulting local selection is stored in:
-
-```text
-config/blueprint.conf
-```
-
-Blueprint contains selection state, not copies of discovered values.
-
-Both `config/blueprint.conf` and `config/generated/` are local state and are
-excluded from Git.
-
-Without a Blueprint, Bootstrap preserves the supported all-inclusive behavior
-for Generated Configuration.
-
----
-
-### Transfer local state manually
-
-On a different target Mac, clone the Toolkit repository and privately transfer
-the reviewed local state required for restoration:
-
-```text
-config/generated/
-config/blueprint.conf
-```
-
-Transfer `config/blueprint.conf` only when you want to preserve the same
-selection. Without it, Bootstrap uses the supported all-inclusive behavior.
-
-Do not commit machine-specific Generated Configuration or the private Blueprint
-to the repository.
-
----
-
-### Preview the target changes
-
-Inspect the selected target state before Bootstrap:
-
-```bash
-./bootstrap.sh --dry-run
-```
-
-Preview uses the same Blueprint selection, generated-input validation, and
-production inspection logic as Bootstrap. It reports planned actions for
-Applications, Git configuration, SSH client configuration, VS Code settings,
-Zsh, Workspace, and macOS without mutating target state. Toolkit logging and
-temporary validation files may still be written.
-
-Planned changes do not count as warnings. The Preview Summary reports Modules
-Inspected, Warnings, Errors, and Duration, and the process uses the common
-status contract `0 / 1 / 2`.
-
----
-
-### Bootstrap the target Mac
-
-From the repository root on the target Mac:
-
-```bash
-./bootstrap.sh --bootstrap
-```
-
-For additional diagnostics:
-
-```bash
-./bootstrap.sh --bootstrap --verbose
-```
-
-Bootstrap combines Generated Configuration with the optional Blueprint
-selection and restores supported state.
-
-Depending on the selected scope, this can include:
-
-- Homebrew packages and casks
-- Mac App Store applications
-- global Git configuration
-- restricted SSH client configuration
-- VS Code extensions and settings
-- limited standalone Zsh `.zshrc` restoration
-- Workspace folders
-- Git repositories and configured branches
-- supported Finder, Dock, Window Management, keyboard, trackpad, and screenshot
-  settings
-
-Bootstrap is designed to be idempotent: state that already matches the desired
-configuration should not be changed unnecessarily.
-
-Existing user state is protected where safe automatic convergence cannot be
-guaranteed. Conflicts and unsafe conditions are reported instead of being
-silently resolved through destructive operations.
-
-VS Code Workspace metadata is discovered, but `.code-workspace` restoration is
-not currently performed by Bootstrap.
-
-### Optional protected SSH identity transfer
-
-This is the **standalone/manual** Secure Migration path. For the recommended
-one-Bundle move, use `bs capture` and `bs restore` above. Standalone migration
-requires `age` on both Macs; install it explicitly if missing. On the source
-Mac, export the SSH identities you choose:
-
-```bash
-./scripts/ssh-identity-migrate.sh export --output /absolute/path/package.age
-```
-
-Transfer the encrypted package privately. On the target Mac, explicitly import
-it after preparing the target environment:
-
-```bash
-./scripts/ssh-identity-migrate.sh import --input /absolute/path/package.age
-```
-
-SSH private identities never enter Generated Configuration, Blueprint, or
-normal Bootstrap. Standalone import requires review and confirmation; the
-integrated Restore path invokes the same importer after full Preview and Apply
-confirmation, before Workspace cloning. See
-[Secure SSH Identity Migration](../toolkit/SSH-IDENTITY-MIGRATION.md) for the
-package, passphrase, conflict, and verification behavior.
-
----
-
-## Logs and exit status
-
-Toolkit keeps the latest run at:
-
-```text
-logs/latest.log
-```
-
-Historical logs are stored under:
-
-```text
-logs/history/
-```
-
-The final process status follows the common lifecycle:
-
-- `0` — completed successfully
-- `1` — completed with warnings
-- `2` — completed with errors
-
-Use `--verbose` when additional diagnostics are needed.
-
----
-
-## Screenshot destination portability
-
-For **manual local-state transfer**, generated Screenshot `location` is the
-destination source. Absolute paths are preserved; leading `~/` resolves to
-the target user HOME. Other shell
-expansions are rejected. An old `/Users/other-user/...` path is not rewritten.
-Missing directories may be created inside HOME only; an outside-HOME destination
-must already be writable and accessible. For a Bundle, Capture normalizes
-destinations inside source HOME to `~/`; an external absolute Screenshot
-destination blocks that selected Bundle category. Preview reports
-directory-only changes without a process restart. See
-[Configuration](../toolkit/CONFIGURATION.md) for the complete path policy.
-
-## Compare with this Mac
-
-Global Verification reports selected requirements after Bootstrap, Workflow,
-and applicable Restore runs. To check the selected reference environment against
-the current Mac later, run `bs compare` or `./bootstrap.sh --compare` from the
-repository root. Comparison is read-only, reports supported extra casks, App
-Store IDs, and VS Code extension IDs when source inventory completeness is
-known, and does not remove extra items. It does not run automatically after
-Bootstrap, Workflow, or Restore.
-
-Other future capabilities are tracked in the project
-[Roadmap](../../ROADMAP.md).
-
-For architecture and configuration details, see:
-
-- [Architecture](../toolkit/ARCHITECTURE.md)
-- [Configuration](../toolkit/CONFIGURATION.md)
-
-Return to the [main README](../../README.md).
+Workflow offers/requires Discovery, lets you choose a Blueprint and shows Preview.
+It applies only after `Apply these changes with Bootstrap? [y/N]`. No planned
+changes means no Bootstrap. `q`/`Q` cancels selection without saving.
+Discovery publishes local generated state; Apply can install apps, write settings
+and restart affected macOS processes. Review the plan before confirming.
+
+## Move to a new Mac
+
+1. On the source Mac, run `./bootstrap.sh --capture` or `bs capture`. Select the
+   supported state, review Preview and optionally select SSH identities. Capture
+   creates one private `exports/bootstrap-*.mbt` without replacing normal source
+   Generated Configuration or Blueprint.
+2. Review and transfer that Bundle privately. Its normal configuration is
+   **not encrypted**; only selected identities in `secure.age` are encrypted.
+   Keep the Bundle passphrase separately.
+3. On the target Mac, run `./bootstrap.sh --restore /absolute/path/environment.mbt`
+   or `bs restore /absolute/path/environment.mbt`. Review source selection, disable
+   unwanted groups and inspect Preview. Restore may first recover an interrupted
+   local publication. Cancelling before Apply preserves unpublished staged state.
+4. Confirm `Apply this selection with Bootstrap? [y/N]`. Selected secure import
+   validates all pairs and requires typing `import` before dependent clones.
+   Conflicts, errors or cancellation stop dependent restoration. Later failure can
+   leave partial changes; it does not roll back imported keys or installs.
+5. Review Verification. Later use `bs workflow` from ordinary local state and
+   explicit `bs compare` for Environment Comparison. Without the launcher, use
+   matching `bootstrap.sh` modes from the root.
+
+For a protected SSH identity, Capture asks for its **existing key passphrase**.
+The **new Bundle passphrase** encrypts `secure.age` and is needed at Restore;
+it is a different secret. If the CLI `age` prompt is left empty, record the
+passphrase it generates and shows once. Missing `age` is offered explicitly,
+never installed silently. Keys retain their original encryption.
+
+Macseed reinstalls applications and clones repositories from remotes. It does
+not copy working trees, `.git`, documents, libraries, caches, sessions or databases.
+Supported settings are reconstructed; arbitrary Zsh/VS Code contents may be
+source-specific. Selected SSH identities are the supported physical secure transfer.
+
+## Individual controls
+
+Use `bs discover`, `bs blueprint`, `bs preview`, `bs bootstrap` or their
+`bootstrap.sh` modes when individual control is useful; they are not mandatory
+steps before Capture/Restore. Check can request administrator authentication and
+offer Homebrew installation. Generated Configuration and Blueprint are private
+local files, not Git content. Manual transfer of reviewed `config/generated/`
+and optional `config/blueprint.conf` remains supported; without Blueprint the
+established all-inclusive behavior applies.
+
+Use `--verbose` for diagnostics and `logs/latest.log` for the latest run.
+Ordinary CLI lifecycle exits are `0` success, `1` warnings, `2` errors; execution
+success is distinct from verified conformity. Comparison does not remove extras.
+
+See [Capture / Restore](../CAPTURE-RESTORE.md), [CLI](../toolkit/CLI.md),
+[Configuration](../toolkit/CONFIGURATION.md) and the standalone
+[secure identity commands](../toolkit/SSH-IDENTITY-MIGRATION.md) for details.

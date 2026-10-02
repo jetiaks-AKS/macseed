@@ -1,418 +1,83 @@
 # Roadmap
 
-## Назначение
-
-Roadmap показывает основные этапы развития Macseed, их порядок и
-текущее направление проекта. Архитектурные контракты описаны в
-`docs/toolkit/ARCHITECTURE.md`, ближайшие конкретные задачи — в `TODO.md`, а
-история отдельных изменений — в `CHANGELOG.md`.
-
-## Этап 1 — Core
-
-**Статус: Completed**
-
-Создана модульная основа Toolkit: общие утилиты, логирование, preflight,
-Configuration Engine и базовые компоненты Homebrew, Git, SSH и Terminal.
-
-## Этап 2 — Discovery Engine
-
-**Статус: Completed**
-
-Реализовано безопасное обнаружение поддерживаемого состояния приложений, Git,
-VS Code, Workspace и macOS. Discovery различает отсутствие и ошибку наблюдения,
-проверяет собранные данные и сохраняет предыдущий валидный результат при
-обработанной ошибке.
-
-## Этап 3 — Generated Configuration
-
-**Статус: Completed**
-
-Определён локальный машинно-зависимый слой `config/generated/`, связывающий
-Discovery с последующим выбором и восстановлением. Производные данные исключены
-из Git, публикуются безопасно и обрабатываются как данные, а не выполняемый код.
-
-Generated Configuration предназначен для воспроизводимого состояния и не
-является хранилищем секретов или credential material. Секретные данные не должны
-попадать в обычную цепочку Generated Configuration и Bootstrap.
-
-## Этап 4 — Bootstrap Engine
-
-**Статус: Completed**
-
-Реализовано идемпотентное восстановление поддерживаемого состояния приложений,
-Git, VS Code, Workspace и macOS. Модули проверяют обязательный ввод до мутации и
-используют локальный цикл `Check → Apply → Verify`, когда результат наблюдаем.
-
-## Этап 5 — Blueprint Engine
-
-**Статус: Completed**
-
-Добавлен приватный слой выбора между Generated Configuration и Bootstrap.
-Blueprint поддерживает выбор категорий и элементов, интерактивное изменение,
-безопасное сохранение и совместимое поведение при отсутствии Blueprint.
-
-## Этап 6 — Reliability & Release Hardening
-
-**Статус: Completed**
-
-Усилены контракты безопасной публикации, проверки входных данных, наблюдения,
-кодов завершения и локального Verify. Критические сценарии Discovery, Blueprint
-и Bootstrap закреплены регрессионными проверками.
-
-## Этап 7 — Release 3.0.0
-
-**Статус: Completed**
-
-Выпущена стабильная версия 3.0.0 с основной моделью:
-
-```text
-Discovery → Generated Configuration → Blueprint → Bootstrap
-```
-
-## Этап 8 — Dry-run / Preview и Release 3.1.0
-
-**Статус: Completed**
-
-Реализован неизменяющий Preview для поддерживаемых областей и пошаговый
-Workflow с обязательным предварительным просмотром перед Bootstrap. Эти
-возможности вошли в стабильную версию 3.1.0.
-
-Текущая продуктовая модель:
-
-```text
-Discovery → Generated Configuration → Blueprint → Preview → Bootstrap
-```
-
-## Этап 9 — macOS Coverage Expansion
-
-**Статус: Completed (Release 3.2.0)**
-
-Расширено и укреплено воспроизводимое покрытие настроек Finder, Dock, Window
-Management, Keyboard, Trackpad и Screenshots. Поддерживаемые настройки проходят
-общую проверку producer/consumer, Preview и локальный `Check → Apply → Verify` с
-необходимым для конкретной категории поведением процессов.
-
-Области без достаточно надёжного или ценного контракта восстановления
-отложены. Их точные ограничения описываются в Configuration и Changelog, а
-повторная оценка приватных и зависящих от версии настроек ожидается при переходе
-на macOS 27.
-
-## Этап 10 — Shell & Developer Environment
-
-**Статус: Completed (Release 3.2.0)**
-
-Этап расширил воспроизводимое рабочее окружение разработчика без превращения
-Toolkit в универсальный менеджер dotfiles, credentials или состояния
-приложений.
-
-Реализованы:
-
-- ограниченное и безопасное восстановление самостоятельного Zsh `.zshrc`;
-- восстановление выбранных прямых global-настроек Git с сохранением конфликтующего
-  состояния целевой машины;
-- восстановление простых независимых SSH Host-профилей на чистой цели без
-  переноса ключей и состояния доверия.
-
-Существующего восстановления Homebrew достаточно для основной области
-CLI-инструментов. Восстановление через pipx, uv, npm globals, Cargo и другие
-менеджеры отложено: оно сильнее зависит от окружения и пока не оправдывает
-сложность проверки происхождения пакетов, переносимости, безопасности,
-конфликтов и сопровождения. Универсальное восстановление бинарников из `PATH`
-отвергнуто.
-
-## Этап 11 — Application Configuration Modules
-
-**Статус: Audited / Deferred**
-
-Этап завершён продуктовой оценкой без добавления модулей. Значимая конфигурация
-приложений обычно восстанавливается через официальную синхронизацию, аккаунт,
-iCloud, документированный экспорт/импорт или пользовательские файлы. Оставшиеся
-возможности преимущественно зависят от конкретного приложения или внешнего
-владельца, затрагивают приватные либо машинно-зависимые данные или требуют
-несоразмерной сложности относительно сэкономленного времени.
-
-Модули не добавляются ради полноты списка. Повторная оценка возможна, если
-появится широко полезная конфигурация, которую официальные механизмы не
-восстанавливают достаточно хорошо, с переносимым и безопасным для приватности
-представлением и ценностью переноса, оправдывающей сопровождение.
-Этот консервативный вывод относится к оценённому тогда scope и не запрещает
-будущие точечные расширения при доказанной ценности переноса.
-
-## Этап 12 — Secure Migration Engine
-
-**Статус: Completed v1 (Release 3.3.0) — SSH identities и Capture/Restore**
-
-SSH identity migration реализован отдельной командой и интегрирован в
-Capture/Restore через зашифрованный `secure.age` внутри приватного Bootstrap
-Bundle v1. Другие категории защищённого переноса остаются возможными будущими
-направлениями.
-
-Для выбранных SSH identities действует отдельный защищённый механизм переноса
-состояния, которое не должно проходить через обычную цепочку:
-
-```text
-Discovery → Generated Configuration → Blueprint → Preview → Bootstrap
-```
-
-Toolkit разделяет два класса состояния:
-
-```text
-Reconstructable State                 Secret / Credential State
-        │                                      │
-     Discovery                           Secure Migration
-        │                                      │
-Generated Configuration                Protected Transfer
-        │                                      │
-     Blueprint                           Explicit Import
-        │
-     Preview
-        │
-    Bootstrap
-```
-
-Обычный Bootstrap предназначен для воспроизводимого несекретного состояния:
-настроек macOS, приложений, Shell, Git, SSH configuration/topology, Workspace и
-других поддерживаемых областей.
-
-Secret и credential material не должен сериализоваться в `config/generated/`.
-Для такого состояния Secure Migration Engine предоставляет отдельный
-защищённый канал переноса с явным выбором пользователя в реализованном SSH scope.
-
-Потенциальная область Secure Migration Engine:
-
-- SSH private keys и связанные public keys, когда их перенос имеет смысл;
-- выбранные сертификаты и другое явно выбранное credential material;
-- в дальнейшем — отдельная оценка возможности переноса выбранных
-  Keychain-backed или application/API credentials;
-- опциональная миграция `known_hosts` только как явно выбранного learned trust
-  state, а не как обычной SSH-конфигурации.
-
-Private SSH keys исключены из обычного Stage 10 SSH Bootstrap; выбранные
-поддерживаемые пары переносятся через Secure Migration Engine.
-
-Для реализованного SSH scope и будущих категорий действуют принципы:
-
-- явный выбор и согласие пользователя;
-- защищённый и зашифрованный migration package или канал;
-- отсутствие секретов в обычной Generated Configuration;
-- отсутствие секретов в Git;
-- отсутствие plaintext secret logging;
-- проверка входных данных до мутации;
-- строгие ownership и permissions на целевой машине;
-- безопасное разрешение конфликтов без молчаливой замены credentials.
-
-Текущий формат и CLI-контракт описаны в
-[SSH Identity Migration](docs/toolkit/SSH-IDENTITY-MIGRATION.md); для будущих
-категорий они определяются отдельно перед реализацией.
-
-## Этап 13 — Reporting & Global Verification
-
-**Статус: Completed**
-
-Добавить понятный человеку отчёт о поддерживаемом окружении: что захвачено,
-выбрано, восстановлено, не поддерживается или требует внимания. Global
-Verification агрегирует существующие локальные `Check → Apply → Verify` после
-Bootstrap/Workflow и, где применимо, Restore. Результат должен различать
-подтверждённое соответствие, расхождение, предупреждение или неподдерживаемую
-область и ошибку наблюдения или проверки. Успешный код завершения команды сам
-по себе не подтверждает готовность выбранного окружения.
-
-## Этап 14 — Environment Comparison
-
-**Статус: Completed**
-
-Сравнивать захваченное или выбранное поддерживаемое окружение с текущим Mac:
-совпадающее, отсутствующее, отличающееся, лишнее — только там, где это надёжно
-наблюдаемо, — а также неподдерживаемое или непроверенное состояние. Сравнение
-строится поверх Discovery, выбора и Verification без второй модели конфигурации.
-
-## Этап 15 — Core Application Interface
-
-**Статус: In progress**
-
-Протокол v1 поддерживает `capabilities`, read-only `bundle_inspect` и
-`environment_compare` поверх production Comparison/Verification,
-`restore_prepare` и первый mutating `restore_execute` для временного
-ограниченного application-safe scope, включая выбранные Homebrew formulae при
-работающем Homebrew, отсутствующие app-only casks, прошедшие проверку metadata
-и каталога назначения, выбранные VS Code extensions при доступном CLI и Git-репозитории,
-восстанавливаемые из сохранённого remote без интерактивной авторизации, а также
-выбранные MAS apps при работающем `mas` и существующем target-side App Store
-account/entitlement state. Выбранный Secure SSH Restore использует существующий
-importer Stage 12 через отдельный унаследованный secret FD, transient PTY adapter
-и существующее evidence/Global Verification. Без корректного канала сохраняется
-`secure_bridge_required`; `age` проверяется только при secure selection, без
-интерактивной установки. Bundle passphrase и SSH-key unlock различаются; импорт
-пользовательских identities не требует администратора. Будущий Desktop должен
-поставлять этот FD и отвечать на bounded challenges. Macseed не управляет Apple ID credentials.
-Для расширений application context может использовать официальный bundled CLI
-stable VS Code без установки `code` в PATH. Уже установленные casks проходят как no-op; остальные
-требования установки и repair/reinstall блокируются до публикации. Установка
-самого Homebrew остаётся внешней предпосылкой. Execute заново строит production Preview,
-сравнивает `prepared_plan_id`, проверяет readiness до публикации и запускает
-production Restore consumers с последующей Global Verification. ID связывает
-подтверждённый план, но не является авторизацией; при изменении плана требуется
-повторная подготовка и подтверждение. `restore_prepare` теперь возвращает выбранные
-требования и действия production Preview с типизированными состояниями и readiness
-по выбранным доменам. Интернет, CLT и sudo не блокируют не зависящие от них планы;
-внешняя подготовка требует Check Again и подтверждения нового `prepared_plan_id`.
-Секретный канал остаётся отдельным требованием запуска Execute.
-Application execution теперь передаёт lifecycle events и подробные production
-Verification/Coverage/Operation records вместе с прежними агрегатами; исход операции
-отделён от соответствия, а сбой и отмена сохраняют доступные частичные records.
-Application Capture теперь предоставляет structured inventory, выбор по семантике
-Blueprint и создание production Bundle с повторным Discovery и проверкой prepared ID.
-Secure SSH selection отделён от generated state; encrypted export использует тот же
-secret channel с отдельным Bundle encryption challenge и SSH-key unlock.
-Structured Compare/Environment Status предоставляет read-only результат production
-Comparison с coverage, причинами и агрегатами без разбора терминального вывода.
-Runtime compatibility и подключение
-GUI относятся к интеграции Desktop, без второго движка Restore.
-
-Создать стабильную структурированную границу между существующим детерминированным
-Core и его клиентами, включая будущий GUI. Интерфейс должен быть машиночитаемым,
-версионированным и детерминированным, передавать progress/events/results и
-типизированные предупреждения, ошибки и конфликты без раскрытия credentials и
-приватных данных. GUI и CLI используют общую границу там, где это применимо;
-GUI не разбирает человекочитаемый вывод CLI или логи. Существующий shell/Core
-остаётся авторитетным движком; переписывание Core на Swift не планируется.
-
-На этом этапе также определить минимальные компоненты Core/runtime, поставляемые
-вместе с приложением, и допустимые внешние зависимости для запуска на реально
-чистом Mac.
-
-Core должен отличать неподдерживаемое действие Restore от отсутствующей
-предпосылки выбранного плана. Проверка предпосылок зависит от плана: Core либо
-продолжает выполнение, либо безопасно удовлетворяет предпосылку и проверяет
-результат, либо возвращает типизированное условие для внешнего действия и
-повторного входа. Homebrew, `age` и Command Line Tools требуются только для
-зависящей от них выбранной работы; подробная модель описана в
-[архитектуре](docs/toolkit/ARCHITECTURE.ru.md#предпосылки-restore).
-Обязательный baseline 4.0 — понятная помощь с предпосылками и повторная проверка.
-Автоматическая установка Homebrew остаётся необязательным улучшением после
-оценки авторизации Desktop и не блокирует начальную архитектуру 4.0; отдельная
-привилегированная подсистема только ради неё сейчас не требуется.
-
-## Этап 16 — Native Macseed Desktop
-
-**Статус: Planned**
-
-Разработать нативное macOS-приложение, предположительно на Swift/SwiftUI, если
-исследование на уровне репозитория не обоснует другое нативное решение. GUI —
-клиент существующего Core, а не второй движок или эмулятор терминала. `bs` CLI
-остаётся доступным для опытных пользователей, автоматизации и разработки.
-
-Основные пользовательские сценарии — **Capture this Mac**, **Restore a Mac** и
-**Environment Status**. Discovery, Blueprint, Preview, Bootstrap, Verification и
-Comparison представлены как этапы этих сценариев, а не как обязательный для
-пользователя словарь архитектуры.
-
-- Capture: сканировать окружение → выбрать сохраняемое → проверить выбор →
-  защищённо включить выбранные identities, если применимо → создать Macseed Bundle.
-- Restore: выбрать и проверить Bundle → просмотреть окружение и при необходимости
-  сузить категории → показать Preview без изменений → запросить явное подтверждение
-  → восстановить окружение → выполнить Verification → показать итог.
-- Environment Status: понятно показать результаты Verification и диагностического
-  Comparison: matching, missing, differing, unverified и extra там, где эти
-  категории поддерживаются. Автоматическая очистка или удаление extra не планируются.
-
-В Restore показывать содержательный прогресс по модулям и категориям, оставляя
-технические логи вторичным уровнем; Verification — явный итог операции. Приложение
-должно запускаться на чистом Mac и позволять осмотр Bundle без ручной установки
-Homebrew, клонирования репозитория или установки `bs`. Для выбранной работы
-Desktop показывает типизированные условия предпосылок, объясняет внешнее
-действие и предлагает инструкции и **Check Again**. После внешней установки
-или прерывания Restore повторный вход использует
-**re-inspect → recompute Preview → rerun idempotent work**, без транзакционного
-resume. Установку CLI можно предложить как необязательное действие. Casks,
-MAS apps, VS Code extensions, Git-репозитории и Secure SSH Restore остаются
-задачами Macseed после подготовки их application-safe execution paths;
-они не заменяются инструкциями по ручному восстановлению.
-
-## Этап 17 — Distribution & Clean-Mac End-to-End Validation
-
-**Статус: Planned**
-
-Подготовить распространение `Macseed-<version>.dmg → Macseed.app → Applications`.
-Планируемый pipeline: сборка приложения → code signing → hardened runtime →
-Apple notarization → stapling → DMG → release artifact. Наличие инфраструктуры
-подписи и notarization пока не предполагается.
-
-Проверить на реальных машинах полный путь: настроенный исходный Mac → Capture →
-Macseed Bundle → перенос Bundle → чистый целевой Mac → установка и запуск
-Macseed.app → Restore → Preview → восстановление → Secure Restore при выборе →
-Verification → Comparison. Проверить также путь с отсутствующими предпосылками:
-пояснение Desktop → внешняя установка → Check Again → повторный Preview →
-Restore. Моки и автоматические тесты не заменяют этот
-приёмочный сценарий. Успешное завершение этапа — целевой критерий готовности
-Macseed 4.0, без обещания даты релиза. Автоматическое обновление приложения
-может стать улучшением после 4.0.
-
-## Поздние необязательные направления
-
-Приоритет после этапа 14 — превращение существующего Core в приложение, а не
-новый широкий цикл расширения покрытия. AI/API integration, cloud accounts,
-хранилище или синхронизация Bundle, remote Mac management, произвольный перенос
-Documents/Downloads/Photos, баз данных, caches и sessions приложений,
-разрушительная очистка и автоматическое удаление extra не входят в scope 4.0.
-
-Application-specific adapters, Secure Migration v2, профили, совместное
-использование окружений, AI assistance, plugin/adapter architecture и
-дополнительные области macOS требуют отдельной оценки ценности и безопасности.
-Новые адаптеры приложений допустимы при доказанной широкой или высокой ценности переноса;
-Core не должен превращаться в каталог recipes. Существующая поддержка VS Code
-сохраняется. Plugin framework сейчас не планируется.
-
-Проверка совместимости с macOS 27 — отдельная веха при фактическом переходе на
-эту версию, а не следующий продуктовый этап.
-
-## Хронология развития
-
-```text
-Core
-  ↓
-Discovery
-  ↓
-Generated Configuration
-  ↓
-Bootstrap
-  ↓
-Blueprint
-  ↓
-Reliability & Release Hardening
-  ↓
-Release 3.0.0
-  ↓
-Dry-run / Preview
-  ↓
-Release 3.1.0
-  ↓
-macOS Coverage Expansion
-  ↓
-Shell & Developer Environment
-  ↓
-Application Configuration Modules
-  ↓
-Release 3.2.0
-  ↓
-Secure Migration Engine
-  ↓
-Release 3.3.0
-  ↓
-Reporting & Global Verification
-  ↓
-Environment Comparison
-  ↓
-Core Application Interface
-  ↓
-Native Macseed Desktop
-  ↓
-Distribution & Clean-Mac End-to-End Validation / 4.0 Readiness
-```
-
-## Правило Roadmap
-
-Roadmap сохраняет крупные этапы, их порядок, статус и основные продуктовые
-результаты. Подробные журналы реализации и релизов принадлежат
-`CHANGELOG.md`, точные текущие контракты — профильным документам, а ближайшие
-исполняемые задачи — `TODO.md`.
+Major stages and product outcomes. Detailed contracts belong to the
+[documentation](docs/README.md), unfinished actions to [TODO](TODO.md), and
+implementation/release history to [Changelog](CHANGELOG.md).
+
+## Foundation and stable CLI milestones
+
+| Stage | Status | Outcome |
+|---|---|---|
+| 1 — Core | Completed | Modular utilities, logging, preflight and Configuration Engine |
+| 2 — Discovery Engine | Completed | Observation of supported environment state with safe publication |
+| 3 — Generated Configuration | Completed | Private derived state connecting observation to restoration |
+| 4 — Bootstrap Engine | Completed | Idempotent restoration with local Check → Apply → Verify |
+| 5 — Blueprint Engine | Completed | Category/item selection, validation and safe interactive saving |
+| 6 — Reliability & Release Hardening | Completed | Input, publication, observation and lifecycle contracts hardened |
+| 7 — Release 3.0.0 | Completed | Stable Discovery → Generated Configuration → Blueprint → Bootstrap |
+| 8 — Dry-run / Preview and Release 3.1.0 | Completed | Read-only Preview and guided Workflow |
+| 9 — macOS Coverage Expansion | Completed; release 3.2.0 | Supported Finder, Dock, Window Management, Keyboard, Trackpad and Screenshots settings |
+| 10 — Shell & Developer Environment | Completed; release 3.2.0 | Restricted standalone Zsh, direct global Git settings and SSH Host profiles |
+| 11 — Application Configuration Modules | Audited / Deferred | No additional adapters justified by the assessed portability, privacy and value |
+| 12 — Secure Migration Engine | Completed v1; release 3.3.0 | Explicit encrypted SSH identity transfer and one-Bundle Capture / Restore |
+
+Additional tool managers and generic PATH/binary restoration are outside the
+completed developer-environment scope. Application adapters may be reconsidered
+when a specific safe portable contract has enough user value; the Stage 11
+assessment does not prohibit such extensions. Existing VS Code support remains.
+
+## Stage 13 — Reporting & Global Verification
+
+**Completed.** Reports selected requirements, conformity and verification gaps
+after Bootstrap, Workflow and applicable Restore, separately from operation
+outcomes. It does not claim whole-Mac identity or application runtime health.
+
+## Stage 14 — Environment Comparison
+
+**Completed.** Explicit read-only comparison with the current Mac, including
+informational extras where source completeness and target enumeration are
+proven. No cleanup or removal behavior.
+
+## Stage 15 — Core Application Interface
+
+**Completed.** Protocol V1 exposes capabilities, Bundle inspection, Capture
+preparation/execution, Restore preparation/execution and Environment Status.
+The interface reuses production Core behavior, reports structured progress and
+verification, protects secrets, and revalidates plans before mutation.
+See the [Core reference](docs/core/APPLICATION-INTERFACE.md).
+
+This completes the application-facing contract; application runtime integration
+and packaged clean-Mac qualification remain the next stages.
+
+## Stage 16 — Native Macseed Desktop
+
+**Planned.** Implement a SwiftUI client for Capture this Mac, Restore a Mac and
+Environment Status. Provide prerequisite guidance, Check Again, structured
+progress/results, separate secret input and cancellation over the existing Core.
+
+This stage defines and implements bundled Core/runtime placement, writable
+application state, a controlled child environment and the Swift Protocol V1
+launcher. It must qualify the Core/Python and age/OpenSSH integration needed by
+the application. See [Desktop](docs/DESKTOP.md).
+
+## Stage 17 — Distribution & Clean-Mac E2E
+
+**Planned.** Deliver and qualify the application through Developer ID signing,
+Hardened Runtime, notarization, stapling, DMG and Gatekeeper validation. Prove
+packaged runtime behavior and Capture → Restore → Verify on clean Apple Silicon
+hardware; qualify Intel separately where support is intended.
+See [Distribution](docs/DISTRIBUTION.md).
+
+The first complete native Desktop release is planned as **Macseed 1.0**, built on
+the mature toolkit/CLI v1.x–v3.3.x Core. Current code remains 3.3.0; published
+versions and tags retain their historical meaning. No release date is promised.
+
+## Later directions
+
+Profiles, shared environments, further secure migration, application adapters
+and assistance features require separate value and safety assessment. A plugin
+framework is not currently planned. Arbitrary user-data migration, full cloning
+and automatic removal of extra state remain outside product scope.
+
+Revalidate version-dependent settings when the actual migration to macOS 27
+occurs; this is a compatibility milestone, not the next product stage.

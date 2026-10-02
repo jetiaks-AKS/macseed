@@ -65,6 +65,13 @@ The format is based on the principles of **Keep a Changelog**.
   scope-aware readiness verdicts, actionable typed reasons, separate operation
   outcomes, and unchanged public command exit codes.
 
+### Changed
+
+* Rebuilt documentation around Macseed Core, CLI and planned Desktop, with English
+  as the authoritative language and selected Russian convenience copies in
+  `docs/ru/`. Consolidated Protocol V1 reference material, closed the Stage 15
+  documentation status, and shortened architecture, roadmap and onboarding.
+
 ### Fixed
 
 * Make application Restore prerequisites depend on selected work: settings and

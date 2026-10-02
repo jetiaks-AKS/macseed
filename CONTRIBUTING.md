@@ -1,148 +1,55 @@
 # Contributing
 
-Thank you for contributing to Macseed.
+Develop on `develop`; `main` contains stable releases. Before editing, inspect
+the branch, working tree and relevant implementation. Preserve unrelated local
+changes and existing contracts. Keep commits limited to one logical task, using
+English `type: short description` with `feat`, `fix`, `refactor`, `docs`, `style`,
+`chore` or `release`. Never commit generated state, Blueprint, logs, exports,
+`.env` or temporary files.
 
-## Workflow
+## Architecture and change principles
 
-- Start development from `develop`.
-- `main` contains stable releases only; do not develop directly on `main`.
-- Keep each commit limited to one logical task.
-- Use English commit messages in the form `type: short description`.
-- Supported commit types are `feat`, `fix`, `refactor`, `docs`, `style`,
-  `chore`, and `release`.
-- Do not commit generated configuration, logs, exports, environment files,
-  local Blueprint state, or temporary files.
+Macseed Core owns Discovery, selection, Preview, Apply, Verification, Comparison,
+Bundle and Secure Migration. The CLI is implemented; Desktop is a planned client
+of the same Core. Global Verification and Protocol V1 are implemented, not future
+features. Read [Architecture](docs/toolkit/ARCHITECTURE.md) before changing boundaries.
 
-Before editing, understand the current working tree and confirm that local
-`develop` is synchronized with `origin/develop`. Preserve unrelated local
-changes.
+Discovery observes and validates before safe publication; handled failures preserve
+previous valid state. Bootstrap distinguishes observation errors from differences,
+validates selected input before mutation, preserves conflicts, skips matching state
+and verifies observable results. No silent reset, clean, forced checkout, remote
+replacement or user-data deletion. Generated state is data, never executed.
 
----
+Application changes reuse production operations and structured records. Keep
+secret input outside JSONL, argv, environment and logs. Operation success and final
+conformity remain separate. Protocol/domain details belong to their references.
 
-## Project model
+## Documentation
 
-The current Toolkit workflow is:
+English is authoritative; [Russian copies](docs/ru/INDEX.md) are optional convenience
+material and may lag behind. Do not create parallel translations of new references.
+Identify the owner of a changed fact using the [documentation index](docs/README.md)
+and update it first. Update other documents only if their text becomes inaccurate.
+Keep Architecture about boundaries, Roadmap about outcomes/status, TODO about
+unfinished actions and Changelog about completed changes. Preserve released history.
 
-```text
-Discovery
-    ↓
-Generated Configuration
-    ↓
-Blueprint
-    ↓
-Bootstrap
-```
+## Validation and handoff
 
-Discovery observes supported state and publishes machine-specific Generated
-Configuration.
-
-Blueprint selects the restoration scope without duplicating discovered values.
-
-Bootstrap combines that selection with Generated Configuration and safely
-applies supported state.
-
-Dry-run / Preview is part of the current implementation contract. Aggregate
-Global Verification remains a planned extension.
-
-For architectural details, see
-[`docs/toolkit/ARCHITECTURE.md`](docs/toolkit/ARCHITECTURE.md).
-
----
-
-## Change principles
-
-Keep changes focused and preserve existing contracts unless the task explicitly
-requires changing them.
-
-Discovery changes must:
-
-- observe rather than configure the system;
-- validate and serialize new state before publication;
-- preserve previous valid Generated Configuration on handled failure.
-
-Bootstrap changes must:
-
-- distinguish observation failures from legitimate differences;
-- validate required Generated Configuration before mutation;
-- avoid unnecessary changes;
-- preserve existing user state;
-- verify applied state where supported.
-
-Do not introduce silent destructive behavior such as:
-
-- `git reset --hard`;
-- `git clean`;
-- force-push;
-- forced checkout over local changes;
-- deletion or replacement of user data without an explicit safe contract.
-
-Update documentation when externally visible behavior or a documented contract
-changes.
-
-Use:
-
-- `docs/toolkit/ARCHITECTURE.md` for architecture;
-- `ROADMAP.md` for implementation stages and future development;
-- `TODO.md` for immediate technical backlog;
-- `CHANGELOG.md` for completed release-visible changes.
-
----
-
-## Validation
-
-Use the focused regression harnesses relevant to the changed area.
-Run the complete local regression suite with `scripts/test.sh`.
-Run ShellCheck for maintained Bash scripts with `scripts/lint.sh`.
-
-Existing coverage includes Blueprint, Discovery, applications, Git, Workspace,
-and macOS consumer behavior. Do not create a new test script solely to mirror
-every production module; extend the closest focused harness when practical.
-
-For Bash changes, run the relevant regression tests and at minimum:
+Run focused existing tests for changed behavior. The canonical full regression
+runner is `scripts/test.sh`; ShellCheck is `scripts/lint.sh`. Use the full suite
+for integration/release gates or justified broad risk, not every small change.
+For Bash changes, include syntax checks:
 
 ```bash
 find modules scripts -type f -name '*.sh' -print0 | xargs -0 -n1 bash -n
 bash -n bootstrap.sh
-git diff --check
 ```
 
-Safe CLI sanity checks that do not execute a real Discovery or Bootstrap
-workflow are:
+Documentation-only changes normally need diff and local-link review plus
+`git diff --check`, without functional tests or observation of real macOS settings.
+Help/version are safe CLI checks. Real Check, Discovery, Bootstrap or Workflow
+require explicit task authorization and understood side effects.
 
-```bash
-./bootstrap.sh --help
-./bootstrap.sh --version
-```
-
-Run real:
-
-```bash
-./bootstrap.sh --check
-./bootstrap.sh --discover
-./bootstrap.sh --blueprint
-./bootstrap.sh --bootstrap
-./bootstrap.sh --workflow
-```
-
-only when the task explicitly requires the corresponding workflow and its side
-effects are understood.
-
-Before handing off a change, inspect:
-
-```bash
-git diff --check
-git diff --stat
-git status --short
-```
-
----
-
-## Pull requests and releases
-
-Open contributions against `develop`.
-
-Release integration into `main`, version changes, release notes, tags, and
-publishing follow the maintainer release process.
-
-See [`docs/git/RELEASE-PROCESS.md`](docs/git/RELEASE-PROCESS.md) for the
-current release procedure.
+Before handoff, review `git diff`, `git diff --stat` and `git status --short`.
+Stage explicit paths only after scope review. Contributions target `develop`;
+version changes and publication follow [Release Process](docs/git/RELEASE-PROCESS.md).

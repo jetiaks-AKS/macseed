@@ -16,7 +16,7 @@ Before starting the release process, make sure that:
 - required regression tests have passed;
 - required manual validation has been completed;
 - there are no known release-blocking issues;
-- Toolkit behavior and documentation reflect the intended release state.
+- Macseed behavior and documentation reflect the intended release state.
 
 Once final release preparation begins, avoid expanding the release scope unless
 a release blocker must be fixed.
@@ -28,13 +28,13 @@ a release blocker must be fixed.
 Review and update release-visible documentation where required:
 
 - `README.md`
-- `README.ru.md`
 - `CHANGELOG.md`
 - `ROADMAP.md`
 - `docs/getting-started/QUICKSTART.md`
 
-Update other documentation only when the release changes the responsibility or
-contract documented there.
+English documentation is authoritative; Russian convenience copies are optional
+and are not a release gate. Update the owning reference only when the release
+changes its responsibility or contract.
 
 Do not update documentation merely because an implementation file changed.
 
@@ -64,7 +64,7 @@ Do not rewrite published stable history to make the graph appear linear.
 
 ---
 
-# 4. Update Toolkit Version
+# 4. Update Code Version
 
 Update:
 
@@ -78,7 +78,7 @@ For example:
 TOOLKIT_VERSION="3.0.0"
 ```
 
-The Toolkit version must match the version being prepared for release.
+The code version must match the version being prepared for release.
 
 ---
 
@@ -104,7 +104,7 @@ git diff --stat
 Confirm that:
 
 - release documentation is final;
-- Toolkit version is correct;
+- code version is correct;
 - no unintended files are included;
 - no release blocker remains.
 
@@ -190,7 +190,7 @@ Confirm that:
 
 - the working tree is clean;
 - the expected release commit is present;
-- the Toolkit version is correct;
+- the code version is correct;
 - the release documentation is present.
 
 Publish `main`:
@@ -283,7 +283,7 @@ Before declaring the release complete, verify:
 - [ ] Required release validation has passed.
 - [ ] Release documentation is updated.
 - [ ] Release history is consistent.
-- [ ] Toolkit version is updated.
+- [ ] Code version is updated.
 - [ ] Release commit is created.
 - [ ] `develop` is pushed.
 - [ ] `develop` is merged into `main`.

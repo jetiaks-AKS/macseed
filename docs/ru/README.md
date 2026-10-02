@@ -1,8 +1,11 @@
+> English documentation is authoritative: [canonical document](../../README.md).
+> This Russian convenience copy may lag behind and describes an earlier snapshot.
+
 # Macseed
 
 **Capture. Rebuild. Continue.**
 
-[English](README.md) | Русский
+[English](../../README.md) | Русский
 
 Сегодня Macseed — инструмент на Bash; планируемый продукт — нативное приложение
 macOS на основе существующего Core для захвата, восстановления и проверки
@@ -57,7 +60,7 @@ Global Verification сообщает о выбранных требования�
 
 Точные форматы, перечень поддерживаемых настроек macOS, правила проверки и
 ограничения восстановления описаны в документе
-[«Конфигурация»](docs/toolkit/CONFIGURATION.md).
+[«Конфигурация»](../toolkit/CONFIGURATION.md).
 
 ## Быстрый старт
 
@@ -79,18 +82,18 @@ bs restore /path/to/bundle.mbt       # Восстановление на нов�
 Приложения устанавливаются заново, репозитории клонируются из remotes;
 working trees и пользовательские файлы не копируются. Выбранные SSH identities
 могут переноситься в зашифрованном Secure Credentials payload. Практические
-шаги — в [«Быстром старте»](docs/getting-started/QUICKSTART.md), отдельные
-команды и их статусы — в [документации CLI](docs/toolkit/CLI.md).
+шаги — в [«Быстром старте»](../getting-started/QUICKSTART.md), отдельные
+команды и их статусы — в [документации CLI](../toolkit/CLI.md).
 
 ## Документация
 
-- [Оглавление документации](docs/README.md)
-- [Быстрый старт](docs/getting-started/QUICKSTART.md)
-- [Архитектура](docs/toolkit/ARCHITECTURE.ru.md)
-- [Конфигурация](docs/toolkit/CONFIGURATION.md)
-- [CLI](docs/toolkit/CLI.md)
-- [План развития](ROADMAP.md)
-- [История изменений](CHANGELOG.md)
+- [Оглавление документации](../README.md)
+- [Быстрый старт](../getting-started/QUICKSTART.md)
+- [Архитектура](ARCHITECTURE.md)
+- [Конфигурация](../toolkit/CONFIGURATION.md)
+- [CLI](../toolkit/CLI.md)
+- [План развития](../../ROADMAP.md)
+- [История изменений](../../CHANGELOG.md)
 
 ## Статус проекта
 
@@ -98,7 +101,7 @@ working trees и пользовательские файлы не копирую
 перенос SSH identities. Текущая разработка также включает Global Verification
 и публичную команду `bs compare`.
 
-Текущее направление развития описано в [ROADMAP.md](ROADMAP.md).
+Текущее направление развития описано в [ROADMAP.md](../../ROADMAP.md).
 
 ## Поддержка
 
@@ -108,4 +111,4 @@ Macseed распространяется бесплатно и с открыты
 
 ## Лицензия
 
-Macseed распространяется по лицензии [MIT](LICENSE).
+Macseed распространяется по лицензии [MIT](../../LICENSE).

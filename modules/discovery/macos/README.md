@@ -1,60 +1,16 @@
 # macOS Discovery
 
-## Назначение
+Reads supported preferences without applying them or inventing values for absent
+keys. Publishes independently validated category files under
+`config/generated/macos/`: `finder.conf`, `dock.conf`, `windows.conf`,
+`keyboard.conf`, `trackpad.conf`, `screenshots.conf`.
 
-Модуль читает поддерживаемые настройки текущего Mac и публикует их в
-`config/generated/macos/`. Discovery не применяет настройки и не синтезирует
-значения для отсутствующих ключей.
+Records are typed `domain|key|type|value` data. The shared category-aware validator
+in `modules/settings/macos/records.sh` rejects invalid keys/types, duplicates and
+unsafe scalars before atomic publication. Data is never `source`d or `eval`uated.
 
-## Категории и файлы
-
-- Finder — `finder.conf`;
-- Dock — `dock.conf`;
-- управление окнами — `windows.conf`;
-- клавиатура — `keyboard.conf`;
-- трекпад — `trackpad.conf`;
-- снимки экрана — `screenshots.conf`.
-
-Каждая запись использует формат `domain|key|type|value`. Поддерживаются типы
-`bool`, `int` и `string`. Точный список разрешённых domain/key/type и контракт
-пути снимков экрана описаны в
-[Configuration](../../../docs/toolkit/CONFIGURATION.md#настройки-macos).
-
-Общий валидатор `modules/settings/macos/records.sh` проверяет категорию,
-domain/key/type, дубликаты и безопасное скалярное представление до публикации.
-Символ `|`, управляющие ASCII-символы, NUL и многострочные значения запрещены.
-Generated data никогда не выполняются через `source` или `eval`.
-
-## Особые контракты
-
-- Finder: `NewWindowTarget` ограничен значениями
-  `PfCm/PfVo/PfHm/PfDe/PfDo/PfAF`; `NewWindowTargetPath` не экспортируется.
-- Dock: `orientation` допускает `left/bottom/right`, `mineffect` —
-  `genie/scale`.
-- Управление окнами: `AppleActionOnDoubleClick` допускает
-  `Minimize/Maximize/Fill/None`, `AppleWindowTabbingMode` —
-  `manual/always/fullscreen`. `HideDesktop` сохраняется как bool:
-  `true` скрывает стандартные элементы рабочего стола, `false` показывает их.
-- Клавиатура: `AppleKeyboardUIMode` — int без дополнительного диапазона;
-  остальные поддерживаемые переключатели имеют тип bool.
-- Трекпад: поддерживаются только bool-настройки `Clicking` и
-  `TrackpadRightClick`. Скорость трекпада, Natural Scrolling, дополнительные
-  жесты и синхронизация устройств не поддерживаются.
-- Снимки экрана: `location` должен быть непустым абсолютным путём или начинаться
-  с `~/`; доступность каталога проверяет потребитель на целевом Mac.
-
-Неподдерживаемое безопасное значение известного enum пропускается с
-предупреждением, а остальные валидные записи категории публикуются. Ошибка
-наблюдения, неверный нативный тип, небезопасное значение или ошибка проверки
-кандидата возвращает `2` и сохраняет предыдущий файл категории.
-
-## Публикация и потребление
-
-Категории публикуются независимо через атомарную замену только после успешного
-сбора, сериализации и проверки всего кандидата. Допустимое отсутствие настройки
-не создаёт запись и оставляет соответствующую целевую настройку неуправляемой.
-
-Bootstrap использует эти файлы через существующие категории Blueprint и
-типизированный цикл проверки и применения. Для `HideDesktop` подтверждается
-только сохранённое значение; визуальный эффект и перезапуск процессов не входят
-в контракт.
+Safe unsupported enum values are skipped with warnings while other valid records
+publish. Observation/type/scalar/candidate errors return `2` and preserve the
+previous category file. Absent source preferences create no record and remain
+unmanaged. [Configuration](../../../docs/toolkit/CONFIGURATION.md#macos-settings)
+owns the exact key/type lists, enums, Screenshot paths and effect limitations.
