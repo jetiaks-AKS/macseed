@@ -134,7 +134,7 @@ valid channel are required only when identities are selected; Core never install
 Capture emits phase/category events, safe Secure challenge metadata, a result and
 exactly one handled terminal event. Cancellation stops owned process groups and
 removes private staging. Ordinary `bs capture` selection, prompts and encryption
-behavior remain unchanged. Desktop, Compare and packaging remain separate work.
+behavior remain unchanged. Desktop and packaging remain separate work.
 
 ### Structured execution and Verification
 
@@ -672,6 +672,71 @@ without expected/actual values, private content, or remote URLs. Comparison does
 not Apply, remove, or plan cleanup, and is not automatically run by Bootstrap,
 Workflow, or Restore. Its facts remain transient; there is no persisted
 Comparison interface.
+
+## Structured Environment Status
+
+Protocol V1 exposes read-only `environment_compare`. Its exact `parameters` are
+`generated_dir` (absolute existing directory) and `blueprint_path` (absolute
+existing file or `null`). These are the production selected-reference inputs,
+not a Bundle path. `null` explicitly requests the existing no-Blueprint,
+all-inclusive semantics; neither an ambient Blueprint nor another inventory is
+substituted. Reference direction remains reference → current Mac.
+
+Core runs an owned `--application-compare` subprocess directly through
+`comparison_run`, `verification_run` and `comparison_project`, without invoking
+a CLI workflow, logger, preflight, Discovery, publication or Apply. The ordinary
+CLI remains independent of the adapter. All target readers and reference
+validation remain production implementations; observations are sequential.
+
+The bounded `result` contains:
+
+- `read_only: true`, `publication_occurred: false` and
+  `target_mutation_may_have_started: false`;
+- `comparison`: production run `status`, typed `verdict`, `also_incomplete` and
+  `counts` for `matching`, `missing`, `differing`, `unverified`, `unsupported`,
+  `unresolved`, `extra`, and `unknown_difference`;
+- `comparison_records`: `record_id`, `domain`, privacy-safe `item_id`,
+  `comparison_kind`, nullable typed `reason`/`phase`, and `support`, including
+  matching predicates. IDs join the existing Verification records;
+- `verification`: existing Global Verification aggregate, independently of
+  comparison verdict and operation success;
+- `records`: bounded Verification/Coverage/Operation records, diagnostics and
+  module outcomes through the existing application reporting channel. Compare
+  includes `excluded` Coverage as well as `resolved`, `unresolved` and
+  `no_requirement`; unsupported remains a subset of unverified;
+- `extra`: per-domain availability, nullable count/reason, and safe item IDs for
+  the production extra-capable domains (casks, App Store and VS Code extensions).
+  Complete digest-bound source provenance and valid successful target enumeration
+  are mandatory. Formula extras remain unavailable; other domains do not support
+  extras. There are no cleanup/removal actions.
+
+Comparison verdicts are `incomplete`, `differences_detected`,
+`no_differences_detected` and `no_comparable_requirements`, preserving Stage 14
+precedence. A completed observation with differences or unverified predicates
+can complete the operation; success does not imply conformity. Invalid source
+records fail with `reference_invalid`; changed reference fails with
+`reference_changed`. Explicit missing/unreadable reference containers fail with
+`reference_unavailable`; malformed request shape fails with `invalid_request`.
+Optional absent inputs, unresolved selections and observation failures retain
+production Coverage/Verification semantics, with typed reasons rather than
+fabricated requirements. Unavailable subprocess/reporting uses
+`comparison_unavailable`/`comparison_reporting_incomplete`.
+
+The application channel accepts at most 8192 records and 4096 bytes per record;
+records retain production order and deterministic identities/categories/counts
+for equivalent observations. Observation timestamps remain factual. Truncated,
+invalid or missing reporting fails rather than claiming a complete projection.
+No expected/actual values, raw settings, credentials, Git identity values,
+authenticated remotes, private keys, shell commands or unnecessary absolute paths
+are serialized. Sensitive subject IDs use the established opaque projection.
+Python bytecode writing is disabled for this read-only execution path.
+
+Events are `started`, bounded read-only `execution_event` lifecycle progress,
+`result` when available, and exactly one terminal
+`completed`, `failed` or `cancelled`. Cancellation terminates the owned process
+group, cleans private staging and retains available partial records. Compare
+never publishes generated state, installs dependencies or changes target state.
+Stage 15 remains in progress; Desktop and runtime distribution are separate work.
 
 ## Planned Core/GUI boundary
 

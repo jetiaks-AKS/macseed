@@ -531,6 +531,75 @@ def restore_execute(operation_id, path, disabled_groups, include_secure, expecte
         return failure("internal_error")
 
 
+def environment_compare(operation_id, parameters):
+    sequence = 1
+    owned = None
+    state = {"read_only": True, "publication_occurred": False,
+             "target_mutation_may_have_started": False}
+
+    def event(kind, data=None):
+        nonlocal sequence
+        sequence += 1
+        emit(sequence, kind, operation_id, data)
+
+    try:
+        with restore_signals(), tempfile.TemporaryDirectory(prefix="macseed-compare-") as temporary:
+            generated = Path(parameters["generated_dir"])
+            blueprint = parameters["blueprint_path"]
+            if not generated.is_dir() or not os.access(generated, os.R_OK | os.X_OK):
+                raise ExecuteFailed("reference_unavailable")
+            if blueprint is not None and (not Path(blueprint).is_file() or not os.access(blueprint, os.R_OK)):
+                raise ExecuteFailed("reference_unavailable")
+            environment = os.environ.copy()
+            # Reference is explicit. No ambient Restore/evidence or snapshot override.
+            for name in tuple(environment):
+                if name.startswith(("BUNDLE_RESTORE_", "MACSEED_", "BLUEPRINT_")) or name in {
+                        "ZSH_SNAPSHOT_FILE", "SSH_SNAPSHOT_FILE", "PREVIEW_PLAN_FILE"}:
+                    environment.pop(name, None)
+            environment.update(BLUEPRINT_GENERATED_DIR=str(generated),
+                               BLUEPRINT_FILE=blueprint or str(Path(temporary) / "absent-blueprint"),
+                               MACSEED_APPLICATION_COMPARE="true", MAS_NO_AUTO_INDEX="1",
+                               HOMEBREW_NO_AUTO_UPDATE="1", PYTHONDONTWRITEBYTECODE="1")
+            def progress(kind, record):
+                if kind == "lifecycle":
+                    event("execution_event", dict(record, read_only=True))
+
+            owned = OwnedBootstrap(ROOT, environment, on_record=progress, mode="--application-compare")
+            try:
+                status = owned.wait()
+            except BaseException:
+                owned.cancel()
+                raise
+            state.update(comparison=owned.comparison, comparison_records=owned.comparison_records,
+                         extra={"domains": owned.extra_status, "items": owned.extra_records},
+                         verification=owned.verification, records=owned.details)
+            if owned.details["status"] != "complete" or owned.comparison is None or owned.verification is None:
+                raise ExecuteFailed("comparison_reporting_incomplete")
+            event("result", state)
+            if status != 0:
+                codes = {row["code"] for row in owned.details["diagnostics"]}
+                raise ExecuteFailed("reference_invalid" if "input_invalid" in codes else
+                                    "reference_changed" if "input_changed" in codes else "comparison_failed")
+            event("completed", {"read_only": True, "target_mutation_may_have_started": False})
+            return 0
+    except Cancelled:
+        if owned is not None:
+            state.update(comparison=owned.comparison, comparison_records=owned.comparison_records,
+                         extra={"domains": owned.extra_status, "items": owned.extra_records},
+                         verification=owned.verification, records=owned.details)
+        event("cancelled", state)
+        return 130
+    except ExecuteFailed as exc:
+        event("failed", dict(state, code=exc.code))
+        return 2
+    except OSError:
+        event("failed", dict(state, code="comparison_unavailable"))
+        return 2
+    except Exception:
+        event("failed", dict(state, code="internal_error"))
+        return 2
+
+
 def main(version, channel=None):
     operation_id = None
     for name in ("MACSEED_APPLICATION_SECURE_READY", "MACSEED_APPLICATION_SECURE_ONLY",
@@ -556,6 +625,18 @@ def main(version, channel=None):
         if operation == "capabilities":
             if set(value) != required:
                 raise ValueError("invalid capabilities request")
+        elif operation == "environment_compare":
+            if set(value) != required | {"parameters"} or not isinstance(value["parameters"], dict):
+                raise ValueError("invalid Compare request")
+            parameters = value["parameters"]
+            if set(parameters) != {"generated_dir", "blueprint_path"}:
+                raise ValueError("invalid reference")
+            for name in ("generated_dir", "blueprint_path"):
+                path_value = parameters[name]
+                if name == "blueprint_path" and path_value is None:
+                    continue
+                if not isinstance(path_value, str) or not path_value.startswith("/") or "\0" in path_value:
+                    raise ValueError("invalid reference path")
         elif operation in ("capture_prepare", "capture_execute"):
             if set(value) != required | {"parameters"} or not isinstance(value['parameters'], dict):
                 raise ValueError('invalid Capture parameters')
@@ -598,6 +679,8 @@ def main(version, channel=None):
         channel.close()
         channel = None
     emit(1, "started", operation_id)
+    if operation == "environment_compare":
+        return environment_compare(operation_id, parameters)
     if operation in ('capture_prepare', 'capture_execute'):
         from capture import capture, CaptureError
         sequence = 1
@@ -623,7 +706,7 @@ def main(version, channel=None):
         result = {
             "protocol_version": PROTOCOL_VERSION,
             "product_version": version,
-            "operations": ["capabilities", "bundle_inspect", "restore_prepare", "restore_execute", "capture_prepare", "capture_execute"],
+            "operations": ["capabilities", "bundle_inspect", "restore_prepare", "restore_execute", "capture_prepare", "capture_execute", "environment_compare"],
         }
     else:
         try:

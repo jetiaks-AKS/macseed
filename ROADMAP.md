@@ -230,7 +230,8 @@ Bootstrap/Workflow и, где применимо, Restore. Результат д
 
 **Статус: In progress**
 
-Протокол v1 поддерживает `capabilities`, read-only `bundle_inspect`,
+Протокол v1 поддерживает `capabilities`, read-only `bundle_inspect` и
+`environment_compare` поверх production Comparison/Verification,
 `restore_prepare` и первый mutating `restore_execute` для временного
 ограниченного application-safe scope, включая выбранные Homebrew formulae при
 работающем Homebrew, отсутствующие app-only casks, прошедшие проверку metadata
@@ -263,7 +264,8 @@ Application Capture теперь предоставляет structured inventory
 Blueprint и создание production Bundle с повторным Discovery и проверкой prepared ID.
 Secure SSH selection отделён от generated state; encrypted export использует тот же
 secret channel с отдельным Bundle encryption challenge и SSH-key unlock.
-Следующая задача этапа — structured Compare/Environment Status.
+Structured Compare/Environment Status предоставляет read-only результат production
+Comparison с coverage, причинами и агрегатами без разбора терминального вывода.
 Runtime compatibility и подключение
 GUI относятся к интеграции Desktop, без второго движка Restore.
 

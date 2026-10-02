@@ -15,10 +15,17 @@ import tempfile
 
 
 class OwnedBootstrap:
-    def __init__(self, root, environment, secure_evidence=None, on_record=None, identities=None):
+    def __init__(self, root, environment, secure_evidence=None, on_record=None, identities=None, mode="--bootstrap"):
+        if mode not in {"--bootstrap", "--application-compare"}:
+            raise ValueError("unsupported owned mode")
         read_fd, write_fd = os.pipe()
         verification_read, verification_write = os.pipe()
         report_read, report_write = os.pipe()
+        self.mode = mode
+        self.comparison = None
+        self.comparison_records = []
+        self.extra_status = []
+        self.extra_records = []
         self.report_fd = report_read
         os.set_blocking(report_read, False)
         self.on_record = on_record
@@ -45,11 +52,17 @@ class OwnedBootstrap:
             descriptors += (receipt.fileno(),)
         try:
             self.process = subprocess.Popen(
-                ["./bootstrap.sh", "--bootstrap"], cwd=root, env=child_env,
+                ["./bootstrap.sh", mode], cwd=root, env=child_env,
                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL, start_new_session=True,
                 pass_fds=descriptors)
         except BaseException:
+            if mode == "--application-compare" and getattr(self, "process", None) is not None:
+                try:
+                    os.killpg(self.process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                self.process.wait()
             if receipt is not None:
                 receipt.close()
             os.close(read_fd)
@@ -70,6 +83,62 @@ class OwnedBootstrap:
         self.verification = None
 
     def _record(self, record):
+        if getattr(self, "mode", None) == "--application-compare" and isinstance(record, dict) and record.get("kind") in {
+                "comparison", "comparison_summary", "extra", "extra_status"}:
+            # Already privacy-projected by reporting.py, on an owned private FD.
+            self.report_count += 1
+            if self.report_count > MAX_RECORDS:
+                self.details["status"] = "truncated"
+                return
+            kind = record["kind"]
+            schemas = {
+                "comparison": {"record_id", "domain", "item_id", "comparison_kind", "reason", "phase", "support"},
+                "extra": {"domain", "item_id"},
+                "extra_status": {"domain", "status", "count", "reason"},
+                "comparison_summary": {"status", "verdict", "also_incomplete", "counts"},
+            }
+            if set(record) != schemas[kind] | {"kind"}:
+                self.reporting_invalid = True
+                return
+            if kind == "comparison_summary":
+                counts = record["counts"]
+                if (record["status"] not in {"complete", "incomplete"} or record["verdict"] not in {
+                        "incomplete", "differences_detected", "no_differences_detected", "no_comparable_requirements"} or
+                        type(record["also_incomplete"]) is not bool or not isinstance(counts, dict) or
+                        set(counts) != {"matching", "missing", "differing", "unverified", "unsupported", "unresolved", "extra", "unknown_difference"} or
+                        any(type(value) is not int or value < 0 for value in counts.values())):
+                    self.reporting_invalid = True
+                    return
+            else:
+                for key in ("domain", "reason", "phase", "support", "status", "comparison_kind"):
+                    value = record.get(key)
+                    if value is not None and (not isinstance(value, str) or not re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", value)):
+                        self.reporting_invalid = True
+                        return
+                if kind == "comparison" and (not re.fullmatch(r"v:[0-9]+", str(record["record_id"])) or
+                        record["comparison_kind"] not in {"matching", "missing", "differing", "unverified"} or
+                        record["support"] not in {"supported", "unsupported"}):
+                    self.reporting_invalid = True
+                    return
+                if kind == "extra_status" and (record["status"] not in {"available", "unavailable", "not_applicable"} or
+                        record["count"] is not None and (type(record["count"]) is not int or record["count"] < 0)):
+                    self.reporting_invalid = True
+                    return
+                if "item_id" in record:
+                    identity = record["item_id"]
+                    if not isinstance(identity, str):
+                        self.reporting_invalid = True
+                        return
+                    if not re.fullmatch(r"opaque:[0-9a-f]{64}", identity):
+                        record["item_id"] = item(record["domain"], identity)
+            record.pop("kind")
+            if kind == "comparison_summary":
+                self.comparison = record
+            else:
+                bucket = {"comparison": self.comparison_records, "extra": self.extra_records,
+                          "extra_status": self.extra_status}[kind]
+                bucket.append(record)
+            return
         if not isinstance(record, dict) or record.get("kind") not in {
                 "lifecycle", "operation", "verification", "coverage", "diagnostic", "details_complete", "truncated", "reporting_failed"}:
             self.reporting_invalid = True
@@ -214,8 +283,17 @@ class OwnedBootstrap:
         self._collect()
         return result
 
+    def _stop_compare_descendants(self):
+        # A stopped shell can leave a reader grandchild that ignored TERM.
+        if getattr(self, "mode", None) == "--application-compare":
+            try:
+                os.killpg(self.process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
     def cancel(self):
         if self.process.poll() is not None:
+            self._stop_compare_descendants()
             self._collect()
             return self.process.returncode
         try:
@@ -239,5 +317,6 @@ class OwnedBootstrap:
             except ProcessLookupError:
                 pass
             self.process.wait()
+        self._stop_compare_descendants()
         self._collect()
         return 130

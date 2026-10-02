@@ -13,7 +13,7 @@ comparison_note() {
 comparison_project() {
     CV_MATCHING=0 CV_MISSING=0 CV_DIFFERING=0 CV_UNVERIFIED=0
     CV_UNSUPPORTED=0 CV_UNRESOLVED=0 CV_UNKNOWN_DIFFERENCE=0
-    CV_ROWS=()
+    CV_ROWS=() CV_ALL_ROWS=()
     local i kind category reason phase
     for ((i=0; i<${#GV_V[@]}; i+=6)); do
         kind="${CV_KIND[$i]:-unknown}"
@@ -28,10 +28,12 @@ comparison_project() {
                 esac ;;
         esac
         [[ "${GV_V[i+4]}" != unsupported ]] || CV_UNSUPPORTED=$((CV_UNSUPPORTED+1))
-        [[ "$category" != matching ]] || continue
         verification_reason "v:$i"
         reason="$GV_REASON" phase="$GV_PHASE"
         [[ "$kind" != unknown || "${GV_V[i+3]}" != mismatch ]] || reason=unknown_difference
+        if [[ "$category" == matching ]]; then reason='' phase=''; fi
+        CV_ALL_ROWS+=("v:$i" "${GV_V[i]}" "${GV_V[i+1]}" "$category" "$reason" "$phase" "${GV_V[i+4]}")
+        [[ "$category" != matching ]] || continue
         CV_ROWS+=("$category" "${GV_V[i]}" "${GV_V[i+1]}" "${GV_V[i+2]}" "$reason" "$phase" "${GV_V[i+4]}")
     done
     for ((i=0; i<${#GV_C[@]}; i+=4)); do
@@ -163,5 +165,26 @@ comparison_run() {
     verification_run >/dev/null
     CV_ACTIVE=false
     comparison_report
+    comparison_application_records
     return 0
+}
+
+# Structured projection of the same completed comparison; no target observers.
+comparison_application_records() {
+    [[ "${MACSEED_APPLICATION_COMPARE:-false}" == true ]] || return 0
+    local i
+    for ((i=0; i<${#CV_ALL_ROWS[@]}; i+=7)); do
+        application_record comparison "${CV_ALL_ROWS[i]}" "${CV_ALL_ROWS[i+1]}" "${CV_ALL_ROWS[i+2]}" \
+            "${CV_ALL_ROWS[i+3]}" "${CV_ALL_ROWS[i+4]}" "${CV_ALL_ROWS[i+5]}" "${CV_ALL_ROWS[i+6]}"
+    done
+    for ((i=0; i<${#CV_EXTRA_DOMAINS[@]}; i++)); do
+        application_record extra_status "${CV_EXTRA_DOMAINS[i]}" "${CV_EXTRA_STATES[i]}" "${CV_EXTRA_COUNTS[i]}" "${CV_EXTRA_REASONS[i]}"
+    done
+    for ((i=0; i<${#CV_EXTRA_ROWS[@]}; i+=2)); do
+        application_record extra "${CV_EXTRA_ROWS[i]}" "${CV_EXTRA_ROWS[i+1]}"
+    done
+    application_record comparison_summary "$GV_STATUS" "$CV_VERDICT" "$CV_ALSO_INCOMPLETE" \
+        "$CV_MATCHING" "$CV_MISSING" "$CV_DIFFERING" "$CV_UNVERIFIED" \
+        "$CV_UNSUPPORTED" "$CV_UNRESOLVED" "$CV_EXTRA_TOTAL" "$CV_UNKNOWN_DIFFERENCE"
+    application_record complete
 }

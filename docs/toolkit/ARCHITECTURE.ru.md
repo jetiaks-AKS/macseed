@@ -423,7 +423,7 @@ secret socket сохраняет binary response framing, добавляет Cap
 Capture передаёт phase/category events, безопасную challenge metadata, результат
 и ровно один handled terminal event. Отмена останавливает принадлежащие Core
 process groups и удаляет private staging. Обычный `bs capture`, его prompts,
-selection и encryption не меняются. Desktop, Compare и packaging остаются вне scope.
+selection и encryption не меняются. Desktop и packaging остаются вне scope.
 
 ### Discovery
 
@@ -656,6 +656,39 @@ values, приватного содержимого или remote URLs. Comparis
 удаление или планирование cleanup и не запускается автоматически в Bootstrap,
 Workflow и Restore. Её facts остаются временными; постоянного интерфейса
 Comparison нет.
+
+## Structured Environment Status
+
+Неизменяющая операция Protocol V1 `environment_compare` использует существующие
+`comparison_run`, `verification_run` и `comparison_project`. Точный контракт
+`parameters`: `generated_dir` — абсолютный путь существующего каталога Generated
+Configuration; `blueprint_path` — абсолютный путь существующего Blueprint либо
+`null` для полного выбора без Blueprint. Другой источник не подставляется;
+направление — reference → текущий Mac. Bundle не является входом этой операции.
+
+Результат содержит `comparison` со статусом, заключением и счётчиками;
+`comparison_records` с идентификаторами записи и элемента, доменом, категорией
+сравнения, типизированной причиной, фазой и статусом поддержки; существующий
+агрегат `verification`; подробные Verification/Coverage/Operation records и
+диагностику; `extra` с доступностью, количеством, причиной и безопасными
+идентификаторами. Передаются и совпадающие требования. Coverage сохраняет
+resolved, unresolved, excluded и no_requirement. Успех операции отделён от
+соответствия окружения. Extras требуют полной provenance, связанной с digest
+источника, и успешного валидного перечисления текущего состояния; удаление не
+планируется.
+
+Адаптер запускает собственный subprocess напрямую через внутренний
+`--application-compare`, без CLI workflow, logger, preflight, Discovery,
+публикации или Apply. Передаются только безопасные поля и типизированные статусы;
+исходные значения настроек, Git identity, ключи, credentials, remote URLs,
+команды оболочки и ненужные абсолютные пути не раскрываются. Ограничение —
+8192 записи, 4096 байт на запись; неполная или некорректная передача завершается
+типизированной ошибкой. Отмена останавливает собственную группу процессов и
+сохраняет доступные частичные записи. Прогресс передаётся через неизменяющие
+`execution_event`. После started/result выдаётся ровно одно терминальное событие
+completed/failed/cancelled. Схема, заключения, ошибки и точные правила описаны в
+[основном контракте](ARCHITECTURE.md#structured-environment-status).
+Stage 15 остаётся In progress; Desktop и поставка runtime относятся к отдельной работе.
 
 ## Планируемая граница Core/GUI
 

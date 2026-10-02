@@ -11,6 +11,12 @@ The format is based on the principles of **Keep a Changelog**.
 
 ### Added
 
+* Added Protocol V1 read-only `environment_compare` for Environment Status,
+  reusing production Comparison and Global Verification. Explicit generated
+  reference/Blueprint inputs produce bounded privacy-safe comparison, coverage,
+  verification, operation and extra-provenance records, with typed failures and
+  owned-process cancellation; human CLI comparison behavior is unchanged.
+
 * Added Protocol V1 application Capture preparation and Bundle creation with
   structured Discovery inventory, Blueprint selection and stale-input protection.
   Optional SSH identities use the existing encrypted package and a separate secret

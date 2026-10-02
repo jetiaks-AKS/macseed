@@ -14,4 +14,4 @@ if ! command -v python3 >/dev/null 2>&1; then
     exit 2
 fi
 
-exec python3 "$CORE_ROOT/modules/core/application-interface/core.py" "$TOOLKIT_VERSION" "$@"
+exec python3 -B "$CORE_ROOT/modules/core/application-interface/core.py" "$TOOLKIT_VERSION" "$@"

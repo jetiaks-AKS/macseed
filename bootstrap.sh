@@ -121,6 +121,11 @@ for arg in "$@"; do
             ((EXECUTION_MODE_COUNT++))
             ;;
 
+        --application-compare)
+            MODE="--application-compare"
+            ((EXECUTION_MODE_COUNT++))
+            ;;
+
         --application-readiness)
             MODE="--application-readiness"
             ((EXECUTION_MODE_COUNT++))
@@ -1077,7 +1082,12 @@ exit "$result"
 
 )
 
-if [[ "$MODE" == "--application-readiness" ]]; then
+if [[ "$MODE" == "--application-compare" ]]; then
+    # Internal read-only adapter: no logger, preflight, CLI workflow or Apply.
+    [[ "${MACSEED_APPLICATION_COMPARE:-false}" == true ]] || exit 2
+    comparison_run >/dev/null
+    [[ "$GV_STATUS" == complete ]]
+elif [[ "$MODE" == "--application-readiness" ]]; then
     if [[ "${MACSEED_APPLICATION_READINESS_REPORT:-false}" == true ]]; then
         bootstrap_application_readiness_report
         exit $?

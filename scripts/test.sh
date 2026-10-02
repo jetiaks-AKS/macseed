@@ -18,6 +18,7 @@ SUITES=(
     scripts/test-configuration-preview.sh
     scripts/test-core-lifecycle.sh
     scripts/test-capture-api.py
+    scripts/test-environment-compare.py
     scripts/test-core-application-interface.py
     scripts/test-discovery-summary.sh
     scripts/test-dry-run-cli.sh

@@ -1,6 +1,7 @@
 """Privacy projection of production records, never a state observer."""
 import hashlib
 import json
+import os
 import re
 import sys
 
@@ -40,6 +41,26 @@ def project(fields):
     kind, *values = fields
     def token(value):
         return value if re.fullmatch(r'[a-z][a-z0-9_-]{0,63}', value) else 'redacted'
+    if kind == 'comparison_summary':
+        status, verdict, incomplete, *counts = values
+        verdicts = {'Comparison incomplete': 'incomplete', 'Differences detected': 'differences_detected',
+                    'No differences detected': 'no_differences_detected', 'No comparable requirements': 'no_comparable_requirements'}
+        return {'kind': kind, 'status': status, 'verdict': verdicts[verdict],
+                'also_incomplete': incomplete == 'true',
+                'counts': dict(zip(('matching', 'missing', 'differing', 'unverified', 'unsupported',
+                                    'unresolved', 'extra', 'unknown_difference'), map(int, counts)))}
+    if kind == 'extra_status':
+        domain, state, count, reason = values
+        return {'kind': kind, 'domain': token(domain), 'status': token(state),
+                'count': int(count) if count else None, 'reason': token(reason) if reason else None}
+    if kind == 'extra':
+        domain, subject = values
+        return {'kind': kind, 'domain': token(domain), 'item_id': item(domain, subject)}
+    if kind == 'comparison':
+        reference, domain, subject, category, reason, phase, support = values
+        return {'kind': kind, 'record_id': reference, 'domain': token(domain), 'item_id': item(domain, subject),
+                'comparison_kind': token(category), 'reason': token(reason) if reason else None,
+                'phase': token(phase) if phase else None, 'support': token(support)}
     if kind == 'item':
         domain, subject, action, state, reason = values
         return {'kind': 'lifecycle', 'domain': token(domain), 'item_id': item(domain, subject),
@@ -72,7 +93,7 @@ def project(fields):
         result.update(predicate=token(predicate), conformity=token(conformity), support=token(support), observed_at=observed or None)
     elif kind == 'coverage':
         disposition, source_status = values
-        if disposition == 'excluded':
+        if disposition == 'excluded' and os.environ.get('MACSEED_APPLICATION_COMPARE') != 'true':
             return None
         result.update(disposition=disposition, source_status=source_status)
     elif kind == 'operation':
