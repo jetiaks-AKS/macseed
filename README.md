@@ -39,9 +39,9 @@ removing anything. See [Capture / Restore](docs/CAPTURE-RESTORE.md) for boundari
 
 ## Project status
 
-The current code version is **3.3.0**. `develop` also contains Global
-Verification, Environment Comparison and the completed Protocol V1 application
-interface. Macseed Core owns the behavior shared by its clients.
+The current Core/CLI version is **3.4.0**, including Global Verification,
+Environment Comparison and the completed Protocol V1 application interface.
+Macseed Core owns the behavior shared by its clients.
 
 A native SwiftUI **Macseed Desktop** is the next stage; `Macseed.app` is not
 implemented yet. The CLI remains supported. The first complete Desktop product

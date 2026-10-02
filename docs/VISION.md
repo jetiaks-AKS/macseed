@@ -41,6 +41,6 @@ and a fresh check, rather than being mistaken for permanent lack of support.
 
 The next outcomes are a native application and a qualified signed distribution.
 The first complete Desktop release is planned as Macseed 1.0, built on the mature
-Core from the toolkit/CLI v1.x–v3.3.x line. This does not rename released history
+Core from the toolkit/CLI v1.x–v3.4.x line. This does not rename released history
 or change the current version. See the [Roadmap](../ROADMAP.md) for stages and
 [Architecture](toolkit/ARCHITECTURE.md) for technical boundaries.

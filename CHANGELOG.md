@@ -7,87 +7,48 @@ The format is based on the principles of **Keep a Changelog**.
 
 ---
 
-## Unreleased
+## [3.4.0] - 2026-10-02
+
+Completes the Core/CLI foundation before Stage 16 native Desktop development.
+Stages 13–15 are complete; Desktop and distribution remain planned. Macseed 1.0
+remains reserved for the first complete native Desktop product release.
 
 ### Added
 
-* Added Protocol V1 read-only `environment_compare` for Environment Status,
-  reusing production Comparison and Global Verification. Explicit generated
-  reference/Blueprint inputs produce bounded privacy-safe comparison, coverage,
-  verification, operation and extra-provenance records, with typed failures and
-  owned-process cancellation; human CLI comparison behavior is unchanged.
-
-* Added Protocol V1 application Capture preparation and Bundle creation with
-  structured Discovery inventory, Blueprint selection and stale-input protection.
-  Optional SSH identities use the existing encrypted package and a separate secret
-  channel; private staging and no-clobber publication preserve terminal Capture.
-
-* Added the Protocol V1 Core application interface with capability reporting,
-  read-only Bundle inspection, `restore_prepare`, and `restore_execute`.
-  Restore reuses production Preview and Bootstrap, rejects stale plans, supports
-  cancellation of owned processes, and reports mutation risk separately from
-  production Global Verification.
-* Added application Restore lifecycle events and detailed production Verification,
-  Coverage and Operation records alongside existing aggregates. Operation outcomes
-  remain separate from conformity; bounded, privacy-conscious reporting retains
-  partial records on failure/cancellation without parsing terminal output.
-* Added structured selected-item/action Restore plans and preparation-time
-  readiness to `restore_prepare`, with typed dispositions, conflicts and
-  prerequisite outcomes. Plans retain deterministic IDs and require re-preparation
-  after prerequisite resolution without persistent resume state.
-* Added plan-sensitive application Restore readiness checks before publication.
-  Missing or unusable prerequisites and unsupported execution requirements block
-  the selected plan; Homebrew and age are not installed interactively in this mode.
-* Expanded application Restore to Homebrew formulae with usable Homebrew,
-  supported safe app-only Homebrew casks, and missing VS Code extensions.
-  VS Code CLI discovery prefers PATH and can use the official bundled macOS CLI
-  when PATH does not contain `code`; satisfied items remain no-op.
-* Added non-interactive Git repository reconstruction from recorded remotes and
-  Mac App Store Restore through the existing `mas` inventory and installation
-  consumer. Existing repository conflict protection is retained; App Store
-  installation relies on existing account, entitlement and authorization state.
-* Integrated Secure SSH identity Restore in application mode through the existing
-  validated, conflict-safe no-clobber importer, before dependent repository clones.
-  A dedicated inherited secret channel keeps passphrases and import confirmation
-  separate from JSON/JSONL. Bundle unlock uses age through an isolated PTY;
-  protected SSH keys have a separate unlock interaction and retain encryption.
-  Production Global Verification checks imported identity pairs, and repeated
-  identical Restore performs no identity writes. Terminal CLI behavior is preserved.
-
-* Completed Stage 14 Environment Comparison with read-only selected-requirement
-  projection, typed differences, per-domain digest-bound source completeness,
-  and informational extra inventory comparison for casks, App Store IDs, and
-  VS Code extension IDs. Legacy inventory remains compatible with extra unknown.
-  Added public `bs compare` and `./bootstrap.sh --compare` entrypoints; comparison
-  remains explicit and never removes extra items.
-
-* Completed Stage 13 human-readable Global Verification reporting with four
-  scope-aware readiness verdicts, actionable typed reasons, separate operation
-  outcomes, and unchanged public command exit codes.
+* Global Verification with structured coverage, conformity and operation reporting,
+  scope-aware readiness verdicts and verification of restored SSH identities.
+* Explicit read-only Environment Comparison through `bs compare` and
+  `./bootstrap.sh --compare`, plus Protocol V1 `environment_compare` for Environment
+  Status. Informational extras require proven source completeness; no removal.
+* Protocol V1 application interface for capabilities, Bundle inspection and
+  structured Capture preparation/execution with inventory, selection and
+  stale-input protection.
+* Structured Restore preparation/execution with selected-item plans, plan-sensitive
+  prerequisites, stale-plan rejection, progress/events, cancellation and production
+  Verification projection. Operation outcomes remain separate from conformity.
+* Application-mode Restore for Homebrew formulae, supported app-only casks,
+  VS Code extensions, Git repositories and Mac App Store apps, using existing
+  consumers and conflict protection.
+* Secure SSH application Restore bridge with separate secret input, no-clobber
+  identity import and verification before dependent repository clones.
 
 ### Changed
 
-* Rebuilt documentation around Macseed Core, CLI and planned Desktop, with English
-  as the authoritative language and selected Russian convenience copies in
-  `docs/ru/`. Consolidated Protocol V1 reference material, closed the Stage 15
-  documentation status, and shortened architecture, roadmap and onboarding.
+* Rebuilt canonical English documentation around Core, CLI and planned Desktop,
+  consolidating Protocol V1 contracts and preserving historical releases.
+* Added canonical regression/lint runners and macOS GitHub Actions validation,
+  with isolated fixtures and a 35-suite regression baseline.
 
 ### Fixed
 
-* Make application Restore prerequisites depend on selected work: settings and
-  Secure-only plans no longer require unrelated internet, Command Line Tools or
-  administrator authorization. Missing installs/clones retain network checks,
-  Homebrew installs retain Command Line Tools checks, and missing MAS apps retain
-  non-interactive authorization. Terminal CLI preflight remains unchanged.
-* Verify supported SSH profiles in a partial snapshot against matching target
-  profiles without weakening Bootstrap/Preview configuration conflict protection.
-* Accept App Store inventory rows with aligned numeric IDs, prevent `mas list`
-  Spotlight auto-indexing during comparison, and print the Comparison heading once.
-* Accept a clean Mac without an SSH directory, and prepare selected SSH
-  configuration and explicitly confirmed identities before Restore clones
-  Workspace repositories, after full Preview and input validation.
-* Activate newly installed Homebrew in the running process and defer the
-  optional launcher with a warning during Homebrew-free Restore.
+* Stabilized SSH passphrase handling and verified supported partial SSH profiles
+  without weakening configuration conflict protection.
+* Hardened Restore prerequisite handling, clean-Mac SSH preparation, Homebrew PATH
+  activation and optional launcher handling.
+* Corrected App Store comparison inventory handling and prevented Spotlight
+  auto-indexing during comparison.
+* Prevented Python bytecode pollution across regression suites and subprocesses,
+  fixing the CI Environment Compare fixture failure.
 
 ## [3.3.0] - 2026-09-26
 

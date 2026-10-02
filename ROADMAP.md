@@ -69,7 +69,7 @@ hardware; qualify Intel separately where support is intended.
 See [Distribution](docs/DISTRIBUTION.md).
 
 The first complete native Desktop release is planned as **Macseed 1.0**, built on
-the mature toolkit/CLI v1.x–v3.3.x Core. Current code remains 3.3.0; published
+the mature toolkit/CLI v1.x–v3.4.x Core. Current Core/CLI version is 3.4.0; published
 versions and tags retain their historical meaning. No release date is promised.
 
 ## Later directions

@@ -6,7 +6,7 @@ Macseed reconstructs supported environment state: **Capture → Rebuild → Veri
 Core owns Discovery, Generated Configuration, Selection / Blueprint, Preview,
 Bootstrap, Verification, Comparison, Bundle and Secure Migration. The official CLI
 is implemented; native SwiftUI Desktop is planned and must consume the same Core.
-Current code version is 3.3.0; Stage 15 Protocol V1 is complete. Desktop/runtime
+Current code version is 3.4.0; Stage 15 Protocol V1 is complete. Desktop/runtime
 integration is Stage 16; packaging and clean-Mac qualification are Stage 17.
 
 Read existing code and consumers before proposing changes. Prefer minimal safe

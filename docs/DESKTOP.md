@@ -38,4 +38,4 @@ do not constitute an installed-app runtime.
 [Distribution](DISTRIBUTION.md) owns signed delivery and packaged clean-Mac proof;
 [TODO](../TODO.md) tracks unfinished actions. The first complete Desktop release
 is planned as **Macseed 1.0**, preserving the mature toolkit/CLI history and the
-current 3.3.0 code version.
+current 3.4.0 Core/CLI version.

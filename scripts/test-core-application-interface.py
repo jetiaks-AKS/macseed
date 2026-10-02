@@ -37,7 +37,7 @@ class CoreInterfaceTests(unittest.TestCase):
         self.assertEqual({row["protocol_version"] for row in records}, {1})
         self.assertEqual(records[1]["data"], {
             "protocol_version": 1,
-            "product_version": "3.3.0",
+            "product_version": "3.4.0",
             "operations": ["capabilities", "bundle_inspect", "restore_prepare", "restore_execute", "capture_prepare", "capture_execute", "environment_compare"],
         })
         self.assertEqual(sum(row["type"] in ("completed", "failed") for row in records), 1)
@@ -67,7 +67,7 @@ class CoreInterfaceTests(unittest.TestCase):
                 self.assertEqual(records[0]["data"]["code"], code)
 
     def test_human_cli_unchanged(self):
-        for flag, expected in (("--version", "Version 3.3.0"), ("--help", "--capture")):
+        for flag, expected in (("--version", "Version 3.4.0"), ("--help", "--capture")):
             with self.subTest(flag=flag):
                 result = subprocess.run(
                     ["bash", "bootstrap.sh", flag], cwd=ROOT,
