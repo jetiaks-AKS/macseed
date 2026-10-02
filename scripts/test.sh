@@ -46,10 +46,34 @@ SUITES=(
     scripts/test-workspace-folders.sh
 )
 
-output_file="$(mktemp)" || exit 2
-trap 'rm -f "$output_file"' EXIT
-trap 'exit 130' INT
-trap 'exit 143' TERM
+usage() {
+    printf 'Usage: scripts/test.sh [--shard INDEX/TOTAL] [--list]\n'
+}
+
+shard_index=1
+shard_total=1
+shard_seen=false
+list_only=false
+while (($#)); do
+    case "$1" in
+        --shard)
+            if [[ "$shard_seen" == true || $# -lt 2 || ! "$2" =~ ^([1-9][0-9]?)/([1-9][0-9]?)$ ]]; then
+                usage >&2
+                exit 2
+            fi
+            shard_index="${BASH_REMATCH[1]}"
+            shard_total="${BASH_REMATCH[2]}"
+            if ((shard_index > shard_total || shard_total > ${#SUITES[@]})); then
+                usage >&2
+                exit 2
+            fi
+            shard_seen=true
+            shift 2 ;;
+        --list) list_only=true; shift ;;
+        --help) usage; exit 0 ;;
+        *) usage >&2; exit 2 ;;
+    esac
+done
 
 for suite in "${SUITES[@]}"; do
     if [[ ! -f "$suite" ]]; then
@@ -57,6 +81,25 @@ for suite in "${SUITES[@]}"; do
         exit 2
     fi
 done
+
+# Round-robin selection keeps one canonical inventory and stable suite order.
+selected_suites=()
+for ((i = 0; i < ${#SUITES[@]}; i++)); do
+    if ((i % shard_total == shard_index - 1)); then
+        selected_suites+=("${SUITES[i]}")
+    fi
+done
+SUITES=("${selected_suites[@]}")
+
+if [[ "$list_only" == true ]]; then
+    printf '%s\n' "${SUITES[@]}"
+    exit 0
+fi
+
+output_file="$(mktemp)" || exit 2
+trap 'rm -f "$output_file"' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 for ((i = 0; i < ${#SUITES[@]}; i++)); do
     suite="${SUITES[i]}"

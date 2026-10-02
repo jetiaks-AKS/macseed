@@ -10,29 +10,59 @@ permissions:
   contents: read
 
 jobs:
-  validate:
+  lint:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - name: Ensure test tools
+      - name: Ensure ShellCheck
         run: |
-          for tool in shellcheck age; do
-            if ! command -v "$tool" >/dev/null 2>&1; then
-              brew install "$tool"
-            fi
-          done
-          if ! command -v rg >/dev/null 2>&1; then
-            brew install ripgrep
+          if ! command -v shellcheck >/dev/null 2>&1; then
+            brew install shellcheck
           fi
           shellcheck --version
-          age --version
-          rg --version
 
       - name: ShellCheck
         run: ./scripts/lint.sh
 
+  regression:
+    name: regression (${{ matrix.shard }}/4)
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Ensure regression tools
+        run: |
+          if ! command -v age >/dev/null 2>&1; then
+            brew install age
+          fi
+          if ! command -v rg >/dev/null 2>&1; then
+            brew install ripgrep
+          fi
+          age --version
+          rg --version
+
       - name: Regression tests
-        run: ./scripts/test.sh
+        run: ./scripts/test.sh --shard ${{ matrix.shard }}/4
+
+  # Preserve the existing combined check name for required-status consumers.
+  validate:
+    if: ${{ always() }}
+    needs: [lint, regression]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require lint and every regression shard
+        env:
+          LINT_RESULT: ${{ needs.lint.result }}
+          REGRESSION_RESULT: ${{ needs.regression.result }}
+        run: |
+          test "$LINT_RESULT" = success
+          test "$REGRESSION_RESULT" = success
