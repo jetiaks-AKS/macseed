@@ -2,6 +2,9 @@
 
 set -u
 
+# Keep test imports and their subprocesses from polluting project fixtures.
+export PYTHONDONTWRITEBYTECODE=1
+
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)" || exit 2
 cd "$PROJECT_ROOT" || exit 2
 
