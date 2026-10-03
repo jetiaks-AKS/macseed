@@ -52,7 +52,8 @@ and packaged clean-Mac qualification remain the next stages.
 ## Stage 16 — Native Macseed Desktop
 
 **Product/UX contract defined (16A); native sample-data foundation implemented
-(16B). Core integration remains planned.** Complete the SwiftUI client for
+(16B); Protocol V1 transport/capabilities implemented (16C). Real task integration
+remains planned.** Complete the SwiftUI client for
 Capture this Mac, Restore a Mac and Environment Status.
 Provide prerequisite guidance, Check Again, structured
 progress/results, separate secret input and cancellation over the existing Core.

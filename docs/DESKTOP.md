@@ -1,8 +1,9 @@
 # Macseed Desktop
 
-**Stage 16A contract defined; Stage 16B native foundation implemented.**
-A local SwiftUI `Macseed.app` demonstrates these flows with DEBUG-only sample
-data. Core integration and production workflows are not implemented yet.
+**Stage 16A contract defined; 16B native foundation and 16C runtime boundary implemented.**
+Normal launch checks real Core capabilities over Protocol V1. The approved sample
+flows remain available only in explicit DEBUG design-preview mode. Real Capture,
+Restore and Environment Status flows are not connected yet.
 Build and review instructions are in
 [Desktop development](../desktop/Macseed/README.md). Macseed is one product with a shared Core and two official frontends: CLI (`bs`) and Desktop.
 The official CLI remains supported. **Simple by default. Detailed on demand.**
@@ -11,6 +12,22 @@ This document owns Desktop presentation and interaction. The implemented
 [Protocol V1](core/APPLICATION-INTERFACE.md) owns transport, operation semantics,
 selection, prerequisites, records and secret input. Desktop consumes those facts;
 it does not recreate Discovery, Preview, Capture, Restore or Verification in Swift.
+
+## Implemented runtime boundary
+
+Desktop resolves an explicit development runtime descriptor or future relative
+bundled resources, launches one owned Core process group per request and consumes
+validated JSONL separately from stderr. It preserves V1 identifiers, sequence,
+phase and additive metadata. Missing runtime/protocol failure is typed and never
+falls back to samples. See [development/runtime details](../desktop/Macseed/README.md).
+
+This boundary is implemented, not packaged clean-Mac proof. Core's root-relative
+logs/config require a private writable workflow workspace before signed-resource
+workflow qualification; current bundled resolution rejects those writes. Secure
+Execute needs the future 16H socket bridge and is rejected before launch today.
+Handled cancellation retains Core evidence; forced termination without a terminal
+event is interruption with unknown effects, never rollback or item-boundary stop.
+Real task presentation and diagnostic persistence/export remain their named slices.
 
 ## Window and navigation
 

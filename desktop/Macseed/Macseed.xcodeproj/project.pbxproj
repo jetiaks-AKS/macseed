@@ -4,6 +4,18 @@ archiveVersion = 1;
 classes = {};
 objectVersion = 56;
 objects = {
+00000000000000000000001E = {isa = PBXShellScriptBuildPhase; buildActionMask = 2147483647; files = (); inputPaths = ("$(SRCROOT)/prepare-runtime.sh"); outputPaths = ("$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/CoreRuntime.plist"); runOnlyForDeploymentPostprocessing = 0; shellPath = /bin/bash; shellScript = "\"${SRCROOT}/prepare-runtime.sh\" \"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}\""; };
+
+000000000000000000000130 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProductionWorkspace.swift; sourceTree = "<group>"; };
+000000000000000000000194 = {isa = PBXBuildFile; fileRef = 000000000000000000000130; };
+00000000000000000000012F = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoreRuntime.swift; sourceTree = "<group>"; };
+000000000000000000000193 = {isa = PBXBuildFile; fileRef = 00000000000000000000012F; };
+00000000000000000000012E = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoreTransport.swift; sourceTree = "<group>"; };
+000000000000000000000192 = {isa = PBXBuildFile; fileRef = 00000000000000000000012E; };
+00000000000000000000012D = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoreLocation.swift; sourceTree = "<group>"; };
+000000000000000000000191 = {isa = PBXBuildFile; fileRef = 00000000000000000000012D; };
+00000000000000000000012C = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoreProtocol.swift; sourceTree = "<group>"; };
+000000000000000000000190 = {isa = PBXBuildFile; fileRef = 00000000000000000000012C; };
 000000000000000000000064 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacseedApp.swift; sourceTree = "<group>"; };
 0000000000000000000000C8 = {isa = PBXBuildFile; fileRef = 000000000000000000000064; };
 000000000000000000000065 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
@@ -16,12 +28,12 @@ objects = {
 0000000000000000000000CC = {isa = PBXBuildFile; fileRef = 000000000000000000000068; };
 000000000000000000000001 = {isa = PBXProject; attributes = {LastUpgradeCheck = 1600; }; buildConfigurationList = 00000000000000000000000A; compatibilityVersion = "Xcode 14.0"; developmentRegion = en; knownRegions = (en, Base); mainGroup = 000000000000000000000002; productRefGroup = 000000000000000000000004; projectDirPath = ""; projectRoot = ""; targets = (000000000000000000000005); };
 000000000000000000000002 = {isa = PBXGroup; children = (000000000000000000000003, 000000000000000000000004, 000000000000000000000006); sourceTree = "<group>"; };
-000000000000000000000003 = {isa = PBXGroup; children = (000000000000000000000064, 000000000000000000000065, 000000000000000000000066, 000000000000000000000067, 000000000000000000000068); path = Sources; sourceTree = "<group>"; };
+000000000000000000000003 = {isa = PBXGroup; children = (000000000000000000000064, 000000000000000000000065, 000000000000000000000066, 000000000000000000000067, 000000000000000000000068, 00000000000000000000012C, 00000000000000000000012D, 00000000000000000000012E, 00000000000000000000012F, 000000000000000000000130); path = Sources; sourceTree = "<group>"; };
 000000000000000000000004 = {isa = PBXGroup; children = (000000000000000000000007); name = Products; sourceTree = "<group>"; };
 000000000000000000000006 = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 000000000000000000000007 = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Macseed.app; sourceTree = BUILT_PRODUCTS_DIR; };
-000000000000000000000005 = {isa = PBXNativeTarget; buildConfigurationList = 00000000000000000000000B; buildPhases = (000000000000000000000008, 000000000000000000000009); buildRules = (); dependencies = (); name = Macseed; productName = Macseed; productReference = 000000000000000000000007; productType = "com.apple.product-type.application"; };
-000000000000000000000008 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (0000000000000000000000C8, 0000000000000000000000C9, 0000000000000000000000CA, 0000000000000000000000CB, 0000000000000000000000CC); runOnlyForDeploymentPostprocessing = 0; };
+000000000000000000000005 = {isa = PBXNativeTarget; buildConfigurationList = 00000000000000000000000B; buildPhases = (000000000000000000000008, 000000000000000000000009, 00000000000000000000001E); buildRules = (); dependencies = (); name = Macseed; productName = Macseed; productReference = 000000000000000000000007; productType = "com.apple.product-type.application"; };
+000000000000000000000008 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (0000000000000000000000C8, 0000000000000000000000C9, 0000000000000000000000CA, 0000000000000000000000CB, 0000000000000000000000CC, 000000000000000000000190, 000000000000000000000191, 000000000000000000000192, 000000000000000000000193, 000000000000000000000194); runOnlyForDeploymentPostprocessing = 0; };
 000000000000000000000009 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
 00000000000000000000000A = {isa = XCConfigurationList; buildConfigurations = (00000000000000000000000C, 00000000000000000000000D); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
 00000000000000000000000B = {isa = XCConfigurationList; buildConfigurations = (00000000000000000000000E, 00000000000000000000000F); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };

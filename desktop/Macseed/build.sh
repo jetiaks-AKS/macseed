@@ -17,12 +17,19 @@ compiler_options=(-sdk "$sdk_path" -target "$architecture-apple-macosx14.0" -swi
 if [[ "$configuration" == Debug ]]; then compiler_options+=(-D DEBUG -Onone -g); else compiler_options+=(-O); fi
 xcrun swiftc "${compiler_options[@]}" -parse-as-library Sources/*.swift -o "$output_dir/Macseed.app/Contents/MacOS/Macseed"
 cp Info.plist "$output_dir/Macseed.app/Contents/Info.plist"
+./prepare-runtime.sh "$output_dir/Macseed.app/Contents/Resources"
 /usr/bin/plutil -lint "$output_dir/Macseed.app/Contents/Info.plist"
 if [[ "${2:-}" == --test ]]; then
-    xcrun swiftc "${compiler_options[@]}" -parse-as-library Sources/Presentation.swift \
-        Sources/SampleProvider.swift Sources/DemoSession.swift Sources/ContentView.swift Tests/PresentationTests.swift \
+    presentation_sources=()
+    for source_file in Sources/*.swift; do
+        if [[ "$source_file" != Sources/MacseedApp.swift ]]; then presentation_sources+=("$source_file"); fi
+    done
+    xcrun swiftc "${compiler_options[@]}" -parse-as-library "${presentation_sources[@]}" Tests/PresentationTests.swift \
         -o "$output_dir/PresentationTests"
     "$output_dir/PresentationTests"
+    xcrun swiftc "${compiler_options[@]}" -parse-as-library Sources/Core*.swift Tests/CoreRuntimeTests.swift \
+        -o "$output_dir/CoreRuntimeTests"
+    "$output_dir/CoreRuntimeTests" "$(cd ../.. && pwd -P)" "$(xcrun --find python3)"
     if [[ "$configuration" == Release ]]; then
         if /usr/bin/strings "$output_dir/Macseed.app/Contents/MacOS/Macseed" | /usr/bin/grep -E 'Demo States|Next Sample Event|Personal SSH key|SampleProvider' >/dev/null; then
             echo 'FAIL: sample UI/provider leaked into Release' >&2

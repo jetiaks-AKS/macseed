@@ -6,25 +6,16 @@ import AppKit
 private typealias ViewState<Value> = SwiftUI.State<Value>
 
 struct ContentView: View {
+    @ObservedObject var runtime = CoreRuntime.shared
     #if DEBUG
     @StateObject private var session = DemoSession()
-    var body: some View { DemoWorkspace(session: session) }
-    #else
-    @ViewState<ProductTask?> private var task = nil
-    var body: some View {
-        VStack(alignment: .leading, spacing: 24) {
-            if let task {
-                Label(task.rawValue, systemImage: task.symbol).font(.largeTitle)
-                Text("Core integration is not available yet.").font(.title3)
-                Text("This foundation build cannot inspect or change your Mac.").foregroundStyle(.secondary)
-                Button("All Tasks") { self.task = nil }
-            } else {
-                TaskHome(select: { task = $0 })
-            }
-            Spacer()
-        }
-        .padding(32)
+    private let designPreview = CommandLine.arguments.contains("--design-preview")
+    @ViewBuilder var body: some View {
+        if designPreview { DemoWorkspace(session: session) }
+        else { ProductionWorkspace(runtime: runtime) }
     }
+    #else
+    var body: some View { ProductionWorkspace(runtime: runtime) }
     #endif
 }
 

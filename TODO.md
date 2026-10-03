@@ -6,9 +6,6 @@ Concrete unfinished work. Outcomes and stage status are in [Roadmap](ROADMAP.md)
 
 Implement the [Desktop contract](docs/DESKTOP.md) in vertical slices:
 
-- [ ] 16C: Bundled Core/Python layout, private writable state/temp, controlled
-  child HOME/PATH/environment, Swift Protocol V1 JSONL launcher, process ownership
-  and cancellation; typed sanitized logging foundation.
 - [ ] 16D: Environment Status with explicit Generated Configuration/Blueprint
   reference, Compare summary and structured details.
 - [ ] 16E: Capture scan/selection, fresh preparation/confirmation, publication and
@@ -26,6 +23,8 @@ Implement the [Desktop contract](docs/DESKTOP.md) in vertical slices:
 - [ ] 16J: Dedicated sanitization regression fixtures for secrets, URLs, paths,
   labels, unknown/malformed fields, partial failure/cancellation and preview/export
   identity; preserve useful typed support context.
+- [ ] 16K: Qualify managed private writable Core workspace for root-relative
+  logs/config before packaged workflows; retain signed resources read-only.
 - [ ] 16K: Desktop flow/runtime/transport/security/accessibility hardening,
   including stale plans, interruptions and diagnostics acceptance.
 

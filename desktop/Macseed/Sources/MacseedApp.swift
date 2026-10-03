@@ -1,6 +1,7 @@
 import SwiftUI
 
 @main struct MacseedApp: App {
+    @NSApplicationDelegateAdaptor(CoreAppLifecycle.self) private var lifecycle
     var body: some Scene {
         WindowGroup("Macseed") {
             ContentView()
@@ -21,9 +22,9 @@ struct FoundationSettingsView: View {
                 Text("Macseed Desktop Foundation").font(.headline)
                 Text("Use Capture, Restore and Environment Status from the main window.")
                 #if DEBUG
-                Text("This build previews the design with sample data. It does not change your Mac.")
+                Text("Use --design-preview for the DEBUG sample experience. Normal launch checks the real Core.")
                 #else
-                Text("Core integration is not available in this foundation build.")
+                Text("This build uses the real Macseed Core runtime. Task integration follows in later slices.")
                 #endif
             }
             .padding(24)
@@ -38,5 +39,26 @@ struct FoundationSettingsView: View {
             .tabItem { Label("Privacy / Diagnostics", systemImage: "hand.raised") }
         }
         .frame(width: 440, height: 220)
+    }
+}
+
+// Quit waits for real owned-process cancellation; closing a window does not
+// terminate the application or detach the shared runtime.
+@MainActor final class CoreAppLifecycle: NSObject, NSApplicationDelegate {
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        let runtime = CoreRuntime.shared
+        guard runtime.isActive else { return .terminateNow }
+        let alert = NSAlert()
+        alert.messageText = "Stop the operation and quit?"
+        alert.informativeText = "Completed changes may remain. Inspect current state before another rebuild."
+        alert.addButton(withTitle: "Keep Working")
+        alert.addButton(withTitle: "Stop and Quit")
+        guard alert.runModal() == .alertSecondButtonReturn else { return .terminateCancel }
+        runtime.cancel()
+        Task {
+            await runtime.waitForCompletion()
+            sender.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
     }
 }
