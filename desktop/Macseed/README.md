@@ -1,8 +1,9 @@
 # Macseed Desktop foundation
 
 Stage 16B provides the approved native SwiftUI design. Stage 16C adds the real
-Protocol V1 process boundary and a capability check on normal launch. Real task
-flows are not connected yet. DEBUG design preview retains deterministic Capture,
+Protocol V1 process boundary and a capability check on normal launch. Stage 16D
+connects real read-only Environment Status; its manual gate is pending. Real Capture
+and Restore are not connected yet. DEBUG design preview retains deterministic Capture,
 Restore and Status fixtures with an explicit sample notice; it launches no Core.
 No Discovery, Bundle creation, Restore or secure migration is run by this shell.
 
@@ -72,7 +73,7 @@ fresh Review, never resumes a progress cursor or old confirmation. Clean results
 keep View Details collapsed; attention results show problem rows directly, with
 technical reasons still collapsed.
 
-Status compares against a sample Generated Configuration reference, not a Bundle.
+Design-preview Status compares against a sample Generated Configuration reference, not a Bundle.
 Settings has only informative General and Privacy / Diagnostics tabs. No decorative
 preferences, log folder, report export, updater or telemetry are implemented.
 Normal macOS About is supplied by the application lifecycle.
@@ -107,7 +108,7 @@ Tests cover parent/child selection and counts, Back guards, result disclosure,
 prerequisites, operation ownership, stopped A → fresh B,
 result scope and fixture determinism. Release compilation excludes fixtures, demo
 session, state picker and sample interaction views; it checks real Core capabilities
-and leaves task flows explicitly unavailable. A binary string check guards accidental sample leakage.
+and uses real Environment Status. Capture/Restore remain unavailable. A binary string check guards accidental sample leakage.
 The real runtime stays separate from DemoSession. Future task adapters map Core
 facts into the existing presentation values; they must not turn DemoSession into
 a production observer/planner/verification engine.
@@ -128,7 +129,7 @@ a production observer/planner/verification engine.
   events (with a truncation flag); latest result stays available. JSONL limits are
   64 MiB per event and 256 MiB per operation, not Core's per-record limits.
 - `ProductionWorkspace.swift`: approved shell with real capability readiness,
-  cancellation and typed error guidance. Real task screens remain unavailable.
+  Status navigation, cancellation and typed error guidance.
 - `CoreRuntimeTests.swift`: deterministic fake-child transport/lifecycle tests
   plus a read-only real Core capabilities smoke test in both configurations.
 
@@ -167,6 +168,54 @@ owned by the running app. Real workflow close/quit UX must be qualified with 16G
 Execute requests selecting secure identities fail before launch with
 `secureBridgeUnavailable`; the separate inherited socket FD bridge remains 16H.
 
-The canonical product contract is [Desktop](../../docs/DESKTOP.md). Stage 16D adds
-real Environment Status reference selection and structured comparison projection;
-Capture/Restore, secure migration and diagnostics remain their later slices.
+## Real Environment Status (16D)
+
+Normal Debug and Release use **Choose Reference…** to select a saved Generated
+Configuration folder. **Choose Blueprint…** optionally narrows its scope; **No
+Blueprint** sends explicit `null`. No ambient configuration is substituted and
+no Discovery is run. A Bundle is not a reference. The selected paths remain visible
+and are held only for this window session, without copying/publishing reference files.
+Changing the folder clears the old Blueprint and result. Core validates contents.
+
+**Compare** sends `environment_compare` through the existing runtime. **Check Again**
+sends a new operation ID with the selected reference and inspects current state again.
+Back/navigation and reference changes are disabled while comparing. Cancellation,
+interruption, runtime/protocol failure and invalid references stay inline; an old
+success is cleared before each check and failed runs never display a clean result.
+Quit uses read-only check wording for this operation.
+
+`CoreComparison.swift` decodes V1 comparison/Coverage/diagnostic/extra evidence.
+`EnvironmentStatusModel.swift` projects only a completed, validated result into
+existing generic display values, preserving the Core verdict and distinct states.
+It rejects incomplete/contradictory payloads and mutation/publication claims.
+`EnvironmentStatusView.swift` reuses approved category/item/technical disclosures;
+collapsed groups retain warning indicators. Zero-count summary entries are omitted.
+Unsupported and unknown differences remain subsets of unverified. Excluded and
+no-requirement Coverage are not reported as matching. Private opaque IDs use a
+neutral item label, not a recovered private name.
+
+Extras require Core `available` evidence for casks/App Store/VS Code extensions
+with consistent per-domain counts/items. Missing provenance remains **Unavailable**
+in details, never a proven zero; extra items do not imply removal. Comparison is
+read-only and neither installs nor repairs anything.
+
+`EnvironmentStatusTests.swift` covers projection/error/refresh behavior, Debug
+sample isolation and the Swift → real Core → Status path with disposable reference,
+HOME and reader fixtures. Mutation sentinels and reference/HOME snapshots protect
+the automated boundary. This is separate from the user-run manual gate, which has
+not been performed or simulated.
+
+After the Debug build, the single command from the repository root for the manual
+gate against real Core is:
+
+```bash
+open -n desktop/Macseed/build/Debug/Macseed.app
+```
+
+Choose **Environment Status**, select the saved Generated Configuration folder and
+optional Blueprint, then **Compare**. No `--design-preview` argument is used.
+
+The canonical product contract is [Desktop](../../docs/DESKTOP.md). Stage 16E adds
+real Capture inventory/selection (including Core `selection_mode`), fresh preparation,
+confirmation/publication and interruption handling. Restore, secure migration,
+diagnostic export and packaged-runtime qualification remain their later slices.

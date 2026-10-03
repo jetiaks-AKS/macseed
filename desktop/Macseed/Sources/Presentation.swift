@@ -25,6 +25,14 @@ enum ProductTask: String, CaseIterable, Identifiable {
 enum DisplayStatus: String {
     case ready = "Ready"
     case matching = "Already Matches"
+    case missing = "Missing"
+    case different = "Different"
+    case unverified = "Unverified"
+    case unresolved = "Unresolved"
+    case extra = "Extra"
+    case excluded = "Excluded"
+    case noRequirement = "No Requirement"
+    case information = "Information"
     case attention = "Needs Attention"
     case verified = "Verified"
     case unsupported = "Not Supported"
@@ -35,6 +43,10 @@ enum DisplayStatus: String {
         switch self {
         case .ready, .verified, .matching, .complete: "checkmark.circle"
         case .attention: "exclamationmark.triangle"
+        case .missing, .different, .unverified, .unresolved: "exclamationmark.triangle"
+        case .extra: "info.circle"
+        case .excluded, .noRequirement: "minus.circle"
+        case .information: "info.circle"
         case .unsupported: "minus.circle"
         case .waiting: "clock"
         case .working: "arrow.triangle.2.circlepath"
@@ -110,7 +122,9 @@ extension SelectionState {
 }
 
 extension DisplayItem {
-    var requiresAttention: Bool { status == .attention || status == .unsupported }
+    var requiresAttention: Bool {
+        [.attention, .unsupported, .missing, .different, .unverified, .unresolved, .extra].contains(status)
+    }
 }
 
 extension DisplayCategory {

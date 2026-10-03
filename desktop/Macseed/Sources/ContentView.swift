@@ -20,7 +20,6 @@ struct ContentView: View {
 }
 
 struct TaskHome: View {
-    @Environment(\.colorScheme) private var colorScheme
     let select: (ProductTask) -> Void
     var body: some View {
         VStack(alignment: .leading, spacing: 24) {
@@ -31,17 +30,6 @@ struct TaskHome: View {
             }
             .padding(20)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background {
-                RoundedRectangle(cornerRadius: 14)
-                    .fill(Color(nsColor: .controlBackgroundColor))
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 14)
-                            .fill(LinearGradient(colors: [
-                                Color(nsColor: .systemBlue).opacity(colorScheme == .dark ? 0.14 : 0.095),
-                                Color(nsColor: .systemTeal).opacity(colorScheme == .dark ? 0.07 : 0.035)
-                            ], startPoint: .topLeading, endPoint: .bottomTrailing))
-                    }
-            }
             ForEach(ProductTask.allCases) { task in
                 Button { select(task) } label: {
                     HStack(spacing: 18) {
@@ -69,7 +57,7 @@ struct StatusLabel: View {
     var body: some View {
         Label(status.rawValue, systemImage: status.symbol)
             .font(.callout)
-            .foregroundStyle(status == .attention ? Color.orange : Color.secondary)
+            .foregroundStyle([DisplayStatus.attention, .missing, .different, .unverified, .unresolved].contains(status) ? Color.orange : Color.secondary)
     }
 }
 

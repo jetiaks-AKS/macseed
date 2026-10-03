@@ -1,9 +1,10 @@
 # Macseed Desktop
 
-**Stage 16A contract defined; 16B native foundation and 16C runtime boundary implemented.**
+**Stage 16A contract defined; 16B native foundation, 16C runtime and 16D Environment Status implemented.**
 Normal launch checks real Core capabilities over Protocol V1. The approved sample
-flows remain available only in explicit DEBUG design-preview mode. Real Capture,
-Restore and Environment Status flows are not connected yet.
+flows remain available only in explicit DEBUG design-preview mode. Environment
+Status uses real read-only Core comparison; its manual gate is pending. Real
+Capture and Restore flows are not connected yet.
 Build and review instructions are in
 [Desktop development](../desktop/Macseed/README.md). Macseed is one product with a shared Core and two official frontends: CLI (`bs`) and Desktop.
 The official CLI remains supported. **Simple by default. Detailed on demand.**
@@ -27,7 +28,7 @@ workflow qualification; current bundled resolution rejects those writes. Secure
 Execute needs the future 16H socket bridge and is rejected before launch today.
 Handled cancellation retains Core evidence; forced termination without a terminal
 event is interruption with unknown effects, never rollback or item-boundary stop.
-Real task presentation and diagnostic persistence/export remain their named slices.
+Real Capture/Restore presentation and diagnostic persistence/export remain their named slices.
 
 ## Window and navigation
 
@@ -184,6 +185,18 @@ extra evidence is not zero. Never offer cleanup or infer removal plans.
 An empty comparable scope says “No comparable requirements”; unavailable/invalid
 references ask for another reference, and changed references require a fresh check.
 Compare is an explicit read-only action; do not auto-run it after Restore.
+
+Implemented in normal Debug/Release: native folder/optional Blueprint selection,
+explicit reference paths, Core comparison and fresh **Check Again**. Reference changes
+clear previous results; choosing another folder also clears the previous Blueprint.
+Summary omits zero counts and identifies unsupported/unknown-difference subsets.
+Collapsed categories expose descendant attention; details preserve matching, missing,
+different, unverified, unsupported and unresolved facts, plus Coverage/diagnostics.
+Unavailable extra evidence is disclosed as unavailable; only Core-confirmed available
+extras appear as items. Invalid reference, failed/interrupted operation or malformed
+result evidence cannot render a clean conclusion. Results/errors stay inline.
+The [development guide](../desktop/Macseed/README.md#real-environment-status-16d)
+provides the manual launch command; no real-user manual gate has been performed.
 
 ## Status vocabulary and evidence
 

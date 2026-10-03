@@ -5,6 +5,35 @@ import AppKit
     @MainActor static func main() {
         #if DEBUG
         precondition(BuildFeatures.sampleExperience)
+        let sources = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Sources")
+        let statusView = try! String(contentsOf: sources.appendingPathComponent("EnvironmentStatusView.swift"), encoding: .utf8)
+        let detailsStart = statusView.range(of: "DisclosureGroup(\"Reference Details\", isExpanded: $referenceDetailsExpanded)")!
+        let detailsEnd = statusView.range(of: "} else {\n                Text(\"Choose a saved environment", range: detailsStart.upperBound..<statusView.endIndex)!
+        let details = String(statusView[detailsStart.lowerBound..<detailsEnd.lowerBound])
+        let primary = String(statusView[..<detailsStart.lowerBound]) + String(statusView[detailsEnd.lowerBound...])
+        precondition(primary.contains("Label(\"Saved Environment\"") && primary.contains("Choose Saved Environment…"))
+        for technical in ["generatedDirectory.path", "blueprint.path", "Generated Configuration", "No Blueprint", "Choose Blueprint…"] {
+            precondition(details.contains(technical) && !primary.contains(technical), "Technical reference/Blueprint UI only inside disclosure")
+        }
+        precondition(statusView.contains("@ReferenceViewState<Bool> private var referenceDetailsExpanded = false"))
+        precondition(details.contains(".disclosureGroupStyle(HeaderDisclosureStyle())"))
+        precondition(!statusView.contains("Bundle comparison is not supported"))
+        let content = try! String(contentsOf: sources.appendingPathComponent("ContentView.swift"), encoding: .utf8)
+        let categoryStart = content.range(of: "struct CategoryRow: View")!
+        precondition(content[categoryStart.lowerBound...].contains("@ViewState<Bool> private var expanded = false"))
+        precondition(statusView.contains("ForEach(result.categories) { category in CategoryRow(category: category) }"))
+        let referenceRuntime = CoreRuntime()
+        let referenceModel = EnvironmentStatusModel(runtime: referenceRuntime)
+        let directory = URL(fileURLWithPath: "/private/tmp/presentation-saved-environment")
+        let blueprint = URL(fileURLWithPath: "/private/tmp/presentation-blueprint.conf")
+        referenceModel.selectReference(directory)
+        precondition(try! referenceModel.reference!.command.parameters()!.object?["blueprint_path"] == .null)
+        referenceModel.selectBlueprint(blueprint)
+        precondition(try! referenceModel.reference!.command.parameters()!.object?["blueprint_path"] == .string(blueprint.path))
+        referenceModel.selectBlueprint(nil)
+        precondition(try! referenceModel.reference!.command.parameters()!.object?["blueprint_path"] == .null)
+        precondition(referenceModel.reference?.generatedDirectory == directory && referenceRuntime.state == .idle)
+        print("PASS: Product reference wording, technical/Blueprint UI behind collapsed disclosure, collapsed categories and optional Blueprint semantics")
         if CommandLine.arguments.contains("--native-controls") {
             _ = NSApplication.shared
             for state in [SelectionState.none, .mixed, .all] {

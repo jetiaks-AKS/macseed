@@ -6,8 +6,8 @@ Concrete unfinished work. Outcomes and stage status are in [Roadmap](ROADMAP.md)
 
 Implement the [Desktop contract](docs/DESKTOP.md) in vertical slices:
 
-- [ ] 16D: Environment Status with explicit Generated Configuration/Blueprint
-  reference, Compare summary and structured details.
+- [ ] 16D: Manual gate for real Environment Status with a user-selected Generated
+  Configuration/optional Blueprint; implementation and focused tests are complete.
 - [ ] 16E: Capture scan/selection, fresh preparation/confirmation, publication and
   interruption states.
 - [ ] 16F: Restore inspection/group selection, prerequisite guidance, Check Again,

@@ -24,7 +24,7 @@ struct FoundationSettingsView: View {
                 #if DEBUG
                 Text("Use --design-preview for the DEBUG sample experience. Normal launch checks the real Core.")
                 #else
-                Text("This build uses the real Macseed Core runtime. Task integration follows in later slices.")
+                Text("Environment Status uses the real Macseed Core runtime. Capture and Restore integration follows in later slices.")
                 #endif
             }
             .padding(24)
@@ -50,7 +50,9 @@ struct FoundationSettingsView: View {
         guard runtime.isActive else { return .terminateNow }
         let alert = NSAlert()
         alert.messageText = "Stop the operation and quit?"
-        alert.informativeText = "Completed changes may remain. Inspect current state before another rebuild."
+        alert.informativeText = runtime.operation == .environmentCompare || runtime.operation == .capabilities
+            ? "The read-only check will stop. Check again to inspect current state."
+            : "Completed changes may remain. Inspect current state before another rebuild."
         alert.addButton(withTitle: "Keep Working")
         alert.addButton(withTitle: "Stop and Quit")
         guard alert.runModal() == .alertSecondButtonReturn else { return .terminateCancel }
