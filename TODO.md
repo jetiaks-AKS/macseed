@@ -6,9 +6,6 @@ Concrete unfinished work. Outcomes and stage status are in [Roadmap](ROADMAP.md)
 
 Implement the [Desktop contract](docs/DESKTOP.md) in vertical slices:
 
-- [ ] 16B: Native shell/navigation with stable content states, small Settings,
-  reusable category/item views, status vocabulary,
-  accessibility and first-launch/empty states.
 - [ ] 16C: Bundled Core/Python layout, private writable state/temp, controlled
   child HOME/PATH/environment, Swift Protocol V1 JSONL launcher, process ownership
   and cancellation; typed sanitized logging foundation.

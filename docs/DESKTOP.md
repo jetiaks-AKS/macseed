@@ -1,8 +1,10 @@
 # Macseed Desktop
 
-**Stage 16A — product and UX contract defined; implementation planned.**
-`Macseed.app` and its Swift/SwiftUI implementation do not exist yet. Macseed is
-one product with a shared Core and two official frontends: CLI (`bs`) and Desktop.
+**Stage 16A contract defined; Stage 16B native foundation implemented.**
+A local SwiftUI `Macseed.app` demonstrates these flows with DEBUG-only sample
+data. Core integration and production workflows are not implemented yet.
+Build and review instructions are in
+[Desktop development](../desktop/Macseed/README.md). Macseed is one product with a shared Core and two official frontends: CLI (`bs`) and Desktop.
 The official CLI remains supported. **Simple by default. Detailed on demand.**
 
 This document owns Desktop presentation and interaction. The implemented
