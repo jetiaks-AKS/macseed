@@ -24,17 +24,41 @@ scan, restore, compare or request administrator authentication automatically.
 Capability failure shows **Needs Attention**, with launch/runtime guidance and
 **Check Again**. Capability availability is not readiness for a selected Restore.
 
-Each flow has a step indicator, one primary next action and Back where safe.
-Review screens show category summaries first, expandable item rows and Details.
+Each destination uses one stable content area whose state changes, with one
+primary action, inline status blocks, expandable rows and disclosure groups.
+Logical Core phases are not separate screens. Review, selection, Preview and
+prerequisites share that area; short focused interactions use sheets, and alerts
+are reserved for justified explicit decisions. If the user can safely complete the
+task without another screen or dialog, do not add one.
 Keep only one Core operation active per application instance; disable competing
 starts and offer return to the active operation. Navigating away must not silently
-cancel or detach it. Closing during work offers Keep Working or Cancel Operation;
-wait for owned-process termination before closing. No background daemon or
+cancel or detach it. Closing during work offers Keep Working or the applicable
+Cancel / Stop Rebuild action; wait for owned-process termination before closing. No background daemon or
 persistent resumable job is introduced.
+
+## Native appearance and Settings
+
+Use native SwiftUI controls, standard checkboxes/toggles, SF Symbols, system
+typography, generous spacing, restrained status indicators and native light/dark
+appearance. Use standard open/save dialogs, sheets, alerts and disclosure groups,
+with keyboard and accessibility behavior. Keep the visual hierarchy quiet; avoid
+web/DevOps dashboard aesthetics, terminal styling, excessive cards, custom controls,
+persistent technical information and unnecessary modals.
+
+Settings remains small: General may offer a default Bundle location and useful
+confirmation preferences if implementation demonstrates value. Preferences must
+not bypass fresh-plan confirmation or secure import consent. Privacy / Diagnostics
+provides diagnostic controls and Open Logs Folder where appropriate, preserving
+private storage and sanitization. Reserve Updates only if the eventual Stage 17
+mechanism needs it; no updater is defined here. Use standard macOS About behavior,
+not a custom About settings page. Diagnostics remains contextual through View
+Details and Export Diagnostic Report, not a primary raw-log destination.
 
 ## Capture this Mac
 
-**Scan → Review → Secure Items → Create Bundle → Done**
+**Scan → Review / Select (including optional SSH identities) → Create Bundle → Result**
+
+These are content states, not mandatory wizard pages.
 
 1. Scan calls `capture_prepare` with `selection: null`. Show an indeterminate
    scan with observed categories as Core reports them. Scanning stages private
@@ -45,7 +69,9 @@ persistent resumable job is introduced.
    categories or item subsets where Core permits. No hidden selection or overlap
    between a whole category and its subset. An empty selection keeps Create Bundle
    disabled with “Choose supported state to capture.”
-3. Secure Items is explicit opt-in and defaults off. Show eligible safe key names,
+3. Within the same Review, a visually separated **Secure Transfer** section shows
+   **SSH identities**, their count and “Encrypted separately.” Selection is explicit
+   opt-in and defaults off. Show eligible safe key names,
    types and public fingerprints, distinguish SSH configuration from private
    identities, and explain that ordinary Bundle settings are private but unencrypted.
    Keys travel in a separately encrypted component. Preparation does not unlock
@@ -55,15 +81,22 @@ persistent resumable job is introduced.
    native save dialog for a new `.mbt` file. Confirm **Create Bundle** using that
    preparation's ID. Execute rescans; changed inventory requires fresh Review and
    confirmation. Never overwrite an existing Bundle; choose another destination.
-5. Done says **Bundle Created** only with successful publication evidence. Show
+5. Result says **Bundle Created** only with successful publication evidence. Show
    selected scope and the chosen location, with Reveal in Finder. Capture does not
    claim target restoration or final Verification. If cancellation/failure follows
    publication, say a Bundle was created and retain its location alongside the
    interruption; do not label it an unpublished failure.
 
+Secure SSH remains part of Capture, not a top-level Credentials area or general
+password vault. Selecting none still allows an ordinary Bundle. Passphrase input
+uses a focused native secure sheet when required.
+
 ## Restore a Mac
 
-**Open Bundle → Inspect → Review → Prerequisites → Preview → Rebuild → Verify → Done**
+**Choose Bundle → Review + Preview → Rebuild → Result**
+
+Inspection and Core Verification run within these states; neither requires a
+separate page. Prerequisites appear inline only when needed.
 
 1. Open uses a native `.mbt` picker; `bundle_inspect` validates and returns format,
    categories/counts and encrypted-component presence. Invalid/unavailable or
@@ -74,11 +107,12 @@ persistent resumable job is introduced.
    Included ordinary groups default on; secure import defaults off, even when
    present. Groups can be narrowed, never expanded beyond Bundle content. Item
    details are informational: Protocol V1 does not allow item-level Restore edits.
-3. `restore_prepare` supplies both prerequisites and Preview. The displayed steps
-   organize that one result; they are not separate domain checks implemented in
-   Desktop. Selection changes invalidate the displayed preparation and confirmation.
-4. Prerequisites shows selected-work conditions, practical guidance and
-   **Check Again**. Recheck calls fresh Prepare with the same current inputs,
+3. `restore_prepare` supplies both prerequisites and Preview in the same Review
+   area, alongside category selection, already-matching summary and changes.
+   Selection changes invalidate the displayed preparation and confirmation.
+4. Inline prerequisites show selected-work conditions, **How to Resolve /
+   Instructions** and **Check Again**; no dedicated prerequisite page by default.
+   Recheck calls fresh Prepare with the same current inputs,
    then shows the new Preview for confirmation. Core reports the first blocker
    per domain; resolving one may reveal another. Do not imply exhaustive readiness.
 5. Preview groups actions by category, showing changes, already matching items,
@@ -91,8 +125,11 @@ persistent resumable job is introduced.
    bridge. `pending_unlock` is an expected secure step, not proof of a conflict.
    A ready plan still permits later network, account or tool failures. Execute
    revalidates the prepared ID; stale plans return to Prepare/Preview/confirmation.
-7. Rebuild shows actual structured phases and records; Verify presents Core's
-   evidence, then Done presents completion and remaining attention items.
+7. Rebuild shows actual structured phases and records. Core Verification remains
+   mandatory in the normal execution path and feeds Result without another screen.
+   Interrupted/failed work may have only partial evidence; never imply Verification
+   completed when it did not. Confirm Rebuild in the Review area; add a sheet/alert
+   only when a specific risk justifies it, not another confirmation page.
 
 Missing Homebrew needs external installation; Desktop does not automatically
 install it. Explain selected dependencies such as Command Line Tools, `mas`, VS
@@ -110,7 +147,8 @@ technical code in Details, rather than guessed remediation.
 
 ## Environment Status
 
-**Inspect → Compare → Summary → Details**
+**Choose reference → Compare → Result**, with inline expandable Details.
+Inspection and comparison are logical work, not additional navigation pages.
 
 The reference is explicit: a user-selected Generated Configuration directory and
 an optional Blueprint file, or explicitly no Blueprint. Explain this as “Compare
@@ -131,8 +169,8 @@ Compare is an explicit read-only action; do not auto-run it after Restore.
 ## Status vocabulary and evidence
 
 Use this small shared vocabulary, with flow-specific titles such as Bundle Created,
-Working, Cancelled or Interrupted when appropriate. Presentation does not change
-Core status, verdict precedence or operation exits.
+Working, Cancelled, Stopped or Interrupted when appropriate. Presentation does
+not change Core status, verdict precedence or operation exits.
 
 | UI status | Evidence and meaning |
 |---|---|
@@ -154,8 +192,17 @@ For no-change Preview show **Already Matches** for observed satisfied rows and
 “No changes planned” for the plan. Unknown or pending secure work prevents an
 all-matching claim. If the user chooses Rebuild to verify a no-change plan, use the
 normal fresh confirmation and execution contract; Preview alone is not final Verify.
-Final Verification says “Selected requirements verified” and exposes gaps and
-per-item evidence. It does not prove app runtime health, visual preference effects,
+When execution completes and relevant selected requirements verify with complete
+evidence and no remaining attention, Result says **“Your environment is ready.”**
+A short scope line makes clear this means the selected supported environment.
+No technical Verification page is required. Otherwise say **“Rebuild completed
+with attention needed”** when execution completed, or the actual failed/stopped
+outcome, with evidence-backed ready/attention counts and **View Details**. Use Core
+counts without conflating operation records with unique verified items or counting
+unsupported twice. Technical details retain “Selected requirements verified,” gaps
+and per-item evidence. Verification always runs in normal Restore; its UI becomes
+prominent when attention is needed. Capture/Status likewise expose only relevant
+outcomes by default. None of these states proves app runtime health, visual effects,
 remote SSH authentication, agent/Keychain readiness or whole-Mac identity.
 
 ## Progress, cancellation and re-entry
@@ -166,21 +213,52 @@ Render `phase_started`, `phase_completed`, Capture/secure events and Restore
 there is no reliable total-work estimate. Prepare/Inspect may expose only start and
 result: show “Checking…” without fabricated substeps. Keep Details collapsible.
 
-Cancel sends the supported signal to the owned Core process; secret dialogs can
-send the secret-channel cancellation response. Show “Cancelling…” until termination.
-Handle Capture/Restore `failed` cancellation codes and Compare's `cancelled` event.
-A result is provisional until the terminal event; missing terminal event, invalid
-transport or unexpected exit is Interrupted, never successful completion.
+Before target mutation begins, **Cancel** ends the operation. Say “No target
+changes occurred” only when Core evidence establishes that fact; local configuration
+publication is a separate effect. Once mutation may have begun, use **Stop Rebuild**.
+A small native confirmation says: “Stop rebuilding? Macseed will stop further work.
+Changes already completed will remain. You can inspect the Mac and plan another
+rebuild later.” Show “Stopping…” until owned-process termination.
 
-On failure/cancellation show available publication and possible-target-mutation
-facts. After mutation may have started, say changes may remain; there is no rollback
-promise. If a process dies before facts arrive, effects are unknown. Re-entry means
-fresh inspection/preparation and confirmation, not Resume. Preserve safe local
-operation details for support; remembered input paths require revalidation.
-`recovery_required` directs users to existing CLI Restore recovery; Desktop must
-not silently recover publication state. After prerequisite resolution use Check
-Again, and after stale plans return to Review/Preview. These routes retain user
-choices only as draft inputs, never as continuing authorization.
+**Current V1 constraint:** stopping sends the supported signal to Core, which
+terminates owned process groups using SIGTERM and, if needed, SIGKILL. It can
+interrupt an in-flight tool. There is no graceful stop-at-item-boundary request or
+acknowledgement; Desktop must not claim it waits for an item to finish. Boundary-aware
+stopping is desirable where practical but requires a separately scoped Core contract
+change, not a UI workaround. “Safe Stop” means no rollback promise and fresh
+re-inspection, not guaranteed atomic item completion or unchanged current work.
+Transactional rollback is explicitly outside Macseed 1.0 scope.
+
+Secret sheets may send secret-channel cancellation. Handle Capture/Restore
+`failed` cancellation codes and Compare's `cancelled` event. A result is provisional
+until the terminal event; missing terminal event, invalid transport or unexpected
+exit is Interrupted, never successful completion. If publication or mutation facts
+have not arrived, conservatively treat effects as unknown and use Stop Rebuild
+rather than promising no changes.
+
+After stopping show a compact Result: completed actions, already matching where
+known, remaining/not processed where evidenced, and Needs Attention. Do not infer
+an exact remaining-item cursor from missing records; say “Not confirmed” when work
+or verification is unknown. Preserve partial evidence, publication facts and
+possible target mutation; changes may remain and the Mac was not rolled back.
+
+Re-entry inspects the current Mac again, creates a fresh plan/Preview, confirms
+it, then applies remaining differences while already-satisfied items become no-ops.
+There is no stored-item-cursor Resume. Remembered inputs are draft choices requiring
+revalidation, never continuing authorization. `recovery_required` directs users to
+existing CLI Restore recovery; Desktop must not silently recover publication state.
+After prerequisites use Check Again; stale plans return to Review/Preview.
+
+### Stopped Bundle A, then Bundle B
+
+Choosing Bundle B starts a new Restore operation with new operation IDs. Discard
+Bundle A's prepared plan and confirmation; inspect/validate B, inspect the current
+Mac through fresh Prepare, show B's fresh Preview and require normal Rebuild
+confirmation. State already changed by A is part of the current observed Mac.
+Never reuse A's plan or remove state introduced by A merely because it is absent
+from B. Absence from a Bundle is not a removal instruction; Macseed 1.0 is not a
+cleanup/reconciliation engine. A compact inline notice may mention the stopped
+rebuild, without an extra blocking modal. The fresh Preview is the safety gate.
 
 ## Secure interactions
 
@@ -225,7 +303,8 @@ not a rich UI metadata registry. Existing fields suffice for this bounded UX.
 
 **Protocol-fit assessment:** the flows above use only existing V1 operations,
 structured results/events and the separate secret channel, without human stdout,
-stderr or log parsing. No blocking Core/API gap was found for this scope. Comparing
+stderr or log parsing. No blocking Core/API gap was found for these flows using signal-based Stop Rebuild;
+graceful item-boundary stopping is not provided, as specified above. Comparing
 a Bundle directly, item-level Restore editing, decrypted identity selection during
 Prepare and Desktop recovery are unavailable and are deliberately outside the
 first Desktop contract. A future requirement for any of them needs a precise Core
@@ -293,14 +372,14 @@ preview/export identity. Tests use disposable fixtures; never real keys or secre
 
 | Slice | Deliverable |
 |---|---|
-| 16B — Native shell and design foundation | Navigation, step layout, reusable rows, vocabulary, accessibility and empty states |
+| 16B — Native shell and design foundation | Native navigation, stable content states, small Settings, reusable rows, vocabulary, accessibility and empty states |
 | 16C — Core process integration and capabilities | Core/Python layout, writable state/temp, controlled child HOME/PATH/environment, JSONL validation, process ownership and cancellation; structured sanitized logging foundation |
 | 16D — Environment Status | Explicit reference picker, read-only Compare, summary and record details |
 | 16E — Capture | Inventory/selection, fresh preparation, Bundle publication and interruption states; secure opt-in completed in 16H |
 | 16F — Restore preparation | Bundle inspection, group selection, prerequisites, Check Again, Preview and fresh confirmation |
-| 16G — Restore execution | Rebuild phases, records, cancellation, partial failure and re-entry |
+| 16G — Restore execution | Rebuild phases, records, Stop Rebuild over current signal cancellation, partial failure and re-entry |
 | 16H — Secure SSH interactions | FD bridge/challenges, encryption/unlock/import confirmation and age/OpenSSH PTY qualification for Capture and Restore |
-| 16I — Verification and completion | Verdict/coverage presentation, no-op, already-matching and incomplete outcomes |
+| 16I — Verification and completion | Concise Result with disclosed verdict/coverage, no-op, already-matching and incomplete outcomes |
 | 16J — Diagnostics and support | Operation Details, retention/clear controls, Diagnostic Report preview/export and dedicated sanitization tests |
 | 16K — Desktop integration hardening | Full flow/transport/security/accessibility checks, stale inputs, interruptions and diagnostic acceptance |
 

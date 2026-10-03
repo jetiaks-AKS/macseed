@@ -20,8 +20,17 @@ outside the developer checkout.
 - Prove clean Apple Silicon E2E; qualify Intel runtime and workflows separately
   before claiming support.
 
-The finished Desktop should not require manual Python installation. Homebrew,
-`mas`, VS Code CLI, Git and `age` are prerequisites for selected work according to
+The intended delivery is a normal `Macseed-1.0.dmg` containing `Macseed.app`,
+installed by moving it to `/Applications`. The app packages its native executable,
+the same shared Core implementation and required runtime/resources. No separate
+user-visible Core/Python/CLI files are needed in the DMG. Exact internal bundle
+paths remain undecided. Desktop must not require a repository clone, standalone
+CLI installation or manual Python installation on a clean Mac. Standalone `bs`
+remains independently supported for CLI/source users; Desktop does not fork Core.
+Installing a Terminal command from Desktop is not a Stage 16 commitment.
+
+Homebrew, `mas`, VS Code CLI, Git and `age` are prerequisites for selected work
+according to
 Core, not universal application launch requirements. Exact package composition
 and supported architectures remain undecided; signing credentials/infrastructure
 are not assumed available.

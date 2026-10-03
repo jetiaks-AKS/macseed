@@ -6,7 +6,8 @@ Concrete unfinished work. Outcomes and stage status are in [Roadmap](ROADMAP.md)
 
 Implement the [Desktop contract](docs/DESKTOP.md) in vertical slices:
 
-- [ ] 16B: Native shell/navigation, reusable category/item views, status vocabulary,
+- [ ] 16B: Native shell/navigation with stable content states, small Settings,
+  reusable category/item views, status vocabulary,
   accessibility and first-launch/empty states.
 - [ ] 16C: Bundled Core/Python layout, private writable state/temp, controlled
   child HOME/PATH/environment, Swift Protocol V1 JSONL launcher, process ownership
@@ -17,10 +18,12 @@ Implement the [Desktop contract](docs/DESKTOP.md) in vertical slices:
   interruption states.
 - [ ] 16F: Restore inspection/group selection, prerequisite guidance, Check Again,
   Preview and fresh-plan confirmation.
-- [ ] 16G: Restore execution/progress, cancellation, partial failure and re-entry.
+- [ ] 16G: Restore execution/progress, Stop Rebuild using current signal cancellation,
+  partial failure and fresh-plan re-entry, including switching Bundles.
 - [ ] 16H: Secure FD/challenge bridge, SSH opt-in, encryption/unlock/import
   confirmation and application age/OpenSSH PTY qualification.
-- [ ] 16I: Final Verification/coverage, completion, no-op and incomplete states.
+- [ ] 16I: Concise Result with mandatory Core Verification and expandable
+  attention/coverage details, no-op and incomplete states.
 - [ ] 16J: Structured operation Details, private bounded log retention/clear,
   privacy-safe Diagnostic Report with complete preview and exact export.
 - [ ] 16J: Dedicated sanitization regression fixtures for secrets, URLs, paths,
