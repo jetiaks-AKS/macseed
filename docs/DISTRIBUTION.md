@@ -39,6 +39,11 @@ Preview → confirmation, plus cancellation, conflicts, partial failure and retr
 Repeated identical Restore should skip matching supported state. Mock and local
 Core tests do not replace packaged qualification.
 
+Qualify private structured logs and operation/interruption Details in the signed,
+notarized app. Verify Diagnostic Report sanitization, complete preview and exact
+export in the packaged clean-Mac flow, including partial failure and secure
+cancellation. No automatic diagnostic submission is part of qualification.
+
 The intended first complete Desktop release is **Macseed 1.0**, with no promised
 date and no rewriting of toolkit/CLI v1.x–v3.3.x history, constants or tags.
 The current [Release Process](git/RELEASE-PROCESS.md) remains the repository/CLI

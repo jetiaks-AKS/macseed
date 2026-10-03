@@ -51,9 +51,12 @@ and packaged clean-Mac qualification remain the next stages.
 
 ## Stage 16 — Native Macseed Desktop
 
-**Planned.** Implement a SwiftUI client for Capture this Mac, Restore a Mac and
-Environment Status. Provide prerequisite guidance, Check Again, structured
+**Product/UX contract defined (16A); implementation planned.** Implement a
+SwiftUI client for Capture this Mac, Restore a Mac and Environment Status.
+Provide prerequisite guidance, Check Again, structured
 progress/results, separate secret input and cancellation over the existing Core.
+Include local structured operation logs/details and an explicitly requested,
+privacy-safe Diagnostic Report with exact preview and export.
 
 This stage defines and implements bundled Core/runtime placement, writable
 application state, a controlled child environment and the Swift Protocol V1
@@ -66,11 +69,18 @@ the application. See [Desktop](docs/DESKTOP.md).
 Hardened Runtime, notarization, stapling, DMG and Gatekeeper validation. Prove
 packaged runtime behavior and Capture → Restore → Verify on clean Apple Silicon
 hardware; qualify Intel separately where support is intended.
+Validate operation logging, interruption details and Diagnostic Report
+preview/export and privacy in the signed/notarized application and clean-Mac flow.
 See [Distribution](docs/DISTRIBUTION.md).
 
 The first complete native Desktop release is planned as **Macseed 1.0**, built on
 the mature toolkit/CLI v1.x–v3.4.x Core. Current Core/CLI version is 3.4.0; published
 versions and tags retain their historical meaning. No release date is promised.
+
+Before public 1.0 launch, run an **Early Access/Alpha** with approximately 10–20
+technical external users exercising real Capture/Restore workflows. Collect
+voluntarily shared privacy-safe diagnostic reports/issues and resolve real-world
+compatibility and UX problems. This is a product validation milestone.
 
 ## Later directions
 
