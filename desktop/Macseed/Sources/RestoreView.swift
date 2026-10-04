@@ -235,9 +235,11 @@ struct RestorePrerequisiteView: View {
                 Text(label).foregroundStyle(.primary)
                 Text("· " + status).foregroundStyle(RestoreStatusTone.prerequisite(condition.status).color)
             }
-            Text(message).font(.callout)
-            DisclosureGroup("Technical reason") { Text(condition.code).font(.caption.monospaced()).textSelection(.enabled) }
-                .disclosureGroupStyle(HeaderDisclosureStyle())
+            if condition.status != "satisfied" {
+                Text(message).font(.callout)
+                DisclosureGroup("Technical reason") { Text(condition.code).font(.caption.monospaced()).textSelection(.enabled) }
+                    .disclosureGroupStyle(HeaderDisclosureStyle())
+            }
         }
     }
     private var status: String {
@@ -262,7 +264,6 @@ struct RestorePrerequisiteView: View {
         case "preview_observation_failed": "Current state could not be inspected reliably. Resolve the inspection issue, then Check Again."
         default:
             switch condition.status {
-            case "satisfied": "This prerequisite is available for the selected plan."
             case "safely_satisfiable": "Core can satisfy this condition later using its existing Rebuild behavior. Preview makes no changes."
             case "unsupported": "This selected requirement is not supported by the current application execution path."
             default: "Resolve this requirement outside Macseed, then Check Again to inspect the current state."
