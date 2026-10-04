@@ -3,11 +3,13 @@
 Stage 16B provides the approved native SwiftUI design. Stage 16C adds the real
 Protocol V1 process boundary and a capability check on normal launch. Stage 16D
 connects real read-only Environment Status, manually approved. Stage 16E connects
-real Capture with its end-to-end manual gate approved; Restore is not connected yet.
+real Capture with its end-to-end manual gate approved. Stage 16F implements real
+Restore Prepare; its real-Bundle manual gate is approved.
 DEBUG design preview retains deterministic Capture,
 Restore and Status fixtures with an explicit sample notice; it launches no Core.
 Capture reads supported state into private staging and can publish a new Saved
-Environment. No Restore or secure migration is run by this shell.
+Environment. Restore inspection/Preview is read-only; Restore execution and secure migration
+are not available in this slice.
 
 ## Build and launch
 
@@ -110,7 +112,7 @@ Tests cover parent/child selection and counts, Back guards, result disclosure,
 prerequisites, operation ownership, stopped A → fresh B,
 result scope and fixture determinism. Release compilation excludes fixtures, demo
 session, state picker and sample interaction views; it checks real Core capabilities
-and uses real Capture/Environment Status. Restore remains unavailable. A binary string check guards accidental sample leakage.
+and uses real Capture, Restore Prepare and Environment Status. Restore execution remains unavailable. A binary string check guards accidental sample leakage.
 The real runtime stays separate from DemoSession. Future task adapters map Core
 facts into the existing presentation values; they must not turn DemoSession into
 a production observer/planner/verification engine.
@@ -272,3 +274,25 @@ The canonical [Desktop contract](../../docs/DESKTOP.md#required-final-product-re
 owns the required Bundle-backed Environment Status before 1.0; this slice records
 it without implementing Bundle comparison or changing V1. Restore, secure transfer,
 diagnostic export and packaged-runtime qualification remain their later slices.
+
+## Real Restore Prepare (16F)
+
+Normal launch uses **Choose Saved Environment… → real inspection → selection →
+Preview → Ready to Rebuild / Needs Attention**. Core must advertise fine Restore
+selection; old runtimes show compatibility guidance. Group membership, labels,
+modes, eligibility and stable item IDs come from Core inventory. The macOS parent
+uses advertised group children; item domains support independent whole/subset
+selection. No preference-key or private identity selection is offered.
+
+Each Preview/Check Again performs fresh `restore_prepare` with the current source
+and selection, `disabled_groups: []`, `include_secure: false`. Structured plan rows
+correlate via `selection_item_id`; readiness distinguishes satisfied, safely
+satisfiable, external and unsupported conditions. Selection/Bundle/Back changes
+invalidate the plan; failed/cancelled/interrupted refreshes clear old evidence.
+The displayed plan retains its exact ID and canonical selection.
+
+Rebuild is disabled. No Execute, installs, settings writes, clones or identity
+imports are reachable. Native sheets inherit the application Appearance. The
+manual gate passed with a real Stage 16E Saved Environment; tests use disposable
+fixtures, including production Core inspection/Preview with unchanged Bundle,
+HOME and normal configuration. Run `RestoreTests` through `build.sh Debug --test`.

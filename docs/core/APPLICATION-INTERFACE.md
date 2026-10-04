@@ -32,10 +32,10 @@ Prepared IDs are 64 lowercase hexadecimal characters.
 | `operation` | Exact `parameters` fields | Behavior |
 |---|---|---|
 | `capabilities` | Omit `parameters` | Returns `protocol_version`, `product_version`, `operations` |
-| `bundle_inspect` | `path` | Returns `format_version`, `selected_categories`, `selected_item_counts`, `secure_component`; no Apply |
+| `bundle_inspect` | `path` | Returns Bundle summary and Core-owned `restore_selection` inventory; no Apply |
 | `capture_prepare` | `selection` | Private staged observation and prepared selection |
 | `capture_execute` | `selection`, `destination`, `expected_prepared_capture_id` | Fresh observation and new Bundle publication |
-| `restore_prepare` | `path`, `disabled_groups`, `include_secure` | Bundle validation, Preview and prerequisites; no publication or Apply |
+| `restore_prepare` | `path`, `disabled_groups`, `include_secure`, optional `selection` | Bundle validation, Preview and prerequisites; no publication or Apply |
 | `restore_execute` | Restore fields plus `expected_prepared_plan_id` | Fresh preparation, local-state publication and restoration |
 | `environment_compare` | `generated_dir`, `blueprint_path` | Explicit read-only reference-to-current-Mac comparison |
 
@@ -92,7 +92,59 @@ and user-owned. Existing files are never replaced. Success returns
 `disabled_groups` is a unique list drawn from `Applications`, `VS Code Settings`,
 `Homebrew`, `macOS Settings`, `Shell`, `Git`, `SSH Configuration`, `Workspace`.
 `include_secure` is boolean; true requires `secure.age`. Selection can be narrowed
-by group, not expanded or replaced with a new item-level Restore selection.
+by group. The additive fine-selection capability also permits domain/item
+narrowing within captured eligible content; selection never expands Bundle scope.
+
+### Additive ordinary Restore selection
+
+Capabilities advertises `features.restore_selection` with `version: 1`,
+`inventory: "bundle_inspect"` and `selection_modes: ["category", "items"]`.
+Clients must check this before sending the new field to an older Core.
+
+`bundle_inspect.restore_selection` contains authoritative `groups` (`id`,
+`domains`) and `inventory`. Each row has `domain`, safe `label`, `selection_mode`,
+`availability` (`available` or `unavailable`), nullable `reason`, and `items`
+with `item_id`/`label`. This is captured selection eligibility, not current-Mac
+execution readiness. Missing or ineligible content is unavailable with
+`no_selectable_content`; malformed/unsupported Bundles still fail inspection.
+
+Items are supported for formulae, casks, App Store IDs, extensions, eligible
+Workspace folders, repositories and supported Git configuration keys. VS Code
+settings, Zsh, SSH configuration and each of the six macOS domains are whole-domain
+only. Individual macOS preference keys and secure identities are not selectable
+through this inventory.
+
+Prepare and Execute accept optional ordinary `selection`:
+
+```json
+{"categories":["macos-finder"],"items":{"homebrew-packages":["restore:<sha256>"]}}
+```
+
+Absent/null preserves the legacy group-only path, including its prepared ID.
+A non-null object is an explicit whitelist; empty arrays/object select no ordinary
+content. Whole item domains include every eligible captured item. Item subsets
+must be nonempty and use Core-issued IDs. Unknown IDs, unavailable content,
+duplicates, whole/subset overlap and item selection in category-only domains
+return `invalid_selection`. Disabled groups remain an upper bound; attempting to
+re-enable their content fails. The existing 4096-byte request limit still applies.
+
+IDs are SHA-256 tokens over domain and original item identity, not array position,
+values, remotes or narrowed order. Safe identifier labels are exposed; unsafe
+identifiers receive a neutral label. App Store display labels use captured application
+names from `appstore.conf` where available, independently of stable App Store IDs.
+Repository positional Preview `item_id`
+remains unchanged; additive `selection_item_id` correlates selectable plan rows
+with inventory IDs. Secure material and preference values are never projected.
+
+Prepare returns canonical effective `selection`: sorted category-only domain IDs
+and sorted item-ID subsets, expanding whole item domains. New finer selection is
+bound into `prepared_plan_id`; Execute repeats the same validated private staged
+Blueprint narrowing and rejects mismatched/stale plans before publication/mutation.
+Equivalent whitelist representations canonicalize to the same effective scope.
+Legacy requests receive the additive public selection/correlation fields after
+legacy identity calculation. The source Bundle, ordinary generated state,
+persistent Blueprint, mutation consumers and CLI selection remain unchanged.
+`include_secure` and the separate secret transport remain independent.
 
 Prepare validates/unpacks into private staging, narrows selection and runs the
 production Preview. It returns:

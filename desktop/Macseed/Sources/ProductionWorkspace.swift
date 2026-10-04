@@ -1,16 +1,18 @@
 import SwiftUI
 
-// Capture/Status consume real Core data. Restore remains a later slice.
+// Capture, Restore Prepare and Status consume structured Core data.
 struct ProductionWorkspace: View {
     @ObservedObject var runtime: CoreRuntime
     @SwiftUI.StateObject private var status: EnvironmentStatusModel
     @SwiftUI.StateObject private var capture: CaptureModel
+    @SwiftUI.StateObject private var restore: RestoreModel
     @SwiftUI.StateObject private var navigation = ProductionNavigation()
-    private var busy: Bool { runtime.isActive || status.state == .running || capture.busy }
+    private var busy: Bool { runtime.isActive || status.state == .running || capture.busy || restore.busy }
     init(runtime: CoreRuntime) {
         self.runtime = runtime
         _status = SwiftUI.StateObject(wrappedValue: EnvironmentStatusModel(runtime: runtime))
         _capture = SwiftUI.StateObject(wrappedValue: CaptureModel(runtime: runtime))
+        _restore = SwiftUI.StateObject(wrappedValue: RestoreModel(runtime: runtime))
     }
     var body: some View {
         NavigationSplitView {
@@ -36,9 +38,7 @@ struct ProductionWorkspace: View {
                             } else if task == .capture {
                                 CaptureView(model: capture, runtime: runtime)
                             } else {
-                                Text("This task is not connected yet.").font(.title3)
-                                Text("Task integration follows in later Desktop slices. No task is run from this screen.")
-                                    .foregroundStyle(.secondary)
+                                RestoreView(model: restore, runtime: runtime)
                             }
                         } else {
                             TaskHome { task in if !busy { navigation.task = task } }
@@ -71,6 +71,7 @@ struct ProductionWorkspace: View {
                 ToolbarItem(placement: .navigation) {
                     Button {
                         if navigation.task == .capture && capture.state == .confirmation { capture.editSelection() }
+                        else if navigation.task == .restore && restore.state == .preview { restore.back() }
                         else { navigation.task = nil }
                     } label: { Label("Back", systemImage: "chevron.backward") }
                         .disabled(navigation.task == nil || busy)

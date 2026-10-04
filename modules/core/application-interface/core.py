@@ -21,6 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "bundle"))
 import bundle
 from execution import OwnedBootstrap
 from reporting import opaque
+import restore_selection
 from secure import launch_channel, import_secure, SecureError
 
 PROTOCOL_VERSION = 1
@@ -97,13 +98,13 @@ def restore_signals():
         signal.signal(signal.SIGTERM, previous_term)
 
 
-def restore_prepare(path, disabled_groups, include_secure):
-    with restore_signals(), prepared_restore(path, disabled_groups, include_secure) as (summary, _stage, _source, _staged):
+def restore_prepare(path, disabled_groups, include_secure, selection=None):
+    with restore_signals(), prepared_restore(path, disabled_groups, include_secure, selection) as (summary, _stage, _source, _staged):
         return summary
 
 
 @contextmanager
-def prepared_restore(path, disabled_groups, include_secure):
+def prepared_restore(path, disabled_groups, include_secure, selection=None):
     if bundle.RECOVERY.exists() or bundle.RECOVERY.is_symlink():
         raise RecoveryRequired()
     input_path = Path(path)
@@ -120,6 +121,10 @@ def prepared_restore(path, disabled_groups, include_secure):
             raise bundle.Invalid("Bundle changed during preparation")
         if include_secure and not (stage / "secure.age").is_file():
             raise InvalidSelection()
+        try:
+            restore_selection.narrow(stage, selection, disabled_groups)
+        except restore_selection.InvalidSelection:
+            raise InvalidSelection() from None
         bundle.narrow(stage, disabled_groups)
         stage_identity = bundle.fingerprint(stage)
         summary_file = private / "preview.summary"
@@ -245,10 +250,15 @@ def prepared_restore(path, disabled_groups, include_secure):
         }
         identity = {"bundle": source_identity, "stage": stage_identity,
                     "disabled_groups": sorted(disabled_groups), "summary": summary}
+        if selection is not None:
+            summary['selection'] = restore_selection.canonical(stage)
         summary["prepared_plan_id"] = hashlib.sha256(json.dumps(identity, sort_keys=True,
                                          separators=(",", ":")).encode()).hexdigest()
         # This identifies observed inputs and this module summary, never authorizes Apply.
         # Future Execute must rebuild and revalidate Preview before mutation.
+        # Additive public fields after legacy identity calculation preserve old IDs.
+        summary['selection'] = restore_selection.canonical(stage)
+        restore_selection.correlate(summary['plan'], stage)
         yield summary, stage, source_identity, stage_identity
 
 
@@ -361,7 +371,7 @@ def readiness(stage, include_secure, secure_ready=False, secure_only=False):
         raise ExecuteFailed(status, item_index)
 
 
-def restore_execute(operation_id, path, disabled_groups, include_secure, expected_id, channel=None):
+def restore_execute(operation_id, path, disabled_groups, include_secure, expected_id, channel=None, selection=None):
     sequence = 1  # started has already been emitted by main().
     state = {"prepared_plan_id": None, "execution_status": "not_started",
              "publication_started": False, "publication_occurred": False,
@@ -396,7 +406,7 @@ def restore_execute(operation_id, path, disabled_groups, include_secure, expecte
     try:
         with restore_signals():
             event("phase_started", {"phase": "preparation"})
-            with prepared_restore(path, disabled_groups, include_secure) as (plan, stage, source_id, stage_id):
+            with prepared_restore(path, disabled_groups, include_secure, selection) as (plan, stage, source_id, stage_id):
                 event("phase_completed", {"phase": "preparation"})
                 if plan["prepared_plan_id"] != expected_id:
                     raise ExecuteFailed("stale_plan")
@@ -654,7 +664,7 @@ def main(version, channel=None):
             expected = {"path"} if operation == "bundle_inspect" else {"path", "disabled_groups", "include_secure"}
             if operation == "restore_execute":
                 expected = expected | {"expected_prepared_plan_id"}
-            if not isinstance(parameters, dict) or set(parameters) != expected:
+            if not isinstance(parameters, dict) or (set(parameters) != expected and not (operation != "bundle_inspect" and set(parameters) == expected | {"selection"})):
                 raise ValueError("invalid Bundle parameters")
             path = parameters["path"]
             if not isinstance(path, str) or not path.startswith("/") or "\0" in path:
@@ -701,11 +711,12 @@ def main(version, channel=None):
                                                "publication_occurred": False,
                                                "target_mutation_may_have_started": False})
             return 2
-        return restore_execute(operation_id, path, disabled_groups, include_secure, expected_id, channel)
+        return restore_execute(operation_id, path, disabled_groups, include_secure, expected_id, channel, parameters.get("selection"))
     if operation == "capabilities":
         result = {
             "protocol_version": PROTOCOL_VERSION,
             "product_version": version,
+            "features": {"restore_selection": {"version": 1, "inventory": "bundle_inspect", "selection_modes": ["category", "items"]}},
             "operations": ["capabilities", "bundle_inspect", "restore_prepare", "restore_execute", "capture_prepare", "capture_execute", "environment_compare"],
         }
     else:
@@ -713,13 +724,17 @@ def main(version, channel=None):
             if operation == "restore_prepare":
                 if len(disabled_groups) != len(set(disabled_groups)) or any(item not in bundle.GROUPS for item in disabled_groups):
                     raise InvalidSelection()
-                result = restore_prepare(path, disabled_groups, include_secure)
+                result = restore_prepare(path, disabled_groups, include_secure, parameters.get("selection"))
             else:
                 input_path = Path(path)
                 mode = input_path.lstat().st_mode
                 if not stat.S_ISREG(mode):
                     raise bundle.Invalid("unsafe Bundle input")
+                source_identity = bundle.fingerprint(input_path)
                 result = bundle.inspect_bundle(input_path, os.environ["HOME"])
+                result["restore_selection"], _ = restore_selection.inventory(bundle.validate_archive(input_path))
+                if bundle.fingerprint(input_path) != source_identity:
+                    raise bundle.Invalid("Bundle changed during inspection")
         except RecoveryRequired:
             emit(2, "failed", operation_id, {"code": "recovery_required"})
             return 2

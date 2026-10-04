@@ -1,10 +1,11 @@
 # Macseed Desktop
 
-**Stage 16B–16E implemented and manually approved. Next: 16F Restore Prepare.**
+**Stage 16B–16F implemented and manually approved. Restore execution remains Stage 16G.**
 Normal launch checks real Core capabilities over Protocol V1. The approved sample
 flows remain available only in explicit DEBUG design-preview mode. Environment
 Status uses real read-only Core comparison. Capture scans/selects/prepares and
-publishes a real Saved Environment through Core. Restore is not connected yet;
+publishes a real Saved Environment through Core. Restore inspects a Saved Environment
+and prepares a read-only Preview; execution is not connected yet;
 private SSH identity transfer remains 16H.
 Build and review instructions are in
 [Desktop development](../desktop/Macseed/README.md). Macseed is one product with a shared Core and two official frontends: CLI (`bs`) and Desktop.
@@ -160,14 +161,29 @@ separate page. Prerequisites appear inline only when needed.
    categories/counts and encrypted-component presence. Invalid/unavailable or
    unsupported Bundles show **Can't Restore**, a typed explanation and Choose
    Another Bundle. Inspection does not promise readiness or expose private values.
-2. Review allows disabling the authoritative groups: Applications, VS Code
-   Settings, Homebrew, macOS Settings, Shell, Git, SSH Configuration and Workspace.
-   Included ordinary groups default on; secure import defaults off, even when
-   present. Groups can be narrowed, never expanded beyond Bundle content. Item
-   details are informational: Protocol V1 does not allow item-level Restore edits.
+2. Stage 16F requires `features.restore_selection.version = 1`; an older Core
+   shows an explicit compatibility state. Core inspection owns groups, domain
+   labels/modes, availability and stable item IDs. Available ordinary scope defaults
+   on. Whole domains and item subsets can be selected independently; category-only
+   domains remain whole. Desktop sections are Applications & Tools, Settings, Shell,
+   Git, SSH Configuration and Workspace. Settings presents one macOS Settings
+   aggregate toggle over all captured/available Core-advertised macOS domains,
+   plus VS Code Settings. Core retains independent macOS domain capability; normal
+   Desktop selection does not expose those children or individual preferences.
+   Applications & Tools/Workspace domains remain independently selectable. Selection never
+   expands beyond eligible Bundle content. Secure material is reported separately;
+   `include_secure: false` is always sent in 16F.
+Preview is attention-first and follows the selection taxonomy. Domain rows are
+collapsed by default, with real item results available on expansion. macOS Settings
+aggregates selected Core domains; underlying setting results remain in Details.
+All-satisfied prerequisites use one concise summary with optional Details; actionable
+conditions remain visible. Summary counts come from Core plan dispositions.
+
 3. `restore_prepare` supplies both prerequisites and Preview in the same Review
    area, alongside category selection, already-matching summary and changes.
-   Selection changes invalidate the displayed preparation and confirmation.
+   Selection and Bundle changes immediately invalidate the displayed preparation.
+   Cancelled, failed or interrupted refreshes clear the old Preview. Back retains
+   selection and requires a fresh Prepare.
 4. Inline prerequisites show selected-work conditions, **How to Resolve /
    Instructions** and **Check Again**; no dedicated prerequisite page by default.
    Recheck calls fresh Prepare with the same current inputs,
@@ -178,6 +194,13 @@ separate page. Prerequisites appear inline only when needed.
    backups, repository clones/branch actions and process restarts where reported.
    Never turn unknown observation into a proposed change. Private setting contents,
    remote URLs and credentials are not needed to explain the action.
+Stage 16F ends here: **Rebuild** is disabled, with explicit execution-unavailable
+copy. No `restore_execute`, prerequisite installation or secure transfer is reachable.
+Preview shows action/state counts and collapsed domain results, with attention
+indicators and progressively disclosed technical reasons. A ready plan retains its
+exact prepared ID and canonical selection for later Stage 16G integration. The
+real-Bundle manual product gate passed with `Test_1.mbt`; automated tests use disposable fixtures.
+
 6. **Rebuild** confirms the selected scope and fresh plan. Disable it for unresolved
    environmental blockers, unsupported selected execution, or missing execution
    bridge. `pending_unlock` is an expected secure step, not proof of a conflict.
@@ -388,16 +411,18 @@ reason codes may need catalog entries, usually no bespoke screen. Unknown IDs us
 safe generic labels; unknown enum values retain their code in Details and prevent
 an unsupported success/action inference. Do not extract human labels from CLI logs.
 Category-only settings stay category-only; no per-setting Capture control or
-private-value editor is promised. `capabilities` advertises operations and version,
-not a rich UI metadata registry. Existing fields suffice for this bounded UX.
+private-value editor is promised. `capabilities` advertises operations, version and the additive Restore selection
+feature. Restore group/domain modes and inventory come from Core, not a Swift
+support catalog.
 
 **Protocol-fit assessment:** the flows above use only existing V1 operations,
 structured results/events and the separate secret channel, without human stdout,
 stderr or log parsing. No blocking Core/API gap was found for these flows using signal-based Stop Rebuild;
 graceful item-boundary stopping is not provided, as specified above. Comparing
 a Bundle directly is unavailable in current V1 and tracked as the required final
-product reference above. Item-level Restore editing, decrypted identity selection
-during Prepare and Desktop recovery remain outside the current contract. Any
+product reference above. Fine ordinary Restore selection is Core-supported;
+decrypted identity selection during Prepare and Desktop recovery remain outside
+the current contract. Any
 extension needs a precise Core contract decision, not a client-side parser.
 
 ## Local logs and Diagnostic Report
@@ -466,7 +491,7 @@ preview/export identity. Tests use disposable fixtures; never real keys or secre
 | 16C — Core process integration and capabilities | Core/Python layout, writable state/temp, controlled child HOME/PATH/environment, JSONL validation, process ownership and cancellation; structured sanitized logging foundation |
 | 16D — Environment Status | Explicit reference picker, read-only Compare, summary and record details |
 | 16E — Capture | Inventory/selection, fresh preparation, Bundle publication and interruption states; secure opt-in completed in 16H |
-| 16F — Restore preparation | Bundle inspection, group selection, prerequisites, Check Again, Preview and fresh confirmation |
+| 16F — Restore preparation | Core-supported domain/item selection, Bundle inspection, prerequisites, Check Again, Preview and fresh confirmation |
 | 16G — Restore execution | Rebuild phases, records, Stop Rebuild over current signal cancellation, partial failure and re-entry |
 | 16H — Secure SSH interactions | FD bridge/challenges, encryption/unlock/import confirmation and age/OpenSSH PTY qualification for Capture and Restore |
 | 16I — Verification and completion | Concise Result with disclosed verdict/coverage, no-op, already-matching and incomplete outcomes |

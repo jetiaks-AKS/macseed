@@ -67,11 +67,13 @@ class RestorePrepareTests(unittest.TestCase):
             bundle.write_file(self.stage / "secure.age", b"age-encryption.org/v1\nprivate-ciphertext")
         bundle.pack(self.stage, self.archive, "/Users/source")
 
-    def invoke(self, *, groups=(), secure=False, path=None):
+    def invoke(self, *, groups=(), secure=False, path=None, selection=None):
         request = {"protocol_version": 1, "operation_id": "prepare-1",
                    "operation": "restore_prepare",
                    "parameters": {"path": str(path or self.archive),
                                   "disabled_groups": list(groups), "include_secure": secure}}
+        if selection is not None:
+            request["parameters"]["selection"] = selection
         result = subprocess.run(
             ["bash", str(self.project / "modules/core/application-interface/core.sh")],
             input=json.dumps(request).encode(), cwd=self.project, env=self.environment,
@@ -83,12 +85,14 @@ class RestorePrepareTests(unittest.TestCase):
         self.assertFalse(list(self.private_temp.glob("mbt-bundle-*")))
         return result, events
 
-    def execute(self, plan_id, *, groups=(), secure=False, path=None):
+    def execute(self, plan_id, *, groups=(), secure=False, path=None, selection=None):
         request = {"protocol_version": 1, "operation_id": "execute-1",
                    "operation": "restore_execute",
                    "parameters": {"path": str(path or self.archive),
                                   "disabled_groups": list(groups), "include_secure": secure,
                                   "expected_prepared_plan_id": plan_id}}
+        if selection is not None:
+            request["parameters"]["selection"] = selection
         result = subprocess.run(
             ["bash", str(self.project / "modules/core/application-interface/core.sh")],
             input=json.dumps(request).encode(), cwd=self.project, env=self.environment,
@@ -134,7 +138,8 @@ class RestorePrepareTests(unittest.TestCase):
         self.pack()
         first = self.plan_result()
         self.assertIn({"domain": "workspace-folders", "item_id": "Projects",
-                       "action": "create_directory", "disposition": "planned", "reason": None}, first["plan"])
+                       "action": "create_directory", "disposition": "planned", "reason": None},
+                      [{key: value for key, value in row.items() if key != "selection_item_id"} for row in first["plan"]])
         self.assertEqual(first["selected_groups"], ["Workspace"])
         self.assertTrue(first["readiness"]["ready"])
         self.assertEqual(first["readiness"]["conditions"], [])
@@ -197,7 +202,8 @@ class RestorePrepareTests(unittest.TestCase):
         self.pack()
         result = self.plan_result()
         self.assertIn({"domain": "git-configuration", "item_id": "user.name", "action": "none",
-                       "disposition": "conflict", "reason": "target_conflict"}, result["plan"])
+                       "disposition": "conflict", "reason": "target_conflict"},
+                      [{key: value for key, value in row.items() if key != "selection_item_id"} for row in result["plan"]])
         self.assertNotIn("PRIVATE_SOURCE_IDENTITY", json.dumps(result))
         self.assertNotIn("PRIVATE_TARGET_IDENTITY", json.dumps(result))
 
@@ -244,7 +250,8 @@ class RestorePrepareTests(unittest.TestCase):
         self.assertIn({'domain': 'homebrew-packages', 'code': 'homebrew_path_activation',
                        'status': 'safely_satisfiable'}, result['readiness']['conditions'])
         self.assertIn({'domain': 'homebrew-packages', 'item_id': 'fixture-formula', 'action': 'none',
-                       'disposition': 'satisfied', 'reason': None}, result['plan'])
+                       'disposition': 'satisfied', 'reason': None},
+                      [{key: value for key, value in row.items() if key != 'selection_item_id'} for row in result['plan']])
         self.assertFalse((self.root / 'mutations').exists())
 
     def test_repository_readiness_and_private_projection(self):

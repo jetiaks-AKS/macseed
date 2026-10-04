@@ -53,7 +53,7 @@ and packaged clean-Mac qualification remain the next stages.
 
 **Product/UX contract defined (16A); native sample-data foundation implemented
 (16B); runtime (16C) and Environment Status (16D) manually approved; real Capture
-(16E) completed and manually approved. Next: 16F Restore Prepare.** Complete the SwiftUI client for
+(16E) completed and manually approved. 16F Restore Prepare completed and manually approved; 16G Restore execution is next.** Complete the SwiftUI client for
 Capture this Mac, Restore a Mac and Environment Status.
 Provide prerequisite guidance, Check Again, structured
 progress/results, separate secret input and cancellation over the existing Core.

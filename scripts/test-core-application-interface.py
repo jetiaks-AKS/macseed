@@ -38,6 +38,7 @@ class CoreInterfaceTests(unittest.TestCase):
         self.assertEqual(records[1]["data"], {
             "protocol_version": 1,
             "product_version": "3.4.0",
+            "features": {"restore_selection": {"version": 1, "inventory": "bundle_inspect", "selection_modes": ["category", "items"]}},
             "operations": ["capabilities", "bundle_inspect", "restore_prepare", "restore_execute", "capture_prepare", "capture_execute", "environment_compare"],
         })
         self.assertEqual(sum(row["type"] in ("completed", "failed") for row in records), 1)
@@ -109,7 +110,7 @@ class CoreInterfaceTests(unittest.TestCase):
             events = [json.loads(line) for line in response.stdout.splitlines()]
             self.assertEqual([event["type"] for event in events], ["started", "result", "completed"])
             self.assertEqual([event["sequence"] for event in events], [1, 2, 3])
-            self.assertEqual(events[1]["data"], {
+            self.assertEqual({key: value for key, value in events[1]["data"].items() if key != "restore_selection"}, {
                 "format_version": 1,
                 "selected_categories": ["vscode-settings"],
                 "selected_item_counts": {name: 1 if name == "homebrew-casks" else 0

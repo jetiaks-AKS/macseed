@@ -42,13 +42,14 @@ struct CaptureCategory: Identifiable {
     var id: String { row.domain }
     var selectable: Bool { row.status == "present" && (["items", "category"].contains(row.selectionMode)) && (row.selectionMode == "category" || !row.items.isEmpty) }
     var itemSelectable: Bool { selectable && row.selectionMode == "items" }
-    var title: String {
+    var title: String { Self.title(for: id) }
+    static func title(for domain: String) -> String {
         let names = ["homebrew-packages": "Homebrew Packages", "homebrew-casks": "Homebrew Applications", "app-store": "App Store Applications",
                      "vscode-extensions": "VS Code Extensions", "vscode-settings": "VS Code Settings", "git-configuration": "Git Configuration",
                      "git-repositories": "Git Repositories", "workspace-folders": "Workspace Folders", "ssh-configuration": "SSH Configuration",
                      "shell-zsh": "Shell Configuration", "macos-finder": "Finder", "macos-dock": "Dock", "macos-windows": "Windows",
                      "macos-keyboard": "Keyboard", "macos-trackpad": "Trackpad", "macos-screenshots": "Screenshots"]
-        return names[id] ?? "Other supported state"
+        return names[domain] ?? "Other supported state"
     }
     var symbol: String {
         switch id {

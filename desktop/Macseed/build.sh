@@ -36,6 +36,9 @@ if [[ "${2:-}" == --test ]]; then
     xcrun swiftc "${compiler_options[@]}" -parse-as-library "${presentation_sources[@]}" Tests/CaptureTests.swift \
         -o "$output_dir/CaptureTests"
     "$output_dir/CaptureTests" "$(cd ../.. && pwd -P)" "$(xcrun --find python3)"
+    xcrun swiftc "${compiler_options[@]}" -parse-as-library "${presentation_sources[@]}" Tests/RestoreTests.swift \
+        -o "$output_dir/RestoreTests"
+    "$output_dir/RestoreTests" "$(cd ../.. && pwd -P)" "$(xcrun --find python3)"
     if [[ "$configuration" == Release ]]; then
         if /usr/bin/strings "$output_dir/Macseed.app/Contents/MacOS/Macseed" | /usr/bin/grep -E 'Demo States|Next Sample Event|Personal SSH key|SampleProvider' >/dev/null; then
             echo 'FAIL: sample UI/provider leaked into Release' >&2

@@ -6,8 +6,6 @@ Concrete unfinished work. Outcomes and stage status are in [Roadmap](ROADMAP.md)
 
 Implement the [Desktop contract](docs/DESKTOP.md) in vertical slices:
 
-- [ ] 16F: Restore inspection/group selection, prerequisite guidance, Check Again,
-  Preview and fresh-plan confirmation.
 - [ ] 16G: Restore execution/progress, Stop Rebuild using current signal cancellation,
   partial failure and fresh-plan re-entry, including switching Bundles.
 - [ ] 16H: Secure FD/challenge bridge, SSH opt-in, encryption/unlock/import

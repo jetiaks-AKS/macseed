@@ -16,6 +16,10 @@ The format is based on the principles of **Keep a Changelog**.
 * Real read-only Environment Status comparison against an explicit saved reference.
 * Real Desktop Capture: scan, review, destination selection, fresh preparation,
   compact confirmation, `.mbt` publication, completion and Reveal in Finder.
+* Additive Protocol V1 Restore selection inventory and domain/item narrowing,
+  with stable item identities and prepared-plan binding over existing consumers.
+* Real Desktop Restore preparation: Saved Environment inspection, fine selection,
+  read-only Preview, prerequisite rechecks and retained prepared-plan identity.
 * Persistent native Appearance preference: System, Light and Dark.
 
 ### Changed

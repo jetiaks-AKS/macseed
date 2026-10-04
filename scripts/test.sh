@@ -35,6 +35,7 @@ SUITES=(
     scripts/test-preview-integration.sh
     scripts/test-restore-prerequisites.py
     scripts/test-restore-prepare.py
+    scripts/test-restore-selection.py
     scripts/test-secure-restore.py
     scripts/test-shell-zsh.sh
     scripts/test-ssh-generated-state.sh

@@ -37,7 +37,7 @@ struct FoundationSettingsView: View {
                 #if DEBUG
                 Text("Use --design-preview for the DEBUG sample experience. Normal launch checks the real Core.")
                 #else
-                Text("Capture and Environment Status use the real Macseed Core runtime. Restore integration follows in later slices.")
+                Text("Capture, Restore Preview and Environment Status use the real Macseed Core runtime.")
                 #endif
             }
             .padding(24)
@@ -66,7 +66,9 @@ struct FoundationSettingsView: View {
         guard runtime.isActive else { return .terminateNow }
         let alert = NSAlert()
         alert.messageText = "Stop the operation and quit?"
-        if runtime.operation == .capturePrepare {
+        if runtime.operation == .restorePrepare || runtime.operation == .bundleInspect {
+            alert.informativeText = "The read-only inspection will stop. Prepare a fresh Restore Preview before rebuilding."
+        } else if runtime.operation == .capturePrepare {
             alert.informativeText = "The scan will stop. Scan this Mac again before another attempt."
         } else if runtime.operation == .captureExecute {
             alert.informativeText = "Capture will stop. A published file or temporary state may remain. Scan again before another attempt."

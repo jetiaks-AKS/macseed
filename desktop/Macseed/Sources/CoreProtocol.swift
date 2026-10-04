@@ -45,6 +45,11 @@ struct CoreCaptureSelection: Codable, Equatable, Sendable {
     enum CodingKeys: String, CodingKey { case categories, items, secureIdentities = "secure_identities" }
 }
 
+struct CoreRestoreSelection: Codable, Equatable, Sendable {
+    let categories: [String]
+    let items: [String: [String]]
+}
+
 // The discriminator comes from Core inventory, never inferred from a sample category.
 struct CoreCaptureInventoryRow: Decodable, Sendable {
     let domain: String
@@ -70,7 +75,7 @@ enum CoreCommand: Sendable {
     case bundleInspect(path: String)
     case capturePrepare(selection: CoreCaptureSelection?)
     case captureExecute(selection: CoreCaptureSelection, destination: String, preparedID: String)
-    case restorePrepare(path: String, disabledGroups: [String], includeSecure: Bool)
+    case restorePrepare(path: String, disabledGroups: [String], includeSecure: Bool, selection: CoreRestoreSelection? = nil)
     case restoreExecute(path: String, disabledGroups: [String], includeSecure: Bool, preparedID: String)
     case environmentCompare(generatedDirectory: String, blueprintPath: String?)
 
@@ -106,7 +111,10 @@ enum CoreCommand: Sendable {
         case .capturePrepare(let value): return .object(["selection": try selection(value)])
         case .captureExecute(let value, let destination, let id):
             return .object(["selection": try selection(value), "destination": .string(destination), "expected_prepared_capture_id": .string(id)])
-        case .restorePrepare(let path, let groups, let secure): return .object(restore(path, groups, secure))
+        case .restorePrepare(let path, let groups, let secure, let selection):
+            var values = restore(path, groups, secure)
+            if let selection { values["selection"] = try JSONDecoder().decode(CoreJSON.self, from: JSONEncoder().encode(selection)) }
+            return .object(values)
         case .restoreExecute(let path, let groups, let secure, let id):
             var values = restore(path, groups, secure)
             values["expected_prepared_plan_id"] = .string(id)
@@ -191,8 +199,10 @@ struct CoreCapabilities: Decodable, Sendable {
     let protocolVersion: Int
     let productVersion: String
     let operations: [String]
+    let features: [String: CoreJSON]?
+    var supportsRestoreSelection: Bool { features?["restore_selection"]?.object?["version"]?.integer == 1 }
     enum CodingKeys: String, CodingKey {
-        case protocolVersion = "protocol_version", productVersion = "product_version", operations
+        case protocolVersion = "protocol_version", productVersion = "product_version", operations, features
     }
 }
 
