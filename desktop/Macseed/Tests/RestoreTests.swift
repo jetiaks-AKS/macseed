@@ -70,8 +70,35 @@ import Foundation
                 selection=dict(categories=sorted(selected_categories),items={k:sorted(v) for k,v in selected_items.items()}),
                 selected_groups=groups, selected_categories=selected_categories,selected_item_counts={k:len(v) for k,v in selected_items.items()},
                 include_secure=False,secure_restore_status='not_selected',plan=plan,readiness=dict(ready=not conditions or mode in ('safe','satisfied'),ready_scope='environment',conditions=conditions,reentry='restore_prepare'),
-                has_planned_changes=True,warning_count=1 if mode=='attention' else 0,error_count=0)
+                has_planned_changes=mode not in ('no_changes','no_changes_attention'),warning_count=1 if mode=='attention' else 0,error_count=0)
+            if mode in ('no_changes','no_changes_attention'):
+                for row in result['plan']: row['disposition']='satisfied'
+                if mode=='no_changes_attention': result['plan'][0]['disposition']='warning'
             if mode=='wrong_selection': result['selection']['categories']=['not-chosen']
+        elif operation=='restore_execute':
+            assert request['parameters']['include_secure'] is False
+            assert request['parameters']['selection'] is not None
+            requests=[json.loads(line) for line in Path('requests.jsonl').read_text().splitlines()]
+            last_prepare=next(r for r in reversed(requests) if r['operation']=='restore_prepare')
+            assert request['parameters']['selection']==last_prepare['parameters']['selection']
+            assert request['parameters']['expected_prepared_plan_id']=='a'*64
+            if mode=='execute_missing_result': emit('completed'); sys.exit(0)
+            if mode=='execute_interrupted':
+                emit('phase_started',dict(phase='bootstrap')); os._exit(9)
+            if mode in ('execute_stop_before','execute_stop_after'):
+                mutation=mode=='execute_stop_after'
+                def stop(signum,frame):
+                    emit('failed',dict(code='cancelled',target_mutation_may_have_started=mutation)); sys.exit(130)
+                signal.signal(signal.SIGTERM,stop)
+                emit('phase_started',dict(phase='bootstrap' if mutation else 'preparation'))
+                time.sleep(10)
+            if mode in ('execute_fail_before','execute_fail_after','execute_stale'):
+                emit('failed',dict(code='stale_plan' if mode=='execute_stale' else 'bootstrap_failed',target_mutation_may_have_started=mode=='execute_fail_after')); sys.exit(2)
+            emit('phase_started',dict(phase='bootstrap'))
+            emit('execution_event',dict(domain='homebrew-packages',item_id='first',state='changed',action='install'))
+            verification=dict(status='complete',verdict='selected_requirements_verified',mismatch_count=0,unverified_count=0,unresolved_count=0,warning_count=0,error_count=0,details={})
+            if mode=='execute_attention': verification['unverified_count']=1; verification['verdict']='incomplete'
+            result=dict(prepared_plan_id='a'*64,execution_status='completed',target_mutation_may_have_started=True,publication_occurred=True,verification=verification,warning_count=0,error_count=0)
         else:
             Path('MUTATION_ATTEMPT').write_text(operation)
             emit('failed',dict(code='forbidden_operation')); sys.exit(2)
@@ -200,6 +227,43 @@ import Foundation
         precondition(requests.allSatisfy { ["capabilities", "bundle_inspect", "restore_prepare"].contains($0["operation"] as! String) })
         precondition(!FileManager.default.fileExists(atPath: core.appendingPathComponent("MUTATION_ATTEMPT").path))
         print("PASS: Capability/inventory, independent areas/groups/items, stable selection IDs, whole/subset requests, Preview correlation/readiness, invalidation, cancellation/interruption and no Execute")
+        for mode in ["no_changes", "attention"] {
+            try write(mode, core.appendingPathComponent("mode")); model.refreshPreview(); await model.waitForCompletion()
+            precondition(!model.canRebuild)
+            model.requestRebuild(); precondition(model.state == .preview)
+        }
+        let outcomes: [(String, RestoreExecutionPresentation.Outcome)] = [
+            ("execute_clean", .clean), ("execute_attention", .attention),
+            ("execute_fail_before", .failedBeforeMutation), ("execute_fail_after", .failedAfterMutation),
+            ("execute_stale", .failedBeforeMutation), ("execute_interrupted", .interrupted), ("execute_missing_result", .interrupted),
+            ("execute_stop_before", .stoppedBeforeMutation), ("execute_stop_after", .stoppedAfterMutation)]
+        for (mode, outcome) in outcomes {
+            try write("clean", core.appendingPathComponent("mode")); model.refreshPreview(); await model.waitForCompletion()
+            precondition(model.canRebuild)
+            let id = model.preparation!.preparedPlanID
+            model.requestRebuild(); precondition(model.state == .confirming && !runtime.isActive)
+            model.cancelRebuildConfirmation(); precondition(model.canRebuild && model.preparation?.preparedPlanID == id)
+            model.requestRebuild()
+            try write(mode, core.appendingPathComponent("mode")); model.confirmRebuild()
+            let operation = runtime.operationID
+            model.confirmRebuild(); model.choose(source); model.back()
+            precondition(runtime.operationID == operation && model.state == .rebuilding)
+            if mode.hasPrefix("execute_stop") {
+                for _ in 0..<100 { if runtime.currentPhase != nil { break }; try await Task.sleep(nanoseconds: 20_000_000) }
+                model.requestStop()
+                if mode == "execute_stop_after" {
+                    precondition(model.stopConfirmation && model.mutationPossible)
+                    model.stopConfirmation = false; precondition(runtime.isActive)
+                    model.requestStop(); model.confirmStop()
+                }
+            }
+            await model.waitForCompletion()
+            precondition(model.state == .result && model.executionResult?.outcome == outcome)
+            precondition(model.preparation == nil && !model.canRebuild)
+            try write("clean", core.appendingPathComponent("mode")); model.checkCurrentState(); await model.waitForCompletion()
+            precondition(model.state == .preview && model.canRebuild)
+        }
+        print("PASS: Stage 16G eligibility, confirmation, fine Execute request, ownership, zero-change, Safe Stop, failure/interruption and Verification outcomes; fixtures only")
         try await realPrepare(repo: repo, python: python, root: root)
     }
 

@@ -1,7 +1,7 @@
 import Combine
 import Foundation
 
-enum RestoreFlowState { case choose, inspecting, preparing, review, preview, failed, cancelled }
+enum RestoreFlowState { case choose, inspecting, preparing, review, preview, confirming, rebuilding, result, failed, cancelled }
 
 struct RestorePreviewPresentation {
     let categories: [DisplayCategory]
@@ -88,6 +88,7 @@ struct RestorePreviewPresentation {
 }
 
 @MainActor final class RestoreModel: ObservableObject {
+    static let shared = RestoreModel(runtime: .shared)
     @Published private(set) var state: RestoreFlowState = .choose
     @Published private(set) var source: URL?
     @Published private(set) var inspection: CoreRestoreInspection?
@@ -95,13 +96,15 @@ struct RestorePreviewPresentation {
     @Published private(set) var selectedItems: [String: Set<String>] = [:]
     @Published private(set) var preparation: CoreRestorePreparation?
     @Published private(set) var preview: RestorePreviewPresentation?
+    @Published private(set) var executionResult: RestoreExecutionPresentation?
+    @Published var stopConfirmation = false
     @Published private(set) var failure: String?
     @Published private(set) var technicalReason: String?
     let runtime: CoreRuntime
     private let location: CoreLocation?
     private var work: Task<Void, Never>?
     private var cancelRequested = false
-    var busy: Bool { state == .inspecting || state == .preparing }
+    var busy: Bool { state == .inspecting || state == .preparing || state == .confirming || state == .rebuilding }
     var areas: [CoreRestoreInspection.Area] { inspection?.restoreSelection?.inventory ?? [] }
     var groups: [CoreRestoreInspection.Group] { inspection?.restoreSelection?.groups ?? [] }
     var selection: CoreRestoreSelection {
@@ -132,6 +135,75 @@ struct RestorePreviewPresentation {
             && preparation?.plan.contains(where: { ["conflict", "blocked", "unknown", "pending_unlock"].contains($0.disposition) }) == false
     }
     init(runtime: CoreRuntime, location: CoreLocation? = nil) { self.runtime = runtime; self.location = location }
+    var canRebuild: Bool {
+        ready && !runtime.isActive && preparation?.hasPlannedChanges == true
+            && preparation?.selection == canonicalSelection
+    }
+    var mutationPossible: Bool {
+        runtime.mutationMayHaveStarted == true || runtime.events.contains { $0.phase == "bootstrap" || $0.type == "execution_event" }
+    }
+    var activity: String {
+        if runtime.events.last?.data?["domain"]?.string == "verification" { return "Verifying the restored environment…" }
+        return switch runtime.currentPhase {
+        case "preparation": "Checking the accepted Preview…"
+        case "publication": "Preparing selected configuration…"
+        case "bootstrap": "Applying the selected environment…"
+        default: "Starting Rebuild…"
+        }
+    }
+    var executionActivities: [DisplayItem] {
+        var rows: [String: DisplayItem] = [:]
+        for event in runtime.events where event.type == "execution_event" {
+            guard let domain = event.data?["domain"]?.string,
+                  let area = areas.first(where: { $0.id == domain }),
+                  let state = event.data?["state"]?.string else { continue }
+            let group = groups.first { $0.id == "macOS Settings" && $0.domains.contains(domain) }
+            let title = group?.id ?? area.label
+            let attention = ["warning", "failed", "conflict", "blocked"].contains(state)
+            let status: DisplayStatus = attention ? .attention : ["changed", "already_satisfied", "satisfied"].contains(state) ? .complete : .working
+            if rows[title]?.requiresAttention == true && !attention { continue }
+            rows[title] = DisplayItem(id: title, title: title, status: status, action: attention ? "Needs Attention" : status == .complete ? "Completed" : "Working")
+        }
+        return rows.values.sorted { $0.title < $1.title }
+    }
+    func requestRebuild() {
+        guard canRebuild else { return }
+        state = .confirming
+    }
+    func cancelRebuildConfirmation() { if state == .confirming { state = .preview } }
+    func confirmRebuild() {
+        guard state == .confirming, !runtime.isActive, let source, let plan = preparation,
+              plan.readiness.ready, plan.errorCount == 0, plan.hasPlannedChanges, plan.selection == canonicalSelection else { return }
+        let request = CoreRequest(.restoreExecute(path: source.path, disabledGroups: [], includeSecure: false,
+                                                preparedID: plan.preparedPlanID, selection: selection))
+        executionResult = nil; stopConfirmation = false; state = .rebuilding
+        // Start synchronously so a second activation cannot launch another operation.
+        runtime.start(request, location: location)
+        work = Task {
+            await runtime.waitForCompletion()
+            let terminal = runtime.termination?.terminal
+            let payload = runtime.latestResult?.data ?? terminal?.data
+            executionResult = RestoreExecutionPresentation(runtime: runtime, payload: payload, expectedID: plan.preparedPlanID, catalog: inspection?.restoreSelection)
+            invalidate(); state = .result
+        }
+    }
+    func requestStop() {
+        guard state == .rebuilding, runtime.isActive else { return }
+        if mutationPossible { stopConfirmation = true } else { runtime.cancel() }
+    }
+    func confirmStop() {
+        guard state == .rebuilding else { return }
+        stopConfirmation = false; runtime.cancel()
+    }
+    func checkCurrentState() {
+        guard state == .result, !runtime.isActive else { return }
+        state = .review; executionResult = nil; refreshPreview()
+    }
+    func finish() {
+        guard state == .result, !runtime.isActive else { return }
+        invalidate(); executionResult = nil; inspection = nil; source = nil
+        selectedCategories = []; selectedItems = [:]; state = .choose
+    }
     func selectionState(_ area: CoreRestoreInspection.Area) -> SelectionState {
         guard area.selectable else { return .none }
         return area.selectionMode == "category" ? (selectedCategories.contains(area.id) ? .all : .none)
@@ -241,4 +313,76 @@ struct RestorePreviewPresentation {
     }
     private func fail(_ message: String, code: String?) { invalidate(); failure = message; technicalReason = code; state = .failed }
     func waitForCompletion() async { await work?.value }
+}
+
+struct RestoreExecutionPresentation {
+    enum Outcome { case clean, attention, stoppedBeforeMutation, stoppedAfterMutation, interrupted, failedBeforeMutation, failedAfterMutation }
+    let outcome: Outcome
+    let title: String
+    let message: String
+    let details: [DisplayItem]
+    let structuredEvidence: [String: CoreJSON]?
+    @MainActor init(runtime: CoreRuntime, payload: [String: CoreJSON]?, expectedID: String, catalog: CoreRestoreInspection.Inventory? = nil) {
+        structuredEvidence = payload
+        let terminal = runtime.termination?.terminal
+        let validTerminal: Bool
+        if case .coreFailure = runtime.error { validTerminal = true }
+        else { validTerminal = runtime.error == nil }
+        let mayMutate = payload?["target_mutation_may_have_started"]?.boolean ?? true
+        let verification = payload?["verification"]?.object
+        let verified = verification?["verdict"]?.string == "selected_requirements_verified"
+            && verification?["status"]?.string == "complete"
+            && ["mismatch_count", "unverified_count", "unresolved_count", "warning_count", "error_count"].allSatisfy { verification?[$0]?.integer == 0 }
+        if !validTerminal || terminal == nil || payload?["target_mutation_may_have_started"]?.boolean == nil {
+            outcome = .interrupted
+        } else if terminal?.isCancellation == true {
+            outcome = mayMutate ? .stoppedAfterMutation : .stoppedBeforeMutation
+        } else if terminal?.type == "failed" {
+            outcome = mayMutate ? .failedAfterMutation : .failedBeforeMutation
+        } else if runtime.state == .completed && payload?["execution_status"]?.string == "completed"
+                    && payload?["prepared_plan_id"]?.string == expectedID {
+            outcome = verified && payload?["warning_count"]?.integer == 0 && payload?["error_count"]?.integer == 0 ? .clean : .attention
+        } else { outcome = .interrupted }
+        switch outcome {
+        case .clean: title = "All Done"; message = "Your environment is ready. Everything was restored successfully."
+        case .attention: title = "Rebuild completed with attention needed"; message = "Review the observed results, then Refresh Preview to check current state."
+        case .stoppedBeforeMutation: title = "Rebuild Cancelled"; message = "Core reports that no target mutation started. Refresh Preview before another Rebuild."
+        case .stoppedAfterMutation: title = "Rebuild Stopped"; message = "Completed changes may remain. Refresh Preview to inspect current state before rebuilding again."
+        case .interrupted: title = "Rebuild Interrupted"; message = "Final consequences are unknown. Changes may remain. Refresh Preview to inspect current state."
+        case .failedBeforeMutation: title = "Rebuild Could Not Start"; message = "Core reports that no target mutation started. Refresh Preview to check prerequisites and current state."
+        case .failedAfterMutation: title = "Rebuild Failed"; message = "Changes may remain. Refresh Preview to inspect current state before rebuilding again."
+        }
+        var projected: [DisplayItem] = []
+        if let code = payload?["code"]?.string {
+            projected.append(DisplayItem(id: "failure", title: "Rebuild", status: .attention,
+                action: code == "stale_plan" ? "The Mac or saved environment changed. A fresh Preview is required." : "Core could not complete the selected Rebuild.", reason: code))
+        }
+        if let verdict = verification?["verdict"]?.string {
+            projected.append(DisplayItem(id: "verification", title: "Observed environment", status: verified ? .matching : .unverified,
+                action: verified ? "Selected requirements verified" : "Final conformity needs attention.", reason: verdict))
+        }
+        if let object = verification?["details"]?.object,
+           case .array(let records) = object["verification_records"] {
+            for (index, value) in records.enumerated() {
+                guard let row = value.object, let conformity = row["conformity"]?.string, conformity != "verified" else { continue }
+                projected.append(DisplayItem(id: "verification-\(index)", title: catalog?.inventory.first { $0.id == row["domain"]?.string }?.label ?? "Selected environment requirement", status: .unverified,
+                    action: "Final state needs attention.", reason: conformity))
+            }
+        }
+        if let object = verification?["details"]?.object,
+           case .array(let records) = object["operation_records"] {
+            for (index, value) in records.enumerated() {
+                guard let row = value.object, let outcome = row["outcome"]?.string,
+                      ["warning", "failure"].contains(outcome) else { continue }
+                projected.append(DisplayItem(id: "operation-\(index)",
+                    title: catalog?.inventory.first { $0.id == row["domain"]?.string }?.label ?? "Selected work",
+                    status: .attention, action: outcome == "failure" ? "Rebuild failed for this selected work." : "This selected work needs attention.", reason: row["reason"]?.string))
+            }
+        }
+        if projected.isEmpty && outcome != .clean {
+            projected.append(DisplayItem(id: "incomplete", title: "Rebuild result", status: .unverified,
+                action: "Complete final evidence is unavailable. Inspect current state with a fresh Preview."))
+        }
+        details = projected
+    }
 }

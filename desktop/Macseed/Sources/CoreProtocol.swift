@@ -76,7 +76,7 @@ enum CoreCommand: Sendable {
     case capturePrepare(selection: CoreCaptureSelection?)
     case captureExecute(selection: CoreCaptureSelection, destination: String, preparedID: String)
     case restorePrepare(path: String, disabledGroups: [String], includeSecure: Bool, selection: CoreRestoreSelection? = nil)
-    case restoreExecute(path: String, disabledGroups: [String], includeSecure: Bool, preparedID: String)
+    case restoreExecute(path: String, disabledGroups: [String], includeSecure: Bool, preparedID: String, selection: CoreRestoreSelection? = nil)
     case environmentCompare(generatedDirectory: String, blueprintPath: String?)
 
     var operation: CoreOperation {
@@ -93,7 +93,7 @@ enum CoreCommand: Sendable {
     var requiresSecretBridge: Bool {
         switch self {
         case .captureExecute(let selection, _, _): !selection.secureIdentities.isEmpty
-        case .restoreExecute(_, _, let secure, _): secure
+        case .restoreExecute(_, _, let secure, _, _): secure
         default: false
         }
     }
@@ -115,9 +115,10 @@ enum CoreCommand: Sendable {
             var values = restore(path, groups, secure)
             if let selection { values["selection"] = try JSONDecoder().decode(CoreJSON.self, from: JSONEncoder().encode(selection)) }
             return .object(values)
-        case .restoreExecute(let path, let groups, let secure, let id):
+        case .restoreExecute(let path, let groups, let secure, let id, let selection):
             var values = restore(path, groups, secure)
             values["expected_prepared_plan_id"] = .string(id)
+            if let selection { values["selection"] = try JSONDecoder().decode(CoreJSON.self, from: JSONEncoder().encode(selection)) }
             return .object(values)
         case .environmentCompare(let directory, let blueprint):
             return .object(["generated_dir": .string(directory), "blueprint_path": blueprint.map(CoreJSON.string) ?? .null])

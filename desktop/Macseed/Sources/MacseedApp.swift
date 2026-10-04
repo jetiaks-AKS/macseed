@@ -56,7 +56,8 @@ struct FoundationSettingsView: View {
 }
 
 // Quit waits for real owned-process cancellation; closing a window does not
-// terminate the application or detach the shared runtime.
+// terminate the application or detach the shared runtime. RestoreModel.shared retains
+// the operation/result context when a window is closed and reopened.
 @MainActor final class CoreAppLifecycle: NSObject, NSApplicationDelegate {
     func applicationWillFinishLaunching(_ notification: Notification) {
         DesktopAppearance(storedValue: UserDefaults.standard.string(forKey: DesktopAppearance.preferenceKey)).apply(to: NSApp)

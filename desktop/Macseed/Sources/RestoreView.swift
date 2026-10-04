@@ -304,7 +304,7 @@ struct RestoreView: View {
             case .inspecting, .preparing:
                 ProgressView(runtime.stopping ? "Stopping…" : (model.state == .inspecting ? "Inspecting saved environment…" : "Preparing Restore Preview…"))
                 Button("Cancel", role: .cancel) { model.cancel() }.disabled(runtime.stopping)
-            case .review, .preview:
+            case .review, .preview, .confirming:
                 if let source = model.source {
                     HStack {
                         Label(source.lastPathComponent, systemImage: "shippingbox").font(.headline)
@@ -335,7 +335,8 @@ struct RestoreView: View {
                     Text(model.selectionSummary).font(.callout).foregroundStyle(.secondary)
                     Button("Preview Restore") { model.refreshPreview() }.buttonStyle(.borderedProminent).disabled(!model.canPreview)
                 } else if let prepared = model.preparation, let preview = model.preview {
-                    Text(model.ready ? "Ready to Rebuild" : "Needs Attention").font(.title2)
+                    Text(!model.ready || preview.sections.flatMap(\.rows).contains(where: { RestorePreviewPresentation.state($0) == "Needs Attention" })
+                         ? "Needs Attention" : prepared.hasPlannedChanges ? "Ready to Rebuild" : "Everything already matches").font(.title2)
                     Text(preview.summary)
                     if !prepared.hasPlannedChanges && prepared.plan.allSatisfy({ $0.disposition == "satisfied" }) {
                         Text("Selected requirements already match this Mac.")
@@ -380,10 +381,35 @@ struct RestoreView: View {
                     HStack {
                         Button("Back") { model.back() }
                         Button("Refresh Preview") { model.refreshPreview() }
-                        Button("Rebuild") {}.buttonStyle(.borderedProminent).disabled(true)
+                        Button("Rebuild") { model.requestRebuild() }.buttonStyle(.borderedProminent).disabled(!model.canRebuild)
                     }
-                    Text("Preview is complete. Rebuild execution is not available in this development slice.")
-                        .font(.callout).foregroundStyle(.secondary)
+                    if !prepared.hasPlannedChanges && prepared.plan.allSatisfy({ $0.disposition == "satisfied" }) {
+                        Text("Everything already matches. No Rebuild is needed.").font(.callout).foregroundStyle(.secondary)
+                    }
+                }
+            case .rebuilding:
+                Text("Rebuilding Your Mac").font(.title2)
+                ProgressView(runtime.stopping ? "Stopping…" : model.activity)
+                ForEach(model.executionActivities) { item in
+                    HStack {
+                        Image(systemName: item.status.symbol).foregroundStyle(item.requiresAttention ? Color.orange : Color.secondary)
+                        Text(item.title)
+                        Spacer()
+                        Text(item.action).foregroundStyle(.secondary)
+                    }
+                }
+                Button("Stop Rebuild", role: .cancel) { model.requestStop() }.disabled(runtime.stopping)
+            case .result:
+                if let result = model.executionResult {
+                    Text(result.title).font(.title2)
+                    Text(result.message)
+                    if result.outcome != .clean {
+                        RestorePreviewItemDetails(items: result.details.filter { $0.status != .matching })
+                        Button("Refresh Preview") { model.checkCurrentState() }
+                    }
+                    DisclosureGroup("View Details") { RestorePreviewItemDetails(items: result.details) }
+                        .disclosureGroupStyle(HeaderDisclosureStyle())
+                    Button("Done") { model.finish() }
                 }
             case .failed, .cancelled:
                 Label(model.state == .cancelled ? "Restore Preparation Cancelled" : "Can't Prepare Restore", systemImage: "exclamationmark.triangle").font(.title2)
@@ -398,8 +424,33 @@ struct RestoreView: View {
                     if model.inspection != nil { Button("Back") { model.back() } }
                 }
             }
-            Text("Restore Preview is read-only. No packages, settings, repositories or SSH identities are changed.")
-                .font(.callout).foregroundStyle(.secondary)
+            if model.state != .rebuilding && model.state != .result {
+                Text("Restore Preview is read-only. No packages, settings, repositories or SSH identities are changed.")
+                    .font(.callout).foregroundStyle(.secondary)
+            }
+        }
+        .sheet(isPresented: Binding(get: { model.state == .confirming }, set: { if !$0 { model.cancelRebuildConfirmation() } })) {
+            VStack(alignment: .leading, spacing: 16) {
+                Text("Rebuild this Mac?").font(.title2)
+                Text("Macseed will apply the changes shown in this Preview. Existing matching items will be left unchanged.")
+                if model.preparation?.warningCount ?? 0 > 0 {
+                    Text("This Preview includes attention conditions. Review them before continuing.").foregroundStyle(.orange)
+                }
+                HStack {
+                    Button("Cancel", role: .cancel) { model.cancelRebuildConfirmation() }
+                    Button("Rebuild") { model.confirmRebuild() }.buttonStyle(.borderedProminent)
+                }
+            }.padding(24).frame(width: 420).interactiveDismissDisabled()
+        }
+        .sheet(isPresented: $model.stopConfirmation) {
+            VStack(alignment: .leading, spacing: 16) {
+                Text("Stop rebuilding?").font(.title2)
+                Text("Completed changes will remain. Macseed will inspect the current state before you rebuild again.")
+                HStack {
+                    Button("Keep Working") { model.stopConfirmation = false }
+                    Button("Stop Rebuild", role: .cancel) { model.confirmStop() }
+                }
+            }.padding(24).frame(width: 420).interactiveDismissDisabled()
         }
     }
     private func chooseBundle() {

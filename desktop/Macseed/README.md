@@ -112,7 +112,7 @@ Tests cover parent/child selection and counts, Back guards, result disclosure,
 prerequisites, operation ownership, stopped A → fresh B,
 result scope and fixture determinism. Release compilation excludes fixtures, demo
 session, state picker and sample interaction views; it checks real Core capabilities
-and uses real Capture, Restore Prepare and Environment Status. Restore execution remains unavailable. A binary string check guards accidental sample leakage.
+and uses real Capture, Restore Prepare and Environment Status. Restore execution requires an accepted prepared Preview and explicit confirmation; its controlled mutation/Verification/idempotence manual gate is approved. A binary string check guards accidental sample leakage.
 The real runtime stays separate from DemoSession. Future task adapters map Core
 facts into the existing presentation values; they must not turn DemoSession into
 a production observer/planner/verification engine.
@@ -168,7 +168,8 @@ cleanup; forced termination cannot guarantee all separately owned descendants or
 in-flight mutations are settled. Missing terminal evidence is interruption, not
 rollback or confirmed no-change. There is no cooperative item-boundary stop.
 Application Quit waits for cancellation; closing a window leaves the shared client
-owned by the running app. Real workflow close/quit UX must be qualified with 16G.
+owned by the running app. Restore retains session ownership across window close/reopen; close/quit interaction
+remains subject to Stage 16K lifecycle hardening.
 Execute requests selecting secure identities fail before launch with
 `secureBridgeUnavailable`; the separate inherited socket FD bridge remains 16H.
 
@@ -291,8 +292,13 @@ satisfiable, external and unsupported conditions. Selection/Bundle/Back changes
 invalidate the plan; failed/cancelled/interrupted refreshes clear old evidence.
 The displayed plan retains its exact ID and canonical selection.
 
-Rebuild is disabled. No Execute, installs, settings writes, clones or identity
-imports are reachable. Native sheets inherit the application Appearance. The
+Stage 16G enables Rebuild for ready plans with real changes after confirmation.
+Execute uses Core; Safe Stop preserves possible changes and requires fresh Preview.
+Private identity imports remain unavailable. Native sheets inherit the application Appearance. The
 manual gate passed with a real Stage 16E Saved Environment; tests use disposable
 fixtures, including production Core inspection/Preview with unchanged Bundle,
 HOME and normal configuration. Run `RestoreTests` through `build.sh Debug --test`.
+
+Stage 16G's controlled manual gate passed: one disposable Workspace folder was
+created, externally confirmed and Core-verified. A fresh Preview then showed
+Already Matches, zero changes and disabled Rebuild. Secure SSH remains Stage 16H.

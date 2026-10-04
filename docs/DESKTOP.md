@@ -1,6 +1,6 @@
 # Macseed Desktop
 
-**Stage 16B–16F implemented and manually approved. Restore execution remains Stage 16G.**
+**Stage 16B–16G complete and manually approved. Secure SSH remains Stage 16H.**
 Normal launch checks real Core capabilities over Protocol V1. The approved sample
 flows remain available only in explicit DEBUG design-preview mode. Environment
 Status uses real read-only Core comparison. Capture scans/selects/prepares and
@@ -194,12 +194,26 @@ conditions remain visible. Summary counts come from Core plan dispositions.
    backups, repository clones/branch actions and process restarts where reported.
    Never turn unknown observation into a proposed change. Private setting contents,
    remote URLs and credentials are not needed to explain the action.
-Stage 16F ends here: **Rebuild** is disabled, with explicit execution-unavailable
-copy. No `restore_execute`, prerequisite installation or secure transfer is reachable.
-Preview shows action/state counts and collapsed domain results, with attention
-indicators and progressively disclosed technical reasons. A ready plan retains its
-exact prepared ID and canonical selection for later Stage 16G integration. The
-real-Bundle manual product gate passed with `Test_1.mbt`; automated tests use disposable fixtures.
+Stage 16F's real-Bundle manual gate passed with `Test_1.mbt`.
+
+Stage 16G enables Rebuild only for a current ready prepared plan with planned
+changes and unchanged selection. A native confirmation is required; Execute sends
+the exact prepared ID and selection without silently preparing again. Core revalidates
+staleness/prerequisites before mutation. Zero-change plans remain Preview outcomes.
+Indeterminate activity uses structured Core phases/records, never synthetic percentages.
+Stop Rebuild confirms when mutation may have started and uses owned process-group
+cancellation. Completed changes may remain; there is no rollback. Missing terminal
+or malformed result evidence is interrupted/unknown, not success. Results require
+structured Verification for clean completion and distinguish attention, cancellation,
+failure and interruption. Re-entry runs fresh Restore Prepare; there is no Resume.
+The app retains Restore session ownership across window closure; Quit confirms and
+waits for owned cancellation. Window-close/quit interaction remains part of Stage 16K
+qualification. Private SSH identities remain Stage 16H (`include_secure: false`).
+Stage 16G's controlled manual gate passed with a disposable one-folder Bundle:
+external filesystem inspection confirmed creation, Core Verification confirmed
+selected requirements, and a fresh Preview confirmed Already Matches with zero
+changes and Rebuild disabled. This qualifies the happy path and idempotence;
+Safe Stop/interruption remain covered by deterministic fixtures and later hardening.
 
 6. **Rebuild** confirms the selected scope and fresh plan. Disable it for unresolved
    environmental blockers, unsupported selected execution, or missing execution

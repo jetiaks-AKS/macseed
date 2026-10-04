@@ -12,7 +12,7 @@ struct ProductionWorkspace: View {
         self.runtime = runtime
         _status = SwiftUI.StateObject(wrappedValue: EnvironmentStatusModel(runtime: runtime))
         _capture = SwiftUI.StateObject(wrappedValue: CaptureModel(runtime: runtime))
-        _restore = SwiftUI.StateObject(wrappedValue: RestoreModel(runtime: runtime))
+        _restore = SwiftUI.StateObject(wrappedValue: runtime === CoreRuntime.shared ? RestoreModel.shared : RestoreModel(runtime: runtime))
     }
     var body: some View {
         NavigationSplitView {

@@ -20,6 +20,8 @@ The format is based on the principles of **Keep a Changelog**.
   with stable item identities and prepared-plan binding over existing consumers.
 * Real Desktop Restore preparation: Saved Environment inspection, fine selection,
   read-only Preview, prerequisite rechecks and retained prepared-plan identity.
+* Native Desktop Restore execution with explicit confirmation, structured activity,
+  Safe Stop, Verification-aware results and fresh Preview after interruption.
 * Persistent native Appearance preference: System, Light and Dark.
 
 ### Changed
