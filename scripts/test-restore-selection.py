@@ -187,17 +187,11 @@ class SelectionTests(unittest.TestCase):
     def test_capability_and_null_legacy(self):
         self.fixture.pack()
         plan = self.prepare()
-        adapter = self.fixture.project / 'modules/core/application-interface/core.py'
-        current = adapter.read_bytes()
-        legacy_adapter = subprocess.check_output(['git', 'show', 'HEAD:modules/core/application-interface/core.py'], cwd=ROOT)
-        try:
-            adapter.write_bytes(legacy_adapter)
-            legacy = self.prepare()
-        finally:
-            adapter.write_bytes(current)
-        self.assertEqual(plan['prepared_plan_id'], legacy['prepared_plan_id'])
-        self.assertEqual({k: v for k, v in plan.items() if k not in ('selection', 'plan')},
-                         {k: v for k, v in legacy.items() if k != 'plan'})
+        # Legacy means an omitted/null request, not whichever adapter happens to
+        # be in git HEAD (which now also advertises additive response metadata).
+        expected = selection_api.canonical(self.stage)
+        self.assertEqual(plan['selection'], expected)
+        self.assertTrue(expected['items'])  # Legacy retains captured scope; no empty whitelist.
         for operation, parameters in [('capabilities', None), ('restore_prepare', dict(path=str(self.fixture.archive), disabled_groups=[], include_secure=False, selection=None))]:
             request = dict(protocol_version=1, operation_id='compatibility', operation=operation)
             if parameters is not None: request['parameters'] = parameters
@@ -205,6 +199,9 @@ class SelectionTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stdout)
             data = json.loads(result.stdout.splitlines()[-2])['data']
             if operation == 'capabilities': self.assertEqual(data['features']['restore_selection']['version'], 1)
-            else: self.assertEqual(data['prepared_plan_id'], plan['prepared_plan_id'])
+            else:
+                self.assertEqual(data['prepared_plan_id'], plan['prepared_plan_id'])
+                self.assertEqual(data['selection'], expected)
+                self.assertEqual(data, plan)  # Exact effective plan, including correlation and identity.
 
 if __name__ == '__main__': unittest.main()

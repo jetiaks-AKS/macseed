@@ -593,7 +593,7 @@ case "$*" in
   "list --cask") [[ ! -f "$TEST_CASK_STATE" ]] || echo fixture-cask ;;
   "info --json=v2 --cask fixture-cask") cat "$TEST_CASK_METADATA" ;;
   "install fixture-formula") touch "$TEST_CASK_STATE.formula" ;;
-  install\ --cask\ --appdir=*\ fixture-cask)
+  install\\ --cask\\ --appdir=*\\ fixture-cask)
     [[ "$MACSEED_APPLICATION_EXECUTION" == true && "$HOMEBREW_NO_SUDO" == 1 &&
        "$HOMEBREW_NO_AUTO_UPDATE" == 1 && "$HOMEBREW_NO_INSTALL_CLEANUP" == 1 &&
        "$HOMEBREW_NO_INSTALL_UPGRADE" == 1 && "$HOMEBREW_NO_ASK" == 1 &&
