@@ -43,9 +43,11 @@ The current Core/CLI version is **3.4.0**, including Global Verification,
 Environment Comparison and the completed Protocol V1 application interface.
 Macseed Core owns the behavior shared by its clients.
 
-A native SwiftUI **Macseed Desktop** is the next stage; `Macseed.app` is not
-implemented yet. The CLI remains supported. The first complete Desktop product
-release is planned as **Macseed 1.0**, preserving the toolkit/CLI release history.
+Native SwiftUI **Macseed Desktop** is implemented through Stage 16G, with real
+Capture, Restore Prepare/Execute and read-only Environment Status manually approved.
+Desktop development remains in progress: 16H–16K and Stage 17 packaging/clean-Mac
+qualification are unfinished. The CLI remains supported. **Macseed 1.0** is reserved
+for the first complete Desktop product release, preserving the toolkit/CLI history.
 
 ## Documentation
 

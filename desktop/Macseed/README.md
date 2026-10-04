@@ -4,12 +4,13 @@ Stage 16B provides the approved native SwiftUI design. Stage 16C adds the real
 Protocol V1 process boundary and a capability check on normal launch. Stage 16D
 connects real read-only Environment Status, manually approved. Stage 16E connects
 real Capture with its end-to-end manual gate approved. Stage 16F implements real
-Restore Prepare; its real-Bundle manual gate is approved.
+Restore Prepare; its real-Bundle manual gate is approved. Stage 16G connects real
+Restore Execute with its controlled mutation/Verification/idempotence gate approved.
 DEBUG design preview retains deterministic Capture,
 Restore and Status fixtures with an explicit sample notice; it launches no Core.
 Capture reads supported state into private staging and can publish a new Saved
-Environment. Restore inspection/Preview is read-only; Restore execution and secure migration
-are not available in this slice.
+Environment. Restore inspection/Preview is read-only; execution is available
+through Core after explicit confirmation. Secure migration remains unavailable until 16H.
 
 ## Build and launch
 

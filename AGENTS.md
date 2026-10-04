@@ -5,9 +5,10 @@
 Macseed reconstructs supported environment state: **Capture → Rebuild → Verify**.
 Core owns Discovery, Generated Configuration, Selection / Blueprint, Preview,
 Bootstrap, Verification, Comparison, Bundle and Secure Migration. The official CLI
-is implemented; native SwiftUI Desktop is planned and must consume the same Core.
-Current code version is 3.4.0; Stage 15 Protocol V1 is complete. Desktop/runtime
-integration is Stage 16; packaging and clean-Mac qualification are Stage 17.
+is implemented; native SwiftUI Desktop consumes the same Core. Core/CLI 3.4.0
+includes completed Stage 15 Protocol V1. Desktop Stage 16 is in progress: 16B–16G
+are complete, with 16H Secure SSH next. Stage 17 owns packaging and clean-Mac
+qualification.
 
 Read existing code and consumers before proposing changes. Prefer minimal safe
 changes and existing helpers over replacements or new abstractions. Follow
@@ -124,7 +125,7 @@ when necessary for accuracy. The [documentation index](docs/README.md) maps owne
 README introduces the product; Vision owns principles; Architecture owns stable
 boundaries; Capture / Restore owns the workflow; CLI owns terminal behavior;
 Core reference owns Protocol/execution; Configuration owns data/domain contracts;
-Desktop/Distribution own their planned boundaries.
+Desktop owns native client integration; Distribution owns planned packaging boundaries.
 
 Roadmap contains major outcomes/status, not an implementation log. Architecture
 is not a changelog or API dump. TODO contains unfinished actionable work only;

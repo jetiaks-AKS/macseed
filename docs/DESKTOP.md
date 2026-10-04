@@ -5,8 +5,10 @@ Normal launch checks real Core capabilities over Protocol V1. The approved sampl
 flows remain available only in explicit DEBUG design-preview mode. Environment
 Status uses real read-only Core comparison. Capture scans/selects/prepares and
 publishes a real Saved Environment through Core. Restore inspects a Saved Environment
-and prepares a read-only Preview; execution is not connected yet;
-private SSH identity transfer remains 16H.
+and prepares a read-only Preview, then executes through Core with confirmation,
+structured progress, Safe Stop and Verification-aware results/fresh-plan re-entry.
+Private SSH identity transfer remains unavailable until 16H; 16I still owns final
+Verification/completion UX integration.
 Build and review instructions are in
 [Desktop development](../desktop/Macseed/README.md). Macseed is one product with a shared Core and two official frontends: CLI (`bs`) and Desktop.
 The official CLI remains supported. **Simple by default. Detailed on demand.**
@@ -30,7 +32,7 @@ workflow qualification; current bundled resolution rejects those writes. Secure
 Execute needs the future 16H socket bridge and is rejected before launch today.
 Handled cancellation retains Core evidence; forced termination without a terminal
 event is interruption with unknown effects, never rollback or item-boundary stop.
-Real Restore presentation and diagnostic persistence/export remain their named slices.
+Diagnostic persistence/export remains Stage 16J; final result UX remains Stage 16I.
 
 ## Window and navigation
 

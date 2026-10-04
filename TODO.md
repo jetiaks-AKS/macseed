@@ -42,6 +42,5 @@ Implement the [Desktop contract](docs/DESKTOP.md) in vertical slices:
 
 ## Maintenance and compatibility
 
-- [ ] Fix the known GitHub Actions harness failure involving Python `__pycache__`.
 - [ ] Revalidate `Clicking`, `TrackpadRightClick` and other version-dependent
   settings when migration to macOS 27 actually occurs.
