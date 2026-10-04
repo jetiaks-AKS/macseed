@@ -1,10 +1,11 @@
 # Macseed Desktop
 
-**Stage 16A contract defined; 16B native foundation, 16C runtime and 16D Environment Status implemented.**
+**Stage 16B–16E implemented and manually approved. Next: 16F Restore Prepare.**
 Normal launch checks real Core capabilities over Protocol V1. The approved sample
 flows remain available only in explicit DEBUG design-preview mode. Environment
-Status uses real read-only Core comparison; its manual gate is pending. Real
-Capture and Restore flows are not connected yet.
+Status uses real read-only Core comparison. Capture scans/selects/prepares and
+publishes a real Saved Environment through Core. Restore is not connected yet;
+private SSH identity transfer remains 16H.
 Build and review instructions are in
 [Desktop development](../desktop/Macseed/README.md). Macseed is one product with a shared Core and two official frontends: CLI (`bs`) and Desktop.
 The official CLI remains supported. **Simple by default. Detailed on demand.**
@@ -28,7 +29,7 @@ workflow qualification; current bundled resolution rejects those writes. Secure
 Execute needs the future 16H socket bridge and is rejected before launch today.
 Handled cancellation retains Core evidence; forced termination without a terminal
 event is interruption with unknown effects, never rollback or item-boundary stop.
-Real Capture/Restore presentation and diagnostic persistence/export remain their named slices.
+Real Restore presentation and diagnostic persistence/export remain their named slices.
 
 ## Window and navigation
 
@@ -65,6 +66,19 @@ with keyboard and accessibility behavior. Keep the visual hierarchy quiet; avoid
 web/DevOps dashboard aesthetics, terminal styling, excessive cards, custom controls,
 persistent technical information and unnecessary modals.
 
+The shared shell uses an inset/material sidebar, a neutral workspace and a
+restrained rounded header/information surface across all tasks. Native blue is
+reserved for interaction/selection; borders use semantic system colors. Light
+and Dark share the same spatial hierarchy, with minimal cards and no decorative
+gradients or heavy shadows.
+
+General Settings includes a native segmented Appearance control: System (default),
+Light and Dark. Only this enum value persists in Desktop UserDefaults. System
+removes the appearance override and follows macOS automatically; Light/Dark set
+application appearance as the single owner; windows, SwiftUI content, Settings
+and native dialogs inherit it without separate color-scheme overrides. This
+preference has no Core, Blueprint or Bundle meaning.
+
 Settings remains small: General may offer a default Bundle location and useful
 confirmation preferences if implementation demonstrates value. Preferences must
 not bypass fresh-plan confirmation or secure import consent. Privacy / Diagnostics
@@ -76,20 +90,26 @@ Details and Export Diagnostic Report, not a primary raw-log destination.
 
 ## Capture this Mac
 
-**Scan → Review / Select (including optional SSH identities) → Create Bundle → Result**
+**Scan → Review / Select → Destination / fresh preparation → Confirm → Result**
 
 These are content states, not mandatory wizard pages.
 
 1. Scan calls `capture_prepare` with `selection: null`. Show an indeterminate
-   scan with observed categories as Core reports them. Scanning stages private
+   scan using Core phase messages without numeric domain progress. Scanning stages private
    inventory; it does not replace ordinary Generated Configuration.
 2. Review renders inventory status and `selection_mode`. Initially select all
    present ordinary categories/items, visibly; unavailable, observation-error and
    unsupported rows remain unselected with reasons. The user can narrow whole
    categories or item subsets where Core permits. No hidden selection or overlap
-   between a whole category and its subset. An empty selection keeps Create Bundle
+   between a whole category and its subset. An empty selection keeps saving
    disabled with “Choose supported state to capture.”
-3. Within the same Review, a visually separated **Secure Transfer** section shows
+   Fully selected item domains use V1 whole-category selection to keep large
+   inventories compact; partial domains send item IDs. Fresh confirmation shows
+   the newly observed scope. Oversized partial requests fail visibly within the
+   existing V1 request limit and require a fresh scan and narrower selection.
+3. Secure Transfer is separate and optional. Stage 16E exposes no private identity
+   controls and always sends `secure_identities: []`; ordinary SSH configuration
+   remains independent. In 16H, within the same Review, **Secure Transfer** shows
    **SSH identities**, their count and “Encrypted separately.” Selection is explicit
    opt-in and defaults off. Show eligible safe key names,
    types and public fingerprints, distinguish SSH configuration from private
@@ -97,15 +117,33 @@ These are content states, not mandatory wizard pages.
    Keys travel in a separately encrypted component. Preparation does not unlock
    them or prove their pairs; unavailable secure tools show guidance or allow
    continuing without identities.
-4. Prepare the chosen selection again. Show canonical selection/counts and a
-   native save dialog for a new `.mbt` file. Confirm **Create Bundle** using that
+4. Choose a new destination in the native save dialog, then prepare the chosen
+   selection again. Desktop normalizes the filename to exactly one `.mbt` suffix.
+   Compact confirmation shows prepared area/item counts, included area summaries,
+   destination and relevant warnings; detailed inventory stays in Review via Back.
+   Category-only areas show Included; macOS Settings shows selected child scope.
+   Confirm **Create Saved Environment** using that
    preparation's ID. Execute rescans; changed inventory requires fresh Review and
    confirmation. Never overwrite an existing Bundle; choose another destination.
-5. Result says **Bundle Created** only with successful publication evidence. Show
+5. Result says **Environment Saved** only with successful publication evidence. Show
    selected scope and the chosen location, with Reveal in Finder. Capture does not
    claim target restoration or final Verification. If cancellation/failure follows
-   publication, say a Bundle was created and retain its location alongside the
-   interruption; do not label it an unpublished failure.
+   publication, retain the reported publication and chosen location alongside the
+   interruption; do not label the operation successful or imply removal/rollback.
+
+Stage 16E uses real V1 Capture in normal Debug/Release. Category-only rows have one
+category checkbox and read-only details; item-mode rows have native all/none/mixed
+selection and bulk actions. Groups remain collapsed by default. Confirmation is
+inline with the exact prepared scope and destination. User-facing counts use
+areas and items; the macOS Settings group and included-settings labels add no
+selection counts. Result scope comes from the
+published Bundle metadata; selected-category event warnings remain disclosed.
+Stale preparation or any failed/interrupted attempt requires a fresh scan and
+confirmation, never a silent execute retry. Capture leaves ordinary local
+Generated Configuration/Blueprint untouched and does not rebuild the source Mac.
+The [development guide](../desktop/Macseed/README.md#real-capture-16e) provides the
+manual gate launch command. The user verified the real-Mac end-to-end gate,
+including publication with one `.mbt` extension, warnings and Reveal in Finder.
 
 Secure SSH remains part of Capture, not a top-level Credentials area or general
 password vault. Selecting none still allows an ordinary Bundle. Passphrase input
@@ -196,7 +234,27 @@ Unavailable extra evidence is disclosed as unavailable; only Core-confirmed avai
 extras appear as items. Invalid reference, failed/interrupted operation or malformed
 result evidence cannot render a clean conclusion. Results/errors stay inline.
 The [development guide](../desktop/Macseed/README.md#real-environment-status-16d)
-provides the manual launch command; no real-user manual gate has been performed.
+provides the manual launch command. Stage 16D's real-Mac manual gate is approved.
+
+### Required final product reference before Macseed 1.0
+
+The current Generated Configuration folder/optional Blueprint picker is a
+**temporary development bridge**, not the intended final Desktop UX. Ordinary
+users must not need to find `config/generated`, choose a Blueprint file or
+understand those internal mechanisms.
+
+The final flow uses **Saved Environment / Bundle** consistently: Capture creates
+one, Restore selects one, and Environment Status selects one to compare with this
+Mac. After Restore, that Saved Environment must also be available as the natural
+reference for verification/status without asking for internal directories.
+Blueprint may remain Core's internal selection mechanism; users normally express
+selection through Capture/Restore category/item controls.
+
+Complete this in future Stage 16 integration/hardening before 1.0. The likely
+boundary is safely validated Bundle staging/reference extraction over the existing
+comparison engine. Current Protocol V1 accepts Generated Configuration only;
+qualify the required Core contract explicitly then. Stage 16E implements neither
+Bundle-backed comparison nor a client-side Bundle parser or speculative V1 change.
 
 ## Status vocabulary and evidence
 
@@ -337,10 +395,10 @@ not a rich UI metadata registry. Existing fields suffice for this bounded UX.
 structured results/events and the separate secret channel, without human stdout,
 stderr or log parsing. No blocking Core/API gap was found for these flows using signal-based Stop Rebuild;
 graceful item-boundary stopping is not provided, as specified above. Comparing
-a Bundle directly, item-level Restore editing, decrypted identity selection during
-Prepare and Desktop recovery are unavailable and are deliberately outside the
-first Desktop contract. A future requirement for any of them needs a precise Core
-contract decision, not a client-side Bundle parser or speculative workaround.
+a Bundle directly is unavailable in current V1 and tracked as the required final
+product reference above. Item-level Restore editing, decrypted identity selection
+during Prepare and Desktop recovery remain outside the current contract. Any
+extension needs a precise Core contract decision, not a client-side parser.
 
 ## Local logs and Diagnostic Report
 

@@ -79,8 +79,8 @@ capture_discovery() {
     done
     # Workspace snapshot is a single production observation/publication group.
     discover_workspace
-    local result=$?
-    capture_workspace_result() { return "$result"; }
+    local capture_workspace_discovery_status=$?
+    capture_workspace_result() { return "$capture_workspace_discovery_status"; }
     capture_observe workspace-folders capture_workspace_result || return 2
     capture_observe git-repositories capture_workspace_result || return 2
     return 0

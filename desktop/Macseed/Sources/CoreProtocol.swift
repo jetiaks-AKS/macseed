@@ -52,12 +52,17 @@ struct CoreCaptureInventoryRow: Decodable, Sendable {
     let reason: String?
     let selectionMode: String // "items" / "category"; unknown modes must not enable selection.
     let items: [Item]
+    let includedSettings: [IncludedSetting]?
+    struct IncludedSetting: Decodable, Sendable {
+        let id: String
+        let label: String
+    }
     struct Item: Decodable, Sendable {
         let itemID: String
         let label: String
         enum CodingKeys: String, CodingKey { case itemID = "item_id", label }
     }
-    enum CodingKeys: String, CodingKey { case domain, status, reason, items, selectionMode = "selection_mode" }
+    enum CodingKeys: String, CodingKey { case domain, status, reason, items, selectionMode = "selection_mode", includedSettings = "included_settings" }
 }
 
 enum CoreCommand: Sendable {

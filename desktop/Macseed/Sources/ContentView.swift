@@ -5,6 +5,36 @@ import AppKit
 // exports a State macro whose plugin is available only with full Xcode.
 private typealias ViewState<Value> = SwiftUI.State<Value>
 
+struct InsetSidebarSurface: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+            .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Color(nsColor: .separatorColor), lineWidth: 0.5))
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .padding(10)
+    }
+}
+
+struct WorkspaceHeader: View {
+    let title: String
+    let subtitle: String
+    var symbol: String? = nil
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if let symbol {
+                Label(title, systemImage: symbol).font(.largeTitle.weight(.semibold))
+            } else {
+                Text(title).font(.largeTitle.weight(.semibold))
+            }
+            Text(subtitle).font(.title3).foregroundStyle(.secondary)
+        }
+        .padding(20)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Color(nsColor: .separatorColor), lineWidth: 0.5))
+    }
+}
+
 struct ContentView: View {
     @ObservedObject var runtime = CoreRuntime.shared
     #if DEBUG
@@ -23,13 +53,7 @@ struct TaskHome: View {
     let select: (ProductTask) -> Void
     var body: some View {
         VStack(alignment: .leading, spacing: 24) {
-            VStack(alignment: .leading, spacing: 10) {
-                Text("Macseed").font(.largeTitle.weight(.semibold))
-                Text("Capture your environment. Rebuild with confidence.")
-                    .font(.title3).foregroundStyle(.secondary)
-            }
-            .padding(20)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            WorkspaceHeader(title: "Macseed", subtitle: "Capture your environment. Rebuild with confidence.")
             ForEach(ProductTask.allCases) { task in
                 Button { select(task) } label: {
                     HStack(spacing: 18) {
@@ -152,6 +176,12 @@ struct HeaderDisclosureStyle: DisclosureGroupStyle {
     }
 }
 
+// Shared horizontal grid for selectable Capture children and their read-only text.
+enum CaptureChildRowGrid {
+    static let leadingInset: CGFloat = 24
+    static let titleInset: CGFloat = 20
+}
+
 struct CategoryRow: View {
     let category: DisplayCategory
     var selected: Binding<Bool>?
@@ -159,6 +189,8 @@ struct CategoryRow: View {
     var selectCategory: ((Bool) -> Void)? = nil
     var itemSelected: ((String) -> Bool)? = nil
     var selectItem: ((String, Bool) -> Void)? = nil
+    var headerSummary: String? = nil
+    var categoryDetails: [DisplayItem] = []
     @ViewState<Bool> private var expanded = false
 
     var body: some View {
@@ -177,9 +209,9 @@ struct CategoryRow: View {
                     HStack {
                         Label(category.title, systemImage: category.symbol).font(.headline)
                         Spacer()
-                        Text("\(category.items.count) \(category.items.count == 1 ? "item" : "items")")
+                        Text(headerSummary ?? "\(category.items.count) \(category.items.count == 1 ? "item" : "items")")
                             .font(.callout).foregroundStyle(.secondary)
-                        if category.hasAttention {
+                        if category.hasAttention || categoryDetails.contains(where: \.requiresAttention) {
                             Image(systemName: "exclamationmark.triangle.fill")
                                 .foregroundStyle(.orange)
                                 .accessibilityLabel("Needs Attention")
@@ -199,8 +231,9 @@ struct CategoryRow: View {
                                 .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
                         }
                     }
-                    .padding(.leading, 24).padding(.vertical, 8)
+                    .padding(.leading, CaptureChildRowGrid.leadingInset).padding(.vertical, 8)
                 } else { ItemDetails(items: category.items).padding(.leading, 24) }
+                if !categoryDetails.isEmpty { ItemDetails(items: categoryDetails).padding(.leading, 24) }
             }
         }
         .padding(.vertical, 7)
@@ -234,7 +267,6 @@ struct ResultSummary: View {
 
 #if DEBUG
 struct DemoWorkspace: View {
-    @Environment(\.colorScheme) private var colorScheme
     @ObservedObject var session: DemoSession
     @ViewState<Bool> private var stopConfirmation = false
     var body: some View {
@@ -253,10 +285,7 @@ struct DemoWorkspace: View {
             }
             .listStyle(.sidebar)
             .scrollContentBackground(.hidden)
-            .background {
-                Color(nsColor: .controlBackgroundColor)
-                    .overlay(Color(nsColor: .systemBlue).opacity(colorScheme == .dark ? 0.055 : 0.035))
-            }
+            .modifier(InsetSidebarSurface())
             .disabled(session.busy)
             .navigationSplitViewColumnWidth(min: 200, ideal: 215)
         } detail: {
@@ -264,9 +293,7 @@ struct DemoWorkspace: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 20) {
                         if let task = session.task {
-                            Label(task.rawValue, systemImage: task.symbol).font(.largeTitle.weight(.semibold))
-                            Text(task.subtitle).foregroundStyle(.secondary)
-                            Divider()
+                            WorkspaceHeader(title: task.rawValue, subtitle: task.subtitle, symbol: task.symbol)
                             switch task {
                             case .capture: CaptureDemoView(session: session)
                             case .restore: RestoreDemoView(session: session, stop: { stopConfirmation = true })

@@ -1,4 +1,27 @@
 import Foundation
+import SwiftUI
+import AppKit
+
+enum DesktopAppearance: String, CaseIterable, Identifiable {
+    case system, light, dark
+    static let preferenceKey = "desktopAppearance"
+    init(storedValue: String?) { self = storedValue.flatMap(Self.init(rawValue:)) ?? .system }
+    var id: String { rawValue }
+    var title: String { rawValue.capitalized }
+    var appearanceName: NSAppearance.Name? {
+        switch self { case .system: nil; case .light: .aqua; case .dark: .darkAqua }
+    }
+    @MainActor func apply(to application: NSApplication) {
+        // AppKit owns appearance. SwiftUI hosts and native dialogs inherit it;
+        // preferredColorScheme would introduce a second window-level override.
+        application.appearance = appearanceName.flatMap(NSAppearance.init(named:))
+        for window in application.windows { inheritAppearance(window) }
+    }
+    @MainActor private func inheritAppearance(_ window: NSWindow) {
+        window.appearance = nil
+        for sheet in window.sheets { inheritAppearance(sheet) }
+    }
+}
 
 // Display values only. Future Protocol mapping belongs outside the views.
 enum ProductTask: String, CaseIterable, Identifiable {

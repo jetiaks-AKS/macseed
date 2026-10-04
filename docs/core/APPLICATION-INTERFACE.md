@@ -66,6 +66,17 @@ SSH candidates expose safe names, key types, public fingerprints and
 `candidate_requires_pair_validation`; Prepare does not unlock keys.
 Inventory limits are 2048 items per domain and 1 MiB internally.
 
+The six category-only `macos-*` inventory rows add `included_settings`, an array
+of `{ "id": "autohide", "label": "Auto-hide" }` entries. IDs identify preference
+keys within that domain. This read-only projection describes only records in the
+same validated staged observation, including any supported remainder after a
+partial warning. Absent/skipped records are omitted; unavailable or failed domains
+have an empty array. Inventory describes the observed domain; category selection
+still decides whether that domain is saved. Values are never exposed. Definitions and labels are owned
+together by the existing macOS scalar contract. Older clients may ignore this
+additive V1 field; it creates no item selection and does not change the prepared
+ID binding or Execute semantics.
+
 Execute requires a non-null selection and the ID from Prepare for that selection.
 It repeats Discovery and binds the ID to staged data, candidate metadata and
 selection, then uses production Preview, portability and Bundle checks.

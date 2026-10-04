@@ -1,8 +1,9 @@
 # Capture / Restore
 
 Macseed reconstructs selected supported environment state:
-**Capture → Rebuild → Verify**. The CLI implements this workflow today; the
-planned Desktop uses the same production Core operations.
+**Capture → Rebuild → Verify**. The CLI implements this workflow today. Desktop
+Capture uses the same production Core; its Stage 16E end-to-end manual gate is approved.
+Desktop Restore integration remains planned.
 
 ## What travels
 
@@ -12,6 +13,12 @@ Workspace folders/repositories and supported macOS settings. Blueprint selects
 categories and items; values remain in Generated Configuration. With no Blueprint,
 the established all-inclusive compatibility behavior applies. Application Capture
 builds a Blueprint from the confirmed selection.
+
+Desktop calls the captured `.mbt` a **Saved Environment**: scan, choose supported
+categories/items, choose a new destination, confirm freshly prepared scope and
+save. Category-only domains stay whole; private SSH identities remain outside
+Stage 16E. See [Desktop](DESKTOP.md#capture-this-mac) for presentation and the
+deferred final product reference requirement for Environment Status.
 
 Restore installs tools/applications, clones repositories from recorded remotes,
 creates folders and restores selected settings. Working trees, `.git`, documents,

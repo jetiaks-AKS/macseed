@@ -129,6 +129,9 @@ Desktop/Distribution own their planned boundaries.
 Roadmap contains major outcomes/status, not an implementation log. Architecture
 is not a changelog or API dump. TODO contains unfinished actionable work only;
 remove completed entries. CHANGELOG records completed release-visible changes.
+During development, consider significant completed user-visible or architectural
+changes for CHANGELOG's `[Unreleased]` section; do not wait for release preparation.
+Keep entries release-oriented and proportional; tiny fixes need no separate entry.
 Never rewrite released history for current branding or language. Keep detailed
 contracts with one owner; link instead of duplicating them. Feature work does not
 require updating every major document. Prefer concise direct English and do not

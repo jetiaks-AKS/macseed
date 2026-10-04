@@ -34,7 +34,7 @@ class CaptureTests(unittest.TestCase):
         self.environment['PATH'] = str(self.root / 'bin') + ':/usr/bin:/bin:/usr/sbin:/sbin'
 
 
-    def fixture(self, real=False):
+    def fixture(self, real=False, workspace=False):
         (self.project / 'scripts').mkdir(exist_ok=True)
         shutil.copy2(ROOT / 'scripts/ssh-identity-migrate.sh', self.project / 'scripts/ssh-identity-migrate.sh')
         self.home.chmod(0o700)
@@ -59,7 +59,9 @@ esac
                         'export_vscode_settings', 'discover_workspace', 'export_finder_settings',
                         'export_dock_settings', 'export_windows_settings', 'export_keyboard_settings',
                         'export_trackpad_settings', 'export_screenshots_settings')
-            entry.write_text(entry.read_text().replace(marker, marker + '\n'.join(name + '() { return 1; }' for name in disabled) + '\n'))
+            entry.write_text(entry.read_text().replace(marker, marker + '\n'.join(
+                name + '() { return 1; }' for name in disabled
+                if not (workspace and name == 'discover_workspace')) + '\n'))
         self.selection = {'categories': ['homebrew-packages'], 'items': {}, 'secure_identities': []}
 
     def invoke_capture(self, operation='capture_prepare', selection=None, extra=None, channel=None):
@@ -110,6 +112,54 @@ esac
         row = next(row for row in prepared['inventory'] if row['domain'] == 'app-store')
         self.assertEqual(row['status'], 'present')
         self.assertEqual(row['items'], [{'item_id': '12345', 'label': 'Public App Name'}])
+
+    def workspace_fixture(self, duplicate=False):
+        self.fixture(workspace=True)
+        paths = ['Projects/fixture-repo']
+        if duplicate:
+            paths.append('Other/fixture-repo')
+        for path in paths:
+            repository = self.home / path
+            repository.mkdir(parents=True)
+            subprocess.run(['git', 'init', '-q', str(repository)], env=self.environment,
+                           stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+
+    def test_workspace_folders_success_is_selectable(self):
+        self.workspace_fixture()
+        prepared = self.prepare()
+        row = next(row for row in prepared['inventory'] if row['domain'] == 'workspace-folders')
+        self.assertEqual(row['status'], 'present')
+        self.assertIsNone(row['reason'])
+        self.assertEqual(row['selection_mode'], 'items')
+        self.assertIn('Projects', [item['item_id'] for item in row['items']])
+        selection = {'categories': [], 'items': {'workspace-folders': ['Projects']}, 'secure_identities': []}
+        self.assertEqual(self.prepare(selection)['selection'], selection)
+
+    def test_git_repositories_success_is_selectable(self):
+        self.workspace_fixture()
+        prepared = self.prepare()
+        row = next(row for row in prepared['inventory'] if row['domain'] == 'git-repositories')
+        self.assertEqual(row['status'], 'present')
+        self.assertIsNone(row['reason'])
+        self.assertEqual(row['selection_mode'], 'items')
+        self.assertEqual([item['label'] for item in row['items']], ['fixture-repo'])
+        selection = {'categories': [], 'items': {'git-repositories': [row['items'][0]['item_id']]}, 'secure_identities': []}
+        self.assertEqual(self.prepare(selection)['selection'], selection)
+
+    def test_workspace_observation_failure_remains_non_selectable(self):
+        # Duplicate identifiers trigger a real production Workspace snapshot
+        # failure; neither domain may expose a partial selectable inventory.
+        self.workspace_fixture(duplicate=True)
+        prepared = self.prepare()
+        for domain in ('workspace-folders', 'git-repositories'):
+            row = next(row for row in prepared['inventory'] if row['domain'] == domain)
+            self.assertEqual(row['status'], 'observation_error')
+            self.assertEqual(row['reason'], 'observation_failed')
+            self.assertEqual(row['items'], [])
+            result, events = self.invoke_capture(selection={
+                'categories': [domain], 'items': {}, 'secure_identities': []})
+            self.assertEqual(result.returncode, 2)
+            self.assertEqual(events[-1]['data']['code'], 'capture_source_unavailable')
 
     def test_invalid_selection_and_unavailable_rejection(self):
         self.fixture()
@@ -184,6 +234,92 @@ esac
         prepared = self.prepare()
         self.assertNotIn('PRIVATE_IDENTITY', json.dumps(prepared))
         self.assertTrue(any(row['domain'] == 'git-configuration' and row['status'] == 'present' for row in prepared['inventory']))
+
+    def test_macos_metadata_does_not_change_prepared_identity(self):
+        self.fixture()
+        spec = importlib.util.spec_from_file_location('capture_metadata_fixture', self.project / 'modules/core/application-interface/capture.py')
+        api = importlib.util.module_from_spec(spec)
+        previous_path = sys.path[:]
+        sys.path.insert(0, str(self.project / 'modules/core/application-interface'))
+        try:
+            spec.loader.exec_module(api)
+        finally:
+            sys.path[:] = previous_path
+        bundle.write_file(self.stage / 'generated/macos/dock.conf', b'com.apple.dock|autohide|bool|true\n')
+        rows = [{'domain': 'macos-dock', 'status': 'present', 'reason': None, 'selection_mode': 'category', 'items': []}]
+        secure = {'status': 'unavailable', 'items': []}
+        fingerprints = {str(path.relative_to(self.stage)): bundle.digest(bundle.checked_file(path))
+                        for path in sorted((self.stage / 'generated').rglob('*')) if path.is_file()}
+        legacy = {'schema': 1, 'inputs': fingerprints, 'inventory': rows, 'secure': secure, 'selection': None}
+        expected = bundle.digest(json.dumps(legacy, sort_keys=True, separators=(',', ':')).encode())
+        first, _, _ = api.prepared(self.stage, rows, secure, None)
+        self.assertEqual(first['prepared_capture_id'], expected)
+        definitions = self.project / 'modules/settings/macos/records.sh'
+        definitions.write_text(definitions.read_text().replace('Auto-hide', 'Hide Dock automatically'))
+        second, _, _ = api.prepared(self.stage, rows, secure, None)
+        self.assertEqual(second['prepared_capture_id'], expected)
+        self.assertEqual(second['inventory'][0]['included_settings'], [{'id': 'autohide', 'label': 'Hide Dock automatically'}])
+        # Legacy readers retain the same status, item inventory and selection.
+        legacy_row = {key: value for key, value in first['inventory'][0].items() if key != 'included_settings'}
+        self.assertEqual(legacy_row, rows[0])
+
+    def test_macos_included_settings_are_effective_value_free_metadata(self):
+        self.fixture(real=True)
+        defaults = self.root / 'bin/defaults'
+        defaults.write_text('''#!/bin/bash
+case "$*" in
+ "read-type NSGlobalDomain AppleShowAllExtensions"|"read-type com.apple.dock autohide"|"read-type com.apple.AppleMultitouchTrackpad Clicking") echo 'Type is boolean' ;;
+ "read-type com.apple.finder NewWindowTarget"|"read-type com.apple.dock orientation"|"read-type NSGlobalDomain AppleWindowTabbingMode"|"read-type com.apple.screencapture location") echo 'Type is string' ;;
+ "read-type NSGlobalDomain KeyRepeat") echo 'Type is integer' ;;
+ "read NSGlobalDomain AppleShowAllExtensions"|"read com.apple.dock autohide"|"read com.apple.AppleMultitouchTrackpad Clicking") echo true ;;
+ "read com.apple.finder NewWindowTarget") echo PfLo ;;
+ "read com.apple.dock orientation") echo unsupported-position ;;
+ "read NSGlobalDomain AppleWindowTabbingMode") echo manual ;;
+ "read NSGlobalDomain KeyRepeat") echo 6 ;;
+ "read com.apple.screencapture location") echo "$HOME/PRIVATE_LOCATION" ;;
+ *) echo 'does not exist' >&2; exit 1 ;;
+esac
+''')
+        defaults.chmod(0o700)
+        expected = {'macos-finder': ('AppleShowAllExtensions', 'Show extensions'),
+                    'macos-dock': ('autohide', 'Auto-hide'),
+                    'macos-windows': ('AppleWindowTabbingMode', 'Window tabbing'),
+                    'macos-keyboard': ('KeyRepeat', 'Key repeat'),
+                    'macos-trackpad': ('Clicking', 'Tap to click'),
+                    'macos-screenshots': ('location', 'Save location')}
+        prepared = self.prepare()
+        for row in prepared['inventory']:
+            if row['domain'] not in expected:
+                self.assertNotIn('included_settings', row)
+                continue
+            identity, label = expected[row['domain']]
+            self.assertEqual(row['included_settings'], [{'id': identity, 'label': label}])
+            self.assertEqual(row['selection_mode'], 'category')
+            self.assertEqual(row['items'], [])
+            self.assertEqual(row['status'], 'present')
+            if row['domain'] in ('macos-finder', 'macos-dock'):
+                self.assertEqual(row['reason'], 'source_partial')
+        self.assertNotIn('PRIVATE_LOCATION', json.dumps(prepared))
+        self.assertNotIn('unsupported-position', json.dumps(prepared))
+        selection = {'categories': sorted(expected), 'items': {}, 'secure_identities': []}
+        selected = self.prepare(selection)
+        self.assertEqual(selected['selection'], selection)
+        self.assertEqual(selected['summary']['selected_items'], 0)
+        status, events = self.execute(selected['prepared_capture_id'], selection=selection)
+        self.assertEqual(status.returncode, 0, events)
+        self.assertTrue(events[-2]['data']['publication_occurred'])
+        self.assertEqual(set(events[-2]['data']['bundle']['selected_categories']), set(expected))
+        # No observed records means no invented metadata or selectable settings.
+        defaults.write_text('#!/bin/bash\necho "does not exist" >&2\nexit 1\n')
+        for row in self.prepare()['inventory']:
+            if row['domain'] in expected:
+                self.assertEqual(row['included_settings'], [])
+                self.assertEqual(row['status'], 'unavailable')
+        defaults.write_text('#!/bin/bash\nexit 2\n')
+        for row in self.prepare()['inventory']:
+            if row['domain'] in expected:
+                self.assertEqual(row['included_settings'], [])
+                self.assertEqual(row['status'], 'observation_error')
 
     def test_cancellation_cleanup_and_no_terminal_input(self):
         self.fixture()

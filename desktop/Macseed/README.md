@@ -2,10 +2,12 @@
 
 Stage 16B provides the approved native SwiftUI design. Stage 16C adds the real
 Protocol V1 process boundary and a capability check on normal launch. Stage 16D
-connects real read-only Environment Status; its manual gate is pending. Real Capture
-and Restore are not connected yet. DEBUG design preview retains deterministic Capture,
+connects real read-only Environment Status, manually approved. Stage 16E connects
+real Capture with its end-to-end manual gate approved; Restore is not connected yet.
+DEBUG design preview retains deterministic Capture,
 Restore and Status fixtures with an explicit sample notice; it launches no Core.
-No Discovery, Bundle creation, Restore or secure migration is run by this shell.
+Capture reads supported state into private staging and can publish a new Saved
+Environment. No Restore or secure migration is run by this shell.
 
 ## Build and launch
 
@@ -108,7 +110,7 @@ Tests cover parent/child selection and counts, Back guards, result disclosure,
 prerequisites, operation ownership, stopped A → fresh B,
 result scope and fixture determinism. Release compilation excludes fixtures, demo
 session, state picker and sample interaction views; it checks real Core capabilities
-and uses real Environment Status. Capture/Restore remain unavailable. A binary string check guards accidental sample leakage.
+and uses real Capture/Environment Status. Restore remains unavailable. A binary string check guards accidental sample leakage.
 The real runtime stays separate from DemoSession. Future task adapters map Core
 facts into the existing presentation values; they must not turn DemoSession into
 a production observer/planner/verification engine.
@@ -129,7 +131,7 @@ a production observer/planner/verification engine.
   events (with a truncation flag); latest result stays available. JSONL limits are
   64 MiB per event and 256 MiB per operation, not Core's per-record limits.
 - `ProductionWorkspace.swift`: approved shell with real capability readiness,
-  Status navigation, cancellation and typed error guidance.
+  Capture/Status navigation, cancellation and typed error guidance.
 - `CoreRuntimeTests.swift`: deterministic fake-child transport/lifecycle tests
   plus a read-only real Core capabilities smoke test in both configurations.
 
@@ -170,9 +172,11 @@ Execute requests selecting secure identities fail before launch with
 
 ## Real Environment Status (16D)
 
-Normal Debug and Release use **Choose Reference…** to select a saved Generated
-Configuration folder. **Choose Blueprint…** optionally narrows its scope; **No
-Blueprint** sends explicit `null`. No ambient configuration is substituted and
+Normal Debug and Release use **Choose Saved Environment…** to select a saved
+Generated Configuration folder through the current temporary development bridge.
+The primary label is **Saved Environment** with **Change…**. Collapsed **Reference
+Details** contains paths/type and optional Blueprint controls; **No Blueprint**
+sends explicit `null`. No ambient configuration is substituted and
 no Discovery is run. A Bundle is not a reference. The selected paths remain visible
 and are held only for this window session, without copying/publishing reference files.
 Changing the folder clears the old Blueprint and result. Core validates contents.
@@ -202,8 +206,9 @@ read-only and neither installs nor repairs anything.
 `EnvironmentStatusTests.swift` covers projection/error/refresh behavior, Debug
 sample isolation and the Swift → real Core → Status path with disposable reference,
 HOME and reader fixtures. Mutation sentinels and reference/HOME snapshots protect
-the automated boundary. This is separate from the user-run manual gate, which has
-not been performed or simulated.
+the automated boundary. The user-run Stage 16D manual gate was approved.
+Automated fixtures do not replace
+the real-Mac manual gates.
 
 After the Debug build, the single command from the repository root for the manual
 gate against real Core is:
@@ -215,7 +220,55 @@ open -n desktop/Macseed/build/Debug/Macseed.app
 Choose **Environment Status**, select the saved Generated Configuration folder and
 optional Blueprint, then **Compare**. No `--design-preview` argument is used.
 
-The canonical product contract is [Desktop](../../docs/DESKTOP.md). Stage 16E adds
-real Capture inventory/selection (including Core `selection_mode`), fresh preparation,
-confirmation/publication and interruption handling. Restore, secure migration,
+## Real Capture (16E)
+
+Normal Debug/Release: **Scan this Mac → Review and select → Choose Destination…
+→ fresh preparation → inline confirmation → Create Saved Environment → Environment
+Saved**. Scan and preparation read this Mac into private Core staging without
+replacing ordinary local Generated Configuration/Blueprint. There is no Homebrew
+installation prerequisite for Capture. Only Core inventory drives selection.
+
+`CoreCapture.swift` decodes prepare/publication evidence. `CaptureModel.swift`
+owns content state, selected scope and the exact preparation binding. `CaptureView.swift`
+reuses native checkboxes and collapsed categories/details. `items` mode uses item
+subsets, all/none/mixed and bulk actions; `category` mode sends a whole domain with
+no per-setting controls. Unknown modes and non-present state cannot be selected.
+Selection counts distinguish areas from items. macOS Settings groups six real
+domains; read-only included-settings labels add no selectable items. Private SSH identities
+are explicitly unavailable here and always excluded (`secure_identities: []`).
+
+The native save panel chooses a new file; Desktop normalizes its name to one
+`.mbt` suffix. Compact inline confirmation shows prepared counts, area summaries,
+location and warnings, with Back returning to detailed Review. Existing output
+is never replaced. Core owns canonical/user-owned parent validation and rechecks
+destination/publication. Execute uses the selected preparation's ID and rescans;
+stale rejection needs a fresh scan/review/confirmation, with no silent retry.
+
+Activity shows real phase messages without numeric domain counts or percentages;
+Core observation events remain internal. Only completed
+publication with consistent Core destination/binding/Bundle metadata yields
+**Environment Saved** and **Reveal in Finder**. Core event warnings stay visible.
+Cancellation/failure after reported publication retains that fact/location without
+claiming success; missing evidence is unknown, not cleanup/rollback. Forced process
+termination retains the 16C descendant/private-staging limitations.
+
+`CaptureTests.swift` covers selection modes/counts, fresh preparation/destination,
+confirmation, publication/warnings, stale/failure/interruption/cancel and no sample
+fallback. A disposable HOME/tools fixture exercises real Capture, a private `.mbt`,
+authoritative Bundle inspection, real stale rejection and category-only saving
+without Homebrew, while checking unchanged HOME and ordinary configuration. It
+does not perform the real-Mac manual gate. The user has approved that end-to-end
+gate, including real publication, warnings and Reveal in Finder.
+
+After the Debug build, launch normal development mode from the repository root:
+
+```bash
+open -n desktop/Macseed/build/Debug/Macseed.app
+```
+
+Choose **Capture this Mac** for the manual gate. Use no `--design-preview` argument.
+
+The canonical [Desktop contract](../../docs/DESKTOP.md#required-final-product-reference-before-macseed-10)
+owns the required Bundle-backed Environment Status before 1.0; this slice records
+it without implementing Bundle comparison or changing V1. Restore, secure transfer,
 diagnostic export and packaged-runtime qualification remain their later slices.

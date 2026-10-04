@@ -7,6 +7,34 @@ The format is based on the principles of **Keep a Changelog**.
 
 ---
 
+## [Unreleased]
+
+### Added
+
+* Native SwiftUI Desktop foundation with Capture, Restore and Environment Status
+  navigation, plus structured Protocol V1 runtime/transport using bundled Core.
+* Real read-only Environment Status comparison against an explicit saved reference.
+* Real Desktop Capture: scan, review, destination selection, fresh preparation,
+  compact confirmation, `.mbt` publication, completion and Reveal in Finder.
+* Persistent native Appearance preference: System, Light and Dark.
+
+### Changed
+
+* Unified native sidebar, neutral workspace and restrained header surfaces with
+  progressive disclosure and semantic Light/Dark presentation.
+* Production Desktop uses structured Core data rather than human CLI output.
+* Capture groups the six macOS settings domains under one expandable selection
+  group, with independent domain checkboxes, all/none/mixed selection and wrapping
+  informational labels for the settings included in the current preparation.
+
+### Fixed
+
+* Normalized Desktop Capture destinations to exactly one `.mbt` extension.
+* Corrected Capture status forwarding so successful Workspace Folders and Git
+  Repositories observations remain selectable.
+* Unified application appearance ownership so switching back to System does not
+  retain a conflicting Dark override in SwiftUI windows.
+
 ## [3.4.0] - 2026-10-02
 
 Completes the Core/CLI foundation before Stage 16 native Desktop development.

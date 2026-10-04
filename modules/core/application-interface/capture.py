@@ -144,6 +144,22 @@ def scan(root, stage, event):
     return rows, secure, environment
 
 
+def included_settings(stage, row):
+    if row['status'] != 'present':
+        return []
+    root = Path(__file__).resolve().parents[3]
+    path = stage / 'generated' / bundle.CATEGORIES[row['domain']]
+    projection = subprocess.run(
+        ['bash', '-c', 'source modules/settings/macos/records.sh; macos_included_settings "$1" "$2"',
+         'capture-settings', str(path), row['domain'][len('macos-'):]],
+        cwd=root, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+        timeout=10, check=False)
+    if projection.returncode != 0:
+        raise CaptureError('capture_inventory_invalid')
+    return [dict(zip(('id', 'label'), line.split('\t')))
+            for line in projection.stdout.decode('utf-8').splitlines()]
+
+
 def prepared(stage, rows, secure, selection):
     chosen, identities, canonical = selection_for(selection, rows, secure) if selection is not None else ({}, [], None)
     # Hash private staged inputs; neither input values nor their per-file hashes are public.
@@ -157,7 +173,10 @@ def prepared(stage, rows, secure, selection):
     prepared_id = bundle.digest(json.dumps(binding, sort_keys=True, separators=(',', ':')).encode())
     public_rows = []
     for row in rows:
-        public_rows.append({**row, 'items': [{k: v for k, v in entry.items() if not k.startswith('_')} for entry in row['items']]})
+        public_row = {**row, 'items': [{k: v for k, v in entry.items() if not k.startswith('_')} for entry in row['items']]}
+        if row['domain'].startswith('macos-'):
+            public_row['included_settings'] = included_settings(stage, row)
+        public_rows.append(public_row)
     public_secure = {**secure, 'items': [{k: v for k, v in entry.items() if not k.startswith('_')} for entry in secure['items']]}
     result = {'prepared_capture_id': prepared_id, 'inventory': public_rows, 'secure_identities': public_secure,
               'selection': canonical, 'summary': {'selected_domains': len(chosen),

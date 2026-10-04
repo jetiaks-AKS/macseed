@@ -6,6 +6,53 @@ MACOS_DOCK_MINEFFECT_PATTERN='^(genie|scale)$'
 MACOS_WINDOW_DOUBLE_CLICK_PATTERN='^(Minimize|Maximize|Fill|None)$'
 MACOS_WINDOW_TABBING_PATTERN='^(manual|always|fullscreen)$'
 
+# Support identity, native type and presentation label share one definition.
+macos_setting_definitions() {
+    cat <<'MACOS_SETTINGS'
+finder|NSGlobalDomain|AppleShowAllExtensions|bool|Show extensions
+finder|com.apple.finder|ShowPathbar|bool|Show path bar
+finder|com.apple.finder|ShowStatusBar|bool|Show status bar
+finder|com.apple.finder|FXPreferredViewStyle|string|Default view
+finder|com.apple.finder|FXDefaultSearchScope|string|Search scope
+finder|com.apple.finder|_FXSortFoldersFirst|bool|Folders first
+finder|com.apple.finder|FXRemoveOldTrashItems|bool|Remove old Trash items
+finder|com.apple.finder|AppleShowAllFiles|bool|Show hidden files
+finder|com.apple.finder|NewWindowTarget|string|New window location
+finder|com.apple.finder|ShowHardDrivesOnDesktop|bool|Desktop hard drives
+finder|com.apple.finder|ShowExternalHardDrivesOnDesktop|bool|Desktop external drives
+finder|com.apple.finder|ShowMountedServersOnDesktop|bool|Desktop servers
+finder|com.apple.finder|FXEnableExtensionChangeWarning|bool|Extension change warning
+dock|com.apple.dock|autohide|bool|Auto-hide
+dock|com.apple.dock|show-recents|bool|Recent applications
+dock|com.apple.dock|tilesize|number|Icon size
+dock|com.apple.dock|magnification|bool|Magnification
+dock|com.apple.dock|largesize|number|Magnified icon size
+dock|com.apple.dock|orientation|string|Position
+dock|com.apple.dock|mineffect|string|Minimize effect
+dock|com.apple.dock|minimize-to-application|bool|Minimize into application
+dock|com.apple.dock|show-process-indicators|bool|Running indicators
+dock|com.apple.dock|launchanim|bool|Launch animation
+dock|com.apple.dock|mru-spaces|bool|Reorder Spaces
+windows|NSGlobalDomain|AppleActionOnDoubleClick|string|Title bar double-click
+windows|NSGlobalDomain|AppleWindowTabbingMode|string|Window tabbing
+windows|NSGlobalDomain|NSCloseAlwaysConfirmsChanges|bool|Confirm unsaved changes
+windows|NSGlobalDomain|NSQuitAlwaysKeepsWindows|bool|Restore windows on launch
+windows|com.apple.WindowManager|HideDesktop|bool|Hide Desktop items
+keyboard|NSGlobalDomain|KeyRepeat|int|Key repeat
+keyboard|NSGlobalDomain|InitialKeyRepeat|int|Repeat delay
+keyboard|NSGlobalDomain|ApplePressAndHoldEnabled|bool|Press and hold
+keyboard|NSGlobalDomain|AppleKeyboardUIMode|int|Keyboard navigation
+keyboard|NSGlobalDomain|NSAutomaticCapitalizationEnabled|bool|Automatic capitalization
+keyboard|NSGlobalDomain|NSAutomaticSpellingCorrectionEnabled|bool|Spelling correction
+keyboard|NSGlobalDomain|NSAutomaticPeriodSubstitutionEnabled|bool|Period substitution
+keyboard|NSGlobalDomain|NSAutomaticQuoteSubstitutionEnabled|bool|Smart quotes
+keyboard|NSGlobalDomain|NSAutomaticDashSubstitutionEnabled|bool|Smart dashes
+trackpad|com.apple.AppleMultitouchTrackpad|Clicking|bool|Tap to click
+trackpad|com.apple.AppleMultitouchTrackpad|TrackpadRightClick|bool|Secondary click
+screenshots|com.apple.screencapture|location|string|Save location
+MACOS_SETTINGS
+}
+
 # Shared scalar contract for macOS Discovery and consumers. No generated code.
 macos_record_bytes_valid() {
     local bytes
@@ -25,54 +72,18 @@ validate_defaults_config() {
         return 2
     fi
 
-    if ! macos_record_bytes_valid "$config_file" || ! LC_ALL=C awk -F '|' -v category="$category" \
+    if ! macos_record_bytes_valid "$config_file" || ! MACSEED_MACOS_SETTING_DEFINITIONS="$(macos_setting_definitions)" LC_ALL=C awk -F '|' -v category="$category" \
         -v finder_target_pattern="$MACOS_FINDER_WINDOW_TARGET_PATTERN" \
         -v dock_orientation_pattern="$MACOS_DOCK_ORIENTATION_PATTERN" \
         -v dock_mineffect_pattern="$MACOS_DOCK_MINEFFECT_PATTERN" \
         -v window_double_click_pattern="$MACOS_WINDOW_DOUBLE_CLICK_PATTERN" \
         -v window_tabbing_pattern="$MACOS_WINDOW_TABBING_PATTERN" '
         BEGIN {
-            allowed["finder", "NSGlobalDomain", "AppleShowAllExtensions"] = "bool"
-            allowed["finder", "com.apple.finder", "ShowPathbar"] = "bool"
-            allowed["finder", "com.apple.finder", "ShowStatusBar"] = "bool"
-            allowed["finder", "com.apple.finder", "FXPreferredViewStyle"] = "string"
-            allowed["finder", "com.apple.finder", "FXDefaultSearchScope"] = "string"
-            allowed["finder", "com.apple.finder", "_FXSortFoldersFirst"] = "bool"
-            allowed["finder", "com.apple.finder", "FXRemoveOldTrashItems"] = "bool"
-            allowed["finder", "com.apple.finder", "AppleShowAllFiles"] = "bool"
-            allowed["finder", "com.apple.finder", "NewWindowTarget"] = "string"
-            allowed["finder", "com.apple.finder", "ShowHardDrivesOnDesktop"] = "bool"
-            allowed["finder", "com.apple.finder", "ShowExternalHardDrivesOnDesktop"] = "bool"
-            allowed["finder", "com.apple.finder", "ShowMountedServersOnDesktop"] = "bool"
-            allowed["finder", "com.apple.finder", "FXEnableExtensionChangeWarning"] = "bool"
-            allowed["dock", "com.apple.dock", "autohide"] = "bool"
-            allowed["dock", "com.apple.dock", "show-recents"] = "bool"
-            allowed["dock", "com.apple.dock", "tilesize"] = "number"
-            allowed["dock", "com.apple.dock", "magnification"] = "bool"
-            allowed["dock", "com.apple.dock", "largesize"] = "number"
-            allowed["dock", "com.apple.dock", "orientation"] = "string"
-            allowed["dock", "com.apple.dock", "mineffect"] = "string"
-            allowed["dock", "com.apple.dock", "minimize-to-application"] = "bool"
-            allowed["dock", "com.apple.dock", "show-process-indicators"] = "bool"
-            allowed["dock", "com.apple.dock", "launchanim"] = "bool"
-            allowed["dock", "com.apple.dock", "mru-spaces"] = "bool"
-            allowed["windows", "NSGlobalDomain", "AppleActionOnDoubleClick"] = "string"
-            allowed["windows", "NSGlobalDomain", "AppleWindowTabbingMode"] = "string"
-            allowed["windows", "NSGlobalDomain", "NSCloseAlwaysConfirmsChanges"] = "bool"
-            allowed["windows", "NSGlobalDomain", "NSQuitAlwaysKeepsWindows"] = "bool"
-            allowed["windows", "com.apple.WindowManager", "HideDesktop"] = "bool"
-            allowed["keyboard", "NSGlobalDomain", "KeyRepeat"] = "int"
-            allowed["keyboard", "NSGlobalDomain", "InitialKeyRepeat"] = "int"
-            allowed["keyboard", "NSGlobalDomain", "ApplePressAndHoldEnabled"] = "bool"
-            allowed["keyboard", "NSGlobalDomain", "AppleKeyboardUIMode"] = "int"
-            allowed["keyboard", "NSGlobalDomain", "NSAutomaticCapitalizationEnabled"] = "bool"
-            allowed["keyboard", "NSGlobalDomain", "NSAutomaticSpellingCorrectionEnabled"] = "bool"
-            allowed["keyboard", "NSGlobalDomain", "NSAutomaticPeriodSubstitutionEnabled"] = "bool"
-            allowed["keyboard", "NSGlobalDomain", "NSAutomaticQuoteSubstitutionEnabled"] = "bool"
-            allowed["keyboard", "NSGlobalDomain", "NSAutomaticDashSubstitutionEnabled"] = "bool"
-            allowed["trackpad", "com.apple.AppleMultitouchTrackpad", "Clicking"] = "bool"
-            allowed["trackpad", "com.apple.AppleMultitouchTrackpad", "TrackpadRightClick"] = "bool"
-            allowed["screenshots", "com.apple.screencapture", "location"] = "string"
+            count = split(ENVIRON["MACSEED_MACOS_SETTING_DEFINITIONS"], lines, "\n")
+            for (i = 1; i <= count; i++) {
+                split(lines[i], fields, "|")
+                allowed[fields[1], fields[2], fields[3]] = fields[4]
+            }
             if (category !~ /^(finder|dock|windows|keyboard|trackpad|screenshots)$/) exit 2
         }
         /^ *$/ { next }
@@ -121,4 +132,19 @@ macos_read_scalar() {
     IFS= read -r MACOS_DEFAULTS_VALUE < "$value_file" || :
     rm -f "$value_file" || return 2
     return 0
+}
+
+# Project only effective validated records. Values never leave this helper.
+macos_included_settings() {
+    validate_defaults_config "$1" "$2" >/dev/null || return 2
+    MACSEED_MACOS_SETTING_DEFINITIONS="$(macos_setting_definitions)" LC_ALL=C awk -F '|' -v category="$2" '
+        BEGIN {
+            count = split(ENVIRON["MACSEED_MACOS_SETTING_DEFINITIONS"], lines, "\n")
+            for (i = 1; i <= count; i++) {
+                split(lines[i], fields, "|")
+                labels[fields[1], fields[2], fields[3]] = fields[5]
+            }
+        }
+        NF == 4 { printf "%s\t%s\n", $2, labels[category, $1, $2] }
+    ' "$1"
 }

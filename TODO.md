@@ -6,10 +6,6 @@ Concrete unfinished work. Outcomes and stage status are in [Roadmap](ROADMAP.md)
 
 Implement the [Desktop contract](docs/DESKTOP.md) in vertical slices:
 
-- [ ] 16D: Manual gate for real Environment Status with a user-selected Generated
-  Configuration/optional Blueprint; implementation and focused tests are complete.
-- [ ] 16E: Capture scan/selection, fresh preparation/confirmation, publication and
-  interruption states.
 - [ ] 16F: Restore inspection/group selection, prerequisite guidance, Check Again,
   Preview and fresh-plan confirmation.
 - [ ] 16G: Restore execution/progress, Stop Rebuild using current signal cancellation,
@@ -25,6 +21,11 @@ Implement the [Desktop contract](docs/DESKTOP.md) in vertical slices:
   identity; preserve useful typed support context.
 - [ ] 16K: Qualify managed private writable Core workspace for root-relative
   logs/config before packaged workflows; retain signed resources read-only.
+- [ ] 16K: Complete Bundle-backed Environment Status before 1.0: validated
+  staging/reference extraction over the existing comparison engine, including the
+  restored Saved Environment as natural status reference. Replace the temporary
+  internal folder/Blueprint picker; qualify the Core contract when implementing.
+  See [final product reference](docs/DESKTOP.md#required-final-product-reference-before-macseed-10).
 - [ ] 16K: Desktop flow/runtime/transport/security/accessibility hardening,
   including stale plans, interruptions and diagnostics acceptance.
 

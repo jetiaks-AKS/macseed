@@ -1,11 +1,44 @@
 import Foundation
 import AppKit
+import SwiftUI
 
 @main struct PresentationTests {
     @MainActor static func main() {
+        if CommandLine.arguments.count == 4 && CommandLine.arguments[1] == "--appearance-read" {
+            let stored = UserDefaults(suiteName: CommandLine.arguments[2])!.string(forKey: DesktopAppearance.preferenceKey)
+            precondition(stored == CommandLine.arguments[3])
+            return
+        }
+        let suite = "MacseedAppearanceTests-" + UUID().uuidString
+        let preferences = UserDefaults(suiteName: suite)!
+        defer { preferences.removePersistentDomain(forName: suite) }
+        precondition(DesktopAppearance(storedValue: preferences.string(forKey: DesktopAppearance.preferenceKey)) == .system)
+        precondition(DesktopAppearance(storedValue: "invalid") == .system)
+        for mode in DesktopAppearance.allCases {
+            preferences.set(mode.rawValue, forKey: DesktopAppearance.preferenceKey)
+            let reopened = UserDefaults(suiteName: suite)!
+            precondition(DesktopAppearance(storedValue: reopened.string(forKey: DesktopAppearance.preferenceKey)) == mode)
+            precondition(preferences.synchronize())
+            let nextLaunch = Process()
+            nextLaunch.executableURL = URL(fileURLWithPath: CommandLine.arguments[0])
+            nextLaunch.arguments = ["--appearance-read", suite, mode.rawValue]
+            try! nextLaunch.run()
+            nextLaunch.waitUntilExit()
+            precondition(nextLaunch.terminationStatus == 0, "Appearance persists across processes")
+        }
+        precondition(DesktopAppearance.system.appearanceName == nil)
+        precondition(DesktopAppearance.light.appearanceName == .aqua)
+        precondition(DesktopAppearance.dark.appearanceName == .darkAqua)
+        print("PASS: Appearance defaults to System, persists all modes and maps to AppKit appearance")
         #if DEBUG
         precondition(BuildFeatures.sampleExperience)
-        let sources = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Sources")
+        var sources = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Sources")
+        if !FileManager.default.fileExists(atPath: sources.appendingPathComponent("EnvironmentStatusView.swift").path) {
+            // build.sh uses relative source paths; native-control tests can run
+            // from the repository root or another working directory.
+            sources = URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL
+                .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Sources")
+        }
         let statusView = try! String(contentsOf: sources.appendingPathComponent("EnvironmentStatusView.swift"), encoding: .utf8)
         let detailsStart = statusView.range(of: "DisclosureGroup(\"Reference Details\", isExpanded: $referenceDetailsExpanded)")!
         let detailsEnd = statusView.range(of: "} else {\n                Text(\"Choose a saved environment", range: detailsStart.upperBound..<statusView.endIndex)!
@@ -19,6 +52,62 @@ import AppKit
         precondition(details.contains(".disclosureGroupStyle(HeaderDisclosureStyle())"))
         precondition(!statusView.contains("Bundle comparison is not supported"))
         let content = try! String(contentsOf: sources.appendingPathComponent("ContentView.swift"), encoding: .utf8)
+        let production = try! String(contentsOf: sources.appendingPathComponent("ProductionWorkspace.swift"), encoding: .utf8)
+        let app = try! String(contentsOf: sources.appendingPathComponent("MacseedApp.swift"), encoding: .utf8)
+        let captureView = try! String(contentsOf: sources.appendingPathComponent("CaptureView.swift"), encoding: .utf8)
+        let progressStart = captureView.range(of: "            case .scanning, .preparing, .saving:")!
+        let progressEnd = captureView.range(of: "            case .review:")!
+        let progress = String(captureView[progressStart.upperBound..<progressEnd.lowerBound])
+        precondition(progress.contains("ProgressView(progressText)") && progress.contains("model.cancel()"))
+        precondition(!progress.contains("capture_category") && !progress.contains("categories checked"))
+        precondition(captureView.contains("case \"validation\": return \"Checking selected environment…\""))
+        let confirmationStart = captureView.range(of: "            case .confirmation:")!
+        let confirmationEnd = captureView.range(of: "            case .result:")!
+        let confirmation = String(captureView[confirmationStart.upperBound..<confirmationEnd.lowerBound])
+        for detailedView in ["CategoryRow(", "CaptureMacOSSettingsView(", "IncludedSettingsText(", "display.items", "selectedItems"] {
+            precondition(!confirmation.contains(detailedView), "Confirmation remains summary-only")
+        }
+        precondition(confirmation.contains("model.confirmationAreas") && confirmation.contains("model.confirmationSummary"))
+        precondition(confirmation.contains("model.confirmationWarnings") && confirmation.contains("Some supported state may be unavailable."))
+        precondition(confirmation.contains("DisclosureGroup(\"Technical reason\")") && !confirmation.contains("source_partial"))
+        precondition(confirmation.contains("model.editSelection()") && confirmation.contains("model.create()"))
+        precondition(!captureView.contains("individual items") && captureView.contains("panel.nameFieldStringValue = \"Saved Environment\""))
+        let groupStart = captureView.range(of: "struct CaptureMacOSSettingsView: View")!
+        let groupEnd = captureView.range(of: "struct CaptureView: View")!
+        let macOSGroup = String(captureView[groupStart.lowerBound..<groupEnd.lowerBound])
+        precondition(macOSGroup.contains("@CaptureViewState<Bool> private var expanded = false"))
+        precondition(macOSGroup.contains("NativeSelectionCheckbox(category.title") && macOSGroup.contains(".frame(width: 28, height: 28)"))
+        precondition(macOSGroup.contains(".disclosureGroupStyle(HeaderDisclosureStyle())"))
+        precondition(!macOSGroup.contains("CategoryRow(") && !macOSGroup.contains("Included as a whole category"))
+        precondition(macOSGroup.components(separatedBy: "DisclosureGroup(").count == 3, "Only parent and progressive technical reasons disclose")
+        precondition(CaptureChildRowGrid.leadingInset == 24 && CaptureChildRowGrid.titleInset == 20)
+        precondition(content.contains(".padding(.leading, CaptureChildRowGrid.leadingInset).padding(.vertical, 8)"))
+        precondition(macOSGroup.contains(".padding(.leading, editable ? CaptureChildRowGrid.leadingInset : 0)"), "macOS areas share the selectable child checkbox column")
+        precondition(macOSGroup.contains(".frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)"))
+        precondition(macOSGroup.contains("IncludedSettingsText(settings: settings).padding(.leading, editable ? CaptureChildRowGrid.titleInset : 0)"), "Metadata starts at the native checkbox title column")
+        precondition(macOSGroup.contains("Supported settings only") && macOSGroup.contains("category.row.includedSettings"))
+        let metadataStart = captureView.range(of: "struct IncludedSettingsText: View")!
+        let metadataView = String(captureView[metadataStart.lowerBound..<groupStart.lowerBound])
+        precondition(metadataView.contains("SettingsFlowLayout") && metadataView.contains("Text(setting.label"))
+        for control in ["Button(", "NativeSelectionCheckbox", ".truncationMode", ".lineLimit(", "Capsule", "+N more"] {
+            precondition(!metadataView.contains(control), "Setting labels stay informational and complete")
+        }
+        let labelSizes = [CGSize(width: 80, height: 16), CGSize(width: 110, height: 16), CGSize(width: 65, height: 16), CGSize(width: 140, height: 16)]
+        let wide = SettingsFlowLayout.frames(sizes: labelSizes, width: 600)
+        let narrow = SettingsFlowLayout.frames(sizes: labelSizes, width: 180)
+        precondition(wide.count == labelSizes.count && narrow.count == labelSizes.count)
+        precondition(wide.allSatisfy { $0.minY == 0 } && narrow.last!.maxY > wide.last!.maxY)
+        precondition(zip(narrow, labelSizes).allSatisfy { $0.size == $1 && $0.maxX <= 180 })
+        precondition(SettingsFlowLayout.frames(sizes: labelSizes, width: 600) == wide, "Re-expansion restores layout without losing labels")
+        print("PASS: Included settings are Core-supplied read-only labels; flow reflows by width without losing scope")
+        print("PASS: macOS Settings uses separate native checkbox/header targets and plain domain rows without nested category disclosure")
+        precondition(content.contains("struct WorkspaceHeader: View") && content.contains("struct InsetSidebarSurface: ViewModifier"))
+        precondition(content.contains("WorkspaceHeader(title: \"Macseed\"") && content.contains("WorkspaceHeader(title: task.rawValue"))
+        precondition(production.contains("WorkspaceHeader(title: task.rawValue"))
+        precondition(content.contains(".modifier(InsetSidebarSurface())") && production.contains(".modifier(InsetSidebarSurface())"))
+        precondition(!content.contains(".systemBlue") && !production.contains(".systemBlue"))
+        precondition(app.contains(".pickerStyle(.segmented)") && !app.contains(".preferredColorScheme(") && !app.contains(".onChange(of: appearanceValue)"))
+        print("PASS: Shared neutral material sidebar/header in production and preview; native Appearance setting")
         let categoryStart = content.range(of: "struct CategoryRow: View")!
         precondition(content[categoryStart.lowerBound...].contains("@ViewState<Bool> private var expanded = false"))
         precondition(statusView.contains("ForEach(result.categories) { category in CategoryRow(category: category) }"))
@@ -36,6 +125,39 @@ import AppKit
         print("PASS: Product reference wording, technical/Blueprint UI behind collapsed disclosure, collapsed categories and optional Blueprint semantics")
         if CommandLine.arguments.contains("--native-controls") {
             _ = NSApplication.shared
+            let previousAppearance = NSApp.appearance
+            let main = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 200, height: 100), styleMask: [.titled], backing: .buffered, defer: false)
+            let settings = NSWindow(contentRect: main.frame, styleMask: [.titled], backing: .buffered, defer: false)
+            let sheet = NSPanel(contentRect: main.frame, styleMask: [.titled], backing: .buffered, defer: false)
+            let windows = [main, settings, sheet]
+            var schemes: [Int: ColorScheme] = [:]
+            for (index, window) in windows.enumerated() {
+                window.isReleasedWhenClosed = false
+                window.contentView = NSHostingView(rootView: AppearanceProbe { schemes[index] = $0 })
+                window.orderFront(nil)
+            }
+            main.beginSheet(sheet)
+            for from in DesktopAppearance.allCases {
+                for to in DesktopAppearance.allCases {
+                    from.apply(to: NSApp)
+                    // A window override must not survive the app preference.
+                    settings.appearance = NSAppearance(named: .darkAqua)
+                    to.apply(to: NSApp)
+                    RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+                    precondition(NSApp.appearance?.name == to.appearanceName)
+                    let active = NSApp.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua])
+                    for (index, window) in windows.enumerated() {
+                        precondition(window.appearance == nil)
+                        precondition(window.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == active)
+                        precondition(window.contentView!.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == active)
+                        precondition(schemes[index] == (active == .darkAqua ? .dark : .light), "SwiftUI inherits app appearance after every transition")
+                    }
+                }
+            }
+            main.endSheet(sheet)
+            for window in windows { window.close() }
+            NSApp.appearance = previousAppearance
+            print("PASS: Every Appearance transition updates main/Settings/sheet and SwiftUI coherently; System removes overrides")
             for state in [SelectionState.none, .mixed, .all] {
                 var selected: Bool?
                 let control = NativeSelectionCheckbox("Include Applications", state: state,
@@ -257,5 +379,14 @@ import AppKit
         precondition(!BuildFeatures.sampleExperience)
         print("PASS: Release has no sample experience")
         #endif
+    }
+}
+
+private struct AppearanceProbe: View {
+    @Environment(\.colorScheme) private var scheme
+    let changed: (ColorScheme) -> Void
+    var body: some View {
+        Text("Appearance test")
+            .onChange(of: scheme, initial: true) { _, value in changed(value) }
     }
 }
