@@ -127,7 +127,7 @@ import SwiftUI
         precondition(style.contains(".buttonStyle(.plain)") && style.contains(".accessibilityValue("))
         precondition(!style.contains("onTapGesture"))
         let workspace = try! String(contentsOfFile: "Sources/ProductionWorkspace.swift", encoding: .utf8)
-        precondition(workspace.contains("navigation.task == .restore ? .infinity : 800"))
+        precondition(workspace.contains("(navigation.task == .restore || navigation.task == .capture) ? .infinity : 800"))
         precondition(source.contains("TaskRowLayout.statusWidth"))
         precondition(source.contains("TaskDisclosureStyle(minimumHeight: 22)"))
         precondition(source.contains("spacing: 12") && source.contains("minHeight: 52"))
@@ -152,6 +152,15 @@ import SwiftUI
     }
 
     @MainActor static func main() {
+        for count in 1...10 {
+            let boundary = 300 + 28 + OperationSummaryLayout.metricWidth(count)
+            precondition(!OperationSummaryLayout.horizontal(width: boundary - 1, count: count))
+            precondition(OperationSummaryLayout.horizontal(width: boundary, count: count))
+            precondition(OperationSummaryLayout.horizontal(width: boundary + 1, count: count))
+        }
+        precondition(OperationMetricsLayout.columns(width: 477, count: 4) == 3)
+        precondition(OperationMetricsLayout.columns(width: 478, count: 4) == 4)
+
         if CommandLine.arguments.count == 4 && CommandLine.arguments[1] == "--appearance-read" {
             let stored = UserDefaults(suiteName: CommandLine.arguments[2])!.string(forKey: DesktopAppearance.preferenceKey)
             precondition(stored == CommandLine.arguments[3])
@@ -236,7 +245,7 @@ import SwiftUI
         let progressStart = captureView.range(of: "            case .scanning, .preparing, .saving:")!
         let progressEnd = captureView.range(of: "            case .review:")!
         let progress = String(captureView[progressStart.upperBound..<progressEnd.lowerBound])
-        precondition(progress.contains("ProgressView(progressText)") && progress.contains("model.cancel()"))
+        precondition(progress.contains("OperationSummaryHeader") && !progress.contains("TaskDomainList") && captureView.contains("Button(\"Cancel\", role: .cancel) { model.cancel() }"))
         precondition(!progress.contains("capture_category") && !progress.contains("categories checked"))
         precondition(captureView.contains("case \"validation\": return \"Checking selected environment…\""))
         let restoreView = try! String(contentsOf: sources.appendingPathComponent("RestoreView.swift"), encoding: .utf8)
@@ -321,20 +330,24 @@ import SwiftUI
         let confirmationStart = captureView.range(of: "            case .confirmation:")!
         let confirmationEnd = captureView.range(of: "            case .result:")!
         let confirmation = String(captureView[confirmationStart.upperBound..<confirmationEnd.lowerBound])
-        for detailedView in ["CategoryRow(", "CaptureMacOSSettingsView(", "IncludedSettingsText(", "display.items", "selectedItems"] {
-            precondition(!confirmation.contains(detailedView), "Confirmation remains summary-only")
-        }
-        precondition(confirmation.contains("model.confirmationAreas") && confirmation.contains("model.confirmationSummary"))
-        precondition(confirmation.contains("model.confirmationWarnings") && confirmation.contains("Some supported state may be unavailable."))
-        precondition(confirmation.contains("DisclosureGroup(\"Technical reason\")") && !confirmation.contains("source_partial"))
-        precondition(confirmation.contains("model.editSelection()") && confirmation.contains("model.create()"))
+        precondition(confirmation.contains("prepared.summary.selectedDomains") && confirmation.contains("model.confirmationSummary"))
+        precondition(confirmation.contains("model.confirmationWarnings") && confirmation.contains("TaskDomainList("))
+        precondition(confirmation.contains("CaptureBundleLocationView") && confirmation.contains("phase: .confirmation"))
+        precondition(!confirmation.contains("NativeSelectionCheckbox") && !confirmation.contains("source_partial"))
+        precondition(captureView.contains("model.editSelection()") && captureView.contains("model.create()"))
+        let capturePresentation = try! String(contentsOf: sources.appendingPathComponent("CapturePresentation.swift"), encoding: .utf8)
+        precondition(capturePresentation.contains("Technical Details") && capturePresentation.contains("TaskDisclosureStyle()"))
+        precondition(capturePresentation.contains("model.selectItem(category.id") && capturePresentation.contains("model.selectCategory(category.id"))
+        let workspace = try! String(contentsOf: sources.appendingPathComponent("ProductionWorkspace.swift"), encoding: .utf8)
+        precondition(workspace.contains("CaptureView(model: capture, runtime: runtime, showsActions: false)"))
+        precondition(workspace.range(of: "CaptureActionsView(model:")!.lowerBound > workspace.range(of: ".padding(28).frame(maxWidth:")!.lowerBound)
         precondition(!captureView.contains("individual items") && captureView.contains("panel.nameFieldStringValue = \"Saved Environment\""))
         let groupStart = captureView.range(of: "struct CaptureMacOSSettingsView: View")!
         let groupEnd = captureView.range(of: "struct CaptureView: View")!
         let macOSGroup = String(captureView[groupStart.lowerBound..<groupEnd.lowerBound])
         precondition(macOSGroup.contains("@CaptureViewState<Bool> private var expanded = false"))
         precondition(macOSGroup.contains("NativeSelectionCheckbox(category.title") && macOSGroup.contains(".frame(width: 28, height: 28)"))
-        precondition(macOSGroup.contains(".disclosureGroupStyle(HeaderDisclosureStyle())"))
+        precondition(macOSGroup.contains(".disclosureGroupStyle(TaskDisclosureStyle())"))
         precondition(!macOSGroup.contains("CategoryRow(") && !macOSGroup.contains("Included as a whole category"))
         precondition(macOSGroup.components(separatedBy: "DisclosureGroup(").count == 3, "Only parent and progressive technical reasons disclose")
         precondition(CaptureChildRowGrid.leadingInset == 24 && CaptureChildRowGrid.titleInset == 20)

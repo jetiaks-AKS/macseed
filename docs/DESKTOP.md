@@ -140,14 +140,18 @@ These are content states, not mandatory wizard pages.
    Keys travel in a separately encrypted component. Preparation does not unlock
    them or prove their pairs; unavailable secure tools show guidance or allow
    continuing without identities.
-4. Choose a new destination in the native save dialog, then prepare the chosen
+4. Choose a destination in the native save dialog, then prepare the chosen
    selection again. Desktop normalizes the filename to exactly one `.mbt` suffix.
-   Compact confirmation shows prepared area/item counts, included area summaries,
-   destination and relevant warnings; detailed inventory stays in Review via Back.
-   Category-only areas show Included; macOS Settings shows selected child scope.
+   Confirmation shows prepared domain/item counts, destination and expandable
+   Domain → Items summaries with relevant warnings. Back edits the selection.
+   Category-only domains retain whole-category scope; macOS Settings groups its
+   selected child domains.
    Confirm **Create Saved Environment** using that
    preparation's ID. Execute rescans; changed inventory requires fresh Review and
-   confirmation. Never overwrite an existing Bundle; choose another destination.
+   confirmation. Existing Bundles require explicit Replace confirmation in the
+   native Save Panel.
+   Replacement is bound to the observed file digest; Core validates the new Bundle
+   before atomic publication, preserving the previous Bundle on failure.
 5. Result says **Environment Saved** only with successful publication evidence. Show
    selected scope and the chosen location, with Reveal in Finder. Capture does not
    claim target restoration or final Verification. If cancellation/failure follows
@@ -156,11 +160,20 @@ These are content states, not mandatory wizard pages.
 
 Stage 16E uses real V1 Capture in normal Debug/Release. Category-only rows have one
 category checkbox and read-only details; item-mode rows have native all/none/mixed
-selection and bulk actions. Groups remain collapsed by default. Confirmation is
-inline with the exact prepared scope and destination. User-facing counts use
-areas and items; the macOS Settings group and included-settings labels add no
+selection and bulk actions. Groups remain collapsed by default. Capture shares
+Restore's operation summary, metric cards, status and whole-row disclosure components. Review retains independent
+native domain/item checkboxes; confirmation and result are read-only Domain → Items
+presentations. Primary actions remain outside the scrolling content. Secure Transfer
+is a separate capability disclosure. Confirmation is inline with the exact prepared
+scope and destination. User-facing counts use
+domains and items; the macOS Settings group and included-settings labels add no
 selection counts. Result scope comes from the
 published Bundle metadata; selected-category event warnings remain disclosed.
+Progress shows a compact Saving Your Environment summary with real Core phase
+messages, a spinner and cancellation. Core does not report per-item Capture
+execution progress, so no waiting task list is shown during publication;
+Completed describes inclusion in a successfully published Bundle, not restoration
+or target Verification. Result warnings come from selected-category event evidence.
 Stale preparation or any failed/interrupted attempt requires a fresh scan and
 confirmation, never a silent execute retry. Capture leaves ordinary local
 Generated Configuration/Blueprint untouched and does not rebuild the source Mac.

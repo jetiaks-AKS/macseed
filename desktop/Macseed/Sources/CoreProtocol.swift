@@ -74,7 +74,7 @@ enum CoreCommand: Sendable {
     case capabilities
     case bundleInspect(path: String)
     case capturePrepare(selection: CoreCaptureSelection?)
-    case captureExecute(selection: CoreCaptureSelection, destination: String, preparedID: String)
+    case captureExecute(selection: CoreCaptureSelection, destination: String, preparedID: String, replacementSHA256: String? = nil)
     case restorePrepare(path: String, disabledGroups: [String], includeSecure: Bool, selection: CoreRestoreSelection? = nil)
     case restoreExecute(path: String, disabledGroups: [String], includeSecure: Bool, preparedID: String, selection: CoreRestoreSelection? = nil)
     case environmentCompare(generatedDirectory: String, blueprintPath: String?)
@@ -92,7 +92,7 @@ enum CoreCommand: Sendable {
     }
     var requiresSecretBridge: Bool {
         switch self {
-        case .captureExecute(let selection, _, _): !selection.secureIdentities.isEmpty
+        case .captureExecute(let selection, _, _, _): !selection.secureIdentities.isEmpty
         case .restoreExecute(_, _, let secure, _, _): secure
         default: false
         }
@@ -109,8 +109,10 @@ enum CoreCommand: Sendable {
         case .capabilities: return nil
         case .bundleInspect(let path): return .object(["path": .string(path)])
         case .capturePrepare(let value): return .object(["selection": try selection(value)])
-        case .captureExecute(let value, let destination, let id):
-            return .object(["selection": try selection(value), "destination": .string(destination), "expected_prepared_capture_id": .string(id)])
+        case .captureExecute(let value, let destination, let id, let replacement):
+            var parameters: [String: CoreJSON] = ["selection": try selection(value), "destination": .string(destination), "expected_prepared_capture_id": .string(id)]
+            if let replacement { parameters["replacement_sha256"] = .string(replacement) }
+            return .object(parameters)
         case .restorePrepare(let path, let groups, let secure, let selection):
             var values = restore(path, groups, secure)
             if let selection { values["selection"] = try JSONDecoder().decode(CoreJSON.self, from: JSONEncoder().encode(selection)) }

@@ -41,13 +41,71 @@ struct TaskDisclosureStyle: DisclosureGroupStyle {
 
 struct TaskStatusLabel: View {
     let state: TaskRowState
+    var title: String? = nil
     var body: some View {
         HStack(spacing: 7) {
             if state == .working { ProgressView().controlSize(.small).frame(width: TaskRowLayout.iconWidth).accessibilityHidden(true) }
             else { Image(systemName: state.symbol).frame(width: TaskRowLayout.iconWidth).accessibilityHidden(true) }
-            Text(state.rawValue)
-        }.font(.callout.weight(.medium)).foregroundStyle(state.tone.color)
-            .accessibilityElement(children: .ignore).accessibilityLabel(state.rawValue)
+            Text(title ?? state.rawValue)
+        }.font(.callout.weight(.medium)).foregroundStyle(state == .planned ? Color.primary : state.tone.color)
+            .accessibilityElement(children: .ignore).accessibilityLabel(title ?? state.rawValue)
+    }
+}
+
+struct OperationMetric: Identifiable {
+    let title: String
+    let count: Int
+    let symbol: String
+    let tone: RestoreStatusTone
+    var id: String { title }
+}
+
+// Decisions depend only on the proposed width, never on content fitting feedback.
+struct OperationSummaryLayout: Layout {
+    let metricCount: Int
+    static func metricWidth(_ count: Int) -> CGFloat { CGFloat(count) * 112 + CGFloat(max(0, count - 1)) * 10 }
+    static func horizontal(width: CGFloat, count: Int) -> Bool { count == 0 || width >= 300 + 28 + metricWidth(count) }
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let width = proposal.width ?? 300 + 28 + Self.metricWidth(metricCount)
+        let horizontal = Self.horizontal(width: width, count: metricCount)
+        let metricsWidth = horizontal ? Self.metricWidth(metricCount) : width
+        let headingWidth = horizontal && metricCount > 0 ? width - metricsWidth - 28 : width
+        let heading = subviews[0].sizeThatFits(ProposedViewSize(width: headingWidth, height: nil))
+        let metrics = subviews[1].sizeThatFits(ProposedViewSize(width: metricsWidth, height: nil))
+        return CGSize(width: width, height: horizontal ? max(heading.height, metrics.height) : heading.height + 20 + metrics.height)
+    }
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let horizontal = Self.horizontal(width: bounds.width, count: metricCount)
+        let metricsWidth = horizontal ? Self.metricWidth(metricCount) : bounds.width
+        let headingWidth = horizontal && metricCount > 0 ? bounds.width - metricsWidth - 28 : bounds.width
+        let headingSize = subviews[0].sizeThatFits(ProposedViewSize(width: headingWidth, height: nil))
+        subviews[0].place(at: bounds.origin, anchor: .topLeading, proposal: ProposedViewSize(width: headingWidth, height: nil))
+        subviews[1].place(at: CGPoint(x: horizontal ? bounds.maxX - metricsWidth : bounds.minX,
+                                     y: horizontal ? bounds.minY : bounds.minY + headingSize.height + 20),
+                          anchor: .topLeading, proposal: ProposedViewSize(width: metricsWidth, height: nil))
+    }
+}
+
+struct OperationMetricsLayout: Layout {
+    static func columns(width: CGFloat, count: Int) -> Int { max(1, min(count, Int((max(0, width) + 10) / 122))) }
+    private func geometry(width: CGFloat, subviews: Subviews) -> (Int, CGFloat) {
+        let columns = Self.columns(width: width, count: subviews.count)
+        let height = subviews.map { $0.sizeThatFits(ProposedViewSize(width: 112, height: nil)).height }.max() ?? 0
+        return (columns, height)
+    }
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        guard !subviews.isEmpty else { return .zero }
+        let width = proposal.width ?? OperationSummaryLayout.metricWidth(subviews.count)
+        let (columns, height) = geometry(width: width, subviews: subviews)
+        let rows = (subviews.count + columns - 1) / columns
+        return CGSize(width: width, height: CGFloat(rows) * height + CGFloat(rows - 1) * 10)
+    }
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let (columns, height) = geometry(width: bounds.width, subviews: subviews)
+        for (index, view) in subviews.enumerated() {
+            view.place(at: CGPoint(x: bounds.minX + CGFloat(index % columns) * 122, y: bounds.minY + CGFloat(index / columns) * (height + 10)),
+                       anchor: .topLeading, proposal: ProposedViewSize(width: 112, height: height))
+        }
     }
 }
 
@@ -58,20 +116,28 @@ struct OperationSummaryHeader: View {
     let counters: [(state: TaskRowState, count: Int)]
     var startedAt: Date? = nil
     var finishedAt: Date? = nil
+    var suppliedMetrics: [OperationMetric]? = nil
+    var scopeSummary: String? = nil
+    private var metricValues: [OperationMetric] {
+        suppliedMetrics ?? counters.map { OperationMetric(title: $0.state.rawValue, count: $0.count, symbol: $0.state.symbol, tone: $0.state.tone) }
+    }
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            ViewThatFits(in: .horizontal) {
-                HStack(alignment: .top, spacing: 28) { heading.frame(minWidth: 300); horizontalMetrics }
-                VStack(alignment: .leading, spacing: 20) { heading; metrics }
+            OperationSummaryLayout(metricCount: metricValues.count) {
+                heading
+                OperationMetricsLayout { ForEach(metricValues) { value in metric(value) } }
             }
-            Text("\(counters.reduce(0) { $0 + $1.count }) selected domains")
+            Text(scopeSummary ?? "\(counters.reduce(0) { $0 + $1.count }) selected domains")
                 .font(.caption).foregroundStyle(.secondary)
         }.padding(18).frame(maxWidth: .infinity, alignment: .leading)
             .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 12))
     }
     private var heading: some View {
         HStack(alignment: .top, spacing: 12) {
-            Image(systemName: state.symbol).font(.system(size: 30, weight: .medium)).foregroundStyle(state.tone.color).accessibilityHidden(true)
+            Group {
+                if state == .working { ProgressView().controlSize(.regular).frame(width: 30, height: 30) }
+                else { Image(systemName: state.symbol).font(.system(size: 30, weight: .medium)).foregroundStyle(state.tone.color) }
+            }.accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 6) {
                 Text(title).font(.title2.weight(.bold)).accessibilityAddTraits(.isHeader)
                 Text(message).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
@@ -88,29 +154,17 @@ struct OperationSummaryHeader: View {
             }.frame(maxWidth: .infinity, alignment: .leading)
         }
     }
-    private var horizontalMetrics: some View {
-        HStack(spacing: 10) {
-            ForEach(counters, id: \.state) { counter in
-                metric(counter.state, count: counter.count).frame(width: 112)
-            }
-        }.fixedSize(horizontal: true, vertical: false)
-    }
-    private var metrics: some View {
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 112), alignment: .leading)], alignment: .leading, spacing: 10) {
-            ForEach(counters, id: \.state) { counter in metric(counter.state, count: counter.count) }
-        }
-    }
-    private func metric(_ state: TaskRowState, count: Int) -> some View {
+    private func metric(_ value: OperationMetric) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
-                Image(systemName: state.symbol).foregroundStyle(state.tone.color).accessibilityHidden(true)
-                Text(String(count)).font(.title2.weight(.bold)).monospacedDigit()
+                Image(systemName: value.symbol).foregroundStyle(value.tone.color).accessibilityHidden(true)
+                Text(String(value.count)).font(.title2.weight(.bold)).monospacedDigit()
             }
-            Text(state.rawValue).font(.caption.weight(.medium)).fixedSize(horizontal: false, vertical: true)
+            Text(value.title).font(.caption.weight(.medium)).fixedSize(horizontal: false, vertical: true)
         }.frame(maxWidth: .infinity, minHeight: 52, alignment: .leading).padding(10)
             .background(.background.opacity(0.65), in: RoundedRectangle(cornerRadius: 8))
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel(state.rawValue).accessibilityValue(String(count))
+            .accessibilityLabel(value.title).accessibilityValue(String(value.count))
     }
     static func elapsed(_ start: Date, _ end: Date) -> String {
         let seconds = max(0, Int(end.timeIntervalSince(start)))
@@ -120,6 +174,7 @@ struct OperationSummaryHeader: View {
 
 struct TaskDomainList: View {
     let domains: [TaskDomainPresentation]
+    var stateTitles: [TaskRowState: String] = [:]
     @TaskViewState<Set<String>> private var expanded = []
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -135,7 +190,7 @@ struct TaskDomainList: View {
                     DisclosureGroup(isExpanded: Binding(get: { expanded.contains(domain.id) }, set: { value in
                         if value { expanded.insert(domain.id) } else { expanded.remove(domain.id) }
                     })) {
-                        TaskDomainItems(domain: domain)
+                        TaskDomainItems(domain: domain, stateTitles: stateTitles)
                     } label: {
                         ViewThatFits(in: .horizontal) {
                             HStack(spacing: 12) { domainTitle(domain); Spacer(); domainStatus(domain) }
@@ -148,6 +203,13 @@ struct TaskDomainList: View {
                 .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.quaternary))
         }
     }
+    private func domainSummary(_ domain: TaskDomainPresentation) -> String {
+        guard !stateTitles.isEmpty else { return domain.summary }
+        let counts = Dictionary(grouping: domain.items, by: \.state)
+        return TaskRowState.allCases.compactMap { state in
+            counts[state].map { "\($0.count) \((stateTitles[state] ?? state.rawValue).lowercased())" }
+        }.joined(separator: " · ")
+    }
     private func domainTitle(_ domain: TaskDomainPresentation) -> some View {
         HStack(spacing: 12) {
             Image(systemName: domain.symbol).frame(width: TaskRowLayout.iconWidth).accessibilityHidden(true)
@@ -156,14 +218,15 @@ struct TaskDomainList: View {
     }
     private func domainStatus(_ domain: TaskDomainPresentation) -> some View {
         VStack(alignment: .leading, spacing: 3) {
-            TaskStatusLabel(state: domain.state)
-            Text(domain.summary).font(.caption).foregroundStyle(.secondary)
+            TaskStatusLabel(state: domain.state, title: stateTitles[domain.state])
+            Text(domainSummary(domain)).font(.caption).foregroundStyle(.secondary)
         }.frame(width: TaskRowLayout.statusWidth, alignment: .leading)
     }
 }
 
 struct TaskDomainItems: View {
     let domain: TaskDomainPresentation
+    var stateTitles: [TaskRowState: String] = [:]
     var body: some View {
 VStack(spacing: 0) {
                             ForEach(domain.items) { item in
@@ -178,7 +241,7 @@ VStack(spacing: 0) {
                                         }
                                     }
                                     Spacer()
-                                    TaskStatusLabel(state: item.state).frame(width: TaskRowLayout.statusWidth, alignment: .leading)
+                                    TaskStatusLabel(state: item.state, title: stateTitles[item.state]).frame(width: TaskRowLayout.statusWidth, alignment: .leading)
                                 }.padding(.vertical, 7)
                             }
                         }.padding(.leading, 36).padding(.vertical, 4)

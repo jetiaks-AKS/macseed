@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tarfile
@@ -266,7 +267,29 @@ def write_file(path, data):
         out.write(data)
 
 
-def pack(stage, output, home):
+def check_replacement(path, expected):
+    # No-follow observation; user consent cannot authorize a changed destination.
+    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(descriptor, "rb") as stream:
+        before = os.fstat(stream.fileno())
+        if not stat.S_ISREG(before.st_mode) or before.st_uid != os.getuid() or before.st_size > MAX_ARCHIVE:
+            raise Invalid("unsafe replacement destination")
+        value = hashlib.sha256()
+        observed_size = 0
+        for chunk in iter(lambda: stream.read(65536), b""):
+            observed_size += len(chunk)
+            if observed_size > MAX_ARCHIVE:
+                raise Invalid("oversized replacement destination")
+            value.update(chunk)
+        after = os.fstat(stream.fileno())
+        if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns) or value.hexdigest() != expected:
+            raise Invalid("replacement destination changed")
+        current = path.lstat()
+        if (current.st_dev, current.st_ino) != (before.st_dev, before.st_ino):
+            raise Invalid("replacement destination changed")
+
+
+def pack(stage, output, home, replacement_sha256=None):
     blueprint = checked_file(stage / "blueprint.conf", 65536)
     paths = required_paths(blueprint)
     files = {path: checked_file(stage / path) for path in paths}
@@ -286,8 +309,11 @@ def pack(stage, output, home):
                   for name, data in sorted(files.items())},
     }
     files["manifest.json"] = (json.dumps(manifest, sort_keys=True) + "\n").encode()
-    if output.exists() or output.is_symlink():
-        raise Invalid("Bundle destination exists")
+    if replacement_sha256 is None:
+        if output.exists() or output.is_symlink():
+            raise Invalid("Bundle destination exists")
+    else:
+        check_replacement(output, replacement_sha256)
     output.parent.mkdir(parents=True, exist_ok=True)
     if output.parent.is_symlink():
         raise Invalid("unsafe Bundle destination parent")
@@ -307,10 +333,15 @@ def pack(stage, output, home):
         if os.path.getsize(temporary) > MAX_ARCHIVE:
             raise Invalid("Bundle is too large")
         validate_archive(Path(temporary))
-        try:
-            os.link(temporary, output)
-        except FileExistsError as exc:
-            raise Invalid("Bundle destination appeared") from exc
+        if replacement_sha256 is not None:
+            # The old file stays intact through creation/fsync/archive validation.
+            check_replacement(output, replacement_sha256)
+            os.replace(temporary, output)
+        else:
+            try:
+                os.link(temporary, output)
+            except FileExistsError as exc:
+                raise Invalid("Bundle destination appeared") from exc
     finally:
         if os.path.exists(temporary):
             os.unlink(temporary)

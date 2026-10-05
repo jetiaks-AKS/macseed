@@ -34,10 +34,16 @@ Prepared IDs are 64 lowercase hexadecimal characters.
 | `capabilities` | Omit `parameters` | Returns `protocol_version`, `product_version`, `operations` |
 | `bundle_inspect` | `path` | Returns Bundle summary and Core-owned `restore_selection` inventory; no Apply |
 | `capture_prepare` | `selection` | Private staged observation and prepared selection |
-| `capture_execute` | `selection`, `destination`, `expected_prepared_capture_id` | Fresh observation and new Bundle publication |
+| `capture_execute` | `selection`, `destination`, `expected_prepared_capture_id`, optional `replacement_sha256` | Fresh observation and Bundle publication |
 | `restore_prepare` | `path`, `disabled_groups`, `include_secure`, optional `selection` | Bundle validation, Preview and prerequisites; no publication or Apply |
 | `restore_execute` | Restore fields plus `expected_prepared_plan_id` | Fresh preparation, local-state publication and restoration |
 | `environment_compare` | `generated_dir`, `blueprint_path` | Explicit read-only reference-to-current-Mac comparison |
+
+Capture publication remains no-clobber by default. After explicit native Save Panel
+Replace confirmation, Desktop may supply `replacement_sha256`: the SHA-256 of the
+observed existing regular, user-owned destination. Core rejects a changed file,
+creates and validates the replacement privately, then atomically publishes it.
+Creation, validation or publication failure preserves the previous Bundle.
 
 Bundle `path` and `generated_dir` are absolute. `blueprint_path` is absolute or
 `null`; null explicitly selects no Blueprint, without falling back to a local

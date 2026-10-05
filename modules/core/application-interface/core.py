@@ -678,8 +678,11 @@ def main(version, channel=None):
                 raise ValueError('invalid Capture parameters')
             parameters = value['parameters']
             expected = {'selection'} if operation == 'capture_prepare' else {'selection', 'destination', 'expected_prepared_capture_id'}
-            if set(parameters) != expected or (operation == 'capture_execute' and parameters['selection'] is None):
+            replacement = operation == 'capture_execute' and set(parameters) == expected | {'replacement_sha256'}
+            if (set(parameters) != expected and not replacement) or (operation == 'capture_execute' and parameters['selection'] is None):
                 raise ValueError('invalid Capture parameters')
+            if replacement and (not isinstance(parameters['replacement_sha256'], str) or not PREPARED_PLAN_ID.fullmatch(parameters['replacement_sha256'])):
+                raise ValueError('invalid Capture replacement fingerprint')
             if operation == 'capture_execute' and (not isinstance(parameters['expected_prepared_capture_id'], str) or
                     not PREPARED_PLAN_ID.fullmatch(parameters['expected_prepared_capture_id'])):
                 raise ValueError('invalid Capture prepared ID')

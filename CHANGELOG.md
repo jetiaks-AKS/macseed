@@ -33,6 +33,10 @@ The format is based on the principles of **Keep a Changelog**.
 
 ### Changed
 
+* Capture uses shared native operation summaries and Domain → Items presentation
+  across selection, confirmation and result, with compact phase-based saving,
+  persistent action areas and explicit capture warnings.
+
 * Unified native sidebar, neutral workspace and restrained header surfaces with
   progressive disclosure and semantic Light/Dark presentation.
 * Production Desktop uses structured Core data rather than human CLI output.
@@ -41,6 +45,9 @@ The format is based on the principles of **Keep a Changelog**.
   informational labels for the settings included in the current preparation.
 
 ### Fixed
+
+* Desktop Capture honors explicitly confirmed Save Panel replacement, validates
+  the new Bundle before atomic publication and preserves the old file on failure.
 
 * Restore Preview correlates Git repositories by their bundle identity and target
   path even when configuration and selection orders differ.

@@ -45,16 +45,21 @@ def run(root, command, environment, output=None, progress=None):
         terminate(child)
 
 
-def destination(path):
+def destination(path, replacement_sha256=None):
     if (not isinstance(path, str) or not path.startswith('/') or
             any(ord(c) < 32 or ord(c) == 127 for c in path)):
         raise CaptureError('invalid_destination')
     target = Path(path)
     parent = target.parent
-    if (target.suffix != '.mbt' or target.exists() or target.is_symlink() or
+    if (target.suffix != '.mbt' or (replacement_sha256 is None and target.exists()) or target.is_symlink() or
             not parent.is_dir() or parent.is_symlink() or str(parent.resolve()) != str(parent) or
             parent.stat().st_uid != os.getuid()):
         raise CaptureError('invalid_destination')
+    if replacement_sha256 is not None:
+        try:
+            bundle.check_replacement(target, replacement_sha256)
+        except (OSError, bundle.Invalid) as exc:
+            raise CaptureError('invalid_destination') from exc
     return target
 
 
@@ -186,7 +191,7 @@ def prepared(stage, rows, secure, selection):
 
 def capture(root, operation, parameters, channel, event):
     from secret_input import PrivateTemporaryDirectory, SecureError
-    target = destination(parameters['destination']) if operation == 'capture_execute' else None
+    target = destination(parameters['destination'], parameters.get('replacement_sha256')) if operation == 'capture_execute' else None
     published = False
     try:
         with PrivateTemporaryDirectory(prefix='macseed-capture-', dir='/private/tmp') as temporary:
@@ -219,11 +224,11 @@ def capture(root, operation, parameters, channel, event):
                 export_secure(root, stage / 'secure.age', selected, channel, parameters['_operation_id'], event)
             else:
                 event('secure_packaging', {'status': 'not_selected'})
-            destination(parameters['destination'])
+            destination(parameters['destination'], parameters.get('replacement_sha256'))
             event('phase_started', {'phase': 'bundle_creation'})
             previous = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGINT, signal.SIGTERM})
             try:
-                bundle.pack(stage, target, os.environ['HOME'])
+                bundle.pack(stage, target, os.environ['HOME'], replacement_sha256=parameters.get('replacement_sha256'))
                 published = True
                 result = {'publication_occurred': True, 'destination': str(target),
                           'bundle': bundle.inspect_bundle(target, os.environ['HOME']),

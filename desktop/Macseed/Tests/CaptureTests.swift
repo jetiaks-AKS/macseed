@@ -1,4 +1,6 @@
 import Foundation
+import AppKit
+import SwiftUI
 
 @main struct CaptureTests {
     typealias Object = [String: Any]
@@ -17,6 +19,32 @@ import Foundation
     static func row(_ domain: String, mode: String, status: String = "present", items: [String] = [], reason: String? = nil) -> Object {
         ["domain": domain, "selection_mode": mode, "status": status, "reason": reason ?? NSNull(),
          "items": items.map { ["item_id": $0, "label": $0] }]
+    }
+    @MainActor static func render(_ model: CaptureModel, _ runtime: CoreRuntime, state: String) throws {
+        _ = NSApplication.shared
+        for (width, height) in [(785, 660), (985, 760), (1385, 1010)] {
+            let content = VStack(spacing: 0) {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 20) {
+                        WorkspaceHeader(title: "Capture this Mac", subtitle: ProductTask.capture.subtitle, symbol: ProductTask.capture.symbol)
+                        CaptureView(model: model, runtime: runtime, showsActions: false)
+                    }.padding(28).frame(maxWidth: .infinity, alignment: .leading)
+                }
+                Divider()
+                CaptureActionsView(model: model, runtime: runtime).padding(.horizontal, 28).padding(.vertical, 12)
+            }.frame(width: CGFloat(width), height: CGFloat(height)).background(Color(nsColor: .windowBackgroundColor))
+            let host = NSHostingView(rootView: content)
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: height), styleMask: [.borderless], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false
+            window.contentView = host
+            host.frame = NSRect(x: 0, y: 0, width: width, height: height)
+            host.layoutSubtreeIfNeeded()
+            host.displayIfNeeded()
+            guard let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { preconditionFailure("Native Capture render unavailable") }
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            try bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: "build/Debug/CaptureUIv2-\(state)-\(width).png"))
+            window.close()
+        }
     }
     @MainActor static func main() async throws {
         // Foundation resolves /private/var to /var, while Core requires Python's
@@ -90,6 +118,7 @@ import Foundation
         model.scan(); await model.waitForCompletion()
         precondition(model.state == .review && model.selectedDomainCount == 2 && model.selectedItemCount == 2)
         precondition(model.bulkState == .all && model.selection.secureIdentities.isEmpty)
+        try render(model, runtime, state: "review")
         let packages = model.categories.first { $0.id == "homebrew-packages" }!
         let finder = model.categories.first { $0.id == "macos-finder" }!
         precondition(packages.itemSelectable && packages.notices[0].requiresAttention)
@@ -101,7 +130,7 @@ import Foundation
         precondition(model.selection.items[finder.id] == nil && Set(model.selection.categories) == [finder.id, packages.id])
         model.selectItem(packages.id, item: "one", included: false)
         precondition(model.selectionState(packages) == .mixed && model.bulkState.bulkActionTitle == "Select All" && model.selectedItemCount == 1)
-        precondition(model.selectionSummary == "2 areas selected · 1 item selected")
+        precondition(model.selectionSummary == "2 domains selected · 1 item selected")
         model.toggleAll(); precondition(model.bulkState == .all && model.selectedItemCount == 2)
         model.toggleAll(); precondition(model.bulkState == .none && !model.canCreate && model.selection.categories.isEmpty && model.selection.items.isEmpty)
         model.selectCategory(finder.id, included: true)
@@ -119,7 +148,7 @@ import Foundation
         let target = root.appendingPathComponent("selected.mbt")
         model.prepare(destination: target); await model.waitForCompletion()
         precondition(model.state == .confirmation && model.preparation?.summary.selectedDomains == 1)
-        precondition(model.confirmationSummary == "1 area selected · 0 items selected")
+        precondition(model.confirmationSummary == "1 domain selected · 0 items selected")
         precondition(model.confirmationAreas.map(\.content) == ["1 of 1"])
 
         precondition(model.destination == target && model.preparation?.selection?.secureIdentities.isEmpty == true)
@@ -130,9 +159,29 @@ import Foundation
         precondition(model.confirmationWarnings.map(\.id) == [packages.id])
         precondition(model.confirmationAreas.first { $0.id == packages.id }?.requiresAttention == true)
 
+        let captureSummary = CaptureSummaryPresentation.review(categories: model.categories, domainCount: model.selectedDomainCount, itemCount: model.selectedItemCount)
+        precondition(captureSummary.domainCount == model.selectedDomainCount && captureSummary.itemCount == model.selectedItemCount)
+        precondition(captureSummary.attentionCount == 2 && captureSummary.unsupportedCount == 2)
+        try render(model, runtime, state: "confirmation")
+        let preparedScope = model.preparation!
+        let plannedTasks = CaptureTaskPresentation(categories: preparedScope.inventory.map { CaptureCategory(row: $0) }, selection: preparedScope.selection!, phase: .confirmation)
+        let waitingTasks = CaptureTaskPresentation(categories: model.categories, selection: model.selection, phase: .progress)
+        precondition(plannedTasks.domains.map(\.id) == waitingTasks.domains.map(\.id))
+        precondition(waitingTasks.domains.flatMap(\.items).allSatisfy { $0.state == .waiting && $0.item.reason == nil })
+        precondition(plannedTasks.domains.flatMap(\.items).contains { $0.item.reason == "source_partial" })
         model.create(); await model.waitForCompletion()
         precondition(model.state == .result && model.publicationEvidence == .occurred && model.publication?.destination == target.path)
         precondition(model.publication?.bundle.capturedDomains.count == 2 && model.resultNotices.count == 1)
+        try render(model, runtime, state: "result")
+        let captured = model.publication!.bundle
+        let resultTasks = CaptureTaskPresentation(categories: preparedScope.inventory.map { CaptureCategory(row: $0) }, selection: preparedScope.selection!,
+            phase: .result, capturedDomains: captured.capturedDomains, notices: model.resultNotices)
+        precondition(resultTasks.domains.map(\.id) == plannedTasks.domains.map(\.id))
+        precondition(resultTasks.domains.first { $0.id == "homebrew-packages" }?.state == .partial)
+        precondition(resultTasks.domains.first { $0.id == "macos-settings" }?.state == .completed)
+        precondition(resultTasks.domains.flatMap(\.items).contains { $0.state == .attention && $0.item.reason == "source_partial" })
+        let resultMetrics = CaptureSummaryPresentation(domainCount: captured.capturedDomains.count, itemCount: captured.itemCount, attentionCount: 1, unsupportedCount: 0, captured: true)
+        precondition(resultMetrics.metrics.first?.title == "Captured Domains" && resultMetrics.domainCount == 2 && resultMetrics.itemCount == 2)
         let requests = try String(contentsOf: core.appendingPathComponent("requests.jsonl"), encoding: .utf8).split(separator: "\n")
         let sent = try requests.map { try JSONSerialization.jsonObject(with: Data($0.utf8)) as! Object }
         precondition(sent.map { $0["operation"] as! String } == ["capture_prepare", "capture_prepare", "capture_prepare", "capture_execute"])
@@ -160,6 +209,7 @@ import Foundation
             model.create()
             if ["slow_save", "published_cancel"].contains(mode) {
                 await waitUntil(runtime) { $0.events.contains { $0.phase == "bundle_creation" } }
+                if mode == "slow_save" { try render(model, runtime, state: "saving") }
                 model.cancel()
             }
             await model.waitForCompletion()
@@ -197,10 +247,10 @@ import Foundation
             category.row.includedSettings?.map(\.label) == [includedLabels[index]] && category.row.items.isEmpty
         })
         precondition(model.selectedDomainCount == 7 && model.selectedItemCount == 1 && !model.macOSSettings.hasAttention)
-        precondition(model.availableAreaCount == 7 && model.selectionSummary == "7 areas selected · 1 item selected")
+        precondition(model.availableAreaCount == 7 && model.selectionSummary == "7 domains selected · 1 item selected")
         model.selectCategory("macos-finder", included: false)
         precondition(model.macOSSettings.state == .mixed && model.macOSSettings.summary == "5 of 6 selected")
-        precondition(model.selectionSummary == "6 of 7 areas selected · 1 item selected")
+        precondition(model.selectionSummary == "6 of 7 domains selected · 1 item selected")
         precondition(!model.selection.categories.contains("macos-finder"))
         model.selectMacOSSettings(included: false)
         precondition(model.macOSSettings.state == .none && model.macOSSettings.summary == "0 of 6 selected")
@@ -209,11 +259,11 @@ import Foundation
         precondition(model.macOSSettings.state == .all && Set(model.selectedCategories) == Set(macOSDomains))
         precondition(model.selection.items.isEmpty && Set(model.selection.categories) == Set(macOSDomains + ["homebrew-packages"]))
         model.toggleAll(); precondition(model.bulkState == .none && model.macOSSettings.state == .none)
-        precondition(model.selectionSummary == "0 of 7 areas selected · 0 items selected")
+        precondition(model.selectionSummary == "0 of 7 domains selected · 0 items selected")
         model.toggleAll(); precondition(model.bulkState == .all && model.macOSSettings.state == .all)
         model.prepare(destination: root.appendingPathComponent("grouped.mbt")); await model.waitForCompletion()
         precondition(model.state == .confirmation && model.preparation?.summary.selectedDomains == 7)
-        precondition(model.confirmationSummary == "7 areas selected · 1 item selected")
+        precondition(model.confirmationSummary == "7 domains selected · 1 item selected")
         precondition(model.confirmationAreas.count == 2)
         precondition(model.confirmationAreas.first { $0.id == "macos-settings" }?.content == "6 of 6")
         precondition(model.confirmationAreas.first { $0.id == "homebrew-packages" }?.content == "1")
@@ -230,7 +280,13 @@ import Foundation
         precondition(model.confirmationAreas.first { $0.id == "macos-settings" }?.content == "5 of 6")
         precondition(model.confirmationAreas.first { $0.id == "ssh-configuration" }?.content == "Included")
         precondition(model.confirmationWarnings.map(\.id) == ["ssh-configuration"])
-        precondition(model.confirmationSummary == "7 areas selected · 1 item selected")
+        let sshPrepared = model.preparation!
+        let sshCategory = sshPrepared.inventory.map { CaptureCategory(row: $0) }.first { $0.id == "ssh-configuration" }!
+        let sshResult = CaptureTaskPresentation(categories: sshPrepared.inventory.map { CaptureCategory(row: $0) }, selection: sshPrepared.selection!, phase: .result,
+            notices: [DisplayCategory(id: sshCategory.id, title: sshCategory.title, symbol: sshCategory.symbol, items: sshCategory.notices)])
+        precondition(sshResult.domains.first { $0.id == "ssh-configuration" }?.state == .partial)
+        precondition(sshResult.domains.first { $0.id == "ssh-configuration" }?.items.contains { $0.item.reason == "source_partial" && $0.state == .attention } == true)
+        precondition(model.confirmationSummary == "7 domains selected · 1 item selected")
         model.editSelection()
         precondition(model.state == .review && model.preparation == nil && model.selectionState(model.categories.first { $0.id == "macos-dock" }!) == .none)
         print("PASS: Prepared summary-only rows, category Included, partial macOS grouping, visible deduplicated warnings and destination normalization")
@@ -241,9 +297,9 @@ import Foundation
         try JSONSerialization.data(withJSONObject: attentionInventory).write(to: core.appendingPathComponent("inventory.json"))
         model.scan(); await model.waitForCompletion()
         precondition(model.macOSSettings.state == .all && model.macOSSettings.summary == "3 of 3 selected" && model.macOSSettings.hasAttention)
-        precondition(model.availableAreaCount == 3 && model.selectionSummary == "3 areas selected · 0 items selected")
+        precondition(model.availableAreaCount == 3 && model.selectionSummary == "3 domains selected · 0 items selected")
         model.selectMacOSSettings(included: false); precondition(model.selectedDomainCount == 0)
-        precondition(model.selectionSummary == "0 of 3 areas selected · 0 items selected")
+        precondition(model.selectionSummary == "0 of 3 domains selected · 0 items selected")
         model.selectMacOSSettings(included: true)
         model.selectCategory("macos-finder", included: true)
         precondition(Set(model.selection.categories) == Set(macOSDomains.dropFirst(3)) && model.selection.items.isEmpty)
@@ -368,6 +424,60 @@ import Foundation
         model.create(); await model.waitForCompletion()
         precondition(model.state == .result && model.publication?.bundle.selectedCategories == [shell.id])
         precondition(model.publication?.bundle.itemCount == 0 && model.selection.items.isEmpty)
+        let originalBundle = try Data(contentsOf: target)
+        model.scan(); await model.waitForCompletion()
+        model.toggleAll(); model.selectCategory(shell.id, included: true)
+        model.prepare(destination: target); await model.waitForCompletion()
+        precondition(model.state == .failed && (try? Data(contentsOf: target)) == originalBundle)
+        model.scan(); await model.waitForCompletion()
+        model.toggleAll(); model.selectCategory(shell.id, included: true)
+        model.prepare(destination: target, replacementConfirmed: true); await model.waitForCompletion()
+        precondition(model.state == .confirmation)
+        try write("export EDITOR=nano\n", home.appendingPathComponent(".zshrc"))
+        model.create(); await model.waitForCompletion()
+        precondition(model.state == .failed && (try? Data(contentsOf: target)) == originalBundle)
+        try write("export EDITOR=vi\n", home.appendingPathComponent(".zshrc"))
+        model.scan(); await model.waitForCompletion()
+        model.toggleAll(); model.selectCategory(shell.id, included: true)
+        model.prepare(destination: target, replacementConfirmed: true); await model.waitForCompletion()
+        precondition(model.state == .confirmation)
+        model.create(); await model.waitForCompletion()
+        precondition(model.state == .result && model.publication?.bundle.selectedCategories == [shell.id])
+        precondition((try? Data(contentsOf: target)) != originalBundle)
+        let safetyScript = root.appendingPathComponent("replacement-safety.py")
+        try write("""
+        import sys, hashlib
+        from pathlib import Path
+        from unittest.mock import patch
+        sys.path.insert(0, sys.argv[1])
+        import bundle
+        target, stage, home = map(Path, sys.argv[2:])
+        stage.mkdir()
+        bundle.unpack(target, stage, str(home))
+        original = target.read_bytes()
+        fingerprint = hashlib.sha256(original).hexdigest()
+        for method, error in [('validate_archive', bundle.Invalid('injected validation failure')), ('os.replace', OSError('injected publication failure'))]:
+            with patch('bundle.' + method, side_effect=error):
+                try:
+                    bundle.pack(stage, target, str(home), replacement_sha256=fingerprint)
+                    raise AssertionError('failure injection did not fail')
+                except (bundle.Invalid, OSError):
+                    pass
+            assert target.read_bytes() == original
+            assert not list(target.parent.glob('.bundle-*'))
+        try:
+            bundle.pack(stage, target, str(home), replacement_sha256='0' * 64)
+            raise AssertionError('changed destination accepted')
+        except bundle.Invalid:
+            pass
+        assert target.read_bytes() == original
+        print('PASS: replacement validation/publication failures preserve original Bundle; changed digest rejected')
+        """, safetyScript)
+        let safety = Process()
+        safety.executableURL = python
+        safety.arguments = ["-B", safetyScript.path, core.appendingPathComponent("modules/bundle").path, target.path, root.appendingPathComponent("replacement-stage").path, home.path]
+        try safety.run(); safety.waitUntilExit()
+        precondition(safety.terminationStatus == 0)
         let afterHome = try snapshot(home), afterConfig = try snapshot(core.appendingPathComponent("config"))
         precondition(beforeHome == afterHome && beforeConfig == afterConfig)
         precondition(!FileManager.default.fileExists(atPath: marker.path) && !FileManager.default.fileExists(atPath: core.appendingPathComponent("logs").path))

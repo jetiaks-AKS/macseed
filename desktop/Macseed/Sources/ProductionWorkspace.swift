@@ -43,7 +43,7 @@ struct ProductionWorkspace: View {
                             if task == .status {
                                 EnvironmentStatusView(model: status, runtime: runtime)
                             } else if task == .capture {
-                                CaptureView(model: capture, runtime: runtime)
+                                CaptureView(model: capture, runtime: runtime, showsActions: false)
                             } else {
                                 #if DEBUG
                                 if syntheticRestore { RestoreDebugScenarioView(scenario: scenarios.selected) }
@@ -68,8 +68,12 @@ struct ProductionWorkspace: View {
                             Button("Check Again") { runtime.checkCapabilities() }
                         }
                     }
-                    .padding(28).frame(maxWidth: navigation.task == .restore ? .infinity : 800, alignment: .leading)
+                    .padding(28).frame(maxWidth: (navigation.task == .restore || navigation.task == .capture) ? .infinity : 800, alignment: .leading)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                if navigation.task == .capture && capture.state != .idle {
+                    Divider()
+                    CaptureActionsView(model: capture, runtime: runtime).padding(.horizontal, 28).padding(.vertical, 12)
                 }
                 if navigation.task == .restore {
                     #if DEBUG

@@ -1,5 +1,7 @@
 import Combine
 import Foundation
+import CryptoKit
+import Darwin
 
 enum CaptureFlowState { case idle, scanning, review, preparing, confirmation, saving, result, failed, cancelled }
 enum CapturePublicationEvidence { case notOccurred, occurred, unknown }
@@ -10,7 +12,7 @@ enum CaptureFailure: Error, Equatable {
     var message: String {
         switch self {
         case .invalidEvidence: "Capture did not provide complete, consistent evidence. Scan this Mac again before creating a saved environment."
-        case .invalidDestination: "Choose a new .mbt file in an accessible folder. Existing saved environments are never replaced."
+        case .invalidDestination: "Choose a new .mbt file in an accessible folder. Existing saved environments require explicit Replace confirmation."
         case .emptySelection: "Choose supported state to capture."
         case .cancelled: "Capture cancelled. Scan this Mac again before another attempt."
         case .interrupted: "Capture interrupted. Scan this Mac again before another attempt."
@@ -18,7 +20,7 @@ enum CaptureFailure: Error, Equatable {
             switch code {
             case "stale_prepared_capture", "capture_source_unavailable", "invalid_selection":
                 "The Mac or selected state changed. Scan this Mac again, review the new selection and confirm it."
-            case "invalid_destination": "The destination is unavailable or already exists. Scan again and choose a new file."
+            case "invalid_destination": "The destination is unavailable or changed since Replace was confirmed. Scan again and choose a new file."
             case "capture_discovery_failed", "capture_inventory_invalid": "The Mac could not be scanned reliably. No complete selection is available. Scan again."
             case "capture_validation_failed": "The selected environment could not be validated for saving. Scan again and review the selection."
             default: "Capture could not complete. Scan this Mac again before another attempt."
@@ -135,6 +137,7 @@ struct CaptureMacOSSettingsGroup {
     @Published private(set) var resultNotices: [DisplayCategory] = []
     let runtime: CoreRuntime
     private let location: CoreLocation?
+    private var replacementSHA256: String?
     private var work: Task<Void, Never>?
     init(runtime: CoreRuntime, location: CoreLocation? = nil) { self.runtime = runtime; self.location = location }
     var busy: Bool { [.scanning, .preparing, .saving].contains(state) }
@@ -156,10 +159,10 @@ struct CaptureMacOSSettingsGroup {
     var selectionSummary: String {
         let selected = selectedDomainCount
         let available = availableAreaCount
-        let areas = available == 1 ? "area" : "areas"
+        let domains = available == 1 ? "domain" : "domains"
         let areaSummary = selected == available
-            ? "\(selected) \(areas) selected"
-            : "\(selected) of \(available) \(areas) selected"
+            ? "\(selected) \(domains) selected"
+            : "\(selected) of \(available) \(domains) selected"
         let items = selectedItemCount == 1 ? "item" : "items"
         return "\(areaSummary) · \(selectedItemCount) \(items) selected"
     }
@@ -193,7 +196,7 @@ struct CaptureMacOSSettingsGroup {
     }
     var confirmationSummary: String {
         guard let summary = preparation?.summary else { return "" }
-        return "\(summary.selectedDomains) \(summary.selectedDomains == 1 ? "area" : "areas") selected · \(summary.selectedItems) \(summary.selectedItems == 1 ? "item" : "items") selected"
+        return "\(summary.selectedDomains) \(summary.selectedDomains == 1 ? "domain" : "domains") selected · \(summary.selectedItems) \(summary.selectedItems == 1 ? "item" : "items") selected"
     }
     var canCreate: Bool { state == .review && selectedDomainCount > 0 && !runtime.isActive }
     func selectionState(_ category: CaptureCategory) -> SelectionState {
@@ -227,17 +230,23 @@ struct CaptureMacOSSettingsGroup {
     func scan() {
         guard !busy, !runtime.isActive else { return }
         inventory = []; selectedCategories = []; selectedItems = [:]; preparation = nil; destination = nil
-        publication = nil; resultNotices = []; publicationEvidence = .notOccurred; publicationMayHaveStarted = false; failure = nil
+        replacementSHA256 = nil; publication = nil; resultNotices = []; publicationEvidence = .notOccurred; publicationMayHaveStarted = false; failure = nil
         run(CoreRequest(.capturePrepare(selection: nil)), state: .scanning, expected: nil)
     }
-    func prepare(destination: URL) {
+    func prepare(destination: URL, replacementConfirmed: Bool = false) {
         guard canCreate else { return }
         let destination = CaptureDestination.normalized(destination)
         self.destination = destination
+        replacementSHA256 = nil
         guard destination.isFileURL, destination.pathExtension == "mbt",
-              !FileManager.default.fileExists(atPath: destination.path),
               (try? FileManager.default.destinationOfSymbolicLink(atPath: destination.path)) == nil else {
             preparation = nil; fail(.invalidDestination); return
+        }
+        if FileManager.default.fileExists(atPath: destination.path) {
+            guard replacementConfirmed, let fingerprint = try? CaptureReplacement.fingerprint(destination) else {
+                preparation = nil; fail(.invalidDestination); return
+            }
+            replacementSHA256 = fingerprint
         }
         preparation = nil; failure = nil
         let expected = selection
@@ -249,8 +258,11 @@ struct CaptureMacOSSettingsGroup {
     }
     func create() {
         guard state == .confirmation, !runtime.isActive, let preparation, let selection = preparation.selection, let destination else { return }
+        if let replacementSHA256, (try? CaptureReplacement.fingerprint(destination)) != replacementSHA256 {
+            fail(.invalidDestination); return
+        }
         publicationEvidence = .unknown; publicationMayHaveStarted = false; failure = nil; publication = nil
-        run(CoreRequest(.captureExecute(selection: selection, destination: destination.path, preparedID: preparation.preparedCaptureID)), state: .saving, expected: selection)
+        run(CoreRequest(.captureExecute(selection: selection, destination: destination.path, preparedID: preparation.preparedCaptureID, replacementSHA256: replacementSHA256)), state: .saving, expected: selection)
     }
     private func run(_ request: CoreRequest, state next: CaptureFlowState, expected: CoreCaptureSelection?) {
         operationID = request.operationID; state = next
@@ -314,4 +326,30 @@ struct CaptureMacOSSettingsGroup {
     func cancel() { if busy { runtime.cancel() } }
     func cancelReview() { guard state == .review, !runtime.isActive else { return }; state = .idle; preparation = nil; destination = nil }
     func waitForCompletion() async { await work?.value }
+}
+
+// Consent is bound to the exact regular, owned file; this performs no publication.
+enum CaptureReplacement {
+    static func fingerprint(_ url: URL) throws -> String {
+        let descriptor = open(url.path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK)
+        guard descriptor >= 0 else { throw CaptureFailure.invalidDestination }
+        let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+        defer { try? handle.close() }
+        var before = stat()
+        guard fstat(descriptor, &before) == 0, before.st_mode & S_IFMT == S_IFREG,
+              before.st_uid == getuid(), before.st_size <= 48 * 1024 * 1024 else { throw CaptureFailure.invalidDestination }
+        var hash = SHA256()
+        var observedSize = 0
+        while let data = try handle.read(upToCount: 65536), !data.isEmpty {
+            observedSize += data.count
+            guard observedSize <= 48 * 1024 * 1024 else { throw CaptureFailure.invalidDestination }
+            hash.update(data: data)
+        }
+        var after = stat()
+        guard fstat(descriptor, &after) == 0, before.st_size == after.st_size,
+              before.st_mtimespec.tv_sec == after.st_mtimespec.tv_sec, before.st_mtimespec.tv_nsec == after.st_mtimespec.tv_nsec else {
+            throw CaptureFailure.invalidDestination
+        }
+        return hash.finalize().map { String(format: "%02x", $0) }.joined()
+    }
 }
