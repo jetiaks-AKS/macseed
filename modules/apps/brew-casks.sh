@@ -212,7 +212,7 @@ brew_install_cask_command() {
         HOMEBREW_NO_ENV_HINTS=1 HOMEBREW_NO_SUDO=1 HOMEBREW_NO_ASK=1 \
             HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1 \
             HOMEBREW_NO_INSTALL_UPGRADE=1 HOMEBREW_CASK_OPTS='' \
-            brew "$1" --cask --appdir=/Applications "$2"
+            python3 -B modules/apps/brew_items.py homebrew-casks "$2" brew "$1" --cask --appdir=/Applications "$2"
     else
         HOMEBREW_NO_ENV_HINTS=1 brew "$1" --cask "$2"
     fi
@@ -247,8 +247,24 @@ install_brew_cask() {
             error "cask_repair_not_supported"
             return 2
         fi
+        local accepted_skip
+        accepted_skip="$(python3 -B modules/apps/brew_items.py --skip-reason homebrew-casks "$cask")" || {
+            error "Accepted Homebrew item state unavailable"
+            return 2
+        }
+        if [[ "$accepted_skip" == cask_execution_requirements_unsupported ]]; then
+            declare -F verification_application_operation_hook >/dev/null && verification_application_operation_hook homebrew-casks "$cask" install skipped "$accepted_skip"
+            warning "Homebrew cask requires unsupported execution: $cask"
+            return 2
+        fi
         cask_application_readiness "$cask" || {
-            error "$CASK_APPLICATION_CONDITION"
+            if [[ "${MACSEED_APPLICATION_ALLOW_ITEM_SKIPS:-false}" == true &&
+                  "$CASK_APPLICATION_CONDITION" == cask_execution_requirements_unsupported ]]; then
+                declare -F verification_application_operation_hook >/dev/null && verification_application_operation_hook homebrew-casks "$cask" install skipped "$CASK_APPLICATION_CONDITION"
+                warning "Homebrew cask requires unsupported execution: $cask"
+            else
+                error "$CASK_APPLICATION_CONDITION"
+            fi
             return 2
         }
     fi
@@ -269,7 +285,18 @@ install_brew_cask() {
     local install_result=$?
 
     if [[ $install_result -ne 0 ]]; then
-        declare -F verification_application_operation_hook >/dev/null && verification_application_operation_hook homebrew-casks "$cask" "$install_command" failure
+        local reason='' outcome=failure
+        if [[ "${MACSEED_APPLICATION_EXECUTION:-false}" == true ]]; then
+            reason=item_install_failed
+            case "$install_result" in
+                124) reason=item_stalled_timeout ;;
+                125) reason=dependency_failed; outcome=skipped ;;
+                126) reason=dependency_observation_failed ;;
+                127) reason=progress_observation_failed ;;
+                130) return 130 ;;
+            esac
+        fi
+        declare -F verification_application_operation_hook >/dev/null && verification_application_operation_hook homebrew-casks "$cask" "$install_command" "$outcome" "$reason"
         error "Failed to install $cask"
         return 2
     fi
@@ -287,6 +314,12 @@ install_brew_cask() {
         return 2
     fi
 
+    if [[ "${MACSEED_APPLICATION_EXECUTION:-false}" == true ]]; then
+        python3 -B modules/apps/brew_items.py --verified homebrew-casks "$cask" || {
+            error "Homebrew item state unavailable after verification"
+            return 2
+        }
+    fi
     success "$cask installed successfully"
     return 0
 
@@ -321,6 +354,7 @@ install_brew_casks() {
     fi
 
     local missing_casks=0
+    local item_errors=0
 
     while IFS= read -r cask || [[ -n "$cask" ]]; do
 
@@ -358,11 +392,15 @@ install_brew_casks() {
 
         install_brew_cask "$cask" "$install_command"
 
-        if [[ $? -ne 0 ]]; then
-            return 2
+        local item_result=$?
+        if [[ $item_result -ne 0 ]]; then
+            [[ $item_result -ne 130 ]] || return 130
+            [[ "${MACSEED_APPLICATION_EXECUTION:-false}" == true ]] || return 2
+            item_errors=$((item_errors + 1))
         fi
 
     done <<< "$casks"
+    [[ $item_errors -eq 0 ]] || return 2
 
     if [[ $missing_casks -eq 0 ]]; then
 

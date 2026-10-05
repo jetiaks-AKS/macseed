@@ -367,6 +367,44 @@ assert_status 'global symlink blocks Apply' 1 configure_git
 [[ "$("$REAL_GIT" config --file "$TEST_ROOT/foreign.gitconfig" --get user.name)" == Existing ]] &&
 pass 'symlink destination untouched' || fail 'symlink destination untouched'
 
+# Restore updates selected scalar drift while preserving native origin safety.
+BUNDLE_RESTORE_ACTIVE=true
+reset_fixture
+generated_value user.name Desired
+global_value user.name Existing
+assert_status 'Restore Preview plans scalar drift' 0 preview_git_configuration
+[[ "${GIT_CONFIGURATION_ACTIONS[0]}" == restore ]] && pass 'Restore action is planned' || fail 'Restore action missing'
+assert_status 'Restore updates scalar' 0 configure_git
+assert_global 'Restore saved scalar applied' user.name Desired
+assert_status 'Restore second Preview no-op' 0 preview_git_configuration
+[[ "${GIT_CONFIGURATION_ACTIONS[0]}" == skip ]] && pass 'Restore repeat no-op' || fail 'Restore repeated write planned'
+reset_fixture
+generated_value user.name Desired
+global_value pull.ff only
+mkdir -p "$XDG_CONFIG_HOME/git"
+"$REAL_GIT" config --file "$XDG_CONFIG_HOME/git/config" user.name Existing
+assert_status 'Restore updates unique XDG origin with dot file present' 0 configure_git
+[[ "$("$REAL_GIT" config --file "$XDG_CONFIG_HOME/git/config" --get user.name)" == Desired ]] && pass 'XDG scalar restored in place' || fail 'XDG scalar not restored'
+"$REAL_GIT" config --file "$HOME/.gitconfig" --get user.name >/dev/null && fail 'Restore duplicated scalar into dot file' || pass 'Restore keeps single origin'
+reset_fixture
+generated_value user.name Desired
+global_value user.name Existing
+"$REAL_GIT" config --global --add user.name Second
+assert_status 'Restore protects multiple values' 1 configure_git
+[[ "$MODULE_CHANGED" == false ]] && pass 'Restore multivar no mutation' || fail 'Restore mutated multivar'
+reset_fixture
+generated_value user.name Desired
+global_value include.path "$HOME/missing"
+assert_status 'Restore protects includes' 1 configure_git
+assert_unset 'Restore include no mutation' user.name
+reset_fixture
+generated_value user.name Desired
+TEST_GIT_MODE=read-failure
+global_value pull.ff only
+assert_status 'Restore observation error blocks mutation' 2 configure_git
+assert_unset 'Restore read failure no mutation' user.name
+unset BUNDLE_RESTORE_ACTIVE
+
 if [[ $FAILURES -ne 0 ]]; then
     printf '%s Git test(s) failed\n' "$FAILURES"
     exit 1

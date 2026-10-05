@@ -71,9 +71,27 @@ import Foundation
                 selected_groups=groups, selected_categories=selected_categories,selected_item_counts={k:len(v) for k,v in selected_items.items()},
                 include_secure=False,secure_restore_status='not_selected',plan=plan,readiness=dict(ready=not conditions or mode in ('safe','satisfied'),ready_scope='environment',conditions=conditions,reentry='restore_prepare'),
                 has_planned_changes=mode not in ('no_changes','no_changes_attention'),warning_count=1 if mode=='attention' else 0,error_count=0)
+            if mode=='mixed_progress':
+                for row in result['plan']:
+                    if row['domain'] in ('app-store','ssh-configuration'): row['disposition']='satisfied'
             if mode in ('no_changes','no_changes_attention'):
                 for row in result['plan']: row['disposition']='satisfied'
                 if mode=='no_changes_attention': result['plan'][0]['disposition']='warning'
+            if mode in ('item_local','only_item_local','forged_item_local'):
+                casks=[row for row in result['plan'] if row['domain']=='homebrew-casks']
+                casks[1]['disposition']='blocked'
+                casks[1]['reason']='cask_execution_requirements_unsupported'
+                if mode=='only_item_local':
+                    for row in result['plan']:
+                        if row is not casks[1]: row['disposition']='satisfied'
+                result['readiness']['conditions']=[dict(domain='homebrew-casks',code='homebrew_unavailable' if mode=='forged_item_local' else 'cask_execution_requirements_unsupported',status='unsupported',scope='item',selected_item_index=2)]
+                if mode=='item_local':
+                    # Existing no-action conflict semantics are preserved;
+                    # they must not block unrelated executable work in the UI.
+                    preserved=next(row for row in result['plan'] if row['domain']=='git-repositories')
+                    preserved.update(action='none',disposition='conflict',reason='target_conflict')
+                result['readiness']['ready']=True
+                result['has_executable_changes']=any(row['disposition']=='planned' for row in result['plan'])
             if mode=='wrong_selection': result['selection']['categories']=['not-chosen']
         elif operation=='restore_execute':
             assert request['parameters']['include_secure'] is False
@@ -83,6 +101,14 @@ import Foundation
             assert request['parameters']['selection']==last_prepare['parameters']['selection']
             assert request['parameters']['expected_prepared_plan_id']=='a'*64
             if mode=='execute_missing_result': emit('completed'); sys.exit(0)
+            if mode in ('execute_partial','execute_item_skip'):
+                emit('phase_started',dict(phase='bootstrap'))
+                item_reason='cask_execution_requirements_unsupported' if mode=='execute_item_skip' else 'item_stalled_timeout'
+                item_outcome='skipped' if mode=='execute_item_skip' else 'failure'
+                emit('operation_record',dict(domain='homebrew-casks',item_id='1',action='install',outcome=item_outcome,reason=item_reason))
+                details=dict(status='complete',operation_records=[dict(domain='homebrew-casks',item_id='1',action='install',outcome=item_outcome,reason=item_reason),dict(domain='vscode-extensions',item_id='1',action='install',outcome='success',reason=None)],verification_records=[dict(domain='homebrew-casks',item_id='1',conformity='mismatch'),dict(domain='vscode-extensions',item_id='1',conformity='verified')])
+                verification=dict(status='complete',verdict='differences_detected',mismatch_count=1,unverified_count=0,unresolved_count=0,warning_count=0,error_count=1,details=details)
+                emit('failed',dict(code='bootstrap_failed',prepared_plan_id='a'*64,target_mutation_may_have_started=True,independent_work_completed=True,verification=verification)); sys.exit(2)
             if mode=='execute_interrupted':
                 emit('phase_started',dict(phase='bootstrap')); os._exit(9)
             if mode in ('execute_stop_before','execute_stop_after'):
@@ -185,6 +211,91 @@ import Foundation
             let aggregate = DisplayCategory(id: "macOS Settings", title: "macOS Settings", symbol: "slider.horizontal.3", items: settingsRows[0].items + [DisplayItem(id: "attention", title: "Detail", status: status, action: "Needs Attention")])
             precondition(RestorePreviewPresentation.state(aggregate) == "Needs Attention")
         }
+        precondition(RestorePreviewPresentation.readyText(action: "install") == "Ready to Install")
+        precondition(RestorePreviewPresentation.readyText(action: "set_preference") == "Ready to Change")
+        precondition(RestorePreviewPresentation.readyText(action: "create_directory") == "Ready to Create")
+        precondition(RestorePreviewPresentation.readyText(action: "unknown") == "Ready to Restore")
+        precondition(settingsRows[0].items.allSatisfy { $0.restoreReadyText == "Ready to Change" })
+        func event(_ domain: String, _ state: String, item: String = "scope", action: String = "restore") throws -> CoreEvent {
+            try CoreEvent(line: JSONSerialization.data(withJSONObject: ["protocol_version": 1, "operation_id": "test", "sequence": 1,
+                "type": "execution_event", "data": ["domain": domain, "state": state, "item_id": item, "action": action]]))
+        }
+        let frozen = RestoreProgressRow.freeze(preview: productPreview, plan: model.preparation!)
+        precondition(frozen.map(\.id) == productPreview.sections.flatMap(\.rows).map(\.id))
+        precondition(frozen.allSatisfy { $0.project(events: []).status == .waiting })
+        let casks = frozen.first { $0.id == "homebrew-casks" }!
+        let packageRow = frozen.first { $0.id == "vscode-extensions" }!
+        var events = [try event(packageRow.id, "started"), try event(casks.id, "started")]
+        precondition(casks.project(events: events).status == .working && packageRow.project(events: events).status == .working)
+        precondition(frozen.map { $0.project(events: events).id } == frozen.map(\.id))
+        events.append(try event(casks.id, "changed", item: "one-item"))
+        precondition(casks.project(events: events).status == .working)
+        events.append(try event(casks.id, "changed"))
+        precondition(casks.project(events: events).action == "OK")
+        events.append(try event("verification", "started"))
+        precondition(RestoreProgressRow.phase(events: events, mutationPossible: true) == "Verifying restored environment…")
+        precondition(casks.project(events: events).action == "OK" && frozen.count == productPreview.sections.flatMap(\.rows).count)
+        precondition(packageRow.project(events: events).status == .working)
+        events.append(try event(packageRow.id, "failed"))
+        events.append(try event(packageRow.id, "changed"))
+        precondition(packageRow.project(events: events).status == .attention)
+        precondition(RestoreProgressRow.phase(events: [], mutationPossible: false) == "Preparing rebuild…")
+        precondition(RestoreProgressRow.phase(events: [], mutationPossible: true) == "Applying your saved environment…")
+        let settingsProgress = frozen.first { $0.id == "macOS Settings" }!
+        let oneSettingEvent = try event(macOS[0], "changed")
+        let allSettingsEvents = try macOS.map { try event($0, "changed") }
+        precondition(settingsProgress.project(events: [oneSettingEvent]).status != .complete)
+        precondition(settingsProgress.project(events: allSettingsEvents).action == "OK")
+        for (domain, item, name) in [("homebrew-casks", "appcleaner", "AppCleaner"),
+                                     ("homebrew-packages", "tree", "tree"),
+                                     ("vscode-extensions", "anthropic.claude-code", "anthropic.claude-code")] {
+            let row = RestoreProgressRow(id: domain, title: domain, domains: [domain], hasAttention: false,
+                                         itemNames: [domain: [item: name, "next": "Next Item"]])
+            var activityEvents = [try event(domain, "applying", item: item, action: "install")]
+            precondition(row.project(events: activityEvents).restoreActivity == "Installing \(name)…")
+            activityEvents.append(try event("another-domain", "applying", item: "other", action: "install"))
+            precondition(row.project(events: activityEvents).restoreActivity == "Installing \(name)…")
+            activityEvents.append(try event(domain, "changed", item: item))
+            precondition(row.project(events: activityEvents).restoreActivity == nil)
+            activityEvents.append(try event(domain, "applying", item: "next", action: "install"))
+            precondition(row.project(events: activityEvents).restoreActivity == "Installing Next Item…")
+            activityEvents.append(try event(domain, "applying", item: "opaque:unknown", action: "install"))
+            precondition(row.project(events: activityEvents).restoreActivity == nil)
+            activityEvents.append(try event(domain, "applying", item: item, action: "unknown"))
+            precondition(row.project(events: activityEvents).restoreActivity == nil)
+        }
+        let knownActivity = try event(casks.id, "applying", item: "1", action: "install")
+        precondition(casks.project(events: [knownActivity]).restoreActivity == "Installing Core item 1…")
+        let completedItem = try CoreEvent(line: JSONSerialization.data(withJSONObject: ["protocol_version": 1, "operation_id": "test", "sequence": 2,
+            "type": "operation_record", "data": ["domain": casks.id, "item_id": "1", "outcome": "success"]]))
+        precondition(casks.project(events: [knownActivity, completedItem]).restoreActivity == nil)
+        func normalize(_ operations: [[String: Any]], _ verificationRecords: [[String: Any]], lifecycle: [CoreEvent] = []) throws -> RestoreResultFindings {
+            let raw: [String: Any] = ["code": "bootstrap_failed", "verification": ["verdict": "differences_detected", "details": [
+                "operation_records": operations, "verification_records": verificationRecords]]]
+            let payload = try JSONDecoder().decode(CoreJSON.self, from: JSONSerialization.data(withJSONObject: raw)).object
+            return RestoreResultFindings(payload: payload, events: lifecycle, catalog: model.inspection!.restoreSelection, verified: false)
+        }
+        let failedCask: [String: Any] = ["domain": "homebrew-casks", "item_id": "appcleaner", "action": "install", "outcome": "failure", "reason": "install_failed"]
+        let aggregateFailure: [String: Any] = ["domain": "bootstrap", "item_id": "scope", "action": "restore", "outcome": "failure", "reason": "bootstrap_failed"]
+        let mismatch: [String: Any] = ["domain": "homebrew-casks", "item_id": "appcleaner", "conformity": "mismatch"]
+        let normalized = try normalize([failedCask, failedCask, aggregateFailure], [mismatch, mismatch], lifecycle: [try event("homebrew-casks", "failed")])
+        precondition(normalized.findings.count == 1 && normalized.findings[0].id == "homebrew-casks" && normalized.findings[0].status == .attention)
+        precondition(normalized.details.filter { $0.reason == "mismatch" }.count == 1)
+        precondition(normalized.details.filter { $0.reason == "bootstrap_failed" }.count == 1)
+        precondition(normalized.details.contains { $0.title == "Rebuild" && $0.reason == "bootstrap_failed" })
+        precondition(normalized.details.filter { $0.reason == "differences_detected" }.count == 1)
+        let failedExtension: [String: Any] = ["domain": "vscode-extensions", "item_id": "extension", "action": "install", "outcome": "failure", "reason": "install_failed"]
+        let secondSpecificEvent = try event("homebrew-casks", "blocked", item: "other-item")
+        let specificFailures = try normalize([failedCask], [], lifecycle: [secondSpecificEvent])
+        precondition(specificFailures.details.contains { $0.reason == "blocked" })
+        let distinct = try normalize([failedCask, failedExtension], [mismatch])
+        precondition(distinct.findings.map(\.id) == ["homebrew-casks", "vscode-extensions"])
+        var anotherFailure = failedCask; anotherFailure["reason"] = "authorization_required"
+        let sameArea = try normalize([failedCask, anotherFailure], [mismatch])
+        precondition(sameArea.findings.count == 1 && sameArea.details.contains { $0.reason == "authorization_required" })
+        let uncertain = try normalize([], [["domain": "homebrew-casks", "conformity": "unverified"]])
+        precondition(uncertain.findings.count == 1 && uncertain.findings[0].status == .unverified)
+        print("PASS: Structured active items, identity fallback, completion/replacement, concurrent domains and semantic result normalization")
         model.selectItem(packages.id, item: packages.items[0].id, included: true)
         precondition(model.preparation == nil && model.preview == nil && model.state == .review)
         try write("attention", core.appendingPathComponent("mode"))
@@ -193,6 +304,8 @@ import Foundation
         let projected = model.preview!.categories.first { $0.id == packages.id }!.items
         precondition(projected.map(\.action).contains("Already Matches") && projected.map(\.action).contains("Will install"))
         precondition(projected.contains { $0.action.hasPrefix("Conflict:") } && projected.contains { $0.requiresAttention })
+        let attentionScope = RestoreProgressRow.freeze(preview: model.preview!, plan: model.preparation!)
+        precondition(attentionScope.first { $0.id == "homebrew-casks" }?.project(events: []).status == .attention)
         let oldOperation = runtime.operationID
         try write("safe", core.appendingPathComponent("mode")); model.refreshPreview(); await model.waitForCompletion()
         precondition(runtime.operationID != oldOperation && model.ready && model.preparation?.preparedPlanID == String(repeating: "b", count: 64))
@@ -227,13 +340,33 @@ import Foundation
         precondition(requests.allSatisfy { ["capabilities", "bundle_inspect", "restore_prepare"].contains($0["operation"] as! String) })
         precondition(!FileManager.default.fileExists(atPath: core.appendingPathComponent("MUTATION_ATTEMPT").path))
         print("PASS: Capability/inventory, independent areas/groups/items, stable selection IDs, whole/subset requests, Preview correlation/readiness, invalidation, cancellation/interruption and no Execute")
+        for mode in ["item_local", "only_item_local"] {
+            try write(mode, core.appendingPathComponent("mode")); model.refreshPreview(); await model.waitForCompletion()
+            precondition(model.state == .preview && model.ready)
+            precondition(model.canRebuild == (mode == "item_local"))
+            precondition(model.preview!.categories.first { $0.id == "homebrew-casks" }!.items.contains {
+                $0.status == .attention && $0.reason == "cask_execution_requirements_unsupported"
+            })
+            precondition(model.preparation!.readiness.conditions.first!.isItemLocal)
+        }
+        try write("forged_item_local", core.appendingPathComponent("mode")); model.refreshPreview(); await model.waitForCompletion()
+        precondition(model.state == .failed && !model.canRebuild)
         for mode in ["no_changes", "attention"] {
             try write(mode, core.appendingPathComponent("mode")); model.refreshPreview(); await model.waitForCompletion()
             precondition(!model.canRebuild)
+            if mode == "no_changes" {
+                precondition(RestoreProgressRow.freeze(preview: model.preview!, plan: model.preparation!).isEmpty)
+            }
             model.requestRebuild(); precondition(model.state == .preview)
         }
+        try write("mixed_progress", core.appendingPathComponent("mode")); model.refreshPreview(); await model.waitForCompletion()
+        let mixedScope = RestoreProgressRow.freeze(preview: model.preview!, plan: model.preparation!)
+        precondition(!mixedScope.contains { $0.id == "app-store" || $0.id == "ssh-configuration" })
+        let matchingEvents = [try event("app-store", "started"), try event("app-store", "already_satisfied")]
+        precondition(mixedScope.map { $0.project(events: matchingEvents).id } == mixedScope.map(\.id))
+        precondition(mixedScope.allSatisfy { $0.project(events: matchingEvents).status == .waiting })
         let outcomes: [(String, RestoreExecutionPresentation.Outcome)] = [
-            ("execute_clean", .clean), ("execute_attention", .attention),
+            ("execute_clean", .clean), ("execute_partial", .partial), ("execute_item_skip", .partial), ("execute_attention", .attention),
             ("execute_fail_before", .failedBeforeMutation), ("execute_fail_after", .failedAfterMutation),
             ("execute_stale", .failedBeforeMutation), ("execute_interrupted", .interrupted), ("execute_missing_result", .interrupted),
             ("execute_stop_before", .stoppedBeforeMutation), ("execute_stop_after", .stoppedAfterMutation)]
@@ -241,10 +374,12 @@ import Foundation
             try write("clean", core.appendingPathComponent("mode")); model.refreshPreview(); await model.waitForCompletion()
             precondition(model.canRebuild)
             let id = model.preparation!.preparedPlanID
+            let progressIDs = RestoreProgressRow.freeze(preview: model.preview!, plan: model.preparation!).map(\.id)
             model.requestRebuild(); precondition(model.state == .confirming && !runtime.isActive)
             model.cancelRebuildConfirmation(); precondition(model.canRebuild && model.preparation?.preparedPlanID == id)
             model.requestRebuild()
             try write(mode, core.appendingPathComponent("mode")); model.confirmRebuild()
+            precondition(model.executionActivities.map(\.id) == progressIDs && model.executionActivities.allSatisfy { $0.status == .waiting })
             let operation = runtime.operationID
             model.confirmRebuild(); model.choose(source); model.back()
             precondition(runtime.operationID == operation && model.state == .rebuilding)
@@ -259,6 +394,23 @@ import Foundation
             }
             await model.waitForCompletion()
             precondition(model.state == .result && model.executionResult?.outcome == outcome)
+            precondition(model.executionActivities.map(\.id) == progressIDs)
+            precondition(!model.executionActivities.contains { $0.status == .complete })
+            if mode == "execute_partial" {
+                let result = model.executionResult!
+                precondition(result.title == "Rebuild Completed with Issues")
+                precondition(result.findings.count == 1 && result.findings[0].title == "Core item 1")
+                precondition(result.findings[0].action == "Download stalled. Check your network or VPN and try again.")
+                precondition(result.successfulAreas == ["Core label vscode-extensions"])
+                precondition(result.details.contains { $0.reason == "item_stalled_timeout" })
+            }
+            if mode == "execute_item_skip" {
+                precondition(model.executionResult!.title == "Rebuild Completed with Issues")
+                precondition(model.executionResult!.details.contains { $0.reason == "cask_execution_requirements_unsupported" })
+                precondition(model.executionResult!.findings.contains {
+                    $0.title == "Core item 1" && $0.status == .attention && $0.reason == "cask_execution_requirements_unsupported"
+                })
+            }
             precondition(model.preparation == nil && !model.canRebuild)
             try write("clean", core.appendingPathComponent("mode")); model.checkCurrentState(); await model.waitForCompletion()
             precondition(model.state == .preview && model.canRebuild)

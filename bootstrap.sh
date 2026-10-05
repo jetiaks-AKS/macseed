@@ -566,6 +566,10 @@ bootstrap_application_readiness() (
             [[ -n "$cask" && "$cask" != \#* ]] || continue
             blueprint_item_selected homebrew-casks "$cask" || continue
             ((index++))
+            if blueprint_exists; then
+                index="$(blueprint_selected_items homebrew-casks | awk -v item="$cask" '$0 == item { print NR; exit }')"
+                [[ "$index" =~ ^[1-9][0-9]*$ ]] || { echo invalid_selected_input; return 2; }
+            fi
             is_cask_installed "$cask"
             result=$?
             [[ $result -ne 0 ]] || continue
@@ -577,12 +581,19 @@ bootstrap_application_readiness() (
                 printf 'cask_repair_not_supported\t%s\n' "$index"
                 return 2
             fi
-            needs_network=true
-            needs_clt=true
             if ! cask_application_readiness "$cask" >/dev/null 2>&1; then
+                if [[ "${MACSEED_APPLICATION_ALLOW_ITEM_SKIPS:-false}" == true &&
+                      "$CASK_APPLICATION_CONDITION" == cask_execution_requirements_unsupported ]]; then
+                    if [[ "${MACSEED_APPLICATION_READINESS_REPORT:-false}" == true ]]; then
+                        printf '%s\t%s\n' "$CASK_APPLICATION_CONDITION" "$index"
+                    fi
+                    continue # No installer or dependency work for this item.
+                fi
                 printf '%s\t%s\n' "$CASK_APPLICATION_CONDITION" "$index"
                 return 2
             fi
+            needs_network=true
+            needs_clt=true
         done <<< "$casks"
     fi
     if application_scope_selected vscode-extensions; then
@@ -632,7 +643,7 @@ bootstrap_application_readiness() (
 # Each selected domain runs the same production gate in isolation. A failed
 # dependency stops that domain's dependent checks; subsequent domains continue.
 bootstrap_application_readiness_report() {
-    local domain condition
+    local domain condition line
     for domain in homebrew-packages homebrew-casks app-store vscode-extensions git-repositories git-configuration; do
         if [[ "$domain" == git-configuration ]]; then
             blueprint_category_enabled "$domain" && git_configuration_scope_selected || continue
@@ -640,14 +651,16 @@ bootstrap_application_readiness_report() {
             bootstrap_item_scope_selected "$domain" || continue
         fi
         condition="$(bootstrap_application_readiness "$domain")"
-        if [[ "$condition" == ready ]]; then
-            if [[ "$domain" == homebrew-* ]] && ! command -v brew >/dev/null 2>&1; then
-                condition=homebrew_path_activation
-            elif [[ "$domain" == vscode-extensions ]] && ! command -v code >/dev/null 2>&1; then
-                condition=vscode_bundled_cli
+        while IFS= read -r line; do
+            if [[ "$line" == ready ]]; then
+                if [[ "$domain" == homebrew-* ]] && ! command -v brew >/dev/null 2>&1; then
+                    line=homebrew_path_activation
+                elif [[ "$domain" == vscode-extensions ]] && ! command -v code >/dev/null 2>&1; then
+                    line=vscode_bundled_cli
+                fi
             fi
-        fi
-        printf '%s\t%s\n' "$domain" "$condition"
+            printf '%s\t%s\n' "$domain" "$line"
+        done <<< "$condition"
     done
     if [[ "${MACSEED_APPLICATION_SECURE_SELECTED:-false}" == true ]]; then
         condition="$(bootstrap_application_readiness secure-ssh-identities)"
@@ -1053,6 +1066,10 @@ case "$MODE" in
 esac
 
 if [[ "$MODE" == --bootstrap ]]; then
+    if [[ "${MACSEED_APPLICATION_EXECUTION:-false}" == true && -d "${MACSEED_ITEM_STATE_DIR:-}" ]]; then
+        # Traversal completed; individual outcomes and final Verification still own success.
+        : > "$MACSEED_ITEM_STATE_DIR/execution-complete"
+    fi
     toolkit_exit_code
     bootstrap_operation_result=$?
     if [[ $bootstrap_operation_result -eq 2 ]]; then

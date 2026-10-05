@@ -2,6 +2,7 @@
 """Isolated production Preview checks for structured Restore preparation."""
 
 import json
+import hashlib
 import importlib.util
 import os
 from pathlib import Path
@@ -10,6 +11,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import tarfile
 import time
 import unittest
 
@@ -193,7 +195,7 @@ class RestorePrepareTests(unittest.TestCase):
         self.assertFalse(events[-1]['data']['publication_started'])
 
 
-    def test_git_identity_values_redacted_and_conflict_typed(self):
+    def test_git_identity_values_redacted_and_restore_planned(self):
         blueprint = self.stage / "blueprint.conf"
         blueprint.write_text(blueprint.read_text().replace('git-configuration="false"', 'git-configuration="true"')
                              .replace('[git-configuration]\n', '[git-configuration]\nuser.name\n'))
@@ -201,8 +203,8 @@ class RestorePrepareTests(unittest.TestCase):
         (self.home / '.gitconfig').write_text('[user]\nname = PRIVATE_TARGET_IDENTITY\n')
         self.pack()
         result = self.plan_result()
-        self.assertIn({"domain": "git-configuration", "item_id": "user.name", "action": "none",
-                       "disposition": "conflict", "reason": "target_conflict"},
+        self.assertIn({"domain": "git-configuration", "item_id": "user.name", "action": "set_setting",
+                       "disposition": "planned", "reason": None},
                       [{key: value for key, value in row.items() if key != "selection_item_id"} for row in result["plan"]])
         self.assertNotIn("PRIVATE_SOURCE_IDENTITY", json.dumps(result))
         self.assertNotIn("PRIVATE_TARGET_IDENTITY", json.dumps(result))
@@ -248,7 +250,7 @@ class RestorePrepareTests(unittest.TestCase):
         result = self.plan_result()
         self.assertTrue(result['readiness']['ready'])
         self.assertIn({'domain': 'homebrew-packages', 'code': 'homebrew_path_activation',
-                       'status': 'safely_satisfiable'}, result['readiness']['conditions'])
+                       'status': 'safely_satisfiable', 'scope': 'operation'}, result['readiness']['conditions'])
         self.assertIn({'domain': 'homebrew-packages', 'item_id': 'fixture-formula', 'action': 'none',
                        'disposition': 'satisfied', 'reason': None},
                       [{key: value for key, value in row.items() if key != 'selection_item_id'} for row in result['plan']])
@@ -396,7 +398,36 @@ verify_workspace_folders() {
         self.assertTrue(any(row['support'] == 'unsupported' for row in details['verification_records']))
         self.assertEqual({row['code'] for row in details['diagnostics']}, {'confirmed_mismatch', 'unsupported_predicate'})
 
-    def test_conflict_preservation_has_typed_operation_and_conformity(self):
+    def test_git_scalar_restore_selection_idempotence_and_stale_plan(self):
+        self.allow_application_bootstrap()
+        blueprint = self.stage / 'blueprint.conf'
+        selected = ['core.editor', 'init.defaultBranch', 'pull.rebase', 'user.name', 'user.email']
+        blueprint.write_text(blueprint.read_text().replace('git-configuration="false"', 'git-configuration="true"')
+                            .replace('[git-configuration]\n', '[git-configuration]\n' + '\n'.join(selected) + '\n'))
+        bundle.write_file(self.stage / 'generated/git.conf', b'[core]\neditor = vim\n[init]\ndefaultBranch = main\n[pull]\nrebase = true\nff = only\n[user]\nname = Saved Name\nemail = saved@example.invalid\n')
+        target = self.home / '.gitconfig'
+        target.write_text('[core]\neditor = MACSEED_GATE_INVALID_EDITOR\n[init]\ndefaultBranch = macseed-gate-invalid\n[pull]\nrebase = true\nff = false\n[user]\nname = Current Name\nemail = current@example.invalid\n')
+        self.pack()
+        plan = self.plan_result()
+        rows = {r['item_id']: r for r in plan['plan'] if r['domain'] == 'git-configuration'}
+        self.assertEqual(rows['pull.rebase']['disposition'], 'satisfied')
+        for key in selected:
+            if key != 'pull.rebase': self.assertEqual(rows[key]['disposition'], 'planned')
+        self.assertNotIn('pull.ff', rows)
+        result, events = self.execute('0' * 64)
+        self.assertEqual(events[-1]['data']['code'], 'stale_plan')
+        self.assertIn('MACSEED_GATE_INVALID_EDITOR', target.read_text())
+        result, events = self.execute(plan['prepared_plan_id'])
+        self.assertEqual(result.returncode, 0, events)
+        details = events[-2]['data']['verification']['details']
+        self.assertTrue(all(r['conformity'] == 'verified' for r in details['verification_records'] if r['domain'] == 'git-configuration'))
+        for key, expected in [('core.editor','vim'),('init.defaultBranch','main'),('user.name','Saved Name'),('user.email','saved@example.invalid'),('pull.ff','false')]:
+            value = subprocess.check_output(['git','config','--file',str(target),'--get',key]).decode().strip()
+            self.assertEqual(value, expected)
+        second = self.plan_result()
+        self.assertTrue(all(r['disposition'] == 'satisfied' for r in second['plan'] if r['domain'] == 'git-configuration'))
+
+    def test_git_restore_has_typed_operation_and_verified_conformity(self):
         self.allow_application_bootstrap()
         blueprint = self.stage / 'blueprint.conf'
         blueprint.write_text(blueprint.read_text().replace('git-configuration="false"', 'git-configuration="true"')
@@ -408,11 +439,10 @@ verify_workspace_folders() {
         result, events = self.execute(self.plan_result()['prepared_plan_id'])
         self.assertEqual(result.returncode, 0, events)
         details = events[-2]['data']['verification']['details']
-        self.assertTrue(any(row['domain'] == 'git-configuration' and row['reason'] == 'target_conflict'
-                            and row['outcome'] == 'skipped' for row in details['operation_records']))
-        self.assertTrue(any(row['domain'] == 'git-configuration' and row['conformity'] == 'mismatch'
+        self.assertTrue(any(row['domain'] == 'git-configuration' and row['outcome'] == 'success' for row in details['operation_records']))
+        self.assertTrue(any(row['domain'] == 'git-configuration' and row['conformity'] == 'verified'
                             for row in details['verification_records']))
-        self.assertEqual(target.read_text(), '[user]\nname = PRIVATE_TARGET_IDENTITY\n')
+        self.assertIn('PRIVATE_SOURCE_IDENTITY', target.read_text())
         for private in (b'PRIVATE_SOURCE_IDENTITY', b'PRIVATE_TARGET_IDENTITY'):
             self.assertNotIn(private, result.stdout + result.stderr)
 
@@ -592,6 +622,7 @@ case "$*" in
   "list --formula --full-name") [[ ! -f "$TEST_CASK_STATE.formula" ]] || echo fixture-formula ;;
   "list --cask") [[ ! -f "$TEST_CASK_STATE" ]] || echo fixture-cask ;;
   "info --json=v2 --cask fixture-cask") cat "$TEST_CASK_METADATA" ;;
+  "info --json=v2 --formula fixture-formula") echo '{"formulae":[{"full_name":"fixture-formula","dependencies":[]}]}' ;;
   "install fixture-formula") touch "$TEST_CASK_STATE.formula" ;;
   install\\ --cask\\ --appdir=*\\ fixture-cask)
     [[ "$MACSEED_APPLICATION_EXECUTION" == true && "$HOMEBREW_NO_SUDO" == 1 &&
@@ -695,23 +726,222 @@ exit 0
         self.assertFalse(Path(self.environment["TEST_CASK_LOG"]).exists())
         self.assertFalse((self.project / "config/.bundle-publication").exists())
 
-    def test_blocked_cask_prevents_mixed_plan_publication(self):
+    def test_unsupported_cask_continues_independent_formula(self):
         metadata = self.cask_fixture(mixed=True)
         metadata["casks"][0]["artifacts"].append({"pkg": ["Fixture.pkg"]})
         Path(self.environment["TEST_CASK_METADATA"]).write_text(json.dumps(metadata))
         self.pack()
-        plan = self.invoke()[1][1]["data"]["prepared_plan_id"]
-        result, events = self.execute(plan)
+        prepared = self.plan_result()
+        self.assertTrue(prepared['readiness']['ready'])
+        self.assertTrue(prepared['has_executable_changes'])
+        result, events = self.execute(prepared['prepared_plan_id'])
+        self.assertEqual(result.returncode, 2, events)
+        final = events[-1]['data']
+        self.assertEqual(final['code'], 'bootstrap_failed')
+        self.assertTrue(final['independent_work_completed'])
+        self.assertEqual(final['verification']['status'], 'complete')
+        self.assertTrue(Path(self.environment['TEST_CASK_STATE'] + '.formula').exists())
+        self.assertFalse(Path(self.environment['TEST_CASK_LOG']).exists())
+        self.assertTrue(any(e['type'] == 'operation_record' and
+            e['data'].get('outcome') == 'skipped' and
+            e['data'].get('reason') == 'cask_execution_requirements_unsupported' for e in events))
+        self.assertIn('fixture-cask', (self.project / 'config/blueprint.conf').read_text())
+
+    def mixed_unsupported_casks(self):
+        base = self.cask_fixture()
+        rows = {}
+        for name in ('item-a', 'item-b', 'item-c', 'dependent'):
+            row = json.loads(json.dumps(base['casks'][0]))
+            row['token'] = name
+            row['artifacts'][0]['target'] = str(self.home / 'Applications' / (name + '.app'))
+            if name == 'item-b':
+                row['artifacts'].append({'pkg': ['fixture.pkg']})
+            if name == 'dependent':
+                row['depends_on'] = {'cask': ['item-b']}
+            rows[name] = row
+        Path(self.environment['TEST_CASK_METADATA']).write_text(json.dumps(rows))
+        blueprint = self.stage / 'blueprint.conf'
+        blueprint.write_text(blueprint.read_text().replace('fixture-cask\n',
+                            'item-c\nitem-b\nitem-a\ndependent\n'))
+        (self.stage / 'generated/brew-casks.conf').write_bytes(
+                          b'item-a\nitem-b\nitem-c\ndependent\n')
+        brew = self.root / 'bin/brew'
+        brew.write_text("#!/usr/bin/env python3\n" + '''import json, os, sys
+from pathlib import Path
+args = sys.argv[1:]
+rows = json.loads(Path(os.environ['TEST_CASK_METADATA']).read_text())
+if args == ['--prefix']: print('/opt/homebrew')
+elif args == ['list', '--formula', '--full-name']: pass
+elif args == ['list', '--cask']:
+    for token, row in rows.items():
+        if Path(row['artifacts'][0]['target']).is_dir(): print(token)
+elif args[:3] == ['info', '--json=v2', '--cask']:
+    print(json.dumps({'casks': [rows[args[3]]]}))
+elif args[:2] == ['install', '--cask']:
+    assert os.environ['HOMEBREW_NO_SUDO'] == '1'
+    assert os.environ['HOMEBREW_NO_AUTO_UPDATE'] == '1'
+    name = args[-1]
+    with open(os.environ['TEST_CASK_LOG'], 'a') as out: out.write(name + '\\n')
+    Path(rows[name]['artifacts'][0]['target']).mkdir()
+else: sys.exit(2)
+''')
+        brew.chmod(0o700)
+        return rows
+
+    def test_mixed_unsupported_casks_keep_selection_and_execute_safe_items(self):
+        self.mixed_unsupported_casks()
+        self.pack()
+        prepared = self.plan_result()
+        self.assertTrue(prepared['readiness']['ready'], prepared)
+        self.assertTrue(prepared['has_executable_changes'])
+        rows = {row['item_id']: row for row in prepared['plan'] if row['domain'] == 'homebrew-casks'}
+        self.assertEqual(set(rows), {'item-a', 'item-b', 'item-c', 'dependent'})
+        for item in ('item-a', 'item-c'):
+            self.assertEqual(rows[item]['disposition'], 'planned')
+        for item in ('item-b', 'dependent'):
+            self.assertEqual(rows[item]['disposition'], 'blocked')
+            self.assertEqual(rows[item]['reason'], 'cask_execution_requirements_unsupported')
+        conditions = [c for c in prepared['readiness']['conditions'] if c.get('scope') == 'item']
+        self.assertEqual({c['selected_item_index'] for c in conditions}, {2, 4})
+        result, events = self.execute(prepared['prepared_plan_id'])
+        self.assertEqual(result.returncode, 2, events)
+        final = events[-1]['data']
+        self.assertTrue(final['independent_work_completed'])
+        self.assertEqual(final['verification']['status'], 'complete')
+        self.assertGreater(final['verification']['mismatch_count'], 0)
+        self.assertEqual(Path(self.environment['TEST_CASK_LOG']).read_text().splitlines(), ['item-a', 'item-c'])
+        operations = final['verification']['details']['operation_records']
+        self.assertEqual({r['item_id'] for r in operations if r['domain'] == 'homebrew-casks' and r['outcome'] == 'skipped'}, {'item-b', 'dependent'})
+        fresh = self.plan_result()
+        fresh_rows = {r['item_id']: r for r in fresh['plan'] if r['domain'] == 'homebrew-casks'}
+        self.assertEqual(fresh_rows['item-a']['disposition'], 'satisfied')
+        self.assertEqual(fresh_rows['item-c']['disposition'], 'satisfied')
+        self.assertFalse(fresh['has_executable_changes'])
+
+    def test_cask_artifact_requirements_do_not_leak_across_orders(self):
+        originals = self.mixed_unsupported_casks()
+        rows = {}
+        names = ('safe-a', 'unsafe-wrapper', 'safe-c', 'unsafe-binary', 'unsafe-cli')
+        for name in names:
+            row = json.loads(json.dumps(originals['item-a']))
+            row['token'] = name
+            target = str(self.home / 'Applications' / (name + '.app'))
+            row['artifacts'] = [{'app': [name + '.app'], 'target': target}, {'zap': [{}]}]
+            if name == 'safe-a': row['artifacts'].append({'uninstall': [{}]})
+            if name in ('unsafe-wrapper', 'unsafe-cli'):
+                arguments = {'executable': target + '/Contents/MacOS/cli'}
+                if name == 'unsafe-cli': arguments['args'] = ['--cli']
+                row['artifacts'].append({'command_wrapper': [name, arguments],
+                                         'target': '/opt/homebrew/bin/' + name})
+            if name == 'unsafe-binary':
+                row['artifacts'].append({'binary': [target + '/Contents/MacOS/cli', {'target': name}],
+                                         'target': '/opt/homebrew/bin/' + name})
+            rows[name] = row
+        Path(self.environment['TEST_CASK_METADATA']).write_text(json.dumps(rows))
+        blueprint = self.stage / 'blueprint.conf'
+        original = blueprint.read_text()
+        for source_order, config_order in ((names, tuple(reversed(names))),
+                (tuple(reversed(names)), ('unsafe-cli', 'safe-c', 'safe-a', 'unsafe-binary', 'unsafe-wrapper'))):
+            with self.subTest(order=source_order):
+                blueprint.write_text(original.replace('item-c\nitem-b\nitem-a\ndependent\n',
+                                                      ''.join(name + '\n' for name in source_order)))
+                (self.stage / 'generated/brew-casks.conf').write_text(''.join(name + '\n' for name in config_order))
+                if self.archive.exists(): self.archive.unlink()
+                self.pack()
+                prepared = self.plan_result()
+                self.assertTrue(prepared['readiness']['ready'])
+                self.assertTrue(prepared['has_executable_changes'])
+                plan = {r['item_id']: r for r in prepared['plan'] if r['domain'] == 'homebrew-casks'}
+                self.assertEqual(set(plan), set(names))
+                for name in names:
+                    unsupported = name.startswith('unsafe-')
+                    self.assertEqual(plan[name]['disposition'], 'blocked' if unsupported else 'planned')
+                    self.assertEqual(plan[name]['reason'], 'cask_execution_requirements_unsupported' if unsupported else None)
+                    expected = 'restore:' + hashlib.sha256(('homebrew-casks\0' + name).encode()).hexdigest()
+                    self.assertEqual(plan[name]['selection_item_id'], expected)
+                conditions = [c for c in prepared['readiness']['conditions'] if c.get('scope') == 'item']
+                self.assertEqual({source_order[c['selected_item_index'] - 1] for c in conditions},
+                                 {'unsafe-wrapper', 'unsafe-binary', 'unsafe-cli'})
+                self.assertEqual(prepared['prepared_plan_id'], self.plan_result()['prepared_plan_id'])
+        # The previous first-blocker policy could not classify later items:
+        # Preview proposed install for them even though the same classifier rejects them.
+        environment = dict(self.environment, BLUEPRINT_FILE=str(blueprint),
+                           BLUEPRINT_GENERATED_DIR=str(self.stage / 'generated'),
+                           BUNDLE_RESTORE_ACTIVE='true', MACSEED_APPLICATION_EXECUTION='true',
+                           MACSEED_APPLICATION_ALLOW_ITEM_SKIPS='false')
+        previous = subprocess.run(['bash', './bootstrap.sh', '--application-readiness'],
+                                  cwd=self.project, env=environment, capture_output=True)
+        self.assertEqual(previous.returncode, 2)
+        self.assertEqual(previous.stdout.decode().strip(), 'cask_execution_requirements_unsupported\t1')
+        result, events = self.execute(prepared['prepared_plan_id'])
+        self.assertEqual(result.returncode, 2, events)
+        self.assertEqual(Path(self.environment['TEST_CASK_LOG']).read_text().splitlines(), ['safe-c', 'safe-a'])
+        operations = events[-1]['data']['verification']['details']['operation_records']
+        self.assertEqual({r['item_id'] for r in operations if r['domain'] == 'homebrew-casks' and r['outcome'] == 'skipped'},
+                         {'unsafe-wrapper', 'unsafe-binary', 'unsafe-cli'})
+        self.assertTrue(events[-1]['data']['independent_work_completed'])
+        self.assertEqual(events[-1]['data']['verification']['status'], 'complete')
+
+    def test_accepted_unsupported_item_stays_skipped_after_late_metadata_change(self):
+        self.mixed_unsupported_casks()
+        self.pack()
+        prepared = self.plan_result()
+        entrypoint = self.project / 'bootstrap.sh'
+        marker = '        run_module "Homebrew Casks" install_brew_casks'
+        change = """        python3 -B - <<'FIXTURE'
+import json, os
+from pathlib import Path
+path = Path(os.environ['TEST_CASK_METADATA'])
+rows = json.loads(path.read_text())
+rows['item-b']['artifacts'].pop()
+path.write_text(json.dumps(rows))
+FIXTURE
+"""
+        original = entrypoint.read_text()
+        self.assertIn(marker, original)
+        entrypoint.write_text(original.replace(marker, change + marker))
+        result, events = self.execute(prepared['prepared_plan_id'])
+        self.assertEqual(result.returncode, 2, events)
+        self.assertEqual(Path(self.environment['TEST_CASK_LOG']).read_text().splitlines(), ['item-a', 'item-c'])
+        skipped = [e['data'] for e in events if e['type'] == 'operation_record' and e['data'].get('outcome') == 'skipped']
+        self.assertTrue(any(r['item_id'] == 'item-b' and r['reason'] == 'cask_execution_requirements_unsupported' for r in skipped))
+
+    def test_only_unsupported_work_cannot_execute(self):
+        metadata = self.cask_fixture()
+        metadata['casks'][0]['artifacts'].append({'pkg': ['fixture.pkg']})
+        Path(self.environment['TEST_CASK_METADATA']).write_text(json.dumps(metadata))
+        blueprint = self.stage / 'blueprint.conf'
+        blueprint.write_text(blueprint.read_text().replace('[workspace-folders]\nProjects\n', '[workspace-folders]\n'))
+        self.pack()
+        prepared = self.plan_result()
+        self.assertFalse(prepared['has_executable_changes'])
+        result, events = self.execute(prepared['prepared_plan_id'])
         self.assertEqual(result.returncode, 2)
-        final = events[-1]["data"]
-        self.assertEqual(final["code"], "cask_execution_requirements_unsupported")
-        self.assertEqual(final["selected_item_index"], 1)
-        self.assertFalse(final["publication_started"])
-        self.assertFalse(final["target_mutation_may_have_started"])
-        self.assertFalse(Path(self.environment["TEST_CASK_STATE"] + ".formula").exists())
-        self.assertIn("fixture-formula", (self.stage / "blueprint.conf").read_text())
-        self.assertIn("fixture-cask", (self.stage / "blueprint.conf").read_text())
-        self.assertNotIn(b"Would install", result.stdout)
+        self.assertEqual(events[-1]['data']['code'], 'no_executable_work')
+        self.assertFalse(events[-1]['data']['publication_started'])
+        self.assertFalse(Path(self.environment['TEST_CASK_LOG']).exists())
+
+    def test_unsupported_cask_preserves_global_blocker_and_stale_plan(self):
+        rows = self.mixed_unsupported_casks()
+        self.pack()
+        prepared = self.plan_result()
+        rows['item-b']['artifacts'].pop()
+        Path(self.environment['TEST_CASK_METADATA']).write_text(json.dumps(rows))
+        result, events = self.execute(prepared['prepared_plan_id'])
+        self.assertEqual(events[-1]['data']['code'], 'stale_plan')
+        self.assertFalse(events[-1]['data']['publication_started'])
+        rows['item-b']['artifacts'].append({'pkg': ['fixture.pkg']})
+        Path(self.environment['TEST_CASK_METADATA']).write_text(json.dumps(rows))
+        brew = self.root / 'bin/brew'
+        original = brew.read_text()
+        brew.write_text(original.replace("if args == ['--prefix']: print('/opt/homebrew')", "if args == ['--prefix']: sys.exit(2)"))
+        blocked = self.plan_result()
+        self.assertFalse(blocked['readiness']['ready'])
+        self.assertTrue(any(c['code'] == 'homebrew_unavailable' and c['scope'] == 'operation' for c in blocked['readiness']['conditions']))
+        result, events = self.execute(blocked['prepared_plan_id'])
+        self.assertEqual(events[-1]['data']['code'], 'homebrew_unavailable')
+        self.assertFalse(events[-1]['data']['publication_started'])
+        self.assertFalse(Path(self.environment['TEST_CASK_LOG']).exists())
 
     def test_cask_metadata_artifact_boundary(self):
         metadata = self.cask_fixture()
@@ -833,7 +1063,7 @@ exit 0
         self.assertTrue(any(row["module"] == "preview_vscode_extensions" and row["planned"]
                             for row in prepared[1]["data"]["modules"]))
         self.assertIn({"domain": "vscode-extensions", "code": "vscode_bundled_cli",
-                       "status": "safely_satisfiable"}, prepared[1]["data"]["readiness"]["conditions"])
+                       "status": "safely_satisfiable", "scope": "operation"}, prepared[1]["data"]["readiness"]["conditions"])
         result, events = self.execute(prepared[1]["data"]["prepared_plan_id"])
         self.assertEqual(result.returncode, 0, events)
         self.assertEqual(events[-2]["data"]["verification"]["verdict"],
@@ -965,6 +1195,64 @@ esac
                            'HAS_TASKS="false"\nHAS_LAUNCH="false"\n'
                            'HAS_EXTENSIONS="false"\n').encode())
         return self.home / "Projects/repo"
+
+    def test_repository_preview_identity_with_reversed_config_order(self):
+        self.repository_fixture()
+        blueprint = self.stage / "blueprint.conf"
+        blueprint.write_text(blueprint.read_text().replace(
+            '[git-repositories]\nrepo\n', '[git-repositories]\nrepo-b\nrepo-a\n'))
+        config = self.stage / "generated/workspace/repositories.conf"
+        template = config.read_text()
+        config.write_text(template.replace('repo', 'repo-a') +
+                          template.replace('repo', 'repo-b'))
+        existing = self.home / "Projects/repo-a"
+        existing.mkdir(parents=True)
+        (existing / '.git').mkdir()
+        (existing / '.branch').write_text('main\n')
+        (existing / 'user-content').write_text('preserve\n')
+        self.pack()
+        # Capture canonicalizes source HOME; unpack expands each ~/ target to
+        # this disposable HOME, independently of Blueprint/config ordering.
+        with tarfile.open(self.archive) as archive:
+            member = next(m for m in archive.getmembers()
+                          if m.name.endswith('workspace/repositories.conf'))
+            self.assertIn(b'PATH="~/Projects/repo-a"', archive.extractfile(member).read())
+        for selected in (None, {'categories': [], 'items': {'git-repositories': [
+                'restore:' + hashlib.sha256(
+                    ('git-repositories\0repo-a').encode()).hexdigest()]}}):
+            result, events = self.invoke(selection=selected)
+            self.assertEqual(result.returncode, 0, events)
+            plan = events[1]['data']
+            rows = {row['display_name']: row for row in plan['plan']
+                    if row['domain'] == 'git-repositories'}
+            self.assertEqual(rows['repo-a']['disposition'], 'satisfied')
+            self.assertEqual(rows['repo-a']['action'], 'none')
+            if selected is None:
+                self.assertEqual(rows['repo-a']['item_id'], '2')
+                self.assertEqual(rows['repo-b']['item_id'], '1')
+                self.assertEqual(rows['repo-b']['disposition'], 'planned')
+                self.assertEqual(rows['repo-b']['action'], 'clone')
+            else:
+                self.assertEqual(set(rows), {'repo-a'})
+                self.assertEqual(rows['repo-a']['item_id'], '1')
+            self.assertEqual(plan['prepared_plan_id'],
+                             self.invoke(selection=selected)[1][1]['data']['prepared_plan_id'])
+        self.assertFalse((self.home / 'Projects/repo-b').exists())
+        self.assertEqual((existing / 'user-content').read_text(), 'preserve\n')
+        self.assertFalse((self.root / 'repo-log').exists())
+        self.assertFalse((self.root / 'mutations').exists())
+        self.assertFalse((self.project / 'config/generated').exists())
+        prepared = self.invoke()[1][1]['data']['prepared_plan_id']
+        changed = self.home / 'Projects/repo-b'
+        changed.mkdir()
+        (changed / '.git').mkdir()
+        (changed / '.branch').write_text('main\n')
+        result, events = self.execute(prepared)
+        self.assertEqual(events[-1]['data']['code'], 'stale_plan', events)
+        self.assertEqual(result.returncode, 2)
+        self.assertFalse(events[-1]['data']['publication_started'])
+        self.assertFalse((self.root / 'repo-log').exists())
+        self.assertFalse((self.project / 'config/generated').exists())
 
     def test_repository_clone_convergence_and_existing_coverage(self):
         target = self.repository_fixture(mixed=True)
@@ -1221,6 +1509,7 @@ case "$*" in
   --prefix) echo /opt/homebrew ;;
   "list --formula --full-name")
     [[ ! -f "$TEST_FORMULA_INSTALLED" ]] || echo fixture-formula ;;
+  "info --json=v2 --formula fixture-formula") echo '{"formulae":[{"full_name":"fixture-formula","dependencies":[]}]}' ;;
   "install fixture-formula")
     [[ "$MACSEED_APPLICATION_EXECUTION" == true && "$HOMEBREW_NO_SUDO" == 1 &&
        "$HOMEBREW_NO_INSTALL_CLEANUP" == 1 && ! -t 0 && ! -t 1 ]] || exit 2

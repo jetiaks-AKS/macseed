@@ -188,7 +188,7 @@ repository_preview() {
 
     case $inspection_result in
         1)
-            preview_record git-repositories "${preview_repository_index:-0}" clone planned
+            preview_record git-repositories "$repository" clone planned
             preview_action "Would clone repository: $repository"
             return 0
             ;;
@@ -205,7 +205,7 @@ repository_preview() {
         return 2
     fi
     if [[ $inspection_result -eq 1 ]]; then
-        preview_record git-repositories "${preview_repository_index:-0}" none conflict target_not_repository
+        preview_record git-repositories "$repository" none conflict target_not_repository
         warning "Directory is not a Git repository"
         return 1
     fi
@@ -216,7 +216,7 @@ repository_preview() {
     fi
 
     if [[ "$current_remote" != "$expected_remote" ]]; then
-        preview_record git-repositories "${preview_repository_index:-0}" none conflict origin_mismatch
+        preview_record git-repositories "$repository" none conflict origin_mismatch
         warning "Remote does not match"
         return 1
     fi
@@ -227,7 +227,7 @@ repository_preview() {
     fi
 
     if [[ "$current_branch" == "$expected_branch" ]]; then
-        preview_record git-repositories "${preview_repository_index:-0}" none satisfied
+        preview_record git-repositories "$repository" none satisfied
         return 0
     fi
 
@@ -238,13 +238,13 @@ repository_preview() {
         return 2
     fi
     if [[ $inspection_result -eq 1 ]]; then
-        preview_record git-repositories "${preview_repository_index:-0}" switch_branch conflict dirty_worktree
+        preview_record git-repositories "$repository" switch_branch conflict dirty_worktree
         warning "Branch does not match"
         warning "Repository has uncommitted changes"
         return 1
     fi
 
-    preview_record git-repositories "${preview_repository_index:-0}" switch_branch planned
+    preview_record git-repositories "$repository" switch_branch planned
     preview_action "Would switch repository branch: $repository -> $expected_branch"
     return 0
 }

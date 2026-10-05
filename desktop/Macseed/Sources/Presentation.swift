@@ -83,6 +83,8 @@ struct DisplayItem: Identifiable, Equatable {
     let status: DisplayStatus
     let action: String
     var reason: String? = nil
+    var restoreReadyText: String? = nil
+    var restoreActivity: String? = nil
 }
 
 struct DisplayCategory: Identifiable, Equatable {

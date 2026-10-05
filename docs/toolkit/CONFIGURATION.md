@@ -410,7 +410,15 @@ executable is available in PATH; it is neither run for testing nor installed.
 Preview shows keys, not values. Bootstrap creates only selected missing direct
 global entries and verifies value/origin. Matching state is no-op; differing or
 multiple values and unavailable editors warn and preserve the target. Observation
-failure blocks mutation; unrelated entries remain. No automatic replacement/removal.
+failure blocks mutation; unrelated entries remain. Ordinary Bootstrap does not replace values.
+
+Bundle Restore plans `set_setting` for selected differing scalars and restores the
+saved value in its unique validated physical origin. It re-observes count/value/
+origin before writing with native Git fixed-value matching, then verifies the
+saved value and single origin. Matching values are no-op; unselected keys remain
+untouched. Multiple values/origins, includes, externally managed files, unavailable
+saved editors and observation errors retain their existing protections. Restore
+never removes keys or changes Capture semantics.
 
 ## SSH configuration
 

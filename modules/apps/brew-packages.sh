@@ -131,7 +131,7 @@ brew_install_formula() {
     if [[ "${MACSEED_APPLICATION_EXECUTION:-false}" == true ]]; then
         HOMEBREW_NO_ENV_HINTS=1 HOMEBREW_NO_SUDO=1 \
             HOMEBREW_NO_INSTALL_CLEANUP=1 HOMEBREW_NO_INSTALL_UPGRADE=1 \
-            brew install "$1"
+            python3 -B modules/apps/brew_items.py homebrew-packages "$1" brew install "$1"
     else
         HOMEBREW_NO_ENV_HINTS=1 brew install "$1"
     fi
@@ -164,6 +164,7 @@ install_brew_packages() {
     fi
 
     local missing_packages=0
+    local item_errors=0
     local package
     local inspection_result
 
@@ -210,10 +211,22 @@ install_brew_packages() {
 
         local install_result=$?
         if [[ $install_result -ne 0 ]]; then
-            declare -F verification_operation_hook >/dev/null && verification_operation_hook homebrew-packages "$package" install failure
-
+            local reason='' outcome=failure
+            if [[ "${MACSEED_APPLICATION_EXECUTION:-false}" == true ]]; then
+                reason=item_install_failed
+                case "$install_result" in
+                    124) reason=item_stalled_timeout ;;
+                    125) reason=dependency_failed; outcome=skipped ;;
+                    126) reason=dependency_observation_failed ;;
+                    127) reason=progress_observation_failed ;;
+                    130) return 130 ;;
+                esac
+            fi
+            declare -F verification_operation_hook >/dev/null && verification_operation_hook homebrew-packages "$package" install "$outcome" "$reason"
             error "Failed to install $package"
-            return 2
+            [[ "${MACSEED_APPLICATION_EXECUTION:-false}" == true ]] || return 2
+            item_errors=$((item_errors + 1))
+            continue
 
         fi
 
@@ -227,12 +240,23 @@ install_brew_packages() {
         declare -F verification_post_hook >/dev/null && verification_post_hook "$inspection_result"
         if [[ $inspection_result -ne 0 ]]; then
             error "Failed to verify Homebrew formula: $package"
-            return 2
+            [[ "${MACSEED_APPLICATION_EXECUTION:-false}" == true ]] || return 2
+            item_errors=$((item_errors + 1))
+            continue
         fi
 
+        if [[ "${MACSEED_APPLICATION_EXECUTION:-false}" == true ]]; then
+            python3 -B modules/apps/brew_items.py --verified homebrew-packages "$package" || {
+                error "Homebrew item state unavailable after verification"
+                item_errors=$((item_errors + 1))
+                continue
+            }
+        fi
         success "$package installed successfully"
 
     done <<< "$packages"
+
+    [[ $item_errors -eq 0 ]] || return 2
 
     if [[ $missing_packages -eq 0 ]]; then
 

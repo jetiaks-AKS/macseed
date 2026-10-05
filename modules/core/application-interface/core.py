@@ -180,6 +180,13 @@ def prepared_restore(path, disabled_groups, include_secure, selection=None):
             if len(fields) != 5 or fields[0] not in domains:
                 raise PreviewFailed()
             domain, item, action, disposition, reason = fields
+            # Production inspection follows config section order, which need not
+            # match Blueprint order. Correlate by section identity before exposing
+            # the existing private numeric Protocol handle.
+            if domain == "git-repositories":
+                if item not in sections[domain]:
+                    raise PreviewFailed()
+                item = str(sections[domain].index(item) + 1)
             if action not in {"none", "install", "reinstall", "create_directory", "replace_with_backup",
                               "set_preference", "restart_process", "set_setting", "create", "clone", "switch_branch"} or disposition not in {
                               "satisfied", "planned", "blocked", "conflict", "warning"}:
@@ -244,6 +251,7 @@ def prepared_restore(path, disabled_groups, include_secure, selection=None):
             "plan": records,
             "readiness": requirements,
             "has_planned_changes": any(item["planned"] for item in modules) or include_secure,
+            "has_executable_changes": any(row["disposition"] == "planned" for row in records) or include_secure,
             "warning_count": sum(item["status"] == "warning" for item in modules),
             "error_count": sum(item["status"] == "error" for item in modules),
             "preview_detail_level": "selected_requirements",
@@ -281,6 +289,7 @@ def prepared_requirements(stage, include_secure):
                        BUNDLE_RESTORE_ACTIVE="true", BUNDLE_RESTORE_SECURE_FILE="",
                        MACSEED_APPLICATION_EXECUTION="true",
                        MACSEED_APPLICATION_READINESS_REPORT="true",
+                       MACSEED_APPLICATION_ALLOW_ITEM_SKIPS="true",
                        MACSEED_APPLICATION_SECURE_SELECTED=str(include_secure).lower(),
                        MACSEED_APPLICATION_SECURE_READY="true")
     child = subprocess.Popen(["./bootstrap.sh", "--application-readiness"], cwd=ROOT,
@@ -301,6 +310,7 @@ def prepared_requirements(stage, include_secure):
         raise
     if child.returncode != 0:
         raise PreviewFailed()
+    sections, _ = bundle.parse_blueprint(bundle.checked_file(stage / "blueprint.conf"))
     conditions = []
     for line in output.decode("ascii").splitlines():
         fields = line.split("\t")
@@ -313,9 +323,14 @@ def prepared_requirements(stage, include_secure):
                   "homebrew_path_activation", "vscode_bundled_cli"} else "unsupported" if code in {
                   "unsupported_interactive_operation", "cask_execution_requirements_unsupported",
                   "cask_repair_not_supported"} else "external_action_required")
-        condition = {"domain": domain, "code": code, "status": status}
+        condition = {"domain": domain, "code": code, "status": status, "scope": "operation"}
         if len(fields) == 3:
+            if (domain != "homebrew-casks" or not fields[2].isascii() or not fields[2].isdigit() or
+                    not 1 <= int(fields[2]) <= len(sections[domain])):
+                raise PreviewFailed()
             condition["selected_item_index"] = int(fields[2])
+            if domain == "homebrew-casks" and code == "cask_execution_requirements_unsupported":
+                condition["scope"] = "item"
         conditions.append(condition)
     if include_secure:
         # This is a launcher capability requirement, not a probe of an execution secret FD.
@@ -323,9 +338,9 @@ def prepared_requirements(stage, include_secure):
         conditions.append({"domain": "secure-ssh-identities", "code": "secure_bridge_required",
                            "status": "external_action_required", "scope": "execution_launch"})
     ready = all(row["status"] in ("satisfied", "safely_satisfiable") or
-                row.get("scope") == "execution_launch" for row in conditions)
+                row.get("scope") in ("execution_launch", "item") for row in conditions)
     return {"ready": ready, "ready_scope": "environment", "conditions": conditions,
-            "check_policy": "first_blocker_per_domain", "reentry": "restore_prepare"}
+            "check_policy": "item_local_then_first_operation_blocker_per_domain", "reentry": "restore_prepare"}
 
 
 def readiness(stage, include_secure, secure_ready=False, secure_only=False):
@@ -335,7 +350,8 @@ def readiness(stage, include_secure, secure_ready=False, secure_only=False):
                        MACSEED_APPLICATION_EXECUTION="true",
                        MACSEED_APPLICATION_SECURE_SELECTED=str(include_secure).lower(),
                        MACSEED_APPLICATION_SECURE_READY=str(secure_ready).lower(),
-                       MACSEED_APPLICATION_SECURE_ONLY=str(secure_only).lower())
+                       MACSEED_APPLICATION_SECURE_ONLY=str(secure_only).lower(),
+                       MACSEED_APPLICATION_ALLOW_ITEM_SKIPS="true")
     process = subprocess.Popen(["./bootstrap.sh", "--application-readiness"], cwd=ROOT,
                                env=environment, stdin=subprocess.DEVNULL,
                                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
@@ -411,6 +427,9 @@ def restore_execute(operation_id, path, disabled_groups, include_secure, expecte
                 if plan["prepared_plan_id"] != expected_id:
                     raise ExecuteFailed("stale_plan")
                 state["prepared_plan_id"] = plan["prepared_plan_id"]
+                if not plan["has_executable_changes"] and any(
+                        row.get("scope") == "item" for row in plan["readiness"]["conditions"]):
+                    raise ExecuteFailed("no_executable_work")
                 sections, categories = bundle.parse_blueprint((stage / "blueprint.conf").read_bytes())
                 secure_only = include_secure and not any(categories.values()) and not any(
                     sections[name] for name in bundle.ITEMS)
@@ -449,7 +468,8 @@ def restore_execute(operation_id, path, disabled_groups, include_secure, expecte
                                    BUNDLE_RESTORE_SECURE_FILE="application-evidence" if include_secure else "",
                                    MACSEED_APPLICATION_SECURE_SELECTED=str(include_secure).lower(),
                                    MACSEED_APPLICATION_SECURE_READY=str(include_secure).lower(),
-                                   MACSEED_APPLICATION_SECURE_ONLY=str(secure_only).lower())
+                                   MACSEED_APPLICATION_SECURE_ONLY=str(secure_only).lower(),
+                                   MACSEED_APPLICATION_ALLOW_ITEM_SKIPS="true")
                 environment.pop("MACSEED_SECURE_EVIDENCE_FD", None)
                 environment.pop("MACSEED_APPLICATION_SECURE_VERIFY_ONLY", None)
                 for name in ("BLUEPRINT_FILE", "BLUEPRINT_GENERATED_DIR",
@@ -462,7 +482,12 @@ def restore_execute(operation_id, path, disabled_groups, include_secure, expecte
                     try:
                         identities = {opaque(subject): str(index) for index, subject in
                                       enumerate(sections["git-repositories"], 1)}
-                        owned = OwnedBootstrap(ROOT, environment, secure_evidence, record_event, identities)
+                        skipped_casks = [row["item_id"] for row in plan["plan"]
+                                         if row["domain"] == "homebrew-casks" and
+                                         row["disposition"] == "blocked" and
+                                         row["reason"] == "cask_execution_requirements_unsupported"]
+                        owned = OwnedBootstrap(ROOT, environment, secure_evidence, record_event,
+                                               identities, skipped_casks=skipped_casks)
                     finally:
                         signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
                     bootstrap_exit = owned.wait()
@@ -484,6 +509,7 @@ def restore_execute(operation_id, path, disabled_groups, include_secure, expecte
                     state["warning_count"] = 1 if bootstrap_exit == 1 else 0
                 state["verification"]["details"] = owned.details
                 if bootstrap_exit not in (0, 1):
+                    state["independent_work_completed"] = owned.independent_work_completed
                     # Preserve typed authoritative outcomes alongside the compatible code.
                     state["operation_failures"] = [row for row in owned.details["operation_records"]
                                                    if row["outcome"] == "failure"]

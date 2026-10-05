@@ -11,6 +11,13 @@ The format is based on the principles of **Keep a Changelog**.
 
 ### Added
 
+* Restore keeps unsupported independent Homebrew casks visible and skips them while
+  supported work continues, retaining operation-wide safety gates and final Verification.
+
+* Application Restore detects stalled Homebrew items after three minutes without
+  observable progress, terminates their owned processes, continues independent
+  work and reports partial results through final Verification.
+
 * Native SwiftUI Desktop foundation with Capture, Restore and Environment Status
   navigation, plus structured Protocol V1 runtime/transport using bundled Core.
 * Real read-only Environment Status comparison against an explicit saved reference.

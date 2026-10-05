@@ -67,6 +67,8 @@ struct CoreRestorePreparation: Decodable {
     let hasPlannedChanges: Bool
     let warningCount: Int
     let errorCount: Int
+    var hasExecutableChanges: Bool { executableChanges ?? hasPlannedChanges }
+    let executableChanges: Bool?
     struct Row: Decodable {
         let domain: String
         let itemID: String
@@ -89,13 +91,23 @@ struct CoreRestorePreparation: Decodable {
         let code: String
         let status: String
         let selectedItemIndex: Int?
+        let scope: String?
+        var isItemLocal: Bool {
+            scope == "item" && domain == "homebrew-casks" && code == "cask_execution_requirements_unsupported"
+                && status == "unsupported" && (selectedItemIndex ?? 0) > 0
+        }
         var id: String { domain + ":" + code + ":" + String(selectedItemIndex ?? 0) }
-        enum CodingKeys: String, CodingKey { case domain, code, status, selectedItemIndex = "selected_item_index" }
+        enum CodingKeys: String, CodingKey { case domain, code, status, scope, selectedItemIndex = "selected_item_index" }
     }
     enum CodingKeys: String, CodingKey {
         case selection, preparedPlanID = "prepared_plan_id", selectedGroups = "selected_groups", selectedCategories = "selected_categories"
         case selectedItemCounts = "selected_item_counts", includeSecure = "include_secure", secureRestoreStatus = "secure_restore_status"
-        case plan, readiness, hasPlannedChanges = "has_planned_changes", warningCount = "warning_count", errorCount = "error_count"
+        case plan, readiness, hasPlannedChanges = "has_planned_changes", executableChanges = "has_executable_changes", warningCount = "warning_count", errorCount = "error_count"
+    }
+    func isItemLocalSkip(_ row: Row) -> Bool {
+        row.disposition == "blocked" && row.domain == "homebrew-casks"
+            && row.reason == "cask_execution_requirements_unsupported"
+            && readiness.conditions.contains { $0.isItemLocal && $0.domain == row.domain && $0.code == row.reason }
     }
     func validate(expected: CoreRestoreSelection, catalog: CoreRestoreInspection.Inventory) throws {
         guard preparedPlanID.range(of: "^[0-9a-f]{64}$", options: .regularExpression) != nil,
@@ -116,7 +128,13 @@ struct CoreRestorePreparation: Decodable {
             domains.contains(row.domain) && (row.selectionItemID == nil || expected.items[row.domain]?.contains(row.selectionItemID!) == true)
         }), expected.items.allSatisfy({ selectedItemCounts[$0.key] == $0.value.count }),
         selectedItemCounts.allSatisfy({ (expected.items[$0.key]?.count ?? 0) == $0.value }) else { throw CoreRuntimeError.malformedEvent }
-        if readiness.ready && readiness.conditions.contains(where: { ["external_action_required", "unsupported"].contains($0.status) }) {
+        guard readiness.conditions.allSatisfy({ condition in
+            condition.scope == nil || condition.scope == "operation" ||
+                (condition.isItemLocal && (condition.selectedItemIndex ?? 0) <= (selectedItemCounts[condition.domain] ?? 0))
+        }), executableChanges == nil || hasExecutableChanges == plan.contains(where: { $0.disposition == "planned" }) else {
+            throw CoreRuntimeError.malformedEvent
+        }
+        if readiness.ready && readiness.conditions.contains(where: { ["external_action_required", "unsupported"].contains($0.status) && !$0.isItemLocal }) {
             throw CoreRuntimeError.malformedEvent
         }
     }

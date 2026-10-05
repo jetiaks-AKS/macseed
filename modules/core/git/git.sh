@@ -262,9 +262,20 @@ inspect_git_configuration() {
             warnings=true
         elif [[ ${GIT_GLOBAL_COUNTS[$index]} -eq 1 ]]; then
             if [[ "${GIT_GLOBAL_VALUES[$index]}" != "${GIT_CONFIGURATION_VALUES[$index]}" ]]; then
-                preview_record git-configuration "$key" none conflict target_conflict
-                warning "Existing Git setting differs; preserving: $key"
-                warnings=true
+                if [[ "${BUNDLE_RESTORE_ACTIVE:-false}" == true || "${BUNDLE_RESTORE_PREVIEW:-false}" == true ]]; then
+                    if [[ "$key" == core.editor ]] && ! git_configuration_editor_available "${GIT_CONFIGURATION_VALUES[$index]}"; then
+                        preview_record git-configuration "$key" set_setting blocked editor_unavailable
+                        warning "Git editor dependency unavailable: $key"
+                        warnings=true
+                    else
+                        preview_record git-configuration "$key" set_setting planned
+                        GIT_CONFIGURATION_ACTIONS[$index]=restore
+                    fi
+                else
+                    preview_record git-configuration "$key" none conflict target_conflict
+                    warning "Existing Git setting differs; preserving: $key"
+                    warnings=true
+                fi
             else
                 preview_record git-configuration "$key" none satisfied
             fi
@@ -298,7 +309,7 @@ preview_git_configuration() {
     result=$?
     [[ $result -ne 2 ]] || return 2
     for index in 0 1 2 3 4 5 6; do
-        [[ "${GIT_CONFIGURATION_ACTIONS[$index]:-skip}" == create ]] || continue
+        [[ "${GIT_CONFIGURATION_ACTIONS[$index]:-skip}" != skip ]] || continue
         preview_action "Would set Git setting: ${GIT_CONFIGURATION_KEYS[$index]}"
     done
     return "$result"
@@ -312,9 +323,12 @@ configure_git() {
     [[ "$GIT_GLOBAL_EXTERNAL" == false ]] || return 1
     [[ $result -eq 0 ]] || warnings=true
     local planned=("${GIT_CONFIGURATION_ACTIONS[@]}")
+    local observed_counts=("${GIT_GLOBAL_COUNTS[@]}") observed_values=("${GIT_GLOBAL_VALUES[@]}")
+    local observed_origins=("${GIT_GLOBAL_ORIGINS[@]}") observed_write_path="$GIT_GLOBAL_WRITE_PATH"
+    local write_result operation_action
     for index in 0 1 2 3 4 5 6; do
         key="${GIT_CONFIGURATION_KEYS[$index]}"
-        if [[ "${planned[$index]:-skip}" != create ]]; then
+        if [[ "${planned[$index]:-skip}" == skip ]]; then
             if [[ "${MACSEED_APPLICATION_EXECUTION:-false}" == true && "${GIT_CONFIGURATION_SET[$index]}" == true && "${GIT_CONFIGURATION_SELECTED[$index]}" == true ]]; then
                 if [[ ${GIT_GLOBAL_COUNTS[$index]} -eq 0 ]]; then
                     verification_application_operation_hook git-configuration "$key" create skipped dependency_unavailable
@@ -338,7 +352,10 @@ configure_git() {
             error "Failed to inspect direct global Git configuration"
             return 2
         fi
-        if [[ ${GIT_GLOBAL_COUNTS[$index]} -ne 0 ]] ||
+        if [[ ${GIT_GLOBAL_COUNTS[$index]} -ne ${observed_counts[$index]} ||
+              "${GIT_GLOBAL_VALUES[$index]}" != "${observed_values[$index]}" ||
+              "${GIT_GLOBAL_ORIGINS[$index]}" != "${observed_origins[$index]}" ||
+              "$GIT_GLOBAL_WRITE_PATH" != "$observed_write_path" ]] ||
            { [[ "$key" == core.editor ]] &&
              ! git_configuration_editor_available "${GIT_CONFIGURATION_VALUES[$index]}"; }; then
             warning "Git setting changed or dependency unavailable: $key"
@@ -347,18 +364,29 @@ configure_git() {
         fi
         expected_path="$GIT_GLOBAL_WRITE_PATH"
         action "Configuring Git setting: $key"
-        if ! git config --global --add "$key" "${GIT_CONFIGURATION_VALUES[$index]}"; then
-            declare -F verification_operation_hook >/dev/null && verification_operation_hook git-configuration "$key" create failure
+        write_result=0
+        operation_action=create
+        if [[ "${planned[$index]}" == restore ]]; then
+            operation_action=set_setting
+            expected_path="${observed_origins[$index]}"
+            # Replace only the observed scalar in its validated physical origin.
+            # Fixed matching prevents config values from becoming regex patterns.
+            git config --file "$expected_path" --no-includes --fixed-value --replace-all "$key" "${GIT_CONFIGURATION_VALUES[$index]}" "${observed_values[$index]}" || write_result=$?
+        else
+            git config --global --add "$key" "${GIT_CONFIGURATION_VALUES[$index]}" || write_result=$?
+        fi
+        if [[ $write_result -ne 0 ]]; then
+            declare -F verification_operation_hook >/dev/null && verification_operation_hook git-configuration "$key" "$operation_action" failure
             error "Failed to configure Git setting: $key"
             return 2
         fi
         # Shared lifecycle flag is read by the calling module wrapper.
         # shellcheck disable=SC2034
         MODULE_CHANGED=true
-        declare -F verification_operation_hook >/dev/null && verification_operation_hook git-configuration "$key" create success
+        declare -F verification_operation_hook >/dev/null && verification_operation_hook git-configuration "$key" "$operation_action" success
         git_global_observe
         result=$?
-        if [[ $result -ne 0 || "$GIT_GLOBAL_WRITE_PATH" != "$expected_path" ||
+        if [[ $result -ne 0 || "$GIT_GLOBAL_WRITE_PATH" != "$observed_write_path" ||
               ${GIT_GLOBAL_COUNTS[$index]} -ne 1 ||
               "${GIT_GLOBAL_ORIGINS[$index]}" != "$expected_path" ||
               "${GIT_GLOBAL_VALUES[$index]}" != "${GIT_CONFIGURATION_VALUES[$index]}" ]]; then

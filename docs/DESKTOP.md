@@ -189,8 +189,13 @@ conditions remain visible. Summary counts come from Core plan dispositions.
 4. Inline prerequisites show selected-work conditions, **How to Resolve /
    Instructions** and **Check Again**; no dedicated prerequisite page by default.
    Recheck calls fresh Prepare with the same current inputs,
-   then shows the new Preview for confirmation. Core reports the first blocker
-   per domain; resolving one may reveal another. Do not imply exhaustive readiness.
+   then shows the new Preview for confirmation. Core reports item-local skips and
+   the first operation-wide blocker per domain; resolving one may reveal another.
+   Unsupported independent casks retain Needs Attention while Rebuild is enabled
+   for remaining executable work. Existing no-action conflicts also remain
+   visible without requesting their mutation; their consumer semantics are
+   unchanged. An all-unsupported plan offers no Rebuild.
+   Do not imply exhaustive readiness.
 5. Preview groups actions by category, showing changes, already matching items,
    conflicts, warnings and unknown observations. Call out installs, settings writes,
    backups, repository clones/branch actions and process restarts where reported.
@@ -325,7 +330,11 @@ When execution completes and relevant selected requirements verify with complete
 evidence and no remaining attention, Result says **“Your environment is ready.”**
 A short scope line makes clear this means the selected supported environment.
 No technical Verification page is required. Otherwise say **“Rebuild completed
-with attention needed”** when execution completed, or the actual failed/stopped
+with attention needed”** when execution completed, or **“Rebuild Completed with
+Issues”** when Core confirms completed independent work, successful mutations and
+complete final Verification despite item failures. Show verified areas and specific
+unresolved items; a stalled download advises checking the network or VPN before a
+fresh Preview. Keep aggregate/technical reasons in Details. Otherwise use the actual failed/stopped
 outcome, with evidence-backed ready/attention counts and **View Details**. Use Core
 counts without conflating operation records with unique verified items or counting
 unsupported twice. Technical details retain “Selected requirements verified,” gaps
@@ -416,8 +425,8 @@ it is not a second inventory, observer, readiness engine or domain state model.
 |---|---|
 | Categories and selection controls | Capture `inventory.domain/status/reason/selection_mode`; Restore selected groups/categories/counts |
 | Items and labels | Capture `item_id/label`; Preview `domain/item_id`, optional repository `display_name`; opaque IDs get neutral labels |
-| Actions and plan state | Preview `action/disposition/reason`, `has_planned_changes`, module summaries |
-| Prerequisites | `readiness.conditions` domain/code/status and optional selected-item index; execution-launch bridge condition |
+| Actions and plan state | Preview `action/disposition/reason`, `has_planned_changes`, `has_executable_changes`, module summaries |
+| Prerequisites | `readiness.conditions` domain/code/status/scope and optional selected-item index; execution-launch bridge condition |
 | Progress and operation outcome | Event type/sequence/phase, operation records, terminal code and publication/mutation flags |
 | Verification and coverage | Core summary/verdict/counts and Verification/Coverage/Operation/Diagnostic records with actual detail status |
 | Comparison | Summary, comparison records, support/reasons, extra-domain availability and extra items |

@@ -150,7 +150,7 @@ Prepare validates/unpacks into private staging, narrows selection and runs the
 production Preview. It returns:
 
 - `prepared_plan_id`, selected groups/categories and item counts;
-- `modules`, `plan`, `has_planned_changes`, `warning_count`, `error_count`;
+- `modules`, `plan`, `has_planned_changes`, `has_executable_changes`, `warning_count`, `error_count`;
 - `include_secure`, `secure_restore_status`, `preview_detail_level`;
 - `readiness` with environmental prerequisites.
 
@@ -160,10 +160,18 @@ repository rows may have a safe `display_name`. Dispositions are `satisfied`,
 An unknown observation must not become an Apply decision.
 
 Readiness contains `ready`, `ready_scope=environment`, `conditions`,
-`check_policy=first_blocker_per_domain`, `reentry=restore_prepare`. Conditions
-contain `domain`, `code`, `status`, and optionally a cask `selected_item_index`.
+`check_policy=item_local_then_first_operation_blocker_per_domain`,
+`reentry=restore_prepare`. Conditions contain `domain`, `code`, `status`, `scope`,
+and optionally a cask `selected_item_index` in selected Blueprint order.
 Statuses are `satisfied`, `safely_satisfiable`, `external_action_required`,
-`unsupported`. Domains are checked independently; each reports its first blocker.
+`unsupported`. Domains report all encountered item-local skips before their first
+operation-wide blocker. `scope=operation` retains whole-operation blocking.
+Only `homebrew-casks` / `cask_execution_requirements_unsupported` with an item index
+uses `scope=item`: the item stays selected and blocked, while independent planned
+work may proceed. Other prerequisite failures retain operation-wide blocking.
+`ready` expresses environmental safety; `has_executable_changes` requires a
+remaining planned action (or selected secure work). An all-unsupported plan offers
+no Rebuild; Execute returns `no_executable_work` before publication.
 `secure_bridge_required` with `scope=execution_launch` concerns Execute launch,
 not environmental readiness. Prepare accepts no secrets.
 
@@ -181,7 +189,7 @@ or mutate it; the existing CLI Restore owns recovery.
 | Selected work | Current application contract |
 |---|---|
 | Homebrew formulae | Usable Homebrew; an existing installation may be activated in the child PATH. Missing/broken Homebrew needs external action; no automatic installation |
-| Casks | Satisfied items are skipped. New installs require qualified app-only `homebrew/cask` metadata, free accessible direct `/Applications` targets, no hooks, extra dependencies, caveats, container override or rename. `pkg`/installer and repair/reinstall are blocked |
+| Casks | Satisfied items are skipped. New installs require qualified app-only `homebrew/cask` metadata, free accessible direct `/Applications` targets, no hooks, extra dependencies, caveats, container override or rename. `pkg`/installer, `binary`, `command_wrapper` and repair/reinstall are blocked |
 | VS Code extensions | Usable `code` in PATH or the official stable CLI in `/Applications` or `$HOME/Applications`. Two copies without an explicit choice are ambiguous. CLI is required before publication even if VS Code's cask is selected |
 | Git repositories | Usable Git and safe destinations. Clones use recorded remotes without credential/askpass prompts; SSH uses existing config/agent and strict known-host checking. HTTP(S) credentials and URL query/fragment are prohibited |
 | App Store | Usable `mas` before publication and existing account/entitlement state; missing IDs need non-interactive `sudo -n` authorization. Core does not manage Apple ID or promise account/entitlement validation before install |
@@ -222,6 +230,42 @@ Core owns child process groups, closes interactive stdin, isolates tool output
 from JSONL and terminates owned processes on cancellation. Private staging is
 cleaned on handled exit; SIGKILL/power loss cannot guarantee cleanup. There is no
 daemon, XPC service, persistent session/resume database or Bootstrap transaction.
+
+### Independent Homebrew items
+
+Application Restore watches each formula/cask metadata/install subprocess for
+**180 seconds without observable progress**, rather than limiting total runtime.
+Owned writable regular-file growth, advancing artifact read offsets (excluding
+logs, locks and terminal output), and compiler/linker CPU time reset the timer. Curl/Ruby CPU activity,
+process liveness and diagnostic output do not count. Progress observations remain
+private; they are not percentages, network speed or proof of installation.
+
+Accepted unsupported casks remain visible in Prepare and final results. Core carries
+their identities in private per-operation state; the production consumer records
+`skipped` / `cask_execution_requirements_unsupported` without invoking their
+installer, even if metadata later becomes eligible. It also repeats the existing
+artifact safety gate for planned casks. Supported independent items and domains
+continue, retaining production ordering, cancellation and watchdog behavior.
+Current safe casks exclude formula/cask dependencies; accepted skips also seed the
+Homebrew dependency gate. Selection and prepared-plan binding remain intact.
+
+A stalled item records `failure` / `item_stalled_timeout`. Core terminates its
+owned process tree, including descendants in Homebrew-created process groups,
+within a private session using TERM followed by KILL. Other selected independent
+Homebrew items continue.
+Homebrew JSON dependency metadata gates later items against an operation-local
+failed/unverified-item ledger, cleared only by local Verify; failed dependencies record `skipped` / `dependency_failed`.
+Unknown dependency metadata blocks that item with `dependency_observation_failed`.
+Existing prerequisite gates and execution order remain authoritative. This
+watchdog does not cover unowned VS Code app processes, MAS or other domains.
+
+Normal final Verification still runs after item failures. Core retains failure
+exit `2` and `bootstrap_failed`; additive `independent_work_completed=true` means
+Bootstrap reached the end of independent-work traversal, not successful conformity.
+Clients may present partial success only with that evidence, complete final
+Verification/details, matching prepared-plan identity and successful operation
+records with matching verified observations. Failure, cancellation and interruption never authorize rollback or resume.
+The temporary failed-item ledger is private and removed on handled completion.
 
 ## Verification and Environment Status
 

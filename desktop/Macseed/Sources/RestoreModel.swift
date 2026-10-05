@@ -11,6 +11,14 @@ struct RestorePreviewPresentation {
         let id: String
         let rows: [DisplayCategory]
     }
+    static func readyText(action: String) -> String {
+        switch action {
+        case "install", "reinstall": "Ready to Install"
+        case "set_setting", "set_preference", "switch_branch": "Ready to Change"
+        case "create_directory", "create": "Ready to Create"
+        default: "Ready to Restore"
+        }
+    }
     static func state(_ row: DisplayCategory) -> String {
         if row.items.isEmpty || row.items.contains(where: { ![DisplayStatus.matching, .ready].contains($0.status) }) { return "Needs Attention" }
         return row.items.contains { $0.status == .ready } ? "Changes Planned" : "Already Matches"
@@ -56,7 +64,7 @@ struct RestorePreviewPresentation {
             }
             let inventoryLabel = row.selectionItemID.flatMap { id in catalog.inventory.first { $0.id == row.domain }?.items.first { $0.id == id }?.label }
             let title = inventoryLabel ?? row.displayName ?? (row.itemID.hasPrefix("opaque:") ? "Private item" : (row.itemID == "scope" ? "Selected area" : row.itemID))
-            rows[row.domain, default: []].append(DisplayItem(id: "restore-\(index)", title: title, status: status, action: reasonMessage ?? message, reason: row.reason))
+            rows[row.domain, default: []].append(DisplayItem(id: "restore-\(index)", title: title, status: status, action: reasonMessage ?? message, reason: row.reason, restoreReadyText: status == .ready ? Self.readyText(action: row.action) : nil))
         }
         categories = order.map { domain in
             DisplayCategory(id: domain, title: catalog.inventory.first { $0.id == domain }?.label ?? "Other supported state", symbol: "slider.horizontal.3", items: rows[domain] ?? [])
@@ -74,7 +82,7 @@ struct RestorePreviewPresentation {
                     if !selected.isEmpty {
                         projected.append(DisplayCategory(id: group.id, title: group.id, symbol: "slider.horizontal.3",
                             items: selected.flatMap { category in category.items.map { item in
-                                DisplayItem(id: item.id, title: category.title + " · " + item.title, status: item.status, action: item.action, reason: item.reason)
+                                DisplayItem(id: item.id, title: category.title + " · " + item.title, status: item.status, action: item.action, reason: item.reason, restoreReadyText: item.restoreReadyText)
                             } }))
                     }
                 }
@@ -84,6 +92,94 @@ struct RestorePreviewPresentation {
             }.compactMap { area in domainRows.first { $0.id == area.id } }
             return projected.isEmpty ? nil : Section(id: section.id, rows: projected)
         }
+    }
+}
+
+// Operation-local presentation scope. Only domain scope completion confirms a whole row.
+struct RestoreProgressRow {
+    let id: String
+    let title: String
+    let domains: Set<String>
+    let hasAttention: Bool
+    let itemNames: [String: [String: String]]
+
+    static func freeze(preview: RestorePreviewPresentation, plan: CoreRestorePreparation) -> [Self] {
+        preview.sections.flatMap(\.rows).compactMap { row in
+            let itemIDs = Set(row.items.map(\.id))
+            let rowDomains = Set(preview.categories.filter { category in
+                category.items.contains { itemIDs.contains($0.id) }
+            }.map(\.id))
+            let relevant = plan.plan.filter { rowDomains.contains($0.domain) && $0.disposition != "satisfied" }
+            guard !relevant.isEmpty else { return nil }
+            var names: [String: [String: String]] = [:]
+            for (index, entry) in plan.plan.enumerated() where rowDomains.contains(entry.domain) {
+                guard entry.itemID != "scope", !entry.itemID.hasPrefix("opaque:"),
+                      let item = preview.categories.flatMap(\.items).first(where: { $0.id == "restore-\(index)" }),
+                      item.title != "Private item" else { continue }
+                names[entry.domain, default: [:]][entry.itemID] = item.title
+            }
+            return Self(id: row.id, title: row.title, domains: Set(relevant.map(\.domain)),
+                        hasAttention: relevant.contains { $0.disposition != "planned" }, itemNames: names)
+        }
+    }
+    func project(events: [CoreEvent]) -> DisplayItem {
+        var states: [String: DisplayStatus] = [:]
+        var active: [String: (id: String, text: String)] = [:]
+        for event in events where ["execution_event", "operation_record"].contains(event.type) {
+            guard let domain = event.data?["domain"]?.string,
+                  let state = event.data?["state"]?.string ?? event.data?["outcome"]?.string else { continue }
+            // Workspace's production module owns both folders and repositories.
+            let targets = domain == "workspace" ? domains.intersection(["workspace-folders", "git-repositories"]) : domains.intersection([domain])
+            for target in targets {
+                let itemID = event.data?["item_id"]?.string
+                if event.type == "operation_record" {
+                    if active[target]?.id == itemID { active[target] = nil }
+                    if state == "failure" || (state == "skipped" && ["dependency_failed", "cask_execution_requirements_unsupported"].contains(event.data?["reason"]?.string ?? "")) { states[target] = .attention }
+                    continue
+                }
+                if state == "applying" {
+                    active[target] = nil
+                    if let itemID, let name = itemNames[target]?[itemID],
+                       let action = event.data?["action"]?.string {
+                        let verb: String?
+                        switch action {
+                        case "install", "reinstall": verb = "Installing"
+                        case "set_setting", "set_preference": verb = "Restoring"
+                        case "create", "create_directory": verb = "Creating"
+                        case "clone": verb = "Cloning"
+                        default: verb = nil
+                        }
+                        if let verb { active[target] = (itemID, "\(verb) \(name)…") }
+                    }
+                } else if itemID == "scope" || active[target]?.id == itemID {
+                    active[target] = nil
+                }
+                if ["warning", "failed", "conflict", "blocked", "cancelled", "interrupted"].contains(state) {
+                    states[target] = .attention
+                } else if states[target] != .attention {
+                    if ["changed", "already_satisfied", "satisfied"].contains(state), event.data?["item_id"]?.string == "scope" {
+                        states[target] = .complete
+                    } else if ["started", "applying", "verifying", "changed", "already_satisfied", "satisfied"].contains(state), states[target] != .complete {
+                        states[target] = .working
+                    }
+                }
+            }
+        }
+        let status: DisplayStatus
+        if hasAttention || states.values.contains(.attention) { status = .attention }
+        else if domains.allSatisfy({ states[$0] == .complete }) { status = .complete }
+        else if states.values.contains(.working) || states.values.contains(.complete) { status = .working }
+        else { status = .waiting }
+        let activity = domains.sorted().compactMap { active[$0]?.text }.joined(separator: "\n")
+        return DisplayItem(id: id, title: title, status: status,
+                           action: status == .complete ? "OK" : status == .working ? "Working…" : status == .attention ? "Needs Attention" : "Waiting",
+                           restoreActivity: !activity.isEmpty ? activity : nil)
+    }
+    static func phase(events: [CoreEvent], mutationPossible: Bool) -> String {
+        if events.contains(where: { $0.data?["domain"]?.string == "verification" || $0.phase == "verification" }) {
+            return "Verifying restored environment…"
+        }
+        return mutationPossible ? "Applying your saved environment…" : "Preparing rebuild…"
     }
 }
 
@@ -131,40 +227,28 @@ struct RestorePreviewPresentation {
     }
     var canPreview: Bool { !busy && !runtime.isActive && selectedAreaCount > 0 && source != nil && inspection != nil }
     var ready: Bool {
-        state == .preview && preparation?.readiness.ready == true && preparation?.errorCount == 0
-            && preparation?.plan.contains(where: { ["conflict", "blocked", "unknown", "pending_unlock"].contains($0.disposition) }) == false
+        guard state == .preview, let plan = preparation, plan.readiness.ready, plan.errorCount == 0 else { return false }
+        return !plan.plan.contains { row in
+            // A conflict with no proposed action is retained by the existing
+            // consumer; environmental blockers are owned by Core readiness.
+            if row.disposition == "conflict" && row.action == "none" { return false }
+            return ["conflict", "blocked", "unknown", "pending_unlock"].contains(row.disposition) && !plan.isItemLocalSkip(row)
+        }
     }
     init(runtime: CoreRuntime, location: CoreLocation? = nil) { self.runtime = runtime; self.location = location }
     var canRebuild: Bool {
-        ready && !runtime.isActive && preparation?.hasPlannedChanges == true
+        ready && !runtime.isActive && preparation?.hasExecutableChanges == true
             && preparation?.selection == canonicalSelection
     }
     var mutationPossible: Bool {
         runtime.mutationMayHaveStarted == true || runtime.events.contains { $0.phase == "bootstrap" || $0.type == "execution_event" }
     }
+    private var progressScope: [RestoreProgressRow] = []
     var activity: String {
-        if runtime.events.last?.data?["domain"]?.string == "verification" { return "Verifying the restored environment…" }
-        return switch runtime.currentPhase {
-        case "preparation": "Checking the accepted Preview…"
-        case "publication": "Preparing selected configuration…"
-        case "bootstrap": "Applying the selected environment…"
-        default: "Starting Rebuild…"
-        }
+        RestoreProgressRow.phase(events: runtime.events, mutationPossible: mutationPossible)
     }
     var executionActivities: [DisplayItem] {
-        var rows: [String: DisplayItem] = [:]
-        for event in runtime.events where event.type == "execution_event" {
-            guard let domain = event.data?["domain"]?.string,
-                  let area = areas.first(where: { $0.id == domain }),
-                  let state = event.data?["state"]?.string else { continue }
-            let group = groups.first { $0.id == "macOS Settings" && $0.domains.contains(domain) }
-            let title = group?.id ?? area.label
-            let attention = ["warning", "failed", "conflict", "blocked"].contains(state)
-            let status: DisplayStatus = attention ? .attention : ["changed", "already_satisfied", "satisfied"].contains(state) ? .complete : .working
-            if rows[title]?.requiresAttention == true && !attention { continue }
-            rows[title] = DisplayItem(id: title, title: title, status: status, action: attention ? "Needs Attention" : status == .complete ? "Completed" : "Working")
-        }
-        return rows.values.sorted { $0.title < $1.title }
+        progressScope.map { $0.project(events: runtime.events) }
     }
     func requestRebuild() {
         guard canRebuild else { return }
@@ -172,10 +256,11 @@ struct RestorePreviewPresentation {
     }
     func cancelRebuildConfirmation() { if state == .confirming { state = .preview } }
     func confirmRebuild() {
-        guard state == .confirming, !runtime.isActive, let source, let plan = preparation,
-              plan.readiness.ready, plan.errorCount == 0, plan.hasPlannedChanges, plan.selection == canonicalSelection else { return }
+        guard state == .confirming, !runtime.isActive, let source, let plan = preparation, let preview,
+              plan.readiness.ready, plan.errorCount == 0, plan.hasExecutableChanges, plan.selection == canonicalSelection else { return }
         let request = CoreRequest(.restoreExecute(path: source.path, disabledGroups: [], includeSecure: false,
                                                 preparedID: plan.preparedPlanID, selection: selection))
+        progressScope = RestoreProgressRow.freeze(preview: preview, plan: plan)
         executionResult = nil; stopConfirmation = false; state = .rebuilding
         // Start synchronously so a second activation cannot launch another operation.
         runtime.start(request, location: location)
@@ -183,7 +268,10 @@ struct RestorePreviewPresentation {
             await runtime.waitForCompletion()
             let terminal = runtime.termination?.terminal
             let payload = runtime.latestResult?.data ?? terminal?.data
-            executionResult = RestoreExecutionPresentation(runtime: runtime, payload: payload, expectedID: plan.preparedPlanID, catalog: inspection?.restoreSelection)
+            let names = progressScope.reduce(into: [String: [String: String]]()) { result, row in
+                result.merge(row.itemNames) { previous, _ in previous }
+            }
+            executionResult = RestoreExecutionPresentation(runtime: runtime, payload: payload, expectedID: plan.preparedPlanID, catalog: inspection?.restoreSelection, itemNames: names)
             invalidate(); state = .result
         }
     }
@@ -201,7 +289,7 @@ struct RestorePreviewPresentation {
     }
     func finish() {
         guard state == .result, !runtime.isActive else { return }
-        invalidate(); executionResult = nil; inspection = nil; source = nil
+        invalidate(); progressScope = []; executionResult = nil; inspection = nil; source = nil
         selectedCategories = []; selectedItems = [:]; state = .choose
     }
     func selectionState(_ area: CoreRestoreInspection.Area) -> SelectionState {
@@ -316,13 +404,15 @@ struct RestorePreviewPresentation {
 }
 
 struct RestoreExecutionPresentation {
-    enum Outcome { case clean, attention, stoppedBeforeMutation, stoppedAfterMutation, interrupted, failedBeforeMutation, failedAfterMutation }
+    enum Outcome { case clean, partial, attention, stoppedBeforeMutation, stoppedAfterMutation, interrupted, failedBeforeMutation, failedAfterMutation }
     let outcome: Outcome
     let title: String
     let message: String
     let details: [DisplayItem]
+    let findings: [DisplayItem]
+    let successfulAreas: [String]
     let structuredEvidence: [String: CoreJSON]?
-    @MainActor init(runtime: CoreRuntime, payload: [String: CoreJSON]?, expectedID: String, catalog: CoreRestoreInspection.Inventory? = nil) {
+    @MainActor init(runtime: CoreRuntime, payload: [String: CoreJSON]?, expectedID: String, catalog: CoreRestoreInspection.Inventory? = nil, itemNames: [String: [String: String]] = [:]) {
         structuredEvidence = payload
         let terminal = runtime.termination?.terminal
         let validTerminal: Bool
@@ -338,51 +428,171 @@ struct RestoreExecutionPresentation {
         } else if terminal?.isCancellation == true {
             outcome = mayMutate ? .stoppedAfterMutation : .stoppedBeforeMutation
         } else if terminal?.type == "failed" {
-            outcome = mayMutate ? .failedAfterMutation : .failedBeforeMutation
+            let records = verification?["details"]?.object?["operation_records"]
+            let changed: Bool
+            if case .array(let rows) = records, case .array(let observed) = verification?["details"]?.object?["verification_records"] {
+                changed = rows.contains { value in
+                    guard let operation = value.object, operation["outcome"]?.string == "success" else { return false }
+                    return observed.contains { observation in
+                        let row = observation.object
+                        return row?["domain"] == operation["domain"] && row?["item_id"] == operation["item_id"]
+                            && row?["conformity"]?.string == "verified"
+                    }
+                }
+            } else { changed = false }
+            let complete = verification?["status"]?.string == "complete" && verification?["details"]?.object?["status"]?.string == "complete"
+            outcome = payload?["independent_work_completed"]?.boolean == true && complete && changed && payload?["prepared_plan_id"]?.string == expectedID
+                ? .partial : mayMutate ? .failedAfterMutation : .failedBeforeMutation
         } else if runtime.state == .completed && payload?["execution_status"]?.string == "completed"
                     && payload?["prepared_plan_id"]?.string == expectedID {
             outcome = verified && payload?["warning_count"]?.integer == 0 && payload?["error_count"]?.integer == 0 ? .clean : .attention
         } else { outcome = .interrupted }
         switch outcome {
         case .clean: title = "All Done"; message = "Your environment is ready. Everything was restored successfully."
+        case .partial: title = "Rebuild Completed with Issues"; message = "Some selected changes completed. Refresh Preview to inspect unresolved items before rebuilding again."
         case .attention: title = "Rebuild completed with attention needed"; message = "Review the observed results, then Refresh Preview to check current state."
         case .stoppedBeforeMutation: title = "Rebuild Cancelled"; message = "Core reports that no target mutation started. Refresh Preview before another Rebuild."
         case .stoppedAfterMutation: title = "Rebuild Stopped"; message = "Completed changes may remain. Refresh Preview to inspect current state before rebuilding again."
         case .interrupted: title = "Rebuild Interrupted"; message = "Final consequences are unknown. Changes may remain. Refresh Preview to inspect current state."
         case .failedBeforeMutation: title = "Rebuild Could Not Start"; message = "Core reports that no target mutation started. Refresh Preview to check prerequisites and current state."
-        case .failedAfterMutation: title = "Rebuild Failed"; message = "Changes may remain. Refresh Preview to inspect current state before rebuilding again."
+        case .failedAfterMutation: title = "Rebuild Failed"; message = "Some selected changes could not be completed. Changes may remain. Refresh Preview to inspect the current state before rebuilding again."
         }
-        var projected: [DisplayItem] = []
+        let normalized = RestoreResultFindings(payload: payload, events: runtime.events, catalog: catalog, verified: verified, itemNames: itemNames)
+        details = normalized.details.isEmpty && outcome != .clean
+            ? [DisplayItem(id: "incomplete", title: "Rebuild result", status: .unverified,
+                           action: "Complete final evidence is unavailable. Inspect current state with a fresh Preview.")]
+            : normalized.details
+        successfulAreas = outcome == .partial ? normalized.successfulAreas : []
+        findings = outcome == .clean ? [] : normalized.findings
+    }
+}
+
+// Separate actionable area summaries from technical evidence, keyed by Protocol identity.
+struct RestoreResultFindings {
+    private struct Key: Hashable {
+        let kind: String
+        let domain: String
+        let item: String
+        let action: String
+        let reason: String
+    }
+    let findings: [DisplayItem]
+    let details: [DisplayItem]
+    let successfulAreas: [String]
+    init(payload: [String: CoreJSON]?, events: [CoreEvent], catalog: CoreRestoreInspection.Inventory?, verified: Bool, itemNames: [String: [String: String]] = [:]) {
+        var detailRows: [DisplayItem] = []
+        var seen: Set<Key> = []
+        var areaOrder: [String] = []
+        var areaStates: [String: DisplayStatus] = [:]
+        var failedAreas: Set<String> = []
+        var itemFindings: [DisplayItem] = []
+        var itemFindingIDs: Set<String> = []
+        var itemFindingAreas: Set<String> = []
+        var otherIssues: Set<String> = []
+        var verifiedAreaOrder: [String] = []
+        func area(_ domain: String) -> (String, String)? {
+            if let group = catalog?.groups.first(where: { $0.id == "macOS Settings" && $0.domains.contains(domain) }) {
+                return (group.id, group.id)
+            }
+            guard let entry = catalog?.inventory.first(where: { $0.id == domain }) else { return nil }
+            return (domain, entry.label)
+        }
+        func append(kind: String, domain: String, item: String = "scope", action: String = "", reason: String,
+                    title: String, status: DisplayStatus, message: String) {
+            guard seen.insert(Key(kind: kind, domain: domain, item: item, action: action, reason: reason)).inserted else { return }
+            detailRows.append(DisplayItem(id: "finding-\(detailRows.count)", title: title, status: status, action: message, reason: reason.isEmpty ? nil : reason))
+        }
+        func mark(_ domain: String, actionable: Bool, failed: Bool = false) {
+            guard let (id, _) = area(domain) else { return }
+            if areaStates[id] == nil { areaOrder.append(id) }
+            if failed { failedAreas.insert(id) }
+            if actionable || areaStates[id] == nil { areaStates[id] = actionable ? .attention : .unverified }
+        }
         if let code = payload?["code"]?.string {
-            projected.append(DisplayItem(id: "failure", title: "Rebuild", status: .attention,
-                action: code == "stale_plan" ? "The Mac or saved environment changed. A fresh Preview is required." : "Core could not complete the selected Rebuild.", reason: code))
+            append(kind: "rebuild", domain: "", reason: code, title: "Rebuild", status: .attention,
+                   message: code == "stale_plan" ? "The Mac or saved environment changed. A fresh Preview is required." : "Rebuild could not complete.")
         }
+        let verification = payload?["verification"]?.object
         if let verdict = verification?["verdict"]?.string {
-            projected.append(DisplayItem(id: "verification", title: "Observed environment", status: verified ? .matching : .unverified,
-                action: verified ? "Selected requirements verified" : "Final conformity needs attention.", reason: verdict))
+            append(kind: "conformity", domain: "", reason: verdict, title: "Observed environment", status: verified ? .matching : .unverified,
+                   message: verified ? "Selected requirements verified" : "Final conformity needs attention.")
         }
-        if let object = verification?["details"]?.object,
-           case .array(let records) = object["verification_records"] {
-            for (index, value) in records.enumerated() {
-                guard let row = value.object, let conformity = row["conformity"]?.string, conformity != "verified" else { continue }
-                projected.append(DisplayItem(id: "verification-\(index)", title: catalog?.inventory.first { $0.id == row["domain"]?.string }?.label ?? "Selected environment requirement", status: .unverified,
-                    action: "Final state needs attention.", reason: conformity))
+        let evidence = verification?["details"]?.object
+        func records(_ key: String) -> [CoreJSON] {
+            if case .array(let values) = evidence?[key] { return values }
+            return []
+        }
+        let operations = records("operation_records")
+        var operationDomains: Set<String> = []
+        for value in operations {
+            guard let row = value.object, let domain = row["domain"]?.string,
+                  let outcome = row["outcome"]?.string, ["failure", "warning"].contains(outcome) || (outcome == "skipped" && ["dependency_failed", "dependency_observation_failed", "cask_execution_requirements_unsupported"].contains(row["reason"]?.string ?? "")) else { continue }
+            let reason = row["reason"]?.string ?? outcome
+            // A selected-work aggregate may repeat the terminal failure verbatim.
+            if area(domain) == nil && reason == payload?["code"]?.string { continue }
+            if domain == "orchestration" && row["item_id"]?.string == "bootstrap"
+                && row["action"]?.string == "execute" && payload?["code"]?.string == "bootstrap_failed" { continue }
+            operationDomains.insert(domain); mark(domain, actionable: true, failed: outcome == "failure")
+            let identity = domain + ":" + (row["item_id"]?.string ?? "scope")
+            if ["item_stalled_timeout", "cask_execution_requirements_unsupported"].contains(reason),
+               let name = itemNames[domain]?[row["item_id"]?.string ?? ""] {
+                if itemFindingIDs.insert(identity).inserted {
+                    let message = reason == "item_stalled_timeout"
+                        ? "Download stalled. Check your network or VPN and try again."
+                        : "This application was skipped because its installation requirements are not supported."
+                    itemFindings.append(DisplayItem(id: identity, title: name, status: .attention,
+                        action: message, reason: reason))
+                }
+                if let (id, _) = area(domain) { itemFindingAreas.insert(id) }
+            } else if let (id, _) = area(domain) { otherIssues.insert(id) }
+            append(kind: "operation", domain: domain, item: row["item_id"]?.string ?? "scope", action: row["action"]?.string ?? "",
+                   reason: reason, title: area(domain)?.1 ?? "Rebuild", status: .attention,
+                   message: outcome == "failure" ? "Rebuild could not complete this selected work." : "This selected work needs attention.")
+        }
+        // Scope failures fill missing operation evidence, rather than repeating it.
+        let lifecycle = records("module_outcomes").compactMap(\.object)
+            + events.filter { $0.type == "execution_event" }.compactMap(\.data)
+        for row in lifecycle {
+            guard let domain = row["domain"]?.string, let state = row["state"]?.string,
+                  ["failed", "warning", "conflict", "blocked"].contains(state) else { continue }
+            if row["item_id"]?.string == "scope" && operationDomains.contains(domain) { continue }
+            if operations.contains(where: { value in
+                guard let operation = value.object else { return false }
+                return operation["domain"] == row["domain"] && operation["item_id"] == row["item_id"]
+                    && operation["reason"] == row["reason"]
+                    && ["failure", "warning"].contains(operation["outcome"]?.string ?? "")
+            }) { continue }
+            mark(domain, actionable: true, failed: state == "failed")
+            if let (id, _) = area(domain) { otherIssues.insert(id) }
+            append(kind: "execution", domain: domain, item: row["item_id"]?.string ?? "scope",
+                   reason: row["reason"]?.string ?? state, title: area(domain)?.1 ?? "Rebuild", status: .attention,
+                   message: state == "failed" ? "Rebuild could not complete this area." : "This selected area needs attention.")
+        }
+        for value in records("verification_records") {
+            guard let row = value.object, let domain = row["domain"]?.string,
+                  let conformity = row["conformity"]?.string else { continue }
+            if conformity == "verified" {
+                if let (id, _) = area(domain), !verifiedAreaOrder.contains(id) { verifiedAreaOrder.append(id) }
+                continue
             }
+            if !itemFindingIDs.contains(domain + ":" + (row["item_id"]?.string ?? "scope")), let (id, _) = area(domain) { otherIssues.insert(id) }
+            mark(domain, actionable: ["mismatch", "missing", "different"].contains(conformity))
+            // Equal conformity/reason within a domain is one final-state finding.
+            append(kind: "verification", domain: domain, action: conformity, reason: row["reason"]?.string ?? conformity,
+                   title: area(domain)?.1 ?? "Selected environment requirement", status: .unverified,
+                   message: "Final state: Unverified")
         }
-        if let object = verification?["details"]?.object,
-           case .array(let records) = object["operation_records"] {
-            for (index, value) in records.enumerated() {
-                guard let row = value.object, let outcome = row["outcome"]?.string,
-                      ["warning", "failure"].contains(outcome) else { continue }
-                projected.append(DisplayItem(id: "operation-\(index)",
-                    title: catalog?.inventory.first { $0.id == row["domain"]?.string }?.label ?? "Selected work",
-                    status: .attention, action: outcome == "failure" ? "Rebuild failed for this selected work." : "This selected work needs attention.", reason: row["reason"]?.string))
-            }
+        for value in records("coverage_records") {
+            guard let row = value.object, row["disposition"]?.string == "unresolved", let domain = row["domain"]?.string else { continue }
+            mark(domain, actionable: false)
         }
-        if projected.isEmpty && outcome != .clean {
-            projected.append(DisplayItem(id: "incomplete", title: "Rebuild result", status: .unverified,
-                action: "Complete final evidence is unavailable. Inspect current state with a fresh Preview."))
+        successfulAreas = verifiedAreaOrder.filter { areaStates[$0] == nil }.map { area($0)?.1 ?? $0 }
+        findings = itemFindings + areaOrder.filter { !itemFindingAreas.contains($0) || otherIssues.contains($0) }.map { id in
+            let title = area(id)?.1 ?? id
+            let status = areaStates[id] ?? .unverified
+            return DisplayItem(id: id, title: title, status: status,
+                               action: failedAreas.contains(id) ? "Rebuild could not complete this area." : status == .attention ? "This selected area needs attention." : "Final conformity could not be proven. Refresh Preview to inspect this area.")
         }
-        details = projected
+        details = detailRows
     }
 }

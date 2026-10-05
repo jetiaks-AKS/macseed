@@ -30,12 +30,11 @@ preview_workspace_repositories() {
 
     local has_warnings=false
     local repository_result
-    local repository path remote branch preview_repository_index=0
+    local repository path remote branch
 
     while IFS=$'\t' read -r repository path remote branch; do
         [[ -n "$repository" ]] || continue
 
-        ((preview_repository_index++))
         repository_preview "$repository" "$path" "$remote" "$branch"
         repository_result=$?
         if [[ $repository_result -eq 2 ]]; then

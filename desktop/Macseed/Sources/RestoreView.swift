@@ -159,19 +159,24 @@ enum RestoreStatusTone: Equatable {
     var color: Color {
         switch self {
         case .success:
-            Color(nsColor: NSColor(name: NSColor.Name("MacseedRestoreSuccess")) { appearance in
-                appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-                    ? NSColor(srgbRed: 0.48, green: 0.68, blue: 0.53, alpha: 1)
-                    : NSColor(srgbRed: 0.25, green: 0.46, blue: 0.30, alpha: 1)
-            })
+            Color(nsColor: Self.successColor)
         case .warning: Color(nsColor: .systemOrange)
         case .error: Color(nsColor: .systemRed)
         case .neutral: .secondary
         }
     }
+    // Retain the system hue, with readable small text on light surfaces.
+    static var successColor: NSColor {
+        NSColor(name: NSColor.Name("MacseedRestoreSuccess")) { appearance in
+            var green = NSColor.systemGreen
+            appearance.performAsCurrentDrawingAppearance { green = NSColor.systemGreen.usingColorSpace(.sRGB) ?? .systemGreen }
+            return appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+                ? green : green.blended(withFraction: 0.40, of: .black) ?? green
+        }
+    }
     static func status(_ status: DisplayStatus) -> Self {
         switch status {
-        case .matching: .success
+        case .matching, .complete: .success
         case .attention, .missing, .different, .unverified, .unresolved: .warning
         default: .neutral
         }
@@ -210,10 +215,9 @@ struct RestorePreviewItemDetails: View {
                         }
                     }
                     Spacer()
-                    if item.status == .matching {
-                        Image(systemName: item.status.symbol)
-                            .font(.callout).foregroundStyle(RestoreStatusTone.status(item.status).color)
-                            .accessibilityLabel(item.status.rawValue)
+                    if item.status == .matching || item.status == .ready {
+                        Text(item.status == .matching ? "OK" : item.restoreReadyText ?? "Ready to Restore")
+                            .font(.callout.weight(.medium)).foregroundStyle(RestoreStatusTone.status(item.status).color)
                     } else {
                         Label(item.status.rawValue, systemImage: item.status.symbol)
                             .font(.callout).foregroundStyle(RestoreStatusTone.status(item.status).color)
@@ -227,17 +231,23 @@ struct RestorePreviewItemDetails: View {
 struct RestorePrerequisiteView: View {
     let condition: CoreRestorePreparation.Condition
     let label: String
+    var showsHeading: Bool = true
+    var technicalTitle: String = "Technical reason"
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Image(systemName: condition.status == "satisfied" ? "checkmark.circle" : "exclamationmark.triangle")
-                    .foregroundStyle(RestoreStatusTone.prerequisite(condition.status).color)
-                Text(label).foregroundStyle(.primary)
-                Text("· " + status).foregroundStyle(RestoreStatusTone.prerequisite(condition.status).color)
+            if showsHeading {
+                HStack {
+                    if condition.status != "satisfied" {
+                        Image(systemName: "exclamationmark.triangle")
+                            .foregroundStyle(RestoreStatusTone.prerequisite(condition.status).color)
+                    }
+                    Text(label).foregroundStyle(.primary)
+                    Text("· " + status).foregroundStyle(RestoreStatusTone.prerequisite(condition.status).color)
+                }
             }
             if condition.status != "satisfied" {
                 Text(message).font(.callout)
-                DisclosureGroup("Technical reason") { Text(condition.code).font(.caption.monospaced()).textSelection(.enabled) }
+                DisclosureGroup(technicalTitle) { Text(condition.code).font(.caption.monospaced()).textSelection(.enabled) }
                     .disclosureGroupStyle(HeaderDisclosureStyle())
             }
         }
@@ -341,38 +351,11 @@ struct RestoreView: View {
                     if !prepared.hasPlannedChanges && prepared.plan.allSatisfy({ $0.disposition == "satisfied" }) {
                         Text("Selected requirements already match this Mac.")
                     }
-                    let attentionRows = preview.sections.flatMap(\.rows).filter { RestorePreviewPresentation.state($0) == "Needs Attention" }
-                    ForEach(attentionRows) { row in
-                        VStack(alignment: .leading, spacing: 4) {
-                            HStack {
-                                Image(systemName: "exclamationmark.triangle").foregroundStyle(RestoreStatusTone.warning.color)
-                                Text(row.title).foregroundStyle(.primary)
-                            }
-                            ForEach(row.items.filter { ![DisplayStatus.matching, .ready].contains($0.status) }) { item in
-                                Text(item.action).font(.callout)
-                            }
-                        }
-                    }
-                    let conditions = prepared.readiness.conditions
-                    if !conditions.isEmpty {
-                        Text("Prerequisites").font(.headline)
-                        let satisfied = conditions.filter { $0.status == "satisfied" }
-                        if satisfied.count == conditions.count {
-                            Label("All requirements satisfied", systemImage: "checkmark.circle").foregroundStyle(RestoreStatusTone.success.color)
-                        }
-                        if !satisfied.isEmpty {
-                            DisclosureGroup("Details") {
-                                ForEach(Array(satisfied.enumerated()), id: \.offset) { _, condition in
-                                    RestorePrerequisiteView(condition: condition, label: model.areas.first { $0.id == condition.domain }?.label ?? "Selected work")
-                                }
-                            }.disclosureGroupStyle(HeaderDisclosureStyle())
-                        }
-                        ForEach(Array(conditions.filter { $0.status != "satisfied" }.enumerated()), id: \.offset) { _, condition in
-                            RestorePrerequisiteView(condition: condition, label: model.areas.first { $0.id == condition.domain }?.label ?? "Selected work")
-                        }
-                        if conditions.contains(where: { $0.status == "external_action_required" || $0.status == "unsupported" }) {
-                            Button("Check Again") { model.refreshPreview() }
-                        }
+                    RestorePreviewAttentionSummaryView(summary: RestoreIssueSummaryPresentation(categories: preview.sections.flatMap(\.rows)))
+                    let prerequisites = RestorePrerequisiteSummaryPresentation(conditions: prepared.readiness.conditions, ready: prepared.readiness.ready)
+                    RestorePrerequisiteSummaryView(summary: prerequisites, areas: model.areas)
+                    if !prerequisites.blockers.isEmpty {
+                        Button("Check Again") { model.refreshPreview() }
                     }
                     ForEach(preview.sections) { section in
                         RestoreSectionHeader(title: section.id)
@@ -389,13 +372,26 @@ struct RestoreView: View {
                 }
             case .rebuilding:
                 Text("Rebuilding Your Mac").font(.title2)
-                ProgressView(runtime.stopping ? "Stopping…" : model.activity)
+                Text(runtime.stopping ? "Stopping…" : model.activity).foregroundStyle(.secondary)
                 ForEach(model.executionActivities) { item in
                     HStack {
-                        Image(systemName: item.status.symbol).foregroundStyle(item.requiresAttention ? Color.orange : Color.secondary)
-                        Text(item.title)
+                        Group {
+                            if item.status == .working || item.restoreActivity != nil {
+                                ProgressView().controlSize(.small)
+                            } else if item.requiresAttention {
+                                Image(systemName: "exclamationmark.triangle").foregroundStyle(RestoreStatusTone.warning.color)
+                            } else {
+                                Color.clear
+                            }
+                        }.frame(width: 18, height: 18)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(item.title)
+                            if let activity = item.restoreActivity {
+                                Text(activity).font(.callout).foregroundStyle(.secondary)
+                            }
+                        }
                         Spacer()
-                        Text(item.action).foregroundStyle(.secondary)
+                        Text(item.action).foregroundStyle(RestoreStatusTone.status(item.status).color)
                     }
                 }
                 Button("Stop Rebuild", role: .cancel) { model.requestStop() }.disabled(runtime.stopping)
@@ -403,8 +399,11 @@ struct RestoreView: View {
                 if let result = model.executionResult {
                     Text(result.title).font(.title2)
                     Text(result.message)
+                    if !result.successfulAreas.isEmpty {
+                        Text("Verified areas: " + result.successfulAreas.joined(separator: ", ")).font(.callout)
+                    }
                     if result.outcome != .clean {
-                        RestorePreviewItemDetails(items: result.details.filter { $0.status != .matching })
+                        RestoreIssueSummaryView(summary: .result(result.findings, catalog: model.inspection?.restoreSelection), isResult: true)
                         Button("Refresh Preview") { model.checkCurrentState() }
                     }
                     DisclosureGroup("View Details") { RestorePreviewItemDetails(items: result.details) }

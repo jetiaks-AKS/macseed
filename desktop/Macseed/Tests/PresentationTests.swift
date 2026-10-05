@@ -3,12 +3,81 @@ import AppKit
 import SwiftUI
 
 @main struct PresentationTests {
+    @MainActor static func restoreSummaryChecks() {
+        let casks = ["firefox", "iina", "keka"].map {
+            DisplayItem(id: "homebrew-casks:" + $0, title: $0, status: .attention,
+                        action: "Repeated generic message", reason: "cask_execution_requirements_unsupported")
+        }
+        let git = ["core.editor", "init.defaultBranch"].map {
+            DisplayItem(id: "git-configuration:" + $0, title: $0, status: .attention,
+                        action: "Repeated generic message", reason: "target_conflict")
+        }
+        let categories = [DisplayCategory(id: "homebrew-casks", title: "Homebrew Applications", symbol: "app", items: casks),
+                          DisplayCategory(id: "git-configuration", title: "Git Configuration", symbol: "gear", items: git)]
+        let summary = RestoreIssueSummaryPresentation(categories: categories + [categories[0]])
+        precondition(summary.count == 5 && summary.title == "5 items need attention")
+        precondition(summary.areas.map(\.title) == ["Homebrew Applications", "Git Configuration"])
+        precondition(summary.areas.map { $0.items.count } == [3, 2] && !summary.detailsInitiallyExpanded)
+        precondition(summary.areas[0].items.map(\.title) == ["firefox", "iina", "keka"])
+        precondition(summary.areas[1].items.map(\.title) == ["core.editor", "init.defaultBranch"])
+        precondition(summary.areas[0].items.allSatisfy { $0.action.contains("not supported") && $0.reason == "cask_execution_requirements_unsupported" })
+        precondition(summary.areas[1].items.allSatisfy { $0.action.contains("preserved") && $0.reason == "target_conflict" })
+        let catalog = CoreRestoreInspection.Inventory(groups: [], inventory: [
+            CoreRestoreInspection.Area(domain: "homebrew-casks", label: "Homebrew Applications", selectionMode: "items", availability: "available", reason: nil, items: [])])
+        let repeatedArea = DisplayItem(id: "homebrew-casks", title: "Homebrew Applications", status: .attention, action: "This area needs attention.")
+        let unknown = DisplayItem(id: "homebrew-casks", title: "Homebrew Applications", status: .unverified, action: "Final conformity is unverified.", reason: "mismatch")
+        let result = RestoreIssueSummaryPresentation.result(casks + [casks[0], repeatedArea, unknown], catalog: catalog)
+        precondition(result.count == 4 && result.attentionCount == 3 && result.unverifiedCount == 1)
+        precondition(result.areas.count == 1 && result.areas[0].unverifiedCount == 1)
+        precondition(result.areas[0].items.contains { $0.status == .unverified && $0.reason == "mismatch" })
+        func condition(_ code: String, _ status: String, scope: String? = nil) -> CoreRestorePreparation.Condition {
+            CoreRestorePreparation.Condition(domain: "homebrew-casks", code: code, status: status, selectedItemIndex: scope == "item" ? 1 : nil, scope: scope)
+        }
+        let satisfied = RestorePrerequisiteSummaryPresentation(conditions: [condition("ready", "satisfied")], ready: true)
+        precondition(satisfied.title == "Ready" && satisfied.blockers.isEmpty && !satisfied.detailsInitiallyExpanded)
+        let local = RestorePrerequisiteSummaryPresentation(conditions: [condition("cask_execution_requirements_unsupported", "unsupported", scope: "item")], ready: true)
+        precondition(local.title == "Ready" && local.blockers.isEmpty)
+        let blocked = RestorePrerequisiteSummaryPresentation(conditions: [condition("homebrew_unavailable", "external_action_required")], ready: false)
+        precondition(blocked.title == "Needs Attention" && blocked.blockers.count == 1)
+        let source = try! String(contentsOfFile: "Sources/RestoreSummary.swift", encoding: .utf8)
+        let previewSource = String(source.components(separatedBy: "// Preview owns area/count summaries only")[1])
+        let prerequisiteSummarySource = String(source.components(separatedBy: "struct RestorePrerequisiteSummaryView:")[1].components(separatedBy: "// Preview owns area/count summaries only")[0])
+        precondition(!previewSource.contains("Show Details") && !previewSource.contains("summary.title"))
+        precondition(previewSource.contains("ForEach(summary.areas)"))
+        precondition(!previewSource.contains("DisclosureGroup") && !previewSource.contains("ForEach(area.items)"))
+        precondition(!previewSource.contains("item.title") && !previewSource.contains("item.action") && !previewSource.contains("item.reason"))
+        precondition(!previewSource.contains("Technical") && !previewSource.contains("cask_execution_requirements_unsupported"))
+        precondition(previewSource.contains("Text(String(area.items.count))") && previewSource.contains(".accessibilityLabel(area.title)"))
+        precondition(prerequisiteSummarySource.contains("DisclosureGroup(isExpanded: $expanded)"))
+        precondition(!prerequisiteSummarySource.contains("Show Details"))
+        precondition(prerequisiteSummarySource.contains("Text(\"Ready\")") && prerequisiteSummarySource.contains("ForEach(summary.affectedDomains"))
+        precondition(prerequisiteSummarySource.contains("showsHeading: false") && prerequisiteSummarySource.contains("technicalTitle: \"Technical Details\""))
+        for areaSource in [previewSource, prerequisiteSummarySource] {
+            let labelSource = areaSource == previewSource
+                ? String(areaSource.components(separatedBy: "private struct RestorePreviewAttentionAreaView:")[1])
+                : String(areaSource.components(separatedBy: "} label: {").last!)
+            precondition(labelSource.contains("Image(systemName: \"exclamationmark.triangle\")"))
+            precondition(labelSource.contains(".foregroundStyle(RestoreStatusTone.warning.color)"))
+            precondition(labelSource.contains(".accessibilityHidden(true)"))
+            precondition(labelSource.range(of: "Image(systemName:")!.lowerBound < labelSource.range(of: "Text(")!.lowerBound)
+        }
+        precondition(blocked.affectedDomains == ["homebrew-casks"])
+        precondition(RestorePrerequisiteSummaryPresentation.status([condition("authorization_required", "external_action_required")]) == "Authorization Required")
+        let view = try! String(contentsOfFile: "Sources/RestoreView.swift", encoding: .utf8)
+        precondition(view.contains("DisclosureGroup(\"Technical reason\")") && view.contains("DisclosureGroup(\"View Details\")"))
+        precondition(view.contains("ForEach(preview.sections)") && view.contains("RestorePreviewDomainRow(row: $0)"))
+        precondition(view.contains("if expanded { RestorePreviewItemDetails(items: row.items)"))
+        precondition(view.contains("Text(item.title)") && view.contains("Text(item.action)"))
+
+        print("PASS: Compact Restore summary counts/area aggregation, collapsed details, concrete names/reasons, prerequisites and result deduplication with Unverified evidence")
+    }
     @MainActor static func main() {
         if CommandLine.arguments.count == 4 && CommandLine.arguments[1] == "--appearance-read" {
             let stored = UserDefaults(suiteName: CommandLine.arguments[2])!.string(forKey: DesktopAppearance.preferenceKey)
             precondition(stored == CommandLine.arguments[3])
             return
         }
+        restoreSummaryChecks()
         let suite = "MacseedAppearanceTests-" + UUID().uuidString
         let preferences = UserDefaults(suiteName: suite)!
         defer { preferences.removePersistentDomain(forName: suite) }
@@ -77,6 +146,23 @@ import SwiftUI
         precondition(aggregateSource.contains("RestoreRowIcon(symbol: \"slider.horizontal.3\")"))
         precondition(restoreView.contains("RestoreRowIcon(symbol: RestoreRowIcon.symbol(for: area.id))"))
         precondition(restoreView.contains("RestorePresentationSection.visible(model.groups, inventory: model.areas)"))
+        func luminance(_ color: NSColor) -> Double {
+            let rgb = color.usingColorSpace(.sRGB)!
+            func linear(_ value: CGFloat) -> Double {
+                let v = Double(value)
+                return v <= 0.04045 ? v / 12.92 : pow((v + 0.055) / 1.055, 2.4)
+            }
+            return 0.2126 * linear(rgb.redComponent) + 0.7152 * linear(rgb.greenComponent) + 0.0722 * linear(rgb.blueComponent)
+        }
+        for name in [NSAppearance.Name.aqua, .darkAqua, .accessibilityHighContrastAqua, .accessibilityHighContrastDarkAqua] {
+            NSAppearance(named: name)!.performAsCurrentDrawingAppearance {
+                let success = luminance(RestoreStatusTone.successColor)
+                let background = luminance(NSColor.windowBackgroundColor)
+                let contrast = (max(success, background) + 0.05) / (min(success, background) + 0.05)
+                precondition(contrast >= 4.5, "Success text contrast in \(name.rawValue): \(contrast)")
+            }
+        }
+        print("PASS: Restore success text contrast in Light/Dark and increased-contrast appearances")
         precondition(RestoreStatusTone.status(.matching) == .success)
         precondition(RestoreStatusTone.domain("Already Matches") == .success)
         precondition(RestoreStatusTone.prerequisite("satisfied") == .success)
@@ -86,14 +172,22 @@ import SwiftUI
         precondition(RestoreStatusTone.status(.unsupported) != .success && RestoreStatusTone.status(.unverified) != .success)
         precondition(restoreView.contains("Text(row.title).foregroundStyle(.primary)") && restoreView.contains("Text(item.title).foregroundStyle(.primary)") && restoreView.contains("Text(label).foregroundStyle(.primary)"))
         precondition(restoreView.contains("Label(item.status.rawValue, systemImage: item.status.symbol)"))
-        precondition(restoreView.contains("if item.status == .matching {") && restoreView.contains(".accessibilityLabel(item.status.rawValue)"))
+        precondition(restoreView.contains("if item.status == .matching || item.status == .ready {"))
+        precondition(restoreView.contains("Text(item.status == .matching ? \"OK\" : item.restoreReadyText"))
+        precondition(restoreView.contains("NSColor.systemGreen") && restoreView.contains("appearance.performAsCurrentDrawingAppearance") && restoreView.contains(".darkAqua"))
         precondition(restoreView.contains("Text(item.action).font(.callout).foregroundStyle(.secondary)"))
         precondition(restoreView.contains("Text(RestorePreviewPresentation.state(row)).foregroundStyle"))
         let prerequisiteSource = String(restoreView.components(separatedBy: "struct RestorePrerequisiteView")[1].components(separatedBy: "struct RestorePreviewDomainRow")[0])
+        precondition(!prerequisiteSource.contains("checkmark.circle"))
+        let progressSource = String(restoreView.components(separatedBy: "case .rebuilding:")[1].components(separatedBy: "case .result:")[0])
+        precondition(progressSource.contains("ProgressView().controlSize(.small)") && !progressSource.contains("checkmark"))
+        precondition(progressSource.contains("if let activity = item.restoreActivity"))
+        precondition(restoreView.contains("RestoreIssueSummaryView(summary: .result(result.findings,"))
+        precondition(!restoreView.contains("result.details.filter"))
         precondition(prerequisiteSource.contains("case \"satisfied\": \"Already Satisfied\""))
         precondition(!prerequisiteSource.contains("This prerequisite is available for the selected plan."))
         precondition(prerequisiteSource.contains("if condition.status != \"satisfied\" {\n                Text(message)"))
-        precondition(prerequisiteSource.contains("DisclosureGroup(\"Technical reason\") { Text(condition.code)"))
+        precondition(prerequisiteSource.contains("DisclosureGroup(technicalTitle) { Text(condition.code)"))
         precondition(RestoreRowGrid.titleInset == RestoreRowGrid.checkboxWidth + RestoreRowGrid.disclosureWidth + RestoreRowGrid.iconWidth + RestoreRowGrid.spacing * 3)
         precondition(restoreView.contains(".disclosureGroupStyle(RestoreHeaderDisclosureStyle())"))
         precondition(restoreView.contains("Color.clear.frame(width: RestoreRowGrid.disclosureWidth") && restoreView.contains(".frame(width: RestoreRowGrid.iconWidth, alignment: .center)"))
@@ -105,10 +199,10 @@ import SwiftUI
         precondition(restoreView.contains("Text(model.selectionSummary).font(.callout).foregroundStyle(.secondary)"))
         precondition(restoreView.contains(".disabled(!model.canPreview)"))
         precondition(restoreView.contains("ForEach(preview.sections)") && restoreView.contains("RestorePreviewDomainRow(row:"))
-        precondition(restoreView.contains("All requirements satisfied") && restoreView.contains("conditions.filter { $0.status != \"satisfied\" }"))
+        precondition(restoreView.contains("RestorePrerequisiteSummaryView") && restoreView.contains("prerequisites.blockers"))
         let previewRow = String(restoreView.components(separatedBy: "struct RestorePreviewDomainRow")[1].components(separatedBy: "struct RestoreView:")[0])
         precondition(previewRow.contains("private var expanded = false") && previewRow.contains("if expanded { RestorePreviewItemDetails(items: row.items)"))
-        precondition(restoreView.range(of: "ForEach(attentionRows)")!.lowerBound < restoreView.range(of: "ForEach(preview.sections)")!.lowerBound)
+        precondition(restoreView.range(of: "RestorePreviewAttentionSummaryView(summary:")!.lowerBound < restoreView.range(of: "ForEach(preview.sections)")!.lowerBound)
         precondition(restoreView.contains("Rebuild this Mac?") && restoreView.contains("Stop rebuilding?") && restoreView.contains("Completed changes will remain."))
         precondition(restoreView.contains("model.confirmStop()") && restoreView.contains("model.checkCurrentState()"))
         precondition(restoreModel.contains("plan.preparedPlanID, selection: selection") && restoreModel.contains("invalidate(); state = .result"))

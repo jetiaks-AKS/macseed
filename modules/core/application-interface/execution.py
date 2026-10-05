@@ -12,12 +12,17 @@ from reporting import MAX_LINE, MAX_RECORDS, item
 import signal
 import subprocess
 import tempfile
+import time
+from item_execution import ProcessTree, process_table
 
 
 class OwnedBootstrap:
-    def __init__(self, root, environment, secure_evidence=None, on_record=None, identities=None, mode="--bootstrap"):
+    def __init__(self, root, environment, secure_evidence=None, on_record=None, identities=None, mode="--bootstrap", skipped_casks=None):
         if mode not in {"--bootstrap", "--application-compare"}:
             raise ValueError("unsupported owned mode")
+        if mode == "--bootstrap":
+            # Observation capability must be checked before starting a mutating child.
+            process_table()
         read_fd, write_fd = os.pipe()
         verification_read, verification_write = os.pipe()
         report_read, report_write = os.pipe()
@@ -35,8 +40,10 @@ class OwnedBootstrap:
         self.report_buffer = b""
         self.report_count = 0
         self.reporting_invalid = False
+        self.item_state = tempfile.TemporaryDirectory(prefix='macseed-items-', dir='/private/tmp')
+        os.chmod(self.item_state.name, 0o700)
         child_env = dict(environment)
-        child_env.update(MACSEED_APPLICATION_EXECUTION="true",
+        child_env.update(MACSEED_APPLICATION_EXECUTION="true", MACSEED_ITEM_STATE_DIR=self.item_state.name,
                          MACSEED_EXECUTION_SIGNAL_FD=str(write_fd),
                          MACSEED_VERIFICATION_FD=str(verification_write),
                          MACSEED_REPORT_FD=str(report_write), MACSEED_REPORT_COUNT="0", MACSEED_REPORT_INVALID="false")
@@ -51,6 +58,10 @@ class OwnedBootstrap:
                              MACSEED_SECURE_ATTEMPT=attempt, MACSEED_SECURE_EXIT=str(status))
             descriptors += (receipt.fileno(),)
         try:
+            skipped_file = Path(self.item_state.name) / 'skipped-casks.json'
+            descriptor = os.open(skipped_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(descriptor, 'w') as stream:
+                json.dump(skipped_casks or [], stream)
             self.process = subprocess.Popen(
                 ["./bootstrap.sh", mode], cwd=root, env=child_env,
                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
@@ -63,6 +74,7 @@ class OwnedBootstrap:
                 except ProcessLookupError:
                     pass
                 self.process.wait()
+            self.item_state.cleanup()
             if receipt is not None:
                 receipt.close()
             os.close(read_fd)
@@ -79,6 +91,8 @@ class OwnedBootstrap:
         os.close(report_write)
         self.signal_fd = read_fd
         self.verification_fd = verification_read
+        self.tree = ProcessTree(self.process.pid, initialize=False) if mode == "--bootstrap" else None
+        self.last_tree_scan = time.monotonic() - .5
         self.mutation_may_have_started = False
         self.verification = None
 
@@ -236,6 +250,8 @@ class OwnedBootstrap:
             self.details["status"] = "invalid"
 
     def _collect(self):
+        self.independent_work_completed = getattr(self, 'independent_work_completed', False) or Path(self.item_state.name, 'execution-complete').is_file()
+        self.item_state.cleanup()
         self._drain()
         if self.report_fd is not None:
             os.close(self.report_fd)
@@ -271,6 +287,8 @@ class OwnedBootstrap:
 
     def wait(self):
         while self.process.poll() is None:
+            if self.tree is not None and time.monotonic() - self.last_tree_scan >= .5:
+                self.tree.scan(); self.last_tree_scan = time.monotonic()
             if self.report_fd is not None:
                 select.select([self.report_fd], [], [], .1)
                 self._drain()
@@ -292,6 +310,13 @@ class OwnedBootstrap:
                 pass
 
     def cancel(self):
+        was_running = self.process.poll() is None
+        if self.tree is not None:
+            self.tree.stop()
+            if was_running:
+                self.process.wait()
+                self._collect()
+                return 130
         if self.process.poll() is not None:
             self._stop_compare_descendants()
             self._collect()
