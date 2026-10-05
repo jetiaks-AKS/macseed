@@ -42,6 +42,10 @@ The format is based on the principles of **Keep a Changelog**.
 
 ### Fixed
 
+* Restore Preview correlates Git repositories by their bundle identity and target
+  path even when configuration and selection orders differ.
+* Bundle Restore now restores selected differing scalar global Git settings,
+  verifies saved values and converges to a no-op; ambiguous/error states stay protected.
 * Normalized Desktop Capture destinations to exactly one `.mbt` extension.
 * Corrected Capture status forwarding so successful Workspace Folders and Git
   Repositories observations remain selectable.

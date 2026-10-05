@@ -53,12 +53,21 @@ and packaged clean-Mac qualification remain the next stages.
 
 **Product/UX contract defined (16A); native sample-data foundation implemented
 (16B); runtime (16C) and Environment Status (16D) manually approved; real Capture
-(16E) completed and manually approved. 16F Restore Prepare completed and manually approved; 16G Restore execution completed and manually approved. Next: 16H Secure SSH.** Complete the SwiftUI client for
+(16E), Restore Prepare (16F) and Restore execution (16G) manually approved. The
+broad Restore gate substantially passed at checkpoint `3e555fba`; compatibility
+and remaining qualification are open.** Complete the SwiftUI client for
 Capture this Mac, Restore a Mac and Environment Status.
 Provide prerequisite guidance, Check Again, structured
 progress/results, separate secret input and cancellation over the existing Core.
-Include local structured operation logs/details and an explicitly requested,
-privacy-safe Diagnostic Report with exact preview and export.
+Desktop Secure SSH Capture/Restore remains unfinished (16H). Deliver persistent
+structured operation logs, live View Log and a redacted Diagnostic Report with
+exact preview/export. The next UX outcome is a reusable unified Macseed design
+system, first applied to Restore, then Capture, Environment Status, All Tasks and
+Settings, with Domain → Items shared across Preview/Rebuild/Verification/Result.
+Automatic MAS Restore is mandatory before 1.0; authorization/install qualification
+remains unresolved. Qualify binary/wrapper cask compatibility and review Workspace
+semantics/discovery roots without implying user file-content restoration. The real
+Desktop Zsh Restore gate remains open. Detailed actions belong to [TODO](TODO.md).
 Complete Saved Environment/Bundle-backed Status before 1.0; the current internal
 reference picker is a temporary development bridge (see [Desktop](docs/DESKTOP.md)).
 

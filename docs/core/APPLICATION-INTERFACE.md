@@ -157,7 +157,12 @@ production Preview. It returns:
 Plan rows contain `domain`, `item_id`, `action`, `disposition`, nullable `reason`;
 repository rows may have a safe `display_name`. Dispositions are `satisfied`,
 `planned`, `blocked`, `conflict`, `warning`, `unknown`, `pending_unlock`.
-An unknown observation must not become an Apply decision.
+An unknown observation must not become an Apply decision. For supported selected
+scalar Git settings, ordinary value drift yields `set_setting` / `planned`, not
+`target_conflict`. Execute re-observes the unique direct origin, restores and
+verifies the saved value; a matching subsequent Prepare is `satisfied`. Unselected
+keys and ambiguous/error protections are unchanged; see
+[Git configuration](../toolkit/CONFIGURATION.md#git-generated-state).
 
 Readiness contains `ready`, `ready_scope=environment`, `conditions`,
 `check_policy=item_local_then_first_operation_blocker_per_domain`,

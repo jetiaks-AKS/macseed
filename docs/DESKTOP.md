@@ -7,8 +7,11 @@ Status uses real read-only Core comparison. Capture scans/selects/prepares and
 publishes a real Saved Environment through Core. Restore inspects a Saved Environment
 and prepares a read-only Preview, then executes through Core with confirmation,
 structured progress, Safe Stop and Verification-aware results/fresh-plan re-entry.
-Private SSH identity transfer remains unavailable until 16H; 16I still owns final
-Verification/completion UX integration.
+The broad Restore manual gate substantially passed at checkpoint `3e555fba`,
+including successful Rebuild/Verification and Git scalar drift → Restore →
+independent verification → idempotent Preview. This does not qualify MAS,
+binary/wrapper casks, Desktop Zsh or Secure SSH. Private SSH identity transfer
+remains unavailable until 16H; 16I owns remaining completion UX qualification.
 Build and review instructions are in
 [Desktop development](../desktop/Macseed/README.md). Macseed is one product with a shared Core and two official frontends: CLI (`bs`) and Desktop.
 The official CLI remains supported. **Simple by default. Detailed on demand.**
@@ -59,6 +62,23 @@ starts and offer return to the active operation. Navigating away must not silent
 cancel or detach it. Closing during work offers Keep Working or the applicable
 Cancel / Stop Rebuild action; wait for owned-process termination before closing. No background daemon or
 persistent resumable job is introduced.
+
+## Shared design system — next UX work
+
+The next UX work is a reusable unified Macseed design system, first applied to
+Restore and then reused by Capture, Environment Status, All Tasks and Settings.
+This is planned work over the existing native shell, not a completed redesign or
+permission to change Core semantics. Shared domain/item rows, status vocabulary,
+spacing, disclosures and accessibility must consume the same presentation model
+across **Preview → Rebuild → Verification → Result**.
+
+Restore's reference hierarchy is **Domain → Items**. The top attention summary
+owns only affected areas and counts, with warning icons; it has no item-detail
+disclosure. Prerequisites separately explain execution requirements with compact,
+independently expandable rows: Ready when satisfied, visible status when blocked.
+The lower domain sections own concrete items, user-facing reasons and temporary
+nested technical diagnostics. Avoid a second item-detail representation above them.
+Retain truthful Needs Attention versus Unverified evidence in all phases.
 
 ## Native appearance and Settings
 
@@ -178,8 +198,10 @@ separate page. Prerequisites appear inline only when needed.
 Preview is attention-first and follows the selection taxonomy. Domain rows are
 collapsed by default, with real item results available on expansion. macOS Settings
 aggregates selected Core domains; underlying setting results remain in Details.
-All-satisfied prerequisites use one concise summary with optional Details; actionable
-conditions remain visible. Summary counts come from Core plan dispositions.
+All-satisfied prerequisites use one concise Ready row with optional disclosure;
+actionable conditions remain visible in affected prerequisite area rows. The top
+attention summary lists affected areas/counts only; lower domains own item details.
+Summary counts come from Core plan dispositions.
 
 3. `restore_prepare` supplies both prerequisites and Preview in the same Review
    area, alongside category selection, already-matching summary and changes.
@@ -216,15 +238,20 @@ failure and interruption. Re-entry runs fresh Restore Prepare; there is no Resum
 The app retains Restore session ownership across window closure; Quit confirms and
 waits for owned cancellation. Window-close/quit interaction remains part of Stage 16K
 qualification. Private SSH identities remain Stage 16H (`include_secure: false`).
-Stage 16G's controlled manual gate passed with a disposable one-folder Bundle:
-external filesystem inspection confirmed creation, Core Verification confirmed
-selected requirements, and a fresh Preview confirmed Already Matches with zero
-changes and Rebuild disabled. This qualifies the happy path and idempotence;
-Safe Stop/interruption remain covered by deterministic fixtures and later hardening.
+The initial Stage 16G one-folder gate qualified creation and idempotence. The
+subsequent broad Restore gate substantially passed with real Rebuild/Verification;
+selected `core.editor` / `init.defaultBranch` drift was restored, independently
+verified and Already Matches on fresh Preview. Repository identity correlation and
+item-local unsupported orchestration are included in the checkpoint. Remaining
+compatibility and targeted qualification belong to [TODO](../TODO.md), including
+the real Desktop Zsh gate and Secure SSH. Safe Stop/interruption fixture coverage
+does not replace all real-process or packaged-runtime qualification.
 
 6. **Rebuild** confirms the selected scope and fresh plan. Disable it for unresolved
-   environmental blockers, unsupported selected execution, or missing execution
-   bridge. `pending_unlock` is an expected secure step, not proof of a conflict.
+   operation-wide environmental blockers or a missing execution bridge.
+   Item-local unsupported casks do not block independent executable work; a plan
+   with no executable changes has no Rebuild. `pending_unlock` is an expected
+   secure step, not proof of a conflict.
    A ready plan still permits later network, account or tool failures. Execute
    revalidates the prepared ID; stale plans return to Prepare/Preview/confirmation.
 7. Rebuild shows actual structured phases and records. Core Verification remains
@@ -239,8 +266,13 @@ Code CLI, network or `age` only when relevant. Do not invent a “Fix All” act
 feed authentication into Core's closed interactive stdin. Administrator, Apple ID,
 SSH agent/known-host and vendor authorization are external actions as applicable;
 independent macOS/vendor dialogs may appear. `safely_satisfiable` describes Core's
-ability, not permission for a new Desktop mutation. Unsupported execution requires
-changing scope or another supported route; Check Again cannot promise to fix it.
+ability, not permission for a new Desktop mutation. Unsupported casks stay visible
+and skipped while safe independent work can proceed; Check Again cannot promise
+to make unsupported artifacts executable. Firefox/Keka contain `command_wrapper`
+and IINA contains `binary` artifacts, outside the current app-only cask policy.
+Safe artifact support is next functional compatibility work, without cask-name
+exceptions. Automatic MAS Restore remains mandatory before 1.0; the authorization/
+install gate is unresolved. Deselecting MAS for the passed gate does not resolve it.
 
 Warnings remain visible without automatically blocking a valid Core plan.
 Conflicts show affected scope and a safe next step; never offer force overwrite,
@@ -452,8 +484,12 @@ extension needs a precise Core contract decision, not a client-side parser.
 
 ## Local logs and Diagnostic Report
 
-Stage 16 includes local structured operation logs and user-requested support
-reports. Logs record client receipt timestamp (distinct from Core `observed_at`),
+Persistent Desktop operation logs, live **View Log**, and a redacted user-requested
+Diagnostic Report are required but not yet implemented. Current in-memory activity/
+Details and Core CLI logs do not satisfy this Desktop contract. View Log must show
+a live sanitized structured projection during work and remain available afterward,
+without a raw stdout/stderr viewer. Logs record client receipt timestamp (distinct
+from Core `observed_at`),
 Macseed/Core version, operation ID/type, event sequence/type, phase, safe domain/item
 reference, warning/conflict/error code, prerequisite, Verification outcome and
 cancellation/interruption. Client-only events are explicitly marked and do not
@@ -513,21 +549,21 @@ preview/export identity. Tests use disposable fixtures; never real keys or secre
 | Slice | Deliverable |
 |---|---|
 | 16B — Native shell and design foundation | Native navigation, stable content states, small Settings, reusable rows, vocabulary, accessibility and empty states |
-| 16C — Core process integration and capabilities | Core/Python layout, writable state/temp, controlled child HOME/PATH/environment, JSONL validation, process ownership and cancellation; structured sanitized logging foundation |
+| 16C — Core process integration and capabilities | Core/Python layout, writable state/temp, controlled child HOME/PATH/environment, JSONL validation, process ownership and cancellation |
 | 16D — Environment Status | Explicit reference picker, read-only Compare, summary and record details |
 | 16E — Capture | Inventory/selection, fresh preparation, Bundle publication and interruption states; secure opt-in completed in 16H |
 | 16F — Restore preparation | Core-supported domain/item selection, Bundle inspection, prerequisites, Check Again, Preview and fresh confirmation |
 | 16G — Restore execution | Rebuild phases, records, Stop Rebuild over current signal cancellation, partial failure and re-entry |
 | 16H — Secure SSH interactions | FD bridge/challenges, encryption/unlock/import confirmation and age/OpenSSH PTY qualification for Capture and Restore |
 | 16I — Verification and completion | Concise Result with disclosed verdict/coverage, no-op, already-matching and incomplete outcomes |
-| 16J — Diagnostics and support | Operation Details, retention/clear controls, Diagnostic Report preview/export and dedicated sanitization tests |
+| 16J — Diagnostics and support | Persistent structured logs, live View Log, retention/clear controls, redacted Diagnostic Report preview/export and sanitization tests |
 | 16K — Desktop integration hardening | Full flow/transport/security/accessibility checks, stale inputs, interruptions and diagnostic acceptance |
 
 Every slice uses existing Core operations; early flow slices retain incomplete
 features as unavailable rather than pretending secure or verification support.
-Logging sanitization starts in 16C, before recording flow events; 16J completes the
-support experience. Today's repository Core and external Python are not an
-installed-app runtime. Stage 16 must qualify runtime and secure tool integration.
+Persistent logging must sanitize before recording flow events; 16J owns the
+unimplemented logging and support experience. Today's repository Core and external
+Python are not an installed-app runtime. Stage 16 must qualify runtime and secure tool integration.
 
 [Distribution](DISTRIBUTION.md) owns Stage 17 signed/notarized packaged clean-Mac
 proof, including operation logs, interruption details and exact Diagnostic Report

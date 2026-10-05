@@ -318,6 +318,10 @@ accepts a narrower safe app-only subset and blocks repair/reinstall.
 `workspace/repositories.conf` uses sections with `NAME`, `PATH`, `REMOTE`,
 `CURRENT_BRANCH` and Discovery metadata. Apply uses `CURRENT_BRANCH`, not `BRANCH`.
 `workspace.conf` describes observed source HOME; target root remains current HOME.
+Workspace Folders recreates directory structure only, not user file contents.
+Folder Discovery currently classifies immediate children of HOME; configurable
+discovery roots and broader Workspace product semantics remain under review
+([TODO](../../TODO.md#broad-restore-manual-gate--2026-10-05)).
 
 Validate both required inputs and build a full selected snapshot before any
 Workspace mutation. Use the Configuration Engine for sections/values, reading

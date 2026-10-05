@@ -8,10 +8,11 @@ Implement the [Desktop contract](docs/DESKTOP.md) in vertical slices:
 
 - [ ] 16H: Secure FD/challenge bridge, SSH opt-in, encryption/unlock/import
   confirmation and application age/OpenSSH PTY qualification.
-- [ ] 16I: Concise Result with mandatory Core Verification and expandable
-  attention/coverage details, no-op and incomplete states.
-- [ ] 16J: Structured operation Details, private bounded log retention/clear,
-  privacy-safe Diagnostic Report with complete preview and exact export.
+- [ ] 16I: Qualify remaining completion UX over implemented mandatory Core
+  Verification, attention/coverage, no-op and incomplete-result states.
+- [ ] 16J: Persistent private structured operation logs with bounded retention/clear,
+  live **View Log**, and a redacted Diagnostic Report with complete preview and
+  exact export; current in-memory details are not persistent diagnostics.
 - [ ] 16J: Dedicated sanitization regression fixtures for secrets, URLs, paths,
   labels, unknown/malformed fields, partial failure/cancellation and preview/export
   identity; preserve useful typed support context.
@@ -22,78 +23,53 @@ Implement the [Desktop contract](docs/DESKTOP.md) in vertical slices:
   restored Saved Environment as natural status reference. Replace the temporary
   internal folder/Blueprint picker; qualify the Core contract when implementing.
   See [final product reference](docs/DESKTOP.md#required-final-product-reference-before-macseed-10).
+- [ ] Unified reusable Macseed design system: apply first to Restore, then reuse
+  in Capture, Environment Status, All Tasks and Settings. Use Domain → Items and
+  one presentation model across Preview → Rebuild → Verification → Result,
+  retaining native accessibility and Core-owned semantics.
 - [ ] 16K: Desktop flow/runtime/transport/security/accessibility hardening,
   including stale plans, interruptions and diagnostics acceptance.
 
 ### Broad Restore manual gate — 2026-10-05
 
-Gate remains **pending**. Preview-only findings do not validate Execute or final
-Verification. Retain the controlled-drift safety backup at
-`~/Desktop/macseed-full-restore-gate-20261005-124533`; this is a temporary manual-gate
-note, never product configuration or runtime input.
+The gate **substantially passed** at checkpoint `3e555fba`: real Rebuild and Core
+Verification succeeded. Git Configuration scalar drift passed Restore, independent
+verification and an idempotent fresh Preview. This is supported-scope evidence,
+not completion of all compatibility, secure or clean-Mac qualification.
+Retain the safety backup at `~/Desktop/macseed-full-restore-gate-20261005-124533`
+until remaining controlled checks are complete; it is not runtime input.
 
-- [x] **Git Repositories Preview identity — manually verified.** Recheck with
-  `Test_1.mbt` passed: `macseed` → OK / Already Matches;
-  `bootstrap-branch-test` → Ready to Restore / Will clone repository.
-- [ ] **Restore orchestration — fixed in working tree; broad manual gate pending.**
-  Item-local `cask_execution_requirements_unsupported` stays selected and visible,
-  is skipped during Execute, and permits supported independent work when no
-  operation-wide blocker exists. Rebuild requires remaining executable changes;
-  final Verification drives Rebuild Completed with Issues when appropriate.
-  Firefox support itself remains unimplemented. Recheck with the fresh Debug app
-  before closing this finding; preserve whole-operation safety prerequisites.
-- [ ] **Homebrew cask classification — diagnosed; manual gate pending.** The
-  apparent regression is newly exposed policy coverage: the unchanged classifier
-  rejects Firefox/Keka `command_wrapper` artifacts and IINA's `binary` artifact.
-  Earlier readiness stopped at Firefox and never classified the later missing
-  casks; their Ready to Install labels were not proof of execution support.
-  Read-only checks of current Homebrew metadata confirm AppCleaner/Plex are
-  app-only and eligible, while Firefox/IINA/Keka remain unsupported. Blueprint
-  and configuration indices in `Test_1.mbt` agree; differing-order regression
-  coverage must retain each finding's item identity and prepared-plan binding.
-  Keep unsupported items skipped and visible; qualify any future binary/wrapper
-  support separately without weakening the current safe-cask policy. Rebuild
-  being enabled does not close orchestration: real Execute/Verification is pending.
-- [ ] **MAS Restore — open; mandatory before 1.0.** Amphetamine reports
-  `authorization_required` and prevents Rebuild. Implement safe automatic Mac App
-  Store restoration with partial-success/non-blocking semantics where appropriate;
-  retain privileged-child interruption concerns in qualification.
-- [ ] **Git Configuration — Restore scalar drift fixed in working tree; manual
-  Execute+Verify pending.** Selected single direct values now plan `set_setting`
-  and restore saved values; matching/unselected keys remain no-op. Ambiguous
-  origins/multiple values and external-management protections remain. Recheck
-  controlled `core.editor` / `init.defaultBranch` drift with the fresh Debug app;
-  `pull.rebase` was Already Matches and is not a failure.
-- [ ] **VS Code extension dependency — observed regression use case.** Manual
-  removal of `ms-azuretools.vscode-containers` failed because
-  `ms-azuretools.vscode-docker` depends on it. This uninstall failure is not a
-  Macseed bug; preserve the scenario as dependency-handling coverage.
-- [ ] **Homebrew watchdog broad manual gate — pending.** Controlled drift leaves
-  casks `appcleaner`, `iina`, `keka`, `plex` and formulae `age`, `bat`, `knot`, `mtr`
-  absent. With the DIRECT route, validate AppCleaner stalling and
-  `item_stalled_timeout` after approximately 180 seconds without meaningful
-  progress; later independent work must continue with no orphan brew/curl
-  descendants. Final Verification is authoritative; partial success must report
-  Rebuild Completed with Issues, and fresh Preview must show only genuinely
-  unresolved state.
-- [ ] **Workspace — Preview passed; Execute+Verify pending.** `VSCode` and
-  `Работа` were intentionally moved out of their target paths; Preview correctly
-  reports Ready to Create. Existing workspace folders remain no-op. Validate
-  Execute and final Verification.
-- [ ] **macOS Settings — Preview passed; Execute+Verify pending.** Finder/Dock
-  drift was detected for `AppleShowAllExtensions`, `ShowPathbar`, `ShowStatusBar`,
-  `_FXSortFoldersFirst`, Dock `autohide` and `show-recents`, including required
-  affected-process restart where applicable. Validate Execute and Verification.
-- [ ] **VS Code Settings / Extensions — Preview passed; Execute+Verify pending.**
-  `settings.json` drift reports Ready to Restore; missing debugpy and Remote
-  SSH-related extensions are detected. Validate Execute and Verification.
-- [ ] **Zsh Restore — not yet manually validated.** Add explicit controlled-drift
-  Restore coverage before considering broad validation complete.
-- [ ] **Broad gate completion — pending.** After correctness/orchestration fixes,
-  pass controlled drift → Preview → Rebuild → final Verification → independent
-  external checks → fresh Preview with zero changes except intentionally
-  unresolved/unsupported items. Do not declare completion before this sequence
-  passes.
+- [ ] **Homebrew cask compatibility — next functional work.** Firefox/Keka
+  contain `command_wrapper` artifacts; IINA contains a `binary` artifact. The
+  current app-only execution policy correctly leaves all three unsupported,
+  selected and skipped. Earlier readiness stopped at Firefox, leaving later
+  casks unclassified; this was not an identity/mapping regression. AppCleaner/Plex
+  are eligible. Qualify safe binary/wrapper execution without name exceptions or
+  weakened safety gates; preserve independent item IDs and prepared-plan binding.
+- [ ] **MAS Restore — mandatory before 1.0.** Safe automatic App Store restoration
+  remains required; authorization/install qualification is unresolved. Amphetamine
+  reports `authorization_required`; deselecting MAS allowed the broad gate to
+  proceed but does not qualify MAS. Retain operation-wide prerequisites and
+  privileged-child interruption protection until a safe contract is qualified.
+- [ ] **Workspace product review.** Workspace Folders restores directory
+  structure only, never user file contents. Review user-facing semantics and
+  configurable discovery roots; current folder discovery classifies immediate
+  children of HOME. Do not imply document/data migration or silently broaden scope.
+- [ ] **Real Desktop Zsh Restore gate.** Run controlled drift → Preview → Rebuild
+  → Verification → independent check → idempotent Preview with safe backup.
+- [ ] **Watchdog targeted qualification.** Independently qualify a real
+  approximately 180-second no-progress stall, owned descendant termination and
+  continued independent work where the broad gate did not exercise that failure.
+- [ ] **VS Code dependency coverage.** Retain the observed case where removal of
+  `ms-azuretools.vscode-containers` is refused because `ms-azuretools.vscode-docker`
+  depends on it; this uninstall refusal is not a Macseed bug.
+
+The passed checkpoint includes repository Preview identity correlation and
+item-local unsupported orchestration. Selected differing Git scalars now plan
+`set_setting`, restore saved values and verify; matching/unselected keys remain
+no-op, and ambiguous origins/multiple values and observation errors stay protected.
+The former `core.editor` / `init.defaultBranch` `target_conflict` drift bug is fixed
+and verified end-to-end; it is no longer open gate work.
 
 ## Stage 17 — Distribution
 

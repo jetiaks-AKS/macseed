@@ -85,6 +85,14 @@ Normal macOS About is supplied by the application lifecycle.
 
 ## Structure and validation
 
+For scoped development slices, run affected focused tests, the relevant Debug
+build and `git diff --check` (plus syntax/lint when code requires it). Run canonical
+`./scripts/test.sh` full regression at major checkpoints/releases or when broad
+contracts require it, not mechanically after every small slice. Documentation-only
+changes require consistency/link review and diff-check, not runtime tests or builds.
+The `Debug --test` command below runs all five Desktop suites; select focused
+harnesses for narrower work.
+
 - `Sources/Presentation.swift`: small shared display values, no domain algorithms.
 - `Sources/ContentView.swift`: native reusable views and task content.
 - `Sources/MacseedApp.swift`: app and Settings scenes.

@@ -3,7 +3,9 @@
 Macseed reconstructs selected supported environment state:
 **Capture → Rebuild → Verify**. The CLI implements this workflow today. Desktop
 Capture uses the same production Core; its Stage 16E end-to-end manual gate is approved.
-Desktop Restore integration remains planned.
+Desktop Restore preparation/execution uses the same Core. Its broad manual gate
+substantially passed at checkpoint `3e555fba`; compatibility and remaining Desktop
+qualification are tracked in [TODO](../TODO.md#broad-restore-manual-gate--2026-10-05).
 
 ## What travels
 
@@ -52,7 +54,10 @@ Publication recovery protects the previous local configuration pair at defined
 failure points. It does not roll back installs, settings or key imports. Late
 failure can leave partial changes. Re-entry means inspecting again, previewing
 again and repeating idempotent actions. Matching supported state should converge
-to no-op; conflicts remain for user resolution.
+to no-op; genuine unsafe/ambiguous conflicts remain for user resolution. Selected
+supported scalar Git settings with ordinary value drift are planned changes:
+Restore writes the saved value, verifies it and then converges to Already Matches.
+Unselected settings remain untouched; observation errors never mean absence.
 
 Application Prepare returns a plan and prerequisites. Execute rebuilds them and
 rejects a stale ID before publication. External prerequisite resolution requires
@@ -60,6 +65,9 @@ Check Again and confirmation of the new plan. CLI confirmation uses the terminal
 See [Core interface](core/APPLICATION-INTERFACE.md) and [CLI](toolkit/CLI.md).
 
 ## Secure identities
+
+Core/CLI secure migration is implemented; the Desktop Secure SSH Capture/Restore
+bridge and real application qualification remain unfinished (Stage 16H).
 
 SSH Configuration is reconstructable Host-profile data. SSH identities are
 separately selected existing private/public pairs handled by Secure Migration,
