@@ -211,7 +211,7 @@ struct RestorePreviewItemDetails: View {
                         if let reason = item.reason {
                             DisclosureGroup("Technical reason") {
                                 Text(reason).font(.caption.monospaced()).textSelection(.enabled)
-                            }.disclosureGroupStyle(HeaderDisclosureStyle()).font(.caption)
+                            }.disclosureGroupStyle(TaskDisclosureStyle(minimumHeight: 22)).font(.caption)
                         }
                     }
                     Spacer()
@@ -248,7 +248,7 @@ struct RestorePrerequisiteView: View {
             if condition.status != "satisfied" {
                 Text(message).font(.callout)
                 DisclosureGroup(technicalTitle) { Text(condition.code).font(.caption.monospaced()).textSelection(.enabled) }
-                    .disclosureGroupStyle(HeaderDisclosureStyle())
+                    .disclosureGroupStyle(TaskDisclosureStyle(minimumHeight: 22))
             }
         }
     }
@@ -282,29 +282,10 @@ struct RestorePrerequisiteView: View {
     }
 }
 
-struct RestorePreviewDomainRow: View {
-    let row: DisplayCategory
-    @RestoreViewState<Bool> private var expanded = false
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            DisclosureGroup(isExpanded: $expanded) { EmptyView() } label: {
-                HStack(spacing: RestoreRowGrid.spacing) {
-                    Image(systemName: RestorePreviewPresentation.state(row) == "Needs Attention" ? "exclamationmark.triangle" : "checkmark.circle")
-                        .frame(width: RestoreRowGrid.iconWidth)
-                        .foregroundStyle(RestoreStatusTone.domain(RestorePreviewPresentation.state(row)).color)
-                    Text(row.title).foregroundStyle(.primary)
-                    Spacer()
-                    Text(RestorePreviewPresentation.state(row)).foregroundStyle(RestoreStatusTone.domain(RestorePreviewPresentation.state(row)).color)
-                }
-            }.disclosureGroupStyle(RestoreHeaderDisclosureStyle())
-            if expanded { RestorePreviewItemDetails(items: row.items).padding(.leading, RestoreRowGrid.disclosureWidth + RestoreRowGrid.spacing) }
-        }.padding(.vertical, 4)
-    }
-}
-
 struct RestoreView: View {
     @ObservedObject var model: RestoreModel
     @ObservedObject var runtime: CoreRuntime
+    var showsRebuildActions = true
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             switch model.state {
@@ -345,66 +326,48 @@ struct RestoreView: View {
                     Text(model.selectionSummary).font(.callout).foregroundStyle(.secondary)
                     Button("Preview Restore") { model.refreshPreview() }.buttonStyle(.borderedProminent).disabled(!model.canPreview)
                 } else if let prepared = model.preparation, let preview = model.preview {
-                    Text(!model.ready || preview.sections.flatMap(\.rows).contains(where: { RestorePreviewPresentation.state($0) == "Needs Attention" })
-                         ? "Needs Attention" : prepared.hasPlannedChanges ? "Ready to Rebuild" : "Everything already matches").font(.title2)
-                    Text(preview.summary)
-                    if !prepared.hasPlannedChanges && prepared.plan.allSatisfy({ $0.disposition == "satisfied" }) {
-                        Text("Selected requirements already match this Mac.")
-                    }
-                    RestorePreviewAttentionSummaryView(summary: RestoreIssueSummaryPresentation(categories: preview.sections.flatMap(\.rows)))
-                    let prerequisites = RestorePrerequisiteSummaryPresentation(conditions: prepared.readiness.conditions, ready: prepared.readiness.ready)
-                    RestorePrerequisiteSummaryView(summary: prerequisites, areas: model.areas)
-                    if !prerequisites.blockers.isEmpty {
-                        Button("Check Again") { model.refreshPreview() }
-                    }
-                    ForEach(preview.sections) { section in
-                        RestoreSectionHeader(title: section.id)
-                        ForEach(section.rows) { RestorePreviewDomainRow(row: $0) }
-                    }
-                    HStack {
-                        Button("Back") { model.back() }
-                        Button("Refresh Preview") { model.refreshPreview() }
-                        Button("Rebuild") { model.requestRebuild() }.buttonStyle(.borderedProminent).disabled(!model.canRebuild)
-                    }
+                    let tasks = RestoreTaskPresentation(preview: preview, plan: prepared)
+                    let needsAttention = !model.ready || tasks.domains.contains { [.attention, .unverified, .partial].contains($0.state) }
+                    RestorePreviewContent(
+                        title: needsAttention ? "Needs Attention" : prepared.hasPlannedChanges ? "Ready to Rebuild" : "Everything already matches",
+                        message: preview.summary, state: needsAttention ? .attention : prepared.hasExecutableChanges ? .planned : .matching,
+                        domains: tasks.domains, counters: tasks.counters,
+                        alreadyMatches: !prepared.hasPlannedChanges && prepared.plan.allSatisfy { $0.disposition == "satisfied" },
+                        prerequisites: RestorePrerequisiteSummaryPresentation(conditions: prepared.readiness.conditions, ready: prepared.readiness.ready),
+                        areas: model.areas, checkAgain: { model.refreshPreview() },
+                        back: { model.back() }, refresh: { model.refreshPreview() }, rebuild: { model.requestRebuild() }, canRebuild: model.canRebuild)
                     if !prepared.hasPlannedChanges && prepared.plan.allSatisfy({ $0.disposition == "satisfied" }) {
                         Text("Everything already matches. No Rebuild is needed.").font(.callout).foregroundStyle(.secondary)
                     }
                 }
             case .rebuilding:
-                Text("Rebuilding Your Mac").font(.title2)
-                Text(runtime.stopping ? "Stopping…" : model.activity).foregroundStyle(.secondary)
-                ForEach(model.executionActivities) { item in
-                    HStack {
-                        Group {
-                            if item.status == .working || item.restoreActivity != nil {
-                                ProgressView().controlSize(.small)
-                            } else if item.requiresAttention {
-                                Image(systemName: "exclamationmark.triangle").foregroundStyle(RestoreStatusTone.warning.color)
-                            } else {
-                                Color.clear
-                            }
-                        }.frame(width: 18, height: 18)
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(item.title)
-                            if let activity = item.restoreActivity {
-                                Text(activity).font(.callout).foregroundStyle(.secondary)
-                            }
-                        }
-                        Spacer()
-                        Text(item.action).foregroundStyle(RestoreStatusTone.status(item.status).color)
-                    }
+                if let preview = model.executionPreview, let plan = model.executionPlan {
+                    let tasks = RestoreTaskPresentation(preview: preview, plan: plan, events: runtime.events, executing: true)
+                    OperationSummaryHeader(title: model.activity.hasPrefix("Verifying") ? "Verifying Your Mac" : "Rebuilding Your Mac",
+                        message: runtime.stopping ? "Stopping… Completed changes may remain." : model.activity,
+                        state: .working, counters: tasks.counters, startedAt: model.executionStartedAt)
+                    TaskDomainList(domains: tasks.domains)
                 }
-                Button("Stop Rebuild", role: .cancel) { model.requestStop() }.disabled(runtime.stopping)
+                if showsRebuildActions {
+                    RestoreRebuildActions(stopping: runtime.stopping, stop: { model.requestStop() })
+                }
             case .result:
                 if let result = model.executionResult {
-                    Text(result.title).font(.title2)
-                    Text(result.message)
-                    if !result.successfulAreas.isEmpty {
-                        Text("Verified areas: " + result.successfulAreas.joined(separator: ", ")).font(.callout)
-                    }
-                    if result.outcome != .clean {
-                        RestoreIssueSummaryView(summary: .result(result.findings, catalog: model.inspection?.restoreSelection), isResult: true)
-                        Button("Refresh Preview") { model.checkCurrentState() }
+                    if let preview = model.executionPreview, let plan = model.executionPlan {
+                        let tasks = RestoreTaskPresentation(preview: preview, plan: plan, events: runtime.events, result: result)
+                        OperationSummaryHeader(title: result.title, message: result.message,
+                            state: result.outcome == .clean ? .completed : result.outcome == .partial ? .partial
+                                : [.failedBeforeMutation, .failedAfterMutation].contains(result.outcome) ? .failed : .attention,
+                            counters: tasks.counters, startedAt: model.executionStartedAt,
+                            finishedAt: model.executionFinishedAt)
+                        HStack {
+                            PendingOperationLogButton()
+                            Button("Refresh Preview") { model.checkCurrentState() }
+                        }
+                        TaskDomainList(domains: tasks.domains)
+                    } else {
+                        Text(result.title).font(.title2)
+                        Text(result.message)
                     }
                     DisclosureGroup("View Details") { RestorePreviewItemDetails(items: result.details) }
                         .disclosureGroupStyle(HeaderDisclosureStyle())
@@ -463,5 +426,53 @@ struct RestoreView: View {
         }
         if let window = NSApp.keyWindow { panel.beginSheetModal(for: window, completionHandler: completion) }
         else { panel.begin(completionHandler: completion) }
+    }
+}
+
+// Real and synthetic Preview share the same presentation hierarchy and spacing.
+struct RestorePreviewContent: View {
+    let title: String
+    let message: String
+    let state: TaskRowState
+    let domains: [TaskDomainPresentation]
+    let counters: [(state: TaskRowState, count: Int)]
+    let alreadyMatches: Bool
+    let prerequisites: RestorePrerequisiteSummaryPresentation
+    let areas: [CoreRestoreInspection.Area]
+    var checkAgain: (() -> Void)? = nil
+    var back: (() -> Void)? = nil
+    var refresh: (() -> Void)? = nil
+    var rebuild: (() -> Void)? = nil
+    var canRebuild = false
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            OperationSummaryHeader(title: title, message: message, state: state, counters: counters)
+            if alreadyMatches { Text("Selected requirements already match this Mac.") }
+            RestorePreviewAttentionSummaryView(summary: RestoreIssueSummaryPresentation(categories: domains.map {
+                DisplayCategory(id: $0.id, title: $0.title, symbol: $0.symbol, items: $0.items.map(\.item))
+            }))
+            RestorePrerequisiteSummaryView(summary: prerequisites, areas: areas)
+            if !prerequisites.blockers.isEmpty {
+                Button("Check Again") { checkAgain?() }.disabled(checkAgain == nil)
+            }
+            TaskDomainList(domains: domains)
+            HStack {
+                Button("Back") { back?() }.disabled(back == nil)
+                Button("Refresh Preview") { refresh?() }.disabled(refresh == nil)
+                Button("Rebuild") { rebuild?() }.buttonStyle(.borderedProminent).disabled(!canRebuild || rebuild == nil)
+            }
+        }
+    }
+}
+
+struct RestoreRebuildActions: View {
+    var stopping = false
+    var stop: (() -> Void)? = nil
+    var body: some View {
+        HStack {
+            PendingOperationLogButton()
+            Spacer()
+            Button("Stop Rebuild", role: .cancel) { stop?() }.disabled(stopping || stop == nil)
+        }
     }
 }

@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 // Capture, Restore Prepare and Status consume structured Core data.
@@ -7,6 +8,12 @@ struct ProductionWorkspace: View {
     @SwiftUI.StateObject private var capture: CaptureModel
     @SwiftUI.StateObject private var restore: RestoreModel
     @SwiftUI.StateObject private var navigation = ProductionNavigation()
+    #if DEBUG
+    @ObservedObject private var scenarios = RestoreDebugScenarios.shared
+    private var syntheticRestore: Bool { scenarios.selected != .real }
+    #else
+    private var syntheticRestore: Bool { false }
+    #endif
     private var busy: Bool { runtime.isActive || status.state == .running || capture.busy || restore.busy }
     init(runtime: CoreRuntime) {
         self.runtime = runtime
@@ -38,26 +45,40 @@ struct ProductionWorkspace: View {
                             } else if task == .capture {
                                 CaptureView(model: capture, runtime: runtime)
                             } else {
-                                RestoreView(model: restore, runtime: runtime)
+                                #if DEBUG
+                                if syntheticRestore { RestoreDebugScenarioView(scenario: scenarios.selected) }
+                                else { RestoreView(model: restore, runtime: runtime, showsRebuildActions: false) }
+                                #else
+                                RestoreView(model: restore, runtime: runtime, showsRebuildActions: false)
+                                #endif
                             }
                         } else {
                             TaskHome { task in if !busy { navigation.task = task } }
                                 .disabled(busy)
                         }
-                        if runtime.isActive && runtime.operation == .capabilities {
+                        if !syntheticRestore && runtime.isActive && runtime.operation == .capabilities {
                             ProgressView(runtime.stopping ? "Stopping…" : "Checking Macseed Core…")
                             Button("Cancel") { runtime.cancel() }.disabled(runtime.stopping)
-                        } else if runtime.operation == .capabilities, let error = runtime.error {
+                        } else if !syntheticRestore && runtime.operation == .capabilities, let error = runtime.error {
                             Label("Needs Attention", systemImage: "exclamationmark.triangle").foregroundStyle(.orange)
                             Text(error.message)
                             Button("Check Again") { runtime.checkCapabilities() }
-                        } else if runtime.operation == .capabilities && runtime.state == .cancelled {
+                        } else if !syntheticRestore && runtime.operation == .capabilities && runtime.state == .cancelled {
                             Text("Core check cancelled.")
                             Button("Check Again") { runtime.checkCapabilities() }
                         }
                     }
-                    .padding(28).frame(maxWidth: 800, alignment: .leading)
+                    .padding(28).frame(maxWidth: navigation.task == .restore ? .infinity : 800, alignment: .leading)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                if navigation.task == .restore {
+                    #if DEBUG
+                    if syntheticRestore {
+                        if scenarios.selected == .rebuilding { rebuildActionArea(synthetic: true) }
+                    } else if restore.state == .rebuilding { rebuildActionArea(synthetic: false) }
+                    #else
+                    if restore.state == .rebuilding { rebuildActionArea(synthetic: false) }
+                    #endif
                 }
                 Divider()
                 HStack {
@@ -79,10 +100,47 @@ struct ProductionWorkspace: View {
                 }
             }
         }
-        .task { if runtime.state == .idle { runtime.checkCapabilities() } }
+        .task { if !syntheticRestore && runtime.state == .idle { runtime.checkCapabilities() } }
+        #if DEBUG
+        .onChange(of: scenarios.selected) { _, scenario in
+            if busy { scenarios.selected = .real; return }
+            if scenario != .real { navigation.task = .restore }
+        }
+        #endif
+    }
+    private func rebuildActionArea(synthetic: Bool) -> some View {
+        VStack(spacing: 0) {
+            Divider()
+            RestoreRebuildActions(stopping: runtime.stopping, stop: synthetic ? nil : { restore.requestStop() })
+                .padding(.horizontal, 28).padding(.vertical, 12)
+        }
     }
 }
 
 @MainActor final class ProductionNavigation: ObservableObject {
     @Published var task: ProductTask?
+}
+
+// Applied only to the main scene; sheets and Settings retain native sizing.
+enum MainWindowPolicy {
+    static let minimum = NSSize(width: 1000, height: 700)
+    static let preferred = NSSize(width: 1200, height: 800)
+    static func apply(to window: NSWindow) {
+        window.contentMinSize = minimum
+        window.collectionBehavior.remove(.fullScreenNone)
+        window.collectionBehavior.insert(.fullScreenPrimary)
+    }
+}
+
+struct MainWindowConfiguration: NSViewRepresentable {
+    final class WindowView: NSView {
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            if let window { MainWindowPolicy.apply(to: window) }
+        }
+    }
+    func makeNSView(context: Context) -> WindowView { WindowView() }
+    func updateNSView(_ view: WindowView, context: Context) {
+        if let window = view.window { MainWindowPolicy.apply(to: window) }
+    }
 }

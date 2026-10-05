@@ -5,11 +5,17 @@ import SwiftUI
     var body: some Scene {
         WindowGroup("Macseed") {
             ContentView()
-                .frame(minWidth: 760, minHeight: 600)
+                .frame(minWidth: MainWindowPolicy.minimum.width,
+                       minHeight: MainWindowPolicy.minimum.height)
+                .background(MainWindowConfiguration())
         }
-        .defaultSize(width: 920, height: 740)
+        .defaultSize(width: MainWindowPolicy.preferred.width, height: MainWindowPolicy.preferred.height)
+        .windowResizability(.contentSize)
         .commands {
             CommandGroup(replacing: .newItem) { }
+            #if DEBUG
+            RestoreScenarioCommands()
+            #endif
         }
         Settings { FoundationSettingsView() }
     }
@@ -89,3 +95,17 @@ struct FoundationSettingsView: View {
         return .terminateLater
     }
 }
+
+#if DEBUG
+struct RestoreScenarioCommands: Commands {
+    @ObservedObject private var scenarios = RestoreDebugScenarios.shared
+    @ObservedObject private var runtime = CoreRuntime.shared
+    var body: some Commands {
+        CommandMenu("Debug") {
+            Picker("Restore Scenario", selection: $scenarios.selected) {
+                ForEach(RestoreDebugScenario.allCases) { Text($0.rawValue).tag($0) }
+            }.disabled(runtime.isActive)
+        }
+    }
+}
+#endif

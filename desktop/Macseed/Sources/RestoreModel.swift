@@ -193,6 +193,11 @@ struct RestoreProgressRow {
     @Published private(set) var preparation: CoreRestorePreparation?
     @Published private(set) var preview: RestorePreviewPresentation?
     @Published private(set) var executionResult: RestoreExecutionPresentation?
+    // Retained presentation inputs only; prepared-plan authorization still uses preparation.
+    @Published private(set) var executionPreview: RestorePreviewPresentation?
+    @Published private(set) var executionPlan: CoreRestorePreparation?
+    @Published private(set) var executionStartedAt: Date?
+    @Published private(set) var executionFinishedAt: Date?
     @Published var stopConfirmation = false
     @Published private(set) var failure: String?
     @Published private(set) var technicalReason: String?
@@ -261,11 +266,14 @@ struct RestoreProgressRow {
         let request = CoreRequest(.restoreExecute(path: source.path, disabledGroups: [], includeSecure: false,
                                                 preparedID: plan.preparedPlanID, selection: selection))
         progressScope = RestoreProgressRow.freeze(preview: preview, plan: plan)
+        executionPreview = preview; executionPlan = plan
+        executionStartedAt = Date(); executionFinishedAt = nil
         executionResult = nil; stopConfirmation = false; state = .rebuilding
         // Start synchronously so a second activation cannot launch another operation.
         runtime.start(request, location: location)
         work = Task {
             await runtime.waitForCompletion()
+            executionFinishedAt = Date()
             let terminal = runtime.termination?.terminal
             let payload = runtime.latestResult?.data ?? terminal?.data
             let names = progressScope.reduce(into: [String: [String: String]]()) { result, row in
@@ -290,6 +298,7 @@ struct RestoreProgressRow {
     func finish() {
         guard state == .result, !runtime.isActive else { return }
         invalidate(); progressScope = []; executionResult = nil; inspection = nil; source = nil
+        executionPreview = nil; executionPlan = nil; executionStartedAt = nil; executionFinishedAt = nil
         selectedCategories = []; selectedItems = [:]; state = .choose
     }
     func selectionState(_ area: CoreRestoreInspection.Area) -> SelectionState {

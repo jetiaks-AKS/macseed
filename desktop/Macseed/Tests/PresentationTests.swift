@@ -44,6 +44,9 @@ import SwiftUI
         let prerequisiteSummarySource = String(source.components(separatedBy: "struct RestorePrerequisiteSummaryView:")[1].components(separatedBy: "// Preview owns area/count summaries only")[0])
         precondition(!previewSource.contains("Show Details") && !previewSource.contains("summary.title"))
         precondition(previewSource.contains("ForEach(summary.areas)"))
+        precondition(previewSource.contains("Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 8)"))
+        precondition(previewSource.contains("GridRow {") && previewSource.contains(".monospacedDigit()"))
+        precondition(!previewSource.contains("Spacer()") && !previewSource.contains(".infinity"))
         precondition(!previewSource.contains("DisclosureGroup") && !previewSource.contains("ForEach(area.items)"))
         precondition(!previewSource.contains("item.title") && !previewSource.contains("item.action") && !previewSource.contains("item.reason"))
         precondition(!previewSource.contains("Technical") && !previewSource.contains("cask_execution_requirements_unsupported"))
@@ -65,19 +68,125 @@ import SwiftUI
         precondition(RestorePrerequisiteSummaryPresentation.status([condition("authorization_required", "external_action_required")]) == "Authorization Required")
         let view = try! String(contentsOfFile: "Sources/RestoreView.swift", encoding: .utf8)
         precondition(view.contains("DisclosureGroup(\"Technical reason\")") && view.contains("DisclosureGroup(\"View Details\")"))
-        precondition(view.contains("ForEach(preview.sections)") && view.contains("RestorePreviewDomainRow(row: $0)"))
-        precondition(view.contains("if expanded { RestorePreviewItemDetails(items: row.items)"))
+        precondition(view.components(separatedBy: "TaskDomainList(domains: tasks.domains)").count == 3 && view.contains("TaskDomainList(domains: domains)"))
         precondition(view.contains("Text(item.title)") && view.contains("Text(item.action)"))
+
+        precondition(TaskRowState.aggregate([.completed, .skipped]) == .partial)
+        precondition(TaskRowState.aggregate([.completed, .failed]) == .partial)
+        precondition(TaskRowState.aggregate([.failed, .waiting]) == .failed)
+        precondition(TaskRowState.aggregate([.unverified]) == .unverified)
+        precondition(TaskRowState.aggregate([.working, .attention]) == .working)
+        precondition(TaskRowState.aggregate([.skipped]) == .skipped)
+        precondition(OperationSummaryHeader.elapsed(Date(timeIntervalSince1970: 0), Date(timeIntervalSince1970: 342)) == "5m 42s")
+        let components = try! String(contentsOfFile: "Sources/TaskComponents.swift", encoding: .utf8)
+        precondition(!components.contains("ProgressView(value:"))
+        precondition(components.contains("Button {}") && components.contains(".disabled(true)"))
+        precondition(components.contains("Technical Details") && components.contains("ForEach(domain.items)"))
+        print("PASS: Reusable task states, elapsed metadata, metric cards and unavailable View Log")
 
         print("PASS: Compact Restore summary counts/area aggregation, collapsed details, concrete names/reasons, prerequisites and result deduplication with Unverified evidence")
     }
+    @MainActor static func renderRestoreV2() {
+        let domains = [TaskRowState.completed, .partial, .attention, .skipped, .failed].enumerated().map { index, state in
+            TaskDomainPresentation(id: "domain-\(index)", title: "Domain \(index + 1)", symbol: "folder",
+                items: [TaskItemPresentation(id: "item-\(index)",
+                    item: DisplayItem(id: "item-\(index)", title: "Concrete item", status: .information, action: "Observed result"), state: state)],
+                activityState: state)
+        }
+        let counters = domains.map { (state: $0.state, count: 1) }
+        let large = TaskDomainPresentation(id: "large", title: "Homebrew", symbol: "shippingbox",
+            items: (1...24).map { index in
+                TaskItemPresentation(id: "large-\(index)", item: DisplayItem(id: "large-\(index)",
+                    title: "Captured application \(index)", status: .attention,
+                    action: "This application's installation requirements are not supported.",
+                    reason: "cask_execution_requirements_unsupported"), state: .skipped)
+            })
+        for width in [730, 930, 1330] {
+            let content = VStack(alignment: .leading, spacing: 22) {
+                OperationSummaryHeader(title: "Rebuild Completed with Issues", message: "Review the observed results and affected items.",
+                    state: .partial, counters: counters, startedAt: Date().addingTimeInterval(-342),
+                    finishedAt: Date())
+                PendingOperationLogButton()
+                TaskDomainList(domains: domains)
+                DisclosureGroup(isExpanded: .constant(true)) {
+                    TaskDomainItems(domain: large)
+                } label: { Text("Homebrew · 24 captured items") }
+                    .disclosureGroupStyle(TaskDisclosureStyle())
+            }.padding(24).frame(width: CGFloat(width)).background(Color(nsColor: .windowBackgroundColor))
+            let renderer = ImageRenderer(content: content)
+            renderer.scale = 1
+            if let image = renderer.nsImage, let tiff = image.tiffRepresentation,
+               let bitmap = NSBitmapImageRep(data: tiff), let png = bitmap.representation(using: .png, properties: [:]) {
+                precondition(bitmap.pixelsWide == width)
+                try! png.write(to: URL(fileURLWithPath: "build/Debug/RestoreUIv2-\(width).png"))
+            } else { preconditionFailure("Restore UI snapshot could not render") }
+        }
+        let source = try! String(contentsOfFile: "Sources/TaskComponents.swift", encoding: .utf8)
+        let style = source.components(separatedBy: "struct TaskDisclosureStyle:")[1].components(separatedBy: "struct TaskStatusLabel:")[0]
+        precondition(style.contains("Button { configuration.isExpanded.toggle() }") && style.contains(".contentShape(Rectangle())"))
+        precondition(style.contains(".buttonStyle(.plain)") && style.contains(".accessibilityValue("))
+        precondition(!style.contains("onTapGesture"))
+        let workspace = try! String(contentsOfFile: "Sources/ProductionWorkspace.swift", encoding: .utf8)
+        precondition(workspace.contains("navigation.task == .restore ? .infinity : 800"))
+        precondition(source.contains("TaskRowLayout.statusWidth"))
+        precondition(source.contains("TaskDisclosureStyle(minimumHeight: 22)"))
+        precondition(source.contains("spacing: 12") && source.contains("minHeight: 52"))
+        let summary = try! String(contentsOfFile: "Sources/RestoreSummary.swift", encoding: .utf8)
+        let attention = summary.components(separatedBy: "// Preview owns area/count summaries only")[1]
+        precondition(attention.contains("if !summary.areas.isEmpty") && attention.contains("Text(\"Needs Attention\").font(.headline)"))
+        let app = try! String(contentsOfFile: "Sources/MacseedApp.swift", encoding: .utf8)
+        precondition(app.contains(".background(MainWindowConfiguration())") && app.contains(".windowResizability(.contentSize)"))
+        precondition(app.contains("MainWindowPolicy.preferred.width") && !app.contains("MainWindowPolicy.maximum"))
+        _ = NSApplication.shared
+        let window = NSWindow(contentRect: NSRect(origin: .zero, size: MainWindowPolicy.preferred),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: true)
+        window.isReleasedWhenClosed = false
+        MainWindowPolicy.apply(to: window)
+        precondition(window.contentMinSize == NSSize(width: 1000, height: 700))
+        precondition(window.contentMaxSize.width > 1600 && window.contentMaxSize.height > 1050)
+        precondition(MainWindowPolicy.preferred == NSSize(width: 1200, height: 800))
+        precondition(window.styleMask.contains(.resizable))
+        precondition(!window.collectionBehavior.contains(.fullScreenNone) && window.collectionBehavior.contains(.fullScreenPrimary))
+        window.close()
+        print("PASS: Native technical disclosure, attention heading, main window bounds/fullscreen policy and responsive range renders")
+    }
+
     @MainActor static func main() {
         if CommandLine.arguments.count == 4 && CommandLine.arguments[1] == "--appearance-read" {
             let stored = UserDefaults(suiteName: CommandLine.arguments[2])!.string(forKey: DesktopAppearance.preferenceKey)
             precondition(stored == CommandLine.arguments[3])
             return
         }
+        #if DEBUG
+        precondition(RestoreDebugScenarios.shared.selected == .real)
+        precondition(RestoreDebugScenario.real.domains.isEmpty)
+        for scenario in RestoreDebugScenario.allCases where scenario != .real {
+            precondition(scenario.counters.reduce(0) { $0 + $1.count } == scenario.domains.count)
+            precondition(Set(scenario.domains.map(\.id)).count == scenario.domains.count)
+        }
+        precondition(RestoreDebugScenario.preview.domains.contains { $0.state == .partial })
+        precondition(!RestoreDebugScenario.preview.domains.contains { $0.state == .failed })
+        precondition(Set(RestoreDebugScenario.rebuilding.domains.map(\.state)) == Set([.completed, .working, .waiting, .skipped, .failed]))
+        precondition(Set(RestoreDebugScenario.issues.domains.map(\.state)) == Set([.completed, .attention, .skipped, .failed]))
+        precondition(RestoreDebugScenario.done.domains.allSatisfy { $0.state == .completed && $0.items.allSatisfy { $0.item.reason == nil } })
+        let scenarioSource = try! String(contentsOfFile: "Sources/SampleProvider.swift", encoding: .utf8)
+        let fixtureSource = scenarioSource.components(separatedBy: "// Manual presentation fixtures only.")[1]
+        precondition(!fixtureSource.contains("CoreRuntime") && !fixtureSource.contains("RestoreModel") && !fixtureSource.contains("Process("))
+        let commandSource = try! String(contentsOfFile: "Sources/MacseedApp.swift", encoding: .utf8)
+        precondition(commandSource.contains("#if DEBUG\nstruct RestoreScenarioCommands"))
+        print("PASS: DEBUG Restore scenarios use presentation fixtures, truthful Preview states and no runtime actions")
+        #endif
+        let components = try! String(contentsOfFile: "Sources/TaskComponents.swift", encoding: .utf8)
+        precondition(components.contains("if item.state != .working, let reason = item.item.reason"))
+        let workspaceSource = try! String(contentsOfFile: "Sources/ProductionWorkspace.swift", encoding: .utf8)
+        precondition(workspaceSource.range(of: "rebuildActionArea(synthetic: true)")!.lowerBound > workspaceSource.range(of: ".padding(28).frame(maxWidth:")!.lowerBound)
+        precondition(workspaceSource.contains("stop: synthetic ? nil : { restore.requestStop() }"))
+        #if DEBUG
+        precondition(RestoreDebugScenario.rebuilding.domains.flatMap(\.items).filter { $0.state == .working }.allSatisfy { $0.item.reason == nil })
+        precondition(fixtureSource.contains("RestorePreviewContent(title:"))
+        #endif
         restoreSummaryChecks()
+        renderRestoreV2()
         let suite = "MacseedAppearanceTests-" + UUID().uuidString
         let preferences = UserDefaults(suiteName: suite)!
         defer { preferences.removePersistentDomain(forName: suite) }
@@ -133,8 +242,8 @@ import SwiftUI
         let restoreView = try! String(contentsOf: sources.appendingPathComponent("RestoreView.swift"), encoding: .utf8)
         let restoreModel = try! String(contentsOf: sources.appendingPathComponent("RestoreModel.swift"), encoding: .utf8)
         precondition(restoreView.contains("NSOpenPanel()") && restoreView.contains("panel.canChooseDirectories = false"))
-        precondition(restoreView.contains(".disabled(!model.canRebuild)") && restoreView.contains("model.confirmRebuild()"))
-        precondition(restoreView.contains("Button(\"Check Again\") { model.refreshPreview() }"))
+        precondition(restoreView.contains("canRebuild: model.canRebuild") && restoreView.contains(".disabled(!canRebuild || rebuild == nil)") && restoreView.contains("model.confirmRebuild()"))
+        precondition(restoreView.contains("checkAgain: { model.refreshPreview() }") && restoreView.contains("Button(\"Check Again\") { checkAgain?() }"))
         precondition(restoreView.contains(".disclosureGroupStyle(HeaderDisclosureStyle())") && restoreView.contains("CaptureChildRowGrid.leadingInset"))
         let sections = RestorePresentationSection.project([])
         precondition(sections.map(\.id) == ["Applications & Tools", "Settings", "Shell", "Git", "SSH Configuration", "Workspace"])
@@ -170,19 +279,18 @@ import SwiftUI
         precondition(RestoreStatusTone.domain("Error") == .error)
         precondition(RestoreStatusTone.domain("Changes Planned") == .neutral)
         precondition(RestoreStatusTone.status(.unsupported) != .success && RestoreStatusTone.status(.unverified) != .success)
-        precondition(restoreView.contains("Text(row.title).foregroundStyle(.primary)") && restoreView.contains("Text(item.title).foregroundStyle(.primary)") && restoreView.contains("Text(label).foregroundStyle(.primary)"))
+        precondition(restoreView.contains("Text(item.title).foregroundStyle(.primary)") && restoreView.contains("Text(label).foregroundStyle(.primary)"))
         precondition(restoreView.contains("Label(item.status.rawValue, systemImage: item.status.symbol)"))
         precondition(restoreView.contains("if item.status == .matching || item.status == .ready {"))
         precondition(restoreView.contains("Text(item.status == .matching ? \"OK\" : item.restoreReadyText"))
         precondition(restoreView.contains("NSColor.systemGreen") && restoreView.contains("appearance.performAsCurrentDrawingAppearance") && restoreView.contains(".darkAqua"))
         precondition(restoreView.contains("Text(item.action).font(.callout).foregroundStyle(.secondary)"))
-        precondition(restoreView.contains("Text(RestorePreviewPresentation.state(row)).foregroundStyle"))
-        let prerequisiteSource = String(restoreView.components(separatedBy: "struct RestorePrerequisiteView")[1].components(separatedBy: "struct RestorePreviewDomainRow")[0])
+        let prerequisiteSource = String(restoreView.components(separatedBy: "struct RestorePrerequisiteView")[1].components(separatedBy: "struct RestoreView:")[0])
         precondition(!prerequisiteSource.contains("checkmark.circle"))
         let progressSource = String(restoreView.components(separatedBy: "case .rebuilding:")[1].components(separatedBy: "case .result:")[0])
-        precondition(progressSource.contains("ProgressView().controlSize(.small)") && !progressSource.contains("checkmark"))
-        precondition(progressSource.contains("if let activity = item.restoreActivity"))
-        precondition(restoreView.contains("RestoreIssueSummaryView(summary: .result(result.findings,"))
+        precondition(progressSource.contains("TaskDomainList(domains: tasks.domains)"))
+        precondition(progressSource.contains("events: runtime.events, executing: true"))
+        precondition(restoreView.contains("events: runtime.events, result: result"))
         precondition(!restoreView.contains("result.details.filter"))
         precondition(prerequisiteSource.contains("case \"satisfied\": \"Already Satisfied\""))
         precondition(!prerequisiteSource.contains("This prerequisite is available for the selected plan."))
@@ -198,11 +306,12 @@ import SwiftUI
         precondition(restoreModel.contains("Everything selected") && restoreModel.contains("Some items excluded") && restoreModel.contains("Nothing selected"))
         precondition(restoreView.contains("Text(model.selectionSummary).font(.callout).foregroundStyle(.secondary)"))
         precondition(restoreView.contains(".disabled(!model.canPreview)"))
-        precondition(restoreView.contains("ForEach(preview.sections)") && restoreView.contains("RestorePreviewDomainRow(row:"))
+        precondition(restoreView.contains("TaskDomainList(domains: tasks.domains)"))
         precondition(restoreView.contains("RestorePrerequisiteSummaryView") && restoreView.contains("prerequisites.blockers"))
-        let previewRow = String(restoreView.components(separatedBy: "struct RestorePreviewDomainRow")[1].components(separatedBy: "struct RestoreView:")[0])
-        precondition(previewRow.contains("private var expanded = false") && previewRow.contains("if expanded { RestorePreviewItemDetails(items: row.items)"))
-        precondition(restoreView.range(of: "RestorePreviewAttentionSummaryView(summary:")!.lowerBound < restoreView.range(of: "ForEach(preview.sections)")!.lowerBound)
+        let taskSource = try! String(contentsOf: sources.appendingPathComponent("TaskComponents.swift"), encoding: .utf8)
+        precondition(taskSource.contains("private var expanded = []") && taskSource.contains("ForEach(domain.items)"))
+        let previewContent = restoreView.components(separatedBy: "struct RestorePreviewContent: View")[1]
+        precondition(previewContent.range(of: "RestorePreviewAttentionSummaryView(summary:")!.lowerBound < previewContent.range(of: "TaskDomainList(domains: domains)")!.lowerBound)
         precondition(restoreView.contains("Rebuild this Mac?") && restoreView.contains("Stop rebuilding?") && restoreView.contains("Completed changes will remain."))
         precondition(restoreView.contains("model.confirmStop()") && restoreView.contains("model.checkCurrentState()"))
         precondition(restoreModel.contains("plan.preparedPlanID, selection: selection") && restoreModel.contains("invalidate(); state = .result"))

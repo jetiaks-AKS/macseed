@@ -89,4 +89,75 @@ enum SampleProvider {
                         action: "Network authentication is not checked", reason: "runtime_authentication_not_supported")])
     ]
 }
+
+// Manual presentation fixtures only. No runtime/model reference or executable actions.
+import SwiftUI
+
+enum RestoreDebugScenario: String, CaseIterable, Identifiable {
+    case real = "Real", preview = "Mixed Preview", rebuilding = "Rebuilding"
+    case issues = "Result with Issues", done = "All Done"
+    var id: String { rawValue }
+    var domains: [TaskDomainPresentation] {
+        guard self != .real else { return [] }
+        let titles = ["Homebrew", "Git Configuration", "Git Repositories", "VS Code Extensions", "VS Code Settings"]
+        let states: [TaskRowState] = self == .done ? Array(repeating: .completed, count: 5)
+            : self == .preview ? [.matching, .attention, .planned, .matching, .unverified]
+            : self == .rebuilding ? [.completed, .working, .waiting, .skipped, .failed]
+            : [.completed, .failed, .attention, .skipped, .completed]
+        return titles.enumerated().map { index, title in
+            let state = states[index]
+            let reason = self != .done && state != .working && index == 1 ? "observation_failed: Synthetic diagnostic evidence. An included Git configuration could not be observed reliably. No assumption of absence is safe. Inspect the owning file and its permissions, resolve the observation error, then Refresh Preview. This deliberately long example exercises wrapping; no real configuration was read or changed." : nil
+            var items = [TaskItemPresentation(id: "scenario-item-\(index)", item: DisplayItem(id: "scenario-item-\(index)", title: index == 1 ? "core.editor" : title,
+                status: state == .matching ? .matching : state == .planned ? .ready : state == .unverified ? .unverified : state == .completed ? .complete : .attention,
+                action: self == .done ? "Verified against the saved environment (sample)." : state == .working ? "Applying or verifying this item (sample)…" : "Synthetic presentation only; no Restore actions.", reason: reason), state: state)]
+            if self == .preview && index == 0 {
+                items.append(TaskItemPresentation(id: "scenario-unsupported", item: DisplayItem(id: "scenario-unsupported", title: "Unsupported application", status: .unsupported,
+                    action: "This application's installation requirements are not supported.", reason: "cask_execution_requirements_unsupported"), state: .attention))
+            }
+            return TaskDomainPresentation(id: "scenario-domain-\(index)", title: title,
+                symbol: index == 0 ? "shippingbox" : "folder", items: items)
+        }
+    }
+    var previewSummary: String {
+        let items = domains.flatMap(\.items)
+        return "\(items.filter { $0.state == .planned }.count) changes · \(items.filter { $0.state == .matching }.count) already match · \(items.filter { [.attention, .unverified].contains($0.state) }.count) need attention"
+    }
+    var counters: [(state: TaskRowState, count: Int)] {
+        TaskRowState.allCases.compactMap { state in
+            let count = domains.filter { $0.state == state }.count
+            return count == 0 ? nil : (state, count)
+        }
+    }
+}
+
+@MainActor final class RestoreDebugScenarios: ObservableObject {
+    static let shared = RestoreDebugScenarios()
+    @Published var selected: RestoreDebugScenario = .real
+}
+
+struct RestoreDebugScenarioView: View {
+    let scenario: RestoreDebugScenario
+    private let finished = Date(timeIntervalSince1970: 1_791_200_000)
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            Text("DEBUG · Synthetic presentation · No Core actions")
+                .font(.caption).foregroundStyle(.secondary)
+            if scenario == .preview {
+                RestorePreviewContent(title: "Needs Attention", message: scenario.previewSummary,
+                    state: .attention, domains: scenario.domains, counters: scenario.counters, alreadyMatches: false,
+                    prerequisites: RestorePrerequisiteSummaryPresentation(conditions: [
+                        CoreRestorePreparation.Condition(domain: "app-store", code: "authorization_required", status: "external_action_required", selectedItemIndex: nil, scope: "operation")], ready: false),
+                    areas: [CoreRestoreInspection.Area(domain: "app-store", label: "App Store Applications", selectionMode: "items", availability: "available", reason: nil, items: [])])
+            } else {
+                OperationSummaryHeader(title: scenario == .rebuilding ? "Rebuilding Your Mac" : scenario == .done ? "All Done" : "Rebuild Completed with Issues",
+                    message: scenario == .done ? "Your environment is ready. Everything was restored successfully." : "Synthetic scenario for manual visual review. Expand domains and Technical Details to inspect sample evidence.",
+                    state: scenario == .rebuilding ? .working : scenario == .done ? .completed : .attention,
+                    counters: scenario.counters, startedAt: finished.addingTimeInterval(-342),
+                    finishedAt: scenario == .rebuilding ? nil : finished)
+                TaskDomainList(domains: scenario.domains)
+                if scenario != .rebuilding { PendingOperationLogButton() }
+            }
+        }.id(scenario)
+    }
+}
 #endif

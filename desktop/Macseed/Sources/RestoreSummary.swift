@@ -126,8 +126,9 @@ struct RestorePrerequisiteSummaryView: View {
                         Text("Prerequisites").font(.headline)
                         Spacer()
                         Text("Ready").foregroundStyle(RestoreStatusTone.success.color)
+                            .frame(width: TaskRowLayout.statusWidth, alignment: .leading)
                     }
-                }.disclosureGroupStyle(HeaderDisclosureStyle())
+                }.disclosureGroupStyle(TaskDisclosureStyle())
                     .accessibilityLabel("Prerequisites")
                     .accessibilityValue("Ready, " + (expanded ? "expanded" : "collapsed"))
             } else {
@@ -139,7 +140,7 @@ struct RestorePrerequisiteSummaryView: View {
                 }
                 if summary.blockers.isEmpty { Text("Needs Attention").foregroundStyle(RestoreStatusTone.warning.color) }
             }
-        }
+        }.padding(.horizontal, 16)
     }
     private func label(_ condition: CoreRestorePreparation.Condition) -> String {
         areas.first { $0.id == condition.domain }?.label ?? "Selected work"
@@ -160,13 +161,15 @@ private struct RestoreBlockingPrerequisiteAreaView: View {
         } label: {
             HStack {
                 Image(systemName: "exclamationmark.triangle")
+                    .frame(width: TaskRowLayout.iconWidth)
                     .foregroundStyle(RestoreStatusTone.warning.color)
                     .accessibilityHidden(true)
                 Text(title)
                 Spacer()
                 Text(status).foregroundStyle(RestoreStatusTone.warning.color)
+                    .frame(width: TaskRowLayout.statusWidth, alignment: .leading)
             }
-        }.disclosureGroupStyle(HeaderDisclosureStyle())
+        }.disclosureGroupStyle(TaskDisclosureStyle())
             .accessibilityLabel(title)
             .accessibilityValue(status + ", " + (expanded ? "expanded" : "collapsed"))
     }
@@ -177,8 +180,15 @@ private struct RestoreBlockingPrerequisiteAreaView: View {
 struct RestorePreviewAttentionSummaryView: View {
     let summary: RestoreIssueSummaryPresentation
     var body: some View {
-        ForEach(summary.areas) { area in
-            RestorePreviewAttentionAreaView(area: area)
+        if !summary.areas.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Needs Attention").font(.headline).accessibilityAddTraits(.isHeader)
+                Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 8) {
+                    ForEach(summary.areas) { area in
+                        RestorePreviewAttentionAreaView(area: area)
+                    }
+                }
+            }
         }
     }
 }
@@ -186,14 +196,17 @@ struct RestorePreviewAttentionSummaryView: View {
 private struct RestorePreviewAttentionAreaView: View {
     let area: RestoreIssueSummaryPresentation.Area
     var body: some View {
-        HStack {
-            Image(systemName: "exclamationmark.triangle")
-                .foregroundStyle(RestoreStatusTone.warning.color)
-                .accessibilityHidden(true)
-            Text(area.title)
-            Spacer()
-            if area.unverifiedCount > 0 { Text("Unverified · " + String(area.unverifiedCount)).foregroundStyle(.secondary) }
-            Text(String(area.items.count)).foregroundStyle(.secondary)
+        GridRow {
+            HStack {
+                Image(systemName: "exclamationmark.triangle")
+                    .foregroundStyle(RestoreStatusTone.warning.color)
+                    .accessibilityHidden(true)
+                Text(area.title)
+            }
+            HStack {
+                Text(String(area.items.count)).foregroundStyle(.secondary).monospacedDigit()
+                if area.unverifiedCount > 0 { Text("Unverified · " + String(area.unverifiedCount)).foregroundStyle(.secondary) }
+            }
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(area.title)

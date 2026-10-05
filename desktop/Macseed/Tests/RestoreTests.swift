@@ -221,6 +221,16 @@ import Foundation
                 "type": "execution_event", "data": ["domain": domain, "state": state, "item_id": item, "action": action]]))
         }
         let frozen = RestoreProgressRow.freeze(preview: productPreview, plan: model.preparation!)
+        let taskPreview = RestoreTaskPresentation(preview: productPreview, plan: model.preparation!)
+        let taskIDs = taskPreview.domains.map(\.id)
+        precondition(Set(taskIDs).count == taskIDs.count)
+        precondition(!taskIDs.contains("homebrew-casks") && !taskIDs.contains("homebrew-packages"))
+        precondition(taskPreview.domains.first { $0.id == "homebrew" } != nil)
+        precondition(taskPreview.counters.reduce(0) { $0 + $1.count } == taskPreview.domains.count)
+        let taskWorking = RestoreTaskPresentation(preview: productPreview, plan: model.preparation!,
+            events: [try event("homebrew-casks", "started")], executing: true)
+        precondition(taskWorking.domains.map(\.id) == taskIDs)
+        precondition(taskWorking.domains.first { $0.id == "homebrew" }?.state == .working)
         precondition(frozen.map(\.id) == productPreview.sections.flatMap(\.rows).map(\.id))
         precondition(frozen.allSatisfy { $0.project(events: []).status == .waiting })
         let casks = frozen.first { $0.id == "homebrew-casks" }!
@@ -394,6 +404,46 @@ import Foundation
             }
             await model.waitForCompletion()
             precondition(model.state == .result && model.executionResult?.outcome == outcome)
+            precondition(model.executionStartedAt != nil && model.executionFinishedAt != nil)
+            precondition(model.executionFinishedAt! >= model.executionStartedAt!)
+            let tasks = RestoreTaskPresentation(preview: model.executionPreview!, plan: model.executionPlan!,
+                events: runtime.events, result: model.executionResult!)
+            precondition(tasks.domains.map(\.id) == taskIDs)
+            precondition(tasks.counters.reduce(0) { $0 + $1.count } == tasks.domains.count)
+            if mode == "execute_clean" { precondition(tasks.domains.allSatisfy { $0.state == .completed }) }
+            if mode == "execute_partial" {
+                precondition(tasks.domains.first { $0.id == "homebrew" }?.state == .failed)
+                precondition(tasks.domains.first { $0.id == "homebrew" }?.items.contains { $0.item.reason == "item_stalled_timeout" } == true)
+            }
+            if mode == "execute_item_skip" {
+                precondition(tasks.domains.first { $0.id == "homebrew" }?.items.contains { $0.state == .skipped } == true)
+                precondition(tasks.domains.first { $0.id == "homebrew" }?.items.contains { $0.item.reason == "cask_execution_requirements_unsupported" } == true)
+                var payload = model.executionResult!.structuredEvidence!
+                var verification = payload["verification"]!.object!
+                var evidence = verification["details"]!.object!
+                let casks = model.executionPlan!.plan.filter { $0.domain == "homebrew-casks" }
+                evidence["operation_records"] = .array(casks.map { row in
+                    .object(["domain": .string(row.domain), "item_id": .string(row.itemID),
+                        "outcome": .string(row.itemID == "1" ? "skipped" : "success"),
+                        "reason": row.itemID == "1" ? .string("cask_execution_requirements_unsupported") : .null])
+                })
+                evidence["verification_records"] = .array(casks.map { row in
+                    .object(["domain": .string(row.domain), "item_id": .string(row.itemID),
+                        "conformity": .string(row.itemID == "1" ? "unverified" : "verified")])
+                })
+                verification["details"] = .object(evidence); payload["verification"] = .object(verification)
+                let mixed = RestoreExecutionPresentation(runtime: runtime, payload: payload, expectedID: id,
+                    catalog: model.inspection?.restoreSelection)
+                let mixedTasks = RestoreTaskPresentation(preview: model.executionPreview!, plan: model.executionPlan!, result: mixed)
+                let homebrew = mixedTasks.domains.first { $0.id == "homebrew" }!
+                precondition(homebrew.state == .partial)
+                precondition(homebrew.items.first { $0.item.reason == "cask_execution_requirements_unsupported" }?.state == .skipped)
+                precondition(homebrew.items.contains { $0.state == .completed })
+                precondition(mixedTasks.domains.map(\.id) == taskIDs)
+            }
+            if mode == "execute_interrupted" || mode == "execute_missing_result" {
+                precondition(!tasks.domains.contains { $0.state == .completed })
+            }
             precondition(model.executionActivities.map(\.id) == progressIDs)
             precondition(!model.executionActivities.contains { $0.status == .complete })
             if mode == "execute_partial" {
