@@ -111,6 +111,14 @@ mechanism needs it; no updater is defined here. Use standard macOS About behavio
 not a custom About settings page. Diagnostics remains contextual through View
 Details and Export Diagnostic Report, not a primary raw-log destination.
 
+Initial Capture, Restore and Status share a tinted primary action card beneath
+WorkspaceHeader: blue Scan, green saved-environment selection and violet Compare.
+Only their explicit existing actions start the next workflow step. The working
+Orbit AppIcon uses these three colors with a uniformly enlarged internal mark
+(+20%). Both Xcode and local builds use the static `Macseed.icns` resource through
+`CFBundleIconFile`; the size variants remain in the asset catalog as source assets.
+This is provisional branding, not a final branding lock.
+
 ## Capture this Mac
 
 **Scan → Review / Select → Destination / fresh preparation → Confirm → Result**
@@ -296,6 +304,13 @@ technical code in Details, rather than guessed remediation.
 
 **Choose reference → Compare → Result**, with inline expandable Details.
 Inspection and comparison are logical work, not additional navigation pages.
+The initial Compare This Mac card owns reference selection and the read-only notice.
+Results use a compact header/action toolbar, semantic Match/Different/Missing/
+Not Applicable metrics and whole-row Domain → Items disclosures. Not Applicable
+counts only Core Coverage `no_requirement`; excluded, unverified, unsupported,
+unresolved and extra facts retain their own labels in summary/details. Domain
+rows align four count pills and indicate additional findings without changing
+Core comparison statuses or taxonomy.
 
 The reference is explicit: a user-selected Generated Configuration directory and
 an optional Blueprint file, or explicitly no Blueprint. Explain this as “Compare
@@ -314,7 +329,7 @@ references ask for another reference, and changed references require a fresh che
 Compare is an explicit read-only action; do not auto-run it after Restore.
 
 Implemented in normal Debug/Release: native folder/optional Blueprint selection,
-explicit reference paths, Core comparison and fresh **Check Again**. Reference changes
+explicit reference paths, Core comparison and fresh **Compare Again**. Reference changes
 clear previous results; choosing another folder also clears the previous Blueprint.
 Summary omits zero counts and identifies unsupported/unknown-difference subsets.
 Collapsed categories expose descendant attention; details preserve matching, missing,

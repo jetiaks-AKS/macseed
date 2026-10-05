@@ -18,6 +18,7 @@ if [[ "$configuration" == Debug ]]; then compiler_options+=(-D DEBUG -Onone -g);
 xcrun swiftc "${compiler_options[@]}" -parse-as-library Sources/*.swift -o "$output_dir/Macseed.app/Contents/MacOS/Macseed"
 cp Info.plist "$output_dir/Macseed.app/Contents/Info.plist"
 ./prepare-runtime.sh "$output_dir/Macseed.app/Contents/Resources"
+cp Resources/Macseed.icns "$output_dir/Macseed.app/Contents/Resources/Macseed.icns"
 /usr/bin/plutil -lint "$output_dir/Macseed.app/Contents/Info.plist"
 if [[ "${2:-}" == --test ]]; then
     presentation_sources=()

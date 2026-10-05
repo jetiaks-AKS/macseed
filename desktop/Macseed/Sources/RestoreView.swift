@@ -290,8 +290,11 @@ struct RestoreView: View {
         VStack(alignment: .leading, spacing: 18) {
             switch model.state {
             case .choose:
-                Text("Choose a saved environment to prepare this Mac for Rebuild.")
-                Button("Choose Saved Environment…", action: chooseBundle).buttonStyle(.borderedProminent).disabled(runtime.isActive)
+                WorkspacePrimaryActionCard(title: "Choose a Saved Environment", symbol: ProductTask.restore.symbol, tint: WorkspaceIdentity.tint(.restore),
+                    message: "Choose a captured environment to inspect a read-only Preview before rebuilding this Mac.",
+                    notice: "Nothing changes until you explicitly choose Rebuild.") {
+                    Button("Choose Saved Environment…", action: chooseBundle).buttonStyle(.borderedProminent).disabled(runtime.isActive)
+                }
             case .inspecting, .preparing:
                 ProgressView(runtime.stopping ? "Stopping…" : (model.state == .inspecting ? "Inspecting saved environment…" : "Preparing Restore Preview…"))
                 Button("Cancel", role: .cancel) { model.cancel() }.disabled(runtime.stopping)

@@ -132,8 +132,11 @@ struct CaptureView: View {
         VStack(alignment: .leading, spacing: 18) {
             switch model.state {
             case .idle:
-                Text("Choose which supported settings and tools to carry to another Mac.")
-                Button("Scan this Mac") { model.scan() }.buttonStyle(.borderedProminent).disabled(runtime.isActive)
+                WorkspacePrimaryActionCard(title: "Scan This Mac", symbol: ProductTask.capture.symbol, tint: WorkspaceIdentity.tint(.capture),
+                    message: "Scan supported settings and tools, then choose what to carry to another Mac.",
+                    notice: "Scanning does not change settings or install anything on this Mac.") {
+                    Button("Scan This Mac") { model.scan() }.buttonStyle(.borderedProminent).disabled(runtime.isActive)
+                }
             case .scanning, .preparing, .saving:
                 OperationSummaryHeader(title: model.state == .scanning ? "Scanning this Mac" : model.state == .saving ? "Saving Your Environment" : "Checking Your Environment",
                     message: progressText, state: .working, counters: [],

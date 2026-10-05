@@ -1,4 +1,6 @@
 import Foundation
+import AppKit
+import SwiftUI
 
 @main struct EnvironmentStatusTests {
     typealias Object = [String: Any]
@@ -36,7 +38,44 @@ import Foundation
     }
     static func quote(_ text: String) -> String { "'" + text.replacingOccurrences(of: "'", with: "'\\''") + "'" }
 
+    @MainActor static func render<V: View>(_ view: V, name: String, width: Int) throws {
+        _ = NSApplication.shared
+        NSApp.appearance = NSAppearance(named: .aqua)
+        let height = 800
+        let root = HStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: 16) {
+                Text("Macseed").font(.title2.weight(.semibold))
+                Label("All Tasks", systemImage: "square.grid.2x2")
+                ForEach(ProductTask.allCases) { task in Label(task.rawValue, systemImage: task.symbol) }
+                Spacer()
+            }.padding(20).frame(width: 215).background(.regularMaterial)
+            ScrollView { view.modifier(WorkspaceContentGeometry()) }
+        }.frame(width: CGFloat(width), height: CGFloat(height)).background(Color(nsColor: .windowBackgroundColor)).environment(\.colorScheme, .light)
+        let host = NSHostingView(rootView: root)
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: height), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = host
+        host.frame = NSRect(x: 0, y: 0, width: width, height: height)
+        host.layoutSubtreeIfNeeded(); host.displayIfNeeded()
+        guard let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { preconditionFailure("Native render unavailable") }
+        host.cacheDisplay(in: host.bounds, to: bitmap)
+        try bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: "build/Debug/\(name).png"))
+        window.close()
+    }
+
     @MainActor static func main() async throws {
+        let renderRuntime = CoreRuntime()
+        let renderModel = EnvironmentStatusModel(runtime: renderRuntime)
+        for (label, width) in [("narrow", 1000), ("wide", 1600)] {
+            try render(TaskHome(select: { _ in }), name: "AllTasksUIv2-" + label, width: width)
+            try render(VStack(alignment: .leading, spacing: 20) {
+                WorkspaceHeader(title: ProductTask.status.rawValue, subtitle: ProductTask.status.subtitle, symbol: ProductTask.status.symbol)
+                EnvironmentStatusView(model: renderModel, runtime: renderRuntime)
+            }, name: "EnvironmentStatusUIv2-initial-" + label, width: width)
+        }
+        let visualResult = try presentation(payload([row(0, "matching"), row(1, "differing"), row(2, "missing"), row(3, "unverified", reason: "observation_failed")], verdict: "differences_detected", alsoIncomplete: true))
+        precondition(visualResult.counts["matching"] == 1 && visualResult.counts["missing"] == 1)
+        precondition(visualResult.categories.map(\.id) == ["homebrew-packages"])
+        print("PASS: native All Tasks/Status narrow/wide renders and real comparison taxonomy/counts")
         let clean = payload([row(0, "matching")], verdict: "no_differences_detected")
         let ready = try presentation(clean)
         precondition(ready.headline == "No differences detected" && !ready.needsAttention && ready.summary == "1 matching")
@@ -49,6 +88,17 @@ import Foundation
         let unsupported = try presentation(payload([row(0, "unverified", support: "unsupported", reason: "unsupported_predicate")], verdict: "incomplete"))
         precondition(unsupported.categories[0].items[0].status == .unsupported)
         precondition(unsupported.summary == "1 unverified · 1 unsupported (within unverified)")
+        precondition(ComparisonOutcome.notApplicable.count(unsupported) == 0)
+        var noRequirementPayload = payload([], verdict: "no_comparable_requirements")
+        var noRequirementRecords = noRequirementPayload["records"] as! Object
+        noRequirementRecords["coverage_records"] = [
+            ["record_id": "c:0", "domain": "homebrew-packages", "item_id": "scope", "disposition": "no_requirement", "source_status": "unknown"],
+            ["record_id": "c:1", "domain": "homebrew-casks", "item_id": "scope", "disposition": "excluded", "source_status": "unknown"]]
+        noRequirementPayload["records"] = noRequirementRecords
+        let notApplicable = try presentation(noRequirementPayload)
+        precondition(ComparisonOutcome.notApplicable.count(notApplicable) == 1)
+        precondition(notApplicable.categories.flatMap(\.items).contains { $0.status == .excluded })
+        precondition(ComparisonOutcome.allCases.map { $0.count(visualResult) } == [1, 1, 1, 0])
         let unknown = try presentation(payload([row(0, "unverified", reason: "unknown_difference")], verdict: "incomplete"))
         precondition(unknown.categories[0].items[0].status == .unverified && unknown.summary.contains("unknown difference"))
         let mixed = try presentation(payload([row(0, "matching"), row(1, "differing"), row(2, "unverified", reason: "observation_failed")],
@@ -155,7 +205,7 @@ import Foundation
         model.compare(); await model.waitForCompletion()
         precondition(model.state == .result && model.presentation?.headline == "No differences detected")
         let firstID = model.operationID
-        try data(payload([row(0, "missing")], verdict: "differences_detected")).write(to: core.appendingPathComponent("response.json"))
+        try data(payload([row(0, "matching"), row(1, "differing"), row(2, "missing"), row(3, "unverified", reason: "observation_failed")], verdict: "differences_detected", alsoIncomplete: true)).write(to: core.appendingPathComponent("response.json"))
         model.selectBlueprint(blueprint)
         model.compare(); await model.waitForCompletion()
         precondition(model.operationID != firstID && model.presentation?.headline == "Needs Attention")
@@ -163,6 +213,9 @@ import Foundation
         let secondID = model.operationID
         model.compare(); await model.waitForCompletion()
         precondition(model.operationID != secondID && model.reference?.blueprint == blueprint)
+        for (label, width) in [("narrow", 1000), ("wide", 1600)] {
+            try render(EnvironmentStatusView(model: model, runtime: runtime), name: "EnvironmentStatusUIv2-result-" + label, width: width)
+        }
         let requests = try String(contentsOf: core.appendingPathComponent("requests.jsonl"), encoding: .utf8).split(separator: "\n")
         precondition(requests.count == 3)
         let sent = try requests.map { try JSONSerialization.jsonObject(with: Data($0.utf8)) as! Object }

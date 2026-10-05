@@ -55,9 +55,11 @@ struct EnvironmentStatusPresentation {
     let summary: String
     let categories: [DisplayCategory]
     let needsAttention: Bool
+    let counts: [String: Int]
 
     init(_ result: CoreComparisonResult) throws {
         try result.validate()
+        counts = result.comparison.counts
         var grouped: [String: [DisplayItem]] = [:]
         var order: [String] = []
         func add(_ domain: String, _ item: DisplayItem) {

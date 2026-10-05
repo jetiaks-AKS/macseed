@@ -39,7 +39,9 @@ struct ProductionWorkspace: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 20) {
                         if let task = navigation.task {
-                            WorkspaceHeader(title: task.rawValue, subtitle: task.subtitle, symbol: task.symbol)
+                            if task != .status || status.state != .result {
+                                WorkspaceHeader(title: task.rawValue, subtitle: task.subtitle, symbol: task.symbol)
+                            }
                             if task == .status {
                                 EnvironmentStatusView(model: status, runtime: runtime)
                             } else if task == .capture {
@@ -68,12 +70,12 @@ struct ProductionWorkspace: View {
                             Button("Check Again") { runtime.checkCapabilities() }
                         }
                     }
-                    .padding(28).frame(maxWidth: (navigation.task == .restore || navigation.task == .capture) ? .infinity : 800, alignment: .leading)
+                    .modifier(WorkspaceContentGeometry())
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 if navigation.task == .capture && capture.state != .idle {
                     Divider()
-                    CaptureActionsView(model: capture, runtime: runtime).padding(.horizontal, 28).padding(.vertical, 12)
+                    CaptureActionsView(model: capture, runtime: runtime).padding(.horizontal, WorkspaceGeometry.margin).padding(.vertical, 12)
                 }
                 if navigation.task == .restore {
                     #if DEBUG
@@ -116,7 +118,7 @@ struct ProductionWorkspace: View {
         VStack(spacing: 0) {
             Divider()
             RestoreRebuildActions(stopping: runtime.stopping, stop: synthetic ? nil : { restore.requestStop() })
-                .padding(.horizontal, 28).padding(.vertical, 12)
+                .padding(.horizontal, WorkspaceGeometry.margin).padding(.vertical, 12)
         }
     }
 }

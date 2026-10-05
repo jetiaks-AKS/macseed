@@ -33,6 +33,12 @@ The format is based on the principles of **Keep a Changelog**.
 
 ### Changed
 
+* Capture, Restore and Status share initial action cards with functional colors;
+  Macseed uses a working three-color Orbit app icon.
+
+* All Tasks uses responsive native action cards; Environment Status shares Desktop
+  summaries, metric cards and domain disclosures over read-only Core comparison.
+
 * Capture uses shared native operation summaries and Domain → Items presentation
   across selection, confirmation and result, with compact phase-based saving,
   persistent action areas and explicit capture warnings.

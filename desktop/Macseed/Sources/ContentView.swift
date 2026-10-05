@@ -49,28 +49,164 @@ struct ContentView: View {
     #endif
 }
 
+// One geometry policy for every production workspace; widths come from the window.
+enum WorkspaceGeometry {
+    static let margin: CGFloat = 28
+    static let cardBreakpoint: CGFloat = 900
+}
+
+struct WorkspaceContentGeometry: ViewModifier {
+    func body(content: Content) -> some View {
+        content.padding(WorkspaceGeometry.margin).frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+struct WorkspaceCardSurface: ViewModifier {
+    func body(content: Content) -> some View {
+        content.background(.background, in: RoundedRectangle(cornerRadius: 8))
+            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.quaternary))
+    }
+}
+
+// Explicit single/three-column modes, independent of intrinsic text measurements.
+struct WorkspaceActionLayout: Layout {
+    static func columns(_ width: CGFloat) -> Int { width >= WorkspaceGeometry.cardBreakpoint ? 3 : 1 }
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let width = proposal.width ?? WorkspaceGeometry.cardBreakpoint
+        let columns = Self.columns(width)
+        let itemWidth = (width - CGFloat(columns - 1) * 16) / CGFloat(columns)
+        let height = subviews.map { $0.sizeThatFits(.init(width: itemWidth, height: nil)).height }.max() ?? 0
+        let rows = (subviews.count + columns - 1) / columns
+        return CGSize(width: width, height: CGFloat(rows) * height + CGFloat(max(0, rows - 1)) * 16)
+    }
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let columns = Self.columns(bounds.width)
+        let width = (bounds.width - CGFloat(columns - 1) * 16) / CGFloat(columns)
+        let height = subviews.map { $0.sizeThatFits(.init(width: width, height: nil)).height }.max() ?? 0
+        for (index, view) in subviews.enumerated() {
+            view.place(at: CGPoint(x: bounds.minX + CGFloat(index % columns) * (width + 16), y: bounds.minY + CGFloat(index / columns) * (height + 16)),
+                       anchor: .topLeading, proposal: .init(width: width, height: height))
+        }
+    }
+}
+
 struct TaskHome: View {
     let select: (ProductTask) -> Void
     var body: some View {
-        VStack(alignment: .leading, spacing: 24) {
+        VStack(alignment: .leading, spacing: 20) {
             WorkspaceHeader(title: "Macseed", subtitle: "Capture your environment. Rebuild with confidence.")
-            ForEach(ProductTask.allCases) { task in
-                Button { select(task) } label: {
-                    HStack(spacing: 18) {
-                        Image(systemName: task.symbol).font(.title).frame(width: 40)
-                        VStack(alignment: .leading, spacing: 5) {
-                            Text(task.rawValue).font(.headline)
-                            Text(task.subtitle).foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        Image(systemName: "chevron.right").foregroundStyle(.secondary)
+            GeometryReader { geometry in
+                let wide = WorkspaceActionLayout.columns(geometry.size.width) == 3
+                WorkspaceActionLayout {
+                    ForEach(ProductTask.allCases) { task in
+                        Button { select(task) } label: {
+                            WorkspaceActionCard(task: task, vertical: wide)
+                                .frame(height: wide ? 180 : 100)
+                        }.buttonStyle(.plain)
+                            .accessibilityLabel(task.rawValue + ". " + task.subtitle)
                     }
-                    .padding(.vertical, 12)
-                    .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel(task.rawValue + ". " + task.subtitle)
-                Divider()
+            }.frame(height: 332)
+
+        }
+    }
+}
+
+// Native tinted icon and action-card primitives; Capture/Restore opt in separately.
+struct WorkspaceCircleIcon: View {
+    let symbol: String
+    let tint: Color
+    var size: CGFloat = 52
+    var body: some View {
+        Image(systemName: symbol).font(.system(size: size * 0.46, weight: .medium))
+            .foregroundStyle(tint).frame(width: size, height: size)
+            .background(tint.opacity(0.12), in: Circle()).accessibilityHidden(true)
+    }
+}
+
+enum WorkspaceIdentity {
+    static func tint(_ task: ProductTask) -> Color {
+        switch task { case .capture: .blue; case .restore: .green; case .status: .indigo }
+    }
+}
+
+struct WorkspacePrimaryActionCard<Content: View>: View {
+    let title: String
+    let symbol: String
+    let tint: Color
+    let message: String
+    let notice: String
+    @ViewBuilder var content: Content
+    var body: some View {
+        HStack(alignment: .top, spacing: 16) {
+            WorkspaceCircleIcon(symbol: symbol, tint: tint)
+            VStack(alignment: .leading, spacing: 12) {
+                Text(title).font(.headline)
+                Text(message).font(.callout).foregroundStyle(.secondary)
+                Text(notice).font(.callout).foregroundStyle(.secondary)
+                content
+            }.frame(maxWidth: .infinity, alignment: .leading)
+        }.padding(20).frame(maxWidth: .infinity, alignment: .leading).modifier(WorkspaceCardSurface())
+    }
+}
+
+struct WorkspaceActionCard: View {
+    let task: ProductTask
+    let vertical: Bool
+    private var tint: Color { WorkspaceIdentity.tint(task) }
+    var body: some View {
+        Group {
+            if vertical {
+                VStack(alignment: .leading, spacing: 12) {
+                    WorkspaceCircleIcon(symbol: task.symbol, tint: tint)
+                    Text(task.rawValue).font(.headline)
+                    HStack(alignment: .bottom, spacing: 12) {
+                        description
+                        affordance
+                    }
+                }
+            } else {
+                HStack(spacing: 16) {
+                    WorkspaceCircleIcon(symbol: task.symbol, tint: tint)
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text(task.rawValue).font(.headline)
+                        description
+                    }
+                    Image(systemName: "chevron.right").font(.caption).foregroundStyle(.secondary).accessibilityHidden(true)
+                }
+            }
+        }.padding(16).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .modifier(WorkspaceCardSurface()).contentShape(Rectangle())
+    }
+    private var description: some View {
+        Text(task.subtitle).font(.callout).foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true).frame(maxWidth: .infinity, alignment: .leading)
+    }
+    private var affordance: some View {
+        Image(systemName: "chevron.right").font(.caption.weight(.medium)).foregroundStyle(.blue)
+            .frame(width: 26, height: 26).background(Color.blue.opacity(0.06), in: Circle()).accessibilityHidden(true)
+    }
+}
+
+struct WorkspaceResultHeader<Actions: View>: View {
+    let title: String
+    let subtitle: String
+    let symbol: String
+    @ViewBuilder var actions: Actions
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 20) { heading; Spacer(); actions }
+            VStack(alignment: .leading, spacing: 12) { heading; actions }
+        }.padding(16).frame(maxWidth: .infinity, alignment: .leading)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.quaternary))
+    }
+    private var heading: some View {
+        HStack(spacing: 12) {
+            Image(systemName: symbol).font(.title).accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title).font(.title3.weight(.semibold)).accessibilityAddTraits(.isHeader)
+                Text(subtitle).font(.callout).foregroundStyle(.secondary)
             }
         }
     }
@@ -533,3 +669,25 @@ struct SecureDemoSheet: View {
     }
 }
 #endif
+
+// Equal-width semantic cards, with stable two/four-column modes.
+struct WorkspaceMetricLayout: Layout {
+    static func columns(_ width: CGFloat) -> Int { width >= WorkspaceGeometry.cardBreakpoint ? 4 : 2 }
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let width = proposal.width ?? WorkspaceGeometry.cardBreakpoint
+        let columns = Self.columns(width)
+        let itemWidth = (width - CGFloat(columns - 1) * 10) / CGFloat(columns)
+        let height = subviews.map { $0.sizeThatFits(.init(width: itemWidth, height: nil)).height }.max() ?? 0
+        let rows = (subviews.count + columns - 1) / columns
+        return CGSize(width: width, height: CGFloat(rows) * height + CGFloat(max(0, rows - 1)) * 10)
+    }
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let columns = Self.columns(bounds.width)
+        let width = (bounds.width - CGFloat(columns - 1) * 10) / CGFloat(columns)
+        let height = subviews.map { $0.sizeThatFits(.init(width: width, height: nil)).height }.max() ?? 0
+        for (index, view) in subviews.enumerated() {
+            view.place(at: CGPoint(x: bounds.minX + CGFloat(index % columns) * (width + 10), y: bounds.minY + CGFloat(index / columns) * (height + 10)),
+                       anchor: .topLeading, proposal: .init(width: width, height: height))
+        }
+    }
+}

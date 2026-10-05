@@ -127,7 +127,7 @@ import SwiftUI
         precondition(style.contains(".buttonStyle(.plain)") && style.contains(".accessibilityValue("))
         precondition(!style.contains("onTapGesture"))
         let workspace = try! String(contentsOfFile: "Sources/ProductionWorkspace.swift", encoding: .utf8)
-        precondition(workspace.contains("(navigation.task == .restore || navigation.task == .capture) ? .infinity : 800"))
+        precondition(workspace.contains(".modifier(WorkspaceContentGeometry())") && !workspace.contains(" : 800"))
         precondition(source.contains("TaskRowLayout.statusWidth"))
         precondition(source.contains("TaskDisclosureStyle(minimumHeight: 22)"))
         precondition(source.contains("spacing: 12") && source.contains("minHeight: 52"))
@@ -149,6 +149,61 @@ import SwiftUI
         precondition(!window.collectionBehavior.contains(.fullScreenNone) && window.collectionBehavior.contains(.fullScreenPrimary))
         window.close()
         print("PASS: Native technical disclosure, attention heading, main window bounds/fullscreen policy and responsive range renders")
+    }
+
+    @MainActor static func renderInitialStates() {
+        _ = NSApplication.shared
+        let runtime = CoreRuntime()
+        let capture = CaptureModel(runtime: runtime)
+        let restore = RestoreModel(runtime: runtime)
+        for task in [ProductTask.capture, .restore] {
+            for (label, width) in [("narrow", 1000), ("wide", 1600)] {
+                let content = HStack(spacing: 0) {
+                    VStack(alignment: .leading, spacing: 16) {
+                        Text("Macseed").font(.title2.weight(.semibold))
+                        Label("All Tasks", systemImage: "square.grid.2x2")
+                        ForEach(ProductTask.allCases) { task in Label(task.rawValue, systemImage: task.symbol) }
+                        Spacer()
+                    }.padding(20).frame(width: 215).background(.regularMaterial)
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 20) {
+                            WorkspaceHeader(title: task.rawValue, subtitle: task.subtitle, symbol: task.symbol)
+                            if task == .capture { CaptureView(model: capture, runtime: runtime, showsActions: false) }
+                            else { RestoreView(model: restore, runtime: runtime, showsRebuildActions: false) }
+                        }.modifier(WorkspaceContentGeometry())
+                    }
+                }.frame(width: CGFloat(width), height: 800).background(Color(nsColor: .windowBackgroundColor))
+                    .environment(\.colorScheme, .light)
+                let host = NSHostingView(rootView: content)
+                let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: 800), styleMask: [.borderless], backing: .buffered, defer: false)
+                window.isReleasedWhenClosed = false; window.appearance = NSAppearance(named: .aqua); window.contentView = host
+                host.frame = NSRect(x: 0, y: 0, width: width, height: 800)
+                host.layoutSubtreeIfNeeded(); host.displayIfNeeded()
+                let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds)!
+                host.cacheDisplay(in: host.bounds, to: bitmap)
+                let name = task == .capture ? "Capture" : "Restore"
+                try! bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: "build/Debug/\(name)InitialUIv2-\(label).png"))
+                window.close()
+            }
+        }
+        precondition(runtime.state == .idle && capture.state == .idle && restore.state == .choose)
+        print("PASS: Native initial Capture/Restore cards narrow/wide; no Core execution")
+    }
+
+    static func appIconChecks() {
+        let root = URL(fileURLWithPath: "Assets.xcassets/AppIcon.appiconset")
+        let json = try! JSONSerialization.jsonObject(with: Data(contentsOf: root.appendingPathComponent("Contents.json"))) as! [String: Any]
+        let images = json["images"] as! [[String: String]]
+        precondition(images.count == 10)
+        for entry in images {
+            let width = Int(entry["size"]!.split(separator: "x")[0])! * Int(entry["scale"]!.dropLast())!
+            let bitmap = NSBitmapImageRep(data: try! Data(contentsOf: root.appendingPathComponent(entry["filename"]!)))!
+            precondition(bitmap.pixelsWide == width && bitmap.pixelsHigh == width)
+            let blue = bitmap.colorAt(x: width / 2, y: width * 274 / 1024)!.usingColorSpace(.sRGB)!
+            precondition(blue.alphaComponent > 0.9 && blue.blueComponent > blue.redComponent)
+        }
+        precondition(NSImage(contentsOfFile: "Resources/Macseed.icns") != nil)
+        print("PASS: Static Orbit AppIcon variants, visible small-scale mark and valid ICNS")
     }
 
     @MainActor static func main() {
@@ -188,7 +243,7 @@ import SwiftUI
         let components = try! String(contentsOfFile: "Sources/TaskComponents.swift", encoding: .utf8)
         precondition(components.contains("if item.state != .working, let reason = item.item.reason"))
         let workspaceSource = try! String(contentsOfFile: "Sources/ProductionWorkspace.swift", encoding: .utf8)
-        precondition(workspaceSource.range(of: "rebuildActionArea(synthetic: true)")!.lowerBound > workspaceSource.range(of: ".padding(28).frame(maxWidth:")!.lowerBound)
+        precondition(workspaceSource.range(of: "rebuildActionArea(synthetic: true)")!.lowerBound > workspaceSource.range(of: ".modifier(WorkspaceContentGeometry())")!.lowerBound)
         precondition(workspaceSource.contains("stop: synthetic ? nil : { restore.requestStop() }"))
         #if DEBUG
         precondition(RestoreDebugScenario.rebuilding.domains.flatMap(\.items).filter { $0.state == .working }.allSatisfy { $0.item.reason == nil })
@@ -196,6 +251,8 @@ import SwiftUI
         #endif
         restoreSummaryChecks()
         renderRestoreV2()
+        renderInitialStates()
+        appIconChecks()
         let suite = "MacseedAppearanceTests-" + UUID().uuidString
         let preferences = UserDefaults(suiteName: suite)!
         defer { preferences.removePersistentDomain(forName: suite) }
@@ -228,16 +285,21 @@ import SwiftUI
         }
         let statusView = try! String(contentsOf: sources.appendingPathComponent("EnvironmentStatusView.swift"), encoding: .utf8)
         let detailsStart = statusView.range(of: "DisclosureGroup(\"Reference Details\", isExpanded: $referenceDetailsExpanded)")!
-        let detailsEnd = statusView.range(of: "} else {\n                Text(\"Choose a saved environment", range: detailsStart.upperBound..<statusView.endIndex)!
+        let detailsEnd = statusView.range(of: "    private func chooseReference()", range: detailsStart.upperBound..<statusView.endIndex)!
         let details = String(statusView[detailsStart.lowerBound..<detailsEnd.lowerBound])
-        let primary = String(statusView[..<detailsStart.lowerBound]) + String(statusView[detailsEnd.lowerBound...])
-        precondition(primary.contains("Label(\"Saved Environment\"") && primary.contains("Choose Saved Environment…"))
-        for technical in ["generatedDirectory.path", "blueprint.path", "Generated Configuration", "No Blueprint", "Choose Blueprint…"] {
-            precondition(details.contains(technical) && !primary.contains(technical), "Technical reference/Blueprint UI only inside disclosure")
+        precondition(statusView.contains("Compare This Mac") && statusView.contains("Choose Saved Environment…"))
+        for technical in ["blueprint.path", "Generated Configuration", "No Blueprint", "Choose Blueprint…"] {
+            precondition(details.contains(technical), "Blueprint controls stay in reference disclosure")
         }
         precondition(statusView.contains("@ReferenceViewState<Bool> private var referenceDetailsExpanded = false"))
-        precondition(details.contains(".disclosureGroupStyle(HeaderDisclosureStyle())"))
-        precondition(!statusView.contains("Bundle comparison is not supported"))
+        precondition(details.contains(".disclosureGroupStyle(TaskDisclosureStyle(minimumHeight: 22))"))
+        precondition(statusView.contains("EnvironmentComparisonView(result: result)"))
+        precondition(WorkspaceActionLayout.columns(899) == 1 && WorkspaceActionLayout.columns(900) == 3)
+        precondition(WorkspaceMetricLayout.columns(899) == 2 && WorkspaceMetricLayout.columns(900) == 4)
+        for task in ProductTask.allCases { precondition(NSImage(systemSymbolName: task.symbol, accessibilityDescription: nil) != nil) }
+        precondition(statusView.contains("WorkspacePrimaryActionCard(title: \"Compare This Mac\""))
+        precondition(statusView.contains("WorkspaceResultHeader(title:") && statusView.contains("ForEach(ComparisonOutcome.allCases)"))
+
         let content = try! String(contentsOf: sources.appendingPathComponent("ContentView.swift"), encoding: .utf8)
         let production = try! String(contentsOf: sources.appendingPathComponent("ProductionWorkspace.swift"), encoding: .utf8)
         let app = try! String(contentsOf: sources.appendingPathComponent("MacseedApp.swift"), encoding: .utf8)
@@ -340,7 +402,7 @@ import SwiftUI
         precondition(capturePresentation.contains("model.selectItem(category.id") && capturePresentation.contains("model.selectCategory(category.id"))
         let workspace = try! String(contentsOf: sources.appendingPathComponent("ProductionWorkspace.swift"), encoding: .utf8)
         precondition(workspace.contains("CaptureView(model: capture, runtime: runtime, showsActions: false)"))
-        precondition(workspace.range(of: "CaptureActionsView(model:")!.lowerBound > workspace.range(of: ".padding(28).frame(maxWidth:")!.lowerBound)
+        precondition(workspace.range(of: "CaptureActionsView(model:")!.lowerBound > workspace.range(of: ".modifier(WorkspaceContentGeometry())")!.lowerBound)
         precondition(!captureView.contains("individual items") && captureView.contains("panel.nameFieldStringValue = \"Saved Environment\""))
         let groupStart = captureView.range(of: "struct CaptureMacOSSettingsView: View")!
         let groupEnd = captureView.range(of: "struct CaptureView: View")!
@@ -380,7 +442,7 @@ import SwiftUI
         print("PASS: Shared neutral material sidebar/header in production and preview; native Appearance setting")
         let categoryStart = content.range(of: "struct CategoryRow: View")!
         precondition(content[categoryStart.lowerBound...].contains("@ViewState<Bool> private var expanded = false"))
-        precondition(statusView.contains("ForEach(result.categories) { category in CategoryRow(category: category) }"))
+        precondition(statusView.contains("ForEach(result.categories) { category in") && statusView.contains("EnvironmentComparisonDomain(category: category)"))
         let referenceRuntime = CoreRuntime()
         let referenceModel = EnvironmentStatusModel(runtime: referenceRuntime)
         let directory = URL(fileURLWithPath: "/private/tmp/presentation-saved-environment")
