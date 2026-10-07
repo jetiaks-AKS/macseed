@@ -60,6 +60,29 @@ than replacing them. Desktop must not parse terminal/log output, emulate
 interactive CLI workflows or implement its own Capture, Restore, Verify,
 Compare or secure importer.
 
+## External tool compatibility boundary
+
+External tools are concrete providers behind small domain-owned adapters. Core
+consumes normalized capabilities and state (`satisfied`, `installable`,
+`repairable`, `unsupported`, `incompatible`, `observation_error`), rather than
+external artifact or lifecycle rules. The shared value contract lives in
+`modules/core/external_tool.py`; the Homebrew provider lives in
+`modules/apps/adapters/`. MAS, Git and VS Code have not been migrated.
+
+Compatibility is determined by observed public CLI capabilities, understood
+metadata and qualified item semantics. Unknown schema, artifact or operation
+behavior fails closed. Tool version is provenance, not a version allowlist or
+an exact captured/target version requirement. Native lifecycle operations remain
+owned by the external tool; Macseed never loads private Homebrew Ruby code or
+reimplements uninstall. Installed inert receipts are conservative safety evidence,
+not executable definitions. Ambiguous evidence blocks repair.
+
+Safety-sensitive preconditions are observed again inside the owned-item execution
+boundary after dependency resolution, immediately before native mutation. This
+reduces state drift; external filesystem/launchd changes are not atomic with the
+native command. Existing cancellation, watchdog and final Verification remain
+Core-owned. This is a static adapter boundary, not a plugin framework.
+
 ## Publication and mutation boundaries
 
 Exporters collect, validate and serialize before replacing a generated file.

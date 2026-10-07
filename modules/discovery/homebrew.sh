@@ -30,7 +30,11 @@ export_brew_packages() {
 
     action "Exporting Homebrew Formulae..."
 
-    local inventory
+    local inventory tool_provenance
+    tool_provenance="$(homebrew_adapter_capture_provenance)" || {
+        error "Failed to observe Homebrew provenance"
+        return 2
+    }
     if ! inventory="$(brew list --formula --installed-on-request)"; then
         error "Failed to inventory Homebrew Formulae"
         return 2
@@ -40,6 +44,9 @@ export_brew_packages() {
         error "Failed to publish Homebrew Formulae"
         return 2
     fi
+
+    discovery_publish_file "${BLUEPRINT_GENERATED_DIR:-config/generated}/provenance/homebrew.json" \
+        serialize_brew_inventory "$tool_provenance" || return 2
 
     local package_count=0
 
@@ -65,16 +72,24 @@ export_brew_casks() {
 
     action "Exporting Homebrew Casks..."
 
-    local inventory
+    local inventory metadata capabilities prefix
     if ! inventory="$(brew list --cask)"; then
         error "Failed to inventory Homebrew Casks"
         return 2
     fi
 
+    metadata="$(HOMEBREW_NO_AUTO_UPDATE=1 brew info --json=v2 --installed --cask)" || return 2
+    prefix="$(HOMEBREW_NO_AUTO_UPDATE=1 brew --prefix)" || return 2
+    capabilities="$(python3 -B modules/apps/adapters/homebrew_cask.py "$prefix" --capture <<< "$metadata")" || return 2
+    jq -e --arg inventory "$inventory" '(.casks | keys | sort) ==
+        ($inventory | split("\n") | map(select(length > 0)) | sort)' <<< "$capabilities" >/dev/null || return 2
+
     if ! discovery_publish_file "$output_file" serialize_brew_inventory "$inventory"; then
         error "Failed to publish Homebrew Casks"
         return 2
     fi
+    discovery_publish_file "${BLUEPRINT_GENERATED_DIR:-config/generated}/homebrew-casks.json" \
+        serialize_brew_inventory "$capabilities" || return 2
 
     provenance_publish homebrew-casks || return 2
 

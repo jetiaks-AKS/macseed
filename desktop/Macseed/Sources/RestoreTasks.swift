@@ -67,17 +67,37 @@ struct RestoreTaskPresentation {
             if case .array(let rows) = evidence?[key] { return rows.compactMap(\.object) }
             return []
         }
-        let operations = records("operation_records") + events.filter { $0.type == "operation_record" }.compactMap(\.data)
-        let verification = records("verification_records")
+        let operations = events.filter { $0.type == "operation_record" }.compactMap(\.data) + records("operation_records")
+        let verification = events.filter { $0.type == "verification_record" }.compactMap(\.data) + records("verification_records")
+        // Core executes sequentially. A new activity replaces the previous one;
+        // finishing an operation clears activity without claiming conformity.
+        var currentActivity: (domain: String, itemID: String)?
+        for event in events {
+            guard let domain = event.data?["domain"]?.string,
+                  let itemID = event.data?["item_id"]?.string else { continue }
+            if event.type == "execution_event" {
+                if ["started", "applying", "verifying"].contains(event.data?["state"]?.string ?? "") {
+                    currentActivity = (domain, itemID)
+                } else if currentActivity?.domain == domain && (currentActivity?.itemID == itemID || itemID == "scope") {
+                    currentActivity = nil
+                }
+            } else if ["operation_record", "verification_record"].contains(event.type) && currentActivity?.domain == domain && currentActivity?.itemID == itemID {
+                currentActivity = nil
+            }
+        }
         let progress = executing && result == nil ? RestoreProgressRow.freeze(preview: preview, plan: plan) : []
         var output: [TaskDomainPresentation] = []
         for category in preview.sections.flatMap(\.rows) {
-            let homebrew = ["homebrew-casks", "homebrew-packages"].contains(category.id)
-            let domainID = homebrew ? "homebrew" : category.id
+            let domainID = category.id
+            let domainScope = Set(preview.categories.filter { row in
+                row.items.contains { item in category.items.contains { $0.id == item.id } }
+            }.map(\.id))
+            let domainActive = currentActivity.map { domainScope.contains($0.domain) ||
+                ($0.domain == "workspace" && !domainScope.isDisjoint(with: ["workspace-folders", "git-repositories"])) } ?? false
             let active = progress.first { $0.id == category.id }?.project(events: events)
-            let activityState: TaskRowState? = active.map {
-                $0.status == .working || $0.restoreActivity != nil ? .working
-                    : $0.status == .complete ? .completed : $0.status == .attention ? .attention : .waiting
+            let activityState: TaskRowState? = active.flatMap {
+                if $0.status == .working || $0.restoreActivity != nil { return domainActive ? .working : nil }
+                return $0.status == .complete ? .completed : $0.status == .attention ? .attention : nil
             }
             let items = category.items.map { item -> TaskItemPresentation in
                 let index = Int(item.id.replacingOccurrences(of: "restore-", with: ""))
@@ -107,8 +127,11 @@ struct RestoreTaskPresentation {
                     state = item.status == .unverified ? .unverified : .attention
                 } else if result != nil {
                     state = .unverified
-                } else if activity != nil || operation != nil {
+                } else if let currentActivity, let entry,
+                          currentActivity.domain == entry.domain && currentActivity.itemID == entry.itemID {
                     state = .working
+                } else if activity != nil || operation != nil {
+                    state = .unverified
                 } else {
                     state = .waiting
                 }
@@ -118,25 +141,26 @@ struct RestoreTaskPresentation {
                 case "cask_execution_requirements_unsupported": message = "This application's installation requirements are not supported."
                 case "item_stalled_timeout": message = "No observable progress. Check the network or VPN, then Refresh Preview."
                 case "dependency_failed": message = "A required dependency did not complete."
-                default: message = result != nil && state == .completed ? "Verified against the saved environment."
-                    : executing && state == .working ? "Applying or verifying this item…" : item.action
+                case "privileged_lifecycle_unknown": message = "Privileged work may continue. Inspect Homebrew before another Rebuild."
+                case "cask_authorization_required": message = "Administrator authorization was not completed."
+                default: message = state == .completed ? "Verified against the saved environment."
+                    : executing && state == .working
+                        ? (entry?.action == "reinstall" ? "Repairing or verifying this item…" : "Applying or verifying this item…")
+                    : executing && state == .unverified && (activity != nil || operation != nil)
+                        ? "Awaiting final Verification." : item.action
                 }
                 return TaskItemPresentation(id: item.id,
                     item: DisplayItem(id: item.id, title: item.title, status: item.status, action: message, reason: reason), state: state)
             }
-            if let index = output.firstIndex(where: { $0.id == domainID }) {
-                let old = output[index]
-                output[index] = TaskDomainPresentation(id: old.id, title: old.title, symbol: old.symbol, items: old.items + items,
-                    activityState: executing ? .aggregate([old.state, activityState ?? .aggregate(items.map(\.state))]) : nil)
-            } else {
-                output.append(TaskDomainPresentation(id: domainID, title: homebrew ? "Homebrew" : category.title,
-                    symbol: homebrew ? "shippingbox" : Self.symbol(category.id), items: items, activityState: activityState))
-            }
+            output.append(TaskDomainPresentation(id: domainID, title: category.title,
+                symbol: Self.symbol(category.id), items: items, activityState: activityState))
         }
         domains = output
     }
     private static func symbol(_ id: String) -> String {
         switch id {
+        case "homebrew-casks": "app"
+        case "homebrew-packages": "shippingbox"
         case "git-configuration", "git-repositories": "point.3.connected.trianglepath.dotted"
         case "workspace-folders": "folder"
         case "app-store": "app.badge"

@@ -9,8 +9,11 @@ and prepares a read-only Preview, then executes through Core with confirmation,
 structured progress, Safe Stop and Verification-aware results/fresh-plan re-entry.
 The broad Restore manual gate substantially passed at checkpoint `3e555fba`,
 including successful Rebuild/Verification and Git scalar drift → Restore →
-independent verification → idempotent Preview. This does not qualify MAS,
-binary/wrapper casks, Desktop Zsh or Secure SSH. Private SSH identity transfer
+independent verification → idempotent Preview. Subsequent Homebrew gates passed
+Repair → Verify → fresh no-op for Keka, Termius and VLC, and validated generated
+completions through Codex. Broader Homebrew qualification and Tailscale
+ownership/activation remain open, alongside MAS, Desktop Zsh and Secure SSH.
+Private SSH identity transfer
 remains unavailable until 16H; 16I owns remaining completion UX qualification.
 Build and review instructions are in
 [Desktop development](../desktop/Macseed/README.md). Macseed is one product with a shared Core and two official frontends: CLI (`bs`) and Desktop.
@@ -289,11 +292,19 @@ SSH agent/known-host and vendor authorization are external actions as applicable
 independent macOS/vendor dialogs may appear. `safely_satisfiable` describes Core's
 ability, not permission for a new Desktop mutation. Unsupported casks stay visible
 and skipped while safe independent work can proceed; Check Again cannot promise
-to make unsupported artifacts executable. Firefox/Keka contain `command_wrapper`
-and IINA contains `binary` artifacts, outside the current app-only cask policy.
-Safe artifact support is next functional compatibility work, without cask-name
-exceptions. Automatic MAS Restore remains mandatory before 1.0; the authorization/
+to make unsupported artifacts executable. Cask capability classes and native
+Repair are qualified semantically, without name exceptions. Preview identifies
+administrator authorization; the Rebuild confirmation explains the separate masked
+Homebrew prompt. Privileged uncertainty blocks Homebrew re-entry and is not cleared
+by a successful payload check. See the
+[Core execution policy](core/APPLICATION-INTERFACE.md). Automatic MAS Restore
+remains mandatory before 1.0; the authorization/
 install gate is unresolved. Deselecting MAS for the passed gate does not resolve it.
+
+Restore preserves Homebrew Applications and Homebrew Packages as separate task
+domains through Preview, Rebuild and Result. Qualified missing-app repairs show
+Will Repair / Ready to Repair and Repairing activity. Finished items await
+Verification rather than retaining Working or implying success.
 
 Warnings remain visible without automatically blocking a valid Core plan.
 Conflicts show affected scope and a safe next step; never offer force overwrite,

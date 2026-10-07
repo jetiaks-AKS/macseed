@@ -77,7 +77,8 @@ struct CoreRestorePreparation: Decodable {
         let reason: String?
         let displayName: String?
         let selectionItemID: String?
-        enum CodingKeys: String, CodingKey { case domain, itemID = "item_id", action, disposition, reason, displayName = "display_name", selectionItemID = "selection_item_id" }
+        var authorizationRequired: Bool? = nil
+        enum CodingKeys: String, CodingKey { case domain, itemID = "item_id", action, disposition, reason, displayName = "display_name", selectionItemID = "selection_item_id", authorizationRequired = "authorization_required" }
     }
     struct Readiness: Decodable {
         let ready: Bool

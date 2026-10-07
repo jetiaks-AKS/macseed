@@ -304,13 +304,16 @@ stricter and belongs to the Core reference.
 
 App Store presence uses exact ID, VS Code exact case-sensitive extension ID.
 Inventory errors are not absence; exact presence is verified after installation.
-Cask presence requires its exact `brew list --cask` token and all top-level
-`target` paths in `brew info --json=v2 --cask` relocated-artifact metadata.
-Missing token means install; missing target for an installed cask means reinstall
-in the CLI consumer. Targetless artifacts such as pkg/uninstall/zap get no extra
-checks. Invalid/unreadable metadata or nonabsolute/control-bearing target paths
-block Apply. Repeat the same check after install/reinstall. Application mode
-accepts a narrower safe app-only subset and blocks repair/reinstall.
+Cask presence requires public Homebrew registration and nonempty typed payload
+predicates. Apps require valid bundle metadata/executables, links require owned
+sources, and packages require exact macOS receipts plus actual required payload.
+An empty observation set or receipt alone never proves satisfaction. Optional
+`homebrew-casks.json` captures selected requirement identities and portable package
+postconditions; registration with missing payload remains explicitly different.
+Native Install/Repair qualification separately checks installation, historical
+cleanup, ownership, requirements and privilege. Homebrew owns all lifecycle writes.
+Unknown observation is not absence; unknown execution behavior fails closed.
+See the [execution policy](../core/APPLICATION-INTERFACE.md).
 
 ## Workspace Bootstrap actionability
 

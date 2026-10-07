@@ -39,13 +39,13 @@ not completion of all compatibility, secure or clean-Mac qualification.
 Retain the safety backup at `~/Desktop/macseed-full-restore-gate-20261005-124533`
 until remaining controlled checks are complete; it is not runtime input.
 
-- [ ] **Homebrew cask compatibility — next functional work.** Firefox/Keka
-  contain `command_wrapper` artifacts; IINA contains a `binary` artifact. The
-  current app-only execution policy correctly leaves all three unsupported,
-  selected and skipped. Earlier readiness stopped at Firefox, leaving later
-  casks unclassified; this was not an identity/mapping regression. AppCleaner/Plex
-  are eligible. Qualify safe binary/wrapper execution without name exceptions or
-  weakened safety gates; preserve independent item IDs and prepared-plan binding.
+- [ ] **Homebrew compatibility qualification.** The External Tool Compatibility
+  Layer, generic Cask capability model and authorized native lifecycle are
+  established. Real Repair → Verify → fresh no-op gates passed for Keka, Termius
+  and VLC; generated completions were validated through Codex. The SSH Restore
+  readiness bug found during the real gate is fixed. Run broader representative
+  gates before claiming complete Homebrew closure; Tailscale's ownership/activation
+  boundary remains fail-closed and must not be counted as satisfied.
 - [ ] **MAS Restore — mandatory before 1.0.** Safe automatic App Store restoration
   remains required; authorization/install qualification is unresolved. Amphetamine
   reports `authorization_required`; deselecting MAS allowed the broad gate to

@@ -7,6 +7,8 @@ cd "$ROOT_DIR" || exit 1
 
 TEST_DIR="$(mktemp -d)"
 trap 'rm -rf "$TEST_DIR"' EXIT
+export HOME="$TEST_DIR"
+export BLUEPRINT_GENERATED_DIR="$TEST_DIR/generated"
 
 VERBOSE=false
 MODULE_CHANGED=false
@@ -90,7 +92,7 @@ BREW_INFO_STATUS=0
 BREW_INSTALL_STATUS=0
 BREW_INSTALL_MAKES_PRESENT=false
 BREW_INSTALLED_FILE="$TEST_DIR/brew-installed"
-CASK_METADATA='{"casks":[{"artifacts":[]}]}'
+CASK_METADATA='default'
 FORMULA_INSTALLED_FILE="$TEST_DIR/formula-installed"
 FORMULA_READ_STATUS=0
 FORMULA_READ_FAIL_AT=0
@@ -128,8 +130,21 @@ brew() {
         return "$BREW_LIST_STATUS"
     fi
 
+    if [[ "$1" == --prefix ]]; then
+        printf '%s\n' "$TEST_DIR/brew"
+        return 0
+    fi
+
     if [[ "$1" == info ]]; then
-        printf '%s\n' "$CASK_METADATA"
+        local metadata="$CASK_METADATA" installed=null
+        grep -Fxq "$4" "$BREW_INSTALLED_FILE" && installed='"1.0"'
+        if [[ "$metadata" == default ]]; then
+            metadata="$(jq -n --arg target "$TEST_DIR/Applications/$4.app" '{casks:[{artifacts:[{app:[($target | split("/") | last)],target:$target}]}]}')"
+        fi
+        if jq -e '.casks | length == 1' <<< "$metadata" >/dev/null 2>&1; then
+            metadata="$(jq --arg token "$4" --argjson installed "$installed" '.casks[0] += {token:$token,installed:$installed}' <<< "$metadata")"
+        fi
+        printf '%s\n' "$metadata"
         return "$BREW_INFO_STATUS"
     fi
 
@@ -139,9 +154,11 @@ brew() {
         if [[ "$BREW_INSTALL_STATUS" -eq 0 ]]; then
             if [[ "$BREW_INSTALL_MAKES_PRESENT" == true ]]; then
                 printf '%s\n' "$3" >> "$BREW_INSTALLED_FILE"
+                fixture_app "$TEST_DIR/Applications/$3.app"
             fi
             if [[ "$CASK_REPAIR_TARGETS" == true ]]; then
-                mkdir -p "$TEST_DIR/First App.app" "$TEST_DIR/Second App.app"
+                fixture_app "$TEST_DIR/Applications/First App.app"
+            fixture_app "$TEST_DIR/Applications/Second App.app"
             fi
             BREW_INFO_STATUS="$CASK_VERIFY_INFO_STATUS"
         fi
@@ -156,6 +173,13 @@ source modules/apps/appstore.sh
 source modules/vscode/extensions.sh
 source modules/apps/brew-casks.sh
 source modules/apps/brew-packages.sh
+
+fixture_app() {
+    mkdir -p "$1/Contents/MacOS"
+    printf '%s\n' '<?xml version="1.0"?><plist version="1.0"><dict><key>CFBundleIdentifier</key><string>org.example.fixture</string><key>CFBundleExecutable</key><string>fixture</string></dict></plist>' > "$1/Contents/Info.plist"
+    printf '#!/bin/sh\n' > "$1/Contents/MacOS/fixture"
+    chmod 700 "$1/Contents/MacOS/fixture"
+}
 
 pass() { echo "PASS: $*"; }
 fail() { echo "FAIL: $*" >&2; exit 1; }
@@ -209,11 +233,12 @@ reset_state() {
     BREW_INFO_STATUS=0
     BREW_INSTALL_STATUS=0
     BREW_INSTALL_MAKES_PRESENT=false
-    CASK_METADATA='{"casks":[{"artifacts":[]}]}'
+    CASK_METADATA='default'
     CASK_FAIL_ITEM=""
     CASK_REPAIR_TARGETS=false
     CASK_VERIFY_INFO_STATUS=0
-    rm -rf "$TEST_DIR/First App.app" "$TEST_DIR/Second App.app"
+    rm -rf "$TEST_DIR/Applications"
+    mkdir -p "$TEST_DIR/Applications"
 }
 
 printf '111|Installed App\n222|Missing App\n' > "$TEST_DIR/appstore.conf"
@@ -699,6 +724,7 @@ printf 'installed.extension\nmissing.extension\n' > "$TEST_DIR/vscode-extensions
 # Homebrew Cask tri-state observation and verified installation.
 reset_state
 printf 'example-cask\n' > "$BREW_INSTALLED_FILE"
+fixture_app "$TEST_DIR/Applications/example-cask.app"
 is_cask_installed example-cask; status=$?
 assert_status 0 "$status" "installed Homebrew cask is recognized"
 
@@ -752,7 +778,7 @@ pass "failed cask install skips post-install verification"
 
 reset_state
 printf 'example-cask\n' > "$BREW_INSTALLED_FILE"
-CASK_METADATA="$(jq -n --arg target "$TEST_DIR/missing-example.app" '{casks:[{artifacts:[{app:["Example.app"],target:$target}]}]}')"
+CASK_METADATA="$(jq -n --arg target "$TEST_DIR/Applications/missing-example.app" '{casks:[{artifacts:[{app:["missing-example.app"],target:$target}]}]}')"
 BREW_INSTALL_STATUS=2
 install_brew_casks > "$TEST_DIR/mutation.out" 2>&1; status=$?
 output="$(cat "$TEST_DIR/mutation.out")"
@@ -776,7 +802,7 @@ pass "verbose failed cask mutation skips verification"
 
 # Real jq and filesystem inspection of every relocated artifact target.
 cask_artifact_fixture() {
-    CASK_METADATA="$(jq -n --arg first "$TEST_DIR/First App.app" --arg second "$TEST_DIR/Second App.app" '
+    CASK_METADATA="$(jq -n --arg first "$TEST_DIR/Applications/First App.app" --arg second "$TEST_DIR/Applications/Second App.app" '
         {casks:[{token:"example-cask",artifacts:[
             {app:["First App.app"],target:$first},
             {app:["Second App.app"],target:$second},
@@ -793,11 +819,12 @@ for cask_case in correct install reinstall verify-install verify-reinstall obser
     case "$cask_case" in
         correct)
             printf 'example-cask\n' > "$BREW_INSTALLED_FILE"
-            mkdir -p "$TEST_DIR/First App.app" "$TEST_DIR/Second App.app"
+            fixture_app "$TEST_DIR/Applications/First App.app"
+            fixture_app "$TEST_DIR/Applications/Second App.app"
             ;;
         reinstall|verify-reinstall)
             printf 'example-cask\n' > "$BREW_INSTALLED_FILE"
-            mkdir -p "$TEST_DIR/First App.app"
+            fixture_app "$TEST_DIR/Applications/First App.app"
             ;;
         later-failure)
             printf 'example-cask\nother-cask\n' > "$TEST_DIR/brew-casks.conf"

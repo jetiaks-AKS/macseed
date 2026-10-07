@@ -17,7 +17,7 @@ from item_execution import ProcessTree, process_table
 
 
 class OwnedBootstrap:
-    def __init__(self, root, environment, secure_evidence=None, on_record=None, identities=None, mode="--bootstrap", skipped_casks=None):
+    def __init__(self, root, environment, secure_evidence=None, on_record=None, identities=None, mode="--bootstrap", skipped_casks=None, cask_plans=None):
         if mode not in {"--bootstrap", "--application-compare"}:
             raise ValueError("unsupported owned mode")
         if mode == "--bootstrap":
@@ -62,6 +62,9 @@ class OwnedBootstrap:
             descriptor = os.open(skipped_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
             with os.fdopen(descriptor, 'w') as stream:
                 json.dump(skipped_casks or [], stream)
+            descriptor = os.open(Path(self.item_state.name) / 'prepared-casks.json', os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(descriptor, 'w') as stream:
+                json.dump(cask_plans or {}, stream)
             self.process = subprocess.Popen(
                 ["./bootstrap.sh", mode], cwd=root, env=child_env,
                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
@@ -250,6 +253,15 @@ class OwnedBootstrap:
             self.details["status"] = "invalid"
 
     def _collect(self):
+        self.unknown_consequences = Path(self.item_state.name, 'external-tool-active.json').exists()
+        self.external_lifecycle_cause = None
+        if self.unknown_consequences:
+            try:
+                cause = json.loads(Path(self.item_state.name, 'external-tool-active.json').read_text()).get('cause')
+                if cause in {'item_stalled_timeout', 'progress_observation_failed', 'cancelled', 'item_install_failed'}:
+                    self.external_lifecycle_cause = cause
+            except (OSError, ValueError, TypeError, AttributeError):
+                pass
         self.independent_work_completed = getattr(self, 'independent_work_completed', False) or Path(self.item_state.name, 'execution-complete').is_file()
         self.item_state.cleanup()
         self._drain()

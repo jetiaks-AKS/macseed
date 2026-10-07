@@ -131,10 +131,72 @@ class RestorePrepareTests(unittest.TestCase):
     def formula_cli(self):
         brew = self.root / "bin/brew"
         brew.write_text('#!/bin/bash\ncase "$*" in\n'
+                        ' --version) echo Homebrew 7.0.7 ;;\n'
+                        ' help\\ *) echo "$2 --formula --cask --full-name --json --appdir" ;;\n'
                         ' --prefix) echo /opt/homebrew ;;\n'
                         ' "list --formula --full-name") exit 0 ;;\n'
                         ' *) exit 2 ;;\nesac\n')
         brew.chmod(0o700)
+
+    def ssh_prerequisite_fixture(self):
+        self.cask_fixture()
+        blueprint = self.stage / 'blueprint.conf'
+        blueprint.write_text(blueprint.read_text().replace('ssh-configuration="false"', 'ssh-configuration="true"'))
+        self.ssh_payload = b'Host bundle-host\n    HostName example.invalid\n    User git\n'
+        bundle.write_file(self.stage / 'generated/ssh/config.snapshot',
+                          b'# toolkit-ssh-snapshot: 1\n# status: ready\n# excluded-profiles: 0\n\n' + self.ssh_payload)
+        directory = self.home / '.ssh'
+        directory.mkdir(mode=0o700)
+        return directory / 'config'
+
+    def test_selected_prerequisite_conflict_blocks_casks_before_publication(self):
+        target = self.ssh_prerequisite_fixture()
+        original = b'Host existing-host\n    HostName preserved.invalid\n'
+        target.write_bytes(original)
+        target.chmod(0o600)
+        self.pack()
+        plan = self.plan_result()
+        self.assertFalse(plan['readiness']['ready'])
+        self.assertTrue(any(c['domain'] == 'ssh-configuration' and c['code'] == 'ssh_configuration_not_ready'
+                            and c['scope'] == 'operation' for c in plan['readiness']['conditions']))
+        self.assertTrue(any(r['domain'] == 'homebrew-casks' and r['disposition'] == 'planned' for r in plan['plan']))
+        result, events = self.execute(plan['prepared_plan_id'])
+        self.assertEqual(result.returncode, 2, events)
+        final = events[-1]['data']
+        self.assertEqual(final['code'], 'ssh_configuration_not_ready')
+        self.assertFalse(final['publication_started'])
+        self.assertFalse(final['target_mutation_may_have_started'])
+        self.assertEqual(target.read_bytes(), original)
+        self.assertFalse((self.root / 'cask-log').exists())
+        self.assertFalse((self.root / 'boundary').exists())
+        self.assertFalse((self.home / 'Library/Application Support/Macseed/Homebrew/active.json').exists())
+
+    def test_selected_prerequisite_matching_partial_absent_and_unselected(self):
+        target = self.ssh_prerequisite_fixture()
+        target.write_bytes(self.ssh_payload)
+        target.chmod(0o600)
+        snapshot = self.stage / 'generated/ssh/config.snapshot'
+        snapshot.write_bytes(snapshot.read_bytes().replace(b'# status: ready', b'# status: partial')
+                             .replace(b'# excluded-profiles: 0', b'# excluded-profiles: 2'))
+        self.pack()
+        self.assertTrue(self.plan_result()['readiness']['ready'])
+        target.unlink()
+        self.archive.unlink()
+        self.pack()
+        self.assertTrue(self.plan_result()['readiness']['ready'])
+        target.write_bytes(b'Host unrelated\n    HostName preserved.invalid\n')
+        target.chmod(0o600)
+        snapshot.write_bytes(b'# toolkit-ssh-snapshot: 1\n# status: empty\n# excluded-profiles: 0\n\n')
+        self.archive.unlink()
+        self.pack()
+        self.assertTrue(self.plan_result()['readiness']['ready'])
+        blueprint = self.stage / 'blueprint.conf'
+        blueprint.write_text(blueprint.read_text().replace('ssh-configuration="true"', 'ssh-configuration="false"'))
+        self.archive.unlink()
+        self.pack()
+        plan = self.plan_result()
+        self.assertTrue(plan['readiness']['ready'])
+        self.assertFalse(any(c['domain'] == 'ssh-configuration' for c in plan['readiness']['conditions']))
 
     def test_structured_folder_actions_and_selected_scope(self):
         self.pack()
@@ -240,10 +302,14 @@ class RestorePrepareTests(unittest.TestCase):
         brew = prefix / 'bin/brew'
         (self.root / 'bin/brew').rename(brew)
         brew.write_text('#!/bin/bash\ncase "$*" in\n'
+                        ' --version) echo Homebrew 7.0.7 ;;\n'
+                        ' help\\ *) echo "$2 --formula --cask --full-name --json --appdir" ;;\n'
                         ' --prefix) echo "$TEST_ACTIVATED_PREFIX" ;;\n'
                         ' "list --formula --full-name") echo fixture-formula ;;\n'
                         ' *) exit 2 ;;\nesac\n')
         self.environment['TEST_ACTIVATED_PREFIX'] = str(prefix)
+        provider = self.project / 'modules/apps/adapters/homebrew.py'
+        provider.write_text(provider.read_text().replace('/opt/homebrew', str(prefix)))
         for tool in ('sudo', 'curl', 'xcode-select'):
             (self.root / 'bin' / tool).write_text('#!/bin/bash\necho ' + tool + ' >> "$TEST_MUTATIONS"\nexit 1\n')
         self.pack()
@@ -569,6 +635,8 @@ os.write(fd, b'{"kind":"details_complete"}\\n')
         bundle.write_file(self.stage / "generated/brew-packages.conf", b"fixture-formula\n")
         brew = self.root / "bin/brew"
         brew.write_text('#!/bin/bash\ncase "$*" in\n'
+                        '  --version) echo Homebrew 7.0.7 ;;\n'
+                        '  help\\ *) echo "$2 --formula --cask --full-name --json --appdir" ;;\n'
                         '  --prefix) echo /opt/homebrew ;;\n'
                         '  "list --formula --full-name") exit 0 ;;\n'
                         '  *) exit 2 ;;\nesac\n')
@@ -602,7 +670,7 @@ os.write(fd, b'{"kind":"details_complete"}\\n')
         self.allow_application_bootstrap()
         destination = self.home / "Applications"
         destination.mkdir()
-        module = self.project / "modules/apps/brew-casks.sh"
+        module = self.project / "modules/apps/adapters/homebrew.sh"
         module.write_text(module.read_text().replace('/Applications', str(destination)))
         self.environment.update(TEST_CASK_METADATA=str(self.root / "cask.json"),
                                 TEST_CASK_STATE=str(self.root / "cask-state"),
@@ -610,6 +678,8 @@ os.write(fd, b'{"kind":"details_complete"}\\n')
                                 TEST_CASK_TARGET=str(destination / "Fixture.app"),
                                 TEST_BOUNDARY=str(self.root / "boundary"))
         metadata = {"casks": [{"token": "fixture-cask", "tap": "homebrew/cask",
+                               "version": "1.0", "installed": None,
+                               "sha256": "a" * 64, "url": "https://example.org/fixture.dmg",
                                "disabled": False, "caveats": None, "caveats_rosetta": None,
                                "depends_on": {"macos": {}}, "container": None, "rename": [],
                                "artifacts": [{"app": ["Fixture.app"],
@@ -618,13 +688,15 @@ os.write(fd, b'{"kind":"details_complete"}\\n')
         brew = self.root / "bin/brew"
         brew.write_text('''#!/bin/bash
 case "$*" in
+  --version) echo 'Homebrew 7.0.7' ;;
+  help\ *) echo "$2 --formula --cask --full-name --json --appdir" ;;
   --prefix) echo /opt/homebrew ;;
   "list --formula --full-name") [[ ! -f "$TEST_CASK_STATE.formula" ]] || echo fixture-formula ;;
   "list --cask") [[ ! -f "$TEST_CASK_STATE" ]] || echo fixture-cask ;;
-  "info --json=v2 --cask fixture-cask") cat "$TEST_CASK_METADATA" ;;
+  "info --json=v2 --cask fixture-cask") python3 -B -c 'import json,os; from pathlib import Path; data=json.loads(Path(os.environ["TEST_CASK_METADATA"]).read_text()); data["casks"][0]["installed"]="1.0" if Path(os.environ["TEST_CASK_STATE"]).exists() else None; print(json.dumps(data))' ;;
   "info --json=v2 --formula fixture-formula") echo '{"formulae":[{"full_name":"fixture-formula","dependencies":[]}]}' ;;
   "install fixture-formula") touch "$TEST_CASK_STATE.formula" ;;
-  install\\ --cask\\ --appdir=*\\ fixture-cask)
+  install\\ --cask\\ --appdir=*\\ fixture-cask|install\\ --cask\\ fixture-cask)
     [[ "$MACSEED_APPLICATION_EXECUTION" == true && "$HOMEBREW_NO_SUDO" == 1 &&
        "$HOMEBREW_NO_AUTO_UPDATE" == 1 && "$HOMEBREW_NO_INSTALL_CLEANUP" == 1 &&
        "$HOMEBREW_NO_INSTALL_UPGRADE" == 1 && "$HOMEBREW_NO_ASK" == 1 &&
@@ -634,7 +706,10 @@ case "$*" in
     echo install >> "$TEST_CASK_LOG"
     [[ "${TEST_CASK_FAIL:-false}" != true ]] || exit 2
     touch "$TEST_CASK_STATE"
-    mkdir "$TEST_CASK_TARGET" ;;
+    if [[ "${TEST_CASK_NO_PAYLOAD:-false}" != true ]]; then
+    mkdir "$TEST_CASK_TARGET"
+    python3 -B -c 'import os,plistlib; from pathlib import Path; app=Path(os.environ["TEST_CASK_TARGET"]); (app/"Contents/MacOS").mkdir(parents=True,exist_ok=True); (app/"Contents/Info.plist").write_bytes(plistlib.dumps({"CFBundleIdentifier":"org.example.Fixture","CFBundleExecutable":"Fixture"})); binary=app/"Contents/MacOS/Fixture"; binary.write_text("#!/bin/sh\\n"); binary.chmod(0o700)'
+    fi ;;
   *) exit 2 ;;
 esac
 exit 0
@@ -674,6 +749,238 @@ exit 0
                             row["data"]["outcome"] == "noop" for row in repeated_events))
         self.assertEqual(Path(self.environment["TEST_CASK_LOG"]).read_text(), "install\n")
 
+    def repair_cask_fixture(self, cli=False):
+        metadata = self.cask_fixture()
+        prefix = self.root / 'brew-prefix'
+        (prefix / 'bin').mkdir(parents=True)
+        module = self.project / 'modules/apps/adapters/homebrew.sh'
+        module.write_text(module.read_text().replace('/opt/homebrew', str(prefix)))
+        probe = self.project / 'modules/apps/adapters/homebrew.py'
+        probe.write_text(probe.read_text().replace('/opt/homebrew', str(prefix)))
+        row = metadata['casks'][0]
+        row['installed'] = '1.0'
+        app = Path(self.environment['TEST_CASK_TARGET'])
+        if cli:
+            row['artifacts'] += [
+                {'binary': [str(app / 'Contents/MacOS/cli'), {'target': 'binary-cli'}],
+                 'target': str(prefix / 'bin/binary-cli')},
+                {'command_wrapper': ['wrapper-cli', {'executable': str(app / 'Contents/MacOS/cli'), 'args': ['--cli']}],
+                 'target': str(prefix / 'bin/wrapper-cli')},
+                {'uninstall': [{'quit': 'org.example.Fixture'}]},
+                {'zap': [{'trash': ['~/Library/Preferences/fixture.plist']}]},
+            ]
+        caskroot = prefix / 'Caskroom/fixture-cask'
+        snapshot = caskroot / '.metadata/1.0/20261006000000/Casks'
+        snapshot.mkdir(parents=True)
+        (caskroot / '1.0').mkdir()
+        (snapshot / 'fixture-cask.json').write_text('{}')
+        receipt = {'uninstall_flight_blocks': False, 'source': {'tap': 'homebrew/cask', 'version': '1.0'},
+                   'uninstall_artifacts': [{k: v for k, v in a.items() if k != 'target'} for a in row['artifacts']]}
+        (caskroot / '.metadata/INSTALL_RECEIPT.json').write_text(json.dumps(receipt))
+        (caskroot / '.metadata/config.json').write_text(json.dumps({'default': {'appdir': str(app.parent)}, 'env': {}, 'explicit': {}}))
+        wrapper = caskroot / '1.0/.homebrew-command-wrappers/wrapper-cli'
+        if cli:
+            wrapper.parent.mkdir(parents=True)
+            wrapper.write_text('#!/bin/sh\n'); wrapper.chmod(0o700)
+            (prefix / 'bin/wrapper-cli').symlink_to(wrapper)
+            (prefix / 'bin/binary-cli').symlink_to(app / 'Contents/MacOS/cli')
+        Path(self.environment['TEST_CASK_STATE']).touch()
+        Path(self.environment['TEST_CASK_METADATA']).write_text(json.dumps(metadata))
+        brew = self.root / 'bin/brew'
+        original = brew.read_text().replace('echo /opt/homebrew', 'echo ' + str(prefix))
+        original = original.replace('  install\\ --cask\\ --appdir=*\\ fixture-cask|install\\ --cask\\ fixture-cask)',
+            '  reinstall\\ --cask\\ fixture-cask|reinstall\\ --cask\\ --appdir=*\\ fixture-cask|install\\ --cask\\ --appdir=*\\ fixture-cask|install\\ --cask\\ fixture-cask)')
+        original = original.replace('echo install >>', 'echo "$1" >>')
+        # Only this executable mock performs simulated Homebrew artifact changes.
+        artifact_script = '''import json, os
+from pathlib import Path
+row = json.loads(Path(os.environ['TEST_CASK_METADATA']).read_text())['casks'][0]
+for artifact in row['artifacts']:
+    if 'binary' in artifact:
+        source = Path(artifact['binary'][0])
+    elif 'command_wrapper' in artifact:
+        target = Path(artifact['target'])
+        source = target.parent.parent / 'Caskroom' / row['token'] / row['installed'] / '.homebrew-command-wrappers' / artifact['command_wrapper'][0]
+    else: continue
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_text('#!/bin/sh\\n'); source.chmod(0o700)
+    target = Path(artifact['target'])
+    target.unlink(missing_ok=True); target.symlink_to(source)
+    executable = artifact.get('command_wrapper', [None, {}])[1].get('executable')
+    if executable:
+        path = Path(executable); path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text('#!/bin/sh\\n'); path.chmod(0o700)
+'''
+        import shlex
+        original = original.replace('mkdir "$TEST_CASK_TARGET"',
+            'mkdir "$TEST_CASK_TARGET"; python3 -B -c ' + shlex.quote(artifact_script))
+        brew.write_text(original)
+        return metadata, prefix, caskroot
+
+    def test_cask_repair_prepare_execute_and_convergence(self):
+        metadata, prefix, caskroot = self.repair_cask_fixture(cli=True)
+        self.pack()
+        evidence = {p: p.read_bytes() for p in caskroot.rglob('*.json')}
+        prepared = self.plan_result()
+        row = next(r for r in prepared['plan'] if r['domain'] == 'homebrew-casks')
+        self.assertTrue(prepared['readiness']['ready'], prepared)
+        self.assertEqual((row['action'], row['disposition']), ('reinstall', 'planned'))
+        self.assertFalse(Path(self.environment['TEST_CASK_LOG']).exists())
+        self.assertEqual(evidence, {p: p.read_bytes() for p in evidence})
+        result, events = self.execute(prepared['prepared_plan_id'])
+        self.assertEqual(result.returncode, 0, events)
+        self.assertEqual(events[-2]['data']['verification']['verdict'], 'selected_requirements_verified')
+        operations = events[-2]['data']['verification']['details']['operation_records']
+        self.assertTrue(any(r['domain'] == 'homebrew-casks' and r['action'] == 'reinstall' and r['outcome'] == 'success' for r in operations))
+        self.assertEqual(Path(self.environment['TEST_CASK_LOG']).read_text(), 'reinstall\n')
+        fresh = self.plan_result()
+        row = next(r for r in fresh['plan'] if r['domain'] == 'homebrew-casks')
+        self.assertEqual((row['action'], row['disposition']), ('none', 'satisfied'))
+        repeated, repeated_events = self.execute(fresh['prepared_plan_id'])
+        self.assertEqual(repeated.returncode, 0, repeated_events)
+        self.assertEqual(Path(self.environment['TEST_CASK_LOG']).read_text(), 'reinstall\n')
+
+    def test_cask_repair_rejects_unsafe_or_ambiguous_state(self):
+        metadata, prefix, caskroot = self.repair_cask_fixture(cli=True)
+        command = ['bash', '-c', 'source modules/apps/brew-casks.sh; '
+                   'cask_application_readiness fixture-cask reinstall >/dev/null 2>&1; '
+                   'printf "%s" "$CASK_APPLICATION_CONDITION"']
+        def check():
+            return subprocess.run(command, cwd=self.project, env=self.environment, capture_output=True).stdout.decode()
+        self.assertEqual(check(), 'ready')
+        link = prefix / 'bin/binary-cli'
+        link.unlink(); link.write_text('foreign command')
+        self.assertEqual(check(), 'cask_target_conflict')
+        link.unlink(); link.symlink_to('/foreign/cli')
+        self.assertEqual(check(), 'cask_target_conflict')
+        link.unlink(); link.symlink_to(metadata['casks'][0]['artifacts'][1]['binary'][0])
+        app = Path(self.environment['TEST_CASK_TARGET'])
+        for kind in ('directory', 'file', 'symlink'):
+            if kind == 'directory': app.mkdir()
+            elif kind == 'file': app.write_text('replacement app')
+            else: app.symlink_to('/missing/app')
+            self.assertEqual(check(), 'cask_target_conflict')
+            if kind == 'directory': app.rmdir()
+            else: app.unlink()
+        receipt = caskroot / '.metadata/INSTALL_RECEIPT.json'
+        original = json.loads(receipt.read_text())
+        for directive in ('script', 'delete', 'trash', 'launchctl', 'signal'):
+            value = json.loads(json.dumps(original))
+            value['uninstall_artifacts'].append({'uninstall': [{directive: 'unsafe'}]})
+            receipt.write_text(json.dumps(value))
+            self.assertEqual(check(), 'cask_execution_requirements_unsupported')
+        value = json.loads(json.dumps(original)); value['uninstall_flight_blocks'] = True
+        receipt.write_text(json.dumps(value))
+        self.assertEqual(check(), 'cask_execution_requirements_unsupported')
+        value = json.loads(json.dumps(original)); value['uninstall_artifacts'][0]['target'] = '/foreign/app'
+        receipt.write_text(json.dumps(value))
+        self.assertEqual(check(), 'cask_target_conflict')
+        value = json.loads(json.dumps(original)); value['source']['version'] = 'other-version'
+        receipt.write_text(json.dumps(value))
+        self.assertEqual(check(), 'cask_execution_requirements_unsupported')
+        receipt.write_text(json.dumps(original))
+        config = caskroot / '.metadata/config.json'
+        saved_config = config.read_text()
+        config.write_text(json.dumps({'default': {'appdir': '/foreign/Applications'}}))
+        self.assertEqual(check(), 'cask_target_conflict')
+        config.write_text(saved_config)
+        metadata['casks'][0]['pinned'] = True
+        Path(self.environment['TEST_CASK_METADATA']).write_text(json.dumps(metadata))
+        self.assertEqual(check(), 'cask_target_conflict')
+        metadata['casks'][0].pop('pinned')
+        Path(self.environment['TEST_CASK_METADATA']).write_text(json.dumps(metadata))
+        definition = caskroot / '.metadata/1.0/20261006000000/Casks/fixture-cask.json'
+        definition.unlink(); definition.with_suffix('.rb').write_text('raise "must never evaluate"')
+        self.assertEqual(check(), 'ready')  # Ruby snapshots are never evaluated.
+        receipt.unlink()
+        self.assertEqual(check(), 'cask_metadata_unavailable')
+        self.assertFalse(Path(self.environment['TEST_CASK_LOG']).exists())
+
+    def test_cask_repair_final_verification_and_stale_plan(self):
+        metadata, prefix, caskroot = self.repair_cask_fixture()
+        self.pack()
+        prepared = self.plan_result()
+        target = Path(self.environment['TEST_CASK_TARGET'])
+        target.mkdir()
+        result, events = self.execute(prepared['prepared_plan_id'])
+        self.assertEqual(events[-1]['data']['code'], 'stale_plan')
+        self.assertFalse(events[-1]['data']['publication_started'])
+        target.rmdir()
+        prepared = self.plan_result()
+        brew = self.root / 'bin/brew'
+        self.environment['TEST_CASK_NO_PAYLOAD'] = 'true'
+        result, events = self.execute(prepared['prepared_plan_id'])
+        self.assertEqual(result.returncode, 2, events)
+        self.assertTrue(events[-1]['data']['target_mutation_may_have_started'])
+        self.assertEqual(events[-1]['data']['verification']['status'], 'complete')
+        self.assertGreater(events[-1]['data']['verification']['mismatch_count'], 0)
+
+    def test_cask_repair_fresh_install_and_cli_only_damage(self):
+        metadata, prefix, caskroot = self.repair_cask_fixture(cli=True)
+        self.pack()
+        prepared = self.plan_result()
+        self.assertEqual(next(r for r in prepared['plan'] if r['domain'] == 'homebrew-casks')['action'], 'reinstall')
+        # An intact app with a missing CLI target cannot authorize whole-app removal.
+        app = Path(self.environment['TEST_CASK_TARGET'])
+        app.mkdir()
+        exe = app / 'Contents/MacOS/cli'
+        exe.parent.mkdir(parents=True); exe.write_text('#!/bin/sh\n'); exe.chmod(0o700)
+        link = prefix / 'bin/binary-cli'
+        link.unlink()
+        attention = self.plan_result()
+        self.assertFalse(attention['readiness']['ready'])
+        self.assertTrue(any(c['code'] == 'cask_target_conflict' for c in attention['readiness']['conditions']))
+        shutil.rmtree(app)
+        # Fresh installation is allowed only after registration and all CLI targets are absent.
+        Path(self.environment['TEST_CASK_STATE']).unlink()
+        (prefix / 'bin/wrapper-cli').unlink()
+        fresh = self.plan_result()
+        row = next(r for r in fresh['plan'] if r['domain'] == 'homebrew-casks')
+        self.assertTrue(fresh['readiness']['ready'])
+        self.assertEqual((row['action'], row['disposition']), ('install', 'planned'))
+        self.assertFalse(Path(self.environment['TEST_CASK_LOG']).exists())
+
+    def test_cask_repair_safe_stop_owns_child_processes(self):
+        self.repair_cask_fixture()
+        import shlex
+        pidfile = self.root / 'repair-child-pid'
+        self.environment['TEST_REPAIR_PID'] = str(pidfile)
+        sleep_script = '''import os, subprocess, sys, time
+from pathlib import Path
+child = subprocess.Popen([sys.executable, '-B', '-c', 'import signal,time; signal.signal(signal.SIGTERM,signal.SIG_IGN); time.sleep(60)'], start_new_session=True)
+Path(os.environ['TEST_REPAIR_PID']).write_text(str(child.pid))
+time.sleep(60)
+'''
+        brew = self.root / 'bin/brew'
+        brew.write_text(brew.read_text().replace('mkdir "$TEST_CASK_TARGET"',
+            'python3 -B -c ' + shlex.quote(sleep_script) + '; mkdir "$TEST_CASK_TARGET"'))
+        self.pack()
+        prepared = self.plan_result()
+        request = {'protocol_version': 1, 'operation_id': 'repair-stop', 'operation': 'restore_execute',
+                   'parameters': {'path': str(self.archive), 'include_secure': False, 'disabled_groups': [],
+                                  'expected_prepared_plan_id': prepared['prepared_plan_id']}}
+        core = subprocess.Popen(['bash', str(self.project / 'modules/core/application-interface/core.sh')],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            cwd=self.project, env=self.environment)
+        self.addCleanup(lambda: core.kill() if core.poll() is None else None)
+        core.stdin.write(json.dumps(request).encode()); core.stdin.close()
+        import time
+        for _ in range(1000):
+            if pidfile.exists() or core.poll() is not None: break
+            time.sleep(.01)
+        self.assertTrue(pidfile.exists(), core.stdout.read() if core.poll() is not None else 'Mock repair never started')
+        core.send_signal(signal.SIGTERM)
+        core.wait(timeout=20)
+        events = [json.loads(line) for line in core.stdout.read().splitlines()]
+        core.stdout.close(); core.stderr.close()
+        self.assertEqual(events[-1]['data']['code'], 'cancelled', events)
+        self.assertTrue(events[-1]['data']['target_mutation_may_have_started'])
+        self.assertEqual(Path(self.environment['TEST_CASK_LOG']).read_text(), 'reinstall\n')
+        self.assertFalse(Path(self.environment['TEST_CASK_TARGET']).exists())
+        child_state = subprocess.run(['/bin/ps', '-p', pidfile.read_text(), '-o', 'stat='],
+                                     capture_output=True).stdout.strip()
+        self.assertTrue(not child_state or child_state.startswith(b'Z'), child_state)
+
     def test_cask_failure_preserves_mutation_boundary(self):
         self.cask_fixture()
         self.environment["TEST_CASK_FAIL"] = "true"
@@ -695,15 +1002,20 @@ exit 0
                                   cwd=self.project, env=environment, stdin=subprocess.DEVNULL,
                                   stdout=subprocess.PIPE, check=False).stdout.strip()
         self.assertEqual(check(), b"ready")
-        # Already satisfied casks bypass the installation artifact classifier.
-        metadata["casks"][0]["artifacts"].append({"pkg": ["Fixture.pkg"]})
+        # Satisfied payloads bypass unsafe execution-only cleanup semantics.
+        metadata["casks"][0]["artifacts"].append({"uninstall": [{"script": "/opaque/cleanup"}]})
         Path(self.environment["TEST_CASK_METADATA"]).write_text(json.dumps(metadata))
         Path(self.environment["TEST_CASK_STATE"]).touch()
         target = Path(self.environment["TEST_CASK_TARGET"])
-        target.mkdir()
+        (target / 'Contents/MacOS').mkdir(parents=True)
+        import plistlib
+        (target / 'Contents/Info.plist').write_bytes(plistlib.dumps({
+            'CFBundleIdentifier': 'org.example.Fixture', 'CFBundleExecutable': 'Fixture'}))
+        binary = target / 'Contents/MacOS/Fixture'
+        binary.write_text('#!/bin/sh\n'); binary.chmod(0o700)
         self.assertEqual(check(), b"ready")
-        target.rmdir()
-        self.assertEqual(check(), b"cask_repair_not_supported\t1")
+        shutil.rmtree(target)
+        self.assertEqual(check(), b"cask_execution_requirements_unsupported\t1")
         brew = self.root / "bin/brew"
         brew.write_text("#!/bin/bash\nexit 2\n")
         self.assertEqual(check(), b"homebrew_unavailable")
@@ -754,6 +1066,7 @@ exit 0
             row = json.loads(json.dumps(base['casks'][0]))
             row['token'] = name
             row['artifacts'][0]['target'] = str(self.home / 'Applications' / (name + '.app'))
+            row['artifacts'][0]['app'] = [name + '.app']
             if name == 'item-b':
                 row['artifacts'].append({'pkg': ['fixture.pkg']})
             if name == 'dependent':
@@ -766,23 +1079,29 @@ exit 0
         (self.stage / 'generated/brew-casks.conf').write_bytes(
                           b'item-a\nitem-b\nitem-c\ndependent\n')
         brew = self.root / 'bin/brew'
-        brew.write_text("#!/usr/bin/env python3\n" + '''import json, os, sys
+        brew.write_text("#!/usr/bin/env python3\n" + '''import json, os, plistlib, sys
 from pathlib import Path
 args = sys.argv[1:]
 rows = json.loads(Path(os.environ['TEST_CASK_METADATA']).read_text())
 if args == ['--prefix']: print('/opt/homebrew')
+elif args == ['--version']: print('Homebrew 7.0.7')
+elif args[:1] == ['help']: print(args[1] + ' --formula --cask --full-name --json --appdir')
 elif args == ['list', '--formula', '--full-name']: pass
 elif args == ['list', '--cask']:
     for token, row in rows.items():
         if Path(row['artifacts'][0]['target']).is_dir(): print(token)
 elif args[:3] == ['info', '--json=v2', '--cask']:
+    rows[args[3]]['installed'] = '1.0' if Path(rows[args[3]]['artifacts'][0]['target']).is_dir() else None
     print(json.dumps({'casks': [rows[args[3]]]}))
 elif args[:2] == ['install', '--cask']:
     assert os.environ['HOMEBREW_NO_SUDO'] == '1'
     assert os.environ['HOMEBREW_NO_AUTO_UPDATE'] == '1'
     name = args[-1]
     with open(os.environ['TEST_CASK_LOG'], 'a') as out: out.write(name + '\\n')
-    Path(rows[name]['artifacts'][0]['target']).mkdir()
+    app = Path(rows[name]['artifacts'][0]['target'])
+    (app / 'Contents/MacOS').mkdir(parents=True)
+    (app / 'Contents/Info.plist').write_bytes(plistlib.dumps({'CFBundleIdentifier':'org.example.Fixture','CFBundleExecutable':'Fixture'}))
+    binary = app / 'Contents/MacOS/Fixture'; binary.write_text('#!/bin/sh\\n'); binary.chmod(0o700)
 else: sys.exit(2)
 ''')
         brew.chmod(0o700)
@@ -808,7 +1127,7 @@ else: sys.exit(2)
         final = events[-1]['data']
         self.assertTrue(final['independent_work_completed'])
         self.assertEqual(final['verification']['status'], 'complete')
-        self.assertGreater(final['verification']['mismatch_count'], 0)
+        self.assertGreater(final['verification']['unverified_count'], 0)
         self.assertEqual(Path(self.environment['TEST_CASK_LOG']).read_text().splitlines(), ['item-a', 'item-c'])
         operations = final['verification']['details']['operation_records']
         self.assertEqual({r['item_id'] for r in operations if r['domain'] == 'homebrew-casks' and r['outcome'] == 'skipped'}, {'item-b', 'dependent'})
@@ -830,11 +1149,12 @@ else: sys.exit(2)
             if name == 'safe-a': row['artifacts'].append({'uninstall': [{}]})
             if name in ('unsafe-wrapper', 'unsafe-cli'):
                 arguments = {'executable': target + '/Contents/MacOS/cli'}
-                if name == 'unsafe-cli': arguments['args'] = ['--cli']
+                if name == 'unsafe-cli': arguments['env'] = {'UNSAFE': 'value'}
+                else: arguments['content'] = 'arbitrary script'
                 row['artifacts'].append({'command_wrapper': [name, arguments],
                                          'target': '/opt/homebrew/bin/' + name})
             if name == 'unsafe-binary':
-                row['artifacts'].append({'binary': [target + '/Contents/MacOS/cli', {'target': name}],
+                row['artifacts'].append({'binary': ['/external/cli', {'target': name}],
                                          'target': '/opt/homebrew/bin/' + name})
             rows[name] = row
         Path(self.environment['TEST_CASK_METADATA']).write_text(json.dumps(rows))
@@ -943,6 +1263,105 @@ FIXTURE
         self.assertFalse(events[-1]['data']['publication_started'])
         self.assertFalse(Path(self.environment['TEST_CASK_LOG']).exists())
 
+    def test_qualified_cask_cli_artifacts(self):
+        metadata = self.cask_fixture()
+        metadata['casks'][0]['installed'] = '1.0'
+        module = self.project / 'modules/apps/adapters/homebrew.sh'
+        prefix = self.root / 'brew-prefix'
+        (prefix / 'bin').mkdir(parents=True)
+        module.write_text(module.read_text().replace('/opt/homebrew', str(prefix)))
+        probe = self.project / 'modules/apps/adapters/homebrew.py'
+        probe.write_text(probe.read_text().replace('/opt/homebrew', str(prefix)))
+        brew = self.root / 'bin/brew'
+        brew.write_text(brew.read_text().replace('echo /opt/homebrew', 'echo ' + str(prefix)))
+        path = Path(self.environment['TEST_CASK_METADATA'])
+        app = metadata['casks'][0]['artifacts'][0]['target']
+        command = ['bash', '-c', 'source modules/apps/brew-casks.sh; '
+                   'cask_application_readiness fixture-cask >/dev/null 2>&1; '
+                   'printf "%s" "$CASK_APPLICATION_CONDITION"']
+        def check(artifact):
+            value = json.loads(json.dumps(metadata))
+            value['casks'][0]['artifacts'].append(artifact)
+            path.write_text(json.dumps(value))
+            return subprocess.run(command, cwd=self.project, env=self.environment,
+                                  capture_output=True).stdout.decode()
+        artifacts = [
+            {'binary': [app + '/Contents/MacOS/cli', {'target': 'fixture-cli'}],
+             'target': str(prefix / 'bin/fixture-cli')},
+            {'command_wrapper': ['fixture-cli', {'executable': app + '/Contents/MacOS/cli'}],
+             'target': str(prefix / 'bin/fixture-cli')},
+            {'command_wrapper': ['fixture-cli', {'executable': app + '/Contents/MacOS/cli',
+                                                'args': ['--cli']}],
+             'target': str(prefix / 'bin/fixture-cli')},
+        ]
+        self.pack()
+        for artifact in artifacts:
+            with self.subTest(artifact=artifact):
+                self.assertEqual(check(artifact), 'ready')
+                prepared = self.plan_result()
+                self.assertTrue(prepared['readiness']['ready'])
+                row = next(r for r in prepared['plan'] if r['domain'] == 'homebrew-casks')
+                self.assertEqual(row['disposition'], 'planned')
+                conflict = prefix / 'bin/fixture-cli'
+                conflict.symlink_to('/missing')
+                self.assertEqual(check(artifact), 'cask_target_conflict')
+                conflict.unlink()
+        bad = []
+        for executable in ('/external/cli', app + '/Contents/../cli', app + '/Contents//cli'):
+            item = json.loads(json.dumps(artifacts[1]))
+            item['command_wrapper'][1]['executable'] = executable
+            bad.append(item)
+        for key, value in (('content', 'echo unsafe'), ('env', {'UNSAFE': 'value'}), ('args', '--cli'),
+                           ('args', [None]), ('args', ['bad\nargument'])):
+            item = json.loads(json.dumps(artifacts[1]))
+            item['command_wrapper'][1][key] = value
+            bad.append(item)
+        for target in ('/usr/bin/fixture-cli', str(prefix / 'bin/other')):
+            item = json.loads(json.dumps(artifacts[0]))
+            item['target'] = target
+            bad.append(item)
+        item = json.loads(json.dumps(artifacts[0]))
+        item['binary'][1]['target'] = '../fixture-cli'
+        bad.append(item)
+        for artifact in bad:
+            with self.subTest(rejected=artifact):
+                self.assertEqual(check(artifact), 'cask_execution_requirements_unsupported')
+        # Homebrew success with a missing CLI target cannot pass final Verification.
+        check(artifacts[2])
+        prepared = self.plan_result()
+        result, events = self.execute(prepared['prepared_plan_id'])
+        self.assertEqual(result.returncode, 2, events)
+        self.assertGreater(events[-1]['data']['verification']['mismatch_count'], 0)
+        self.assertEqual(Path(self.environment['TEST_CASK_LOG']).read_text(), 'install\n')
+        # Mock Homebrew owns artifact creation; Macseed only delegates and verifies.
+        import shlex
+        mock_artifacts = """import json, os
+from pathlib import Path
+row = json.loads(Path(os.environ['TEST_CASK_METADATA']).read_text())['casks'][0]
+a = row['artifacts'][-1]
+exe = Path(a['binary'][0] if 'binary' in a else a['command_wrapper'][1]['executable'])
+exe.parent.mkdir(parents=True, exist_ok=True); exe.write_text('#!/bin/sh\\n'); exe.chmod(0o700)
+target = Path(a['target'])
+source = exe if 'binary' in a else target.parent.parent / 'Caskroom' / row['token'] / row['installed'] / '.homebrew-command-wrappers' / a['command_wrapper'][0]
+source.parent.mkdir(parents=True, exist_ok=True); source.write_text('#!/bin/sh\\n'); source.chmod(0o700)
+target.symlink_to(source)
+"""
+        brew.write_text(brew.read_text().replace('mkdir "$TEST_CASK_TARGET"',
+                        'mkdir "$TEST_CASK_TARGET"; python3 -B -c ' + shlex.quote(mock_artifacts)))
+        for artifact in artifacts:
+            shutil.rmtree(app)
+            Path(self.environment['TEST_CASK_STATE']).unlink()
+            (prefix / 'bin/fixture-cli').unlink(missing_ok=True)
+            check(artifact)
+            prepared = self.plan_result()
+            result, events = self.execute(prepared['prepared_plan_id'])
+            self.assertEqual(result.returncode, 0, events)
+            self.assertEqual(events[-2]['data']['verification']['verdict'],
+                             'selected_requirements_verified')
+            fresh = self.plan_result()
+            row = next(r for r in fresh['plan'] if r['domain'] == 'homebrew-casks')
+            self.assertEqual(row['disposition'], 'satisfied')
+
     def test_cask_metadata_artifact_boundary(self):
         metadata = self.cask_fixture()
         path = Path(self.environment["TEST_CASK_METADATA"])
@@ -966,17 +1385,17 @@ FIXTURE
             value["casks"][0]["artifacts"].append({artifact: [{}]})
             self.assertEqual(check(value), "ready")
         for key, value in (("caveats", "EULA"), ("caveats_rosetta", True),
-                           ("depends_on", {"formula": ["helper"]}), ("container", {"type": "pkg"}),
+                           ("depends_on", {"unknown": ["helper"]}), ("container", {"type": "pkg"}),
                            ("disabled", True), ("tap", "third-party/tap"), ("rename", ["something"])):
             candidate = json.loads(json.dumps(metadata))
             candidate["casks"][0][key] = value
             self.assertEqual(check(candidate), "cask_execution_requirements_unsupported")
-        self.assertEqual(check({"casks": []}), "cask_metadata_unavailable")
+        self.assertEqual(check({"casks": []}), "homebrew_metadata_incompatible")
         Path(self.environment["TEST_CASK_TARGET"]).mkdir()
         self.assertEqual(check(metadata), "cask_target_conflict")
         Path(self.environment["TEST_CASK_TARGET"]).rmdir()
         (self.home / "Applications").rmdir()
-        self.assertEqual(check(metadata), "cask_authorization_required")
+        self.assertEqual(check(metadata), "ready")  # Homebrew can create the absent app directory.
 
     def vscode_fixture(self, bundled=False, mixed=False):
         if mixed:
@@ -1506,6 +1925,8 @@ exit 0
         brew = self.root / "bin/brew"
         brew.write_text('''#!/bin/bash
 case "$*" in
+  --version) echo 'Homebrew 7.0.7' ;;
+  help\ *) echo "$2 --formula --cask --full-name --json --appdir" ;;
   --prefix) echo /opt/homebrew ;;
   "list --formula --full-name")
     [[ ! -f "$TEST_FORMULA_INSTALLED" ]] || echo fixture-formula ;;

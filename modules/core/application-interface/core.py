@@ -177,9 +177,16 @@ def prepared_restore(path, disabled_groups, include_secure, selection=None):
         domains = set(bundle.ITEMS) | set(bundle.CATEGORIES) | {"secure-ssh-identities"}
         for line in plan_file.read_text().splitlines():
             fields = line.split("\t")
-            if len(fields) != 5 or fields[0] not in domains:
+            if len(fields) not in (5, 6) or fields[0] not in domains:
                 raise PreviewFailed()
-            domain, item, action, disposition, reason = fields
+            domain, item, action, disposition, reason = fields[:5]
+            capability = {}
+            if len(fields) == 6:
+                capability = json.loads(fields[5])
+                if (domain != 'homebrew-casks' or set(capability) != {'qualification_id', 'authorization_required'} or
+                        not PREPARED_PLAN_ID.fullmatch(str(capability['qualification_id'])) or
+                        type(capability['authorization_required']) is not bool):
+                    raise PreviewFailed()
             # Production inspection follows config section order, which need not
             # match Blueprint order. Correlate by section identity before exposing
             # the existing private numeric Protocol handle.
@@ -192,7 +199,8 @@ def prepared_restore(path, disabled_groups, include_secure, selection=None):
                               "satisfied", "planned", "blocked", "conflict", "warning"}:
                 raise PreviewFailed()
             records.append({"domain": domain, "item_id": item, "action": action,
-                            "disposition": disposition, "reason": None if reason == "none" else reason})
+                            "disposition": disposition, "reason": None if reason == "none" else reason,
+                            **capability})
         # Selected inventory is read by the existing validated Bundle parser.
         # Fill unobservable items, never invent an Apply decision from missing inspection.
         for domain in bundle.ITEMS:
@@ -256,8 +264,13 @@ def prepared_restore(path, disabled_groups, include_secure, selection=None):
             "error_count": sum(item["status"] == "error" for item in modules),
             "preview_detail_level": "selected_requirements",
         }
+        # Diagnostic tool provenance is not an exact-version plan requirement.
+        # Conditions and normalized planning decisions remain identity-bound.
+        identity_summary = dict(summary)
+        identity_summary['readiness'] = {key: value for key, value in requirements.items()
+                                        if key != 'external_tools'}
         identity = {"bundle": source_identity, "stage": stage_identity,
-                    "disabled_groups": sorted(disabled_groups), "summary": summary}
+                    "disabled_groups": sorted(disabled_groups), "summary": identity_summary}
         if selection is not None:
             summary['selection'] = restore_selection.canonical(stage)
         summary["prepared_plan_id"] = hashlib.sha256(json.dumps(identity, sort_keys=True,
@@ -274,8 +287,12 @@ READINESS_CODES = {
     "ready", "authorization_required", "unsupported_interactive_operation",
     "vscode_cli_required", "vscode_cli_unavailable", "vscode_cli_ambiguous",
     "git_required", "git_unavailable", "repository_target_conflict",
+    "ssh_configuration_not_ready", "ssh_configuration_observation_failed",
     "mas_required", "mas_unavailable", "age_required", "age_unavailable",
     "homebrew_installation_requires_interaction", "homebrew_unavailable",
+    "homebrew_capability_unavailable", "homebrew_metadata_incompatible",
+    "cask_launchctl_observation_failed",
+    "privileged_lifecycle_unknown", "homebrew_platform_incompatible",
     "missing_required_dependency", "secure_bridge_required", "invalid_selected_input",
     "cask_metadata_unavailable", "cask_execution_requirements_unsupported",
     "cask_target_conflict", "cask_authorization_required", "cask_repair_not_supported",
@@ -339,7 +356,30 @@ def prepared_requirements(stage, include_secure):
                            "status": "external_action_required", "scope": "execution_launch"})
     ready = all(row["status"] in ("satisfied", "safely_satisfiable") or
                 row.get("scope") in ("execution_launch", "item") for row in conditions)
+    external_tools = []
+    for domain, kind in (("homebrew-packages", "formula"), ("homebrew-casks", "cask")):
+        if not sections[domain]:
+            continue
+        probe = subprocess.run([sys.executable, '-B', str(ROOT / 'modules/apps/adapters/homebrew.py'),
+                                'probe', kind], cwd=ROOT, env=environment,
+                               stdin=subprocess.DEVNULL, capture_output=True, timeout=120)
+        observed = json.loads(probe.stdout)
+        observed['domain'] = domain
+        external_tools.append(observed)
+    compatibility_codes = {
+        'homebrew_installation_requires_interaction': 'tool_unavailable',
+        'homebrew_capability_unavailable': 'capability_unavailable',
+        'homebrew_metadata_incompatible': 'metadata_incompatible',
+        'homebrew_unavailable': 'observation_failure',
+        'cask_metadata_unavailable': 'observation_failure',
+        'cask_launchctl_observation_failed': 'observation_failure',
+        'cask_execution_requirements_unsupported': 'item_unsupported',
+    }
+    for condition in conditions:
+        if condition['code'] in compatibility_codes:
+            condition['compatibility'] = compatibility_codes[condition['code']]
     return {"ready": ready, "ready_scope": "environment", "conditions": conditions,
+            "external_tools": external_tools,
             "check_policy": "item_local_then_first_operation_blocker_per_domain", "reentry": "restore_prepare"}
 
 
@@ -372,7 +412,8 @@ def readiness(stage, include_secure, secure_ready=False, secure_only=False):
     fields = output.decode("ascii", errors="replace").strip().split("\t")
     status = fields[0]
     cask_conditions = {"cask_metadata_unavailable", "cask_execution_requirements_unsupported",
-                       "cask_target_conflict", "cask_authorization_required", "cask_repair_not_supported"}
+                       "cask_target_conflict", "cask_authorization_required", "cask_repair_not_supported",
+                       "cask_launchctl_observation_failed"}
     item_index = None
     if len(fields) == 2 and status in cask_conditions and fields[1].isascii() and fields[1].isdigit():
         item_index = int(fields[1])
@@ -390,6 +431,7 @@ def readiness(stage, include_secure, secure_ready=False, secure_only=False):
 def restore_execute(operation_id, path, disabled_groups, include_secure, expected_id, channel=None, selection=None):
     sequence = 1  # started has already been emitted by main().
     state = {"prepared_plan_id": None, "execution_status": "not_started",
+             "unknown_consequences": False,
              "publication_started": False, "publication_occurred": False,
              "target_mutation_may_have_started": False, "bootstrap_status": "not_started",
              "secure_restore_status": "selected_pending" if include_secure else "not_selected",
@@ -487,7 +529,9 @@ def restore_execute(operation_id, path, disabled_groups, include_secure, expecte
                                          row["disposition"] == "blocked" and
                                          row["reason"] == "cask_execution_requirements_unsupported"]
                         owned = OwnedBootstrap(ROOT, environment, secure_evidence, record_event,
-                                               identities, skipped_casks=skipped_casks)
+                                               identities, skipped_casks=skipped_casks,
+                                               cask_plans={row['item_id']: row['qualification_id'] for row in plan['plan']
+                                                           if row['domain'] == 'homebrew-casks' and row.get('qualification_id')})
                     finally:
                         signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
                     bootstrap_exit = owned.wait()
@@ -498,6 +542,9 @@ def restore_execute(operation_id, path, disabled_groups, include_secure, expecte
                         state["verification"]["details"] = owned.details
                     raise
                 state["target_mutation_may_have_started"] |= owned.mutation_may_have_started
+                state['unknown_consequences'] = getattr(owned, 'unknown_consequences', False)
+                if getattr(owned, 'external_lifecycle_cause', None):
+                    state['external_lifecycle_cause'] = owned.external_lifecycle_cause
                 state["bootstrap_status"] = ({0: "success", 1: "warning"}.get(bootstrap_exit, "failure"))
                 if owned.verification is not None:
                     state["verification"] = {key: value for key, value in owned.verification.items()
@@ -513,7 +560,7 @@ def restore_execute(operation_id, path, disabled_groups, include_secure, expecte
                     # Preserve typed authoritative outcomes alongside the compatible code.
                     state["operation_failures"] = [row for row in owned.details["operation_records"]
                                                    if row["outcome"] == "failure"]
-                    raise ExecuteFailed("bootstrap_failed")
+                    raise ExecuteFailed('privileged_lifecycle_unknown' if state.get('unknown_consequences') else "bootstrap_failed")
                 event("phase_completed", {"phase": "bootstrap"})
                 state["execution_status"] = "completed"
                 event("result", state)
@@ -548,6 +595,8 @@ def restore_execute(operation_id, path, disabled_groups, include_secure, expecte
         state["secure_restore_status"] = "cancelled" if exc.code == "secure_cancelled" else "failed"
         return failure(exc.code, 130 if exc.code == "secure_cancelled" else 2)
     except ExecuteFailed as exc:
+        if exc.code == 'privileged_lifecycle_unknown':
+            state['unknown_consequences'] = True
         return failure(exc.code, selected_item_index=exc.selected_item_index)
     except RecoveryRequired:
         return failure("recovery_required")
@@ -556,7 +605,8 @@ def restore_execute(operation_id, path, disabled_groups, include_secure, expecte
     except PreviewFailed:
         return failure("preview_failed")
     except Cancelled:
-        return failure("cancelled", 130)
+        state['unknown_consequences'] = bool(owned and getattr(owned, 'unknown_consequences', False))
+        return failure('privileged_lifecycle_unknown' if state['unknown_consequences'] else "cancelled", 130)
     except bundle.Unsupported:
         return failure("unsupported_bundle")
     except (FileNotFoundError, PermissionError):

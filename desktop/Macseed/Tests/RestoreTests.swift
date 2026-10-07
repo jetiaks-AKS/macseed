@@ -2,7 +2,117 @@ import Foundation
 
 @main struct RestoreTests {
     static func write(_ value: String, _ path: URL) throws { try value.write(to: path, atomically: false, encoding: .utf8) }
+    @MainActor static func taskPresentationChecks() throws {
+        let casks = ["firefox", "iina", "keka"] + (4...16).map { "cask-\($0)" }
+        let packages = ["firefox"] + (2...21).map { "formula-\($0)" }
+        let domains = ["homebrew-casks", "homebrew-packages"]
+        let titles = ["Homebrew Applications", "Homebrew Packages"]
+        let names = [casks, packages]
+        let catalog = CoreRestoreInspection.Inventory(
+            groups: [.init(id: "Homebrew", domains: domains)],
+            inventory: domains.enumerated().map { index, domain in
+                .init(domain: domain, label: titles[index], selectionMode: "items", availability: "available", reason: nil,
+                      items: names[index].map { .init(itemID: $0, label: $0) })
+            })
+        var rows: [[String: Any]] = domains.enumerated().flatMap { index, domain in
+            names[index].map { ["domain": domain, "item_id": $0, "display_name": $0,
+                               "action": "install", "disposition": "planned"] }
+        }
+        rows[0]["action"] = "reinstall"
+        rows[1]["authorization_required"] = true
+        let raw: [String: Any] = ["prepared_plan_id": String(repeating: "a", count: 64),
+            "selection": ["categories": [], "items": Dictionary(uniqueKeysWithValues: zip(domains, names))],
+            "selected_groups": ["Homebrew"], "selected_categories": [],
+            "selected_item_counts": [domains[0]: 16, domains[1]: 21],
+            "include_secure": false, "secure_restore_status": "not_selected", "plan": rows,
+            "readiness": ["ready": true, "ready_scope": "environment", "conditions": [], "reentry": "restore_prepare"],
+            "has_planned_changes": true, "warning_count": 0, "error_count": 0]
+        let plan = try JSONDecoder().decode(CoreRestorePreparation.self, from: JSONSerialization.data(withJSONObject: raw))
+        let preview = RestorePreviewPresentation(plan, catalog: catalog)
+        precondition(plan.plan[1].authorizationRequired == true)
+        precondition(preview.categories[0].items[1].action.contains("Administrator authorization required"))
+        func event(_ type: String, _ domain: String, _ item: String, _ key: String, _ value: String, action: String = "install") throws -> CoreEvent {
+            try CoreEvent(line: JSONSerialization.data(withJSONObject: ["protocol_version": 1, "operation_id": "presentation",
+                "sequence": 1, "type": type, "data": ["domain": domain, "item_id": item, "action": action, key: value]]))
+        }
+        var events: [CoreEvent] = []
+        func project() -> RestoreTaskPresentation {
+            RestoreTaskPresentation(preview: preview, plan: plan, events: events, executing: true)
+        }
+        func stable(_ tasks: RestoreTaskPresentation) {
+            precondition(tasks.domains.map(\.id) == domains)
+            precondition(tasks.domains.map(\.title) == titles)
+            precondition(tasks.domains.map { $0.items.count } == [16, 21])
+            precondition(tasks.counters.reduce(0) { $0 + $1.count } == 2)
+        }
+        func state(_ item: String, domain: String = "homebrew-casks") -> TaskRowState {
+            project().domains.first { $0.id == domain }!.items.first { $0.item.title == item }!.state
+        }
+        stable(RestoreTaskPresentation(preview: preview, plan: plan))
+        let repairItem = preview.categories.first { $0.id == domains[0] }!.items[0]
+        precondition(repairItem.action == "Will Repair" && repairItem.restoreReadyText == "Ready to Repair")
+        let repairProgress = RestoreProgressRow.freeze(preview: preview, plan: plan).first { $0.id == domains[0] }!
+        let repairEvent = try event("execution_event", domains[0], "firefox", "state", "applying", action: "reinstall")
+        precondition(repairProgress.project(events: [repairEvent]).restoreActivity == "Repairing firefox…")
+        let sourceRoot = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Sources")
+        let view = try String(contentsOf: sourceRoot.appendingPathComponent("RestoreView.swift"), encoding: .utf8)
+        // These are the actual production Preview, Rebuild and Result consumers.
+        precondition(view.contains("RestoreTaskPresentation(preview: preview, plan: prepared)"))
+        precondition(view.contains("RestoreTaskPresentation(preview: preview, plan: plan, events: runtime.events, executing: true)"))
+        precondition(view.contains("RestoreTaskPresentation(preview: preview, plan: plan, events: runtime.events, result: result)"))
+        for item in casks.prefix(3) {
+            events.append(try event("execution_event", domains[0], item, "state", "applying", action: item == "firefox" ? "reinstall" : "install"))
+            stable(project())
+            precondition(project().domains.flatMap(\.items).filter { $0.state == .working }.map { $0.item.title } == [item])
+            precondition(project().domains[0].summary.contains("1 working"))
+            precondition(project().counters.first { $0.state == .working }?.count == 1)
+            events.append(try event("operation_record", domains[0], item, "outcome", "success"))
+            precondition(state(item) == .unverified, "Operation success is not final conformity")
+            precondition(!project().domains.flatMap(\.items).contains { $0.state == .working })
+            precondition(!project().counters.contains { $0.state == .working })
+        }
+        // Even missing terminal evidence must not retain stale activity or imply success.
+        events.append(try event("execution_event", domains[0], "cask-4", "state", "applying"))
+        events.append(try event("execution_event", domains[1], "firefox", "state", "applying"))
+        precondition(state("cask-4") == .unverified)
+        precondition(state("firefox") == .unverified && state("firefox", domain: domains[1]) == .working)
+        precondition(project().domains[0].state != .working && project().domains[1].state == .working)
+        events.append(try event("operation_record", domains[1], "firefox", "outcome", "failure"))
+        precondition(state("firefox", domain: domains[1]) == .failed)
+        events.append(try event("operation_record", domains[0], "cask-5", "outcome", "skipped"))
+        precondition(state("cask-5") == .skipped)
+        events.append(try event("execution_event", domains[0], "cask-6", "state", "applying"))
+        events.append(try event("execution_event", domains[0], "cask-6", "state", "changed"))
+        precondition(state("cask-6") == .unverified)
+        events.append(try event("execution_event", domains[0], "keka", "state", "verifying"))
+        precondition(state("keka") == .working)
+        events.append(try event("verification_record", domains[0], "keka", "conformity", "verified"))
+        precondition(state("keka") == .completed)
+        precondition(!project().counters.contains { $0.state == .working })
+        events.append(try event("execution_event", "verification", "scope", "state", "started"))
+        stable(project())
+        precondition(!project().domains.flatMap(\.items).contains { $0.state == .working })
+        let verified: [[String: Any]] = rows.map { ["domain": $0["domain"]!, "item_id": $0["item_id"]!, "conformity": "verified"] }
+        // Final evidence overrides any earlier live observation.
+        events.append(try event("verification_record", domains[0], "firefox", "conformity", "mismatch"))
+        let payloadRaw: [String: Any] = ["verification": ["details": ["verification_records": verified, "operation_records": []]]]
+        let payload = try JSONDecoder().decode(CoreJSON.self, from: JSONSerialization.data(withJSONObject: payloadRaw)).object!
+        let result = RestoreExecutionPresentation(runtime: CoreRuntime(), payload: payload, expectedID: plan.preparedPlanID)
+        let final = RestoreTaskPresentation(preview: preview, plan: plan, events: events.filter { $0.type != "operation_record" }, result: result)
+        stable(final)
+        precondition(final.domains.allSatisfy { $0.state == .completed })
+        precondition(final.domains.flatMap(\.items).allSatisfy { $0.state == .completed })
+        let unfinished = RestoreTaskPresentation(preview: preview, plan: plan, events: [],
+            result: RestoreExecutionPresentation(runtime: CoreRuntime(), payload: nil, expectedID: plan.preparedPlanID))
+        stable(unfinished)
+        precondition(unfinished.domains.flatMap(\.items).allSatisfy { $0.state == .unverified })
+        print("PASS: Homebrew Applications (16) and Packages (21) stay separate through Preview/Rebuild/Verification/Result")
+        print("PASS: Sequential items clear Working without inferred success; counters and final Verification stay authoritative")
+        print("PASS: Production Restore projection distinguishes Will Repair / Ready to Repair / Repairing")
+    }
     @MainActor static func main() async throws {
+        try taskPresentationChecks()
+        if CommandLine.arguments.contains("--presentation-only") { return }
         let repo = URL(fileURLWithPath: CommandLine.arguments[1])
         let python = URL(fileURLWithPath: CommandLine.arguments[2])
         let root = URL(fileURLWithPath: "/private/tmp").appendingPathComponent("macseed-desktop-restore-" + UUID().uuidString)
@@ -224,13 +334,15 @@ import Foundation
         let taskPreview = RestoreTaskPresentation(preview: productPreview, plan: model.preparation!)
         let taskIDs = taskPreview.domains.map(\.id)
         precondition(Set(taskIDs).count == taskIDs.count)
-        precondition(!taskIDs.contains("homebrew-casks") && !taskIDs.contains("homebrew-packages"))
-        precondition(taskPreview.domains.first { $0.id == "homebrew" } != nil)
+        // This fixture places packages in an unknown group, outside projected sections.
+        // The dedicated Homebrew presentation fixture above covers both real domains.
+        precondition(taskIDs.contains("homebrew-casks"))
+        precondition(!taskIDs.contains("homebrew"))
         precondition(taskPreview.counters.reduce(0) { $0 + $1.count } == taskPreview.domains.count)
         let taskWorking = RestoreTaskPresentation(preview: productPreview, plan: model.preparation!,
             events: [try event("homebrew-casks", "started")], executing: true)
         precondition(taskWorking.domains.map(\.id) == taskIDs)
-        precondition(taskWorking.domains.first { $0.id == "homebrew" }?.state == .working)
+        precondition(taskWorking.domains.first { $0.id == "homebrew-casks" }?.state == .working)
         precondition(frozen.map(\.id) == productPreview.sections.flatMap(\.rows).map(\.id))
         precondition(frozen.allSatisfy { $0.project(events: []).status == .waiting })
         let casks = frozen.first { $0.id == "homebrew-casks" }!
@@ -412,12 +524,12 @@ import Foundation
             precondition(tasks.counters.reduce(0) { $0 + $1.count } == tasks.domains.count)
             if mode == "execute_clean" { precondition(tasks.domains.allSatisfy { $0.state == .completed }) }
             if mode == "execute_partial" {
-                precondition(tasks.domains.first { $0.id == "homebrew" }?.state == .failed)
-                precondition(tasks.domains.first { $0.id == "homebrew" }?.items.contains { $0.item.reason == "item_stalled_timeout" } == true)
+                precondition(tasks.domains.first { $0.id == "homebrew-casks" }?.state == .failed)
+                precondition(tasks.domains.first { $0.id == "homebrew-casks" }?.items.contains { $0.item.reason == "item_stalled_timeout" } == true)
             }
             if mode == "execute_item_skip" {
-                precondition(tasks.domains.first { $0.id == "homebrew" }?.items.contains { $0.state == .skipped } == true)
-                precondition(tasks.domains.first { $0.id == "homebrew" }?.items.contains { $0.item.reason == "cask_execution_requirements_unsupported" } == true)
+                precondition(tasks.domains.first { $0.id == "homebrew-casks" }?.items.contains { $0.state == .skipped } == true)
+                precondition(tasks.domains.first { $0.id == "homebrew-casks" }?.items.contains { $0.item.reason == "cask_execution_requirements_unsupported" } == true)
                 var payload = model.executionResult!.structuredEvidence!
                 var verification = payload["verification"]!.object!
                 var evidence = verification["details"]!.object!
@@ -435,7 +547,7 @@ import Foundation
                 let mixed = RestoreExecutionPresentation(runtime: runtime, payload: payload, expectedID: id,
                     catalog: model.inspection?.restoreSelection)
                 let mixedTasks = RestoreTaskPresentation(preview: model.executionPreview!, plan: model.executionPlan!, result: mixed)
-                let homebrew = mixedTasks.domains.first { $0.id == "homebrew" }!
+                let homebrew = mixedTasks.domains.first { $0.id == "homebrew-casks" }!
                 precondition(homebrew.state == .partial)
                 precondition(homebrew.items.first { $0.item.reason == "cask_execution_requirements_unsupported" }?.state == .skipped)
                 precondition(homebrew.items.contains { $0.state == .completed })

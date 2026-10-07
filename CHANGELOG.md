@@ -11,6 +11,20 @@ The format is based on the principles of **Keep a Changelog**.
 
 ### Added
 
+* External Tool Compatibility Layer established with Homebrew as the first
+  domain-owned provider; public capabilities drive compatibility and observed
+  versions remain diagnostic provenance.
+* Generic Homebrew Cask capability model with nonempty independent payload
+  verification, package receipt-plus-filesystem evidence, action-specific metadata
+  evolution, captured requirements and final prepared-plan requalification.
+* Qualified Homebrew-generated shell completions participate in Capture, payload
+  verification and native lifecycle repair, with protection for existing edited outputs.
+* Qualified native Cask Install/Repair supports authorized Homebrew lifecycle
+  operations under the managing user, with masked credential handling and durable
+  overlap protection when privileged consequences cannot be established.
+* Restore preserves separate Homebrew Applications and Packages domains, repair
+  actions and authoritative item progress through final Verification.
+
 * Restore keeps unsupported independent Homebrew casks visible and skips them while
   supported work continues, retaining operation-wide safety gates and final Verification.
 
@@ -52,6 +66,9 @@ The format is based on the principles of **Keep a Changelog**.
 
 ### Fixed
 
+* SSH Restore readiness now catches selected configuration conflicts and
+  observation failures before publication, fixing the bug found during the real
+  Homebrew acceptance gate.
 * Desktop Capture honors explicitly confirmed Save Panel replacement, validates
   the new Bundle before atomic publication and preserves the old file on failure.
 
@@ -64,6 +81,14 @@ The format is based on the principles of **Keep a Changelog**.
   Repositories observations remain selectable.
 * Unified application appearance ownership so switching back to System does not
   retain a conflicting Dark override in SwiftUI windows.
+
+### Qualification
+
+* Real Repair → Verify → fresh no-op gates passed for Keka, Termius and VLC;
+  generated completions support was validated through the Codex cask.
+* Homebrew closure remains open: broader representative gates are still required.
+  Tailscale remains a known fail-closed ownership/activation boundary and is not
+  counted as satisfied.
 
 ## [3.4.0] - 2026-10-02
 

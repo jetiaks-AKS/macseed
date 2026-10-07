@@ -200,15 +200,116 @@ or mutate it; the existing CLI Restore owns recovery.
 | Selected work | Current application contract |
 |---|---|
 | Homebrew formulae | Usable Homebrew; an existing installation may be activated in the child PATH. Missing/broken Homebrew needs external action; no automatic installation |
-| Casks | Satisfied items are skipped. New installs require qualified app-only `homebrew/cask` metadata, free accessible direct `/Applications` targets, no hooks, extra dependencies, caveats, container override or rename. `pkg`/installer, `binary`, `command_wrapper` and repair/reinstall are blocked |
+| Casks | The Homebrew provider uses nonempty typed payload predicates, independently of registration. Qualified apps/suites, typed relocated payloads, binary/static ancillary links, declarative wrappers, bounded generic artifacts and observable native packages can install or repair through Homebrew. Requirements, ownership, historical cleanup and privilege are qualified separately. Unknown executable behavior fails closed |
 | VS Code extensions | Usable `code` in PATH or the official stable CLI in `/Applications` or `$HOME/Applications`. Two copies without an explicit choice are ambiguous. CLI is required before publication even if VS Code's cask is selected |
 | Git repositories | Usable Git and safe destinations. Clones use recorded remotes without credential/askpass prompts; SSH uses existing config/agent and strict known-host checking. HTTP(S) credentials and URL query/fragment are prohibited |
 | App Store | Usable `mas` before publication and existing account/entitlement state; missing IDs need non-interactive `sudo -n` authorization. Core does not manage Apple ID or promise account/entitlement validation before install |
 | Secure SSH | Usable `age` and the separate secret bridge; importing user keys does not require administrator authorization |
 
+
+Cask repair is `reinstall` in Protocol V1 and delegates to native
+`brew reinstall --cask TOKEN`; fresh installation uses `brew install --cask TOKEN`.
+Macseed does not implement artifacts or edit Homebrew receipts/Caskroom. Ordinary
+Restore never requests `--zap`, `--force` or `--adopt`.
+
+Registration and a valid nonempty payload requirement must both match before an
+item is satisfied. Apps require an Info.plist identity and executable; suites
+require valid application members. Links must resolve to their declared executable
+or cask-owned staged payload. Wrappers allow executable/arguments and bounded
+locale/terminal environment declarations, not arbitrary content. Relocated artifacts
+use explicitly supported standard destinations. Package evidence combines exact
+macOS receipt IDs with actual required apps/files; receipts alone cannot verify a
+package. Shared/ambiguous package ownership blocks cleanup.
+
+Qualified generated completions use the public
+`generate_completions_from_executable` declaration, an associated declared binary
+or application executable, bounded completion commands/formats and standard shell
+destinations. Observe and Capture read nonempty, user-owned regular output files;
+they never invoke the generator. Native Homebrew owns generation during lifecycle
+execution. Installation requires a checksum and available macOS sandbox support.
+Repair binds historical/current generation semantics and requires Macseed's saved
+output hashes before replacing remaining completion files; foreign or edited output
+fails closed. Missing generated output remains drift even if Homebrew exits zero.
+
+Current installation and historical cleanup are independently qualified. Compatible
+version/checksum changes and newly qualified `quit` directives do not require
+whole-definition equality. Replacement identities, saved destinations and current
+requirements remain bound. Existing relocated replacements, pins, opaque hooks,
+uninspectable history and broad destructive selectors block repair. Macseed prefers
+its own post-Verification contract records; legacy inert JSON receipt/config evidence
+has a structurally checked, fail-closed compatibility reader. No Ruby API, Ruby
+execution, timestamp snapshot selection or private wrapper-directory layout is used.
+Public current JSON is not claimed to be historical lifecycle evidence.
+
+Qualified cleanup includes exact `quit`/service/package identities and bounded
+`delete`, `trash`, `rmdir`, and login items whose application relationship is
+observable. Active services need owned plist/program evidence; unknown jobs and
+foreign login items fail closed. Existing configuration data without independent
+ownership is preserved. Declared absent preference-file cleanup can be authorized;
+absence does not imply native cleanup is unprivileged.
+
+Unprivileged execution retains `HOMEBREW_NO_SUDO=1`. An
+`authorized_native_lifecycle` profile runs Homebrew as its managing user, using
+native sudo suboperations. Execute uses a fixed masked askpass prompt through
+`sudo -A -v`; passwords go directly from the helper to sudo, never through Core,
+Protocol, argv, environment values, files or logs. Preview does not authenticate.
+The contract is requalified after authorization and before native mutation.
+Checksummed HTTPS downloads retain Homebrew's checksum verification. Standard
+`no_check` declarative payloads explicitly use HTTPS/source trust, not a claimed
+checksum or publisher signature; unchecked native packages remain unsupported.
+Free-form activation/license caveats, Rosetta setup, manual/script installers,
+flight blocks, unqualified generated executable behavior and kernel-extension cleanup still
+need external action or additional capability support.
+
+Each privileged lifecycle holds a private lock and durable uncertainty journal.
+A nonzero/aborted privileged operation is conservatively unknown because root
+children or installer services may survive. Further mutation stops; Prepare blocks new Restore execution, including unrelated
+selected domains, with `privileged_lifecycle_unknown`. Payload Verification remains
+independent and cannot clear the journal. Manual process/state inspection is required
+before explicitly reconciling this quarantine; no automatic rollback or safe root
+cancellation is claimed. Completed native lifecycle plus quiescent tracked processes
+allows final independent Verification and repeat-run idempotency.
+
+### External tool adapter results
+
+The concrete Homebrew adapter exposes contract version 1 with `tool`, `state`,
+`compatibility`, `reason`, `operation`, `provenance` and `capabilities`. Normalized
+states are `satisfied`, `installable`, `repairable`, `unsupported`, `incompatible`
+and `observation_error`. Compatibility distinguishes `compatible`,
+`item_unsupported`, `tool_unavailable`, `capability_unavailable`,
+`metadata_incompatible` and `observation_failure`.
+
+Readiness adds `external_tools` capability/provenance records and a `compatibility`
+field on relevant conditions. `homebrew_capability_unavailable` and
+`homebrew_metadata_incompatible` block the operation; unsupported individual
+artifact semantics retain the existing item-scoped reason.
+`cask_launchctl_observation_failed` is an observation failure, never absence.
+Public `brew help` command/option availability and actual inventory/JSON shape are
+checked; observed version alone neither grants nor denies compatibility.
+
+Qualified planned cask rows add `qualification_id` and `authorization_required`;
+these fields participate in prepared-plan identity. Provider results also carry
+typed `evidence` and an action-specific `execution` contract. Credentials are not
+part of either value.
+
+Native command construction, artifact/receipt qualification, observation,
+dependency metadata and post-install observation belong to the Homebrew adapter.
+Domain consumers retain selection, lifecycle hooks and Verification reporting.
+The adapter repeats all repair checks inside the same watchdog after dependency
+resolution and immediately before native execution. The qualification digest and
+authorization requirement are prepared-plan fields; a changed digest skips mutation. Changed preconditions
+emit a structured skipped operation reason, prevent that item's native mutation
+and preserve independent work and final Verification. No preview or precondition
+snapshot provides an atomic filesystem/launchd guarantee.
+
 Internet is required for missing installs/clones, Command Line Tools for missing
 Homebrew formulae/casks, and administrator authorization for missing MAS apps.
 Unrelated prerequisites do not block settings-only or Secure-only plans.
+Selected SSH configuration is an existing operation-wide Restore prerequisite.
+Preparation and Execute reuse its read-only inspector: conflicts or excluded source
+report `ssh_configuration_not_ready`, and observation failures report
+`ssh_configuration_observation_failed`, before configuration publication or Apply.
+Matching partial snapshots and absent source requirements retain their existing behavior.
 Network, Marketplace, account and clone failures can still occur during execution;
 a missing prerequisite is distinct from unsupported execution. Independent macOS
 or vendor dialogs are not suppressed. CLI retains its own preflight policy.
@@ -257,8 +358,9 @@ their identities in private per-operation state; the production consumer records
 installer, even if metadata later becomes eligible. It also repeats the existing
 artifact safety gate for planned casks. Supported independent items and domains
 continue, retaining production ordering, cancellation and watchdog behavior.
-Current safe casks exclude formula/cask dependencies; accepted skips also seed the
-Homebrew dependency gate. Selection and prepared-plan binding remain intact.
+Cask dependencies are recursively qualified before planning native installation;
+accepted skips also seed the Homebrew dependency gate. Broken registered dependencies
+are not silently treated as repairable by a parent install. Selection and prepared-plan binding remain intact.
 
 A stalled item records `failure` / `item_stalled_timeout`. Core terminates its
 owned process tree, including descendants in Homebrew-created process groups,

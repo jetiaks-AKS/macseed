@@ -116,6 +116,7 @@ class CoreInterfaceTests(unittest.TestCase):
                 "selected_item_counts": {name: 1 if name == "homebrew-casks" else 0
                                          for name in bundle.ITEMS},
                 "secure_component": True,
+                "external_tools": {},
             })
             self.assertEqual(events[-1]["type"], "completed")
             self.assertNotIn(str(output).encode(), response.stdout)

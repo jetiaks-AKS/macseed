@@ -81,12 +81,14 @@ class ProcessTree:
         while True:
             rows = self.scan()
             if not rows:
-                return
+                return True
             for pid in sorted(rows, key=lambda pid: pid == self.root):
                 try:
                     os.kill(pid, signal.SIGTERM if time.monotonic() < deadline else signal.SIGKILL)
                 except ProcessLookupError:
                     pass
+                except PermissionError:
+                    pass  # Privileged descendants remain explicitly unquiescent.
             if time.monotonic() >= deadline:
                 break
             time.sleep(.05)
@@ -96,6 +98,9 @@ class ProcessTree:
                 os.kill(pid, signal.SIGKILL)
             except ProcessLookupError:
                 pass
+            except PermissionError:
+                pass
+        return not bool(self.scan())
 
 
 class ProgressProbe:
@@ -167,6 +172,7 @@ class ItemExecutor:
         self.poll = poll
         self.cancelled = False
         self.reason = None
+        self.unquiescent = False
 
     def cancel(self, *_):
         self.cancelled = True
@@ -207,7 +213,7 @@ class ItemExecutor:
                 return OBSERVATION_FAILED, b''
             finally:
                 if tree is not None:
-                    tree.stop()
+                    self.unquiescent |= not tree.stop()
                 else:
                     try:
                         os.killpg(process.pid, signal.SIGKILL)

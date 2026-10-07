@@ -9,6 +9,9 @@ set -u
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TEST_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TEST_ROOT"' EXIT INT TERM
+export HOME="$TEST_ROOT/home"
+mkdir -p "$HOME" "$TEST_ROOT/modules/apps/adapters"
+ln -s "$PROJECT_ROOT/modules/apps/adapters/homebrew_cask.py" "$TEST_ROOT/modules/apps/adapters/homebrew_cask.py"
 
 TEST_FAILURES=0
 FORMULA_MODE=normal
@@ -19,6 +22,7 @@ ERROR_MESSAGES=""
 
 source "$PROJECT_ROOT/modules/core/common/common.sh"
 source "$PROJECT_ROOT/modules/core/homebrew/homebrew.sh"
+source "$PROJECT_ROOT/modules/apps/adapters/homebrew.sh"
 source "$PROJECT_ROOT/modules/discovery/discovery.sh"
 
 log() { :; }
@@ -37,6 +41,15 @@ brew() {
     printf '%s\n' "$*" >> "$BREW_CALLS"
 
     case "$*" in
+        --version) printf '%s\n' 'Homebrew 7.0.7' ;;
+        --prefix) printf '%s\n' /opt/homebrew ;;
+        "info --json=v2 --installed --cask")
+            case "$CASK_MODE" in
+                normal) python3 -B -c 'import json,os; print(json.dumps({"casks":[{"token":token,"installed":"1","artifacts":[{"app":[app],"target":os.environ["HOME"]+"/Applications/"+app}]} for token,app in [("firefox","Firefox.app"),("visual-studio-code","Visual Studio Code.app")]]}))' ;;
+                empty) printf '%s\n' '{"casks":[]}' ;;
+                *) return 2 ;;
+            esac
+            ;;
         "list --formula --installed-on-request")
             case "$FORMULA_MODE" in
                 normal) printf '%s\n' git wget ;;
@@ -117,6 +130,7 @@ if [[ $formula_status -eq 0 ]] &&
    grep -Fxq 'list --formula --installed-on-request' "$BREW_CALLS" &&
    ! grep -Fxq 'list --formula' "$BREW_CALLS" &&
    [[ "$(cat config/generated/brew-packages.conf)" == $'git\nwget' ]] &&
+   [[ "$(cat config/generated/provenance/homebrew.json)" == '{"homebrew": {"version": "7.0.7"}}' ]] &&
    ! grep -q 'dependency-only' config/generated/brew-packages.conf &&
    [[ "$SUCCESS_MESSAGES" == *'2 Formulae exported'* ]]; then
     pass "formula Discovery exports requested formulae in the existing format"

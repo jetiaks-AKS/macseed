@@ -442,6 +442,12 @@ bootstrap_run_startup_validation() {
 # against the same staged Blueprint and generated inputs used by Preview.
 bootstrap_application_readiness() (
     local focus="${1:-all}" needs_network=false needs_clt=false needs_authorization=false
+    python3 -B modules/apps/adapters/homebrew_lifecycle.py --pending
+    local lifecycle_state=$?
+    if [[ "$lifecycle_state" -ne 1 ]]; then
+        echo privileged_lifecycle_unknown
+        return 2
+    fi
     application_scope_selected() {
         [[ "$focus" == all || "$focus" == "$1" ]] && bootstrap_item_scope_selected "$1"
     }
@@ -477,6 +483,22 @@ bootstrap_application_readiness() (
         return 2
     fi
     local result prefix
+    # Restore's selected configuration is an operation-wide prerequisite in
+    # bundle_restore_prerequisites. Use the same read-only inspector before
+    # publication; a warning/conflict cannot be treated as environment readiness.
+    if [[ "$focus" == all || "$focus" == ssh-configuration ]] &&
+       blueprint_category_enabled ssh-configuration && ssh_configuration_scope_selected; then
+        local ssh_payload
+        ssh_payload="$(mktemp)" || { echo ssh_configuration_observation_failed; return 2; }
+        ssh_configuration_inspect "$ssh_payload" >/dev/null 2>&1
+        result=$?
+        rm -f "$ssh_payload"
+        case "$result" in
+            0|3) ;; # Ready, or no source requirement; mirrors the Apply consumer.
+            1) echo ssh_configuration_not_ready; return 2 ;;
+            *) echo ssh_configuration_observation_failed; return 2 ;;
+        esac
+    fi
     if application_scope_selected git-repositories; then
         if ! repository_application_readiness >/dev/null 2>&1; then
             echo "$REPOSITORY_APPLICATION_CONDITION"
@@ -531,11 +553,6 @@ bootstrap_application_readiness() (
                 return 2
             }
         fi
-        if ! brew --prefix >/dev/null 2>&1 ||
-           ! brew list --formula --full-name >/dev/null 2>&1; then
-            echo homebrew_unavailable
-            return 2
-        fi
     fi
     if application_scope_selected homebrew-packages; then
         local package packages
@@ -546,13 +563,13 @@ bootstrap_application_readiness() (
         while IFS= read -r package || [[ -n "$package" ]]; do
             [[ -n "$package" && "$package" != \#* ]] || continue
             blueprint_item_selected homebrew-packages "$package" || continue
-            is_brew_package_installed "$package"
+            homebrew_adapter_classify formula "$package" >/dev/null
             result=$?
-            if [[ $result -eq 1 ]]; then needs_network=true; needs_clt=true; fi
-            if [[ $result -ne 0 && $result -ne 1 ]]; then
-                echo homebrew_unavailable
+            if [[ $result -ne 0 ]]; then
+                echo "$HOMEBREW_ADAPTER_CONDITION"
                 return 2
             fi
+            if [[ "$HOMEBREW_ADAPTER_STATE" == installable ]]; then needs_network=true; needs_clt=true; fi
         done <<< "$packages"
     fi
     if application_scope_selected homebrew-casks; then
@@ -570,18 +587,16 @@ bootstrap_application_readiness() (
                 index="$(blueprint_selected_items homebrew-casks | awk -v item="$cask" '$0 == item { print NR; exit }')"
                 [[ "$index" =~ ^[1-9][0-9]*$ ]] || { echo invalid_selected_input; return 2; }
             fi
-            is_cask_installed "$cask"
+            homebrew_adapter_classify cask "$cask" >/dev/null 2>&1
             result=$?
-            [[ $result -ne 0 ]] || continue
-            if [[ $result -ne 1 ]]; then
-                echo homebrew_unavailable
-                return 2
-            fi
-            if [[ "$CASK_REINSTALL_REQUIRED" == true ]]; then
-                printf 'cask_repair_not_supported\t%s\n' "$index"
-                return 2
-            fi
-            if ! cask_application_readiness "$cask" >/dev/null 2>&1; then
+            [[ "$HOMEBREW_ADAPTER_STATE" != satisfied ]] || continue
+            CASK_APPLICATION_CONDITION="$HOMEBREW_ADAPTER_CONDITION"
+            if [[ $result -ne 0 ]]; then
+                if [[ "$HOMEBREW_ADAPTER_STATE" == incompatible ||
+                      "$CASK_APPLICATION_CONDITION" == homebrew_unavailable ]]; then
+                    echo "$CASK_APPLICATION_CONDITION"
+                    return 2
+                fi
                 if [[ "${MACSEED_APPLICATION_ALLOW_ITEM_SKIPS:-false}" == true &&
                       "$CASK_APPLICATION_CONDITION" == cask_execution_requirements_unsupported ]]; then
                     if [[ "${MACSEED_APPLICATION_READINESS_REPORT:-false}" == true ]]; then
@@ -644,9 +659,14 @@ bootstrap_application_readiness() (
 # dependency stops that domain's dependent checks; subsequent domains continue.
 bootstrap_application_readiness_report() {
     local domain condition line
-    for domain in homebrew-packages homebrew-casks app-store vscode-extensions git-repositories git-configuration; do
-        if [[ "$domain" == git-configuration ]]; then
-            blueprint_category_enabled "$domain" && git_configuration_scope_selected || continue
+    for domain in homebrew-packages homebrew-casks app-store vscode-extensions git-repositories git-configuration ssh-configuration; do
+        if [[ "$domain" == git-configuration || "$domain" == ssh-configuration ]]; then
+            blueprint_category_enabled "$domain" || continue
+            if [[ "$domain" == git-configuration ]]; then
+                git_configuration_scope_selected || continue
+            else
+                ssh_configuration_scope_selected || continue
+            fi
         else
             bootstrap_item_scope_selected "$domain" || continue
         fi
@@ -1066,7 +1086,8 @@ case "$MODE" in
 esac
 
 if [[ "$MODE" == --bootstrap ]]; then
-    if [[ "${MACSEED_APPLICATION_EXECUTION:-false}" == true && -d "${MACSEED_ITEM_STATE_DIR:-}" ]]; then
+    if [[ "${MACSEED_APPLICATION_EXECUTION:-false}" == true && -d "${MACSEED_ITEM_STATE_DIR:-}" &&
+          ! -f "$MACSEED_ITEM_STATE_DIR/external-tool-active.json" ]]; then
         # Traversal completed; individual outcomes and final Verification still own success.
         : > "$MACSEED_ITEM_STATE_DIR/execution-complete"
     fi

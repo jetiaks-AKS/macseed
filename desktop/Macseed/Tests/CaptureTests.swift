@@ -361,6 +361,9 @@ import SwiftUI
           'list --formula'|'list --formula --full-name'|'list --formula --installed-on-request')
             echo one
             if [[ "$(/bin/cat \(quote(mode.path)))" == normal ]]; then echo two; else echo changed; fi;;
+          --version) echo 'Homebrew 7.0.7';;
+          help\\ *) echo "$2 --formula --cask --full-name --json --appdir";;
+          'info --json=v2 --installed --cask') echo '{"casks":[]}';;
           'list --cask') exit 0;;
           --prefix) echo /opt/homebrew;;
           *) echo attempted >> \(quote(marker.path)); exit 99;;

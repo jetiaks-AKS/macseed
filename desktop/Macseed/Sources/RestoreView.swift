@@ -398,6 +398,10 @@ struct RestoreView: View {
             VStack(alignment: .leading, spacing: 16) {
                 Text("Rebuild this Mac?").font(.title2)
                 Text("Macseed will apply the changes shown in this Preview. Existing matching items will be left unchanged.")
+                if model.preparation?.plan.contains(where: { $0.authorizationRequired == true }) == true {
+                    Text("Some Homebrew casks require administrator authorization for their declared installation or cleanup. A separate password prompt will appear. Interrupted privileged work may require manual inspection before another Rebuild.")
+                        .foregroundStyle(.secondary)
+                }
                 if model.preparation?.warningCount ?? 0 > 0 {
                     Text("This Preview includes attention conditions. Review them before continuing.").foregroundStyle(.orange)
                 }

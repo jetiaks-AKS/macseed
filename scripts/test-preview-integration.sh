@@ -68,6 +68,9 @@ brew() {
     case "$*" in
         'list --formula --full-name') [[ "$TEST_CASE" != application-error ]] || return 2; echo present ;;
         'list --cask') return 0 ;;
+        --prefix) echo /opt/homebrew ;;
+        'info --json=v2 --cask example-cask')
+            printf '{"casks":[{"token":"example-cask","installed":null,"artifacts":[{"app":["Example.app"],"target":"%s/Applications/Example.app"}]}]}\n' "$HOME" ;;
         *) mutation "brew $*" ;;
     esac
 }

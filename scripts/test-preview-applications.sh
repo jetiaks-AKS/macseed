@@ -10,6 +10,8 @@ PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TEST_ROOT="$(mktemp -d)"
 COMMAND_LOG="$TEST_ROOT/commands.log"
 OBSERVATION_LOG="$TEST_ROOT/observations.log"
+export HOME="$TEST_ROOT"
+export BLUEPRINT_GENERATED_DIR="$TEST_ROOT/generated"
 TEST_FAILURES=0
 VERBOSE=false
 MODULE_CHANGED=false
@@ -45,7 +47,7 @@ CASK_LIST_STATUS=0
 CASK_INFO_STATUS=0
 MAS_STATUS=0
 CODE_STATUS=0
-CASK_METADATA='{"casks":[{"artifacts":[]}]}'
+CASK_METADATA=default
 
 brew() {
     if [[ "$*" == 'list --formula --full-name' ]]; then
@@ -58,9 +60,18 @@ brew() {
         cat "$TEST_ROOT/cask-installed"
         return "$CASK_LIST_STATUS"
     fi
+    if [[ "$1" == --prefix ]]; then
+        printf '%s\n' "$TEST_ROOT/brew"
+        return 0
+    fi
     if [[ "$1" == info ]]; then
         echo cask-info >> "$OBSERVATION_LOG"
-        printf '%s\n' "$CASK_METADATA"
+        local metadata="$CASK_METADATA" installed=null
+        grep -Fxq "$4" "$TEST_ROOT/cask-installed" && installed='"1.0"'
+        if [[ "$metadata" == default ]]; then
+            metadata="$(jq -n --arg target "$TEST_ROOT/Applications/$4.app" '{casks:[{artifacts:[{app:[($target | split("/") | last)],target:$target}]}]}')"
+        fi
+        jq --arg token "$4" --argjson installed "$installed" '.casks[0] += {token:$token,installed:$installed}' <<< "$metadata"
         return "$CASK_INFO_STATUS"
     fi
     printf 'brew %s\n' "$*" >> "$COMMAND_LOG"
@@ -107,10 +118,14 @@ reset_state() {
     CASK_INFO_STATUS=0
     MAS_STATUS=0
     CODE_STATUS=0
-    CASK_METADATA='{"casks":[{"artifacts":[]}]}'
+    CASK_METADATA=default
     BLUEPRINT_PRESENT=false
     SELECTED_ITEMS=""
     MODULE_CHANGED=false
+    mkdir -p "$TEST_ROOT/Applications/correct-cask.app/Contents/MacOS"
+    printf '%s\n' '<?xml version="1.0"?><plist version="1.0"><dict><key>CFBundleIdentifier</key><string>org.example.correct</string><key>CFBundleExecutable</key><string>correct</string></dict></plist>' > "$TEST_ROOT/Applications/correct-cask.app/Contents/Info.plist"
+    printf '#!/bin/sh\n' > "$TEST_ROOT/Applications/correct-cask.app/Contents/MacOS/correct"
+    chmod 700 "$TEST_ROOT/Applications/correct-cask.app/Contents/MacOS/correct"
 }
 
 run_case() {
@@ -194,10 +209,10 @@ expect_no_mutation "cask Preview performs no mutation"
 reset_state
 printf 'broken-cask\n' > "$TEST_ROOT/brew-casks.conf"
 printf 'broken-cask\n' > "$TEST_ROOT/cask-installed"
-CASK_METADATA="{\"casks\":[{\"artifacts\":[{\"target\":\"$TEST_ROOT/Missing.app\"}]}]}"
+CASK_METADATA="$(jq -n --arg target "$TEST_ROOT/Applications/Missing.app" '{casks:[{artifacts:[{app:["Missing.app"],target:$target}]}]}')"
 run_case preview_brew_casks
 expect_status 0 "cask reinstall Preview succeeds"
-expect_message "Would reinstall Homebrew cask: broken-cask" "cask Preview distinguishes reinstall"
+expect_message "Would repair Homebrew cask: broken-cask" "cask Preview distinguishes reinstall"
 expect_no_mutation "cask reinstall Preview performs no mutation"
 
 reset_state
@@ -213,7 +228,7 @@ BLUEPRINT_PRESENT=true
 SELECTED_ITEMS=second-cask
 run_case preview_brew_casks
 [[ "$OUTPUT" == *'cask: second-cask'* && "$OUTPUT" != *'cask: first-cask'* &&
-   "$(cat "$OBSERVATION_LOG")" == cask-list ]] &&
+   "$(cat "$OBSERVATION_LOG")" == $'cask-info\ncask-list' ]] &&
     pass "cask Preview inspects only the Blueprint subset" ||
     fail "cask Preview selection changed"
 

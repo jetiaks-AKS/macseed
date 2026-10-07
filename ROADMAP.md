@@ -65,9 +65,14 @@ exact preview/export. The next UX outcome is a reusable unified Macseed design
 system, first applied to Restore, then Capture, Environment Status, All Tasks and
 Settings, with Domain → Items shared across Preview/Rebuild/Verification/Result.
 Automatic MAS Restore is mandatory before 1.0; authorization/install qualification
-remains unresolved. Qualify binary/wrapper cask compatibility and review Workspace
-semantics/discovery roots without implying user file-content restoration. The real
-Desktop Zsh Restore gate remains open. Detailed actions belong to [TODO](TODO.md).
+remains unresolved. The External Tool Compatibility Layer is established with
+Homebrew as its first provider, including generic Cask capabilities and authorized
+native lifecycle operations. Real Repair → Verify → fresh no-op gates passed for
+Keka, Termius and VLC; generated completions were validated through Codex. The SSH
+Restore readiness bug found in that gate is fixed. Homebrew closure remains open:
+qualify broader representative cases and retain Tailscale's fail-closed ownership/
+activation boundary. Review Workspace semantics/discovery roots without implying
+user file-content restoration. The real Desktop Zsh Restore gate remains open. Detailed actions belong to [TODO](TODO.md).
 Complete Saved Environment/Bundle-backed Status before 1.0; the current internal
 reference picker is a temporary development bridge (see [Desktop](docs/DESKTOP.md)).
 

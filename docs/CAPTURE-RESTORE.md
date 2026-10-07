@@ -89,3 +89,19 @@ Successful execution does not imply whole-Mac identity or application health.
 Environment Comparison is a separate explicit observation; extras need sufficient
 provenance and never imply removal. Start with the current
 [CLI Quick Start](getting-started/QUICKSTART.md).
+
+## External tool provenance and compatibility
+
+New Capture state records the observed Homebrew version in optional Bundle v1
+manifest metadata: `external_tools.homebrew.version`. It is diagnostic provenance,
+not a Restore requirement. Older Bundles without the field remain valid, and
+capture/target versions may differ when the required capabilities are present.
+Bundle v1 additionally permits optional `generated/homebrew-casks.json` with
+selected typed payload requirements and source observation status. Older Bundles
+remain valid; missing payloads are never captured as verified installation evidence.
+
+Restore uses domain-owned external-tool adapters for capability-based compatibility;
+unknown metadata or lifecycle semantics fail closed. Homebrew owns native install
+and reinstall. Repair checks run again immediately before native execution, with
+the existing item watchdog, Safe Stop and authoritative final Verification.
+See [Core execution policy](core/APPLICATION-INTERFACE.md#external-tool-adapter-results).

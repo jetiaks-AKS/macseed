@@ -507,7 +507,11 @@ preview_record() {
     for field in "$@"; do
         [[ "$field" != *$'\t'* && "$field" != *$'\n'* && "$field" != *$'\r'* ]] || return 2
     done
-    printf '%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "${5:-none}" >> "$PREVIEW_PLAN_FILE"
+    if [[ -n "${6:-}" ]]; then
+        printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "${5:-none}" "$6" >> "$PREVIEW_PLAN_FILE"
+    else
+        printf '%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "${5:-none}" >> "$PREVIEW_PLAN_FILE"
+    fi
 }
 
 # Application-only records; no CLI/log output is interpreted by this channel.
@@ -524,6 +528,11 @@ application_record() {
 }
 
 run_module() {
+    if [[ "${MACSEED_APPLICATION_EXECUTION:-false}" == true &&
+          -f "${MACSEED_ITEM_STATE_DIR:-}/external-tool-active.json" ]]; then
+        error "External lifecycle consequences are unknown; further mutation is blocked"
+        return 2
+    fi
     application_module_record "$2" started '' false
     run_module_body "$@"
     local status=$?
@@ -532,6 +541,10 @@ run_module() {
 }
 
 run_configuration() {
+    if [[ "${MACSEED_APPLICATION_EXECUTION:-false}" == true &&
+          -f "${MACSEED_ITEM_STATE_DIR:-}/external-tool-active.json" ]]; then
+        return 2
+    fi
     application_module_record "$2" started '' false
     run_configuration_body "$@"
     local status=$?

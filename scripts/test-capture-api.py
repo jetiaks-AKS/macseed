@@ -42,6 +42,9 @@ class CaptureTests(unittest.TestCase):
         brew.write_text('''#!/bin/bash
 case "$*" in
  "list --formula"|"list --formula --full-name"|"list --formula --installed-on-request") [[ "${CAPTURE_FAIL:-}" != true ]] || exit 2; printf '%s\\n' "${CAPTURE_ITEM:-fixture-formula}" ;;
+ --version) echo 'Homebrew 7.0.7' ;;
+ help\\ *) echo "$2 --formula --cask --full-name --json --appdir" ;;
+ "info --json=v2 --installed --cask") echo '{"casks":[]}' ;;
  "list --cask") exit 0 ;;
  --prefix) echo /opt/homebrew ;;
  *) exit 2 ;;

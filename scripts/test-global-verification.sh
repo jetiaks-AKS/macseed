@@ -47,6 +47,7 @@ MUTATIONS="$TEST_ROOT/mutations"
 mutate() { printf '%s\n' "$*" >> "$MUTATIONS"; return 99; }
 brew() {
     case "$*" in
+        --prefix) printf '%s\n' "$TEST_ROOT/brew"; return 0 ;;
         'list --cask')
             case "$CASK_STATE" in absent) return 0 ;; error) return 2 ;; esac
             printf 'example\n'
@@ -54,7 +55,9 @@ brew() {
             return 0 ;;
         'info --json=v2 --cask example')
             [[ "$CASK_STATE" != metadata-error ]] || return 2
-            printf '{"casks":[{"artifacts":[{"target":"%s"}]}]}\n' "$HOME/cask-app"
+            local installed='"1.0"'
+            [[ "$CASK_STATE" != absent ]] || installed=null
+            printf '{"casks":[{"token":"example","installed":%s,"artifacts":[{"artifact":["payload",{"target":"%s"}],"target":"%s"}]}]}\n' "$installed" "$HOME/Library/cask-app" "$HOME/Library/cask-app"
             return 0 ;;
     esac
     if [[ "$*" != 'list --formula --full-name' ]]; then mutate "brew $*"; return 99; fi
@@ -359,7 +362,8 @@ find "$HOME" -type f -exec shasum -a 256 {} \; | sort > "$TEST_ROOT/after"
 assert cmp -s "$TEST_ROOT/before" "$TEST_ROOT/after"
 assert test ! -s "$MUTATIONS"
 # Casks now use the existing production installation predicate.
-command mkdir "$HOME/cask-app"
+command mkdir -p "$HOME/Library"
+printf 'fixture payload\n' > "$HOME/Library/cask-app"
 BREW_STATE=present
 printf 'example\n' > "$BLUEPRINT_GENERATED_DIR/brew-casks.conf"
 sed '/^\[homebrew-casks\]/a\
@@ -382,11 +386,12 @@ for state in present absent error metadata-error; do
     assert record_is example installed "$expected"
 done
 CASK_STATE=present
-command rmdir "$HOME/cask-app"
+command rm "$HOME/Library/cask-app"
 verification_reset bootstrap
 verify_brew_casks
 assert record_is example installed mismatch
-command mkdir "$HOME/cask-app"
+command mkdir -p "$HOME/Library"
+printf 'fixture payload\n' > "$HOME/Library/cask-app"
 
 printf '123|Example\n' > "$BLUEPRINT_GENERATED_DIR/appstore.conf"
 printf 'example.extension\n' > "$BLUEPRINT_GENERATED_DIR/vscode-extensions.conf"

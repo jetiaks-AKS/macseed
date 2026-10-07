@@ -13,7 +13,8 @@ struct RestorePreviewPresentation {
     }
     static func readyText(action: String) -> String {
         switch action {
-        case "install", "reinstall": "Ready to Install"
+        case "install": "Ready to Install"
+        case "reinstall": "Ready to Repair"
         case "set_setting", "set_preference", "switch_branch": "Ready to Change"
         case "create_directory", "create": "Ready to Create"
         default: "Ready to Restore"
@@ -45,7 +46,7 @@ struct RestorePreviewPresentation {
                 case "replace_with_backup": message = "Will replace with backup"
                 case "create_directory", "create": message = "Will create"
                 case "set_setting", "set_preference": message = "Will restore setting"
-                case "reinstall": message = "Will reinstall"
+                case "reinstall": message = "Will Repair"
                 default: message = "Will Restore"
                 }
             case "conflict": status = .attention; message = "Conflict: existing state differs from this requirement."
@@ -60,11 +61,13 @@ struct RestorePreviewPresentation {
             case "source_excluded": reasonMessage = "The captured SSH configuration is not eligible for restoration."
             case "observation_failed": reasonMessage = "Current state could not be inspected reliably."
             case "target_conflict": reasonMessage = "Conflict: existing state differs from the saved environment and will be preserved."
+            case "privileged_lifecycle_unknown": reasonMessage = "Privileged Homebrew work may still be running. Inspect it before another Rebuild."
             default: reasonMessage = nil
             }
             let inventoryLabel = row.selectionItemID.flatMap { id in catalog.inventory.first { $0.id == row.domain }?.items.first { $0.id == id }?.label }
             let title = inventoryLabel ?? row.displayName ?? (row.itemID.hasPrefix("opaque:") ? "Private item" : (row.itemID == "scope" ? "Selected area" : row.itemID))
-            rows[row.domain, default: []].append(DisplayItem(id: "restore-\(index)", title: title, status: status, action: reasonMessage ?? message, reason: row.reason, restoreReadyText: status == .ready ? Self.readyText(action: row.action) : nil))
+            let action = reasonMessage ?? (row.authorizationRequired == true ? message + " · Administrator authorization required" : message)
+            rows[row.domain, default: []].append(DisplayItem(id: "restore-\(index)", title: title, status: status, action: action, reason: row.reason, restoreReadyText: status == .ready ? Self.readyText(action: row.action) : nil))
         }
         categories = order.map { domain in
             DisplayCategory(id: domain, title: catalog.inventory.first { $0.id == domain }?.label ?? "Other supported state", symbol: "slider.horizontal.3", items: rows[domain] ?? [])
@@ -143,7 +146,8 @@ struct RestoreProgressRow {
                        let action = event.data?["action"]?.string {
                         let verb: String?
                         switch action {
-                        case "install", "reinstall": verb = "Installing"
+                        case "install": verb = "Installing"
+                        case "reinstall": verb = "Repairing"
                         case "set_setting", "set_preference": verb = "Restoring"
                         case "create", "create_directory": verb = "Creating"
                         case "clone": verb = "Cloning"

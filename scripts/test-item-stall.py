@@ -110,9 +110,18 @@ time.sleep(60)
 
 class RestoreStallTests(unittest.TestCase):
     def test_production_cask_stall_continues_and_verifies(self):
+        self.production_cask_stall()
+
+    def test_production_cask_repair_stall_continues_and_verifies(self):
+        self.production_cask_stall(repair=True)
+
+    def production_cask_stall(self, repair=False):
         f = fixture.RestorePrepareTests()
         f.setUp(); self.addCleanup(f.doCleanups)
-        f.cask_fixture(mixed=True)
+        if repair:
+            _, prefix, _ = f.repair_cask_fixture()
+        else:
+            f.cask_fixture(mixed=True)
         module = f.project / 'modules/core/application-interface/item_execution.py'
         module.write_text(module.read_text().replace('STALL_SECONDS = 180', 'STALL_SECONDS = 1.5'))
         blueprint = f.stage / 'blueprint.conf'
@@ -123,10 +132,12 @@ class RestoreStallTests(unittest.TestCase):
         # Executable mock, never a shell-function replacement of the child command.
         brew = f.root / 'bin/brew'
         brew.write_text('''#!/usr/bin/env python3
-import json,os,subprocess,sys,time
+import json,os,plistlib,subprocess,sys,time
 from pathlib import Path
 a=sys.argv[1:]; state=Path(os.environ['TEST_CASK_STATE']); later=Path(os.environ['LATER_STATE'])
 if a==['--prefix']: print('/opt/homebrew')
+elif a==['--version']: print('Homebrew 7.0.7')
+elif a[:1]==['help']: print(a[1]+' --formula --cask --full-name --json --appdir')
 elif a==['list','--formula','--full-name']:
  if Path(str(state)+'.formula').exists(): print('fixture-formula')
 elif a==['list','--cask']:
@@ -134,6 +145,7 @@ elif a==['list','--cask']:
 elif a[:3]==['info','--json=v2','--formula']: print(json.dumps({'formulae':[{'full_name':a[-1],'dependencies':[],'build_dependencies':[]}]}))
 elif a[:3]==['info','--json=v2','--cask']:
  data=json.loads(Path(os.environ['TEST_CASK_METADATA']).read_text()); data['casks'][0]['token']=a[-1]
+ data['casks'][0]['installed']='1.0' if (later.exists() if a[-1]=='later-cask' else state.exists()) else None
  if a[-1]=='later-cask': data['casks'][0]['artifacts']=[{'app':['Later.app'],'target':str(Path(os.environ['TEST_CASK_TARGET']).parent/'Later.app')}]
  print(json.dumps(data))
 elif a==['install','fixture-formula']: Path(str(state)+'.formula').touch()
@@ -141,9 +153,16 @@ elif a[0]=='install' and a[-1]=='fixture-cask':
  p=subprocess.Popen([sys.executable,'-B','-c','import signal,time; signal.signal(signal.SIGTERM,signal.SIG_IGN); time.sleep(60)'],start_new_session=True)
  Path(os.environ['STALL_PID']).write_text(str(p.pid)); time.sleep(60)
 elif a[0]=='install' and a[-1]=='later-cask':
- later.touch(); (Path(os.environ['TEST_CASK_TARGET']).parent/'Later.app').mkdir()
+ later.touch(); app=Path(os.environ['TEST_CASK_TARGET']).parent/'Later.app'; (app/'Contents/MacOS').mkdir(parents=True)
+ (app/'Contents/Info.plist').write_bytes(plistlib.dumps({'CFBundleIdentifier':'org.example.Later','CFBundleExecutable':'Later'}))
+ binary=app/'Contents/MacOS/Later'; binary.write_text('#!/bin/sh\\n'); binary.chmod(0o700)
 else: sys.exit(2)
 ''')
+        if repair:
+            mock = brew.read_text().replace('/opt/homebrew', str(prefix))
+            mock = mock.replace("elif a==['list','--cask']:\n", "elif a==['list','--cask']:\n if state.exists(): print('fixture-cask')\n")
+            mock = mock.replace("a[0]=='install' and a[-1]=='fixture-cask'", "a[0]=='reinstall' and a[-1]=='fixture-cask'")
+            brew.write_text(mock)
         brew.chmod(0o700)
         f.pack(); prepared = f.invoke()[1][1]['data']['prepared_plan_id']
         result, events = f.execute(prepared)
@@ -154,7 +173,7 @@ else: sys.exit(2)
         self.assertEqual(final['verification']['status'], 'complete')
         self.assertNotEqual(final['verification']['verdict'], 'selected_requirements_verified')
         records = final['verification']['details']
-        self.assertTrue(any(r['item_id']=='fixture-cask' and r['reason']=='item_stalled_timeout' for r in records['operation_records']))
+        self.assertTrue(any(r['item_id']=='fixture-cask' and r['action']==('reinstall' if repair else 'install') and r['reason']=='item_stalled_timeout' for r in records['operation_records']))
         self.assertTrue(any(r['item_id']=='later-cask' and r['conformity']=='verified' for r in records['verification_records']))
         self.assertTrue(any(r['item_id']=='fixture-cask' and r['conformity']!='verified' for r in records['verification_records']))
         self.assertTrue(Path(f.environment['LATER_STATE']).exists())
@@ -178,6 +197,8 @@ import json,os,sys,time
 from pathlib import Path
 a=sys.argv[1:]; state=Path(os.environ['FORMULA_STATE'])
 if a==['--prefix']: print('/opt/homebrew')
+elif a==['--version']: print('Homebrew 7.0.7')
+elif a[:1]==['help']: print(a[1]+' --formula --cask --full-name --json --appdir')
 elif a==['list','--formula','--full-name']:
  if state.exists(): print(state.read_text())
 elif a[:3]==['info','--json=v2','--formula']:

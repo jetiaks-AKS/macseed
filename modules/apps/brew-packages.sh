@@ -33,25 +33,7 @@ read_brew_packages_configuration() {
 # Inspect Formula Presence (0 Present, 1 Absent, 2 Error)
 # ==========================================
 
-is_brew_package_installed() {
-
-    local package="$1"
-    local inventory
-
-    inventory="$(brew list --formula --full-name)" || return 2
-
-    # Discovery emits short names. Qualified inputs must match the tap too;
-    # ambiguous short names are an observation error, not confirmed absence.
-    LC_ALL=C awk -v package="$package" '
-        {
-            count = split($0, parts, "/")
-            if ($0 == package || "homebrew/core/" $0 == package ||
-                (index(package, "/") == 0 && parts[count] == package)) matches++
-        }
-        END { exit(matches > 1 ? 2 : (matches == 1 ? 0 : 1)) }
-    ' <<< "$inventory"
-
-}
+source modules/apps/adapters/homebrew.sh
 
 # ==========================================
 # Preview Homebrew Packages
@@ -100,6 +82,20 @@ preview_brew_packages() {
         [[ "$package" =~ ^# ]] && continue
         blueprint_item_selected homebrew-packages "$package" || continue
 
+        if [[ "${MACSEED_APPLICATION_EXECUTION:-false}" == true ]]; then
+            homebrew_adapter_classify formula "$package" >/dev/null 2>&1
+            case "$HOMEBREW_ADAPTER_STATE" in
+                satisfied) preview_record homebrew-packages "$package" none satisfied ;;
+                installable)
+                    preview_record homebrew-packages "$package" install planned
+                    preview_action "Would install Homebrew formula: $package" ;;
+                *)
+                    preview_record homebrew-packages "$package" install blocked "$HOMEBREW_ADAPTER_CONDITION"
+                    error "Failed to qualify Homebrew formula: $package"
+                    return 2 ;;
+            esac
+            continue
+        fi
         is_brew_package_installed "$package"
         inspection_result=$?
         case $inspection_result in
@@ -125,17 +121,6 @@ preview_brew_packages() {
 # ==========================================
 # Install Homebrew Packages
 # ==========================================
-
-brew_install_formula() {
-    declare -F verification_applying_hook >/dev/null && verification_applying_hook homebrew-packages "$1" install
-    if [[ "${MACSEED_APPLICATION_EXECUTION:-false}" == true ]]; then
-        HOMEBREW_NO_ENV_HINTS=1 HOMEBREW_NO_SUDO=1 \
-            HOMEBREW_NO_INSTALL_CLEANUP=1 HOMEBREW_NO_INSTALL_UPGRADE=1 \
-            python3 -B modules/apps/brew_items.py homebrew-packages "$1" brew install "$1"
-    else
-        HOMEBREW_NO_ENV_HINTS=1 brew install "$1"
-    fi
-}
 
 install_brew_packages() {
 
@@ -219,6 +204,7 @@ install_brew_packages() {
                     125) reason=dependency_failed; outcome=skipped ;;
                     126) reason=dependency_observation_failed ;;
                     127) reason=progress_observation_failed ;;
+                    128) reason="$(jq -er '.reason' "$MACSEED_ITEM_STATE_DIR/homebrew-precondition.json" 2>/dev/null)" || reason=homebrew_precondition_changed; outcome=skipped ;;
                     130) return 130 ;;
                 esac
             fi

@@ -289,11 +289,71 @@ def check_replacement(path, expected):
             raise Invalid("replacement destination changed")
 
 
+def external_tools_provenance(value):
+    if (not isinstance(value, dict) or set(value) - {'homebrew'} or
+            any(not isinstance(row, dict) or set(row) != {'version'} or
+                not isinstance(row['version'], str) or not 0 < len(row['version']) <= 256 or
+                any(ord(c) < 32 or ord(c) == 127 for c in row['version'])
+                for row in value.values())):
+        raise Invalid('invalid external-tool provenance')
+    return value
+
+
+def cask_capabilities(value):
+    if (not isinstance(value, dict) or set(value) != {'contract', 'casks'} or value['contract'] != 1 or
+            not isinstance(value['casks'], dict) or len(value['casks']) > 2048):
+        raise Invalid('invalid cask capability evidence')
+    for token, row in value['casks'].items():
+        if (not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9+_.@-]*', token) or not isinstance(row, dict) or
+                set(row) != {'state', 'reason', 'required'} or row['state'] not in {
+                    'satisfied', 'installable', 'repairable', 'unsupported', 'incompatible', 'observation_error'} or
+                row['reason'] is not None and not re.fullmatch(r'[a-z][a-z0-9_]{0,63}', str(row['reason'])) or
+                not isinstance(row['required'], list) or len(row['required']) > 50000):
+            raise Invalid('invalid cask capability evidence')
+        for predicate in row['required']:
+            if (not isinstance(predicate, dict) or not {'kind', 'identity'} <= set(predicate) or
+                    set(predicate) - {'kind', 'identity', 'target', 'bundle_id', 'members'} or
+                    predicate['kind'] not in {'app', 'suite', 'bundle', 'file', 'link', 'wrapper', 'receipt'} or
+                    not isinstance(predicate['identity'], str) or not 0 < len(predicate['identity']) <= 255 or
+                    any(ord(c) < 32 or ord(c) == 127 or c == '/' for c in predicate['identity'])):
+                raise Invalid('invalid cask payload predicate')
+            if 'bundle_id' in predicate and (predicate['kind'] != 'app' or not isinstance(predicate['bundle_id'], str) or
+                    not re.fullmatch(r'[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)+', predicate['bundle_id'])):
+                raise Invalid('invalid captured application identity')
+            if 'members' in predicate:
+                members = predicate['members']
+                if (predicate['kind'] != 'suite' or not isinstance(members, list) or not 0 < len(members) <= 2048 or
+                        any(not isinstance(member, dict) or set(member) != {'name', 'bundle_id'} or
+                            not isinstance(member['name'], str) or '/' in member['name'] or
+                            not member['name'].endswith('.app') or any(ord(c) < 32 for c in member['name']) or
+                            not isinstance(member['bundle_id'], str) or
+                            not re.fullmatch(r'[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)+', member['bundle_id']) for member in members)):
+                    raise Invalid('invalid captured suite members')
+            if 'target' in predicate:
+                target = predicate['target']
+                if (not isinstance(target, dict) or set(target) != {'root', 'relative'} or
+                        target['root'] not in {'applications', 'home', 'prefix', 'library', 'system'} or
+                        not isinstance(target['relative'], str) or len(target['relative']) > 4096 or
+                        any(part in ('', '.', '..') for part in target['relative'].split('/')) or
+                        any(ord(c) < 32 or ord(c) == 127 for c in target['relative'])):
+                    raise Invalid('invalid portable cask target')
+        if row['state'] in ('satisfied', 'repairable', 'installable') and not row['required']:
+            raise Invalid('empty cask payload predicates')
+    return value
+
+
 def pack(stage, output, home, replacement_sha256=None):
     blueprint = checked_file(stage / "blueprint.conf", 65536)
     paths = required_paths(blueprint)
     files = {path: checked_file(stage / path) for path in paths}
     files.update(completeness_files(stage))
+    capabilities = stage / 'generated/homebrew-casks.json'
+    if capabilities.exists() or capabilities.is_symlink():
+        data = cask_capabilities(json.loads(checked_file(capabilities)))
+        selected, _ = parse_blueprint(blueprint)
+        data['casks'] = {token: row for token, row in data['casks'].items() if token in selected['homebrew-casks']}
+        if data['casks']:
+            files['generated/homebrew-casks.json'] = (json.dumps(data, sort_keys=True) + '\n').encode()
     selected_payload(files, blueprint)
     zsh = files.get("generated/shell/zshrc.snapshot")
     if zsh is not None and not zsh.startswith(b"MBT-ZSHRC-1\nstatus=eligible\n"):
@@ -308,6 +368,12 @@ def pack(stage, output, home, replacement_sha256=None):
         "files": {name: {"size": len(data), "sha256": digest(data)}
                   for name, data in sorted(files.items())},
     }
+    provenance = stage / 'generated/provenance/homebrew.json'
+    if provenance.exists() or provenance.is_symlink():
+        try:
+            manifest['external_tools'] = external_tools_provenance(json.loads(checked_file(provenance, 4096)))
+        except (ValueError, UnicodeError) as exc:
+            raise Invalid('invalid external-tool provenance') from exc
     files["manifest.json"] = (json.dumps(manifest, sort_keys=True) + "\n").encode()
     if replacement_sha256 is None:
         if output.exists() or output.is_symlink():
@@ -347,7 +413,7 @@ def pack(stage, output, home, replacement_sha256=None):
             os.unlink(temporary)
 
 
-def validate_archive(path):
+def validate_archive(path, with_provenance=False):
     if path.is_symlink() or not path.is_file() or path.stat().st_size > MAX_ARCHIVE:
         raise Invalid("unsafe or oversized Bundle")
     raw = path.read_bytes()
@@ -391,7 +457,7 @@ def validate_archive(path):
                 member.pax_headers or member.size > MAX_MEMBER or
                 name in files or name.startswith("/") or
                 any(part in ("", ".", "..") for part in name.split("/")) or
-                name not in {"manifest.json", "blueprint.conf", "secure.age",
+                name not in {"manifest.json", "blueprint.conf", "secure.age", "generated/homebrew-casks.json",
                              *("generated/" + item for item in (*ITEMS.values(), *CATEGORIES.values())),
                              *("generated/provenance/" + item + ".sha256"
                                for item in COMPLETE_INVENTORIES)}):
@@ -405,7 +471,14 @@ def validate_archive(path):
         raise Invalid("invalid Bundle manifest") from exc
     if not isinstance(manifest, dict) or manifest.get("format") != "mac-bootstrap-bundle" or manifest.get("version") != 1:
         raise Unsupported("unsupported Bundle version")
+    provenance = external_tools_provenance(manifest.get('external_tools', {}))
     expected = required_paths(files["blueprint.conf"])
+    if 'generated/homebrew-casks.json' in files:
+        capabilities = cask_capabilities(json.loads(files['generated/homebrew-casks.json']))
+        selected, _ = parse_blueprint(files['blueprint.conf'])
+        if not capabilities['casks'] or set(capabilities['casks']) - set(selected['homebrew-casks']):
+            raise Invalid('cask capability evidence does not match selection')
+        expected.add('generated/homebrew-casks.json')
     for domain, inventory in COMPLETE_INVENTORIES.items():
         marker = "generated/provenance/" + domain + ".sha256"
         if marker in files:
@@ -425,20 +498,23 @@ def validate_archive(path):
         record = manifest["files"][name]
         if record != {"size": len(data), "sha256": digest(data)}:
             raise Invalid("Bundle integrity mismatch")
-    return files
+    return (files, provenance) if with_provenance else files
 
 
 def unpack(bundle, stage, home):
-    files = validate_archive(bundle)
+    files, provenance = validate_archive(bundle, with_provenance=True)
     target_paths(files, home)
     (stage / "generated").mkdir(mode=0o700, exist_ok=True)
     for name, data in files.items():
         write_file(stage / name, data)
+    if provenance:
+        write_file(stage / 'generated/provenance/homebrew.json',
+                   (json.dumps(provenance, sort_keys=True) + '\n').encode())
 
 
 def inspect_bundle(bundle, home):
     """Validate as Restore does, then return only UI-safe selection metadata."""
-    files = validate_archive(bundle)
+    files, provenance = validate_archive(bundle, with_provenance=True)
     target_paths(files, home)
     sections, categories = parse_blueprint(files["blueprint.conf"])
     return {
@@ -446,6 +522,7 @@ def inspect_bundle(bundle, home):
         "selected_categories": sorted(name for name, enabled in categories.items() if enabled),
         "selected_item_counts": {name: len(sections[name]) for name in ITEMS},
         "secure_component": "secure.age" in files,
+        "external_tools": provenance,
     }
 
 
