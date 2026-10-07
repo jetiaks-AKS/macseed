@@ -1,11 +1,19 @@
 # Macseed Vision
 
 Macseed helps people move a supported working environment to a new Mac with
-less manual setup and a result they can inspect: **Capture → Rebuild → Verify**.
+less manual setup and a result they can inspect. The product tagline is
+**Capture. Rebuild. Continue.** The engineering lifecycle is
+**Capture → Rebuild → Verify**.
 Users choose what matters, review the changes, and see which selected
 requirements were verified and which still need attention.
 
 ## Product principles
+
+Macseed is deliberately scoped: breadth is secondary to completeness. Prefer a
+smaller set of valuable capabilities implemented completely and reliably.
+Supported capabilities should provide meaningful end-to-end value through
+**Capture/Observe → Classify/Plan → Rebuild/Transfer → Verify**, as applicable;
+checklist coverage alone does not justify a feature.
 
 - Observe before changing; distinguish absence from an observation failure.
 - Make selection explicit and show a Preview before Apply.
@@ -25,16 +33,32 @@ Macseed reconstructs supported configuration, installs applications, and clones
 repositories. It is not a full Mac clone, backup, Migration Assistant replacement,
 arbitrary file migrator or application-session copier. Documents, libraries,
 databases and runtime state belong to dedicated transfer or backup tools.
-Selected SSH identities are the currently supported secure physical transfer.
+Reconstruct what can be safely reacquired; transfer unique portable state only
+under a bounded safe contract; leave caches, logs, temporary/derived state and
+obsolete artifacts out of migration. This classification is not permission to
+delete existing target state. Selected SSH identities are the currently supported
+secure physical transfer.
+
+Current Workspace Folders restores structure only. Future work may investigate
+bounded transfer of useful unique workspace/local data; that requires an explicit
+product and safety contract, not a general backup or file-migration engine.
 
 New application adapters require a clear portable contract and enough user
 value to justify their security and maintenance cost. Macseed should remain
 focused rather than grow into a universal configuration framework or recipe
-catalog. Existing VS Code support remains part of the product.
+catalog. Existing VS Code support remains part of the product. Complexity,
+security risk and maintenance cost justify narrowing, deferring or rejecting
+capabilities whose user value is insufficient. For high-value capabilities,
+investigate a bounded safe implementation before reducing the intended outcome.
+
+Applications remain important: continue qualifying existing Homebrew coverage,
+and qualify safe automatic MAS Restore before 1.0. Direct/vendor application
+restoration is not current work.
 
 ## Direction
 
-One authoritative Core serves the official CLI and the planned native Desktop.
+One authoritative Core serves the official CLI and the native Desktop under
+development.
 Desktop should make Capture, Restore and Environment Status approachable without
 reimplementing their behavior. Missing prerequisites should lead to clear guidance
 and a fresh check, rather than being mistaken for permanent lack of support.

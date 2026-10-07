@@ -65,14 +65,12 @@ exact preview/export. The next UX outcome is a reusable unified Macseed design
 system, first applied to Restore, then Capture, Environment Status, All Tasks and
 Settings, with Domain → Items shared across Preview/Rebuild/Verification/Result.
 Automatic MAS Restore is mandatory before 1.0; authorization/install qualification
-remains unresolved. The External Tool Compatibility Layer is established with
-Homebrew as its first provider, including generic Cask capabilities and authorized
-native lifecycle operations. Real Repair → Verify → fresh no-op gates passed for
-Keka, Termius and VLC; generated completions were validated through Codex. The SSH
-Restore readiness bug found in that gate is fixed. Homebrew closure remains open:
-qualify broader representative cases and retain Tailscale's fail-closed ownership/
-activation boundary. Review Workspace semantics/discovery roots without implying
-user file-content restoration. The real Desktop Zsh Restore gate remains open. Detailed actions belong to [TODO](TODO.md).
+remains unresolved. Continue representative qualification of existing Homebrew
+coverage over the established capability-based compatibility boundary. Investigate
+useful bounded Workspace/Data semantics while preserving today's structure-only
+Folders behavior. Close the existing SSH/Zsh/Git/VS Code/macOS Settings and
+application-state gaps according to their value and safety contracts. Detailed
+actions and qualification evidence belong to [TODO](TODO.md).
 Complete Saved Environment/Bundle-backed Status before 1.0; the current internal
 reference picker is a temporary development bridge (see [Desktop](docs/DESKTOP.md)).
 
@@ -102,10 +100,15 @@ compatibility and UX problems. This is a product validation milestone.
 
 ## Later directions
 
-Profiles, shared environments, further secure migration, application adapters
-and assistance features require separate value and safety assessment. A plugin
-framework is not currently planned. Arbitrary user-data migration, full cloning
-and automatic removal of extra state remain outside product scope.
+Post-1.0 possibilities include environment snapshots/history, semantic comparison
+and change detection, profiles, selective restore and a broader Environment Manager
+direction. Preserve these as ideas only; no design or schedule is committed.
+Direct/vendor application restoration is a distant possibility requiring separate
+value, provenance, security and maintenance assessment, not a current subsystem or
+task. Further secure migration and application adapters likewise require bounded
+value and safety assessment. A plugin framework is not currently planned.
+Arbitrary user-data migration, full cloning and automatic removal of extra state
+remain outside product scope.
 
 Revalidate version-dependent settings when the actual migration to macOS 27
 occurs; this is a compatibility milestone, not the next product stage.

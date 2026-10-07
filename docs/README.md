@@ -8,7 +8,7 @@ English is authoritative. Read from product purpose toward technical contracts:
 | Document | Owns |
 |---|---|
 | [Product README](../README.md) | Product introduction and current capabilities |
-| [Vision](VISION.md) | Purpose, principles and long-term boundaries |
+| [Vision](VISION.md) | Product tagline, scope, capability value criteria and long-term boundaries |
 | [Architecture](toolkit/ARCHITECTURE.md) | Core, CLI and Desktop responsibilities and invariants |
 | [Capture / Restore](CAPTURE-RESTORE.md) | Bundle workflow, reconstruction and secure transfer |
 | [CLI Quick Start](getting-started/QUICKSTART.md) | Current CLI setup and recommended workflows |
@@ -21,7 +21,7 @@ English is authoritative. Read from product purpose toward technical contracts:
 | [Roadmap](../ROADMAP.md) | Major stages, status and product outcomes |
 | [TODO](../TODO.md) | Concrete unfinished work |
 | [Changelog](../CHANGELOG.md) | Completed release-visible changes and released history |
-| [Contributing](../CONTRIBUTING.md) / [AGENTS](../AGENTS.md) | Contributor and agent workflow |
+| [Contributing](../CONTRIBUTING.md) / [AGENTS](../AGENTS.md) | Contributor/agent workflow and proportional capability qualification |
 | [Release Process](git/RELEASE-PROCESS.md) | Current repository/CLI release procedure |
 
 Module READMEs describe local responsibilities and point to the owning references.

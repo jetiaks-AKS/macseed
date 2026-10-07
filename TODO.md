@@ -8,8 +8,10 @@ Implement the [Desktop contract](docs/DESKTOP.md) in vertical slices:
 
 - [ ] 16H: Secure FD/challenge bridge, SSH opt-in, encryption/unlock/import
   confirmation and application age/OpenSSH PTY qualification.
-- [ ] 16I: Qualify remaining completion UX over implemented mandatory Core
-  Verification, attention/coverage, no-op and incomplete-result states.
+- [ ] 16I: Align and qualify Restore result presentation with the
+  [result contract](docs/DESKTOP.md#restore-result-contract): Complete, Completed
+  with Issues, Failed, Stopped and Interrupted/Unknown, over mandatory Core
+  Verification, attention/coverage, no-op and incomplete-result evidence.
 - [ ] 16J: Persistent private structured operation logs with bounded retention/clear,
   live **View Log**, and a redacted Diagnostic Report with complete preview and
   exact export; current in-memory details are not persistent diagnostics.
@@ -54,7 +56,9 @@ until remaining controlled checks are complete; it is not runtime input.
 - [ ] **Workspace product review.** Workspace Folders restores directory
   structure only, never user file contents. Review user-facing semantics and
   configurable discovery roots; current folder discovery classifies immediate
-  children of HOME. Do not imply document/data migration or silently broaden scope.
+  children of HOME. Investigate bounded transfer of useful unique workspace/local
+  data only after research, a capability matrix and an explicit product/safety
+  contract; do not silently introduce a general backup/file-migration engine.
 - [ ] **Real Desktop Zsh Restore gate.** Run controlled drift → Preview → Rebuild
   → Verification → independent check → idempotent Preview with safe backup.
 - [ ] **Watchdog targeted qualification.** Independently qualify a real
@@ -85,6 +89,13 @@ and verified end-to-end; it is no longer open gate work.
 - [ ] Run real Capture/Restore validation with approximately 10–20 technical
   external users; collect voluntarily shared privacy-safe reports/issues.
 - [ ] Resolve observed compatibility/UX problems before the public 1.0 launch.
+
+## Supported capability gaps
+
+- [ ] Review remaining SSH/Zsh/Git/VS Code/macOS Settings and application-state
+  gaps against meaningful end-to-end value; retain existing contracts and qualify
+  bounded improvements through the [capability process](CONTRIBUTING.md#capability-qualification).
+  Do not introduce Direct/vendor application restoration as current work.
 
 ## Maintenance and compatibility
 

@@ -1,7 +1,8 @@
 # Macseed Architecture
 
 Macseed has one authoritative Core and two client boundaries. The CLI is
-implemented; native Desktop is planned.
+implemented; native Desktop is under development with Stage 16B–16G complete.
+Packaged distribution and clean-Mac qualification remain planned.
 
 ```text
 Macseed
@@ -11,7 +12,7 @@ Macseed
 │   ├── Verification and Comparison
 │   └── Bundle and Secure Migration
 ├── CLI: bs / bootstrap.sh
-└── Desktop: Macseed.app (planned)
+└── Desktop: Macseed.app (under development)
 ```
 
 These are responsibility boundaries, not a proposal to move production files.
@@ -19,7 +20,7 @@ The current Bash/Python implementation stays in the existing repository layout.
 
 ## State and control flow
 
-The product lifecycle is **Capture → Rebuild → Verify**. Internally:
+The engineering lifecycle is **Capture → Rebuild → Verify**. Internally:
 
 ```text
 Discover → Select → Preview → Apply → Verify
@@ -52,7 +53,7 @@ Comparison is an explicit observational projection of those same facts.
 | Secure Migration | `modules/migration/`; separately selected encrypted SSH identity transfer |
 | CLI | `bootstrap.sh` is the production entrypoint; `bin/bs` dispatches to it from the repository root |
 | Application interface | `modules/core/application-interface/`; Protocol V1 adapter over production paths |
-| Desktop | Planned Swift/SwiftUI client consuming structured Core events and results |
+| Desktop | Swift/SwiftUI client under development consuming structured Core events and results |
 
 Shared utilities remain in `modules/core/`; domain behavior stays with its
 existing owner. The application adapter composes authoritative paths rather
@@ -129,9 +130,11 @@ cancellation. Clients provide user confirmation, prerequisite guidance and
 secret input, and display Core's structured progress and results.
 
 Current execution uses the repository layout and external Python 3. Stage 16
-must implement the application runtime, writable state and controlled child
-environment contract. Stage 17 qualifies the packaged application on clean Macs.
-Neither a SwiftUI app nor signed distribution exists yet.
+has implemented the native client/runtime boundary and controlled child environment;
+private writable workflow state and remaining integration still need qualification.
+Stage 17 qualifies the packaged application on clean Macs. A SwiftUI app exists;
+signed/notarized distribution is not yet qualified. See the current
+[Desktop runtime boundary](../DESKTOP.md#implemented-runtime-boundary).
 
 Detailed transport, readiness, mutation and reporting semantics belong to
 [Core Application Interface](../core/APPLICATION-INTERFACE.md). Data formats and

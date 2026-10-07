@@ -323,7 +323,8 @@ See the [execution policy](../core/APPLICATION-INTERFACE.md).
 `workspace.conf` describes observed source HOME; target root remains current HOME.
 Workspace Folders recreates directory structure only, not user file contents.
 Folder Discovery currently classifies immediate children of HOME; configurable
-discovery roots and broader Workspace product semantics remain under review
+discovery roots and bounded useful unique-data transfer remain future investigations,
+requiring explicit product/safety contracts rather than a general backup engine
 ([TODO](../../TODO.md#broad-restore-manual-gate--2026-10-05)).
 
 Validate both required inputs and build a full selected snapshot before any

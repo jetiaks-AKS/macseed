@@ -26,6 +26,12 @@ Restore installs tools/applications, clones repositories from recorded remotes,
 creates folders and restores selected settings. Working trees, `.git`, documents,
 media, databases, caches and sessions are not copied. `.code-workspace` metadata
 is discovered but has no restoration consumer and is excluded from Bundles.
+Current Workspace Folders restores structure only. Future bounded transfer of
+useful unique workspace/local data requires a separate explicit product and safety
+contract; it is not implemented and does not imply general file migration.
+Reconstruct safely reacquirable state, transfer unique portable state only where a
+safe contract exists, and exclude disposable/derived state and obsolete artifacts
+from migration. This does not authorize target cleanup.
 Exact domain limits belong to [Configuration](toolkit/CONFIGURATION.md).
 
 ## Bundle and selection

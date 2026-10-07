@@ -400,19 +400,42 @@ normal fresh confirmation and execution contract; Preview alone is not final Ver
 When execution completes and relevant selected requirements verify with complete
 evidence and no remaining attention, Result says **“Your environment is ready.”**
 A short scope line makes clear this means the selected supported environment.
-No technical Verification page is required. Otherwise say **“Rebuild completed
-with attention needed”** when execution completed, or **“Rebuild Completed with
-Issues”** when Core confirms completed independent work, successful mutations and
-complete final Verification despite item failures. Show verified areas and specific
-unresolved items; a stalled download advises checking the network or VPN before a
-fresh Preview. Keep aggregate/technical reasons in Details. Otherwise use the actual failed/stopped
-outcome, with evidence-backed ready/attention counts and **View Details**. Use Core
-counts without conflating operation records with unique verified items or counting
-unsupported twice. Technical details retain “Selected requirements verified,” gaps
+No technical Verification page is required. Use the Restore result contract below
+for remaining outcomes; show verified areas and specific unresolved items. A stalled
+download advises checking the network or VPN before a fresh Preview. Keep
+aggregate/technical reasons in Details and expose **View Details**.
+Use Core counts without conflating operation records with unique verified items or
+counting unsupported twice. Technical details retain “Selected requirements verified,” gaps
 and per-item evidence. Verification always runs in normal Restore; its UI becomes
 prominent when attention is needed. Capture/Status likewise expose only relevant
 outcomes by default. None of these states proves app runtime health, visual effects,
 remote SSH authentication, agent/Keychain readiness or whole-Mac identity.
+
+### Restore result contract
+
+This is the intended Desktop result contract over current Core evidence; Stage 16I
+still owns alignment and qualification of the final UI. It does not claim that all
+labels or mappings below are implemented.
+
+| Result | Required meaning |
+|---|---|
+| Complete | Executable work completed, with complete terminal/Verification evidence and no remaining issues in selected supported scope |
+| Completed with Issues | Executable work completed, but known unresolved/unsupported outcomes or evidenced item failures remain; disclose them |
+| Failed | Actual prerequisite, execution or runtime failure prevents completed work under the operation contract |
+| Stopped | User cancellation after execution begins, with sufficient evidence of handled termination; completed changes may remain |
+| Interrupted/Unknown | Terminal evidence is missing, invalid or incomplete; completion and effects cannot be established |
+
+Known unsupported remaining state alone must not become a generic execution failure.
+A blocking prerequisite still prevents execution. An item failure may be presented
+as Completed with Issues only when Core proves completed independent work and the
+required complete final evidence; it does not turn Core failure into success.
+Preserve Core terminal codes, exits and Verification verdicts in Details. Current
+Protocol V1 can retain exit `2` / `bootstrap_failed` for item failures with
+`independent_work_completed=true`; the
+[Core evidence contract](core/APPLICATION-INTERFACE.md#independent-homebrew-items)
+remains authoritative. User stop with incomplete termination evidence is
+Interrupted/Unknown, not a confirmed Stopped result. Cancellation before execution
+remains Cancelled. No result promises rollback or whole-Mac identity.
 
 ## Progress, cancellation and re-entry
 

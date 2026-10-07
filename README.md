@@ -1,11 +1,13 @@
 # Macseed
 
-**Capture → Rebuild → Verify**
+**Capture. Rebuild. Continue.**
 
 Macseed captures the supported parts of a working Mac, reconstructs them on
 another Mac, and reports what matches the selected environment. It reduces
 manual setup while preserving existing user state when safe convergence is
-not possible.
+not possible. Its engineering lifecycle is **Capture → Rebuild → Verify**.
+Macseed favors a smaller set of valuable, complete and reliable capabilities
+over broad shallow coverage.
 
 Applications are installed again, repositories are cloned from remotes, and
 supported settings are restored. Macseed does not clone a Mac or transfer

@@ -10,9 +10,9 @@ English `type: short description` with `feat`, `fix`, `refactor`, `docs`, `style
 ## Architecture and change principles
 
 Macseed Core owns Discovery, selection, Preview, Apply, Verification, Comparison,
-Bundle and Secure Migration. The CLI is implemented; Desktop is a planned client
-of the same Core. Global Verification and Protocol V1 are implemented, not future
-features. Read [Architecture](docs/toolkit/ARCHITECTURE.md) before changing boundaries.
+Bundle and Secure Migration. The CLI is implemented; Desktop is a native client
+under development using the same Core. Global Verification and Protocol V1 are
+implemented, not future features. Read [Architecture](docs/toolkit/ARCHITECTURE.md) before changing boundaries.
 
 Discovery observes and validates before safe publication; handled failures preserve
 previous valid state. Bootstrap distinguishes observation errors from differences,
@@ -23,6 +23,23 @@ replacement or user-data deletion. Generated state is data, never executed.
 Application changes reuse production operations and structured records. Keep
 secret input outside JSONL, argv, environment and logs. Operation success and final
 conformity remain separate. Protocol/domain details belong to their references.
+
+## Capability qualification
+
+For substantial external-tool, privileged, migration or user-data capabilities,
+follow **Research/Inspection → capability matrix → product contract → architecture
+→ implementation → representative real gates → independent verification →
+repeat/no-op convergence**, where applicable. The matrix should distinguish
+supported, unsupported and unknown capabilities and the evidence required for
+observation, execution and verification. Agree the bounded user outcome and safety
+contract before implementation; reuse existing architecture and authoritative paths.
+Research depth must match risk and complexity; simple changes do not require this
+full process. Mocks alone do not establish real-tool qualification.
+
+Prefer generic capability-based implementations over application-name/version
+special cases where practical. Fail closed when required evidence is unavailable;
+unknown observation is not absence. See [Vision](docs/VISION.md) for the scope and
+value criteria used to narrow, defer or reject work.
 
 ## Documentation
 

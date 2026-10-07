@@ -15,6 +15,33 @@ changes and existing helpers over replacements or new abstractions. Follow
 **Check → Apply → Verify** and do not expand task scope to adjacent findings.
 Audit/review is read-only unless implementation is explicitly requested.
 
+## Product scope and capability qualification
+
+The product tagline is **Capture. Rebuild. Continue.**; the engineering lifecycle
+remains **Capture → Rebuild → Verify**. Follow [Vision](docs/VISION.md): prefer
+complete, reliable end-to-end value over breadth or checklist coverage. Reconstruct
+safely reacquirable state; transfer unique portable state only under a bounded safe
+contract; exclude caches, logs, temporary/derived state and obsolete artifacts from
+migration. This does not authorize deleting target state. Macseed is not a full
+clone, backup or Migration Assistant replacement.
+
+Complexity, security risk and maintenance cost can justify narrowing, deferring or
+rejecting low-value capabilities. Investigate bounded safe implementations for
+high-value outcomes before reducing them. For substantial external-tool,
+privileged, migration or user-data work, follow **Research/Inspection → capability
+matrix → product contract → architecture → implementation → representative real
+gates → independent verification → repeat/no-op convergence**, where applicable.
+Scale research to risk and complexity; keep simple changes lightweight. Prefer
+generic capability-based behavior over application-name/version special cases
+where practical, and fail closed without required evidence. Contributor guidance
+is in [Contributing](CONTRIBUTING.md#capability-qualification).
+
+Applications remain important: continue Homebrew qualification and deliver safe
+automatic MAS Restore before 1.0. Direct/vendor application restoration is not
+current work. Current Workspace Folders restores structure only; any future bounded
+unique-data transfer requires an explicit contract, never silent expansion into a
+general backup/file-migration engine. Post-1.0 ideas stay compactly in Roadmap.
+
 ## Repository and entry points
 
 Run Macseed commands from the repository root because `bootstrap.sh` sources
