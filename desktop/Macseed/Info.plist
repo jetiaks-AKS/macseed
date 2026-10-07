@@ -12,5 +12,6 @@
 <key>CFBundleVersion</key><string>1</string>
 <key>LSMinimumSystemVersion</key><string>14.0</string>
 <key>NSHighResolutionCapable</key><true/>
+<key>NSAppleEventsUsageDescription</key><string>Macseed reads login items through System Events to verify ownership before Homebrew repairs an application. Access is requested only when you choose Check Again.</string>
 <key>NSPrincipalClass</key><string>NSApplication</string>
 </dict></plist>

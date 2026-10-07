@@ -56,10 +56,102 @@ import Foundation
         precondition(repairProgress.project(events: [repairEvent]).restoreActivity == "Repairing firefox…")
         let sourceRoot = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Sources")
         let view = try String(contentsOf: sourceRoot.appendingPathComponent("RestoreView.swift"), encoding: .utf8)
+        precondition(view.contains("if result.outcome != .clean {\n                DisclosureGroup(\"View Details\")"))
+        precondition(view.contains("Macseed will apply the changes shown in this Preview. Items that already match will not be changed."))
+        precondition(view.contains("Some changes may require administrator authorization."))
+        precondition(!view.contains("Some Homebrew casks require administrator authorization") && !view.contains("A separate password prompt will appear."))
         // These are the actual production Preview, Rebuild and Result consumers.
         precondition(view.contains("RestoreTaskPresentation(preview: preview, plan: prepared)"))
         precondition(view.contains("RestoreTaskPresentation(preview: preview, plan: plan, events: runtime.events, executing: true)"))
-        precondition(view.contains("RestoreTaskPresentation(preview: preview, plan: plan, events: runtime.events, result: result)"))
+        precondition(view.contains("RestoreResultContent(result: result"))
+        precondition(view.contains("RestoreRebuildProgressContent(tasks: tasks"))
+        precondition(TaskDomainPresentation(id: "mixed", title: "Mixed", symbol: "app", items: [
+            .init(id: "1", item: preview.categories[0].items[0], state: .matching),
+            .init(id: "2", item: preview.categories[0].items[1], state: .attention)
+        ], previewOnly: true).state == .attention)
+        for state in [TaskRowState.planned, .matching, .attention, .unverified] {
+            precondition(TaskDomainPresentation(id: "one", title: "One", symbol: "app", items: [
+                .init(id: "1", item: preview.categories[0].items[0], state: state)
+            ], previewOnly: true).state == state)
+        }
+        var scopedRaw = raw
+        var scopedRows = rows
+        scopedRows[2]["disposition"] = "satisfied"
+        scopedRaw["plan"] = scopedRows
+        let scopedPlan = try JSONDecoder().decode(CoreRestorePreparation.self, from: JSONSerialization.data(withJSONObject: scopedRaw))
+        let scopedPreview = RestorePreviewPresentation(scopedPlan, catalog: catalog)
+        let scoped = RestoreTaskPresentation(preview: scopedPreview, plan: scopedPlan, executing: true)
+        precondition(scoped.domains.flatMap(\.items).count == rows.count - 1)
+        precondition(!scoped.domains.flatMap(\.items).contains { $0.id == "restore-2" })
+        let scopedCounts = RestorePreviewMetrics.counts(RestoreTaskPresentation(preview: scopedPreview, plan: scopedPlan).domains)
+        precondition(scopedCounts.changes == rows.count - 1 && scopedCounts.matching == 1)
+        var semanticRaw = scopedRaw
+        var semanticRows = scopedRows
+        semanticRows[3]["disposition"] = "blocked"
+        semanticRows[3]["reason"] = "cask_target_conflict"
+        semanticRows[3]["diagnostic"] = ["primitive": "launchctl", "condition": "foreign_target"]
+        semanticRows[4]["disposition"] = "unknown"
+        semanticRaw["plan"] = semanticRows
+        let semanticPlan = try JSONDecoder().decode(CoreRestorePreparation.self, from: JSONSerialization.data(withJSONObject: semanticRaw))
+        let semanticPreview = RestorePreviewPresentation(semanticPlan, catalog: catalog)
+        let semanticTasks = RestoreTaskPresentation(preview: semanticPreview, plan: semanticPlan)
+        let metrics = RestorePreviewMetrics.counts(semanticTasks.domains)
+        precondition(metrics.changes == rows.count - 3 && metrics.attention == 2 && metrics.matching == 1)
+        precondition(!semanticTasks.domains.contains { $0.state == .partial })
+        let diagnosticItem = semanticTasks.domains.flatMap(\.items).first { $0.id == "restore-3" }!
+        precondition(diagnosticItem.item.reason == "cask_target_conflict")
+        precondition(diagnosticItem.item.action.contains("launch service"))
+        precondition(diagnosticItem.diagnostic?.technicalDescription == "primitive: launchctl\ncondition: foreign_target")
+        let automationRaw: [String: Any] = ["domain": "homebrew-casks", "code": "cask_authorization_required",
+            "status": "external_action_required", "scope": "operation", "selected_item_index": 1,
+            "diagnostic": ["primitive": "login_item", "condition": "authorization_denied"]]
+        let automation = try JSONDecoder().decode(CoreRestorePreparation.Condition.self, from: JSONSerialization.data(withJSONObject: automationRaw))
+        precondition(automation.diagnostic?.automationRequirement == true && !automation.isItemLocal)
+        precondition(RestorePrerequisiteSummaryPresentation.status([automation]) == "Authorization Required")
+        precondition(automation.diagnostic!.explanation.contains("Check Again"))
+        precondition(RestorePrerequisiteSummaryPresentation(conditions: [automation], ready: false).blockers.count == 1)
+        var launchRaw = automationRaw
+        launchRaw["code"] = "cask_launchctl_observation_failed"
+        launchRaw["diagnostic"] = ["primitive": "launchctl", "condition": "observation_failed"]
+        let launch = try JSONDecoder().decode(CoreRestorePreparation.Condition.self, from: JSONSerialization.data(withJSONObject: launchRaw))
+        var unavailableRaw = automationRaw
+        unavailableRaw["code"] = "cask_metadata_unavailable"
+        unavailableRaw["diagnostic"] = ["primitive": "login_item", "condition": "application_unavailable"]
+        let unavailable = try JSONDecoder().decode(CoreRestorePreparation.Condition.self, from: JSONSerialization.data(withJSONObject: unavailableRaw))
+        let scopedPrerequisites = RestorePrerequisiteSummaryPresentation(conditions: [launch, unavailable], ready: false)
+        precondition(scopedPrerequisites.blockers.count == 2)
+        precondition(scopedPrerequisites.blockers.contains { $0.diagnostic?.automationRequirement == true })
+        precondition(launch.diagnostic?.automationRequirement == false)
+        let aggregateRaw: [String: Any] = ["domain": "homebrew-casks", "code": "preview_observation_failed", "status": "external_action_required"]
+        let aggregate = try JSONDecoder().decode(CoreRestorePreparation.Condition.self, from: JSONSerialization.data(withJSONObject: aggregateRaw))
+        let deduplicated = RestorePrerequisiteSummaryPresentation(conditions: [aggregate, unavailable, unavailable], ready: false)
+        precondition(deduplicated.conditions.count == 3 && deduplicated.conditions.first?.code == "preview_observation_failed")
+        precondition(deduplicated.blockers.count == 1 && deduplicated.blockers[0].diagnostic == unavailable.diagnostic)
+        precondition(RestorePrerequisiteSummaryPresentation(conditions: [aggregate], ready: false).blockers.count == 1)
+        var foreignRaw = launchRaw
+        foreignRaw["code"] = "cask_target_conflict"
+        foreignRaw["diagnostic"] = ["primitive": "launchctl", "condition": "foreign_target"]
+        let foreign = try JSONDecoder().decode(CoreRestorePreparation.Condition.self, from: JSONSerialization.data(withJSONObject: foreignRaw))
+        precondition(RestorePrerequisiteSummaryPresentation(conditions: [aggregate, foreign], ready: false).blockers.count == 2)
+        let compact = RestorePrerequisiteSummaryPresentation(conditions: [], ready: true)
+        precondition(compact.title == "Ready" && compact.blockers.isEmpty && !compact.detailsInitiallyExpanded)
+        var successfulRaw = aggregateRaw
+        successfulRaw["code"] = "ready"
+        successfulRaw["status"] = "ready"
+        let successful = try JSONDecoder().decode(CoreRestorePreparation.Condition.self, from: JSONSerialization.data(withJSONObject: successfulRaw))
+        let allReady = RestorePrerequisiteSummaryPresentation(conditions: [successful], ready: true)
+        precondition(allReady.isTerminalReady && allReady.conditions.count == 1 && allReady.blockers.isEmpty)
+        precondition(!scopedPrerequisites.isTerminalReady && !deduplicated.isTerminalReady)
+        precondition(!RestorePrerequisiteSummaryPresentation(conditions: [successful], ready: false).isTerminalReady)
+        let summarySource = try String(contentsOf: sourceRoot.appendingPathComponent("RestoreSummary.swift"), encoding: .utf8)
+        let readyBranch = summarySource.components(separatedBy: "if summary.isTerminalReady {")[1].components(separatedBy: "} else {")[0]
+        precondition(readyBranch.contains("Label(\"Ready\", systemImage: \"checkmark\")"))
+        precondition(!readyBranch.contains("DisclosureGroup") && !readyBranch.contains("ForEach") && !readyBranch.contains("Button"))
+        precondition(summarySource.contains("RestoreBlockingPrerequisiteAreaView(") && summarySource.contains("private var expanded = true"))
+        let forged = CoreRestorePreparation.Diagnostic(primitive: "/private/path", condition: "foreign_target")
+        precondition(!forged.valid)
+        let verificationPhase = try event("execution_event", "verification", "scope", "state", "started")
+        precondition(RestoreProgressRow.phase(events: [verificationPhase], mutationPossible: true) == "Verifying restored environment…")
         for item in casks.prefix(3) {
             events.append(try event("execution_event", domains[0], item, "state", "applying", action: item == "firefox" ? "reinstall" : "install"))
             stable(project())
@@ -67,7 +159,8 @@ import Foundation
             precondition(project().domains[0].summary.contains("1 working"))
             precondition(project().counters.first { $0.state == .working }?.count == 1)
             events.append(try event("operation_record", domains[0], item, "outcome", "success"))
-            precondition(state(item) == .unverified, "Operation success is not final conformity")
+            precondition(state(item) == .awaitingVerification, "Operation success awaits authoritative conformity")
+            precondition(state(item).tone == .neutral && state(item).symbol == "clock")
             precondition(!project().domains.flatMap(\.items).contains { $0.state == .working })
             precondition(!project().counters.contains { $0.state == .working })
         }
@@ -75,7 +168,7 @@ import Foundation
         events.append(try event("execution_event", domains[0], "cask-4", "state", "applying"))
         events.append(try event("execution_event", domains[1], "firefox", "state", "applying"))
         precondition(state("cask-4") == .unverified)
-        precondition(state("firefox") == .unverified && state("firefox", domain: domains[1]) == .working)
+        precondition(state("firefox") == .awaitingVerification && state("firefox", domain: domains[1]) == .working)
         precondition(project().domains[0].state != .working && project().domains[1].state == .working)
         events.append(try event("operation_record", domains[1], "firefox", "outcome", "failure"))
         precondition(state("firefox", domain: domains[1]) == .failed)
@@ -95,6 +188,7 @@ import Foundation
         let verified: [[String: Any]] = rows.map { ["domain": $0["domain"]!, "item_id": $0["item_id"]!, "conformity": "verified"] }
         // Final evidence overrides any earlier live observation.
         events.append(try event("verification_record", domains[0], "firefox", "conformity", "mismatch"))
+        precondition(state("firefox") == .unverified && state("firefox").tone == .warning)
         let payloadRaw: [String: Any] = ["verification": ["details": ["verification_records": verified, "operation_records": []]]]
         let payload = try JSONDecoder().decode(CoreJSON.self, from: JSONSerialization.data(withJSONObject: payloadRaw)).object!
         let result = RestoreExecutionPresentation(runtime: CoreRuntime(), payload: payload, expectedID: plan.preparedPlanID)
@@ -113,6 +207,18 @@ import Foundation
     @MainActor static func main() async throws {
         try taskPresentationChecks()
         if CommandLine.arguments.contains("--presentation-only") { return }
+        for (status, expected, prompts) in [(Int32(0), RestoreAutomationPermission.Outcome.available, 0),
+                                            (-1744, .available, 1), (-1743, .denied, 0), (-10004, .unavailable, 0)] {
+            var promptCount = 0
+            var starts = 0
+            let outcome = await RestoreAutomationPermission.resolve(check: { status }, prompt: { promptCount += 1; return 0 }, start: { starts += 1 })
+            precondition(outcome == expected && promptCount == prompts && starts == 0)
+        }
+        var checks = 0
+        let unavailableThenUndetermined = await RestoreAutomationPermission.resolve(check: { checks += 1; return checks == 1 ? -600 : -1744 }, prompt: { 0 }, start: {})
+        precondition(unavailableThenUndetermined == .available && checks == 2)
+        let deniedPrompt = await RestoreAutomationPermission.resolve(check: { -1744 }, prompt: { -1743 }, start: {})
+        precondition(deniedPrompt == .denied && deniedPrompt.message != nil)
         let repo = URL(fileURLWithPath: CommandLine.arguments[1])
         let python = URL(fileURLWithPath: CommandLine.arguments[2])
         let root = URL(fileURLWithPath: "/private/tmp").appendingPathComponent("macseed-desktop-restore-" + UUID().uuidString)
@@ -173,6 +279,7 @@ import Foundation
             selected=set(selected_categories)|set(selected_items)
             groups=[group['id'] for group in catalog['groups'] if selected.intersection(group['domains'])]
             conditions=[] if mode!='attention' else [dict(domain='homebrew-packages',code='homebrew_installation_requires_interaction',status='external_action_required')]
+            if mode=='automation': conditions=[dict(domain='homebrew-casks',code='cask_metadata_unavailable',status='external_action_required',scope='operation',selected_item_index=1,diagnostic=dict(primitive='login_item',condition='application_unavailable'))]
             if mode=='safe': conditions=[dict(domain='homebrew-packages',code='homebrew_path_activation',status='safely_satisfiable')]
             if mode=='satisfied': conditions=[dict(domain='homebrew-packages',code='ready',status='satisfied')]
             if mode=='unsupported_condition': conditions=[dict(domain='homebrew-packages',code='unsupported_interactive_operation',status='unsupported')]
@@ -187,7 +294,7 @@ import Foundation
             if mode in ('no_changes','no_changes_attention'):
                 for row in result['plan']: row['disposition']='satisfied'
                 if mode=='no_changes_attention': result['plan'][0]['disposition']='warning'
-            if mode in ('item_local','only_item_local','forged_item_local'):
+            if mode in ('item_local','only_item_local','forged_item_local','scoped_ssh') and (mode!='scoped_ssh' or 'homebrew-casks' in selected_items):
                 casks=[row for row in result['plan'] if row['domain']=='homebrew-casks']
                 casks[1]['disposition']='blocked'
                 casks[1]['reason']='cask_execution_requirements_unsupported'
@@ -202,6 +309,11 @@ import Foundation
                     preserved.update(action='none',disposition='conflict',reason='target_conflict')
                 result['readiness']['ready']=True
                 result['has_executable_changes']=any(row['disposition']=='planned' for row in result['plan'])
+            if mode=='scoped_ssh':
+                if 'ssh-configuration' in selected_categories:
+                    result['readiness']['conditions'].append(dict(domain='ssh-configuration',code='ssh_configuration_not_ready',status='external_action_required',scope='operation'))
+                    result['readiness']['ready']=False
+                result['prepared_plan_id']=__import__('hashlib').sha256(json.dumps(result['selection'],sort_keys=True).encode()).hexdigest()
             if mode=='wrong_selection': result['selection']['categories']=['not-chosen']
         elif operation=='restore_execute':
             assert request['parameters']['include_secure'] is False
@@ -252,7 +364,7 @@ import Foundation
         inventory += [["domain": "ssh-configuration", "label": "SSH Configuration", "selection_mode": "category", "availability": "available", "reason": NSNull(), "items": []],
                       ["domain": "unavailable-area", "label": "Unavailable area", "selection_mode": "category", "availability": "unavailable", "reason": "no_selectable_content", "items": []]]
         let groups: [[String: Any]] = [["id": "Applications", "domains": applications], ["id": "Workspace", "domains": workspace],
-                                      ["id": "macOS Settings", "domains": macOS], ["id": "Other Core group", "domains": ["homebrew-packages", "ssh-configuration", "unavailable-area"]]]
+                                      ["id": "macOS Settings", "domains": macOS], ["id": "SSH Configuration", "domains": ["ssh-configuration"]], ["id": "Other Core group", "domains": ["homebrew-packages", "unavailable-area"]]]
         let inspection: [String: Any] = ["format_version": 1, "selected_categories": macOS + ["ssh-configuration"], "selected_item_counts": [:], "secure_component": true,
                                         "restore_selection": ["groups": groups, "inventory": inventory]]
         try JSONSerialization.data(withJSONObject: inspection).write(to: core.appendingPathComponent("inspection.json"))
@@ -260,7 +372,7 @@ import Foundation
         let model = RestoreModel(runtime: runtime, location: CoreLocation(root: core, python: python, home: root, temporaryBase: root, toolDirectories: []))
         let source = root.appendingPathComponent("sample.mbt")
         model.choose(source); await model.waitForCompletion()
-        precondition(model.state == .review && model.areas.count == inventory.count && model.groups.count == 4 && model.bulkState == .all)
+        precondition(model.state == .review && model.areas.count == inventory.count && model.groups.count == 5 && model.bulkState == .all)
         precondition(model.selectionSummary == "Everything selected" && model.canPreview)
         precondition(model.inspection?.secureComponent == true && model.selectedAreaCount == 13)
         for id in applications + workspace {
@@ -308,7 +420,7 @@ import Foundation
         precondition(model.state == .preview && model.ready && model.preparation?.preparedPlanID == String(repeating: "a", count: 64))
         precondition(model.preview?.categories.first { $0.id == packages.id }?.items.first?.title == "Core item 2")
         let productPreview = model.preview!
-        precondition(productPreview.sections.map(\.id) == ["Applications & Tools", "Settings", "Workspace"])
+        precondition(productPreview.sections.map(\.id) == ["Applications & Tools", "Settings", "SSH Configuration", "Workspace"])
         let settingsRows = productPreview.sections.first { $0.id == "Settings" }!.rows
         precondition(settingsRows.count == 1 && settingsRows[0].id == "macOS Settings")
         precondition(settingsRows[0].items.count == macOS.count)
@@ -462,6 +574,78 @@ import Foundation
         precondition(requests.allSatisfy { ["capabilities", "bundle_inspect", "restore_prepare"].contains($0["operation"] as! String) })
         precondition(!FileManager.default.fileExists(atPath: core.appendingPathComponent("MUTATION_ATTEMPT").path))
         print("PASS: Capability/inventory, independent areas/groups/items, stable selection IDs, whole/subset requests, Preview correlation/readiness, invalidation, cancellation/interruption and no Execute")
+        try write("automation", core.appendingPathComponent("mode"))
+        model.refreshPreview(); await model.waitForCompletion()
+        precondition(!model.canRebuild && model.prerequisiteRetryMessage == nil)
+        let blockedAutomationID = model.preparation!.preparedPlanID
+        let retryRequestsBefore = try String(contentsOf: core.appendingPathComponent("requests.jsonl"), encoding: .utf8)
+        await model.checkPrerequisites(permission: { .denied })
+        precondition(model.prerequisiteRetryMessage != nil && !model.canRebuild && model.preparation!.preparedPlanID == blockedAutomationID)
+        let deniedRequests = try String(contentsOf: core.appendingPathComponent("requests.jsonl"), encoding: .utf8)
+        precondition(deniedRequests == retryRequestsBefore)
+        var permissionCalls = 0
+        await model.checkPrerequisites(permission: {
+            permissionCalls += 1
+            try! write("clean", core.appendingPathComponent("mode"))
+            return .available
+        })
+        await model.waitForCompletion()
+        precondition(permissionCalls == 1 && model.canRebuild && model.prerequisiteRetryMessage == nil)
+        let retryRequestsAfter = try String(contentsOf: core.appendingPathComponent("requests.jsonl"), encoding: .utf8)
+        precondition(retryRequestsAfter.split(separator: "\n").count == retryRequestsBefore.split(separator: "\n").count + 1)
+        print("PASS: Actionable Automation denial preserves fail-closed Preview; user retry performs one Prepare after access")
+        try write("scoped_ssh", core.appendingPathComponent("mode"))
+        model.refreshPreview(); await model.waitForCompletion()
+        precondition(!model.canRebuild && model.preparation!.readiness.conditions.contains { $0.code == "ssh_configuration_not_ready" })
+        func prepareRequests() throws -> [[String: Any]] {
+            try String(contentsOf: core.appendingPathComponent("requests.jsonl"), encoding: .utf8)
+                .split(separator: "\n").map { try JSONSerialization.jsonObject(with: Data($0.utf8)) as! [String: Any] }
+                .filter { $0["operation"] as? String == "restore_prepare" }
+        }
+        let prepareCount = try prepareRequests().count
+        let sshPlanID = model.preparation!.preparedPlanID
+        let selectedMetrics = RestorePreviewMetrics.counts(RestoreTaskPresentation(preview: model.preview!, plan: model.preparation!).domains)
+        model.selectPreviewDomain("ssh-configuration", included: false)
+        precondition(model.previewNeedsRefresh && !model.canRebuild && model.state == .preview)
+        precondition(model.preparation!.preparedPlanID == sshPlanID && model.preview != nil)
+        model.selectPreviewDomain("homebrew-casks", included: false)
+        model.selectPreviewDomain("homebrew-casks", included: true)
+        await Task.yield()
+        let countAfterEdits = try prepareRequests().count
+        precondition(countAfterEdits == prepareCount)
+        model.requestRebuild(); precondition(model.state == .preview)
+        let finalDraft = model.canonicalSelection
+        model.refreshPreview(); await model.waitForCompletion()
+        precondition((try? prepareRequests().count) == prepareCount + 1)
+        precondition(model.preparation!.selection == finalDraft && !model.previewNeedsRefresh)
+        precondition(model.canRebuild && !model.preparation!.selection.categories.contains("ssh-configuration"))
+        precondition(model.preparation!.preparedPlanID != sshPlanID)
+        precondition(!model.preparation!.readiness.conditions.contains { $0.domain == "ssh-configuration" })
+        let unselectedMetrics = RestorePreviewMetrics.counts(RestoreTaskPresentation(preview: model.preview!, plan: model.preparation!).domains)
+        precondition(unselectedMetrics.changes + unselectedMetrics.attention + unselectedMetrics.matching == selectedMetrics.changes + selectedMetrics.attention + selectedMetrics.matching - 1)
+        precondition(model.preparation!.plan.filter { $0.domain == "homebrew-casks" && $0.disposition == "planned" }.count == 3)
+        precondition(model.preparation!.readiness.conditions.contains { $0.isItemLocal })
+        model.selectPreviewDomain("ssh-configuration", included: true)
+        precondition(model.previewNeedsRefresh && !model.canRebuild)
+        model.selectPreviewDomain("ssh-configuration", included: false)
+        precondition(!model.previewNeedsRefresh && model.canRebuild)
+        precondition((try? prepareRequests().count) == prepareCount + 1)
+        model.selectPreviewDomain("ssh-configuration", included: true)
+        model.refreshPreview(); await model.waitForCompletion()
+        precondition(!model.canRebuild && model.preparation!.readiness.conditions.contains { $0.code == "ssh_configuration_not_ready" })
+        model.selectPreviewDomain("ssh-configuration", included: false)
+        try write("no_changes", core.appendingPathComponent("mode")); model.refreshPreview(); await model.waitForCompletion()
+        precondition(!model.canRebuild && !model.preparation!.hasExecutableChanges)
+        precondition(model.preparation!.plan.allSatisfy { $0.disposition == "satisfied" })
+        model.back()
+        if model.bulkState != .all { model.toggleAll() }
+        model.toggleAll(); model.selectArea("ssh-configuration", included: true)
+        try write("scoped_ssh", core.appendingPathComponent("mode")); model.refreshPreview(); await model.waitForCompletion()
+        model.selectPreviewDomain("ssh-configuration", included: false)
+        precondition(model.state == .preview && model.selectedAreaCount == 0 && !model.canRebuild)
+        precondition(model.previewNeedsRefresh && model.preparation != nil && model.preview != nil && !model.canPreview)
+        model.back(); model.toggleAll(); try write("clean", core.appendingPathComponent("mode")); model.refreshPreview(); await model.waitForCompletion()
+        print("PASS: Draft checkbox edits make zero Prepare calls; one explicit refresh binds final selection; SSH re-entry, item skips, selected metrics and no-op eligibility")
         for mode in ["item_local", "only_item_local"] {
             try write(mode, core.appendingPathComponent("mode")); model.refreshPreview(); await model.waitForCompletion()
             precondition(model.state == .preview && model.ready)
@@ -488,7 +672,7 @@ import Foundation
         precondition(mixedScope.map { $0.project(events: matchingEvents).id } == mixedScope.map(\.id))
         precondition(mixedScope.allSatisfy { $0.project(events: matchingEvents).status == .waiting })
         let outcomes: [(String, RestoreExecutionPresentation.Outcome)] = [
-            ("execute_clean", .clean), ("execute_partial", .partial), ("execute_item_skip", .partial), ("execute_attention", .attention),
+            ("execute_clean", .clean), ("execute_partial", .failedAfterMutation), ("execute_item_skip", .partial), ("execute_attention", .attention),
             ("execute_fail_before", .failedBeforeMutation), ("execute_fail_after", .failedAfterMutation),
             ("execute_stale", .failedBeforeMutation), ("execute_interrupted", .interrupted), ("execute_missing_result", .interrupted),
             ("execute_stop_before", .stoppedBeforeMutation), ("execute_stop_after", .stoppedAfterMutation)]
@@ -522,7 +706,12 @@ import Foundation
                 events: runtime.events, result: model.executionResult!)
             precondition(tasks.domains.map(\.id) == taskIDs)
             precondition(tasks.counters.reduce(0) { $0 + $1.count } == tasks.domains.count)
-            if mode == "execute_clean" { precondition(tasks.domains.allSatisfy { $0.state == .completed }) }
+            if mode == "execute_clean" {
+                precondition(tasks.domains.allSatisfy { $0.state == .completed })
+                precondition(model.executionResult!.title == "All Done")
+                precondition(model.executionResult!.message.hasPrefix("Your environment is ready."))
+                precondition(model.executionResult!.findings.isEmpty)
+            }
             if mode == "execute_partial" {
                 precondition(tasks.domains.first { $0.id == "homebrew-casks" }?.state == .failed)
                 precondition(tasks.domains.first { $0.id == "homebrew-casks" }?.items.contains { $0.item.reason == "item_stalled_timeout" } == true)
@@ -560,14 +749,16 @@ import Foundation
             precondition(!model.executionActivities.contains { $0.status == .complete })
             if mode == "execute_partial" {
                 let result = model.executionResult!
-                precondition(result.title == "Rebuild Completed with Issues")
+                precondition(result.title == "Rebuild Failed")
                 precondition(result.findings.count == 1 && result.findings[0].title == "Core item 1")
                 precondition(result.findings[0].action == "Download stalled. Check your network or VPN and try again.")
-                precondition(result.successfulAreas == ["Core label vscode-extensions"])
+                precondition(result.details.contains { $0.action == "Rebuild could not complete." })
                 precondition(result.details.contains { $0.reason == "item_stalled_timeout" })
             }
             if mode == "execute_item_skip" {
                 precondition(model.executionResult!.title == "Rebuild Completed with Issues")
+                precondition(!model.executionResult!.details.contains { $0.action == "Rebuild could not complete." })
+                precondition(model.executionResult!.details.contains { $0.reason == "differences_detected" })
                 precondition(model.executionResult!.details.contains { $0.reason == "cask_execution_requirements_unsupported" })
                 precondition(model.executionResult!.findings.contains {
                     $0.title == "Core item 1" && $0.status == .attention && $0.reason == "cask_execution_requirements_unsupported"

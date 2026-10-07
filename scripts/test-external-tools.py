@@ -58,13 +58,19 @@ class ExternalToolTests(unittest.TestCase):
         launchctl = fixture.root / 'bin/launchctl'
         launchctl.write_text('''#!/bin/bash
 [[ "${TEST_LAUNCH_ERROR:-false}" != true ]] || exit 1
-printf 'services = {}\\nPID Status Label\\n'
-[[ ! -e "$TEST_LAUNCH_JOB" ]] || printf '%s\\n' org.example.Fixture-SmartDelete
+if [[ "$1" == list ]]; then
+    printf 'PID Status Label\\n'
+    [[ ! -e "$TEST_LAUNCH_JOB" ]] || printf -- '- 0 %s\\n' org.example.Fixture-SmartDelete
+else
+    printf 'services = {\\n'
+    [[ ! -e "$TEST_LAUNCH_JOB" ]] || printf '0 - %s\\n' org.example.Fixture-SmartDelete
+    printf '}\\n'
+fi
 exit 0
 ''')
         launchctl.chmod(0o700)
         helper = fixture.project / 'modules/apps/adapters/homebrew_cask.py'
-        helper.write_text(helper.read_text().replace('/bin/launchctl', str(launchctl)))
+        helper.write_text(helper.read_text().replace('/bin/launchctl', str(launchctl)).replace("Path('/Library/LaunchAgents'), Path('/Library/LaunchDaemons')", "Path.home() / 'Library/LaunchAgents', Path.home() / 'Library/LaunchDaemons'"))
         return fixture, metadata, receipt, marker, label
 
     def test_supported_capabilities_formula_and_cask_states(self):

@@ -20,6 +20,8 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "bundle"))
 import bundle
 from execution import OwnedBootstrap
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from external_tool import diagnostic_valid
 from reporting import opaque
 import restore_selection
 from secure import launch_channel, import_secure, SecureError
@@ -183,9 +185,19 @@ def prepared_restore(path, disabled_groups, include_secure, selection=None):
             capability = {}
             if len(fields) == 6:
                 capability = json.loads(fields[5])
-                if (domain != 'homebrew-casks' or set(capability) != {'qualification_id', 'authorization_required'} or
-                        not PREPARED_PLAN_ID.fullmatch(str(capability['qualification_id'])) or
-                        type(capability['authorization_required']) is not bool):
+                if domain != 'homebrew-casks' or not isinstance(capability, dict):
+                    raise PreviewFailed()
+                keys = set(capability)
+                if keys - {'qualification_id', 'authorization_required', 'diagnostic'}:
+                    raise PreviewFailed()
+                if disposition == 'planned' and not {'qualification_id', 'authorization_required'} <= keys:
+                    raise PreviewFailed()
+                if keys & {'qualification_id', 'authorization_required'}:
+                    if (not {'qualification_id', 'authorization_required'} <= keys or
+                            not PREPARED_PLAN_ID.fullmatch(str(capability['qualification_id'])) or
+                            type(capability['authorization_required']) is not bool):
+                        raise PreviewFailed()
+                if 'diagnostic' in keys and not diagnostic_valid(capability['diagnostic']):
                     raise PreviewFailed()
             # Production inspection follows config section order, which need not
             # match Blueprint order. Correlate by section identity before exposing
@@ -224,6 +236,16 @@ def prepared_restore(path, disabled_groups, include_secure, selection=None):
                 label = sections["git-repositories"][int(row["item_id"]) - 1]
                 if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_. -]{0,127}", label, re.ASCII):
                     row["display_name"] = label
+        # Correlate bounded provider context to the same selected item and reason.
+        for condition in requirements['conditions']:
+            index = condition.get('selected_item_index')
+            if index is None:
+                continue
+            identity = sections[condition['domain']][index - 1]
+            row = next((row for row in records if row['domain'] == condition['domain']
+                        and row['item_id'] == identity and row['reason'] == condition['code']), None)
+            if row and row.get('diagnostic'):
+                condition['diagnostic'] = row['diagnostic']
         # Attach typed readiness reasons to dependent actions without changing Preview decisions.
         for condition in requirements["conditions"]:
             if condition["status"] in ("external_action_required", "unsupported"):
@@ -380,7 +402,7 @@ def prepared_requirements(stage, include_secure):
             condition['compatibility'] = compatibility_codes[condition['code']]
     return {"ready": ready, "ready_scope": "environment", "conditions": conditions,
             "external_tools": external_tools,
-            "check_policy": "item_local_then_first_operation_blocker_per_domain", "reentry": "restore_prepare"}
+            "check_policy": "all_cask_item_conditions_then_first_operation_blocker_per_domain", "reentry": "restore_prepare"}
 
 
 def readiness(stage, include_secure, secure_ready=False, secure_only=False):

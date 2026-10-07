@@ -1,4 +1,5 @@
 import AppKit
+import CoreServices
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -237,7 +238,7 @@ struct RestorePrerequisiteView: View {
         VStack(alignment: .leading, spacing: 4) {
             if showsHeading {
                 HStack {
-                    if condition.status != "satisfied" {
+                    if !["satisfied", "safely_satisfiable"].contains(condition.status) {
                         Image(systemName: "exclamationmark.triangle")
                             .foregroundStyle(RestoreStatusTone.prerequisite(condition.status).color)
                     }
@@ -247,21 +248,27 @@ struct RestorePrerequisiteView: View {
             }
             if condition.status != "satisfied" {
                 Text(message).font(.callout)
-                DisclosureGroup(technicalTitle) { Text(condition.code).font(.caption.monospaced()).textSelection(.enabled) }
+                DisclosureGroup(technicalTitle) {
+                    Text(condition.code).font(.caption.monospaced()).textSelection(.enabled)
+                    if let diagnostic = condition.diagnostic {
+                        Text(diagnostic.technicalDescription).font(.caption.monospaced()).textSelection(.enabled)
+                    }
+                }
                     .disclosureGroupStyle(TaskDisclosureStyle(minimumHeight: 22))
             }
         }
     }
     private var status: String {
         switch condition.status {
-        case "satisfied": "Already Satisfied"
-        case "safely_satisfiable": "Can be prepared during Rebuild"
+        case "satisfied": "Ready"
+        case "safely_satisfiable": "Ready during Rebuild"
         case "unsupported": "Unsupported"
-        default: "Prerequisite Required"
+        default: condition.code.contains("authorization_required") ? "Authorization Required" : "Action Required"
         }
     }
     private var message: String {
-        switch condition.code {
+        if let diagnostic = condition.diagnostic { return diagnostic.explanation }
+        return switch condition.code {
         case "homebrew_installation_requires_interaction": "Install Homebrew outside Macseed, then Check Again. Macseed will not install it during Preview."
         case "homebrew_unavailable": "Make the existing Homebrew installation usable, then Check Again."
         case "vscode_cli_required", "vscode_cli_unavailable": "Make the Visual Studio Code command-line tool available, then Check Again."
@@ -286,6 +293,7 @@ struct RestoreView: View {
     @ObservedObject var model: RestoreModel
     @ObservedObject var runtime: CoreRuntime
     var showsRebuildActions = true
+    var showsPreviewActions = true
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             switch model.state {
@@ -337,44 +345,27 @@ struct RestoreView: View {
                         domains: tasks.domains, counters: tasks.counters,
                         alreadyMatches: !prepared.hasPlannedChanges && prepared.plan.allSatisfy { $0.disposition == "satisfied" },
                         prerequisites: RestorePrerequisiteSummaryPresentation(conditions: prepared.readiness.conditions, ready: prepared.readiness.ready),
-                        areas: model.areas, checkAgain: { model.refreshPreview() },
+                        areas: model.areas,
+                        selectionStates: Dictionary(model.areas.map { ($0.id, model.previewSelectionState($0.id)) } + tasks.domains.map { ($0.id, model.previewSelectionState($0.id)) }, uniquingKeysWith: { first, _ in first }),
+                        excludedAreas: model.areas.filter { $0.selectable && !prepared.selection.categories.contains($0.id) && prepared.selection.items[$0.id] == nil },
+                        selectDomain: { model.selectPreviewDomain($0, included: $1) },
+                        showsActions: showsPreviewActions, needsRefresh: model.previewNeedsRefresh, retryMessage: model.prerequisiteRetryMessage, retrying: model.retryingPrerequisites,
+                        checkAgain: { Task { await model.checkPrerequisites() } },
                         back: { model.back() }, refresh: { model.refreshPreview() }, rebuild: { model.requestRebuild() }, canRebuild: model.canRebuild)
-                    if !prepared.hasPlannedChanges && prepared.plan.allSatisfy({ $0.disposition == "satisfied" }) {
-                        Text("Everything already matches. No Rebuild is needed.").font(.callout).foregroundStyle(.secondary)
-                    }
                 }
             case .rebuilding:
                 if let preview = model.executionPreview, let plan = model.executionPlan {
                     let tasks = RestoreTaskPresentation(preview: preview, plan: plan, events: runtime.events, executing: true)
-                    OperationSummaryHeader(title: model.activity.hasPrefix("Verifying") ? "Verifying Your Mac" : "Rebuilding Your Mac",
-                        message: runtime.stopping ? "Stopping… Completed changes may remain." : model.activity,
-                        state: .working, counters: tasks.counters, startedAt: model.executionStartedAt)
-                    TaskDomainList(domains: tasks.domains)
+                    RestoreRebuildProgressContent(tasks: tasks, activity: model.activity,
+                        stopping: runtime.stopping, activities: model.executionActivities)
                 }
                 if showsRebuildActions {
                     RestoreRebuildActions(stopping: runtime.stopping, stop: { model.requestStop() })
                 }
             case .result:
                 if let result = model.executionResult {
-                    if let preview = model.executionPreview, let plan = model.executionPlan {
-                        let tasks = RestoreTaskPresentation(preview: preview, plan: plan, events: runtime.events, result: result)
-                        OperationSummaryHeader(title: result.title, message: result.message,
-                            state: result.outcome == .clean ? .completed : result.outcome == .partial ? .partial
-                                : [.failedBeforeMutation, .failedAfterMutation].contains(result.outcome) ? .failed : .attention,
-                            counters: tasks.counters, startedAt: model.executionStartedAt,
-                            finishedAt: model.executionFinishedAt)
-                        HStack {
-                            PendingOperationLogButton()
-                            Button("Refresh Preview") { model.checkCurrentState() }
-                        }
-                        TaskDomainList(domains: tasks.domains)
-                    } else {
-                        Text(result.title).font(.title2)
-                        Text(result.message)
-                    }
-                    DisclosureGroup("View Details") { RestorePreviewItemDetails(items: result.details) }
-                        .disclosureGroupStyle(HeaderDisclosureStyle())
-                    Button("Done") { model.finish() }
+                    RestoreResultContent(result: result,
+                        refresh: { model.checkCurrentState() }, done: { model.finish() })
                 }
             case .failed, .cancelled:
                 Label(model.state == .cancelled ? "Restore Preparation Cancelled" : "Can't Prepare Restore", systemImage: "exclamationmark.triangle").font(.title2)
@@ -397,9 +388,9 @@ struct RestoreView: View {
         .sheet(isPresented: Binding(get: { model.state == .confirming }, set: { if !$0 { model.cancelRebuildConfirmation() } })) {
             VStack(alignment: .leading, spacing: 16) {
                 Text("Rebuild this Mac?").font(.title2)
-                Text("Macseed will apply the changes shown in this Preview. Existing matching items will be left unchanged.")
+                Text("Macseed will apply the changes shown in this Preview. Items that already match will not be changed.")
                 if model.preparation?.plan.contains(where: { $0.authorizationRequired == true }) == true {
-                    Text("Some Homebrew casks require administrator authorization for their declared installation or cleanup. A separate password prompt will appear. Interrupted privileged work may require manual inspection before another Rebuild.")
+                    Text("Some changes may require administrator authorization.")
                         .foregroundStyle(.secondary)
                 }
                 if model.preparation?.warningCount ?? 0 > 0 {
@@ -446,6 +437,13 @@ struct RestorePreviewContent: View {
     let alreadyMatches: Bool
     let prerequisites: RestorePrerequisiteSummaryPresentation
     let areas: [CoreRestoreInspection.Area]
+    var selectionStates: [String: SelectionState] = [:]
+    var excludedAreas: [CoreRestoreInspection.Area] = []
+    var selectDomain: ((String, Bool) -> Void)? = nil
+    var showsActions = true
+    var needsRefresh = false
+    var retryMessage: String? = nil
+    var retrying = false
     var checkAgain: (() -> Void)? = nil
     var back: (() -> Void)? = nil
     var refresh: (() -> Void)? = nil
@@ -453,21 +451,51 @@ struct RestorePreviewContent: View {
     var canRebuild = false
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            OperationSummaryHeader(title: title, message: message, state: state, counters: counters)
+            Text(title).font(.title2.weight(.bold)).accessibilityAddTraits(.isHeader)
+            if needsRefresh {
+                Label("Selection changed. Refresh Preview to update counts and prerequisites. The current Preview shows the previous selection.", systemImage: "arrow.clockwise")
+                    .font(.callout).foregroundStyle(.secondary)
+            }
+            RestorePreviewMetrics(domains: domains)
             if alreadyMatches { Text("Selected requirements already match this Mac.") }
-            RestorePreviewAttentionSummaryView(summary: RestoreIssueSummaryPresentation(categories: domains.map {
-                DisplayCategory(id: $0.id, title: $0.title, symbol: $0.symbol, items: $0.items.map(\.item))
-            }))
             RestorePrerequisiteSummaryView(summary: prerequisites, areas: areas)
             if !prerequisites.blockers.isEmpty {
-                Button("Check Again") { checkAgain?() }.disabled(checkAgain == nil)
+                Button(retrying ? "Checking…" : "Check Again") { checkAgain?() }.disabled(checkAgain == nil || needsRefresh || retrying)
+                if let retryMessage { Text(retryMessage).font(.callout).foregroundStyle(.secondary) }
             }
-            TaskDomainList(domains: domains)
-            HStack {
-                Button("Back") { back?() }.disabled(back == nil)
-                Button("Refresh Preview") { refresh?() }.disabled(refresh == nil)
-                Button("Rebuild") { rebuild?() }.buttonStyle(.borderedProminent).disabled(!canRebuild || rebuild == nil)
+            TaskDomainList(domains: domains.map { domain in
+                var previewDomain = domain
+                previewDomain.previewOnly = true
+                return previewDomain
+            }, selectionStates: selectionStates, selectDomain: selectDomain)
+            if let selectDomain {
+                ForEach(excludedAreas) { area in
+                    HStack {
+                        NativeSelectionCheckbox(area.label, state: selectionStates[area.id] ?? .none, accessibilityTitle: "Select " + area.label) {
+                            selectDomain(area.id, $0)
+                        }
+                        Spacer()
+                        Text((selectionStates[area.id] ?? SelectionState.none) == SelectionState.none ? "Not selected" : "Selected").font(.callout).foregroundStyle(.secondary)
+                    }.padding(.vertical, 7)
+                }
             }
+            if showsActions {
+                RestorePreviewActions(back: back, refresh: refresh, rebuild: rebuild, canRebuild: canRebuild)
+            }
+        }
+    }
+}
+
+struct RestorePreviewActions: View {
+    var back: (() -> Void)? = nil
+    var refresh: (() -> Void)? = nil
+    var rebuild: (() -> Void)? = nil
+    var canRebuild = false
+    var body: some View {
+        HStack {
+            Button("Back") { back?() }.disabled(back == nil)
+            Button("Refresh Preview") { refresh?() }.disabled(refresh == nil)
+            Button("Rebuild") { rebuild?() }.buttonStyle(.borderedProminent).disabled(!canRebuild || rebuild == nil)
         }
     }
 }
@@ -481,5 +509,145 @@ struct RestoreRebuildActions: View {
             Spacer()
             Button("Stop Rebuild", role: .cancel) { stop?() }.disabled(stopping || stop == nil)
         }
+    }
+}
+
+// Execution content deliberately has no Preview summary or readiness inventory.
+struct RestoreRebuildProgressContent: View {
+    let tasks: RestoreTaskPresentation
+    let activity: String
+    let stopping: Bool
+    let activities: [DisplayItem]
+    private var verifying: Bool { activity.hasPrefix("Verifying") }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            Text("Rebuilding this Mac").font(.title.weight(.bold)).accessibilityAddTraits(.isHeader)
+            Text(stopping ? "Stopping… Completed changes may remain." : activity).foregroundStyle(.secondary)
+            HStack(spacing: 12) {
+                ProgressView()
+                Text(stopping ? "Stopping Rebuild…" : verifying ? activity
+                     : activities.compactMap(\.restoreActivity).first ?? activity).font(.title2)
+            }.accessibilityElement(children: .combine)
+            ForEach(tasks.domains) { domain in
+                Text(domain.title).font(.headline)
+                ForEach(domain.items) { item in
+                    HStack {
+                        Text(item.item.title).foregroundStyle(item.state == .completed ? .secondary : .primary)
+                        Spacer()
+                        TaskStatusLabel(state: item.state)
+                    }.padding(.vertical, 3)
+                    if [.failed, .skipped, .attention].contains(item.state) {
+                        Text(item.item.action).font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+            }
+            Divider()
+            HStack {
+                Text("Verification").font(.headline)
+                Spacer()
+                TaskStatusLabel(state: verifying ? .working : .waiting,
+                    title: verifying ? "Verifying restored environment…" : "Waiting")
+            }
+        }
+    }
+}
+
+struct RestoreResultContent: View {
+    let result: RestoreExecutionPresentation
+    let refresh: () -> Void
+    let done: () -> Void
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            Text(result.title).font(.title.weight(.bold)).accessibilityAddTraits(.isHeader)
+            Text(result.message).foregroundStyle(.secondary)
+            if !result.successfulAreas.isEmpty {
+                Text("Verified selected work: " + result.successfulAreas.joined(separator: ", ")).font(.callout)
+            }
+            if !result.findings.isEmpty {
+                Text("Needs Attention").font(.headline)
+                RestorePreviewItemDetails(items: result.findings)
+            }
+            if result.outcome != .clean {
+                DisclosureGroup("View Details") { RestorePreviewItemDetails(items: result.details) }
+                    .disclosureGroupStyle(HeaderDisclosureStyle())
+            }
+            HStack {
+                Button("Done", action: done).buttonStyle(.borderedProminent)
+                if result.outcome != .clean { Button("Refresh Preview", action: refresh) }
+                PendingOperationLogButton()
+            }
+        }
+    }
+}
+
+
+struct RestorePreviewMetrics: View {
+    let domains: [TaskDomainPresentation]
+    static func counts(_ domains: [TaskDomainPresentation]) -> (changes: Int, attention: Int, matching: Int) {
+        let items = domains.flatMap(\.items)
+        return (items.filter { $0.state == .planned }.count,
+                items.filter { [.attention, .unverified].contains($0.state) }.count,
+                items.filter { $0.state == .matching }.count)
+    }
+    var body: some View {
+        let counts = Self.counts(domains)
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 12) { cards(counts) }
+            VStack(spacing: 8) { cards(counts) }
+        }
+    }
+    @ViewBuilder private func cards(_ counts: (changes: Int, attention: Int, matching: Int)) -> some View {
+        metric("Changes Planned", count: counts.changes, symbol: "arrow.down.circle", color: .primary)
+        metric("Need Attention", count: counts.attention, symbol: "exclamationmark.triangle", color: counts.attention > 0 ? RestoreStatusTone.warning.color : .secondary)
+        metric("Already Match", count: counts.matching, symbol: "checkmark.circle", color: RestoreStatusTone.success.color)
+    }
+    private func metric(_ title: String, count: Int, symbol: String, color: Color) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Label(String(count), systemImage: symbol).font(.title2.weight(.semibold)).monospacedDigit()
+            Text(title).font(.callout)
+        }.foregroundStyle(color).frame(minWidth: 140, maxWidth: .infinity, alignment: .leading).padding(14)
+            .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 8))
+            .accessibilityElement(children: .ignore).accessibilityLabel(title).accessibilityValue(String(count))
+    }
+}
+
+// Called only from the user's prerequisite retry, never from Prepare.
+enum RestoreAutomationPermission {
+    enum Outcome: Equatable {
+        case available, denied, unavailable
+        var message: String? {
+            switch self {
+            case .available: nil
+            case .denied: "Allow Macseed → System Events in System Settings → Privacy & Security → Automation, then Check Again. Access may be restricted by your administrator."
+            case .unavailable: "System Events access is unavailable. Resolve the system restriction, then Check Again."
+            }
+        }
+    }
+    static func resolve(check: () async -> OSStatus, prompt: () async -> OSStatus,
+                        start: () async throws -> Void) async -> Outcome {
+        var status = await check()
+        if status == OSStatus(procNotFound) {
+            do { try await start(); status = await check() }
+            catch { return .unavailable }
+        }
+        // errAEEventWouldRequireUserConsent is returned by the nonprompting check.
+        if status == OSStatus(-1744) { status = await prompt() }
+        if status == noErr { return .available }
+        if status == OSStatus(errAEEventNotPermitted) { return .denied }
+        return .unavailable
+    }
+    @MainActor static func requestAccess() async -> Outcome {
+        await resolve(check: { await permission(ask: false) }, prompt: { await permission(ask: true) }, start: {
+            let configuration = NSWorkspace.OpenConfiguration()
+            configuration.activates = false
+            _ = try await NSWorkspace.shared.openApplication(
+                at: URL(fileURLWithPath: "/System/Library/CoreServices/System Events.app"), configuration: configuration)
+        })
+    }
+    private static func permission(ask: Bool) async -> OSStatus {
+        await Task.detached {
+            let target = NSAppleEventDescriptor(bundleIdentifier: "com.apple.systemevents")
+            return AEDeterminePermissionToAutomateTarget(target.aeDesc, AEEventClass(kCoreEventClass), AEEventID(kAEGetData), ask)
+        }.value
     }
 }

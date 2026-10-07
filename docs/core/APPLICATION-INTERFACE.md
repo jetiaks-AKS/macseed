@@ -171,7 +171,7 @@ keys and ambiguous/error protections are unchanged; see
 [Git configuration](../toolkit/CONFIGURATION.md#git-generated-state).
 
 Readiness contains `ready`, `ready_scope=environment`, `conditions`,
-`check_policy=item_local_then_first_operation_blocker_per_domain`,
+`check_policy=all_cask_item_conditions_then_first_operation_blocker_per_domain`,
 `reentry=restore_prepare`. Conditions contain `domain`, `code`, `status`, `scope`,
 and optionally a cask `selected_item_index` in selected Blueprint order.
 Statuses are `satisfied`, `safely_satisfiable`, `external_action_required`,
@@ -286,6 +286,12 @@ artifact semantics retain the existing item-scoped reason.
 `cask_launchctl_observation_failed` is an observation failure, never absence.
 Public `brew help` command/option availability and actual inventory/JSON shape are
 checked; observed version alone neither grants nor denies compatibility.
+
+Blocked cask rows may add a bounded `diagnostic: {primitive, condition}`; matching
+item-correlated readiness conditions preserve it. The context contains no paths
+or raw output and participates in plan identity. It explains the existing reason
+without changing readiness scope or authorizing mutation. See the
+[capability matrix](../toolkit/HOMEBREW-CAPABILITIES.md).
 
 Qualified planned cask rows add `qualification_id` and `authorization_required`;
 these fields participate in prepared-plan identity. Provider results also carry

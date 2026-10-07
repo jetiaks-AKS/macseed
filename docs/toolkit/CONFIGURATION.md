@@ -313,6 +313,9 @@ postconditions; registration with missing payload remains explicitly different.
 Native Install/Repair qualification separately checks installation, historical
 cleanup, ownership, requirements and privilege. Homebrew owns all lifecycle writes.
 Unknown observation is not absence; unknown execution behavior fails closed.
+The [Homebrew capability matrix](HOMEBREW-CAPABILITIES.md) defines bounded
+primitive/state ownership contracts, orphan lifecycle qualification and
+non-prompting Automation readiness.
 See the [execution policy](../core/APPLICATION-INTERFACE.md).
 
 ## Workspace Bootstrap actionability

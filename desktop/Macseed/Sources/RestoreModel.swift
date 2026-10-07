@@ -66,7 +66,7 @@ struct RestorePreviewPresentation {
             }
             let inventoryLabel = row.selectionItemID.flatMap { id in catalog.inventory.first { $0.id == row.domain }?.items.first { $0.id == id }?.label }
             let title = inventoryLabel ?? row.displayName ?? (row.itemID.hasPrefix("opaque:") ? "Private item" : (row.itemID == "scope" ? "Selected area" : row.itemID))
-            let action = reasonMessage ?? (row.authorizationRequired == true ? message + " · Administrator authorization required" : message)
+            let action = row.diagnostic?.explanation ?? reasonMessage ?? (row.authorizationRequired == true ? message + " · Administrator authorization required" : message)
             rows[row.domain, default: []].append(DisplayItem(id: "restore-\(index)", title: title, status: status, action: action, reason: row.reason, restoreReadyText: status == .ready ? Self.readyText(action: row.action) : nil))
         }
         categories = order.map { domain in
@@ -115,7 +115,7 @@ struct RestoreProgressRow {
             let relevant = plan.plan.filter { rowDomains.contains($0.domain) && $0.disposition != "satisfied" }
             guard !relevant.isEmpty else { return nil }
             var names: [String: [String: String]] = [:]
-            for (index, entry) in plan.plan.enumerated() where rowDomains.contains(entry.domain) {
+            for (index, entry) in plan.plan.enumerated() where rowDomains.contains(entry.domain) && entry.disposition != "satisfied" {
                 guard entry.itemID != "scope", !entry.itemID.hasPrefix("opaque:"),
                       let item = preview.categories.flatMap(\.items).first(where: { $0.id == "restore-\(index)" }),
                       item.title != "Private item" else { continue }
@@ -205,11 +205,13 @@ struct RestoreProgressRow {
     @Published var stopConfirmation = false
     @Published private(set) var failure: String?
     @Published private(set) var technicalReason: String?
+    @Published private(set) var retryingPrerequisites = false
+    @Published private(set) var prerequisiteRetryMessage: String?
     let runtime: CoreRuntime
     private let location: CoreLocation?
     private var work: Task<Void, Never>?
     private var cancelRequested = false
-    var busy: Bool { state == .inspecting || state == .preparing || state == .confirming || state == .rebuilding }
+    var busy: Bool { retryingPrerequisites || state == .inspecting || state == .preparing || state == .confirming || state == .rebuilding }
     var areas: [CoreRestoreInspection.Area] { inspection?.restoreSelection?.inventory ?? [] }
     var groups: [CoreRestoreInspection.Group] { inspection?.restoreSelection?.groups ?? [] }
     var selection: CoreRestoreSelection {
@@ -235,8 +237,11 @@ struct RestoreProgressRow {
         return selectedAreaCount == 0 ? .none : .mixed
     }
     var canPreview: Bool { !busy && !runtime.isActive && selectedAreaCount > 0 && source != nil && inspection != nil }
+    var previewNeedsRefresh: Bool {
+        preparation.map { $0.selection != canonicalSelection } ?? false
+    }
     var ready: Bool {
-        guard state == .preview, let plan = preparation, plan.readiness.ready, plan.errorCount == 0 else { return false }
+        guard !previewNeedsRefresh, state == .preview, let plan = preparation, plan.readiness.ready, plan.errorCount == 0 else { return false }
         return !plan.plan.contains { row in
             // A conflict with no proposed action is retained by the existing
             // consumer; environmental blockers are owned by Core readiness.
@@ -340,12 +345,29 @@ struct RestoreProgressRow {
     }
     func selectArea(_ id: String, included: Bool) {
         guard !busy, !runtime.isActive, let area = areas.first(where: { $0.id == id }), area.selectable else { return }
+        updateDraftArea(area, included: included)
+        invalidate(); state = .review
+    }
+    private func updateDraftArea(_ area: CoreRestoreInspection.Area, included: Bool) {
+        let id = area.id
         if area.selectionMode == "category" {
             if included { selectedCategories.insert(id) } else { selectedCategories.remove(id) }
         } else {
             selectedItems[id] = included ? Set(area.items.map(\.id)) : nil
         }
-        invalidate(); state = .review
+    }
+    func selectPreviewDomain(_ id: String, included: Bool) {
+        guard state == .preview, !runtime.isActive else { return }
+        let scope = areas.first(where: { $0.id == id }).map { [$0] }
+            ?? groups.first(where: { $0.id == id }).map { group in areas.filter { group.domains.contains($0.id) } }
+            ?? []
+        for area in scope where area.selectable { updateDraftArea(area, included: included) }
+        // Keep the immutable accepted Preview. Only explicit Refresh invokes Core.
+    }
+    func previewSelectionState(_ id: String) -> SelectionState {
+        if let area = areas.first(where: { $0.id == id }) { return selectionState(area) }
+        if let group = groups.first(where: { $0.id == id }) { return groupState(group) }
+        return .none
     }
     func selectItem(_ domain: String, item: String, included: Bool) {
         guard !busy, !runtime.isActive, let area = areas.first(where: { $0.id == domain }), area.selectable,
@@ -362,9 +384,22 @@ struct RestoreProgressRow {
         let included = bulkState != .all
         for area in areas { selectArea(area.id, included: included) }
     }
+    func checkPrerequisites(permission: () async -> RestoreAutomationPermission.Outcome = RestoreAutomationPermission.requestAccess) async {
+        guard state == .preview, !busy, !runtime.isActive, !previewNeedsRefresh, let plan = preparation else { return }
+        prerequisiteRetryMessage = nil
+        if plan.readiness.conditions.contains(where: { $0.diagnostic?.automationRequirement == true }) {
+            retryingPrerequisites = true
+            let outcome = await permission()
+            retryingPrerequisites = false
+            guard preparation?.preparedPlanID == plan.preparedPlanID, !previewNeedsRefresh else { return }
+            if outcome != .available { prerequisiteRetryMessage = outcome.message; return }
+        }
+        refreshPreview()
+    }
     func refreshPreview() {
         guard canPreview, let source, let catalog = inspection?.restoreSelection else { return }
         cancelRequested = false
+        prerequisiteRetryMessage = nil
         let expected = canonicalSelection
         let request = CoreRequest(.restorePrepare(path: source.path, disabledGroups: [], includeSecure: false, selection: selection))
         invalidate(); failure = nil; technicalReason = nil; state = .preparing
@@ -453,24 +488,41 @@ struct RestoreExecutionPresentation {
                     }
                 }
             } else { changed = false }
+            let concreteFailure: Bool
+            let knownItemSkip: Bool
+            if case .array(let rows) = records {
+                knownItemSkip = rows.contains { value in
+                    let row = value.object
+                    return row?["outcome"]?.string == "skipped" && row?["reason"]?.string == "cask_execution_requirements_unsupported"
+                }
+                concreteFailure = rows.contains { value in
+                    guard let row = value.object else { return true }
+                    if row["outcome"]?.string == "success" { return false }
+                    if row["outcome"]?.string == "skipped", row["reason"]?.string == "cask_execution_requirements_unsupported" { return false }
+                    // Only the known Bootstrap aggregate can accompany an item-local skip.
+                    return !(row["outcome"]?.string == "failure" && row["reason"]?.string == "bootstrap_failed"
+                        && ((row["domain"]?.string == "orchestration" && row["item_id"]?.string == "bootstrap")
+                            || (row["domain"]?.string == "bootstrap" && row["item_id"]?.string == "scope")))
+                }
+            } else { concreteFailure = true; knownItemSkip = false }
             let complete = verification?["status"]?.string == "complete" && verification?["details"]?.object?["status"]?.string == "complete"
-            outcome = payload?["independent_work_completed"]?.boolean == true && complete && changed && payload?["prepared_plan_id"]?.string == expectedID
+            outcome = knownItemSkip && !concreteFailure && payload?["code"]?.string == "bootstrap_failed" && payload?["independent_work_completed"]?.boolean == true && complete && changed && payload?["prepared_plan_id"]?.string == expectedID
                 ? .partial : mayMutate ? .failedAfterMutation : .failedBeforeMutation
         } else if runtime.state == .completed && payload?["execution_status"]?.string == "completed"
                     && payload?["prepared_plan_id"]?.string == expectedID {
             outcome = verified && payload?["warning_count"]?.integer == 0 && payload?["error_count"]?.integer == 0 ? .clean : .attention
         } else { outcome = .interrupted }
         switch outcome {
-        case .clean: title = "All Done"; message = "Your environment is ready. Everything was restored successfully."
+        case .clean: title = "All Done"; message = "Your environment is ready. Everything selected was restored successfully."
         case .partial: title = "Rebuild Completed with Issues"; message = "Some selected changes completed. Refresh Preview to inspect unresolved items before rebuilding again."
-        case .attention: title = "Rebuild completed with attention needed"; message = "Review the observed results, then Refresh Preview to check current state."
+        case .attention: title = "Rebuild Completed with Issues"; message = "Review the observed results, then Refresh Preview to check current state."
         case .stoppedBeforeMutation: title = "Rebuild Cancelled"; message = "Core reports that no target mutation started. Refresh Preview before another Rebuild."
         case .stoppedAfterMutation: title = "Rebuild Stopped"; message = "Completed changes may remain. Refresh Preview to inspect current state before rebuilding again."
         case .interrupted: title = "Rebuild Interrupted"; message = "Final consequences are unknown. Changes may remain. Refresh Preview to inspect current state."
         case .failedBeforeMutation: title = "Rebuild Could Not Start"; message = "Core reports that no target mutation started. Refresh Preview to check prerequisites and current state."
         case .failedAfterMutation: title = "Rebuild Failed"; message = "Some selected changes could not be completed. Changes may remain. Refresh Preview to inspect the current state before rebuilding again."
         }
-        let normalized = RestoreResultFindings(payload: payload, events: runtime.events, catalog: catalog, verified: verified, itemNames: itemNames)
+        let normalized = RestoreResultFindings(payload: payload, events: runtime.events, catalog: catalog, verified: verified, itemNames: itemNames, completedWithIssues: [.partial, .attention].contains(outcome))
         details = normalized.details.isEmpty && outcome != .clean
             ? [DisplayItem(id: "incomplete", title: "Rebuild result", status: .unverified,
                            action: "Complete final evidence is unavailable. Inspect current state with a fresh Preview.")]
@@ -492,7 +544,7 @@ struct RestoreResultFindings {
     let findings: [DisplayItem]
     let details: [DisplayItem]
     let successfulAreas: [String]
-    init(payload: [String: CoreJSON]?, events: [CoreEvent], catalog: CoreRestoreInspection.Inventory?, verified: Bool, itemNames: [String: [String: String]] = [:]) {
+    init(payload: [String: CoreJSON]?, events: [CoreEvent], catalog: CoreRestoreInspection.Inventory?, verified: Bool, itemNames: [String: [String: String]] = [:], completedWithIssues: Bool = false) {
         var detailRows: [DisplayItem] = []
         var seen: Set<Key> = []
         var areaOrder: [String] = []
@@ -521,7 +573,7 @@ struct RestoreResultFindings {
             if failed { failedAreas.insert(id) }
             if actionable || areaStates[id] == nil { areaStates[id] = actionable ? .attention : .unverified }
         }
-        if let code = payload?["code"]?.string {
+        if let code = payload?["code"]?.string, !(completedWithIssues && code == "bootstrap_failed") {
             append(kind: "rebuild", domain: "", reason: code, title: "Rebuild", status: .attention,
                    message: code == "stale_plan" ? "The Mac or saved environment changed. A fresh Preview is required." : "Rebuild could not complete.")
         }
@@ -552,7 +604,7 @@ struct RestoreResultFindings {
                 if itemFindingIDs.insert(identity).inserted {
                     let message = reason == "item_stalled_timeout"
                         ? "Download stalled. Check your network or VPN and try again."
-                        : "This application was skipped because its installation requirements are not supported."
+                        : "Skipped — this application’s installation requirements are not safely supported."
                     itemFindings.append(DisplayItem(id: identity, title: name, status: .attention,
                         action: message, reason: reason))
                 }
@@ -568,6 +620,8 @@ struct RestoreResultFindings {
         for row in lifecycle {
             guard let domain = row["domain"]?.string, let state = row["state"]?.string,
                   ["failed", "warning", "conflict", "blocked"].contains(state) else { continue }
+            if completedWithIssues && row["reason"]?.string == "bootstrap_failed"
+                && ["orchestration", "bootstrap"].contains(domain) { continue }
             if row["item_id"]?.string == "scope" && operationDomains.contains(domain) { continue }
             if operations.contains(where: { value in
                 guard let operation = value.object else { return false }

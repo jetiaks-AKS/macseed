@@ -49,9 +49,9 @@ struct ProductionWorkspace: View {
                             } else {
                                 #if DEBUG
                                 if syntheticRestore { RestoreDebugScenarioView(scenario: scenarios.selected) }
-                                else { RestoreView(model: restore, runtime: runtime, showsRebuildActions: false) }
+                                else { RestoreView(model: restore, runtime: runtime, showsRebuildActions: false, showsPreviewActions: false) }
                                 #else
-                                RestoreView(model: restore, runtime: runtime, showsRebuildActions: false)
+                                RestoreView(model: restore, runtime: runtime, showsRebuildActions: false, showsPreviewActions: false)
                                 #endif
                             }
                         } else {
@@ -82,8 +82,10 @@ struct ProductionWorkspace: View {
                     if syntheticRestore {
                         if scenarios.selected == .rebuilding { rebuildActionArea(synthetic: true) }
                     } else if restore.state == .rebuilding { rebuildActionArea(synthetic: false) }
+                    else if restore.state == .preview || restore.state == .confirming { previewActionArea }
                     #else
                     if restore.state == .rebuilding { rebuildActionArea(synthetic: false) }
+                    else if restore.state == .preview || restore.state == .confirming { previewActionArea }
                     #endif
                 }
                 Divider()
@@ -113,6 +115,16 @@ struct ProductionWorkspace: View {
             if scenario != .real { navigation.task = .restore }
         }
         #endif
+    }
+    private var previewActionArea: some View {
+        VStack(spacing: 0) {
+            Divider()
+            RestorePreviewActions(back: { restore.back() }, refresh: { restore.refreshPreview() },
+                                  rebuild: { restore.requestRebuild() }, canRebuild: restore.canRebuild)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, WorkspaceGeometry.margin).padding(.vertical, 12)
+                .disabled(restore.busy || runtime.isActive)
+        }
     }
     private func rebuildActionArea(synthetic: Bool) -> some View {
         VStack(spacing: 0) {

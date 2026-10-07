@@ -4,6 +4,7 @@ Payload observation, current installation, installed cleanup and privilege are
 separate contracts. Homebrew alone performs lifecycle operations. All subprocess
 observations below are public, read-only interfaces.
 """
+from functools import wraps
 import hashlib
 import json
 import os
@@ -14,6 +15,10 @@ import re
 import stat
 import subprocess
 import sys
+import tempfile
+import time
+import urllib.request
+import xml.etree.ElementTree as ET
 from urllib.parse import urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'core'))
@@ -75,13 +80,34 @@ def completion_predicates(args, prefix):
 
 
 class Unsafe(Exception):
-    def __init__(self, condition=UNSUPPORTED):
+    def __init__(self, condition=UNSUPPORTED, diagnostic=None):
         self.condition = condition
+        self.diagnostic = diagnostic
 
 
-def require(value, condition=UNSUPPORTED):
+def require(value, condition=UNSUPPORTED, detail=None):
     if not value:
-        raise Unsafe(condition)
+        raise Unsafe(condition, {'condition': detail} if detail else None)
+
+
+def contract(primitive):
+    """Bounded, non-sensitive context on the existing provider result."""
+    def decorate(function):
+        @wraps(function)
+        def checked(*args, **kwargs):
+            try:
+                return function(*args, **kwargs)
+            except Unsafe as exc:
+                context = exc.diagnostic or {}
+                context.setdefault('primitive', primitive)
+                context.setdefault('condition', 'ownership_unproven' if exc.condition == CONFLICT else
+                                   'unsupported_capability' if exc.condition == UNSUPPORTED else 'observation_failed')
+                exc.diagnostic = context
+                raise
+            except (OSError, ValueError, TypeError, KeyError, IndexError, AttributeError, subprocess.SubprocessError):
+                raise Unsafe(OBSERVATION, {'primitive': primitive, 'condition': 'observation_failed'}) from None
+        return checked
+    return decorate
 
 
 def clean(value):
@@ -149,6 +175,7 @@ class PublicObserver:
         require(len(observed.stdout) <= 4 * 1024 * 1024, OBSERVATION)
         return observed.stdout
 
+    @contract('pkgutil')
     def packages(self, selectors):
         inventory = self.read(['/usr/sbin/pkgutil', '--pkgs']).decode().splitlines()
         records = []
@@ -173,6 +200,63 @@ class PublicObserver:
                             'location': str(base), 'version': str(info.get('pkg-version', ''))})
         return records
 
+    @contract('pkgutil')
+    def package_install_payloads(self, row, selectors):
+        """Checksum-bound, inert inspection of a root-app native package.
+
+        Never run installer/scripts. Unsupported layouts stay fail closed.
+        Temporary artifacts are private and removed on every handled return.
+        """
+        require(re.fullmatch(r'[0-9a-f]{64}', row.get('sha256', '')))
+        source = urlsplit(row.get('url', ''))
+        require(source.scheme == 'https' and source.hostname and not source.username and not source.password)
+        with tempfile.TemporaryDirectory(prefix='macseed-package-inspect-') as directory:
+            root = Path(directory)
+            archive = root / 'source.pkg'
+            digest, size, started = hashlib.sha256(), 0, time.monotonic()
+            with urllib.request.urlopen(row['url'], timeout=30) as response, archive.open('wb') as output:
+                destination = urlsplit(response.geturl())
+                require(destination.scheme == 'https' and destination.hostname and not destination.username and not destination.password)
+                while True:
+                    chunk = response.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    size += len(chunk)
+                    require(size <= 128 * 1024 * 1024 and time.monotonic() - started <= 60, OBSERVATION)
+                    digest.update(chunk); output.write(chunk)
+            require(digest.hexdigest() == row['sha256'], OBSERVATION)
+            expanded = root / 'expanded'
+            self.read(['/usr/sbin/pkgutil', '--expand-full', str(archive), str(expanded)])
+            records, payloads, count, total = set(), [], 0, 0
+            for location, directories, files in os.walk(expanded, followlinks=False):
+                require(len(Path(location).relative_to(expanded).parts) <= 24, OBSERVATION)
+                count += len(directories) + len(files)
+                require(count <= 8192, OBSERVATION)
+                for name in files:
+                    target = Path(location) / name
+                    total += target.lstat().st_size
+                    require(total <= 512 * 1024 * 1024, OBSERVATION)
+                    if name != 'PackageInfo':
+                        continue
+                    require(not target.is_symlink() and target.stat().st_size <= 65536, OBSERVATION)
+                    try:
+                        info = ET.fromstring(target.read_bytes())
+                    except ET.ParseError:
+                        raise Unsafe(OBSERVATION) from None
+                    require(info.tag == 'pkg-info')
+                    identifier = info.get('identifier')
+                    require(identifier in selectors and identifier not in records)
+                    records.add(identifier)
+                    application = path(info.get('install-location'))
+                    require(application.parent == Path('/Applications') and application.suffix == '.app')
+                    payload = target.parent / 'Payload'
+                    require(bundle_matches(payload), OBSERVATION)
+                    identity = plistlib.loads((payload / 'Contents/Info.plist').read_bytes())['CFBundleIdentifier']
+                    payloads.append({'kind': 'app', 'path': str(application), 'package': identifier, 'bundle_id': identity})
+            require(records == set(selectors) and len(payloads) > 0)
+            return payloads
+
+    @contract('pkgutil')
     def package_ownership(self, packages):
         selected = {record['id'] for record in packages}
         filenames = sorted({f for record in packages for f in record['paths'] if os.path.lexists(f)})
@@ -198,61 +282,144 @@ class PublicObserver:
                     owners.add(record['pkgid'])
             require(bool(owners) and owners <= selected, CONFLICT)
 
-    def launchctl(self, labels, payloads):
+    def launch_roots(self):
+        return (Path.home() / 'Library/LaunchAgents', Path.home() / 'Library/LaunchDaemons',
+                Path('/Library/LaunchAgents'), Path('/Library/LaunchDaemons'))
+
+    @contract('launchctl')
+    def launchctl(self, labels, payloads, orphan_labels=(), xpc_labels=()):
         home = Path.home()
-        inventories = [self.read(['/bin/launchctl', *args]).decode() for args in (
-            ['print', 'gui/' + str(os.getuid())], ['print', 'user/' + str(os.getuid())],
-            ['print', 'system'], ['list'])]
-        require(all(v.strip() for v in inventories), 'cask_launchctl_observation_failed')
+        domains = ('gui/' + str(os.getuid()), 'user/' + str(os.getuid()), 'system')
+        # Explicit domains are authoritative. launchctl list depends on the
+        # caller's inherited bootstrap namespace and is not a required observer.
+        inventories = [self.read(['/bin/launchctl', 'print', domain]).decode() for domain in domains]
+        selected = []
+        for raw in inventories:
+            rows = raw.splitlines()
+            starts = [(i, re.fullmatch(r'([ \t]*)services = \{[ \t]*', line))
+                      for i, line in enumerate(rows)]
+            starts = [(i, match) for i, match in starts if match]
+            require(len(starts) == 1, 'cask_launchctl_observation_failed', 'malformed_observation')
+            start, match = starts[0]
+            end = next((i for i in range(start + 1, len(rows))
+                        if rows[i].rstrip() == match[1] + '}'), None)
+            require(end is not None, 'cask_launchctl_observation_failed', 'malformed_observation')
+            present = set()
+            for line in rows[start + 1:end]:
+                # Other services/records cannot invalidate a selected label.
+                mentioned = set(line.split()) & set(labels)
+                if not mentioned:
+                    continue
+                record = re.fullmatch(r'\s*[0-9]+\s+(?:-|[-]?[0-9]+)\s+(\S+)\s*', line)
+                require(record is not None and record[1] in labels,
+                        'cask_launchctl_observation_failed', 'malformed_observation')
+                require(record[1] not in present, CONFLICT, 'ownership_ambiguous')
+                present.add(record[1])
+            selected.append(present)
+        roots = self.launch_roots()
+        plists = {label: {} for label in labels}
+        for root in roots:
+            if not root.exists():
+                continue
+            require(root.is_dir() and not root.is_symlink(), CONFLICT, 'ownership_ambiguous')
+            candidates = [p for p in root.iterdir() if p.suffix == '.plist']
+            require(len(candidates) <= 2048, OBSERVATION, 'observation_limit')
+            for target in candidates:
+                try:
+                    data = plistlib.loads(target.read_bytes())
+                    require(isinstance(data, dict), OBSERVATION, 'malformed_observation')
+                except (OSError, ValueError, plistlib.InvalidFileException, Unsafe):
+                    # An unknown unrelated file is not attributed to this label.
+                    # A selected canonical filename remains a required observation.
+                    require(target.stem not in labels, OBSERVATION, 'observation_failed')
+                    continue
+                label = data.get('Label')
+                if label not in labels:
+                    require(target.stem not in labels, CONFLICT, 'conflicting_plist')
+                    continue
+                require(not target.is_symlink() and target.is_file(), CONFLICT, 'ownership_ambiguous')
+                require(target.stat().st_uid in (0, os.getuid()) and not target.stat().st_mode & 0o022,
+                        CONFLICT, 'conflicting_plist')
+                arguments = data.get('ProgramArguments')
+                require(arguments is None or (isinstance(arguments, list) and all(clean(v) for v in arguments)),
+                        OBSERVATION, 'malformed_observation')
+                command = data.get('Program') or (arguments or [None])[0]
+                require(clean(command), OBSERVATION, 'malformed_observation')
+                require(any(beneath(path(command), Path(p['path'])) for p in payloads
+                            if p['kind'] in ('app', 'suite', 'bundle')), CONFLICT, 'foreign_target')
+                plists[label][str(target)] = command
         privileged = False
         for label in labels:
-            pattern = r'(?<![A-Za-z0-9_.-])' + re.escape(label) + r'(?![A-Za-z0-9_.-])'
-            present_domains = [domain for domain, inventory in zip(
-                ('gui/' + str(os.getuid()), 'user/' + str(os.getuid()), 'system', 'fallback'), inventories)
-                if re.search(pattern, inventory)]
-            plists = {}
-            for root in (home / 'Library/LaunchAgents', home / 'Library/LaunchDaemons',
-                         Path('/Library/LaunchAgents'), Path('/Library/LaunchDaemons')):
-                target = root / (label + '.plist')
-                if os.path.lexists(target):
-                    require(not target.is_symlink() and target.is_file(), CONFLICT)
-                    require(target.stat().st_uid in (0, os.getuid()) and not target.stat().st_mode & 0o022, CONFLICT)
-                    data = plistlib.loads(target.read_bytes())
-                    command = data.get('Program') or (data.get('ProgramArguments') or [None])[0]
-                    require(data.get('Label') == label and clean(command), CONFLICT)
-                    require(any(beneath(path(command), Path(p['path'])) for p in payloads
-                                if p['kind'] in ('app', 'suite', 'bundle')), CONFLICT)
-                    plists[str(target)] = command
-                    privileged |= str(root).startswith('/Library/')
-            require(not present_domains or bool(plists), CONFLICT)
-            require('fallback' not in present_domains or len(present_domains) > 1, CONFLICT)
-            for domain in set(present_domains) - {'fallback'}:
+            concrete = {domain for domain, observed in zip(domains, selected) if label in observed}
+            require(len(concrete) <= 1, CONFLICT, 'ownership_ambiguous')
+            owned_plists = plists[label]
+            require(len(owned_plists) <= 1, CONFLICT, 'ownership_ambiguous')
+            privileged |= any(filename.startswith('/Library/') for filename in owned_plists)
+            for domain in concrete:
                 raw = self.read(['/bin/launchctl', 'print', domain + '/' + label]).decode()
                 programs = re.findall(r'^\s*program = (/[^\r\n]+)$', raw, re.M)
-                require(len(programs) == 1, 'cask_launchctl_observation_failed')
-                matching = [filename for filename, command in plists.items() if command == programs[0]]
-                require(bool(matching) and any(filename.startswith('/Library/') if domain == 'system'
-                        else filename.startswith(str(home) + '/') for filename in matching), CONFLICT)
-            require(not os.path.lexists(Path.cwd() / label), CONFLICT)
+                require(len(programs) == 1, 'cask_launchctl_observation_failed', 'malformed_observation')
+                program = path(programs[0])
+                if owned_plists:
+                    matching = [filename for filename, command in owned_plists.items() if command == str(program)]
+                    allowed_roots = (Path('/Library/LaunchDaemons'),) if domain == 'system' else (
+                        home / 'Library/LaunchAgents', home / 'Library/LaunchDaemons', Path('/Library/LaunchAgents'))
+                    require(any(Path(filename).parent in allowed_roots for filename in matching), CONFLICT, 'conflicting_plist')
+                else:
+                    # An inactive orphan is bounded by the installed lifecycle and
+                    # exact missing payload. No removal is performed here.
+                    require(domain != 'system', CONFLICT, 'ownership_unproven')
+                    candidates = [Path(p['path']) for p in payloads if p['kind'] == 'app'
+                                  and not os.path.lexists(p['path']) and beneath(program, Path(p['path']))
+                                  and beneath(program.resolve(strict=False), Path(p['path']).resolve(strict=False))]
+                    require(len(candidates) == 1, CONFLICT, 'foreign_target')
+                    types = re.findall(r'^\s*type = ([^\r\n]+)$', raw, re.M)
+                    require(label in orphan_labels or (label in xpc_labels and types == ['XPCService']),
+                            CONFLICT, 'ownership_unproven')
+                    if types == ['XPCService']:
+                        sources = re.findall(r'^\s*path = (/[^\r\n]+)$', raw, re.M)
+                        identities = re.findall(r'^\s*bundle id = ([^\r\n]+)$', raw, re.M)
+                        require(len(sources) == 1 and identities == [label]
+                                and program.parent.parent == path(sources[0]) / 'Contents',
+                                CONFLICT, 'ownership_unproven')
+                    relative = program.relative_to(candidates[0]).parts
+                    require((len(relative) == 3 and relative[:2] == ('Contents', 'MacOS')) or
+                            (len(relative) == 6 and relative[:2] == ('Contents', 'XPCServices')
+                             and relative[2].endswith('.xpc') and relative[3:5] == ('Contents', 'MacOS')),
+                            CONFLICT, 'ownership_unproven')
+                    states = re.findall(r'^\s*state = ([^\r\n]+)$', raw, re.M)
+                    require(len(states) == 1, 'cask_launchctl_observation_failed', 'malformed_observation')
+                    require(states[0] in ('not running', 'waiting', 'exited', 'disabled') and
+                            not re.search(r'^\s*pid = ', raw, re.M) and not os.path.lexists(program),
+                            CONFLICT, 'live_ownership_unproven')
+            require(not os.path.lexists(Path.cwd() / label), CONFLICT, 'conflicting_plist')
         return privileged
 
-    def login_items(self, names, apps):
-        # Public AppleScript interface; fail closed on TCC denial, malformed data
-        # or a name pointing at a different app. No UI scripting or deletion.
-        script = ('tell application "System Events"\n'
-                  'set pairs to {}\nrepeat with x in login items\n'
-                  'set end of pairs to (name of x) & tab & (path of x)\nend repeat\n'
-                  'set AppleScript\'s text item delimiters to linefeed\n'
-                  'return pairs as text\nend tell')
-        raw = self.read(['/usr/bin/osascript', '-e', script]).decode().strip()
+    @contract('login_item')
+    def login_items(self, names, apps, orphan_names=()):
+        from homebrew_automation import AutomationUnavailable, login_items
+        try:
+            pairs = login_items()
+        except AutomationUnavailable as exc:
+            raise Unsafe('cask_authorization_required' if exc.authorization else OBSERVATION,
+                         {'primitive': 'login_item', 'condition': exc.condition}) from None
         seen = {}
-        for line in raw.splitlines():
-            fields = line.split('\t')
-            require(len(fields) == 2 and fields[0] not in seen, OBSERVATION)
-            seen[fields[0]] = fields[1]
+        for name, target in pairs:
+            if name not in names:
+                continue
+            require(clean(name) and name not in seen and (target is None or clean(target)),
+                    OBSERVATION, 'identity_ambiguous')
+            seen[name] = target
         for name in names:
-            require(any(Path(app['path']).stem == name for app in apps), CONFLICT)
-            require(name not in seen or seen[name] in {p['path'] for p in apps}, CONFLICT)
+            expected = [Path(app['path']) for app in apps if Path(app['path']).stem == name]
+            require(len(expected) == 1, CONFLICT, 'ownership_ambiguous')
+            if name not in seen:
+                continue
+            target = seen[name]
+            if target is None:
+                require(name in orphan_names and not os.path.lexists(expected[0]), CONFLICT, 'ownership_unproven')
+            else:
+                require(target == str(expected[0]), CONFLICT, 'foreign_target')
 
     def platform(self):
         return platform.machine(), self.read(['/usr/bin/sw_vers', '-productVersion']).decode().strip()
@@ -318,6 +485,7 @@ def package_selectors(artifacts):
     return sorted(set(selectors))
 
 
+@contract('metadata')
 def predicates(row, prefix, observer):
     payloads, packages = [], []
     home = Path.home()
@@ -467,6 +635,7 @@ def bundle_matches(target, app=True, expected_id=None):
     return binary.is_file() and os.access(binary, os.X_OK)
 
 
+@contract('payload')
 def observe(payloads, row, prefix):
     require(bool(payloads))
     missing, owned = [], []
@@ -521,6 +690,7 @@ def observe(payloads, row, prefix):
     return missing, owned
 
 
+@contract('historical_metadata')
 def installed_contract(row, prefix):
     """Prefer Macseed's own observation record. Legacy receipt import is inert,
     structurally checked compatibility evidence, not a Ruby API/version rule.
@@ -549,17 +719,19 @@ def installed_contract(row, prefix):
     return artifacts, appdir
 
 
-def qualify_cleanup(directives, payloads, packages, observer):
+@contract('lifecycle')
+def qualify_cleanup(directives, payloads, packages, observer, orphan=None):
     privileged = False
     for key, entries in directives.items():
         if key == 'quit':
             continue
         if key == 'launchctl':
             try:
-                privileged |= observer.launchctl(entries, payloads)
+                privileged |= observer.launchctl(entries, payloads, (orphan or {}).get("launchctl", ()),
+                                                  (orphan or {}).get("xpc_launchctl", ()))
             except Unsafe as exc:
                 if exc.condition == OBSERVATION:
-                    raise Unsafe('cask_launchctl_observation_failed') from None
+                    raise Unsafe('cask_launchctl_observation_failed', exc.diagnostic) from None
                 raise
         elif key == 'pkgutil':
             require(set(entries) == {p['id'] for p in packages})
@@ -567,7 +739,7 @@ def qualify_cleanup(directives, payloads, packages, observer):
             observer.package_ownership(packages)
             privileged = True
         elif key == 'login_item':
-            observer.login_items(entries, [p for p in payloads if p['kind'] == 'app'])
+            observer.login_items(entries, [p for p in payloads if p['kind'] == 'app'], (orphan or {}).get("login_item", ()))
         else:
             for entry in entries:
                 target = path(entry)
@@ -594,12 +766,17 @@ def version_tuple(value):
     return tuple(int(v) for v in value.split('.')) + (0,) * (4 - len(value.split('.')))
 
 
-def requirements(row, observer):
+@contract('requirements')
+def requirements(row, observer, operation=None):
     require(row.get('tap') == 'homebrew/cask' and row.get('disabled') is False)
     require(not row.get('container') and not row.get('rename'))
-    # Free-form caveats cannot reliably distinguish activation/consent requirements
-    # from prose. Observe payload independently, but don't silently satisfy them.
-    require(not row.get('caveats') and not row.get('caveats_rosetta'))
+    # Public Homebrew caveats are installation information, not executable
+    # cleanup directives. Native package installation is distinct from activation.
+    # Keep Repair conservative and keep Rosetta requirements independently blocked.
+    caveats = row.get('caveats')
+    native_install = operation == 'install' and any(kind == 'pkg' for kind, _ in artifact_rows(row['artifacts']))
+    require(not caveats or (native_install and isinstance(caveats, str) and len(caveats) <= 16384))
+    require(not row.get('caveats_rosetta'))
     checksum = row.get('sha256')
     require(isinstance(checksum, str) and (re.fullmatch(r'[0-9a-f]{64}', checksum) or checksum == 'no_check'))
     url = urlsplit(row.get('url', ''))
@@ -631,12 +808,23 @@ def requirements(row, observer):
     observer.conflicts(row.get('conflicts_with'))
 
 
+@contract('replacement')
 def operation_contract(row, payloads, packages, prefix, observer, operation):
-    requirements(row, observer)
+    requirements(row, observer, operation)
     generated = [p for p in payloads if p.get('artifact') == GENERATED_COMPLETIONS]
     if generated:
         require(row['sha256'] != 'no_check' and Path('/usr/bin/sandbox-exec').is_file())
-    current = lifecycle(row['artifacts'])
+    current = lifecycle(row['artifacts']) if operation == 'reinstall' else {}
+    if operation == 'install' and packages:
+        # Native Install never acts as receipt adoption or implicit cleanup.
+        require(not any(record['present'] for record in packages), CONFLICT)
+        for kind, artifact in artifact_rows(row['artifacts']):
+            if kind != 'uninstall':
+                continue
+            for directive in artifact[kind]:
+                require(isinstance(directive, dict))
+                for entry in values(directive.get('delete', [])):
+                    require(not os.path.lexists(path(entry)), CONFLICT)
     privileged = any(kind == 'pkg' or kind == 'keyboard_layout' for kind, _ in artifact_rows(row['artifacts']))
     require(row['sha256'] != 'no_check' or not packages)
     for p in payloads:
@@ -690,8 +878,12 @@ def operation_contract(row, payloads, packages, prefix, observer, operation):
         # Remaining relocated payloads may be foreign replacements; only owned
         # links/package files can coexist with damage without stronger provenance.
         require(all(not os.path.lexists(p['path']) for p in payloads if p['kind'] in ('app', 'suite', 'bundle') and 'package' not in p), CONFLICT)
-        privileged |= qualify_cleanup(old, payloads, packages, observer)
-        privileged |= qualify_cleanup(current, payloads, packages, observer)
+        orphan = {key: old.get(key, []) for key in ('launchctl', 'login_item')}
+        # New current declarations need direct native XPC identity/path evidence;
+        # they do not inherit historical declaration authority.
+        orphan['xpc_launchctl'] = current.get('launchctl', [])
+        privileged |= qualify_cleanup(old, payloads, packages, observer, orphan)
+        privileged |= qualify_cleanup(current, payloads, packages, observer, orphan)
     return {'profile': 'authorized_native_lifecycle' if privileged else 'unprivileged',
             'integrity': 'homebrew_checksum' if row['sha256'] != 'no_check' else 'https_source_trust',
             'payloads': payloads, 'cleanup': current if operation == 'reinstall' else {},
@@ -754,6 +946,10 @@ def classify(row, prefix, observer=None, operation=None, observation_only=False,
                         predicate['bundle_id'] = identifier
                     if predicate['kind'] == 'suite' and predicate['path'] in record.get('suite_members', {}):
                         predicate['members'] = record['suite_members'][predicate['path']]
+        if packages and not row.get('installed'):
+            require(not any(record['present'] for record in packages), CONFLICT)
+        if packages and not row.get('installed') and not any('path' in p for p in payloads):
+            payloads.extend(observer.package_install_payloads(row, [record['id'] for record in packages]))
         missing, _ = observe(payloads, row, prefix)
         registered = bool(row.get('installed'))
         if registered and not missing and not operation:
@@ -773,7 +969,8 @@ def classify(row, prefix, observer=None, operation=None, observation_only=False,
         dependent = []
         for token in values((row.get('depends_on') or {}).get('cask', [])):
             child = classify(observer.cask(token), prefix, observer, visited=(*visited, row['token']))
-            require(child['state'] in ('satisfied', 'installable', 'repairable'), child.get('reason') or UNSUPPORTED)
+            if child['state'] not in ('satisfied', 'installable', 'repairable'):
+                raise Unsafe(child.get('reason') or UNSUPPORTED, child.get('diagnostic'))
             # Homebrew install does not repair a registered-but-broken dependency.
             require(child['state'] != 'repairable', CONFLICT)
             if child.get('authorization_required'):
@@ -790,7 +987,10 @@ def classify(row, prefix, observer=None, operation=None, observation_only=False,
             'homebrew_metadata_incompatible', 'homebrew_platform_incompatible') else (
             'observation_error', 'observation_failure') if exc.condition in (OBSERVATION, 'cask_launchctl_observation_failed') else (
             'unsupported', 'item_unsupported')
-        return result('homebrew', state, compatibility, exc.condition, selected_operation)
+        value = result('homebrew', state, compatibility, exc.condition, selected_operation)
+        if exc.diagnostic:
+            value['diagnostic'] = exc.diagnostic
+        return value
     except (OSError, ValueError, TypeError, KeyError, IndexError, AttributeError, subprocess.SubprocessError):
         return result('homebrew', 'observation_error', 'observation_failure', OBSERVATION, selected_operation)
 

@@ -171,6 +171,71 @@ class RestorePrepareTests(unittest.TestCase):
         self.assertFalse((self.root / 'boundary').exists())
         self.assertFalse((self.home / 'Library/Application Support/Macseed/Homebrew/active.json').exists())
 
+    def test_ssh_selection_rebinds_prepared_scope_and_preserves_repairs(self):
+        self.repair_cask_fixture()
+        blueprint = self.stage / 'blueprint.conf'
+        blueprint.write_text(blueprint.read_text().replace('ssh-configuration="false"', 'ssh-configuration="true"'))
+        bundle.write_file(self.stage / 'generated/ssh/config.snapshot',
+                          b'# toolkit-ssh-snapshot: 1\n# status: ready\n# excluded-profiles: 0\n\nHost captured\n    HostName captured.invalid\n    User git\n')
+        directory = self.home / '.ssh'
+        directory.mkdir(mode=0o700)
+        target = directory / 'config'
+        original = b'Host existing\n HostName preserved.invalid\n'
+        target.write_bytes(original); target.chmod(0o600)
+        self.pack()
+        selected = {'categories': ['homebrew-casks', 'ssh-configuration'], 'items': {}}
+        excluded = {'categories': ['homebrew-casks'], 'items': {}}
+        first = self.plan_result(selection=selected)
+        self.assertFalse(first['readiness']['ready'])
+        self.assertTrue(any(c['code'] == 'ssh_configuration_not_ready' for c in first['readiness']['conditions']))
+        fresh = self.plan_result(selection=excluded)
+        self.assertTrue(fresh['readiness']['ready'], fresh)
+        self.assertNotEqual(first['prepared_plan_id'], fresh['prepared_plan_id'])
+        self.assertNotIn('ssh-configuration', fresh['selection']['categories'])
+        self.assertFalse(any(c['domain'] == 'ssh-configuration' for c in fresh['readiness']['conditions']))
+        repair = next(r for r in fresh['plan'] if r['domain'] == 'homebrew-casks')
+        self.assertEqual((repair['action'], repair['disposition']), ('reinstall', 'planned'))
+        rejected, events = self.execute(first['prepared_plan_id'], selection=excluded)
+        self.assertEqual(rejected.returncode, 2, events)
+        self.assertEqual(events[-1]['data']['code'], 'stale_plan')
+        self.assertFalse(events[-1]['data']['publication_occurred'])
+        self.assertFalse(events[-1]['data']['target_mutation_may_have_started'])
+        again = self.plan_result(selection=selected)
+        self.assertFalse(again['readiness']['ready'])
+        self.assertTrue(any(c['code'] == 'ssh_configuration_not_ready' for c in again['readiness']['conditions']))
+        empty = self.plan_result(selection={'categories': [], 'items': {}})
+        self.assertFalse(empty['has_executable_changes'])
+        self.assertFalse(empty['has_planned_changes'])
+        self.assertEqual(empty['plan'], [])
+        self.assertEqual(target.read_bytes(), original)
+        self.assertFalse(Path(self.environment['TEST_CASK_LOG']).exists())
+        self.assertFalse((self.root / 'boundary').exists())
+
+    def test_ssh_exclusion_preserves_item_scoped_unsupported_casks(self):
+        self.mixed_unsupported_casks()
+        blueprint = self.stage / 'blueprint.conf'
+        blueprint.write_text(blueprint.read_text().replace('ssh-configuration="false"', 'ssh-configuration="true"'))
+        bundle.write_file(self.stage / 'generated/ssh/config.snapshot',
+                          b'# toolkit-ssh-snapshot: 1\n# status: ready\n# excluded-profiles: 0\n\nHost captured\n    HostName captured.invalid\n    User git\n')
+        directory = self.home / '.ssh'
+        directory.mkdir(mode=0o700)
+        target = directory / 'config'
+        target.write_bytes(b'Host existing\n HostName preserved.invalid\n'); target.chmod(0o600)
+        self.pack()
+        selected = self.plan_result(selection={'categories': ['homebrew-casks', 'ssh-configuration'], 'items': {}})
+        self.assertFalse(selected['readiness']['ready'])
+        fresh = self.plan_result(selection={'categories': ['homebrew-casks'], 'items': {}})
+        self.assertTrue(fresh['readiness']['ready'])
+        self.assertTrue(fresh['has_executable_changes'])
+        rows = {r['item_id']: r for r in fresh['plan']}
+        for token in ('item-a', 'item-c'):
+            self.assertEqual(rows[token]['disposition'], 'planned')
+        for token in ('item-b', 'dependent'):
+            self.assertEqual(rows[token]['reason'], 'cask_execution_requirements_unsupported')
+        self.assertEqual(len([c for c in fresh['readiness']['conditions'] if c.get('scope') == 'item']), 2)
+        self.assertFalse(any(c['domain'] == 'ssh-configuration' for c in fresh['readiness']['conditions']))
+        self.assertFalse(Path(self.environment['TEST_CASK_LOG']).exists())
+
     def test_selected_prerequisite_matching_partial_absent_and_unselected(self):
         target = self.ssh_prerequisite_fixture()
         target.write_bytes(self.ssh_payload)

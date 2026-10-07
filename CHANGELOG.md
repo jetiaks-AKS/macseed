@@ -11,6 +11,9 @@ The format is based on the principles of **Keep a Changelog**.
 
 ### Added
 
+* Clean native package Install with checksum-bound root-app payload inspection,
+  separate installer authorization and conservative Repair qualification.
+
 * External Tool Compatibility Layer established with Homebrew as the first
   domain-owned provider; public capabilities drive compatibility and observed
   versions remain diagnostic provenance.
@@ -46,6 +49,11 @@ The format is based on the principles of **Keep a Changelog**.
 * Persistent native Appearance preference: System, Light and Dark.
 
 ### Changed
+
+* Homebrew Repair qualifies bounded installed-lifecycle launch-service/login-item
+  orphans generically, preserves structured ownership diagnostics, and checks
+  Automation without prompting during Preview. Desktop offers explicit consent
+  and restores compact Preview scope cards.
 
 * Capture, Restore and Status share initial action cards with functional colors;
   Macseed uses a working three-color Orbit app icon.

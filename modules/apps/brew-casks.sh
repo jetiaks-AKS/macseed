@@ -69,7 +69,7 @@ preview_brew_casks() {
     fi
 
     local cask
-    local inspection_result
+    local inspection_result observation_status=0
 
     while IFS= read -r cask || [[ -n "$cask" ]]; do
         [[ -z "$cask" ]] && continue
@@ -87,11 +87,11 @@ preview_brew_casks() {
                     preview_record homebrew-casks "$cask" reinstall planned none "$(jq -c '{qualification_id, authorization_required}' <<< "$HOMEBREW_ADAPTER_RESULT")"
                     preview_action "Would repair Homebrew cask: $cask" ;;
                 unsupported)
-                    preview_record homebrew-casks "$cask" "${HOMEBREW_ADAPTER_OPERATION:-install}" blocked "$HOMEBREW_ADAPTER_CONDITION" ;;
+                    preview_record homebrew-casks "$cask" "${HOMEBREW_ADAPTER_OPERATION:-install}" blocked "$HOMEBREW_ADAPTER_CONDITION" "$(jq -c 'if .diagnostic then {diagnostic} else {} end' <<< "$HOMEBREW_ADAPTER_RESULT")" ;;
                 *)
-                    preview_record homebrew-casks "$cask" install blocked "$HOMEBREW_ADAPTER_CONDITION"
+                    preview_record homebrew-casks "$cask" install blocked "$HOMEBREW_ADAPTER_CONDITION" "$(jq -c 'if .diagnostic then {diagnostic} else {} end' <<< "$HOMEBREW_ADAPTER_RESULT")"
                     error "Failed to qualify Homebrew cask: $cask"
-                    return 2 ;;
+                    observation_status=2 ;;
             esac
             continue
         fi
@@ -118,7 +118,7 @@ preview_brew_casks() {
         fi
     done <<< "$casks"
 
-    return 0
+    return "$observation_status"
 
 }
 

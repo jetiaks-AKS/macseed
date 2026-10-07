@@ -175,6 +175,8 @@ struct OperationSummaryHeader: View {
 struct TaskDomainList: View {
     let domains: [TaskDomainPresentation]
     var stateTitles: [TaskRowState: String] = [:]
+    var selectionStates: [String: SelectionState] = [:]
+    var selectDomain: ((String, Bool) -> Void)? = nil
     @TaskViewState<Set<String>> private var expanded = []
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -187,21 +189,31 @@ struct TaskDomainList: View {
             }.padding(.bottom, 12)
             VStack(spacing: 0) {
                 ForEach(domains) { domain in
-                    DisclosureGroup(isExpanded: Binding(get: { expanded.contains(domain.id) }, set: { value in
-                        if value { expanded.insert(domain.id) } else { expanded.remove(domain.id) }
-                    })) {
-                        TaskDomainItems(domain: domain, stateTitles: stateTitles)
-                    } label: {
-                        ViewThatFits(in: .horizontal) {
-                            HStack(spacing: 12) { domainTitle(domain); Spacer(); domainStatus(domain) }
-                            VStack(alignment: .leading, spacing: 8) { domainTitle(domain); domainStatus(domain) }
-                        }.padding(.vertical, 6)
-                    }.disclosureGroupStyle(TaskDisclosureStyle()).padding(.horizontal, 16)
+                    if let selectDomain, let selection = selectionStates[domain.id] {
+                        HStack(alignment: .top, spacing: 0) {
+                            NativeSelectionCheckbox("", state: selection, accessibilityTitle: "Select " + domain.title) {
+                                selectDomain(domain.id, $0)
+                            }.frame(width: 28, height: 48).padding(.leading, 12)
+                            domainRow(domain)
+                        }
+                    } else { domainRow(domain) }
                     if domain.id != domains.last?.id { Divider() }
                 }
             }.background(.background, in: RoundedRectangle(cornerRadius: 8))
                 .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.quaternary))
         }
+    }
+    private func domainRow(_ domain: TaskDomainPresentation) -> some View {
+        DisclosureGroup(isExpanded: Binding(get: { expanded.contains(domain.id) }, set: { value in
+            if value { expanded.insert(domain.id) } else { expanded.remove(domain.id) }
+        })) {
+            TaskDomainItems(domain: domain, stateTitles: stateTitles)
+        } label: {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 12) { domainTitle(domain); Spacer(); domainStatus(domain) }
+                VStack(alignment: .leading, spacing: 8) { domainTitle(domain); domainStatus(domain) }
+            }.padding(.vertical, 6)
+        }.disclosureGroupStyle(TaskDisclosureStyle()).padding(.horizontal, 16)
     }
     private func domainSummary(_ domain: TaskDomainPresentation) -> String {
         guard !stateTitles.isEmpty else { return domain.summary }
@@ -237,6 +249,9 @@ VStack(spacing: 0) {
                                         if item.state != .working, let reason = item.item.reason {
                                             DisclosureGroup("Technical Details") {
                                                 Text(reason).font(.caption.monospaced()).textSelection(.enabled)
+                                                if let diagnostic = item.diagnostic {
+                                                    Text(diagnostic.technicalDescription).font(.caption.monospaced()).textSelection(.enabled)
+                                                }
                                             }.disclosureGroupStyle(TaskDisclosureStyle(minimumHeight: 22)).font(.caption)
                                         }
                                     }

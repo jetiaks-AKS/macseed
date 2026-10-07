@@ -229,14 +229,22 @@ Summary counts come from Core plan dispositions.
 
 3. `restore_prepare` supplies both prerequisites and Preview in the same Review
    area, alongside category selection, already-matching summary and changes.
-   Selection and Bundle changes immediately invalidate the displayed preparation.
+   Bundle changes invalidate the displayed preparation; Preview selection edits
+   retain its evidence as stale until explicit Refresh Preview.
    Cancelled, failed or interrupted refreshes clear the old Preview. Back retains
    selection and requires a fresh Prepare.
 4. Inline prerequisites show selected-work conditions, **How to Resolve /
    Instructions** and **Check Again**; no dedicated prerequisite page by default.
+   Ready prerequisites collapse to one **Prerequisites · Ready** row. Actionable
+   findings stay visible; a specific structured cause replaces a duplicate aggregate
+   inspection consequence in presentation, while Core evidence remains intact.
+   For login-item Automation, user-initiated Check Again checks permission without
+   prompting, requests consent only if undetermined, and continues fresh Prepare
+   after access becomes available. Denied/restricted access requires System Settings
+   or administrator recovery; ordinary Preview never requests permission.
    Recheck calls fresh Prepare with the same current inputs,
-   then shows the new Preview for confirmation. Core reports item-local skips and
-   the first operation-wide blocker per domain; resolving one may reveal another.
+   then shows the new Preview for confirmation. Core reports all cask item conditions
+   and the first operation-wide blocker in other domains; resolving one may reveal another.
    Unsupported independent casks retain Needs Attention while Rebuild is enabled
    for remaining executable work. Existing no-action conflicts also remain
    visible without requesting their mutation; their consumer semantics are
@@ -274,7 +282,15 @@ does not replace all real-process or packaged-runtime qualification.
 6. **Rebuild** confirms the selected scope and fresh plan. Disable it for unresolved
    operation-wide environmental blockers or a missing execution bridge.
    Item-local unsupported casks do not block independent executable work; a plan
-   with no executable changes has no Rebuild. `pending_unlock` is an expected
+   with no executable changes has no Rebuild. Preview domain checkboxes change
+   the local draft selection without requesting Core. A draft differing from the
+   prepared selection disables Rebuild and labels the retained Preview as stale.
+   Refresh Preview runs one Prepare with the final draft; counts and readiness
+   continue to describe the prepared scope until that refresh completes.
+   Excluded domains remain available for reselection; excluding selected SSH removes
+   its prerequisite without weakening SSH checks when selected. Back, Refresh
+   Preview and Rebuild stay in a fixed footer outside the scrolling task content.
+   `pending_unlock` is an expected
    secure step, not proof of a conflict.
    A ready plan still permits later network, account or tool failures. Execute
    revalidates the prepared ID; stale plans return to Prepare/Preview/confirmation.

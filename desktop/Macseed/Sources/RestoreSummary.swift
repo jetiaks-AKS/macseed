@@ -67,7 +67,21 @@ struct RestorePrerequisiteSummaryPresentation {
     let conditions: [CoreRestorePreparation.Condition]
     let ready: Bool
     var blockers: [CoreRestorePreparation.Condition] {
-        conditions.filter { ["external_action_required", "unsupported"].contains($0.status) && !$0.isItemLocal }
+        let actionable = conditions.filter { ["external_action_required", "unsupported"].contains($0.status) && !$0.isItemLocal }
+        var seen = Set<String>()
+        return actionable.filter { condition in
+            // An aggregate inspection consequence is not another root cause.
+            // Keep every supplied condition unchanged for support/Core evidence.
+            if condition.code == "preview_observation_failed" && actionable.contains(where: {
+                $0.domain == condition.domain && $0.code != condition.code && $0.diagnostic?.valid == true
+                    && ["authorization_required", "authorization_denied", "application_unavailable",
+                        "observation_failed", "malformed_observation", "observation_limit", "identity_ambiguous"]
+                        .contains($0.diagnostic?.condition ?? "")
+            }) { return false }
+            let identity = condition.domain + ":" + String(condition.selectedItemIndex ?? 0) + ":"
+                + (condition.diagnostic.map { $0.primitive + ":" + $0.condition } ?? condition.code)
+            return seen.insert(identity).inserted
+        }
     }
     var affectedDomains: [String] {
         blockers.reduce(into: []) { if !$0.contains($1.domain) { $0.append($1.domain) } }
@@ -75,9 +89,10 @@ struct RestorePrerequisiteSummaryPresentation {
     static func status(_ conditions: [CoreRestorePreparation.Condition]) -> String {
         if conditions.contains(where: { ["authorization_required", "cask_authorization_required"].contains($0.code) }) { return "Authorization Required" }
         if conditions.contains(where: { $0.status == "unsupported" }) { return "Unsupported" }
-        return "Prerequisite Required"
+        return "Action Required"
     }
-    var title: String { ready && blockers.isEmpty ? "Ready" : "Needs Attention" }
+    var isTerminalReady: Bool { ready && blockers.isEmpty }
+    var title: String { isTerminalReady ? "Ready" : "Needs Attention" }
     var detailsInitiallyExpanded: Bool { false }
 }
 
@@ -111,28 +126,20 @@ struct RestoreIssueSummaryView: View {
 struct RestorePrerequisiteSummaryView: View {
     let summary: RestorePrerequisiteSummaryPresentation
     let areas: [CoreRestoreInspection.Area]
-    @RestoreSummaryState<Bool> private var expanded = false
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            if summary.title == "Ready" {
-                DisclosureGroup(isExpanded: $expanded) {
-                    if expanded {
-                        ForEach(Array(summary.conditions.filter { !$0.isItemLocal }.enumerated()), id: \.offset) { _, condition in
-                            RestorePrerequisiteView(condition: condition, label: label(condition), technicalTitle: "Technical Details")
-                        }
-                    }
-                } label: {
-                    HStack {
-                        Text("Prerequisites").font(.headline)
-                        Spacer()
-                        Text("Ready").foregroundStyle(RestoreStatusTone.success.color)
-                            .frame(width: TaskRowLayout.statusWidth, alignment: .leading)
-                    }
-                }.disclosureGroupStyle(TaskDisclosureStyle())
+            if summary.isTerminalReady {
+                HStack {
+                    Text("Prerequisites").font(.headline)
+                    Spacer()
+                    Label("Ready", systemImage: "checkmark")
+                        .foregroundStyle(RestoreStatusTone.success.color)
+                        .frame(width: TaskRowLayout.statusWidth, alignment: .leading)
+                }
                     .accessibilityLabel("Prerequisites")
-                    .accessibilityValue("Ready, " + (expanded ? "expanded" : "collapsed"))
+                    .accessibilityValue("Ready")
             } else {
-                Text("Prerequisites").font(.headline)
+                Text("Prerequisites — \(summary.blockers.count) \(summary.blockers.count == 1 ? "action" : "actions") required").font(.headline)
                 ForEach(summary.affectedDomains, id: \.self) { domain in
                     RestoreBlockingPrerequisiteAreaView(
                         title: areas.first { $0.id == domain }?.label ?? "Selected work",
@@ -142,15 +149,12 @@ struct RestorePrerequisiteSummaryView: View {
             }
         }.padding(.horizontal, 16)
     }
-    private func label(_ condition: CoreRestorePreparation.Condition) -> String {
-        areas.first { $0.id == condition.domain }?.label ?? "Selected work"
-    }
 }
 
 private struct RestoreBlockingPrerequisiteAreaView: View {
     let title: String
     let conditions: [CoreRestorePreparation.Condition]
-    @RestoreSummaryState<Bool> private var expanded = false
+    @RestoreSummaryState<Bool> private var expanded = true
     var body: some View {
         DisclosureGroup(isExpanded: $expanded) {
             if expanded {

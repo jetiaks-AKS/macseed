@@ -2,6 +2,8 @@
 """Focused generic Cask contracts. No real Homebrew lifecycle or authorization."""
 import copy
 import importlib.util
+import io
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -33,14 +35,17 @@ class Observer(cask.PublicObserver):
     def packages(self, selectors):
         return copy.deepcopy(self.receipts or [{'id': s, 'present': False, 'paths': []} for s in selectors])
 
+    def package_install_payloads(self, row, selectors):
+        return copy.deepcopy(self.package_payloads)
+
     def package_ownership(self, packages):
         cask.require(not self.shared, cask.CONFLICT)
 
-    def launchctl(self, labels, payloads):
+    def launchctl(self, labels, payloads, orphan_labels=(), xpc_labels=()):
         cask.require(not self.jobs, cask.CONFLICT)
         return False
 
-    def login_items(self, names, apps):
+    def login_items(self, names, apps, orphan_names=()):
         cask.require(all(any(Path(app['path']).stem == name for app in apps) for name in names), cask.CONFLICT)
 
     def platform(self):
@@ -73,6 +78,7 @@ class CapabilityTests(unittest.TestCase):
             self.addCleanup(signal.signal, sig, signal.getsignal(sig))
         self.observer = Observer()
         self.app = self.home / 'Applications/Example.app'
+        self.observer.package_payloads = [{'kind': 'app', 'path': str(self.app), 'package': 'org.example.Package'}]
         self.row = {'token': 'generic-example', 'installed': None, 'tap': 'homebrew/cask',
                     'disabled': False, 'version': '2.0', 'sha256': 'a' * 64,
                     'url': 'https://example.org/download.dmg', 'depends_on': {'macos': {'>=': ['12']}},
@@ -304,6 +310,79 @@ class CapabilityTests(unittest.TestCase):
                                   'version': '1.0', 'paths': [str(self.app / 'Contents/Info.plist'),
                                                             str(self.app / 'Contents/MacOS/Example')]}]
 
+    def test_public_native_package_inspection_binds_checksum_identity_and_target(self):
+        row = copy.deepcopy(self.row)
+        content = b'inert fixture package'
+        row['sha256'] = hashlib.sha256(content).hexdigest()
+        observer = cask.PublicObserver()
+        commands = []
+        def expand(arguments):
+            commands.append(arguments)
+            self.assertEqual(arguments[:2], ['/usr/sbin/pkgutil', '--expand-full'])
+            component = Path(arguments[-1]) / 'component.pkg'
+            component.mkdir(parents=True)
+            (component / 'PackageInfo').write_text('<pkg-info identifier="org.example.Package" install-location="/Applications/Example.app"/>')
+            self.application(component / 'Payload')
+            return b''
+        def response(*args, **kwargs):
+            value = io.BytesIO(content)
+            value.geturl = lambda: row['url']
+            return value
+        with patch('homebrew_cask.urllib.request.urlopen', side_effect=response), patch.object(observer, 'read', side_effect=expand):
+            payload = observer.package_install_payloads(row, ['org.example.Package'])
+            self.assertEqual(payload, [{'kind': 'app', 'path': '/Applications/Example.app',
+                'package': 'org.example.Package', 'bundle_id': 'org.example.Application'}])
+            self.assertFalse(Path(commands[-1][-1]).exists())
+            with self.assertRaises(cask.Unsafe):
+                observer.package_install_payloads(row, ['org.example.Foreign'])
+            row['sha256'] = 'b' * 64
+            previous = len(commands)
+            with self.assertRaises(cask.Unsafe):
+                observer.package_install_payloads(row, ['org.example.Package'])
+            self.assertEqual(len(commands), previous)
+
+    def test_native_package_caveats_clean_install_and_repair_are_distinct(self):
+        self.package()
+        self.observer.receipts = []
+        self.row['caveats'] = 'Activation may require user consent. See vendor license before installation.'
+        value = self.classify()
+        self.assertEqual(value['state'], 'installable', value)
+        self.assertTrue(value['authorization_required'])
+        self.assertEqual(value['execution']['requirements']['caveats'], self.row['caveats'])
+        self.historical()
+        self.assertEqual(self.classify()['state'], 'unsupported')
+        self.assertEqual(self.classify()['diagnostic']['primitive'], 'requirements')
+
+    def test_native_package_clean_install_rejects_receipts_and_delete_residuals(self):
+        self.package()
+        self.assertEqual(self.classify()['reason'], cask.CONFLICT)
+        self.observer.receipts = []
+        target = self.home / 'owned-wrapper'
+        self.row['artifacts'][1]['uninstall'][0]['delete'] = str(target)
+        target.write_text('residual state')
+        self.assertEqual(self.classify()['reason'], cask.CONFLICT)
+        target.unlink()
+        self.assertEqual(self.classify()['state'], 'installable')
+
+    def test_absent_package_install_does_not_require_repair_cleanup_capability(self):
+        self.package()
+        self.observer.receipts = []
+        self.row['artifacts'][1]['uninstall'][0]['script'] = '/opaque/cleanup'
+        self.assertEqual(self.classify()['state'], 'installable')
+        self.historical()
+        self.assertEqual(self.classify()['state'], 'unsupported')
+
+    def test_native_package_verification_cannot_satisfy_receipt_only(self):
+        self.package()
+        self.row['installed'] = '2.0'
+        self.observer.receipts[0]['paths'] = []
+        self.assertNotEqual(self.classify(observation_only=True)['state'], 'satisfied')
+        self.observer.receipts = []
+        self.assertNotEqual(self.classify(observation_only=True)['state'], 'satisfied')
+        self.row['installed'] = None
+        self.row['artifacts'].append({'installer': [{'script': {'executable': 'opaque.sh'}}]})
+        self.assertEqual(self.classify()['state'], 'unsupported')
+
     def test_package_receipt_plus_real_payload_and_repair(self):
         self.package()
         self.historical()
@@ -396,14 +475,250 @@ class CapabilityTests(unittest.TestCase):
         def read(arguments):
             if arguments[-1].endswith('/' + label):
                 return ('program = ' + program + '\n').encode()
-            if arguments[-1] in ('gui/' + str(os.getuid()), 'list'):
-                return ('services = {' + label + '}\n').encode()
-            return b'services = {}\n'
-        with patch.object(observer, 'read', side_effect=read):
+            if arguments[-1] == 'list':
+                return ('PID Status Label\n- 0 ' + label + '\n').encode()
+            if arguments[-1] == 'gui/' + str(os.getuid()):
+                return ('services = {\n0 - ' + label + '\n}\n').encode()
+            return b'services = {\n}\n'
+        with patch.object(observer, 'launch_roots', return_value=(directory,)), patch.object(observer, 'read', side_effect=read):
             self.assertFalse(observer.launchctl([label], [{'kind': 'app', 'path': str(self.app)}]))
-        with patch.object(observer, 'read', side_effect=lambda args: b'program = /foreign/service\n' if args[-1].endswith('/' + label) else read(args)):
+        with patch.object(observer, 'launch_roots', return_value=(directory,)), patch.object(observer, 'read', side_effect=lambda args: b'program = /foreign/service\n' if args[-1].endswith('/' + label) else read(args)):
             with self.assertRaises(cask.Unsafe):
                 observer.launchctl([label], [{'kind': 'app', 'path': str(self.app)}])
+
+    def public_jobs(self, programs=None, domains=('user',), state='waiting', extra=''):
+        label = 'org.example.Helper'
+        observer = cask.PublicObserver()
+        program = str(self.app / 'Contents/XPCServices/Helper.xpc/Contents/MacOS/Helper')
+        programs = programs or [program]
+        def read(arguments):
+            target = arguments[-1]
+            if target == 'list':
+                return b'PID Status Label\n'
+            if target.endswith('/' + label):
+                return ('\n'.join('program = ' + p for p in programs) + '\nstate = ' + state + '\n' + extra).encode()
+            present = any(target == domain + '/' + str(os.getuid()) for domain in domains)
+            return ('services = {\n' + ('0 - ' + label + '\n' if present else '') + '}\n').encode()
+        directory = self.home / 'Library/LaunchAgents'
+        directory.mkdir(parents=True, exist_ok=True)
+        return observer, label, program, directory, read
+
+    def test_launchctl_missing_and_declared_owned_orphan(self):
+        observer, label, program, directory, read = self.public_jobs()
+        payload = [{'kind': 'app', 'path': str(self.app)}]
+        with patch.object(observer, 'launch_roots', return_value=(directory,)), patch.object(observer, 'read', side_effect=lambda args: b'PID Status Label\n' if args[-1] == 'list' else b'services = {\n}\n'):
+            self.assertFalse(observer.launchctl([label], payload))
+        with patch.object(observer, 'launch_roots', return_value=(directory,)), patch.object(observer, 'read', side_effect=read):
+            self.assertFalse(observer.launchctl([label], payload, [label]))
+            with self.assertRaises(cask.Unsafe) as error:
+                observer.launchctl([label], payload)
+            self.assertEqual(error.exception.diagnostic['condition'], 'ownership_unproven')
+        # The actual old/current adapter contract qualifies the same primitive;
+        # it is not a test-only orphan override or version allowlist.
+        self.row['artifacts'].append({'uninstall': [{'launchctl': label, 'quit': 'org.example.Application'}]})
+        self.historical()
+        self.row['version'] = '99.5'
+        with patch.object(observer, 'platform', return_value=('arm64', '15.6.1')), patch.object(observer, 'conflicts'), \
+                patch.object(observer, 'launch_roots', return_value=(directory,)), patch.object(observer, 'read', side_effect=read):
+            value = cask.classify(self.row, self.prefix, observer)
+            self.assertEqual(value['state'], 'repairable', value)
+            self.assertEqual(value['execution']['historical_cleanup']['launchctl'], [label])
+            self.assertTrue(value['qualification_id'])
+
+    def test_launchctl_foreign_conflicting_plist_and_live_orphans(self):
+        for program, state, extra, detail in [
+                ('/foreign/Helper', 'waiting', '', 'foreign_target'),
+                (str(self.app / 'Contents/XPCServices/Helper.xpc/Contents/MacOS/Helper'), 'running', 'pid = 123\n', 'live_ownership_unproven')]:
+            observer, label, _, directory, read = self.public_jobs([program], state=state, extra=extra)
+            with patch.object(observer, 'launch_roots', return_value=(directory,)), patch.object(observer, 'read', side_effect=read):
+                with self.assertRaises(cask.Unsafe) as error:
+                    observer.launchctl([label], [{'kind': 'app', 'path': str(self.app)}], [label])
+                self.assertEqual(error.exception.condition, cask.CONFLICT)
+                self.assertEqual(error.exception.diagnostic, {'primitive': 'launchctl', 'condition': detail})
+        observer, label, _, directory, read = self.public_jobs()
+        (directory / 'different-filename.plist').write_bytes(plistlib.dumps({'Label': label, 'Program': '/foreign/Helper'}))
+        with patch.object(observer, 'launch_roots', return_value=(directory,)), patch.object(observer, 'read', side_effect=read):
+            with self.assertRaises(cask.Unsafe) as error:
+                observer.launchctl([label], [{'kind': 'app', 'path': str(self.app)}], [label])
+            self.assertEqual(error.exception.diagnostic['condition'], 'foreign_target')
+
+    def test_launchctl_ambiguous_domains_and_malformed_evidence(self):
+        for programs, domains, condition in [
+                (['/one', '/two'], ('user',), 'malformed_observation'),
+                (None, ('gui', 'user'), 'ownership_ambiguous')]:
+            observer, label, _, directory, read = self.public_jobs(programs, domains)
+            with patch.object(observer, 'launch_roots', return_value=(directory,)), patch.object(observer, 'read', side_effect=read):
+                with self.assertRaises(cask.Unsafe) as error:
+                    observer.launchctl([label], [{'kind': 'app', 'path': str(self.app)}], [label])
+                self.assertEqual(error.exception.diagnostic['condition'], condition)
+        observer, label, _, directory, _ = self.public_jobs()
+        with patch.object(observer, 'launch_roots', return_value=(directory,)), patch.object(observer, 'read', side_effect=PermissionError):
+            with self.assertRaises(cask.Unsafe) as error:
+                observer.launchctl([label], [{'kind': 'app', 'path': str(self.app)}], [label])
+            self.assertEqual(error.exception.condition, cask.OBSERVATION)
+
+    def test_duplicate_service_plist_ownership_is_ambiguous(self):
+        observer, label, program, directory, read = self.public_jobs()
+        for name in ('first.plist', 'second.plist'):
+            (directory / name).write_bytes(plistlib.dumps({'Label': label, 'Program': program}))
+        with patch.object(observer, 'launch_roots', return_value=(directory,)), patch.object(observer, 'read', side_effect=read):
+            with self.assertRaises(cask.Unsafe) as error:
+                observer.launchctl([label], [{'kind': 'app', 'path': str(self.app)}], [label])
+            self.assertEqual(error.exception.diagnostic['condition'], 'ownership_ambiguous')
+
+    def test_launchctl_scopes_records_and_ignores_mach_endpoints_and_implicit_list(self):
+        observer, label, _, directory, read = self.public_jobs()
+        (directory / 'unrelated.plist').write_bytes(b'malformed unrelated plist')
+        def inventory(arguments):
+            self.assertNotEqual(arguments[-1], 'list')
+            raw = read(arguments)
+            if arguments[-1].startswith('gui/') and not arguments[-1].endswith('/' + label):
+                return raw + ('mach endpoints = {\n0 0 ' + label + '\n}\n').encode()
+            if arguments[-1].startswith('user/') and not arguments[-1].endswith('/' + label):
+                return raw.replace(b'services = {\n', b'services = {\nunrelated malformed record\n')
+            return raw
+        with patch.object(observer, 'launch_roots', return_value=(directory,)), patch.object(observer, 'read', side_effect=inventory):
+            self.assertFalse(observer.launchctl([label], [{'kind': 'app', 'path': str(self.app)}], [label]))
+        (directory / (label + '.plist')).write_bytes(b'malformed selected plist')
+        with patch.object(observer, 'launch_roots', return_value=(directory,)), patch.object(observer, 'read', side_effect=inventory):
+            with self.assertRaises(cask.Unsafe):
+                observer.launchctl([label], [{'kind': 'app', 'path': str(self.app)}], [label])
+
+    def test_current_only_xpc_requires_exact_native_identity_and_path(self):
+        observer, label, program, directory, read = self.public_jobs()
+        payload = [{'kind': 'app', 'path': str(self.app)}]
+        source = str(Path(program).parent.parent.parent)
+        for identity, bundle, expected in [(label, source, True), ('org.foreign', source, False),
+                                           (label, '/foreign/Helper.xpc', False)]:
+            def native(arguments):
+                raw = read(arguments)
+                if arguments[-1].endswith('/' + label):
+                    raw += ('type = XPCService\npath = ' + bundle + '\nbundle id = ' + identity + '\n').encode()
+                return raw
+            with patch.object(observer, 'launch_roots', return_value=(directory,)), patch.object(observer, 'read', side_effect=native):
+                if expected:
+                    self.assertFalse(observer.launchctl([label], payload, (), [label]))
+                else:
+                    with self.assertRaises(cask.Unsafe):
+                        observer.launchctl([label], payload, (), [label])
+        with patch.object(observer, 'launch_roots', return_value=(directory,)), patch.object(observer, 'read', side_effect=read):
+            with self.assertRaises(cask.Unsafe):
+                observer.launchctl([label], payload, (), [label])
+
+    def test_login_item_unrelated_duplicate_does_not_poison_selected_identity(self):
+        with patch('homebrew_automation.login_items', return_value=[('Other', None), ('Other', '/foreign')]):
+            cask.PublicObserver().login_items(['Example'], [{'kind': 'app', 'path': str(self.app)}], ['Example'])
+
+    def test_diagnostic_contract_excludes_free_text_and_unknown_fields(self):
+        from external_tool import diagnostic_valid
+        self.assertTrue(diagnostic_valid({'primitive': 'login_item', 'condition': 'foreign_target'}))
+        for value in ({'primitive': '/private/path', 'condition': 'foreign_target'},
+                      {'primitive': 'login_item', 'condition': 'raw output'},
+                      {'primitive': 'login_item', 'condition': 'foreign_target', 'path': '/private/path'},
+                      {'primitive': ['login_item'], 'condition': 'foreign_target'}):
+            self.assertFalse(diagnostic_valid(value))
+
+    def test_malformed_launch_inventory_cannot_mean_absence(self):
+        observer, label, _, directory, _ = self.public_jobs()
+        for raw in (b'garbage', b'services = {', b'PID Status Label\nmalformed'):
+            with patch.object(observer, 'launch_roots', return_value=(directory,)), patch.object(observer, 'read', return_value=raw):
+                with self.assertRaises(cask.Unsafe) as error:
+                    observer.launchctl([label], [{'kind': 'app', 'path': str(self.app)}], [label])
+                self.assertEqual(error.exception.condition, 'cask_launchctl_observation_failed')
+                self.assertEqual(error.exception.diagnostic['condition'], 'malformed_observation')
+
+    def test_login_item_owned_absent_and_declared_missing_target(self):
+        observer = cask.PublicObserver()
+        apps = [{'kind': 'app', 'path': str(self.app)}]
+        for pairs in ([], [('Example', str(self.app))], [('Example', None)]):
+            with patch('homebrew_automation.login_items', return_value=pairs):
+                observer.login_items(['Example'], apps, ['Example'])
+        self.application()
+        with patch('homebrew_automation.login_items', return_value=[('Example', str(self.app))]):
+            observer.login_items(['Example'], apps)
+        with patch('homebrew_automation.login_items', return_value=[('Example', None)]):
+            with self.assertRaises(cask.Unsafe):
+                observer.login_items(['Example'], apps, ['Example'])
+
+    def test_login_item_foreign_duplicate_and_unproven_orphan(self):
+        observer = cask.PublicObserver()
+        apps = [{'kind': 'app', 'path': str(self.app)}]
+        for pairs, historical, reason, condition in [
+                ([('Example', '/Applications/Other.app')], ['Example'], cask.CONFLICT, 'foreign_target'),
+                ([('Example', None)], [], cask.CONFLICT, 'ownership_unproven'),
+                ([('Example', None), ('Example', None)], ['Example'], cask.OBSERVATION, 'identity_ambiguous')]:
+            with patch('homebrew_automation.login_items', return_value=pairs):
+                with self.assertRaises(cask.Unsafe) as error:
+                    observer.login_items(['Example'], apps, historical)
+                self.assertEqual(error.exception.condition, reason)
+                self.assertEqual(error.exception.diagnostic, {'primitive': 'login_item', 'condition': condition})
+
+    def test_login_item_metadata_evolution_and_installed_identity_binding(self):
+        self.row['artifacts'].append({'uninstall': [{'login_item': 'Example', 'quit': 'org.example.Application'}]})
+        self.historical()
+        observer = cask.PublicObserver()
+        with patch.object(observer, 'platform', return_value=('arm64', '15.6.1')), patch.object(observer, 'conflicts'), \
+                patch('homebrew_automation.login_items', return_value=[('Example', None)]):
+            value = cask.classify(self.row, self.prefix, observer)
+            self.assertEqual(value['state'], 'repairable', value)
+            self.row['artifacts'][0] = {'app': ['Other.app'], 'target': str(self.app.parent / 'Other.app')}
+            self.assertEqual(cask.classify(self.row, self.prefix, observer)['reason'], cask.CONFLICT)
+
+    def test_login_item_authorization_and_unavailability_are_not_conflicts(self):
+        from homebrew_automation import AutomationUnavailable
+        self.row['artifacts'].append({'uninstall': [{'login_item': 'Example'}]})
+        self.historical()
+        observer = cask.PublicObserver()
+        for condition, authorization in [('authorization_denied', True), ('authorization_required', True),
+                                         ('application_unavailable', False), ('observation_failed', False)]:
+            with patch.object(observer, 'platform', return_value=('arm64', '15.6.1')), patch.object(observer, 'conflicts'), \
+                    patch('homebrew_automation.login_items', side_effect=AutomationUnavailable(condition, authorization)):
+                value = cask.classify(self.row, self.prefix, observer)
+                self.assertEqual(value['reason'], 'cask_authorization_required' if authorization else cask.OBSERVATION)
+                self.assertEqual(value['diagnostic'], {'primitive': 'login_item', 'condition': condition})
+                self.assertNotEqual(value['reason'], cask.CONFLICT)
+
+    def test_automation_never_executes_without_nonprompting_permission(self):
+        from homebrew_automation import AppleEvents, AutomationUnavailable, login_items
+        for code in (-1743, -1744, -600):
+            with self.assertRaises(AutomationUnavailable):
+                AppleEvents.check(code)
+        with patch('homebrew_automation.AppleEvents') as factory:
+            events = factory.return_value
+            events.permission.side_effect = AutomationUnavailable('authorization_denied', True)
+            with self.assertRaises(AutomationUnavailable):
+                login_items()
+            events.evaluate.assert_not_called()
+            events.permission.side_effect = None
+            events.evaluate.return_value = 'Example\tmissing\t-\nOther\tpresent\t/Applications/Other.app'
+            self.assertEqual(login_items(), [('Example', None), ('Other', '/Applications/Other.app')])
+            events.evaluate.return_value = 'malformed'
+            with self.assertRaises(AutomationUnavailable):
+                login_items()
+        with patch('homebrew_automation.AppleEvents') as factory:
+            events = factory.return_value
+            events.evaluate.return_value = ''
+            self.assertEqual(login_items(), [])
+        with patch('homebrew_automation.C.CDLL') as library:
+            events = AppleEvents()
+            with patch.object(events, 'descriptor') as descriptor:
+                from homebrew_automation import Descriptor
+                descriptor.return_value = Descriptor()
+                library.return_value.AEDeterminePermissionToAutomateTarget.return_value = 0
+                events.permission()
+                self.assertIs(library.return_value.AEDeterminePermissionToAutomateTarget.call_args.args[-1], False)
+
+    def test_owned_dangling_link_is_repairable_foreign_link_is_conflict(self):
+        destination = self.prefix / 'bin/example'
+        self.row['artifacts'] = [{'binary': ['bin/example'], 'target': str(destination)}]
+        self.historical()
+        destination.symlink_to(self.prefix / 'Caskroom/generic-example/1.0/bin/example')
+        self.assertEqual(self.classify()['state'], 'repairable')
+        destination.unlink()
+        destination.symlink_to(self.prefix / 'Caskroom/foreign-example/1.0/bin/example')
+        value = self.classify()
+        self.assertEqual(value['reason'], cask.CONFLICT)
+        self.assertEqual(value['diagnostic']['primitive'], 'payload')
 
     def test_public_package_receipt_interface_and_existing_shared_files(self):
         observer = cask.PublicObserver()
@@ -592,6 +907,104 @@ class RestoreCapabilityTests(unittest.TestCase):
         fresh = fixture.plan_result()
         self.assertFalse(fresh['readiness']['ready'])
         self.assertTrue(any(row['code'] == 'privileged_lifecycle_unknown' for row in fresh['readiness']['conditions']))
+
+    def test_provider_diagnostic_roundtrip_and_readiness_binding(self):
+        fixture, _ = self.fixture()
+        metadata = json.loads(Path(fixture.environment['TEST_CASK_METADATA']).read_text())
+        metadata['casks'][0]['artifacts'].append({'uninstall': [{'login_item': 'Fixture'}]})
+        Path(fixture.environment['TEST_CASK_METADATA']).write_text(json.dumps(metadata))
+        # Mock only the native observer in the disposable Core copy. The real
+        # Shell Preview/readiness, selected identity and Protocol projection run.
+        adapter = fixture.project / 'modules/apps/adapters/homebrew_automation.py'
+        adapter.write_text(adapter.read_text() + "\ndef login_items():\n    raise AutomationUnavailable('authorization_denied', True)\n")
+        fixture.pack()
+        plan = fixture.plan_result()
+        item = next(row for row in plan['plan'] if row['domain'] == 'homebrew-casks')
+        expected = {'primitive': 'login_item', 'condition': 'authorization_denied'}
+        self.assertEqual(item['diagnostic'], expected)
+        self.assertEqual(item['reason'], 'cask_authorization_required')
+        self.assertEqual(item['disposition'], 'blocked')
+        self.assertFalse(plan['readiness']['ready'])
+        condition = next(row for row in plan['readiness']['conditions'] if row['domain'] == 'homebrew-casks')
+        self.assertEqual(condition['diagnostic'], expected)
+        self.assertEqual(condition['scope'], 'operation')
+        self.assertEqual(condition['status'], 'external_action_required')
+        self.assertNotIn('qualification_id', item)
+
+    def test_preview_and_readiness_collect_all_items_after_primitive_failure(self):
+        fixture, _ = self.fixture()
+        path = Path(fixture.environment['TEST_CASK_METADATA'])
+        template = json.loads(path.read_text())['casks'][0]
+        rows = []
+        prefix = fixture.root / 'brew-prefix'
+        for token, name, directive in [('fixture-cask', 'Fixture', {'launchctl': 'org.example.Service'}),
+                                       ('login-cask', 'Login', {'login_item': 'Login'}),
+                                       ('plain-cask', 'Plain', None), ('matched-cask', 'Matched', None),
+                                       ('unsupported-cask', 'Unsupported', None)]:
+            row = copy.deepcopy(template)
+            row['token'] = token
+            target = fixture.home / 'Applications' / (name + '.app')
+            row['artifacts'] = [{'app': [name + '.app'], 'target': str(target)}]
+            if directive:
+                row['artifacts'].append({'uninstall': [directive]})
+            if token == 'unsupported-cask':
+                row['artifacts'].append({'installer': [{'script': {'executable': 'install.sh'}}]})
+            rows.append(row)
+            receipt = prefix / 'Caskroom' / token / '.metadata'
+            receipt.mkdir(parents=True, exist_ok=True)
+            (receipt / 'INSTALL_RECEIPT.json').write_text(json.dumps({'uninstall_flight_blocks': False,
+                'source': {'tap': 'homebrew/cask', 'version': '1.0'},
+                'uninstall_artifacts': [{k: v for k, v in artifact.items() if k != 'target'} for artifact in row['artifacts']]}))
+            (receipt / 'config.json').write_text(json.dumps({'default': {'appdir': str(target.parent)}}))
+            if token == 'matched-cask':
+                (target / 'Contents/MacOS').mkdir(parents=True)
+                (target / 'Contents/Info.plist').write_bytes(plistlib.dumps({'CFBundleIdentifier': 'org.example.Matched', 'CFBundleExecutable': 'Matched'}))
+                binary = target / 'Contents/MacOS/Matched'
+                binary.write_text('#!/bin/sh\n'); binary.chmod(0o700)
+        path.write_text(json.dumps({'casks': rows}))
+        brew = fixture.root / 'bin/brew'
+        contents = brew.read_text()
+        line = next(line for line in contents.splitlines() if line.strip().startswith('"info --json=v2 --cask fixture-cask")'))
+        contents = contents.replace(line, "  info\\ --json=v2\\ --cask\\ *) python3 -B -c 'import json,os,sys; from pathlib import Path; rows=json.loads(Path(os.environ[\"TEST_CASK_METADATA\"]).read_text())[\"casks\"]; print(json.dumps({\"casks\":[r for r in rows if r[\"token\"]==sys.argv[1]]}))' \"$4\" ;;")
+        contents = contents.replace('|| echo fixture-cask ;;', '|| echo "' + '\n'.join(row['token'] for row in rows) + '" ;;')
+        brew.write_text(contents)
+        adapter = fixture.project / 'modules/apps/adapters/homebrew_cask.py'
+        adapter.write_text(adapter.read_text() + "\ndef fixture_launchctl(self, *args):\n    raise Unsafe('cask_launchctl_observation_failed', {'primitive': 'launchctl', 'condition': 'observation_failed'})\nPublicObserver.launchctl = fixture_launchctl\n")
+        # Definitions must precede the CLI main invocation.
+        text = adapter.read_text()
+        marker = text.index("\ndef fixture_launchctl")
+        override = text[marker:]
+        text = text[:marker]
+        main = text.index("if __name__ == '__main__':")
+        adapter.write_text(text[:main] + override + '\n' + text[main:])
+        automation = fixture.project / 'modules/apps/adapters/homebrew_automation.py'
+        automation.write_text(automation.read_text() + "\ndef login_items():\n    raise AutomationUnavailable('authorization_denied', True)\n")
+        tokens = [row['token'] for row in rows]
+        (fixture.stage / 'generated/brew-casks.conf').write_text('\n'.join(tokens) + '\n')
+        blueprint = fixture.stage / 'blueprint.conf'
+        blueprint.write_text(blueprint.read_text().replace('[homebrew-casks]\nfixture-cask\n', '[homebrew-casks]\n' + '\n'.join(tokens) + '\n'))
+        fixture.pack()
+        plan = fixture.plan_result()
+        items = [row for row in plan['plan'] if row['domain'] == 'homebrew-casks']
+        self.assertEqual(len(items), len(tokens), items)
+        self.assertNotIn('inspection_unavailable', [row['reason'] for row in items])
+        self.assertEqual([row['disposition'] for row in items], ['blocked', 'blocked', 'planned', 'satisfied', 'blocked'], items)
+        conditions = [row for row in plan['readiness']['conditions'] if row['domain'] == 'homebrew-casks']
+        self.assertTrue(any(row.get('diagnostic', {}).get('primitive') == 'launchctl' for row in conditions), conditions)
+        self.assertTrue(any(row.get('diagnostic', {}).get('primitive') == 'login_item' for row in conditions), conditions)
+        self.assertFalse(plan['readiness']['ready'])
+        self.assertFalse(Path(fixture.environment['TEST_CASK_LOG']).exists())
+
+    def test_missing_qualification_cannot_be_replaced_by_diagnostics(self):
+        fixture, _ = self.fixture()
+        module = fixture.project / 'modules/apps/brew-casks.sh'
+        text = module.read_text().replace("{qualification_id, authorization_required}", "{diagnostic: {primitive: \"payload\", condition: \"ownership_unproven\"}}")
+        module.write_text(text)
+        fixture.pack()
+        result, events = fixture.invoke()
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(events[-1]['data']['code'], 'preview_failed')
+        self.assertFalse(Path(fixture.environment['TEST_CASK_LOG']).exists())
 
     def test_captured_capabilities_roundtrip_and_selection_validation(self):
         fixture, bundle = self.fixture()

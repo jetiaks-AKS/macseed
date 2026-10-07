@@ -592,7 +592,8 @@ bootstrap_application_readiness() (
             [[ "$HOMEBREW_ADAPTER_STATE" != satisfied ]] || continue
             CASK_APPLICATION_CONDITION="$HOMEBREW_ADAPTER_CONDITION"
             if [[ $result -ne 0 ]]; then
-                if [[ "$HOMEBREW_ADAPTER_STATE" == incompatible ||
+                if [[ "${MACSEED_APPLICATION_READINESS_REPORT:-false}" != true ]] &&
+                   [[ "$HOMEBREW_ADAPTER_STATE" == incompatible ||
                       "$CASK_APPLICATION_CONDITION" == homebrew_unavailable ]]; then
                     echo "$CASK_APPLICATION_CONDITION"
                     return 2
@@ -605,6 +606,11 @@ bootstrap_application_readiness() (
                     continue # No installer or dependency work for this item.
                 fi
                 printf '%s\t%s\n' "$CASK_APPLICATION_CONDITION" "$index"
+                # Read-only reporting collects every selected item's requirement;
+                # the execution gate still stops at the first unsafe item.
+                if [[ "${MACSEED_APPLICATION_READINESS_REPORT:-false}" == true ]]; then
+                    continue
+                fi
                 return 2
             fi
             needs_network=true

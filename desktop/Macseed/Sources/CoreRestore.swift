@@ -69,6 +69,44 @@ struct CoreRestorePreparation: Decodable {
     let errorCount: Int
     var hasExecutableChanges: Bool { executableChanges ?? hasPlannedChanges }
     let executableChanges: Bool?
+    struct Diagnostic: Decodable, Equatable {
+        let primitive: String
+        let condition: String
+        var valid: Bool {
+            [primitive, condition].allSatisfy { $0.range(of: "^[a-z][a-z0-9_]{0,63}$", options: .regularExpression) != nil }
+        }
+        var automationRequirement: Bool {
+            primitive == "login_item" && ["authorization_required", "authorization_denied", "application_unavailable"].contains(condition)
+        }
+        var explanation: String {
+            if automationRequirement {
+                return condition == "application_unavailable"
+                    ? "Macseed needs System Events permission to inspect login items. Choose Check Again to request access and retry."
+                    : condition == "authorization_denied"
+                        ? "Allow Macseed → System Events in System Settings → Privacy & Security → Automation, then Check Again."
+                        : "Macseed needs System Events permission to inspect login items. Choose Check Again to request access and retry."
+            }
+            switch condition {
+            case "foreign_target": return "This " + primitiveName + " points outside the expected application. Existing state will be preserved."
+            case "conflicting_plist": return "The launch service has conflicting configuration ownership. Existing state will be preserved."
+            case "identity_ambiguous", "ownership_ambiguous": return "Ownership of this " + primitiveName + " is ambiguous. Existing state will be preserved."
+            case "live_ownership_unproven": return "A running launch service cannot be safely attributed to the missing application."
+            case "malformed_observation", "observation_failed", "observation_limit": return "Macseed could not reliably inspect this " + primitiveName + ". Check the current state before rebuilding."
+            case "unsupported_capability": return "This application requires an unsupported " + primitiveName + " capability."
+            default: return "Ownership of this " + primitiveName + " could not be proven. Existing state will be preserved."
+            }
+        }
+        private var primitiveName: String {
+            switch primitive {
+            case "login_item": "login item"
+            case "launchctl": "launch service"
+            case "payload": "application payload"
+            case "historical_metadata": "installed lifecycle contract"
+            default: primitive.replacingOccurrences(of: "_", with: " ")
+            }
+        }
+        var technicalDescription: String { "primitive: " + primitive + "\ncondition: " + condition }
+    }
     struct Row: Decodable {
         let domain: String
         let itemID: String
@@ -78,7 +116,8 @@ struct CoreRestorePreparation: Decodable {
         let displayName: String?
         let selectionItemID: String?
         var authorizationRequired: Bool? = nil
-        enum CodingKeys: String, CodingKey { case domain, itemID = "item_id", action, disposition, reason, displayName = "display_name", selectionItemID = "selection_item_id", authorizationRequired = "authorization_required" }
+        var diagnostic: Diagnostic? = nil
+        enum CodingKeys: String, CodingKey { case diagnostic, domain, itemID = "item_id", action, disposition, reason, displayName = "display_name", selectionItemID = "selection_item_id", authorizationRequired = "authorization_required" }
     }
     struct Readiness: Decodable {
         let ready: Bool
@@ -93,12 +132,13 @@ struct CoreRestorePreparation: Decodable {
         let status: String
         let selectedItemIndex: Int?
         let scope: String?
+        var diagnostic: Diagnostic? = nil
         var isItemLocal: Bool {
             scope == "item" && domain == "homebrew-casks" && code == "cask_execution_requirements_unsupported"
                 && status == "unsupported" && (selectedItemIndex ?? 0) > 0
         }
         var id: String { domain + ":" + code + ":" + String(selectedItemIndex ?? 0) }
-        enum CodingKeys: String, CodingKey { case domain, code, status, scope, selectedItemIndex = "selected_item_index" }
+        enum CodingKeys: String, CodingKey { case diagnostic, domain, code, status, scope, selectedItemIndex = "selected_item_index" }
     }
     enum CodingKeys: String, CodingKey {
         case selection, preparedPlanID = "prepared_plan_id", selectedGroups = "selected_groups", selectedCategories = "selected_categories"
@@ -126,12 +166,12 @@ struct CoreRestorePreparation: Decodable {
         }
         let domains = Set(expected.categories).union(expected.items.keys)
         guard plan.allSatisfy({ row in
-            domains.contains(row.domain) && (row.selectionItemID == nil || expected.items[row.domain]?.contains(row.selectionItemID!) == true)
+            (row.diagnostic?.valid ?? true) && domains.contains(row.domain) && (row.selectionItemID == nil || expected.items[row.domain]?.contains(row.selectionItemID!) == true)
         }), expected.items.allSatisfy({ selectedItemCounts[$0.key] == $0.value.count }),
         selectedItemCounts.allSatisfy({ (expected.items[$0.key]?.count ?? 0) == $0.value }) else { throw CoreRuntimeError.malformedEvent }
         guard readiness.conditions.allSatisfy({ condition in
-            condition.scope == nil || condition.scope == "operation" ||
-                (condition.isItemLocal && (condition.selectedItemIndex ?? 0) <= (selectedItemCounts[condition.domain] ?? 0))
+            (condition.diagnostic?.valid ?? true) && (condition.scope == nil || condition.scope == "operation" ||
+                (condition.isItemLocal && (condition.selectedItemIndex ?? 0) <= (selectedItemCounts[condition.domain] ?? 0)))
         }), executableChanges == nil || hasExecutableChanges == plan.contains(where: { $0.disposition == "planned" }) else {
             throw CoreRuntimeError.malformedEvent
         }

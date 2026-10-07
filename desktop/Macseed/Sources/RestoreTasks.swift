@@ -6,6 +6,7 @@ enum TaskRowState: String, CaseIterable {
     case completed = "Completed", partial = "Partial Success", attention = "Needs Attention"
     case skipped = "Skipped", failed = "Failed", working = "Working", waiting = "Waiting"
     case planned = "Changes Planned", matching = "Already Matches", unverified = "Unverified"
+    case awaitingVerification = "Awaiting Verification"
     var symbol: String {
         switch self {
         case .completed, .matching: "checkmark.circle.fill"
@@ -13,7 +14,7 @@ enum TaskRowState: String, CaseIterable {
         case .skipped: "minus.circle.fill"
         case .failed: "xmark.circle.fill"
         case .working: "arrow.triangle.2.circlepath"
-        case .waiting: "clock"
+        case .waiting, .awaitingVerification: "clock"
         case .planned: "arrow.down.circle"
         }
     }
@@ -27,6 +28,7 @@ enum TaskRowState: String, CaseIterable {
         }
         if states.contains(.skipped) { return success ? .partial : .skipped }
         if states.contains(.waiting) { return .waiting }
+        if states.contains(.awaitingVerification) { return .awaitingVerification }
         if states.contains(.planned) { return .planned }
         return states.allSatisfy { $0 == .matching } ? .matching : .completed
     }
@@ -36,6 +38,7 @@ struct TaskItemPresentation: Identifiable {
     let id: String
     let item: DisplayItem
     let state: TaskRowState
+    var diagnostic: CoreRestorePreparation.Diagnostic? = nil
 }
 struct TaskDomainPresentation: Identifiable {
     let id: String
@@ -43,7 +46,16 @@ struct TaskDomainPresentation: Identifiable {
     let symbol: String
     let items: [TaskItemPresentation]
     var activityState: TaskRowState? = nil
-    var state: TaskRowState { activityState ?? .aggregate(items.map(\.state)) }
+    var previewOnly = false
+    var state: TaskRowState {
+        if let activityState { return activityState }
+        if previewOnly {
+            if items.contains(where: { $0.state == .attention }) { return .attention }
+            if items.contains(where: { $0.state == .unverified }) { return .unverified }
+            return items.contains(where: { $0.state == .planned }) ? .planned : .matching
+        }
+        return .aggregate(items.map(\.state))
+    }
     var summary: String {
         let counts = Dictionary(grouping: items, by: \.state)
         return TaskRowState.allCases.compactMap { state in
@@ -99,7 +111,11 @@ struct RestoreTaskPresentation {
                 if $0.status == .working || $0.restoreActivity != nil { return domainActive ? .working : nil }
                 return $0.status == .complete ? .completed : $0.status == .attention ? .attention : nil
             }
-            let items = category.items.map { item -> TaskItemPresentation in
+            let items = category.items.filter { item in
+                guard executing, result == nil else { return true }
+                guard let index = Int(item.id.replacingOccurrences(of: "restore-", with: "")), plan.plan.indices.contains(index) else { return false }
+                return progress.contains { $0.id == category.id } && plan.plan[index].disposition != "satisfied"
+            }.map { item -> TaskItemPresentation in
                 let index = Int(item.id.replacingOccurrences(of: "restore-", with: ""))
                 let entry = index.flatMap { plan.plan.indices.contains($0) ? plan.plan[$0] : nil }
                 func belongs(_ row: [String: CoreJSON]) -> Bool {
@@ -130,6 +146,8 @@ struct RestoreTaskPresentation {
                 } else if let currentActivity, let entry,
                           currentActivity.domain == entry.domain && currentActivity.itemID == entry.itemID {
                     state = .working
+                } else if operation?["outcome"]?.string == "success" {
+                    state = .awaitingVerification
                 } else if activity != nil || operation != nil {
                     state = .unverified
                 } else {
@@ -146,14 +164,15 @@ struct RestoreTaskPresentation {
                 default: message = state == .completed ? "Verified against the saved environment."
                     : executing && state == .working
                         ? (entry?.action == "reinstall" ? "Repairing or verifying this item…" : "Applying or verifying this item…")
-                    : executing && state == .unverified && (activity != nil || operation != nil)
-                        ? "Awaiting final Verification." : item.action
+                    : state == .awaitingVerification
+                        ? "Awaiting Verification." : item.action
                 }
                 return TaskItemPresentation(id: item.id,
-                    item: DisplayItem(id: item.id, title: item.title, status: item.status, action: message, reason: reason), state: state)
+                    item: DisplayItem(id: item.id, title: item.title, status: item.status, action: message, reason: reason), state: state, diagnostic: entry?.diagnostic)
             }
+            if items.isEmpty { continue }
             output.append(TaskDomainPresentation(id: domainID, title: category.title,
-                symbol: Self.symbol(category.id), items: items, activityState: activityState))
+                symbol: Self.symbol(category.id), items: items, activityState: activityState, previewOnly: !executing && result == nil))
         }
         domains = output
     }
