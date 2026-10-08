@@ -95,8 +95,9 @@ The format is based on the principles of **Keep a Changelog**.
 * Real Repair → Verify → fresh no-op gates passed for Keka, Termius and VLC;
   generated completions support was validated through the Codex cask.
 * Homebrew closure remains open: broader representative gates are still required.
-  Tailscale remains a known fail-closed ownership/activation boundary and is not
-  counted as satisfied.
+  Clean Tailscale Install and subsequent matching observation passed through
+  `08e2b469`; universal Repair is not qualified, and ambiguous/damaged privileged
+  Repair states remain fail-closed.
 
 ## [3.4.0] - 2026-10-02
 

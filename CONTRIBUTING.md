@@ -55,6 +55,13 @@ unfinished actions and Changelog about completed changes. Preserve released hist
 Run focused existing tests for changed behavior. The canonical full regression
 runner is `scripts/test.sh`; ShellCheck is `scripts/lint.sh`. Use the full suite
 for integration/release gates or justified broad risk, not every small change.
+When Desktop production presentation/state semantics change, focused validation
+must include both the relevant feature tests and `PresentationTests`. Run full
+canonical validation at implementation checkpoint closure. Canonical repository
+regression and Desktop validation must run sequentially unless temporary-state
+isolation has explicitly been proven. Complete one checkpoint at a time without
+unrelated task hopping.
+
 For Bash changes, include syntax checks:
 
 ```bash

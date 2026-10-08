@@ -7,8 +7,12 @@ Core owns Discovery, Generated Configuration, Selection / Blueprint, Preview,
 Bootstrap, Verification, Comparison, Bundle and Secure Migration. The official CLI
 is implemented; native SwiftUI Desktop consumes the same Core. Core/CLI 3.4.0
 includes completed Stage 15 Protocol V1. Desktop Stage 16 is in progress: 16B–16G
-are complete, with 16H Secure SSH next. Stage 17 owns packaging and clean-Mac
-qualification.
+are complete; Restore/Homebrew presentation and recovery advanced through
+`08e2b469`. The immediate next implementation checkpoint is Unified UI Scenario
+Catalog, followed by Desktop UI consistency/unification. Follow the current
+[execution order](ROADMAP.md#current-practical-execution-order), one checkpoint
+at a time without unrelated task hopping; historical slice IDs are unchanged.
+Stage 17 owns packaging and clean-Mac qualification.
 
 Read existing code and consumers before proposing changes. Prefer minimal safe
 changes and existing helpers over replacements or new abstractions. Follow
@@ -177,6 +181,12 @@ Validate proportionally. Documentation-only changes use diff/link review and
 inspection or workflows merely for documentation. For code, run focused existing
 harnesses first. Use `scripts/test.sh` for justified full integration/release
 validation and `scripts/lint.sh` for ShellCheck. Do not replace canonical runners.
+When Desktop production presentation/state semantics change, focused validation
+must include both the relevant feature tests and `PresentationTests`. Run full
+canonical validation at implementation checkpoint closure. Canonical repository
+regression and Desktop validation must run sequentially unless temporary-state
+isolation has explicitly been proven.
+
 Minimum Bash syntax verification:
 
 ```bash

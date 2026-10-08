@@ -7,14 +7,16 @@ Status uses real read-only Core comparison. Capture scans/selects/prepares and
 publishes a real Saved Environment through Core. Restore inspects a Saved Environment
 and prepares a read-only Preview, then executes through Core with confirmation,
 structured progress, Safe Stop and Verification-aware results/fresh-plan re-entry.
-The broad Restore manual gate substantially passed at checkpoint `3e555fba`,
-including successful Rebuild/Verification and Git scalar drift → Restore →
-independent verification → idempotent Preview. Subsequent Homebrew gates passed
-Repair → Verify → fresh no-op for Keka, Termius and VLC, and validated generated
-completions through Codex. Broader Homebrew qualification and Tailscale
-ownership/activation remain open, alongside MAS, Desktop Zsh and Secure SSH.
-Private SSH identity transfer
-remains unavailable until 16H; 16I owns remaining completion UX qualification.
+Restore presentation/recovery and capability-based Homebrew qualification advanced
+substantially through checkpoint `08e2b469ba714a6eb32a3293296943b774653415`.
+Real Restore converged to a fresh **Everything Already Matches** Preview; clean
+Tailscale installation and subsequent matching observation passed. Earlier Repair
+→ Verify → fresh no-op gates for Keka, Termius and VLC and generated completions
+through Codex remain valid. Clean Install does not qualify universal Tailscale
+Repair: ambiguous/damaged privileged Repair states remain fail-closed. Continuing
+compatibility qualification, MAS, Desktop Zsh and Secure SSH remain open.
+Private SSH identity transfer remains unavailable until 16H. The immediate next
+checkpoint is the Unified UI Scenario Catalog, followed by UI consistency/unification.
 Build and review instructions are in
 [Desktop development](../desktop/Macseed/README.md). Macseed is one product with a shared Core and two official frontends: CLI (`bs`) and Desktop.
 The official CLI remains supported. **Simple by default. Detailed on demand.**
@@ -38,7 +40,8 @@ workflow qualification; current bundled resolution rejects those writes. Secure
 Execute needs the future 16H socket bridge and is rejected before launch today.
 Handled cancellation retains Core evidence; forced termination without a terminal
 event is interruption with unknown effects, never rollback or item-boundary stop.
-Diagnostic persistence/export remains Stage 16J; final result UX remains Stage 16I.
+Diagnostic persistence/export remains Stage 16J. Restore Result presentation is
+implemented and checkpoint-qualified; broader completion qualification remains open.
 
 ## Window and navigation
 
@@ -68,8 +71,9 @@ persistent resumable job is introduced.
 
 ## Shared design system — next UX work
 
-The next UX work is a reusable unified Macseed design system, first applied to
-Restore and then reused by Capture, Environment Status, All Tasks and Settings.
+After the Unified UI Scenario Catalog, the next separate checkpoint is UI
+consistency/unification: reuse qualified Restore presentation across Capture,
+Environment Status, All Tasks and Settings.
 This is planned work over the existing native shell, not a completed redesign or
 permission to change Core semantics. Shared domain/item rows, status vocabulary,
 spacing, disclosures and accessibility must consume the same presentation model
@@ -429,9 +433,12 @@ remote SSH authentication, agent/Keychain readiness or whole-Mac identity.
 
 ### Restore result contract
 
-This is the intended Desktop result contract over current Core evidence; Stage 16I
-still owns alignment and qualification of the final UI. It does not claim that all
-labels or mappings below are implemented.
+Restore implements this result contract over Core evidence, with presentation and
+recovery qualified through `08e2b469`. Preview, Progress and Result have dedicated
+presentation; finished item activity shows **Awaiting Verification** until final
+evidence arrives. Clean Result omits internal reason codes; issues/failures retain
+diagnostic disclosure. This advances 16I without closing every future Desktop
+completion or packaged-runtime qualification concern.
 
 | Result | Required meaning |
 |---|---|
@@ -527,8 +534,9 @@ must never enter operation Details or diagnostics.
 
 ## Generic rendering and Protocol V1 fit
 
-Use a small presentation catalog for domain/group labels, icons, action verbs,
-status text and typed reason/prerequisite guidance. It translates Core identifiers;
+The production presentation catalog/mapping owns canonical domain/group labels,
+icons, colors, action verbs, status text and typed reason/prerequisite guidance
+used by production views. It translates Core identifiers;
 it is not a second inventory, observer, readiness engine or domain state model.
 
 | Generic UI input | Existing structured source |
@@ -559,6 +567,31 @@ product reference above. Fine ordinary Restore selection is Core-supported;
 decrypted identity selection during Prepare and Desktop recovery remain outside
 the current contract. Any
 extension needs a precise Core contract decision, not a client-side parser.
+
+## Unified UI Scenario Catalog — next implementation checkpoint
+
+The planned catalog is a Debug-only synthetic presentation harness, distinct from
+the production presentation catalog/mapping above. It renders production models
+and views without Core mutation:
+
+```text
+Synthetic Scenario Fixtures
+          ↓
+Production Presentation Models
+          ↓
+Production Views / Shared Components
+```
+
+The Debug catalog owns fixtures and navigation only. Production owns semantic
+status, labels, icons, colors, cards/rows, disclosures and action presentation;
+the catalog must not duplicate production UI. Intended coverage includes Restore,
+Capture, Environment Status and useful shared semantic states/components.
+
+A new user-visible production state, status, outcome or prerequisite should not
+silently exist without synthetic scenario coverage. Prefer structural coverage
+tests over giant pixel snapshot tests. The catalog is not implemented yet. Capture
+and Environment Status are not redesigned during its construction; visual
+unification follows as a separate checkpoint.
 
 ## Local logs and Diagnostic Report
 
@@ -636,6 +669,9 @@ preview/export identity. Tests use disposable fixtures; never real keys or secre
 | 16I — Verification and completion | Concise Result with disclosed verdict/coverage, no-op, already-matching and incomplete outcomes |
 | 16J — Diagnostics and support | Persistent structured logs, live View Log, retention/clear controls, redacted Diagnostic Report preview/export and sanitization tests |
 | 16K — Desktop integration hardening | Full flow/transport/security/accessibility checks, stale inputs, interruptions and diagnostic acceptance |
+
+Slice identifiers above retain their historical meaning; practical execution order
+is tracked in [Roadmap](../ROADMAP.md#current-practical-execution-order).
 
 Every slice uses existing Core operations; early flow slices retain incomplete
 features as unavailable rather than pretending secure or verification support.

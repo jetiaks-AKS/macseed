@@ -54,19 +54,23 @@ and packaged clean-Mac qualification remain the next stages.
 **Product/UX contract defined (16A); native sample-data foundation implemented
 (16B); runtime (16C) and Environment Status (16D) manually approved; real Capture
 (16E), Restore Prepare (16F) and Restore execution (16G) manually approved. The
-broad Restore gate substantially passed at checkpoint `3e555fba`; compatibility
-and remaining qualification are open.** Complete the SwiftUI client for
+Restore presentation/recovery and Homebrew compatibility advanced substantially
+through checkpoint `08e2b469`: real Restore converged to a fresh Everything Already
+Matches Preview, including clean Tailscale Install and matching observation.
+Remaining qualification is open.** Complete the SwiftUI client for
 Capture this Mac, Restore a Mac and Environment Status.
 Provide prerequisite guidance, Check Again, structured
 progress/results, separate secret input and cancellation over the existing Core.
 Desktop Secure SSH Capture/Restore remains unfinished (16H). Deliver persistent
 structured operation logs, live View Log and a redacted Diagnostic Report with
-exact preview/export. The next UX outcome is a reusable unified Macseed design
-system, first applied to Restore, then Capture, Environment Status, All Tasks and
-Settings, with Domain → Items shared across Preview/Rebuild/Verification/Result.
+exact preview/export. The next bounded Desktop implementation checkpoint is the
+Unified UI Scenario Catalog, followed separately by UI consistency/unification
+across Restore, Capture, Environment Status, All Tasks and Settings.
 Automatic MAS Restore is mandatory before 1.0; authorization/install qualification
-remains unresolved. Continue representative qualification of existing Homebrew
-coverage over the established capability-based compatibility boundary. Investigate
+remains unresolved. Homebrew now primarily needs continuing compatibility
+qualification/maintenance over the established capability-based boundary; it is
+not the primary architecture blocker. Ambiguous/damaged privileged Repair states
+remain fail-closed; clean Tailscale Install does not qualify universal Repair. Investigate
 useful bounded Workspace/Data semantics while preserving today's structure-only
 Folders behavior. Close the existing SSH/Zsh/Git/VS Code/macOS Settings and
 application-state gaps according to their value and safety contracts. Detailed
@@ -78,6 +82,24 @@ This stage defines and implements bundled Core/runtime placement, writable
 application state, a controlled child environment and the Swift Protocol V1
 launcher. It must qualify the Core/Python and age/OpenSSH integration needed by
 the application. See [Desktop](docs/DESKTOP.md).
+
+### Current practical execution order
+
+Existing Stage 16 slice identifiers (16H Secure SSH, 16I completion, 16J diagnostics,
+16K hardening) retain their historical meaning; they do not prescribe today's
+implementation order. Complete one bounded checkpoint at a time:
+
+1. Unified UI Scenario Catalog.
+2. Desktop UI consistency/unification.
+3. Persistent operation journal / View Log / Diagnostic Report.
+4. Remaining capability qualification and product gaps (including MAS, Workspace/Data,
+   real Zsh and watchdog gates).
+5. Secure SSH Desktop integration.
+6. Saved Environment / Bundle-backed Environment Status.
+7. Stage 16 integration hardening.
+8. Stage 17 distribution / clean-Mac E2E.
+9. Early Access / Alpha.
+10. Macseed 1.0.
 
 ## Stage 17 — Distribution & Clean-Mac E2E
 

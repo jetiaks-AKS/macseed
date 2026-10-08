@@ -4,8 +4,10 @@ Macseed reconstructs selected supported environment state:
 **Capture → Rebuild → Verify**. The CLI implements this workflow today. Desktop
 Capture uses the same production Core; its Stage 16E end-to-end manual gate is approved.
 Desktop Restore preparation/execution uses the same Core. Its broad manual gate
-substantially passed at checkpoint `3e555fba`; compatibility and remaining Desktop
-qualification are tracked in [TODO](../TODO.md#broad-restore-manual-gate--2026-10-05).
+advanced through Restore/Homebrew checkpoint `08e2b469`, with real convergence
+to a fresh Everything Already Matches Preview. Continuing compatibility and
+remaining Desktop qualification are tracked in
+[TODO](../TODO.md#restorehomebrew-checkpoint--08e2b469).
 
 ## What travels
 

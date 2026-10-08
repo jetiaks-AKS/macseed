@@ -47,8 +47,10 @@ Macseed Core owns the behavior shared by its clients.
 
 Native SwiftUI **Macseed Desktop** is implemented through Stage 16G, with real
 Capture, Restore Prepare/Execute and read-only Environment Status manually approved.
-Desktop development remains in progress: 16H–16K and Stage 17 packaging/clean-Mac
-qualification are unfinished. The CLI remains supported. **Macseed 1.0** is reserved
+Desktop Stage 16 remains active. Restore/Homebrew recovery passed a major real
+qualification checkpoint. Remaining work includes Desktop consistency, diagnostics,
+secure migration integration, MAS Restore, final Status/reference semantics and
+packaged clean-Mac qualification. The CLI remains supported. **Macseed 1.0** is reserved
 for the first complete Desktop product release, preserving the toolkit/CLI history.
 
 ## Documentation
