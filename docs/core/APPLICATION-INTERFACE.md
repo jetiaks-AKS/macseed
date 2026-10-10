@@ -192,6 +192,26 @@ rejects publication. After external preparation, use **Check Again → Prepare
 → confirm the new plan**. Neither ID nor `ready` is authorization, a transaction
 or proof that target state cannot change.
 
+Optional diagnostic response fields preserve V1 requests and the existing plan-ID
+calculation. Prepare returns `plan_diagnostics`: SHA-256 fingerprints for `bundle`,
+`stage`, canonical `selection`, preparation `parameters`, `plan`, `readiness`
+(excluding external-tool provenance), and `modules`. These fingerprints are
+computed before public row correlation and never authorize execution.
+On a freshness refusal, Execute adds `plan_validation` with allowlisted `check`
+(`prepared_plan_id` or `input_recheck`), `expected_id`, `recomputed_id` and the
+recomputed `components`. Input rechecks also report Boolean
+`bundle_changed_after_prepare` / `stage_changed_after_prepare`.
+Desktop compares against the retained Prepare fingerprints in **Copy Diagnostic
+Details**, without sending a baseline back to Core. Missing evidence is unknown;
+a changed planning fingerprint alone does not establish actual target-state drift.
+No paths, settings values, Bundle contents, free-form diagnostics or secrets enter
+these fields. Older clients can ignore them and older Core responses remain usable.
+
+Failure to run the required process observer before Bootstrap returns
+`process_observation_unavailable`, preserving publication/mutation facts.
+It is distinct from `bundle_unavailable`, which still reports inaccessible input.
+
+
 Pending local publication returns `recovery_required`. Prepare does not recover
 or mutate it; the existing CLI Restore owns recovery.
 

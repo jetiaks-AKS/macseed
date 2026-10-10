@@ -231,6 +231,12 @@ actionable conditions remain visible in affected prerequisite area rows. The top
 attention summary lists affected areas/counts only; lower domains own item details.
 Summary counts come from Core plan dispositions.
 
+Selection shows fully/partially/not-selected counts for selectable underlying Core
+categories; unavailable categories are excluded and item-level Preview metrics are
+unchanged. Selection status and Preview Restore stay in a fixed footer. During
+inspection/preparation, an indeterminate Preparing Restore Preview activity explains
+that target state is unchanged; no intermediate phases or percentages are inferred.
+
 3. `restore_prepare` supplies both prerequisites and Preview in the same Review
    area, alongside category selection, already-matching summary and changes.
    Bundle changes invalidate the displayed preparation; Preview selection edits
@@ -246,6 +252,8 @@ Summary counts come from Core plan dispositions.
    prompting, requests consent only if undetermined, and continues fresh Prepare
    after access becomes available. Denied/restricted access requires System Settings
    or administrator recovery; ordinary Preview never requests permission.
+   The explanation states that login-item inspection requires System Events access;
+   a successful recheck replaces permission warnings while retaining independent item issues.
    Recheck calls fresh Prepare with the same current inputs,
    then shows the new Preview for confirmation. Core reports all cask item conditions
    and the first operation-wide blocker in other domains; resolving one may reveal another.
@@ -265,8 +273,17 @@ Stage 16G enables Rebuild only for a current ready prepared plan with planned
 changes and unchanged selection. A native confirmation is required; Execute sends
 the exact prepared ID and selection without silently preparing again. Core revalidates
 staleness/prerequisites before mutation. Zero-change plans remain Preview outcomes.
+A confirmed `stale_plan` Result says **Restore Plan Is Outdated** and directs the user
+to **Refresh Preview**. It states that no changes were made only when Core explicitly
+reports no target mutation. The original failure outcome and diagnostic code remain.
+For freshness failures, **Copy Diagnostic Details** includes the Desktop prepared,
+Execute requested and Core recomputed IDs, plus per-component fingerprint changes
+when available. Unknown components remain unknown; changed planning evidence does
+not by itself prove target-state changes. See the
+[Core diagnostic contract](core/APPLICATION-INTERFACE.md#restore-plans-and-re-entry).
 Indeterminate activity uses structured Core phases/records, never synthetic percentages.
-Stop Rebuild confirms when mutation may have started and uses owned process-group
+Stop Rebuild confirms for every active Rebuild, with Continue Rebuild as the
+default and Escape action, before sending operation-bound cancellation. It uses owned process-group
 cancellation. Completed changes may remain; there is no rollback. Missing terminal
 or malformed result evidence is interrupted/unknown, not success. Results require
 structured Verification for clean completion and distinguish attention, cancellation,
@@ -433,12 +450,49 @@ remote SSH authentication, agent/Keychain readiness or whole-Mac identity.
 
 ### Restore result contract
 
-Restore implements this result contract over Core evidence, with presentation and
-recovery qualified through `08e2b469`. Preview, Progress and Result have dedicated
-presentation; finished item activity shows **Awaiting Verification** until final
-evidence arrives. Clean Result omits internal reason codes; issues/failures retain
-diagnostic disclosure. This advances 16I without closing every future Desktop
-completion or packaged-runtime qualification concern.
+Restore presents Core evidence through dedicated Preview, Progress and Result views.
+Progress uses fixed-height category rows and real structured activity. Active work
+shows **Working** unless a known problem requires **Needs Attention**, with warnings
+retained below the list. Completed execution and no-change plans await Verification;
+Preview and operation receipts alone never make category statuses green. Complete
+category Verification evidence permits independent **Completed** / **Already Matches**
+finalization without resetting confirmed categories merely because another phase starts.
+Latest category operation, Verification and Coverage records remain in memory for the current Restore even when the transport's
+bounded event window advances; no persistent journal is created.
+
+Result finalizes categories independently from complete, plan-bound Verification
+of their selected requirements. Missing operation receipts alone are not failures;
+Verification confirms final state, not which client performed a mutation. Auxiliary
+macOS process restarts are execution steps, not final-state requirements: complete
+`stored_preference` evidence must cover every selected setting, without requiring
+restart receipts. Other auxiliary actions require execution evidence or a clean
+authoritative outcome. Insufficient final evidence is **Unverified**; **Awaiting
+Verification** is reserved for running work.
+A structured `stale_plan` with `failed_before_mutation`, explicit no target mutation,
+and `verification.status=not_run` shows neutral **Not Run** for categories with no
+execution/Verification evidence. Other failures retain their evidence-based statuses;
+unavailable Verification counts remain unavailable.
+A supported item-local skip can produce **Rebuild Needs Attention** only with
+confirmed independent success, consistent Verification and no unexplained failure.
+The original Core terminal failure remains available.
+
+Result uses three cards for the overall Result, Mismatch and Unverified, with
+nonzero Unresolved shown separately. Issues appear in one compact **Needs Attention**
+section; one initially collapsed **Technical Details** shows compact problem-only
+execution and Verification findings. **Copy Diagnostic Details** copies the available
+allowlisted terminal, execution, Verification, coverage and diagnostic fields,
+including successful evidence. Raw process output, arbitrary payload fields and
+secrets are excluded; this is not a raw Core log. Categories convey verified work
+without a repeated successful-area summary. Clean Result also offers diagnostic copying;
+actions remain in the fixed footer. This does not close packaged-runtime qualification.
+
+User-confirmed real-Mac GUI validation covered Preview → Rebuild → Verification,
+the running **Waiting**, **Working** and **Awaiting Verification** states, and
+evidence-based **Completed** / **Already Matches**. Partial Restore with the known
+`tailscale-app` limitation reported **Mismatch: 1**, **Unverified: 0**. An intentional
+`stale_plan` was rejected before target mutation and displayed **Restore Plan Is
+Outdated** with nine neutral **Not Run** categories. **Refresh Preview → Rebuild**
+in the same session then completed successfully without another `stale_plan`.
 
 | Result | Required meaning |
 |---|---|

@@ -35,6 +35,172 @@ import Foundation
             try CoreEvent(line: JSONSerialization.data(withJSONObject: ["protocol_version": 1, "operation_id": "presentation",
                 "sequence": 1, "type": type, "data": ["domain": domain, "item_id": item, "action": action, key: value]]))
         }
+        // Operation progress never infers execution from conformity or a phase change.
+        let finished = try event("operation_record", domains[0], "firefox", "outcome", "success", action: "reinstall")
+        let activeEvent = try event("execution_event", domains[1], "firefox", "state", "applying")
+        let verifiedOnly = try event("verification_record", domains[0], "iina", "conformity", "verified")
+        let phase = try event("execution_event", "verification", "scope", "state", "started")
+        let failure = try event("operation_record", domains[0], "keka", "outcome", "failure")
+        func operationTasks(_ events: [CoreEvent]) -> RestoreTaskPresentation {
+            RestoreTaskPresentation(preview: preview, plan: plan, events: events, executing: true, operationProgress: true)
+        }
+        let emptyProgress = operationTasks([])
+        precondition(emptyProgress.domains.count == 2 && emptyProgress.domains.flatMap(\.items).count == 37)
+        precondition(RestoreOperationSummary(domains: emptyProgress.domains).completed == 0)
+        let unrelatedAction = try event("operation_record", domains[0], "firefox", "outcome", "success", action: "inspect")
+        precondition(RestoreOperationSummary(domains: operationTasks([unrelatedAction]).domains).completed == 0)
+        let projected = operationTasks([finished, activeEvent, failure])
+        let counts = RestoreOperationSummary(domains: projected.domains)
+        precondition(counts.completed == 1 && counts.working == 1 && counts.attention == 1)
+        let skippedItem = TaskItemPresentation(id: "skip", item: DisplayItem(id: "skip", title: "Dependent item",
+            status: .attention, action: "Skipped", reason: "dependency_failed"), state: .skipped)
+        precondition(RestoreOperationSummary(domains: [.init(id: "skip", title: "Skipped", symbol: "app", items: [skippedItem])]).attention == 1)
+        let checking = operationTasks([finished, activeEvent, verifiedOnly, phase])
+        precondition(RestoreOperationSummary(domains: checking.domains).completed == 1)
+        precondition(checking.domains.flatMap(\.items).first { $0.id == "restore-1" }!.state == .unverified)
+        precondition(RestoreOperationSummary(domains: checking.domains).working == 0)
+        var twoRaw = raw
+        twoRaw["plan"] = [rows[0], rows[16]]
+        let twoPlan = try JSONDecoder().decode(CoreRestorePreparation.self, from: JSONSerialization.data(withJSONObject: twoRaw))
+        let twoPreview = RestorePreviewPresentation(twoPlan, catalog: catalog)
+        var matchingRaw = twoRaw
+        var matchingRows = [rows[0], rows[16]]
+        matchingRows[1]["disposition"] = "satisfied"
+        matchingRaw["plan"] = matchingRows
+        let matchingPlan = try JSONDecoder().decode(CoreRestorePreparation.self, from: JSONSerialization.data(withJSONObject: matchingRaw))
+        let matchingPreview = RestorePreviewPresentation(matchingPlan, catalog: catalog)
+        func live(_ events: [CoreEvent]) -> RestoreTaskPresentation {
+            RestoreTaskPresentation(preview: matchingPreview, plan: matchingPlan, events: events, executing: true, operationProgress: true)
+        }
+        let starting = live([])
+        precondition(starting.domains.allSatisfy { ![.completed, .matching].contains($0.executionStatus) })
+        precondition(starting.domains[0].executionStatus == .waiting && starting.domains[1].executionStatus == .awaitingVerification)
+        precondition(live([finished]).domains[0].executionStatus == .awaitingVerification)
+        let verifiedCask = try event("verification_record", domains[0], "firefox", "conformity", "verified")
+        let verifiedPackage = try event("verification_record", domains[1], "firefox", "conformity", "verified")
+        precondition(live([finished, verifiedCask]).domains[0].executionStatus == .completed)
+        precondition(live([finished, verifiedCask]).domains[1].executionStatus == .awaitingVerification)
+        precondition(live([finished, verifiedCask, phase]).domains[0].executionStatus == .completed)
+        precondition(live([finished, verifiedCask, verifiedPackage, phase]).domains[1].executionStatus == .matching)
+        let mismatch = try event("verification_record", domains[0], "firefox", "conformity", "mismatch")
+        let withMismatch = live([finished, verifiedCask, verifiedPackage, phase, mismatch])
+        precondition(withMismatch.domains[0].executionStatus == .attention && withMismatch.domains[1].executionStatus == .matching)
+        precondition(live([mismatch, activeEvent]).domains[0].executionStatus == .attention)
+
+        let two = RestoreTaskPresentation(preview: twoPreview, plan: twoPlan, executing: true, operationProgress: true)
+        precondition(two.domains.count == 2 && two.domains.flatMap(\.items).count == 2)
+        var manyRaw = raw
+        manyRaw["plan"] = (0..<120).map { index in
+            ["domain": domains[index % 2], "item_id": "item-\(index)", "display_name": "Item \(index)",
+             "action": "install", "disposition": "planned"]
+        }
+        let manyPlan = try JSONDecoder().decode(CoreRestorePreparation.self, from: JSONSerialization.data(withJSONObject: manyRaw))
+        let manyPreview = RestorePreviewPresentation(manyPlan, catalog: catalog)
+        let many = RestoreTaskPresentation(preview: manyPreview, plan: manyPlan, executing: true, operationProgress: true)
+        precondition(many.domains.count == 2 && many.domains.flatMap(\.items).count == 120)
+        precondition(RestoreOperationSummary(domains: many.domains).completed == 0)
+        let macDomains = ["macos-dock", "macos-screenshots"]
+        let macCatalog = CoreRestoreInspection.Inventory(groups: [.init(id: "macOS Settings", domains: macDomains)],
+            inventory: macDomains.map { .init(domain: $0, label: $0, selectionMode: "category", availability: "available", reason: nil, items: []) })
+        var macRaw = raw
+        macRaw["plan"] = [
+            ["domain": macDomains[0], "item_id": "com.apple.dock/tilesize", "action": "set_preference", "disposition": "planned"],
+            ["domain": macDomains[1], "item_id": "com.apple.screencapture/location", "action": "set_preference", "disposition": "planned"],
+            ["domain": macDomains[1], "item_id": "SystemUIServer", "action": "restart_process", "disposition": "planned"]]
+        let macPlan = try JSONDecoder().decode(CoreRestorePreparation.self, from: JSONSerialization.data(withJSONObject: macRaw))
+        let macPreview = RestorePreviewPresentation(macPlan, catalog: macCatalog)
+        let preferenceEvidence: [[String: CoreJSON]] = macPlan.plan.filter { $0.action != "restart_process" }.map {
+            ["domain": .string($0.domain), "item_id": .string($0.itemID), "predicate": .string("stored_preference"), "conformity": .string("verified")]
+        }
+        precondition(RestoreTaskPresentation.hasVerifiedRequirements(entries: macPlan.plan, observations: preferenceEvidence, operations: []))
+        precondition(!RestoreTaskPresentation.hasVerifiedRequirements(entries: macPlan.plan, observations: Array(preferenceEvidence.prefix(1)), operations: []))
+        var wrongPredicate = preferenceEvidence
+        wrongPredicate[1]["predicate"] = .string("other")
+        precondition(!RestoreTaskPresentation.hasVerifiedRequirements(entries: macPlan.plan, observations: wrongPredicate, operations: []))
+
+        func macTasks(_ evidence: [CoreEvent]) -> RestoreTaskPresentation {
+            RestoreTaskPresentation(preview: macPreview, plan: macPlan, events: evidence, executing: true, operationProgress: true)
+        }
+        let macVerified = try event("verification_record", macDomains[1], "com.apple.screencapture/location", "conformity", "verified", action: "set_preference")
+        let missing = macTasks([macVerified, phase])
+        precondition(missing.domains.flatMap(\.items).count == 3)
+        precondition(missing.domains.allSatisfy { $0.state == .unverified })
+        precondition(RestoreOperationSummary(domains: missing.domains).completed == 0)
+        precondition(RestoreOperationSummary(domains: missing.domains).attention == 0)
+        let macReceipt = try event("operation_record", macDomains[0], "com.apple.dock/tilesize", "outcome", "success", action: "set_preference")
+        precondition(RestoreOperationSummary(domains: macTasks([macReceipt]).domains).completed == 1)
+        let macWrongAction = try event("operation_record", macDomains[0], "com.apple.dock/tilesize", "outcome", "success", action: "verify")
+        precondition(RestoreOperationSummary(domains: macTasks([macWrongAction]).domains).completed == 0)
+        precondition(emptyProgress.domains.allSatisfy { $0.executionStatus == .waiting })
+        precondition(missing.domains.allSatisfy { $0.executionStatus == .awaitingVerification && $0.executionMessages.isEmpty })
+        precondition(projected.domains[0].executionStatus == .attention)
+        precondition(projected.domains[1].executionStatus == .working)
+        let warning = try event("operation_record", domains[0], "firefox", "outcome", "warning")
+        precondition(operationTasks([warning]).domains[0].executionStatus == .attention)
+        precondition(operationTasks([warning, warning]).domains[0].executionMessages.count == 1)
+        let matchingDomain = TaskDomainPresentation(id: "matching", title: "Matching", symbol: "app", items: [
+            .init(id: "match", item: preview.categories[0].items[0], state: .matching)])
+        precondition(matchingDomain.executionStatus == .awaitingVerification)
+        let neutralSkip = TaskDomainPresentation(id: "skip", title: "Skip", symbol: "app", items: [
+            .init(id: "skip", item: DisplayItem(id: "skip", title: "Skip", status: .waiting, action: "", reason: "not_applicable"), state: .skipped)])
+        precondition(neutralSkip.executionStatus == .waiting && neutralSkip.executionMessages.isEmpty)
+        let cancelled = try event("execution_event", domains[0], "firefox", "state", "cancelled")
+        precondition(operationTasks([cancelled]).domains[0].executionStatus == .waiting)
+        precondition(operationTasks([cancelled]).domains[0].executionMessages.isEmpty)
+        let summary = RestoreVerificationSummary(payload: ["verification": .object([
+            "status": .string("complete"), "verified_count": .integer(127), "mismatch_count": .integer(0),
+            "unverified_count": .integer(0), "unresolved_count": .integer(0)])])
+        precondition(summary.verified == 127 && summary.mismatch == 0 && counts.completed == 1)
+        precondition(RestoreVerificationSummary(payload: nil).verified == nil)
+        precondition(summary.complete && summary.title == "Verification Complete")
+        precondition(RestoreVerificationSummary(payload: nil).title == "Verification Not Reported")
+        for status in ["not_run", "incomplete", "failed", "complete"] {
+            let incomplete = RestoreVerificationSummary(payload: ["verification": .object(["status": .string(status), "verified_count": .integer(3)])])
+            precondition(!incomplete.complete && incomplete.mismatch == nil && incomplete.unverified == nil && incomplete.unresolved == nil)
+        }
+        let activeRows = RestoreProgressRow.freeze(preview: preview, plan: plan)
+        func activity(_ events: [CoreEvent]) -> String {
+            RestoreProgressRow.activity(events: events, rows: activeRows, mutationPossible: true)
+        }
+        let firstActivity = try event("execution_event", domains[0], "firefox", "state", "applying", action: "reinstall")
+        let nextActivity = try event("execution_event", domains[1], "firefox", "state", "applying")
+        precondition(activity([]) == "Restoring environment…")
+        precondition(activity([firstActivity]) == "Repairing firefox…")
+        precondition(activity([firstActivity, nextActivity]) == "Installing firefox…")
+        precondition(activity([firstActivity, finished]) == "Restoring environment…")
+        precondition(activity([firstActivity, failure]) == "Repairing firefox…") // unrelated receipt
+        precondition(activity([firstActivity, phase]) == "Verifying restored environment…")
+        precondition(activity([firstActivity, cancelled]) == "Restoring environment…")
+        let unknownActivity = try event("execution_event", domains[0], "opaque:unknown", "state", "applying")
+        precondition(activity([firstActivity, unknownActivity]) == "Homebrew Applications…")
+        let startedCategory = try event("execution_event", domains[1], "scope", "state", "started")
+        precondition(activity([firstActivity, startedCategory]) == "Homebrew Packages…")
+        for type in ["phase_started", "phase_completed", "completed", "failed", "cancelled"] {
+            let boundary = try CoreEvent(line: JSONSerialization.data(withJSONObject: ["protocol_version": 1, "operation_id": "presentation", "sequence": 2,
+                "type": type, "data": ["phase": "bootstrap"]]))
+            precondition(activity([firstActivity, boundary]) == "Restoring environment…")
+        }
+        func resultSummary(_ counts: [String: CoreJSON]) -> RestoreVerificationSummary {
+            RestoreVerificationSummary(payload: ["verification": .object(counts)])
+        }
+        let cleanCounts: [String: CoreJSON] = ["status": .string("complete"), "verified_count": .integer(129),
+            "mismatch_count": .integer(0), "unverified_count": .integer(0), "unresolved_count": .integer(0)]
+        let cleanSummary = resultSummary(cleanCounts)
+        precondition(cleanSummary.overallResult(outcome: .clean) == "OK" && cleanSummary.verified == 129)
+        for (outcome, expected) in [(RestoreExecutionPresentation.Outcome.failedBeforeMutation, "Failed"), (.failedAfterMutation, "Failed"),
+            (.stoppedBeforeMutation, "Stopped"), (.stoppedAfterMutation, "Stopped"), (.interrupted, "Interrupted"), (.partial, "Needs Attention"), (.attention, "Needs Attention")] {
+            precondition(cleanSummary.overallResult(outcome: outcome) == expected)
+            if ["Failed", "Stopped", "Interrupted"].contains(expected) {
+                precondition(resultSummary([:]).overallResult(outcome: outcome) == expected)
+            }
+        }
+        precondition(resultSummary([:]).overallResult(outcome: .clean) == "Incomplete")
+        for key in ["mismatch_count", "unverified_count", "unresolved_count"] {
+            var counts = cleanCounts; counts[key] = .integer(1)
+            precondition(resultSummary(counts).overallResult(outcome: .clean) == "Needs Attention")
+            counts.removeValue(forKey: key)
+            precondition(resultSummary(counts).overallResult(outcome: .attention) == "Incomplete")
+        }
         var events: [CoreEvent] = []
         func project() -> RestoreTaskPresentation {
             RestoreTaskPresentation(preview: preview, plan: plan, events: events, executing: true)
@@ -56,13 +222,13 @@ import Foundation
         precondition(repairProgress.project(events: [repairEvent]).restoreActivity == "Repairing firefox…")
         let sourceRoot = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Sources")
         let view = try String(contentsOf: sourceRoot.appendingPathComponent("RestoreView.swift"), encoding: .utf8)
-        precondition(view.contains("if result.outcome != .clean {\n                DisclosureGroup(\"View Details\")"))
+        precondition(view.contains("DisclosureGroup(\"Technical Details\")") && !view.contains("DisclosureGroup(\"View Details\")"))
         precondition(view.contains("Macseed will apply the changes shown in this Preview. Items that already match will not be changed."))
         precondition(view.contains("Some changes may require administrator authorization."))
         precondition(!view.contains("Some Homebrew casks require administrator authorization") && !view.contains("A separate password prompt will appear."))
         // These are the actual production Preview, Rebuild and Result consumers.
         precondition(view.contains("RestoreTaskPresentation(preview: preview, plan: prepared)"))
-        precondition(view.contains("RestoreTaskPresentation(preview: preview, plan: plan, events: runtime.events, executing: true)"))
+        precondition(view.contains("RestoreTaskPresentation(preview: preview, plan: plan, events: model.categoryPresentationEvents, executing: true, operationProgress: true)"))
         precondition(view.contains("RestoreResultContent(result: result"))
         precondition(view.contains("RestoreRebuildProgressContent(tasks: tasks"))
         precondition(TaskDomainPresentation(id: "mixed", title: "Mixed", symbol: "app", items: [
@@ -204,8 +370,122 @@ import Foundation
         print("PASS: Sequential items clear Working without inferred success; counters and final Verification stay authoritative")
         print("PASS: Production Restore projection distinguishes Will Repair / Ready to Repair / Repairing")
     }
+    @MainActor static func restoreEvidenceChecks() throws {
+        func json(_ value: [String: Any]) throws -> [String: CoreJSON] {
+            try JSONDecoder().decode(CoreJSON.self, from: JSONSerialization.data(withJSONObject: value)).object!
+        }
+        let id = String(repeating: "a", count: 64)
+        let skip: [String: Any] = ["record_id": "o:0", "domain": "homebrew-casks", "item_id": "tailscale-app", "action": "install", "outcome": "skipped", "reason": "cask_execution_requirements_unsupported"]
+        let success: [String: Any] = ["record_id": "o:1", "domain": "homebrew-packages", "item_id": "bat", "action": "install", "outcome": "success"]
+        let noop: [String: Any] = ["domain": "homebrew-packages", "item_id": "htop", "action": "install", "outcome": "noop"]
+        let aggregate: [String: Any] = ["domain": "orchestration", "item_id": "bootstrap", "action": "execute", "outcome": "failure"]
+        let observations: [[String: Any]] = [["domain": "homebrew-casks", "item_id": "tailscale-app", "conformity": "mismatch"], ["domain": "homebrew-packages", "item_id": "bat", "conformity": "verified"]]
+        func payload(_ operations: [[String: Any]], observations: [[String: Any]] = observations) throws -> [String: CoreJSON] {
+            try json(["code": "bootstrap_failed", "prepared_plan_id": id, "independent_work_completed": true,
+                "target_mutation_may_have_started": true, "verification": ["status": "complete", "details": ["status": "complete", "operation_records": operations, "verification_records": observations]]])
+        }
+        let partial = try payload([skip, success, noop, aggregate])
+        precondition(RestoreExecutionPresentation.hasPartialEvidence(payload: partial, expectedID: id))
+        precondition(!RestoreExecutionPresentation.hasPartialEvidence(payload: partial, expectedID: "wrong"))
+        var wrongAggregate = aggregate; wrongAggregate["action"] = "install"
+        let wrongAggregatePayload = try payload([skip, success, wrongAggregate])
+        precondition(!RestoreExecutionPresentation.hasPartialEvidence(payload: wrongAggregatePayload, expectedID: id))
+        var failedItem = success; failedItem["outcome"] = "failure"; failedItem["reason"] = "install_failed"
+        let failedPayload = try payload([skip, success, failedItem, aggregate])
+        precondition(!RestoreExecutionPresentation.hasPartialEvidence(payload: failedPayload, expectedID: id))
+        let noopPayload = try payload([skip, noop, aggregate])
+        precondition(!RestoreExecutionPresentation.hasPartialEvidence(payload: noopPayload, expectedID: id))
+        var incompletePartial = partial
+        incompletePartial["independent_work_completed"] = .bool(false)
+        precondition(!RestoreExecutionPresentation.hasPartialEvidence(payload: incompletePartial, expectedID: id))
+        var diagnosticPayload = partial
+        var verificationObject = diagnosticPayload["verification"]!.object!
+        var diagnosticDetails = verificationObject["details"]!.object!
+        diagnosticDetails["diagnostics"] = .array([.object(["record_id": .string("run"), "code": .string("observation_failed"), "severity": .string("error")])])
+        verificationObject["details"] = .object(diagnosticDetails); diagnosticPayload["verification"] = .object(verificationObject)
+        precondition(!RestoreExecutionPresentation.hasPartialEvidence(payload: diagnosticPayload, expectedID: id))
+        let catalog = CoreRestoreInspection.Inventory(groups: [.init(id: "macOS Settings", domains: ["macos-dock"]), .init(id: "Homebrew", domains: ["homebrew-casks"])], inventory: [
+            .init(domain: "macos-dock", label: "Dock", selectionMode: "category", availability: "available", reason: nil, items: []),
+            .init(domain: "homebrew-casks", label: "Homebrew Applications", selectionMode: "items", availability: "available", reason: nil, items: [])])
+        let planRaw: [String: Any] = ["prepared_plan_id": id, "selection": ["categories": ["macos-dock"], "items": ["homebrew-casks": ["tailscale-app", "iina"]]], "selected_groups": ["macOS Settings"], "selected_categories": ["macos-dock"], "selected_item_counts": ["homebrew-casks": 2], "include_secure": false, "secure_restore_status": "not_selected", "plan": [
+            ["domain": "macos-dock", "item_id": "com.apple.dock/tilesize", "action": "set_preference", "disposition": "planned"],
+            ["domain": "macos-dock", "item_id": "com.apple.dock/autohide", "action": "set_preference", "disposition": "planned"],
+            ["domain": "homebrew-casks", "item_id": "tailscale-app", "action": "install", "disposition": "blocked", "reason": "cask_execution_requirements_unsupported"],
+            ["domain": "homebrew-casks", "item_id": "iina", "action": "install", "disposition": "planned"]],
+            "readiness": ["ready": true, "ready_scope": "environment", "conditions": [], "reentry": "restore_prepare"], "has_planned_changes": true, "warning_count": 1, "error_count": 0]
+        let plan = try JSONDecoder().decode(CoreRestorePreparation.self, from: JSONSerialization.data(withJSONObject: planRaw))
+        let preview = RestorePreviewPresentation(plan, catalog: catalog)
+        func event(_ domain: String, _ item: String, _ state: String) throws -> CoreEvent {
+            try CoreEvent(line: JSONSerialization.data(withJSONObject: ["protocol_version": 1, "operation_id": "checks", "sequence": 1, "type": "execution_event", "data": ["domain": domain, "item_id": item, "state": state, "action": "set_preference"]]))
+        }
+        let caskActive = try event("homebrew-casks", "iina", "applying")
+        let working = RestoreTaskPresentation(preview: preview, plan: plan, events: [caskActive], executing: true, operationProgress: true)
+        let caskRow = working.domains.first { $0.id == "homebrew-casks" }!
+        precondition(caskRow.executionStatus == .attention && !caskRow.executionMessages.isEmpty)
+        let changed = try event("macos-dock", "com.apple.dock/tilesize", "changed")
+        let verifying = try event("verification", "scope", "started")
+        let localVerifying = try event("macos-dock", "com.apple.dock/tilesize", "verifying")
+        for events in [[changed], [changed, localVerifying, verifying]] {
+            let rows = RestoreTaskPresentation(preview: preview, plan: plan, events: events, executing: true, operationProgress: true)
+            precondition(rows.domains.first { $0.id == "macOS Settings" }!.executionStatus == .awaitingVerification)
+        }
+        let dockRecords: [[String: Any]] = ["tilesize", "autohide"].map {
+            ["domain": "macos-dock", "item_id": "com.apple.dock/" + $0, "predicate": "stored_preference", "conformity": "verified"]
+        }
+        let dockEvidence = try dockRecords.map { try json($0) }
+        let dockEntries = plan.plan.filter { $0.domain == "macos-dock" }
+        precondition(RestoreTaskPresentation.hasVerifiedRequirements(entries: dockEntries, observations: dockEvidence, operations: []))
+        precondition(!RestoreTaskPresentation.hasVerifiedRequirements(entries: dockEntries, observations: Array(dockEvidence.prefix(1)), operations: []))
+        var mismatchEvidence = dockEvidence; mismatchEvidence[1]["conformity"] = .string("mismatch")
+        precondition(!RestoreTaskPresentation.hasVerifiedRequirements(entries: dockEntries, observations: mismatchEvidence, operations: []))
+        // A runtime without a terminal receipt cannot certify a final outcome.
+        let runtime = CoreRuntime()
+        func finalRows(_ observations: [[String: Any]]) throws -> RestoreTaskPresentation {
+            let data = try payload([skip, success, aggregate], observations: observations + observationsForPackage)
+            let result = RestoreExecutionPresentation(runtime: runtime, payload: data, expectedID: id, catalog: catalog)
+            return RestoreTaskPresentation(preview: preview, plan: plan, result: result, executing: true, operationProgress: true)
+        }
+        let observationsForPackage: [[String: Any]] = [["domain": "homebrew-packages", "item_id": "bat", "conformity": "verified"]]
+        // The incomplete runtime intentionally cannot certify a terminal outcome.
+        let uncertified = try finalRows(dockRecords)
+        precondition(uncertified.domains.first { $0.id == "macOS Settings" }!.executionStatus == .unverified)
+        let names = ["homebrew-casks": ["tailscale-app": "Tailscale", "iina": "IINA"]]
+        let normalized = RestoreResultFindings(payload: partial, events: [], catalog: catalog, verified: false, itemNames: names, completedWithIssues: true)
+        precondition(normalized.findings.count == 1 && normalized.findings[0].title == "Tailscale")
+        var second = skip; second["item_id"] = "iina"
+        let two = RestoreResultFindings(payload: try payload([skip, second, success, aggregate]), events: [], catalog: catalog, verified: false, itemNames: names, completedWithIssues: true)
+        precondition(two.findings.count == 2 && Set(two.findings.map(\.title)) == ["Tailscale", "IINA"])
+        let technical = RestoreExecutionPresentation(runtime: runtime, payload: partial, expectedID: id).technicalDetails.joined(separator: "\n")
+        precondition(technical.contains("bootstrap_failed") && technical.contains("cask_execution_requirements_unsupported") && technical.contains("tailscale-app") && technical.contains("mismatch"))
+        var privatePayload = partial; privatePayload["access_token"] = .string("DO_NOT_RENDER")
+        privatePayload["stderr"] = .string("DO_NOT_RENDER")
+        precondition(!RestoreExecutionPresentation(runtime: runtime, payload: privatePayload, expectedID: id).technicalDetails.joined().contains("DO_NOT_RENDER"))
+        let privateResult = RestoreExecutionPresentation(runtime: runtime, payload: privatePayload, expectedID: id)
+        precondition(!privateResult.diagnosticReport.contains("DO_NOT_RENDER"))
+        precondition(privateResult.diagnosticReport.contains("homebrew-packages") && privateResult.diagnosticReport.contains("verified"))
+        precondition(!privateResult.compactTechnicalDetails.joined().contains("item_id: bat"))
+        precondition(privateResult.compactTechnicalDetails.count < privateResult.technicalDetails.count)
+        let safeHash = String(repeating: "d", count: 64)
+        var stalePayload: [String: CoreJSON] = ["code": .string("stale_plan"),
+            "target_mutation_may_have_started": .bool(false),
+            "plan_validation": .object(["check": .string("prepared_plan_id"), "expected_id": .string(id),
+                "recomputed_id": .string(safeHash), "components": .object(["plan": .string(safeHash), "bundle": .string(id), "secret": .string("DO_NOT_COPY")]),
+                "private_path": .string("/Users/DO_NOT_COPY")])]
+        let diagnostic = RestoreExecutionPresentation(runtime: runtime, payload: stalePayload, expectedID: id,
+            expectedDiagnostics: ["plan": id, "bundle": id]).diagnosticReport
+        precondition(diagnostic.contains("Desktop prepared ID: " + id) && diagnostic.contains("Execute requested ID: " + id))
+        precondition(diagnostic.contains("Core recomputed ID: " + safeHash) && diagnostic.contains("plan changed: true"))
+        precondition(diagnostic.contains("bundle changed: false") && diagnostic.contains("selection changed: unknown"))
+        precondition(!diagnostic.contains("DO_NOT_COPY") && !diagnostic.contains("/Users/"))
+        stalePayload["plan_validation"] = .object(["check": .string("DO_NOT_COPY"), "expected_id": .string("DO_NOT_COPY"),
+            "components": .object(["plan": .string("DO_NOT_COPY")])])
+        precondition(!RestoreExecutionPresentation(runtime: runtime, payload: stalePayload, expectedID: id,
+            expectedDiagnostics: ["plan": "DO_NOT_COPY"]).diagnosticReport.contains("DO_NOT_COPY"))
+        print("PASS: Working retains Preview warnings; execution awaits Verification; Partial requires typed independent success; item diagnostics preserve independent problems")
+    }
     @MainActor static func main() async throws {
         try taskPresentationChecks()
+        try restoreEvidenceChecks()
         if CommandLine.arguments.contains("--presentation-only") { return }
         for (status, expected, prompts) in [(Int32(0), RestoreAutomationPermission.Outcome.available, 0),
                                             (-1744, .available, 1), (-1743, .denied, 0), (-10004, .unavailable, 0)] {
@@ -235,6 +515,8 @@ import Foundation
         request=json.load(sys.stdin)
         with open('requests.jsonl','a') as out: out.write(json.dumps(request)+'\\n')
         mode=Path('mode').read_text() if Path('mode').exists() else 'clean'
+        session=mode.startswith('session')
+        session_id=__import__('hashlib').sha256(Path('session-count').read_bytes()).hexdigest() if Path('session-count').exists() else 'a'*64
         sequence=0
         def emit(kind,data=None):
             global sequence
@@ -314,6 +596,20 @@ import Foundation
                     result['readiness']['conditions'].append(dict(domain='ssh-configuration',code='ssh_configuration_not_ready',status='external_action_required',scope='operation'))
                     result['readiness']['ready']=False
                 result['prepared_plan_id']=__import__('hashlib').sha256(json.dumps(result['selection'],sort_keys=True).encode()).hexdigest()
+            if mode in ('session-automation','session-skip'):
+                casks=[row for row in result['plan'] if row['domain']=='homebrew-casks']
+                casks[1].update(disposition='blocked',reason='cask_execution_requirements_unsupported')
+                result['readiness']['conditions']=[dict(domain='homebrew-casks',code='cask_execution_requirements_unsupported',status='unsupported',scope='item',selected_item_index=2)]
+                result['readiness']['ready']=mode=='session-skip'
+                if mode=='session-automation':
+                    casks[0].update(disposition='blocked',reason='cask_metadata_unavailable',diagnostic=dict(primitive='login_item',condition='application_unavailable'))
+                    result['readiness']['conditions'].append(dict(domain='homebrew-casks',code='cask_metadata_unavailable',status='external_action_required',scope='operation',selected_item_index=1,diagnostic=dict(primitive='login_item',condition='application_unavailable')))
+            if session:
+                count=int(Path('session-count').read_text())+1 if Path('session-count').exists() else 1
+                Path('session-count').write_text(str(count))
+                result['prepared_plan_id']=__import__('hashlib').sha256(str(count).encode()).hexdigest()
+                result['plan_diagnostics']={key:result['prepared_plan_id'] for key in ('bundle','stage','selection','parameters','plan','readiness','modules')}
+                if mode=='session-delay': time.sleep(0.15)
             if mode=='wrong_selection': result['selection']['categories']=['not-chosen']
         elif operation=='restore_execute':
             assert request['parameters']['include_secure'] is False
@@ -321,7 +617,7 @@ import Foundation
             requests=[json.loads(line) for line in Path('requests.jsonl').read_text().splitlines()]
             last_prepare=next(r for r in reversed(requests) if r['operation']=='restore_prepare')
             assert request['parameters']['selection']==last_prepare['parameters']['selection']
-            assert request['parameters']['expected_prepared_plan_id']=='a'*64
+            assert request['parameters']['expected_prepared_plan_id']==(session_id if session else 'a'*64)
             if mode=='execute_missing_result': emit('completed'); sys.exit(0)
             if mode in ('execute_partial','execute_item_skip'):
                 emit('phase_started',dict(phase='bootstrap'))
@@ -341,12 +637,18 @@ import Foundation
                 emit('phase_started',dict(phase='bootstrap' if mutation else 'preparation'))
                 time.sleep(10)
             if mode in ('execute_fail_before','execute_fail_after','execute_stale'):
-                emit('failed',dict(code='stale_plan' if mode=='execute_stale' else 'bootstrap_failed',target_mutation_may_have_started=mode=='execute_fail_after')); sys.exit(2)
+                failed=dict(code='stale_plan' if mode=='execute_stale' else 'bootstrap_failed',target_mutation_may_have_started=mode=='execute_fail_after')
+                if mode=='execute_stale': failed['plan_validation']=dict(check='prepared_plan_id',expected_id=request['parameters']['expected_prepared_plan_id'],recomputed_id='d'*64,components={'plan':'d'*64})
+                if mode=='execute_stale': failed.update(execution_status='failed_before_mutation',bootstrap_status='not_started',verification=dict(status='not_run'))
+                emit('failed',failed); sys.exit(2)
             emit('phase_started',dict(phase='bootstrap'))
+            if mode=='session-evidence-window':
+                emit('verification_record',dict(domain='homebrew-packages',item_id='1',predicate='installed',conformity='verified'))
+                for index in range(300): emit('execution_event',dict(domain='verification',item_id='scope',state='started'))
             emit('execution_event',dict(domain='homebrew-packages',item_id='first',state='changed',action='install'))
             verification=dict(status='complete',verdict='selected_requirements_verified',mismatch_count=0,unverified_count=0,unresolved_count=0,warning_count=0,error_count=0,details={})
             if mode=='execute_attention': verification['unverified_count']=1; verification['verdict']='incomplete'
-            result=dict(prepared_plan_id='a'*64,execution_status='completed',target_mutation_may_have_started=True,publication_occurred=True,verification=verification,warning_count=0,error_count=0)
+            result=dict(prepared_plan_id=session_id if session else 'a'*64,execution_status='completed',target_mutation_may_have_started=True,publication_occurred=True,verification=verification,warning_count=0,error_count=0)
         else:
             Path('MUTATION_ATTEMPT').write_text(operation)
             emit('failed',dict(code='forbidden_operation')); sys.exit(2)
@@ -363,8 +665,9 @@ import Foundation
         inventory += macOS.map { ["domain": $0, "label": "Core label " + $0, "selection_mode": "category", "availability": "available", "reason": NSNull(), "items": []] }
         inventory += [["domain": "ssh-configuration", "label": "SSH Configuration", "selection_mode": "category", "availability": "available", "reason": NSNull(), "items": []],
                       ["domain": "unavailable-area", "label": "Unavailable area", "selection_mode": "category", "availability": "unavailable", "reason": "no_selectable_content", "items": []]]
+        inventory.append(["domain": "empty-items", "label": "Empty items", "selection_mode": "items", "availability": "available", "reason": NSNull(), "items": []])
         let groups: [[String: Any]] = [["id": "Applications", "domains": applications], ["id": "Workspace", "domains": workspace],
-                                      ["id": "macOS Settings", "domains": macOS], ["id": "SSH Configuration", "domains": ["ssh-configuration"]], ["id": "Other Core group", "domains": ["homebrew-packages", "unavailable-area"]]]
+                                      ["id": "macOS Settings", "domains": macOS], ["id": "SSH Configuration", "domains": ["ssh-configuration"]], ["id": "Other Core group", "domains": ["homebrew-packages", "unavailable-area", "empty-items"]]]
         let inspection: [String: Any] = ["format_version": 1, "selected_categories": macOS + ["ssh-configuration"], "selected_item_counts": [:], "secure_component": true,
                                         "restore_selection": ["groups": groups, "inventory": inventory]]
         try JSONSerialization.data(withJSONObject: inspection).write(to: core.appendingPathComponent("inspection.json"))
@@ -375,6 +678,115 @@ import Foundation
         precondition(model.state == .review && model.areas.count == inventory.count && model.groups.count == 5 && model.bulkState == .all)
         precondition(model.selectionSummary == "Everything selected" && model.canPreview)
         precondition(model.inspection?.secureComponent == true && model.selectedAreaCount == 13)
+        if CommandLine.arguments.contains("--plan-session-only") {
+            func prepare(_ mode: String = "session") async throws {
+                try write(mode, core.appendingPathComponent("mode"))
+                model.refreshPreview()
+                precondition(!model.canRebuild && model.preparation == nil)
+                await model.waitForCompletion()
+                precondition(model.canRebuild)
+            }
+            func execute() async throws {
+                let id = model.preparation!.preparedPlanID
+                try write("session", core.appendingPathComponent("mode"))
+                model.requestRebuild(); model.confirmRebuild(); await model.waitForCompletion()
+                precondition(model.executionPlan?.preparedPlanID == id && model.executionResult?.outcome == .clean)
+                model.checkCurrentState(); await model.waitForCompletion()
+            }
+            try await prepare(); try await execute()
+            try await prepare()
+            try write("session-evidence-window", core.appendingPathComponent("mode"))
+            model.requestRebuild(); model.confirmRebuild(); await model.waitForCompletion()
+            precondition(runtime.historyTruncated)
+            precondition(!runtime.events.contains { $0.type == "verification_record" })
+            precondition(model.categoryPresentationEvents.contains { $0.type == "verification_record" })
+            model.checkCurrentState(); await model.waitForCompletion()
+            try await prepare(); let first = model.preparation!.preparedPlanID
+            try await prepare(); precondition(model.preparation!.preparedPlanID != first)
+            try await execute()
+            try write("automation", core.appendingPathComponent("mode"))
+            model.refreshPreview(); await model.waitForCompletion()
+            await model.checkPrerequisites(permission: {
+                try! write("session", core.appendingPathComponent("mode")); return .available
+            })
+            await model.waitForCompletion()
+            precondition(model.prerequisiteRetryMessage == nil && model.canRebuild)
+            try await prepare(); try await execute()
+            try await prepare("session-delay")
+            let latest = model.preparation!.preparedPlanID
+            try write("session-delay", core.appendingPathComponent("mode"))
+            model.refreshPreview()
+            let pending = model.waitForCompletion
+            model.refreshPreview(); model.requestRebuild()
+            precondition(model.state == .preparing && !model.canRebuild)
+            await pending()
+            precondition(model.preparation!.preparedPlanID != latest)
+            let finalID = model.preparation!.preparedPlanID
+            try await Task.sleep(nanoseconds: 200_000_000)
+            precondition(model.preparation!.preparedPlanID == finalID)
+            try await execute()
+            try write("session-automation", core.appendingPathComponent("mode"))
+            model.refreshPreview(); await model.waitForCompletion()
+            precondition(!model.canRebuild && model.preparation!.readiness.conditions.contains { $0.diagnostic?.automationRequirement == true })
+            await model.checkPrerequisites(permission: { .denied })
+            precondition(model.prerequisiteRetryMessage!.contains("Privacy & Security → Automation"))
+            await model.checkPrerequisites(permission: {
+                try! write("session-skip", core.appendingPathComponent("mode")); return .available
+            })
+            await model.waitForCompletion()
+            precondition(model.prerequisiteRetryMessage == nil && model.canRebuild)
+            precondition(!model.preparation!.readiness.conditions.contains { $0.diagnostic?.automationRequirement == true })
+            precondition(model.preparation!.plan.contains { $0.reason == "cask_execution_requirements_unsupported" })
+            try write("clean", core.appendingPathComponent("mode")); model.refreshPreview(); await model.waitForCompletion()
+            try write("execute_stale", core.appendingPathComponent("mode"))
+            model.requestRebuild(); model.confirmRebuild(); await model.waitForCompletion()
+            precondition(model.executionResult?.outcome == .failedBeforeMutation)
+            precondition(model.executionResult?.title == "Restore Plan Is Outdated")
+            let notRun = RestoreTaskPresentation(preview: model.executionPreview!, plan: model.executionPlan!,
+                events: runtime.events, result: model.executionResult!, operationProgress: true)
+            precondition(notRun.domains.allSatisfy { $0.executionStatus == .notRun && $0.executionStatus.tone == .neutral })
+            let summary = RestoreVerificationSummary(payload: model.executionResult!.structuredEvidence)
+            precondition(summary.title == "Verification Not Run" && summary.mismatch == nil && summary.unverified == nil && summary.unresolved == nil)
+            // Each required pre-mutation fact is necessary; a failure alone is not Not Run.
+            for key in ["code", "execution_status", "target_mutation_may_have_started", "verification"] {
+                var changed = model.executionResult!.structuredEvidence!
+                changed.removeValue(forKey: key)
+                let changedResult = RestoreExecutionPresentation(runtime: runtime, payload: changed, expectedID: model.executionPlan!.preparedPlanID)
+                let changedTasks = RestoreTaskPresentation(preview: model.executionPreview!, plan: model.executionPlan!,
+                    result: changedResult, operationProgress: true)
+                precondition(changedTasks.domains.allSatisfy { $0.executionStatus != .notRun })
+            }
+            let performed = try CoreEvent(line: JSONSerialization.data(withJSONObject: ["protocol_version": 1,
+                "operation_id": "performed", "sequence": 1, "type": "operation_record",
+                "data": ["domain": "homebrew-casks", "item_id": "1", "action": "install", "outcome": "success"]]))
+            let mixed = RestoreTaskPresentation(preview: model.executionPreview!, plan: model.executionPlan!,
+                events: [performed], result: model.executionResult!, operationProgress: true)
+            precondition(mixed.domains.first { $0.id == "homebrew-casks" }!.executionStatus == .unverified)
+
+            precondition(model.executionResult!.message.contains("No changes were made by this Restore attempt."))
+            precondition(model.executionResult!.diagnosticReport.contains("stale_plan"))
+            precondition(model.executionResult!.diagnosticReport.contains("Core recomputed ID:"))
+            precondition(model.executionResult!.diagnosticReport.contains("Execute requested ID:"))
+
+            print("PASS: Same-session Prepare/Refresh/Check Again/Execute use latest IDs; overlapping Refresh is blocked; stale-plan UX and independent warnings remain")
+            return
+        }
+        let initialSelection = model.selection
+        precondition(model.selectionCategoryCounts.fully == model.areas.filter(\.selectable).count)
+        precondition(model.selectionCategoryCounts.partially == 0 && model.selectionCategoryCounts.notSelected == 0)
+        let itemArea = model.areas.first { $0.selectable && $0.items.count > 1 }!
+        model.selectItem(itemArea.id, item: itemArea.items[0].id, included: false)
+        precondition(model.selectionCategoryCounts.partially == 1)
+        model.selectArea(itemArea.id, included: false)
+        precondition(model.selectionCategoryCounts.notSelected == 1 && model.selectionCategoryCounts.partially == 0)
+        model.selectArea(itemArea.id, included: true)
+        precondition(model.selection == initialSelection)
+        let summaryMacOSGroup = model.groups.first { $0.id == "macOS Settings" }!
+        model.selectArea(summaryMacOSGroup.domains[0], included: false)
+        precondition(model.groupState(summaryMacOSGroup) == .mixed && model.selectionCategoryCounts.notSelected == 1)
+        model.selectGroup(summaryMacOSGroup, included: true)
+        precondition(model.selection == initialSelection)
+
         for id in applications + workspace {
             model.selectArea(id, included: false)
             precondition(!model.selection.categories.contains(id))
@@ -474,7 +886,7 @@ import Foundation
         events.append(try event(packageRow.id, "changed"))
         precondition(packageRow.project(events: events).status == .attention)
         precondition(RestoreProgressRow.phase(events: [], mutationPossible: false) == "Preparing rebuild…")
-        precondition(RestoreProgressRow.phase(events: [], mutationPossible: true) == "Applying your saved environment…")
+        precondition(RestoreProgressRow.phase(events: [], mutationPossible: true) == "Restoring environment…")
         let settingsProgress = frozen.first { $0.id == "macOS Settings" }!
         let oneSettingEvent = try event(macOS[0], "changed")
         let allSettingsEvents = try macOS.map { try event($0, "changed") }
@@ -692,13 +1104,21 @@ import Foundation
             if mode.hasPrefix("execute_stop") {
                 for _ in 0..<100 { if runtime.currentPhase != nil { break }; try await Task.sleep(nanoseconds: 20_000_000) }
                 model.requestStop()
+                precondition(model.stopConfirmation && runtime.isActive && !runtime.stopping)
+                model.requestStop(); precondition(model.stopConfirmation && !runtime.stopping)
                 if mode == "execute_stop_after" {
-                    precondition(model.stopConfirmation && model.mutationPossible)
-                    model.stopConfirmation = false; precondition(runtime.isActive)
-                    model.requestStop(); model.confirmStop()
+                    precondition(model.mutationPossible)
+                    model.dismissStopConfirmation(); precondition(runtime.isActive)
+                    model.requestStop()
                 }
+                model.confirmStop(); model.confirmStop()
+                precondition(!model.stopConfirmation)
             }
+            if mode == "execute_clean" { model.requestStop() }
             await model.waitForCompletion()
+            precondition(!model.stopConfirmation)
+            model.confirmStop(); model.requestStop()
+            precondition(!runtime.stopping && !model.stopConfirmation)
             precondition(model.state == .result && model.executionResult?.outcome == outcome)
             precondition(model.executionStartedAt != nil && model.executionFinishedAt != nil)
             precondition(model.executionFinishedAt! >= model.executionStartedAt!)
@@ -708,8 +1128,10 @@ import Foundation
             precondition(tasks.counters.reduce(0) { $0 + $1.count } == tasks.domains.count)
             if mode == "execute_clean" {
                 precondition(tasks.domains.allSatisfy { $0.state == .completed })
+                let compact = RestoreTaskPresentation(preview: model.executionPreview!, plan: model.executionPlan!, events: runtime.events, result: model.executionResult!, operationProgress: true)
+                precondition(compact.domains.allSatisfy { [.completed, .matching].contains($0.executionStatus) })
                 precondition(model.executionResult!.title == "All Done")
-                precondition(model.executionResult!.message.hasPrefix("Your environment is ready."))
+                precondition(model.executionResult!.message.hasPrefix("Your selected environment has been restored and verified."))
                 precondition(model.executionResult!.findings.isEmpty)
             }
             if mode == "execute_partial" {
@@ -756,7 +1178,7 @@ import Foundation
                 precondition(result.details.contains { $0.reason == "item_stalled_timeout" })
             }
             if mode == "execute_item_skip" {
-                precondition(model.executionResult!.title == "Rebuild Completed with Issues")
+                precondition(model.executionResult!.title == "Rebuild Needs Attention")
                 precondition(!model.executionResult!.details.contains { $0.action == "Rebuild could not complete." })
                 precondition(model.executionResult!.details.contains { $0.reason == "differences_detected" })
                 precondition(model.executionResult!.details.contains { $0.reason == "cask_execution_requirements_unsupported" })
@@ -769,7 +1191,7 @@ import Foundation
             precondition(model.state == .preview && model.canRebuild)
         }
         print("PASS: Stage 16G eligibility, confirmation, fine Execute request, ownership, zero-change, Safe Stop, failure/interruption and Verification outcomes; fixtures only")
-        try await realPrepare(repo: repo, python: python, root: root)
+        if !CommandLine.arguments.contains("--fixtures-only") { try await realPrepare(repo: repo, python: python, root: root) }
     }
 
     @MainActor static func realPrepare(repo: URL, python: URL, root: URL) async throws {

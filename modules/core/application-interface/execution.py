@@ -16,13 +16,20 @@ import time
 from item_execution import ProcessTree, process_table
 
 
+class ProcessObservationUnavailable(Exception):
+    """The required read-only process observer could not run before Bootstrap."""
+
+
 class OwnedBootstrap:
     def __init__(self, root, environment, secure_evidence=None, on_record=None, identities=None, mode="--bootstrap", skipped_casks=None, cask_plans=None):
         if mode not in {"--bootstrap", "--application-compare"}:
             raise ValueError("unsupported owned mode")
         if mode == "--bootstrap":
             # Observation capability must be checked before starting a mutating child.
-            process_table()
+            try:
+                process_table()
+            except (OSError, subprocess.SubprocessError, ValueError) as exc:
+                raise ProcessObservationUnavailable() from exc
         read_fd, write_fd = os.pipe()
         verification_read, verification_write = os.pipe()
         report_read, report_write = os.pipe()

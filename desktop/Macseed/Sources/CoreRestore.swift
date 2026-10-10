@@ -56,6 +56,7 @@ struct CoreRestoreInspection: Decodable {
 
 struct CoreRestorePreparation: Decodable {
     let preparedPlanID: String
+    let planDiagnostics: [String: String]?
     let selection: CoreRestoreSelection
     let selectedGroups: [String]
     let selectedCategories: [String]
@@ -81,10 +82,10 @@ struct CoreRestorePreparation: Decodable {
         var explanation: String {
             if automationRequirement {
                 return condition == "application_unavailable"
-                    ? "Macseed needs System Events permission to inspect login items. Choose Check Again to request access and retry."
+                    ? "Macseed cannot inspect login items without System Events permission. Choose Check Again to allow access and check the current state again."
                     : condition == "authorization_denied"
                         ? "Allow Macseed → System Events in System Settings → Privacy & Security → Automation, then Check Again."
-                        : "Macseed needs System Events permission to inspect login items. Choose Check Again to request access and retry."
+                        : "Macseed cannot inspect login items without System Events permission. Choose Check Again to allow access and check the current state again."
             }
             switch condition {
             case "foreign_target": return "This " + primitiveName + " points outside the expected application. Existing state will be preserved."
@@ -141,6 +142,7 @@ struct CoreRestorePreparation: Decodable {
         enum CodingKeys: String, CodingKey { case diagnostic, domain, code, status, scope, selectedItemIndex = "selected_item_index" }
     }
     enum CodingKeys: String, CodingKey {
+        case planDiagnostics = "plan_diagnostics"
         case selection, preparedPlanID = "prepared_plan_id", selectedGroups = "selected_groups", selectedCategories = "selected_categories"
         case selectedItemCounts = "selected_item_counts", includeSecure = "include_secure", secureRestoreStatus = "secure_restore_status"
         case plan, readiness, hasPlannedChanges = "has_planned_changes", executableChanges = "has_executable_changes", warningCount = "warning_count", errorCount = "error_count"

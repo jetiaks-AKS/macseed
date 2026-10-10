@@ -50,6 +50,19 @@ The format is based on the principles of **Keep a Changelog**.
 
 ### Changed
 
+* Restore freshness failures include safe plan/component fingerprints in Desktop
+  diagnostic copying. A denied process observer is reported separately from an
+  unavailable Bundle, preserving the original publication and mutation facts.
+
+* Desktop Restore keeps category progress compact, separates execution from final
+  conformity, and finalizes categories independently from Verification evidence.
+  Supported partial outcomes retain Core failures in collapsed technical diagnostics
+  while presenting concrete user issues and semantic Result cards.
+
+* Restore selection shows category inclusion counts and keeps Preview Restore in a
+  fixed footer; Preview preparation uses honest indeterminate activity. Stop Rebuild
+  always confirms with a safe Continue default and operation identity guards.
+
 * Homebrew Repair qualifies bounded installed-lifecycle launch-service/login-item
   orphans generically, preserves structured ownership diagnostics, and checks
   Automation without prompting during Preview. Desktop offers explicit consent

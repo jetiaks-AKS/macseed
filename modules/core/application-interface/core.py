@@ -19,7 +19,7 @@ import tempfile
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "bundle"))
 import bundle
-from execution import OwnedBootstrap
+from execution import OwnedBootstrap, ProcessObservationUnavailable
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from external_tool import diagnostic_valid
 from reporting import opaque
@@ -297,6 +297,15 @@ def prepared_restore(path, disabled_groups, include_secure, selection=None):
             summary['selection'] = restore_selection.canonical(stage)
         summary["prepared_plan_id"] = hashlib.sha256(json.dumps(identity, sort_keys=True,
                                          separators=(",", ":")).encode()).hexdigest()
+        # Optional, privacy-bounded diagnostic fingerprints. Not part of plan identity.
+        # A client can compare these to rejected Execute evidence without sending a baseline.
+        components = {"bundle": source_identity, "stage": stage_identity,
+                      "selection": restore_selection.canonical(stage),
+                      "parameters": {"disabled_groups": sorted(disabled_groups), "include_secure": include_secure},
+                      "plan": identity_summary["plan"], "readiness": identity_summary["readiness"],
+                      "modules": identity_summary["modules"]}
+        summary["plan_diagnostics"] = {key: hashlib.sha256(json.dumps(value, sort_keys=True,
+            separators=(",", ":")).encode()).hexdigest() for key, value in components.items()}
         # This identifies observed inputs and this module summary, never authorizes Apply.
         # Future Execute must rebuild and revalidate Preview before mutation.
         # Additive public fields after legacy identity calculation preserve old IDs.
@@ -489,6 +498,8 @@ def restore_execute(operation_id, path, disabled_groups, include_secure, expecte
             with prepared_restore(path, disabled_groups, include_secure, selection) as (plan, stage, source_id, stage_id):
                 event("phase_completed", {"phase": "preparation"})
                 if plan["prepared_plan_id"] != expected_id:
+                    state["plan_validation"] = {"check": "prepared_plan_id", "expected_id": expected_id,
+                        "recomputed_id": plan["prepared_plan_id"], "components": plan["plan_diagnostics"]}
                     raise ExecuteFailed("stale_plan")
                 state["prepared_plan_id"] = plan["prepared_plan_id"]
                 if not plan["has_executable_changes"] and any(
@@ -504,8 +515,15 @@ def restore_execute(operation_id, path, disabled_groups, include_secure, expecte
                 readiness(stage, include_secure, channel is not None, secure_only)
                 if plan["error_count"]:
                     raise ExecuteFailed("preview_observation_failed")
-                if (bundle.fingerprint(stage) != stage_id or
-                    bundle.fingerprint(Path(path)) != source_id):
+                current_stage = bundle.fingerprint(stage)
+                # Preserve the original short-circuit: a changed stage already rejects.
+                current_source = bundle.fingerprint(Path(path)) if current_stage == stage_id else None
+                if current_stage != stage_id or current_source != source_id:
+                    state["plan_validation"] = {"check": "input_recheck", "expected_id": expected_id,
+                        "recomputed_id": plan["prepared_plan_id"], "components": plan["plan_diagnostics"],
+                        "stage_changed_after_prepare": current_stage != stage_id}
+                    if current_source is not None:
+                        state["plan_validation"]["bundle_changed_after_prepare"] = current_source != source_id
                     raise ExecuteFailed("stale_plan")
                 if bundle.RECOVERY.exists() or bundle.RECOVERY.is_symlink():
                     raise RecoveryRequired()
@@ -631,6 +649,8 @@ def restore_execute(operation_id, path, disabled_groups, include_secure, expecte
         return failure('privileged_lifecycle_unknown' if state['unknown_consequences'] else "cancelled", 130)
     except bundle.Unsupported:
         return failure("unsupported_bundle")
+    except ProcessObservationUnavailable:
+        return failure("process_observation_unavailable")
     except (FileNotFoundError, PermissionError):
         return failure("bundle_unavailable")
     except (bundle.Invalid, tarfile.TarError, ValueError, TypeError, KeyError, UnicodeError):

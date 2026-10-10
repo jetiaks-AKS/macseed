@@ -294,6 +294,9 @@ struct RestoreView: View {
     @ObservedObject var runtime: CoreRuntime
     var showsRebuildActions = true
     var showsPreviewActions = true
+    var showsSelectionActions = true
+    var showsPreparationActions = true
+    var showsResultActions = true
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             switch model.state {
@@ -304,14 +307,30 @@ struct RestoreView: View {
                     Button("Choose Saved Environment…", action: chooseBundle).buttonStyle(.borderedProminent).disabled(runtime.isActive)
                 }
             case .inspecting, .preparing:
-                ProgressView(runtime.stopping ? "Stopping…" : (model.state == .inspecting ? "Inspecting saved environment…" : "Preparing Restore Preview…"))
-                Button("Cancel", role: .cancel) { model.cancel() }.disabled(runtime.stopping)
+                VStack(alignment: .leading, spacing: 16) {
+                    HStack(alignment: .center, spacing: 16) {
+                        ProgressView().controlSize(.large)
+                            .frame(width: 40, height: 40).accessibilityHidden(true)
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Preparing Restore Preview").font(.title2.weight(.bold))
+                                .accessibilityAddTraits(.isHeader)
+                            Text(runtime.stopping ? "Stopping Preview…" : "Inspecting the selected environment and checking prerequisites…")
+                                .font(.callout).foregroundStyle(.secondary)
+                        }
+                    }
+                    Divider()
+                    Label("Read-only inspection — no changes will be made to this Mac.", systemImage: "checkmark.shield")
+                        .font(.callout).foregroundStyle(.secondary)
+                }
+                .padding(18).frame(maxWidth: .infinity, alignment: .leading)
+                .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 12))
+                if showsPreparationActions { RestorePreparationActions(stopping: runtime.stopping, cancel: { model.cancel() }) }
             case .review, .preview, .confirming:
                 if let source = model.source {
                     HStack {
                         Label(source.lastPathComponent, systemImage: "shippingbox").font(.headline)
                         Spacer()
-                        Button("Change…", action: chooseBundle)
+                        Button("Change…", action: chooseBundle).disabled(model.busy || runtime.isActive)
                     }
                 }
                 if model.inspection?.secureComponent == true {
@@ -334,8 +353,9 @@ struct RestoreView: View {
                             !section.groups.contains { $0.id == "macOS Settings" && $0.domains.contains(area.id) }
                         }) { RestoreAreaSelectionView(model: model, area: $0) }
                     }
-                    Text(model.selectionSummary).font(.callout).foregroundStyle(.secondary)
-                    Button("Preview Restore") { model.refreshPreview() }.buttonStyle(.borderedProminent).disabled(!model.canPreview)
+                    if showsSelectionActions {
+                        RestoreSelectionActions(status: model.selectionSummary, canPreview: model.canPreview, preview: { model.refreshPreview() })
+                    }
                 } else if let prepared = model.preparation, let preview = model.preview {
                     let tasks = RestoreTaskPresentation(preview: preview, plan: prepared)
                     let needsAttention = !model.ready || tasks.domains.contains { [.attention, .unverified, .partial].contains($0.state) }
@@ -346,18 +366,15 @@ struct RestoreView: View {
                         alreadyMatches: !prepared.hasPlannedChanges && prepared.plan.allSatisfy { $0.disposition == "satisfied" },
                         prerequisites: RestorePrerequisiteSummaryPresentation(conditions: prepared.readiness.conditions, ready: prepared.readiness.ready),
                         areas: model.areas,
-                        selectionStates: Dictionary(model.areas.map { ($0.id, model.previewSelectionState($0.id)) } + tasks.domains.map { ($0.id, model.previewSelectionState($0.id)) }, uniquingKeysWith: { first, _ in first }),
-                        excludedAreas: model.areas.filter { $0.selectable && !prepared.selection.categories.contains($0.id) && prepared.selection.items[$0.id] == nil },
-                        selectDomain: { model.selectPreviewDomain($0, included: $1) },
                         showsActions: showsPreviewActions, needsRefresh: model.previewNeedsRefresh, retryMessage: model.prerequisiteRetryMessage, retrying: model.retryingPrerequisites,
                         checkAgain: { Task { await model.checkPrerequisites() } },
                         back: { model.back() }, refresh: { model.refreshPreview() }, rebuild: { model.requestRebuild() }, canRebuild: model.canRebuild)
                 }
             case .rebuilding:
                 if let preview = model.executionPreview, let plan = model.executionPlan {
-                    let tasks = RestoreTaskPresentation(preview: preview, plan: plan, events: runtime.events, executing: true)
+                    let tasks = RestoreTaskPresentation(preview: preview, plan: plan, events: model.categoryPresentationEvents, executing: true, operationProgress: true)
                     RestoreRebuildProgressContent(tasks: tasks, activity: model.activity,
-                        stopping: runtime.stopping, activities: model.executionActivities)
+                        stopping: runtime.stopping)
                 }
                 if showsRebuildActions {
                     RestoreRebuildActions(stopping: runtime.stopping, stop: { model.requestStop() })
@@ -365,6 +382,11 @@ struct RestoreView: View {
             case .result:
                 if let result = model.executionResult {
                     RestoreResultContent(result: result,
+                        showsActions: showsResultActions,
+                        tasks: model.executionPreview.flatMap { preview in model.executionPlan.map { plan in
+                            RestoreTaskPresentation(preview: preview, plan: plan, events: model.categoryPresentationEvents,
+                                result: result, executing: true, operationProgress: true)
+                        } },
                         refresh: { model.checkCurrentState() }, done: { model.finish() })
                 }
             case .failed, .cancelled:
@@ -380,7 +402,7 @@ struct RestoreView: View {
                     if model.inspection != nil { Button("Back") { model.back() } }
                 }
             }
-            if model.state != .rebuilding && model.state != .result {
+            if model.state != .rebuilding && model.state != .result && model.state != .inspecting && model.state != .preparing {
                 Text("Restore Preview is read-only. No packages, settings, repositories or SSH identities are changed.")
                     .font(.callout).foregroundStyle(.secondary)
             }
@@ -402,15 +424,16 @@ struct RestoreView: View {
                 }
             }.padding(24).frame(width: 420).interactiveDismissDisabled()
         }
-        .sheet(isPresented: $model.stopConfirmation) {
+        .sheet(isPresented: Binding(get: { model.stopConfirmation }, set: { if !$0 { model.dismissStopConfirmation() } })) {
             VStack(alignment: .leading, spacing: 16) {
                 Text("Stop rebuilding?").font(.title2)
-                Text("Completed changes will remain. Macseed will inspect the current state before you rebuild again.")
+                Text("Rebuild is still in progress. Stopping it may leave some changes already applied to this Mac. A fresh Restore Preview will be required before another Rebuild.")
                 HStack {
-                    Button("Keep Working") { model.stopConfirmation = false }
-                    Button("Stop Rebuild", role: .cancel) { model.confirmStop() }
+                    Button("Continue Rebuild") { model.dismissStopConfirmation() }.keyboardShortcut(.defaultAction)
+                    Button("Stop Rebuild", role: .destructive) { model.confirmStop() }
                 }
             }.padding(24).frame(width: 420).interactiveDismissDisabled()
+                .onExitCommand { model.dismissStopConfirmation() }
         }
     }
     private func chooseBundle() {
@@ -437,9 +460,6 @@ struct RestorePreviewContent: View {
     let alreadyMatches: Bool
     let prerequisites: RestorePrerequisiteSummaryPresentation
     let areas: [CoreRestoreInspection.Area]
-    var selectionStates: [String: SelectionState] = [:]
-    var excludedAreas: [CoreRestoreInspection.Area] = []
-    var selectDomain: ((String, Bool) -> Void)? = nil
     var showsActions = true
     var needsRefresh = false
     var retryMessage: String? = nil
@@ -467,22 +487,37 @@ struct RestorePreviewContent: View {
                 var previewDomain = domain
                 previewDomain.previewOnly = true
                 return previewDomain
-            }, selectionStates: selectionStates, selectDomain: selectDomain)
-            if let selectDomain {
-                ForEach(excludedAreas) { area in
-                    HStack {
-                        NativeSelectionCheckbox(area.label, state: selectionStates[area.id] ?? .none, accessibilityTitle: "Select " + area.label) {
-                            selectDomain(area.id, $0)
-                        }
-                        Spacer()
-                        Text((selectionStates[area.id] ?? SelectionState.none) == SelectionState.none ? "Not selected" : "Selected").font(.callout).foregroundStyle(.secondary)
-                    }.padding(.vertical, 7)
-                }
-            }
+            })
             if showsActions {
                 RestorePreviewActions(back: back, refresh: refresh, rebuild: rebuild, canRebuild: canRebuild)
             }
         }
+    }
+}
+
+struct RestorePreparationActions: View {
+    let stopping: Bool
+    let cancel: () -> Void
+    var body: some View {
+        HStack {
+            Spacer()
+            Button("Cancel", role: .cancel, action: cancel).disabled(stopping)
+        }
+    }
+}
+
+struct RestoreSelectionActions: View {
+    let status: String
+    let canPreview: Bool
+    let preview: () -> Void
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack { Text(status).font(.callout).foregroundStyle(.secondary); Spacer(); action }
+            VStack(alignment: .leading, spacing: 8) { Text(status).font(.callout).foregroundStyle(.secondary); action }
+        }
+    }
+    private var action: some View {
+        Button("Preview Restore", action: preview).buttonStyle(.borderedProminent).disabled(!canPreview)
     }
 }
 
@@ -517,36 +552,76 @@ struct RestoreRebuildProgressContent: View {
     let tasks: RestoreTaskPresentation
     let activity: String
     let stopping: Bool
-    let activities: [DisplayItem]
-    private var verifying: Bool { activity.hasPrefix("Verifying") }
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: 18) {
             Text("Rebuilding this Mac").font(.title.weight(.bold)).accessibilityAddTraits(.isHeader)
-            Text(stopping ? "Stopping… Completed changes may remain." : activity).foregroundStyle(.secondary)
             HStack(spacing: 12) {
                 ProgressView()
-                Text(stopping ? "Stopping Rebuild…" : verifying ? activity
-                     : activities.compactMap(\.restoreActivity).first ?? activity).font(.title2)
-            }.accessibilityElement(children: .combine)
-            ForEach(tasks.domains) { domain in
-                Text(domain.title).font(.headline)
-                ForEach(domain.items) { item in
-                    HStack {
-                        Text(item.item.title).foregroundStyle(item.state == .completed ? .secondary : .primary)
-                        Spacer()
-                        TaskStatusLabel(state: item.state)
-                    }.padding(.vertical, 3)
-                    if [.failed, .skipped, .attention].contains(item.state) {
-                        Text(item.item.action).font(.caption).foregroundStyle(.secondary)
-                    }
+                Text(stopping ? "Stopping… Completed changes may remain." : activity).foregroundStyle(.secondary)
+            }
+            RestoreExecutionCategories(domains: tasks.domains)
+        }
+    }
+}
+
+struct RestoreExecutionCategories: View {
+    let domains: [TaskDomainPresentation]
+    var showsWarnings = true
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(domains) { domain in
+                HStack {
+                    Label(domain.title, systemImage: domain.symbol).font(.headline).lineLimit(1)
+                    Spacer()
+                    TaskStatusLabel(state: domain.executionStatus)
+                }.frame(height: 44)
+                Divider()
+            }
+        }
+        let messages = Array(NSOrderedSet(array: domains.flatMap(\.executionMessages))) as? [String] ?? []
+        if showsWarnings && !messages.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(messages, id: \.self) { message in
+                    Label(message, systemImage: "exclamationmark.triangle")
+                        .font(.callout).foregroundStyle(RestoreStatusTone.warning.color)
                 }
             }
-            Divider()
-            HStack {
-                Text("Verification").font(.headline)
-                Spacer()
-                TaskStatusLabel(state: verifying ? .working : .waiting,
-                    title: verifying ? "Verifying restored environment…" : "Waiting")
+        }
+    }
+}
+
+struct RestoreVerificationResult: View {
+    let outcome: RestoreExecutionPresentation.Outcome
+    let payload: [String: CoreJSON]?
+    static func resultTone(_ result: String) -> RestoreStatusTone {
+        switch result {
+        case "OK": .success
+        case "Failed": .error
+        case "Stopped": .neutral
+        default: .warning
+        }
+    }
+    static func countTone(_ count: Int?, problem: RestoreStatusTone) -> RestoreStatusTone {
+        (count ?? 0) > 0 ? problem : .neutral
+    }
+
+    var body: some View {
+        let summary = RestoreVerificationSummary(payload: payload)
+        let result = summary.overallResult(outcome: outcome)
+        VStack(alignment: .leading, spacing: 8) {
+            Label(summary.title, systemImage: "checkmark.shield").font(.headline)
+            HStack(spacing: 12) {
+                RestorePreviewMetrics.metric("Result", count: nil, symbol: result == "OK" ? "checkmark.shield" : result == "Failed" ? "xmark.circle" : result == "Stopped" ? "stop.circle" : "exclamationmark.triangle", color: Self.resultTone(result).color, value: result, captionColor: .primary)
+                RestorePreviewMetrics.metric("Mismatch", count: summary.mismatch, symbol: "exclamationmark.triangle",
+                    color: Self.countTone(summary.mismatch, problem: .error).color, captionColor: .primary)
+                RestorePreviewMetrics.metric("Unverified", count: summary.unverified, symbol: "questionmark.circle",
+                    color: Self.countTone(summary.unverified, problem: .warning).color, captionColor: .primary)
+            }
+            if let count = summary.unresolved, count > 0 {
+                Label("Unresolved: \(count)", systemImage: "exclamationmark.triangle")
+                    .font(.callout).foregroundStyle(RestoreStatusTone.warning.color)
+            } else if summary.unresolved == nil {
+                Text("Unresolved: —").font(.callout).foregroundStyle(.secondary)
             }
         }
     }
@@ -554,28 +629,41 @@ struct RestoreRebuildProgressContent: View {
 
 struct RestoreResultContent: View {
     let result: RestoreExecutionPresentation
+    var showsActions = true
+    var tasks: RestoreTaskPresentation? = nil
     let refresh: () -> Void
     let done: () -> Void
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             Text(result.title).font(.title.weight(.bold)).accessibilityAddTraits(.isHeader)
             Text(result.message).foregroundStyle(.secondary)
-            if !result.successfulAreas.isEmpty {
-                Text("Verified selected work: " + result.successfulAreas.joined(separator: ", ")).font(.callout)
-            }
+            RestoreVerificationResult(outcome: result.outcome, payload: result.structuredEvidence)
+            if let tasks { RestoreExecutionCategories(domains: tasks.domains, showsWarnings: false) }
             if !result.findings.isEmpty {
-                Text("Needs Attention").font(.headline)
-                RestorePreviewItemDetails(items: result.findings)
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Needs Attention").font(.headline)
+                    ForEach(result.findings) { item in
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(item.title).font(.callout.weight(.semibold))
+                            Text(item.action).font(.callout).foregroundStyle(.secondary)
+                        }
+                    }
+                }
             }
-            if result.outcome != .clean {
-                DisclosureGroup("View Details") { RestorePreviewItemDetails(items: result.details) }
-                    .disclosureGroupStyle(HeaderDisclosureStyle())
+            if !result.technicalDetails.isEmpty {
+                DisclosureGroup("Technical Details") {
+                    ForEach(Array(result.compactTechnicalDetails.enumerated()), id: \.offset) { _, text in
+                        Text(text).font(.caption.monospaced()).textSelection(.enabled)
+                    }
+                    Button("Copy Diagnostic Details") {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(result.diagnosticReport, forType: .string)
+                    }
+                    .padding(.top, 14)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }.disclosureGroupStyle(HeaderDisclosureStyle())
             }
-            HStack {
-                Button("Done", action: done).buttonStyle(.borderedProminent)
-                if result.outcome != .clean { Button("Refresh Preview", action: refresh) }
-                PendingOperationLogButton()
-            }
+            if showsActions { RestoreResultActions(result: result, refresh: refresh, done: done) }
         }
     }
 }
@@ -597,17 +685,17 @@ struct RestorePreviewMetrics: View {
         }
     }
     @ViewBuilder private func cards(_ counts: (changes: Int, attention: Int, matching: Int)) -> some View {
-        metric("Changes Planned", count: counts.changes, symbol: "arrow.down.circle", color: .primary)
-        metric("Need Attention", count: counts.attention, symbol: "exclamationmark.triangle", color: counts.attention > 0 ? RestoreStatusTone.warning.color : .secondary)
-        metric("Already Match", count: counts.matching, symbol: "checkmark.circle", color: RestoreStatusTone.success.color)
+        Self.metric("Changes Planned", count: counts.changes, symbol: "arrow.down.circle", color: .primary)
+        Self.metric("Need Attention", count: counts.attention, symbol: "exclamationmark.triangle", color: counts.attention > 0 ? RestoreStatusTone.warning.color : .secondary)
+        Self.metric("Already Match", count: counts.matching, symbol: "checkmark.circle", color: RestoreStatusTone.success.color)
     }
-    private func metric(_ title: String, count: Int, symbol: String, color: Color) -> some View {
+    static func metric(_ title: String, count: Int?, symbol: String, color: Color, value: String? = nil, captionColor: Color? = nil) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Label(String(count), systemImage: symbol).font(.title2.weight(.semibold)).monospacedDigit()
-            Text(title).font(.callout)
-        }.foregroundStyle(color).frame(minWidth: 140, maxWidth: .infinity, alignment: .leading).padding(14)
+            Label(value ?? count.map(String.init) ?? "—", systemImage: symbol).font(.title2.weight(.semibold)).monospacedDigit().foregroundStyle(color)
+            Text(title).font(.callout).foregroundStyle(captionColor ?? color)
+        }.frame(minWidth: 140, maxWidth: .infinity, alignment: .leading).padding(14)
             .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 8))
-            .accessibilityElement(children: .ignore).accessibilityLabel(title).accessibilityValue(String(count))
+            .accessibilityElement(children: .ignore).accessibilityLabel(title).accessibilityValue(value ?? count.map(String.init) ?? "Not reported")
     }
 }
 
@@ -649,5 +737,18 @@ enum RestoreAutomationPermission {
             let target = NSAppleEventDescriptor(bundleIdentifier: "com.apple.systemevents")
             return AEDeterminePermissionToAutomateTarget(target.aeDesc, AEEventClass(kCoreEventClass), AEEventID(kAEGetData), ask)
         }.value
+    }
+}
+
+struct RestoreResultActions: View {
+    let result: RestoreExecutionPresentation
+    let refresh: () -> Void
+    let done: () -> Void
+    var body: some View {
+        HStack {
+            Button("Done", action: done).buttonStyle(.borderedProminent)
+            if result.outcome != .clean { Button("Refresh Preview", action: refresh) }
+            PendingOperationLogButton()
+        }
     }
 }

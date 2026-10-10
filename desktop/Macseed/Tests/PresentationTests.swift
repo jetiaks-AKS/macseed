@@ -68,7 +68,7 @@ import SwiftUI
         precondition(blocked.affectedDomains == ["homebrew-casks"])
         precondition(RestorePrerequisiteSummaryPresentation.status([condition("authorization_required", "external_action_required")]) == "Authorization Required")
         let view = try! String(contentsOfFile: "Sources/RestoreView.swift", encoding: .utf8)
-        precondition(view.contains("DisclosureGroup(\"Technical reason\")") && view.contains("DisclosureGroup(\"View Details\")"))
+        precondition(view.contains("DisclosureGroup(\"Technical reason\")") && view.contains("DisclosureGroup(\"Technical Details\")"))
         precondition(view.contains("RestoreRebuildProgressContent(tasks:") && view.contains("RestoreResultContent(result:"))
         precondition(view.contains("TaskDomainList(domains: domains.map"))
         precondition(view.contains("Text(item.title)") && view.contains("Text(item.action)"))
@@ -89,6 +89,65 @@ import SwiftUI
         print("PASS: Compact Restore summary counts/area aggregation, collapsed details, concrete names/reasons, prerequisites and result deduplication with Unverified evidence")
     }
     @MainActor static func renderRestoreV2() {
+        let restoreSource = try! String(contentsOfFile: "Sources/RestoreView.swift", encoding: .utf8)
+        let resultSource = restoreSource.components(separatedBy: "struct RestoreResultContent:")[1].components(separatedBy: "struct RestorePreviewMetrics:")[0]
+        precondition(!resultSource.contains("Text(\"Execution\")") && !resultSource.contains("receipts") && !resultSource.contains("Confirmed completed"))
+        precondition(resultSource.range(of: "RestoreVerificationResult")!.lowerBound < resultSource.range(of: "RestoreExecutionCategories")!.lowerBound)
+        for status in ["complete", "incomplete", "not_run"] {
+            let payload: [String: CoreJSON] = ["verification": .object(["status": .string(status), "verified_count": .integer(12),
+                "mismatch_count": .integer(1), "unverified_count": .integer(2), "unresolved_count": .integer(3)])]
+            let image = ImageRenderer(content: RestoreVerificationResult(outcome: .attention, payload: payload).frame(width: 760))
+            precondition(image.nsImage != nil)
+        }
+        precondition(ImageRenderer(content: RestoreVerificationResult(outcome: .attention, payload: nil).frame(width: 760)).nsImage != nil)
+        print("PASS: Result reuses three Preview metric cards above categories and preserves missing Verification counts")
+        precondition(resultSource.contains("DisclosureGroup(\"Technical Details\")"))
+        precondition(!resultSource.contains("Verified selected work"))
+        precondition(resultSource.contains("result.compactTechnicalDetails") && resultSource.contains("Copy Diagnostic Details"))
+        precondition(resultSource.contains("result.diagnosticReport") && resultSource.contains("NSPasteboard.general"))
+
+        precondition(!resultSource.contains("DisclosureGroup(\"Needs Attention\")") && !resultSource.contains("View Details"))
+        precondition(resultSource.contains("showsWarnings: false"))
+        let progressSource = restoreSource.components(separatedBy: "struct RestoreRebuildProgressContent:")[1].components(separatedBy: "struct RestoreExecutionCategories:")[0]
+        precondition(!progressSource.contains("Label(\"Verification\"") && !progressSource.contains("Checking selected requirements"))
+        precondition(progressSource.contains("ProgressView()") && !progressSource.contains("RestoreOperationCounts") && progressSource.contains("RestoreExecutionCategories"))
+        precondition(RestoreVerificationResult.resultTone("OK") == .success)
+        precondition(RestoreVerificationResult.resultTone("Failed") == .error)
+        precondition(RestoreVerificationResult.resultTone("Stopped") == .neutral)
+        for result in ["Incomplete", "Interrupted", "Needs Attention"] { precondition(RestoreVerificationResult.resultTone(result) == .warning) }
+        for count in [Int?.none, 0] {
+            precondition(RestoreVerificationResult.countTone(count, problem: .error) == .neutral)
+            precondition(RestoreVerificationResult.countTone(count, problem: .warning) == .neutral)
+        }
+        precondition(RestoreVerificationResult.countTone(1, problem: .error) == .error)
+        precondition(RestoreVerificationResult.countTone(1, problem: .warning) == .warning)
+        // Production execution categories stay compact with 2 or 120 operations.
+        func executionDomains(_ count: Int) -> [TaskDomainPresentation] {
+            ["homebrew-casks", "homebrew-packages"].map { domain in
+                TaskDomainPresentation(id: domain, title: domain, symbol: "shippingbox",
+                    items: (0..<count).map { index in
+                        TaskItemPresentation(id: "\(domain)-\(index)",
+                            item: DisplayItem(id: "\(domain)-\(index)", title: "Item \(index)", status: .waiting, action: "Install"), state: .waiting)
+                    })
+            }
+        }
+        let smallExecution = ImageRenderer(content: RestoreExecutionCategories(domains: executionDomains(1)).frame(width: 1000))
+        let largeExecution = ImageRenderer(content: RestoreExecutionCategories(domains: executionDomains(60)).frame(width: 1000))
+        precondition(smallExecution.nsImage != nil && largeExecution.nsImage != nil)
+        precondition(abs(smallExecution.nsImage!.size.height - largeExecution.nsImage!.size.height) < 2)
+        for state in [TaskRowState.waiting, .working, .awaitingVerification, .completed, .matching, .attention, .notRun] {
+            var rows = executionDomains(1)
+            for index in rows.indices {
+                rows[index].activityState = state
+                if [.completed, .matching, .notRun].contains(state) { rows[index].confirmedFinalState = state }
+            }
+            let rendered = ImageRenderer(content: RestoreExecutionCategories(domains: rows).frame(width: 1000))
+            precondition(rendered.nsImage != nil)
+            precondition(abs(rendered.nsImage!.size.height - smallExecution.nsImage!.size.height) < 2)
+        }
+        precondition(TaskRowState.notRun.tone == .neutral && TaskRowState.notRun.rawValue == "Not Run")
+        precondition(TaskRowState.aggregate([.notRun, .notRun]) == .notRun)
+        print("PASS: Production Rebuild categories keep fixed height and neutral Not Run presentation")
         let domains = [TaskRowState.completed, .partial, .attention, .skipped, .failed].enumerated().map { index, state in
             TaskDomainPresentation(id: "domain-\(index)", title: "Domain \(index + 1)", symbol: "folder",
                 items: [TaskItemPresentation(id: "item-\(index)",
@@ -209,6 +268,7 @@ import SwiftUI
     }
 
     @MainActor static func main() {
+        if CommandLine.arguments.contains("--restore-only") { renderRestoreV2(); return }
         for count in 1...10 {
             let boundary = 300 + 28 + OperationSummaryLayout.metricWidth(count)
             precondition(!OperationSummaryLayout.horizontal(width: boundary - 1, count: count))
@@ -325,6 +385,23 @@ import SwiftUI
         precondition(!aggregateSource.contains("DisclosureGroup") && !aggregateSource.contains("ForEach") && !aggregateSource.contains("Supported settings only"))
         precondition(aggregateSource.contains("model.selectGroup(group") && aggregateSource.contains("Included"))
         precondition(restoreView.contains("RestoreSectionHeader(title: section.id)"))
+        precondition(restoreView.contains("showsSelectionActions") && restoreView.contains("if showsSelectionActions"))
+        precondition(restoreView.components(separatedBy: "Button(\"Preview Restore\"").count == 2)
+        precondition(workspaceSource.contains("showsSelectionActions: false"))
+        precondition(workspaceSource.contains("else if restore.state == .review { selectionActionArea }"))
+        precondition(workspaceSource.range(of: "selectionActionArea: some View")!.lowerBound > workspaceSource.range(of: "ScrollView {")!.lowerBound)
+        precondition(restoreView.contains("Preparing Restore Preview") && restoreView.contains("Stopping Preview…"))
+        precondition(restoreView.contains("Read-only inspection — no changes will be made to this Mac."))
+        precondition(restoreView.contains("Button(\"Continue Rebuild\")") && restoreView.contains(".keyboardShortcut(.defaultAction)"))
+        precondition(restoreView.contains(".onExitCommand { model.dismissStopConfirmation() }"))
+        precondition(restoreView.contains("Button(\"Change…\", action: chooseBundle).disabled(model.busy || runtime.isActive)"))
+        for width in [400, 1000] {
+            let renderer = ImageRenderer(content: RestoreSelectionActions(status: "Some items excluded", canPreview: false, preview: {})
+                .padding(28).frame(width: CGFloat(width)))
+            precondition(renderer.nsImage != nil)
+        }
+        print("PASS: Selection footer narrow/wide, single Preview action, honest preparation and safe Stop confirmation bindings")
+
         precondition(RestoreRowIcon.symbol(for: "vscode-settings") == "gearshape")
         precondition(aggregateSource.contains("RestoreRowIcon(symbol: \"slider.horizontal.3\")"))
         precondition(restoreView.contains("RestoreRowIcon(symbol: RestoreRowIcon.symbol(for: area.id))"))
@@ -363,7 +440,7 @@ import SwiftUI
         precondition(!prerequisiteSource.contains("checkmark.circle"))
         let progressSource = String(restoreView.components(separatedBy: "case .rebuilding:")[1].components(separatedBy: "case .result:")[0])
         precondition(progressSource.contains("RestoreRebuildProgressContent(tasks:"))
-        precondition(progressSource.contains("events: runtime.events, executing: true"))
+        precondition(progressSource.contains("events: model.categoryPresentationEvents, executing: true, operationProgress: true"))
         precondition(restoreView.contains("RestoreResultContent(result:"))
         precondition(!restoreView.contains("result.details.filter"))
         precondition(prerequisiteSource.contains("case \"satisfied\": \"Ready\""))
@@ -378,15 +455,15 @@ import SwiftUI
         precondition(!restoreView.contains("restoreExecute") && restoreModel.contains(".restoreExecute(") && restoreModel.contains("includeSecure: false"))
         precondition(!restoreModel.contains("areas selected ·") && !restoreModel.contains("items selected"))
         precondition(restoreModel.contains("Everything selected") && restoreModel.contains("Some items excluded") && restoreModel.contains("Nothing selected"))
-        precondition(restoreView.contains("Text(model.selectionSummary).font(.callout).foregroundStyle(.secondary)"))
-        precondition(restoreView.contains(".disabled(!model.canPreview)"))
+        precondition(restoreView.contains("RestoreSelectionActions(status: model.selectionSummary, canPreview: model.canPreview"))
+        precondition(restoreView.contains(".disabled(!canPreview)"))
         precondition(restoreView.contains("TaskDomainList(domains: domains.map"))
         precondition(restoreView.contains("RestorePrerequisiteSummaryView") && restoreView.contains("prerequisites.blockers"))
         let taskSource = try! String(contentsOf: sources.appendingPathComponent("TaskComponents.swift"), encoding: .utf8)
         precondition(taskSource.contains("private var expanded = []") && taskSource.contains("ForEach(domain.items)"))
         let previewContent = restoreView.components(separatedBy: "struct RestorePreviewContent: View")[1]
         precondition(previewContent.range(of: "RestorePrerequisiteSummaryView(summary:")!.lowerBound < previewContent.range(of: "TaskDomainList(domains: domains.map")!.lowerBound)
-        precondition(restoreView.contains("Rebuild this Mac?") && restoreView.contains("Stop rebuilding?") && restoreView.contains("Completed changes will remain."))
+        precondition(restoreView.contains("Rebuild this Mac?") && restoreView.contains("Stop rebuilding?") && restoreView.contains("Stopping it may leave some changes already applied to this Mac."))
         precondition(restoreView.contains("model.confirmStop()") && restoreView.contains("model.checkCurrentState()"))
         precondition(restoreModel.contains("plan.preparedPlanID, selection: selection") && restoreModel.contains("invalidate(); state = .result"))
         precondition(!restoreView.contains("Button(\"Resume\")") && !restoreView.contains("ProgressView(value:"))

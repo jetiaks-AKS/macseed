@@ -49,9 +49,9 @@ struct ProductionWorkspace: View {
                             } else {
                                 #if DEBUG
                                 if syntheticRestore { RestoreDebugScenarioView(scenario: scenarios.selected) }
-                                else { RestoreView(model: restore, runtime: runtime, showsRebuildActions: false, showsPreviewActions: false) }
+                                else { RestoreView(model: restore, runtime: runtime, showsRebuildActions: false, showsPreviewActions: false, showsSelectionActions: false, showsPreparationActions: false, showsResultActions: false) }
                                 #else
-                                RestoreView(model: restore, runtime: runtime, showsRebuildActions: false, showsPreviewActions: false)
+                                RestoreView(model: restore, runtime: runtime, showsRebuildActions: false, showsPreviewActions: false, showsSelectionActions: false, showsPreparationActions: false, showsResultActions: false)
                                 #endif
                             }
                         } else {
@@ -82,9 +82,15 @@ struct ProductionWorkspace: View {
                     if syntheticRestore {
                         if scenarios.selected == .rebuilding { rebuildActionArea(synthetic: true) }
                     } else if restore.state == .rebuilding { rebuildActionArea(synthetic: false) }
+                    else if restore.state == .result { resultActionArea }
+                    else if restore.state == .inspecting || restore.state == .preparing { preparationActionArea }
+                    else if restore.state == .review { selectionActionArea }
                     else if restore.state == .preview || restore.state == .confirming { previewActionArea }
                     #else
                     if restore.state == .rebuilding { rebuildActionArea(synthetic: false) }
+                    else if restore.state == .result { resultActionArea }
+                    else if restore.state == .inspecting || restore.state == .preparing { preparationActionArea }
+                    else if restore.state == .review { selectionActionArea }
                     else if restore.state == .preview || restore.state == .confirming { previewActionArea }
                     #endif
                 }
@@ -115,6 +121,32 @@ struct ProductionWorkspace: View {
             if scenario != .real { navigation.task = .restore }
         }
         #endif
+    }
+    private var resultActionArea: some View {
+        VStack(spacing: 0) {
+            Divider()
+            if let result = restore.executionResult {
+                RestoreResultActions(result: result, refresh: { restore.checkCurrentState() }, done: { restore.finish() })
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, WorkspaceGeometry.margin).padding(.vertical, 12)
+            }
+        }
+    }
+    private var preparationActionArea: some View {
+        VStack(spacing: 0) {
+            Divider()
+            RestorePreparationActions(stopping: runtime.stopping, cancel: { restore.cancel() })
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, WorkspaceGeometry.margin).padding(.vertical, 12)
+        }
+    }
+    private var selectionActionArea: some View {
+        VStack(spacing: 0) {
+            Divider()
+            RestoreSelectionActions(status: restore.selectionSummary, canPreview: restore.canPreview, preview: { restore.refreshPreview() })
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, WorkspaceGeometry.margin).padding(.vertical, 12)
+        }
     }
     private var previewActionArea: some View {
         VStack(spacing: 0) {

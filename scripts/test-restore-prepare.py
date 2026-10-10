@@ -605,6 +605,55 @@ os.write(fd, b'{"kind":"details_complete"}\\n')
         self.assertEqual(len(child.details['operation_records']), 8192)
         self.assertEqual(opaque('private-name'), opaque('private-name'))
 
+    def test_execute_process_observer_failure_is_not_bundle_unavailable(self):
+        self.pack()
+        plan = self.plan_result()
+        copied = self.project / 'modules/core/application-interface/execution.py'
+        text = copied.read_text().replace('            try:\n                process_table()',
+            '            try:\n                raise PermissionError("fixture process inspection denied")', 1)
+        copied.write_text(text)
+        result, events = self.execute(plan['prepared_plan_id'])
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(events[-1]['data']['code'], 'process_observation_unavailable')
+        self.assertTrue(events[-1]['data']['publication_occurred'])
+        self.assertFalse(events[-1]['data']['target_mutation_may_have_started'])
+        self.assertEqual(events[-1]['data']['bootstrap_status'], 'not_started')
+
+    def test_stale_input_recheck_reports_only_fingerprints_and_flags(self):
+        copied = self.project / 'modules/core/application-interface/core.py'
+        original = copied.read_text()
+        for component in ('bundle', 'stage'):
+            self.archive = self.root / (component + '.mbt')
+            self.pack()
+            plan = self.plan_result()
+            mutation = ('Path(path).write_bytes(b"fixture archive changed")' if component == 'bundle'
+                        else '(stage / "fixture-extra").write_bytes(b"fixture stage changed")')
+            copied.write_text(original.replace('                current_stage = bundle.fingerprint(stage)',
+                '                ' + mutation + '\n                current_stage = bundle.fingerprint(stage)', 1))
+            result, events = self.execute(plan['prepared_plan_id'])
+            self.assertEqual(result.returncode, 2)
+            result = events[-1]['data']
+            self.assertEqual(result['code'], 'stale_plan')
+            self.assertFalse(result['publication_occurred'])
+            self.assertFalse(result['target_mutation_may_have_started'])
+            validation = result['plan_validation']
+            self.assertEqual(validation['check'], 'input_recheck')
+            self.assertEqual(validation['expected_id'], validation['recomputed_id'])
+            self.assertTrue(validation[component + '_changed_after_prepare'])
+            if component == 'stage':
+                self.assertNotIn('bundle_changed_after_prepare', validation)
+            self.assertNotIn(str(self.root), json.dumps(validation))
+            copied.write_text(original)
+
+    def test_missing_bundle_retains_bundle_unavailable(self):
+        self.pack()
+        plan = self.plan_result()
+        result, events = self.execute(plan['prepared_plan_id'], path=self.root / 'missing.mbt')
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(events[-1]['data']['code'], 'bundle_unavailable')
+        self.assertFalse(events[-1]['data']['publication_occurred'])
+        self.assertFalse(events[-1]['data']['target_mutation_may_have_started'])
+
     def test_prepare_plan_and_recomputation(self):
         self.pack()
         before = self.archive.read_bytes()
@@ -2071,12 +2120,21 @@ esac
         self.pack()
         self.allow_application_bootstrap()
         prepared = self.invoke()[1][1]["data"]["prepared_plan_id"]
+        baseline = self.invoke()[1][1]['data']['plan_diagnostics']
         (self.home / "Projects").mkdir()
         stale, events = self.execute(prepared)
         self.assertEqual(stale.returncode, 2)
         self.assertEqual(events[-1]["data"]["code"], "stale_plan")
         self.assertFalse(events[-1]["data"]["publication_started"])
         self.assertFalse((self.project / "config/blueprint.conf").exists())
+        diagnosis = events[-1]['data']['plan_validation']
+        self.assertEqual(diagnosis['expected_id'], prepared)
+        self.assertNotEqual(diagnosis['recomputed_id'], prepared)
+        self.assertEqual(diagnosis['components']['bundle'], baseline['bundle'])
+        self.assertEqual(diagnosis['components']['stage'], baseline['stage'])
+        self.assertNotEqual(diagnosis['components']['plan'], baseline['plan'])
+        self.assertEqual(set(diagnosis['components']), {'bundle', 'stage', 'selection', 'parameters', 'plan', 'readiness', 'modules'})
+        self.assertTrue(all(len(value) == 64 and all(c in '0123456789abcdef' for c in value) for value in diagnosis['components'].values()))
 
         current = self.invoke()[1][1]["data"]["prepared_plan_id"]
         (self.project / "config/blueprint.conf").mkdir()
