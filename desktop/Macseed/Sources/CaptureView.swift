@@ -64,21 +64,16 @@ struct CaptureMacOSSettingsView: View {
                     .disabled(group.availableIDs.isEmpty)
                 }
                 DisclosureGroup(isExpanded: $expanded) { EmptyView() } label: {
-                    HStack {
-                        VStack(alignment: .leading, spacing: 3) {
-                            Label("macOS Settings", systemImage: "slider.horizontal.3").font(.headline)
-                            Text("Supported settings only").font(.callout).foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        VStack(alignment: .leading, spacing: 3) {
-                            if group.hasAttention { TaskStatusLabel(state: .attention) }
-                            Text(group.summary).font(.caption).foregroundStyle(.secondary)
-                        }.frame(width: TaskRowLayout.statusWidth, alignment: .leading)
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: 12) { categoryTitle; Spacer(); categoryStatus }
+                        VStack(alignment: .leading, spacing: 6) { categoryTitle; categoryStatus }
                     }
                 }
                 .disclosureGroupStyle(TaskDisclosureStyle())
             }
             if expanded {
+                Text("Supported settings only").font(.caption).foregroundStyle(.secondary)
+                    .padding(.leading, CaptureChildRowGrid.leadingInset)
                 ForEach(group.children.filter { editable || model.selectionState($0) != .none }) { category in
                     VStack(alignment: .leading, spacing: 4) {
                         HStack {
@@ -92,10 +87,14 @@ struct CaptureMacOSSettingsView: View {
                             Spacer()
                             if !category.selectable {
                                 Text(category.headerSummary).font(.callout).foregroundStyle(.secondary)
-                                Image(systemName: "exclamationmark.triangle.fill")
-                                    .foregroundStyle(.orange).accessibilityLabel("Needs Attention")
+                                if category.row.status == "observation_error" {
+                                    Image(systemName: "exclamationmark.triangle.fill")
+                                        .foregroundStyle(.orange).accessibilityLabel("Needs Attention")
+                                }
                             } else if !category.notices.isEmpty {
                                 Label("Needs Attention", systemImage: "exclamationmark.triangle").font(.callout).foregroundStyle(.orange)
+                            } else {
+                                Text(model.selectionState(category).captureTitle).font(.callout.weight(.medium))
                             }
                         }
                         if !category.selectable {
@@ -113,6 +112,20 @@ struct CaptureMacOSSettingsView: View {
             }
         }.padding(.horizontal, 16).padding(.vertical, 4)
     }
+    private var categoryTitle: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "slider.horizontal.3").frame(width: TaskRowLayout.iconWidth).accessibilityHidden(true)
+            Text("macOS Settings").font(.body.weight(.medium))
+        }
+    }
+    private var categoryStatus: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            if model.macOSSettings.hasAttention { TaskStatusLabel(state: .attention) }
+            else { Text(model.macOSSettings.state.captureTitle).font(.callout.weight(.medium)) }
+            Text(model.macOSSettings.summary).font(.caption).foregroundStyle(.secondary)
+        }.frame(width: TaskRowLayout.statusWidth, alignment: .leading)
+    }
+
 }
 
 struct CaptureView: View {
@@ -122,7 +135,7 @@ struct CaptureView: View {
     private var progressText: String {
         if runtime.stopping { return "Stopping Capture…" }
         switch runtime.currentPhase {
-        case "discovery": return "Scanning supported environment…"
+        case "discovery": return model.state == .saving ? "Rechecking selected environment…" : "Scanning supported environment…"
         case "validation": return "Checking selected environment…"
         case "bundle_creation": return "Creating Saved Environment…"
         default: return model.state == .scanning ? "Starting scan…" : "Preparing selected environment…"
@@ -137,20 +150,30 @@ struct CaptureView: View {
                     notice: "Scanning does not change settings or install anything on this Mac.") {
                     Button("Scan This Mac") { model.scan() }.buttonStyle(.borderedProminent).disabled(runtime.isActive)
                 }
-            case .scanning, .preparing, .saving:
-                OperationSummaryHeader(title: model.state == .scanning ? "Scanning this Mac" : model.state == .saving ? "Saving Your Environment" : "Checking Your Environment",
-                    message: progressText, state: .working, counters: [],
-                    suppliedMetrics: model.state == .scanning ? [] : selectionSummary.metrics,
-                    scopeSummary: model.state == .scanning ? "Core is scanning supported state." : selectionSummary.scope)
+            case .scanning:
+                Text("Scanning this Mac").font(.title.weight(.bold)).accessibilityAddTraits(.isHeader)
+                HStack(spacing: 12) {
+                    ProgressView()
+                    Text(progressText).foregroundStyle(.secondary)
+                }
+            case .preparing:
+                Text("Checking Your Environment").font(.title.weight(.bold)).accessibilityAddTraits(.isHeader)
+                HStack(spacing: 12) {
+                    ProgressView()
+                    Text(progressText).foregroundStyle(.secondary)
+                }
+            case .saving:
+                Text("Saving Your Environment").font(.title.weight(.bold)).accessibilityAddTraits(.isHeader)
+                HStack(spacing: 12) {
+                    ProgressView()
+                    Text(progressText).foregroundStyle(.secondary)
+                }
                 if model.state == .saving {
                     Text("Once saving begins, stopping does not promise that a published file will be removed.")
                         .font(.callout).foregroundStyle(.secondary)
                 }
             case .review:
-                OperationSummaryHeader(title: model.canCreate ? "Ready to Capture" : "Choose Supported State",
-                    message: "Ordinary settings are private but unencrypted. Only supported reproducible state is included.",
-                    state: selectionSummary.attentionCount > 0 ? .attention : .planned, counters: [],
-                    suppliedMetrics: selectionSummary.metrics, scopeSummary: model.selectionSummary)
+                let rows = CaptureReviewRow.project(model.categories)
                 HStack {
                     Text("Review and select").font(.headline)
                     Spacer()
@@ -158,17 +181,15 @@ struct CaptureView: View {
                         .buttonStyle(.plain).foregroundStyle(.secondary)
                         .disabled(!model.categories.contains(where: \.selectable) || runtime.isActive)
                 }
+                CaptureReviewMetrics(summary: selectionSummary)
                 VStack(spacing: 0) {
-                    ForEach(model.categories) { category in
-                        if CaptureMacOSSettingsGroup.domainIDs.contains(category.id) {
-                            if category.id == model.categories.first(where: { CaptureMacOSSettingsGroup.domainIDs.contains($0.id) })?.id {
-                                CaptureMacOSSettingsView(model: model)
-                                Divider()
-                            }
-                        } else {
+                    ForEach(rows) { row in
+                        if row.id == "macos-settings" {
+                            CaptureMacOSSettingsView(model: model)
+                        } else if let category = row.categories.first {
                             CaptureCategorySelectionView(model: model, category: category)
-                            if category.id != model.categories.last?.id { Divider() }
                         }
+                        if row.id != rows.last?.id { Divider() }
                     }
                 }.background(.background, in: RoundedRectangle(cornerRadius: 8))
                     .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.quaternary))
@@ -177,35 +198,52 @@ struct CaptureView: View {
                 if !model.canCreate { Text("Choose supported state to capture.").foregroundStyle(.secondary) }
             case .confirmation:
                 if let prepared = model.preparation, let selection = prepared.selection {
-                    let summary = CaptureSummaryPresentation(domainCount: prepared.summary.selectedDomains, itemCount: prepared.summary.selectedItems,
-                        attentionCount: model.confirmationWarnings.count, unsupportedCount: 0)
-                    OperationSummaryHeader(title: "Save this environment?", message: "Review the final capture before creating the saved environment.",
-                        state: summary.attentionCount > 0 ? .attention : .planned, counters: [], suppliedMetrics: summary.metrics,
-                        scopeSummary: model.confirmationSummary)
-                    if let destination = model.destination { CaptureBundleLocationView(destination: destination) }
+                    Text("Save this environment?").font(.title2.weight(.bold)).accessibilityAddTraits(.isHeader)
+                    Text("Review the final capture before creating the saved environment.").font(.callout).foregroundStyle(.secondary)
+                    if let destination = model.destination {
+                        CaptureBundleLocationView(destination: destination)
+                            .padding(14).frame(maxWidth: .infinity, alignment: .leading)
+                            .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 8))
+                    }
+                    if !model.confirmationWarnings.isEmpty {
+                        Label(model.confirmationWarnings.map(\.title).joined(separator: ", ") + " needs attention",
+                              systemImage: "exclamationmark.triangle")
+                            .font(.callout).foregroundStyle(.orange)
+                    }
                     Text("The saved settings are private but unencrypted. Private SSH identities are not included.")
                         .font(.callout).foregroundStyle(.secondary)
                     TaskDomainList(domains: CaptureTaskPresentation(categories: prepared.inventory.map { CaptureCategory(row: $0) },
-                        selection: selection, phase: .confirmation).domains, stateTitles: [.planned: "Ready to Save"])
+                        selection: selection, phase: .confirmation).domains, stateTitles: [.planned: "Ready to Save"], compactReadyItems: true, title: "Included in this capture")
                 }
             case .result:
                 if let saved = model.publication {
-                    let summary = CaptureSummaryPresentation(domainCount: saved.bundle.capturedDomains.count, itemCount: saved.bundle.itemCount,
-                        attentionCount: Set(model.resultNotices.map(\.id)).count, unsupportedCount: 0, captured: true)
-                    OperationSummaryHeader(title: "Environment Saved", message: summary.attentionCount == 0 ? "Your selected environment was saved successfully." : "Your environment was saved. Review the captured domains that need attention.",
-                        state: summary.attentionCount == 0 ? .completed : .partial, counters: [], suppliedMetrics: summary.metrics, scopeSummary: summary.scope)
+                    Text("Environment Saved").font(.title2.weight(.bold)).accessibilityAddTraits(.isHeader)
+                    Text(model.resultNotices.isEmpty ? "Your environment was saved." : "Your environment was saved. Review the captured categories with limitations.")
+                        .font(.callout).foregroundStyle(.secondary)
+                    CaptureSavedMetrics(publication: saved, notices: model.resultNotices)
                     CaptureBundleLocationView(destination: URL(fileURLWithPath: saved.destination))
+                        .padding(14).frame(maxWidth: .infinity, alignment: .leading)
+                        .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 8))
                     if let prepared = model.preparation, let selection = prepared.selection {
                         TaskDomainList(domains: CaptureTaskPresentation(categories: prepared.inventory.map { CaptureCategory(row: $0) },
-                            selection: selection, phase: .result, capturedDomains: saved.bundle.capturedDomains, notices: model.resultNotices).domains)
+                            selection: selection, phase: .result, publication: saved, notices: model.resultNotices).domains,
+                            compactReadyItems: true, title: "Captured Environment")
                     }
                 }
             case .failed, .cancelled:
-                Label(model.state == .cancelled ? "Capture Cancelled" : "Needs Attention",
-                      systemImage: model.state == .cancelled ? "stop.circle" : "exclamationmark.triangle")
-                    .font(.title2).foregroundStyle(model.state == .cancelled ? Color.secondary : Color.orange)
+                if model.state == .failed, let failure = model.failure, failure.isOutdatedPreparation {
+                    Text(failure.presentationTitle).font(.title2.weight(.bold)).accessibilityAddTraits(.isHeader)
+                } else {
+                    Label(model.state == .cancelled ? "Capture Cancelled" : "Needs Attention",
+                          systemImage: model.state == .cancelled ? "stop.circle" : "exclamationmark.triangle")
+                        .font(.title2).foregroundStyle(model.state == .cancelled ? Color.secondary : Color.orange)
+                }
                 if let failure = model.failure {
-                    Text(failure.message)
+                    if failure.isOutdatedPreparation {
+                        Text(failure.presentationMessage).font(.callout).foregroundStyle(.secondary)
+                    } else {
+                        Text(failure.message)
+                    }
                     if let reason = failure.technicalReason {
                         DisclosureGroup("Technical Details") { Text(reason).font(.caption.monospaced()).textSelection(.enabled) }
                             .disclosureGroupStyle(TaskDisclosureStyle(minimumHeight: 22))
@@ -221,7 +259,6 @@ struct CaptureView: View {
                 }
             }
             if showsActions { CaptureActionsView(model: model, runtime: runtime) }
-            Text("Capture does not rebuild or change settings on this Mac.").font(.callout).foregroundStyle(.secondary)
         }
     }
     private var selectionSummary: CaptureSummaryPresentation {
@@ -248,12 +285,15 @@ struct CaptureActionsView: View {
             case .review:
                 Button("Cancel") { model.cancelReview() }.disabled(runtime.isActive)
                 Spacer()
-                Button("Choose Destination…", action: chooseDestination).buttonStyle(.borderedProminent).disabled(!model.canCreate)
+                Button("Choose Destination…", action: chooseDestination).buttonStyle(.borderedProminent).disabled(!model.canCreate || runtime.isActive)
             case .confirmation:
                 Button("Back") { model.editSelection() }.disabled(runtime.isActive)
                 Spacer()
                 Button("Create Saved Environment") { model.create() }.buttonStyle(.borderedProminent).disabled(runtime.isActive)
-            case .scanning, .preparing, .saving:
+            case .scanning:
+                Button("Cancel", role: .cancel) { model.cancel() }.disabled(runtime.stopping)
+                Spacer()
+            case .preparing, .saving:
                 Spacer()
                 Button("Cancel", role: .cancel) { model.cancel() }.disabled(runtime.stopping)
             case .result:

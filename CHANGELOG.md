@@ -74,9 +74,11 @@ The format is based on the principles of **Keep a Changelog**.
 * All Tasks uses responsive native action cards; Environment Status shares Desktop
   summaries, metric cards and domain disclosures over read-only Core comparison.
 
-* Capture uses shared native operation summaries and Domain → Items presentation
-  across selection, confirmation and result, with compact phase-based saving,
-  persistent action areas and explicit capture warnings.
+* Finalized Desktop Capture UI: live Review selection cards, compact read-only
+  Confirmation/Result labels and independent warnings, selected macOS subdomains
+  and bounded VS Code JSON settings details, compact Core-phase progress, and
+  publication-backed saved counts/states. Stale preparation now asks for a fresh
+  Scan with specific guidance; cancellation retains cautious publication evidence.
 
 * Unified native sidebar, neutral workspace and restrained header surfaces with
   progressive disclosure and semantic Light/Dark presentation.

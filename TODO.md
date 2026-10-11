@@ -29,7 +29,7 @@ Implement the [Desktop contract](docs/DESKTOP.md) in vertical slices:
   internal folder/Blueprint picker; qualify the Core contract when implementing.
   See [final product reference](docs/DESKTOP.md#required-final-product-reference-before-macseed-10).
 - [ ] Desktop UI consistency/unification after the Scenario Catalog: reuse
-  qualified Restore presentation in Capture, Environment Status, All Tasks and Settings. Use Domain → Items and
+  qualified Restore/Capture presentation in Environment Status, All Tasks and Settings. Use Domain → Items and
   one presentation model across Preview → Rebuild → Verification → Result,
   retaining native accessibility and Core-owned semantics.
 - [ ] 16K: Desktop flow/runtime/transport/security/accessibility hardening,

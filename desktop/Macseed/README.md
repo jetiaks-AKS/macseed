@@ -250,16 +250,21 @@ domains; read-only included-settings labels add no selectable items. Private SSH
 are explicitly unavailable here and always excluded (`secure_identities: []`).
 
 The native save panel chooses a new file; Desktop normalizes its name to one
-`.mbt` suffix. Compact inline confirmation shows prepared counts, area summaries,
-location and warnings, with Back returning to detailed Review. Existing output
-is never replaced. Core owns canonical/user-owned parent validation and rechecks
+`.mbt` suffix. Review owns the live selection cards; compact inline confirmation
+shows the destination, wrapping read-only content and independent warnings, with
+Back returning to detailed Review. Existing output requires explicit Replace in
+the native Save Panel, with digest-bound validation before atomic replacement.
+Core owns canonical/user-owned parent validation and rechecks
 destination/publication. Execute uses the selected preparation's ID and rescans;
 stale rejection needs a fresh scan/review/confirmation, with no silent retry.
 
 Activity shows real phase messages without numeric domain counts or percentages;
 Core observation events remain internal. Only completed
 publication with consistent Core destination/binding/Bundle metadata yields
-**Environment Saved** and **Reveal in Finder**. Core event warnings stay visible.
+**Environment Saved** and **Reveal in Finder**. Result cards use published domain/item
+counts; Needs Attention counts captured Core domains with event warnings. The
+Captured Environment list uses Completed/Needs Attention/Unverified according to
+available inclusion evidence. Core event warnings stay visible.
 Cancellation/failure after reported publication retains that fact/location without
 claiming success; missing evidence is unknown, not cleanup/rollback. Forced process
 termination retains the 16C descendant/private-staging limitations.

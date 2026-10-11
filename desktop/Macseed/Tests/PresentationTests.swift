@@ -162,7 +162,21 @@ import SwiftUI
                     action: "This application's installation requirements are not supported.",
                     reason: "cask_execution_requirements_unsupported"), state: .skipped)
             })
+        let compactCapture = TaskDomainPresentation(id: "capture-details", title: "Homebrew Packages", symbol: "shippingbox",
+            items: (1...12).map { index in
+                TaskItemPresentation(id: "capture-\(index)", item: DisplayItem(id: "capture-\(index)",
+                    title: index == 1 ? String(repeating: "long-package-name-", count: 12) : "package-\(index)",
+                    status: .ready, action: "Supported state available to save."), state: .planned)
+            } + [TaskItemPresentation(id: "capture-warning", item: DisplayItem(id: "capture-warning", title: "Needs Attention",
+                status: .attention, action: "Some supported state may be unavailable in this category.", reason: "source_partial"), state: .attention, captureRole: .categoryWarning)])
         for width in [730, 930, 1330] {
+            let captureRenderer = ImageRenderer(content: TaskDomainItems(domain: compactCapture, compactReadyItems: true)
+                .padding(24).frame(width: CGFloat(width)).background(Color(nsColor: .windowBackgroundColor)))
+            captureRenderer.scale = 1
+            let captureImage = captureRenderer.nsImage!
+            let captureBitmap = NSBitmapImageRep(data: captureImage.tiffRepresentation!)!
+            precondition(captureBitmap.pixelsWide == width)
+            try! captureBitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: "build/Debug/CaptureConfirmation-details-\(width).png"))
             let content = VStack(alignment: .leading, spacing: 22) {
                 OperationSummaryHeader(title: "Rebuild Completed with Issues", message: "Review the observed results and affected items.",
                     state: .partial, counters: counters, startedAt: Date().addingTimeInterval(-342),
@@ -366,11 +380,28 @@ import SwiftUI
         let production = try! String(contentsOf: sources.appendingPathComponent("ProductionWorkspace.swift"), encoding: .utf8)
         let app = try! String(contentsOf: sources.appendingPathComponent("MacseedApp.swift"), encoding: .utf8)
         let captureView = try! String(contentsOf: sources.appendingPathComponent("CaptureView.swift"), encoding: .utf8)
-        let progressStart = captureView.range(of: "            case .scanning, .preparing, .saving:")!
+        precondition(!captureView.contains("Capture does not rebuild or change settings on this Mac."))
+        precondition(captureView.contains("The saved settings are private but unencrypted. Private SSH identities are not included."))
+        precondition(captureView.contains("No completed publication was reported.") && captureView.contains("Publication could not be confirmed."))
+        precondition(captureView.contains("failure.isOutdatedPreparation") && captureView.contains("Text(failure.presentationTitle)"))
+
+        let progressStart = captureView.range(of: "            case .scanning:")!
         let progressEnd = captureView.range(of: "            case .review:")!
         let progress = String(captureView[progressStart.upperBound..<progressEnd.lowerBound])
-        precondition(progress.contains("OperationSummaryHeader") && !progress.contains("TaskDomainList") && captureView.contains("Button(\"Cancel\", role: .cancel) { model.cancel() }"))
+        precondition(!progress.contains("OperationSummaryHeader") && !progress.contains("TaskDomainList") && captureView.contains("Button(\"Cancel\", role: .cancel) { model.cancel() }"))
         precondition(!progress.contains("capture_category") && !progress.contains("categories checked"))
+        let scan = String(progress.prefix(upTo: progress.range(of: "            case .preparing:")!.lowerBound))
+        precondition(scan.contains("ProgressView()") && scan.contains("Text(progressText)") && !scan.contains("OperationSummaryHeader"))
+        let checkingStart = progress.range(of: "            case .preparing:")!
+        let checkingEnd = progress.range(of: "            case .saving:")!
+        let checking = String(progress[checkingStart.upperBound..<checkingEnd.lowerBound])
+        precondition(checking.contains("Checking Your Environment") && checking.contains("ProgressView()") && checking.contains("Text(progressText)"))
+        precondition(!checking.contains("OperationSummaryHeader") && !checking.contains("selectionSummary"))
+        let saving = String(progress[checkingEnd.upperBound...])
+        precondition(saving.contains("Saving Your Environment") && saving.contains("ProgressView()") && !saving.contains("selectionSummary"))
+        precondition(captureView.contains("Rechecking selected environment…"))
+
+
         precondition(captureView.contains("case \"validation\": return \"Checking selected environment…\""))
         let restoreView = try! String(contentsOf: sources.appendingPathComponent("RestoreView.swift"), encoding: .utf8)
         let restoreModel = try! String(contentsOf: sources.appendingPathComponent("RestoreModel.swift"), encoding: .utf8)
@@ -472,18 +503,39 @@ import SwiftUI
         let confirmationStart = captureView.range(of: "            case .confirmation:")!
         let confirmationEnd = captureView.range(of: "            case .result:")!
         let confirmation = String(captureView[confirmationStart.upperBound..<confirmationEnd.lowerBound])
-        precondition(confirmation.contains("prepared.summary.selectedDomains") && confirmation.contains("model.confirmationSummary"))
+        precondition(!confirmation.contains("prepared.summary.selectedDomains") && !confirmation.contains("prepared.summary.selectedItems"))
         precondition(confirmation.contains("model.confirmationWarnings") && confirmation.contains("TaskDomainList("))
         precondition(confirmation.contains("CaptureBundleLocationView") && confirmation.contains("phase: .confirmation"))
         precondition(!confirmation.contains("NativeSelectionCheckbox") && !confirmation.contains("source_partial"))
         precondition(captureView.contains("model.editSelection()") && captureView.contains("model.create()"))
         let capturePresentation = try! String(contentsOf: sources.appendingPathComponent("CapturePresentation.swift"), encoding: .utf8)
         precondition(capturePresentation.contains("Technical Details") && capturePresentation.contains("TaskDisclosureStyle()"))
+        let confirmationItems = capturePresentation.components(separatedBy: "struct CaptureConfirmationItems: View")[1]
+        precondition(!confirmationItems.contains("Text(\"Needs Attention\")") && !confirmationItems.contains("? domain.title"))
+        precondition(confirmationItems.contains("item.captureRole != .categoryWarning") && confirmationItems.contains("Technical Details"))
+
         precondition(capturePresentation.contains("model.selectItem(category.id") && capturePresentation.contains("model.selectCategory(category.id"))
         let workspace = try! String(contentsOf: sources.appendingPathComponent("ProductionWorkspace.swift"), encoding: .utf8)
         precondition(workspace.contains("CaptureView(model: capture, runtime: runtime, showsActions: false)"))
         precondition(workspace.range(of: "CaptureActionsView(model:")!.lowerBound > workspace.range(of: ".modifier(WorkspaceContentGeometry())")!.lowerBound)
         precondition(!captureView.contains("individual items") && captureView.contains("panel.nameFieldStringValue = \"Saved Environment\""))
+        let reviewStart = captureView.range(of: "            case .review:")!
+        let reviewEnd = captureView.range(of: "            case .confirmation:")!
+        let captureReview = String(captureView[reviewStart.upperBound..<reviewEnd.lowerBound])
+        precondition(!confirmation.contains("CaptureReviewMetrics") && confirmation.contains("compactReadyItems: true") && confirmation.contains("Included in this capture"))
+        precondition(!confirmation.contains("OperationSummaryHeader") && !confirmation.contains("scopeSummary"))
+        let capturedResultEnd = captureView.range(of: "            case .failed, .cancelled:")!
+        let capturedResult = String(captureView[confirmationEnd.upperBound..<capturedResultEnd.lowerBound])
+        precondition(capturedResult.contains("CaptureSavedMetrics(publication: saved") && capturedResult.contains("saved.destination"))
+        precondition(capturedResult.contains("Captured Environment") && capturedResult.contains("compactReadyItems: true"))
+        precondition(!capturedResult.contains("OperationSummaryHeader") && !capturedResult.contains("Ready to Save"))
+
+
+        precondition(captureReview.contains("CaptureReviewRow.project") && captureReview.contains("CaptureCategorySelectionView"))
+        precondition(captureReview.contains("CaptureReviewMetrics(summary: selectionSummary)") && !captureReview.contains("attentionMessage(rows)") && captureReview.contains("Choose supported state to capture."))
+        for removed in ["OperationSummaryHeader", "CaptureSectionSelectionView", "Ready to Capture", "Selected Domains", "Selected Items"] {
+            precondition(!captureReview.contains(removed))
+        }
         let groupStart = captureView.range(of: "struct CaptureMacOSSettingsView: View")!
         let groupEnd = captureView.range(of: "struct CaptureView: View")!
         let macOSGroup = String(captureView[groupStart.lowerBound..<groupEnd.lowerBound])

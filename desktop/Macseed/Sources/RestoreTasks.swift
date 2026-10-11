@@ -42,6 +42,7 @@ struct TaskItemPresentation: Identifiable {
     var diagnostic: CoreRestorePreparation.Diagnostic? = nil
     var technicalName: String? = nil
     var executionAction: String? = nil
+    var captureRole: CaptureItemRole? = nil
 }
 struct TaskDomainPresentation: Identifiable {
     let id: String

@@ -2,36 +2,57 @@ import SwiftUI
 
 private typealias CapturePresentationState<Value> = SwiftUI.State<Value>
 
+enum CaptureItemRole { case wholeCategory, categoryWarning, selectedSubdomain, configuration }
+
 // Read-only presentation of existing selection, preparation and publication facts.
 struct CaptureTaskPresentation {
     enum Phase { case confirmation, progress, result }
     let domains: [TaskDomainPresentation]
     init(categories: [CaptureCategory], selection: CoreCaptureSelection, phase: Phase,
-         capturedDomains: Set<String>? = nil, notices: [DisplayCategory] = []) {
-        let selected = capturedDomains ?? Set(selection.categories).union(selection.items.keys)
+         capturedDomains: Set<String>? = nil, publication: CoreCapturePublication? = nil, notices: [DisplayCategory] = []) {
+        let selected = phase == .result ? publication?.bundle.capturedDomains ?? capturedDomains ?? [] : Set(selection.categories).union(selection.items.keys)
         var output: [TaskDomainPresentation] = []
-        for category in categories where selected.contains(category.id) {
+        let ordered = phase != .progress ? CaptureReviewRow.project(categories).flatMap(\.categories) : categories
+        for category in ordered where selected.contains(category.id) {
             let isMacOS = CaptureMacOSSettingsGroup.domainIDs.contains(category.id)
             let domainID = isMacOS ? "macos-settings" : category.id
             let chosen = Set(selection.items[category.id] ?? category.row.items.map(\.itemID))
-            let facts = category.display.items.filter { !category.itemSelectable || chosen.contains($0.id) }
-            let state: TaskRowState = phase == .progress ? .waiting : phase == .result ? .completed : .planned
+            let resultBound = publication?.publicationOccurred == true && publication?.bundle.capturedDomains.contains(category.id) == true
+            let exactItems = resultBound && publication?.bundle.selectedItemCounts[category.id] == chosen.count
+            let realCategoryItems = phase != .progress && category.row.selectionMode == "category" && !category.row.items.isEmpty
+            let facts = realCategoryItems ? category.row.items.map {
+                DisplayItem(id: $0.itemID, title: $0.label.hasPrefix("opaque:") ? "Private item" : $0.label,
+                            status: .ready, action: "Supported state available to save.")
+            } : category.display.items.filter { !category.itemSelectable || chosen.contains($0.id) }
+            let resultKnown = resultBound && (category.row.selectionMode == "category" || exactItems)
+            let state: TaskRowState = phase == .progress ? .waiting : phase == .result ? (resultKnown ? .completed : .unverified) : .planned
+            let wholeCategory = phase != .progress && category.row.selectionMode == "category" && !realCategoryItems
+            let role: CaptureItemRole? = wholeCategory ? (isMacOS ? .selectedSubdomain : category.id == "vscode-settings" ? .configuration : .wholeCategory) : nil
             var items = facts.map { item in
                 TaskItemPresentation(id: category.id + ":" + item.id,
-                    item: DisplayItem(id: category.id + ":" + item.id, title: item.title, status: item.status,
-                        action: phase == .progress ? "Waiting for the saved environment to be created."
+                    item: DisplayItem(id: category.id + ":" + item.id, title: role == .configuration ? "JSON configuration" : item.title, status: item.status,
+                        action: role == .configuration ? (phase == .result ? "Supported VS Code settings were saved. Included file: settings.json." : "Supported VS Code settings will be included in this saved environment. Included file: settings.json.")
+                            : role == .wholeCategory ? (phase == .result ? "The whole supported configuration was saved." : "The whole supported configuration will be included in this saved environment.")
+                            : phase == .progress ? "Waiting for the saved environment to be created."
                             : phase == .result ? "Included in the published saved environment." : item.action,
-                        reason: nil), state: state)
+                        reason: nil), state: state,
+                    captureRole: role)
+            }
+            if phase == .result && !resultKnown {
+                items = [TaskItemPresentation(id: category.id + ":content-evidence", item: DisplayItem(id: category.id + ":content-evidence",
+                    title: category.title, status: .information, action: "The category was saved, but its exact item contents were not reported."),
+                    state: .unverified, captureRole: .wholeCategory)]
             }
             let warnings = phase == .result ? notices.filter { $0.id == category.id }.flatMap(\.items)
                 : phase == .confirmation ? category.notices : []
-            items += warnings.map { item in TaskItemPresentation(id: category.id + ":" + item.id + ":notice", item: item, state: .attention) }
+            items += warnings.map { item in TaskItemPresentation(id: category.id + ":" + item.id + ":notice", item: item, state: .attention,
+                captureRole: phase != .progress ? .categoryWarning : nil) }
             if let index = output.firstIndex(where: { $0.id == domainID }) {
                 let old = output[index]
-                output[index] = TaskDomainPresentation(id: old.id, title: old.title, symbol: old.symbol, items: old.items + items)
+                output[index] = TaskDomainPresentation(id: old.id, title: old.title, symbol: old.symbol, items: old.items + items, activityState: phase == .result ? (!warnings.isEmpty || old.state == .attention ? .attention : old.state == .unverified ? .unverified : state) : nil)
             } else {
                 output.append(TaskDomainPresentation(id: domainID, title: isMacOS ? "macOS Settings" : category.title,
-                    symbol: isMacOS ? "slider.horizontal.3" : category.symbol, items: items))
+                    symbol: isMacOS ? "slider.horizontal.3" : category.symbol, items: items, activityState: phase == .result ? (!warnings.isEmpty ? .attention : state) : nil))
             }
         }
         domains = output
@@ -102,9 +123,9 @@ struct CaptureCategorySelectionView: View {
     private var status: some View {
         VStack(alignment: .leading, spacing: 3) {
             if !category.selectable {
-                TaskStatusLabel(state: .attention, title: category.headerSummary)
+                TaskStatusLabel(state: category.row.status == "observation_error" ? .attention : .skipped, title: category.headerSummary)
             } else if !category.notices.isEmpty { TaskStatusLabel(state: .attention) }
-            else { Text(model.selectionState(category) == .none ? "Not selected" : "Selected").font(.callout.weight(.medium)).foregroundStyle(.primary) }
+            else { Text(model.selectionState(category).captureTitle).font(.callout.weight(.medium)).foregroundStyle(.primary) }
             if category.selectable {
                 Text(category.itemSelectable ? "\(model.selectedItems[category.id]?.count ?? 0) of \(category.row.items.count) selected" : category.headerSummary)
                     .font(.caption).foregroundStyle(.secondary)
@@ -132,7 +153,6 @@ struct CaptureSecureTransferView: View {
     @CapturePresentationState<Bool> private var expanded = false
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("Capabilities").font(.headline)
             DisclosureGroup(isExpanded: $expanded) {
                 Text("Private SSH identity transfer is not available in this build. No private SSH identities will be captured. Ordinary SSH Configuration is separate and remains selectable.")
                     .font(.callout).foregroundStyle(.secondary)
@@ -140,9 +160,161 @@ struct CaptureSecureTransferView: View {
                 HStack {
                     Label("Secure Transfer", systemImage: "lock.shield")
                     Spacer()
-                    TaskStatusLabel(state: .attention, title: "Not Supported").frame(width: TaskRowLayout.statusWidth, alignment: .leading)
+                    Text("Unavailable").font(.callout.weight(.medium)).foregroundStyle(.secondary).frame(width: TaskRowLayout.statusWidth, alignment: .leading)
                 }
             }.disclosureGroupStyle(TaskDisclosureStyle())
         }.padding(.horizontal, 16)
+    }
+}
+
+extension SelectionState {
+    var captureTitle: String {
+        switch self {
+        case .all: "Selected"
+        case .mixed: "Partially Selected"
+        case .none: "Not Selected"
+        }
+    }
+}
+
+// Review ordering only; the macOS row retains its six independent Core domains.
+struct CaptureReviewRow: Identifiable {
+    let id: String
+    let categories: [CaptureCategory]
+    var needsAttention: Bool {
+        categories.contains { $0.row.status == "observation_error" || !$0.notices.isEmpty }
+    }
+    static func project(_ categories: [CaptureCategory]) -> [Self] {
+        let order = ["homebrew-casks", "app-store", "homebrew-packages", "vscode-extensions", "macos-settings",
+                     "vscode-settings", "shell-zsh", "git-configuration", "ssh-configuration", "workspace-folders", "git-repositories"]
+        let known = Set(order + CaptureMacOSSettingsGroup.domainIDs)
+        var rows = order.compactMap { id -> Self? in
+            let members = categories.filter { id == "macos-settings" ? CaptureMacOSSettingsGroup.domainIDs.contains($0.id) : $0.id == id }
+            return members.isEmpty ? nil : Self(id: id, categories: members)
+        }
+        rows += categories.filter { !known.contains($0.id) }.map { Self(id: $0.id, categories: [$0]) }
+        return rows
+    }
+    static func attentionMessage(_ rows: [Self]) -> String? {
+        let count = rows.filter(\.needsAttention).count
+        guard count > 0 else { return nil }
+        return count == 1 ? "1 category needs attention" : "\(count) categories need attention"
+    }
+}
+
+struct CaptureReviewMetrics: View {
+    let summary: CaptureSummaryPresentation
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 12) { cards }
+            VStack(spacing: 8) { cards }
+        }
+    }
+    @ViewBuilder private var cards: some View {
+        RestorePreviewMetrics.metric("Selected Domains", count: summary.domainCount, symbol: "square.stack", color: .primary)
+        RestorePreviewMetrics.metric("Selected Items", count: summary.itemCount, symbol: "checklist", color: .primary)
+        RestorePreviewMetrics.metric("Needs Attention", count: summary.attentionCount, symbol: "exclamationmark.triangle",
+            color: summary.attentionCount > 0 ? RestoreStatusTone.warning.color : .secondary)
+    }
+}
+
+// Presentation partition only; neither selection nor prepared evidence is modified.
+struct CaptureConfirmationContents {
+    let ordinary: [TaskItemPresentation]
+    let itemProblems: [TaskItemPresentation]
+    let categoryProblems: [TaskItemPresentation]
+    let explanations: [TaskItemPresentation]
+    var problems: [TaskItemPresentation] { itemProblems + categoryProblems }
+    init(_ items: [TaskItemPresentation]) {
+        func needsAttention(_ item: TaskItemPresentation) -> Bool {
+            ![.planned, .completed].contains(item.state) || item.item.requiresAttention || item.item.reason != nil || item.diagnostic != nil
+        }
+        ordinary = items.filter { $0.captureRole != .wholeCategory && !needsAttention($0) }
+        explanations = items.filter { ($0.captureRole == .wholeCategory || $0.captureRole == .configuration) && !needsAttention($0) }
+        var seen = Set<String>()
+        let candidates = items.filter(needsAttention)
+        // Prefer the item representation only when both carry the same structured fact identity.
+        let ordered = candidates.filter { $0.captureRole != .categoryWarning }
+            + candidates.filter { $0.captureRole == .categoryWarning }
+        let unique = ordered.filter { item in
+            guard !item.item.id.isEmpty else { return true }
+            let identity = [item.item.id, item.item.title, item.item.action, item.item.reason ?? "",
+                            item.item.status.rawValue, item.state.rawValue,
+                            item.diagnostic?.technicalDescription ?? ""].joined(separator: "\u{0}")
+            return seen.insert(identity).inserted
+        }
+        itemProblems = unique.filter { $0.captureRole != .categoryWarning }
+        categoryProblems = unique.filter { $0.captureRole == .categoryWarning }
+    }
+}
+
+struct CaptureConfirmationItems: View {
+    let domain: TaskDomainPresentation
+    var body: some View {
+        let contents = CaptureConfirmationContents(domain.items)
+        VStack(alignment: .leading, spacing: 10) {
+            SettingsFlowLayout {
+                ForEach(contents.ordinary) { item in
+                    Text(item.item.title).font(.callout)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.horizontal, 8).padding(.vertical, 4)
+                        .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 5))
+                }
+            }
+            ForEach(contents.explanations) { item in
+                Text(item.item.action).font(.callout).foregroundStyle(.secondary)
+            }
+            if !contents.problems.isEmpty {
+                ForEach(contents.problems) { item in
+                    VStack(alignment: .leading, spacing: 4) {
+                        if item.captureRole != .categoryWarning && item.captureRole != .wholeCategory {
+                            Text(item.item.title).font(.callout.weight(.medium))
+                        }
+                        if !item.item.action.isEmpty {
+                            Text(item.item.action).font(.callout).foregroundStyle(.secondary)
+                        }
+                        if item.item.reason != nil || item.diagnostic != nil {
+                            DisclosureGroup("Technical Details") {
+                                if let reason = item.item.reason { Text(reason).font(.caption.monospaced()).textSelection(.enabled) }
+                                if let diagnostic = item.diagnostic { Text(diagnostic.technicalDescription).font(.caption.monospaced()).textSelection(.enabled) }
+                            }.disclosureGroupStyle(TaskDisclosureStyle(minimumHeight: 22)).font(.caption)
+                        }
+                    }.padding(.vertical, 3)
+                }
+            }
+        }.padding(.leading, 36).padding(.vertical, 8)
+    }
+}
+
+struct CaptureSavedMetrics: View {
+    let publication: CoreCapturePublication
+    let notices: [DisplayCategory]
+    var body: some View {
+        let attention = Set(notices.filter { !$0.items.isEmpty && publication.bundle.capturedDomains.contains($0.id) }.map(\.id)).count
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 12) { cards(attention) }
+            VStack(spacing: 8) { cards(attention) }
+        }
+    }
+    @ViewBuilder private func cards(_ attention: Int) -> some View {
+        RestorePreviewMetrics.metric("Domains Saved", count: publication.bundle.capturedDomains.count, symbol: "square.stack", color: .primary)
+        RestorePreviewMetrics.metric("Items Saved", count: publication.bundle.itemCount, symbol: "checklist", color: .primary)
+        RestorePreviewMetrics.metric("Needs Attention", count: attention, symbol: "exclamationmark.triangle",
+            color: attention > 0 ? RestoreStatusTone.warning.color : .secondary)
+    }
+}
+
+// Wording only; the failure, stale-plan guards and publication evidence remain Model-owned.
+extension CaptureFailure {
+    var isOutdatedPreparation: Bool {
+        self == .runtime(.coreFailure("stale_prepared_capture"))
+    }
+    var presentationTitle: String {
+        isOutdatedPreparation ? "Capture Preparation Is Outdated" : "Needs Attention"
+    }
+    var presentationMessage: String {
+        isOutdatedPreparation
+            ? "The selected environment has changed since confirmation. Scan this Mac again to prepare an updated capture."
+            : message
     }
 }

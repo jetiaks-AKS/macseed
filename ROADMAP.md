@@ -57,7 +57,9 @@ and packaged clean-Mac qualification remain the next stages.
 Restore presentation/recovery and Homebrew compatibility advanced substantially
 through checkpoint `08e2b469`: real Restore converged to a fresh Everything Already
 Matches Preview, including clean Tailscale Install and matching observation.
-Remaining qualification is open.** Complete the SwiftUI client for
+Capture UI is finalized and manually qualified for full/partial selection,
+publication with/without warnings, cancellation and stale preparation/re-scan.
+Remaining Stage 16 qualification is open.** Complete the SwiftUI client for
 Capture this Mac, Restore a Mac and Environment Status.
 Provide prerequisite guidance, Check Again, structured
 progress/results, separate secret input and cancellation over the existing Core.

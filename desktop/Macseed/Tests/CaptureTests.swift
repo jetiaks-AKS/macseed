@@ -159,9 +159,28 @@ import SwiftUI
         precondition(model.confirmationWarnings.map(\.id) == [packages.id])
         precondition(model.confirmationAreas.first { $0.id == packages.id }?.requiresAttention == true)
 
+        let ordinaryFailure = CaptureFailure.runtime(.coreFailure("capture_validation_failed"))
+        precondition(!ordinaryFailure.isOutdatedPreparation && ordinaryFailure.presentationTitle == "Needs Attention")
+        precondition(ordinaryFailure.presentationMessage == ordinaryFailure.message)
+
         let captureSummary = CaptureSummaryPresentation.review(categories: model.categories, domainCount: model.selectedDomainCount, itemCount: model.selectedItemCount)
         precondition(captureSummary.domainCount == model.selectedDomainCount && captureSummary.itemCount == model.selectedItemCount)
         precondition(captureSummary.attentionCount == 2 && captureSummary.unsupportedCount == 2)
+        let rows = CaptureReviewRow.project(model.categories)
+        precondition(rows.flatMap(\.categories).count == model.categories.count)
+        precondition(Set(rows.flatMap(\.categories).map(\.id)) == Set(model.categories.map(\.id)))
+        precondition(rows.map(\.id) == ["app-store", "homebrew-packages", "macos-settings", "vscode-settings", "shell-zsh", "future-domain"])
+        precondition(CaptureReviewRow.project([]).isEmpty)
+        precondition(SelectionState.mixed.captureTitle == "Partially Selected")
+        precondition(CaptureReviewRow.attentionMessage(rows) == "2 categories need attention")
+        precondition(CaptureReviewRow.attentionMessage(rows.filter { !$0.needsAttention }) == nil)
+        let futureRow = try JSONDecoder().decode(CoreCaptureInventoryRow.self,
+            from: JSONSerialization.data(withJSONObject: row("future-domain", mode: "future", status: "unsupported")))
+        let future = CaptureReviewRow.project([CaptureCategory(row: futureRow)])
+        precondition(future.count == 1 && future[0].categories[0].id == "future-domain")
+        precondition(future[0].categories[0].title == "future-domain" && !future[0].categories[0].selectable)
+        precondition(CaptureReviewRow.attentionMessage(future) == nil)
+
         try render(model, runtime, state: "confirmation")
         let preparedScope = model.preparation!
         let plannedTasks = CaptureTaskPresentation(categories: preparedScope.inventory.map { CaptureCategory(row: $0) }, selection: preparedScope.selection!, phase: .confirmation)
@@ -169,16 +188,61 @@ import SwiftUI
         precondition(plannedTasks.domains.map(\.id) == waitingTasks.domains.map(\.id))
         precondition(waitingTasks.domains.flatMap(\.items).allSatisfy { $0.state == .waiting && $0.item.reason == nil })
         precondition(plannedTasks.domains.flatMap(\.items).contains { $0.item.reason == "source_partial" })
+        precondition(plannedTasks.domains.first?.id == "homebrew-packages")
+        let preparedPackages = plannedTasks.domains.first!
+        precondition(preparedPackages.items.filter { $0.state == .planned }.count == 2)
+        precondition(preparedPackages.items.filter { $0.item.reason == "source_partial" }.count == 1)
+        let contents = CaptureConfirmationContents(preparedPackages.items)
+        precondition(contents.ordinary.count == 2 && contents.problems.count == 1)
+        precondition(contents.problems.first?.item.reason == "source_partial")
+        precondition(Set(contents.ordinary.map(\.id)).isDisjoint(with: Set(contents.problems.map(\.id))))
+        let reordered = CaptureConfirmationContents([contents.problems[0]] + contents.ordinary + [contents.problems[0]])
+        precondition(reordered.ordinary.map(\.id) == contents.ordinary.map(\.id) && reordered.problems.count == 1)
+        precondition(contents.itemProblems.isEmpty && contents.categoryProblems.count == 1)
+        let wholeCategory = TaskItemPresentation(id: "whole", item: DisplayItem(id: "whole", title: "Future Domain",
+            status: .ready, action: "Whole category"), state: .planned, captureRole: .wholeCategory)
+        precondition(CaptureConfirmationContents([wholeCategory]).ordinary.isEmpty)
+        precondition(CaptureConfirmationContents([wholeCategory]).explanations.count == 1)
+        let settingsRow = try JSONDecoder().decode(CoreCaptureInventoryRow.self,
+            from: JSONSerialization.data(withJSONObject: row("vscode-settings", mode: "category", reason: "source_partial")))
+        let settingsDomain = CaptureTaskPresentation(categories: [CaptureCategory(row: settingsRow)],
+            selection: CoreCaptureSelection(categories: ["vscode-settings"], items: [:], secureIdentities: []), phase: .confirmation).domains[0]
+        let settingsContents = CaptureConfirmationContents(settingsDomain.items)
+        precondition(settingsContents.ordinary.map { $0.item.title } == ["JSON configuration"])
+        precondition(settingsContents.explanations[0].item.action.contains("settings.json"))
+        precondition(settingsContents.categoryProblems.count == 1 && settingsContents.itemProblems.isEmpty)
+
+        var firstProblem = contents.problems[0]
+        firstProblem.captureRole = nil
+        let secondProblem = TaskItemPresentation(id: "independent", item: DisplayItem(id: "independent", title: firstProblem.item.title,
+            status: firstProblem.item.status, action: firstProblem.item.action, reason: firstProblem.item.reason), state: .attention)
+        let mixedProblems = CaptureConfirmationContents([wholeCategory, contents.problems[0], firstProblem, secondProblem])
+        precondition(mixedProblems.ordinary.isEmpty && mixedProblems.itemProblems.map(\.id) == [firstProblem.id, secondProblem.id])
+        precondition(mixedProblems.categoryProblems.isEmpty, "Same structured fact is shown once at item level")
+        let independentCategory = TaskItemPresentation(id: "category-source", item: DisplayItem(id: "category-source", title: firstProblem.item.title,
+            status: .attention, action: firstProblem.item.action, reason: firstProblem.item.reason), state: .attention, captureRole: .categoryWarning)
+        let combined = CaptureConfirmationContents([independentCategory, firstProblem, secondProblem])
+        precondition(combined.itemProblems.map(\.id) == [firstProblem.id, secondProblem.id] && combined.categoryProblems.count == 1)
+        precondition(CaptureConfirmationContents(contents.ordinary).problems.isEmpty)
+
+
+
         model.create(); await model.waitForCompletion()
         precondition(model.state == .result && model.publicationEvidence == .occurred && model.publication?.destination == target.path)
         precondition(model.publication?.bundle.capturedDomains.count == 2 && model.resultNotices.count == 1)
         try render(model, runtime, state: "result")
         let captured = model.publication!.bundle
         let resultTasks = CaptureTaskPresentation(categories: preparedScope.inventory.map { CaptureCategory(row: $0) }, selection: preparedScope.selection!,
-            phase: .result, capturedDomains: captured.capturedDomains, notices: model.resultNotices)
+            phase: .result, publication: model.publication, notices: model.resultNotices)
         precondition(resultTasks.domains.map(\.id) == plannedTasks.domains.map(\.id))
-        precondition(resultTasks.domains.first { $0.id == "homebrew-packages" }?.state == .partial)
+        precondition(resultTasks.domains.first { $0.id == "homebrew-packages" }?.state == .attention)
         precondition(resultTasks.domains.first { $0.id == "macos-settings" }?.state == .completed)
+        precondition(CaptureConfirmationContents(resultTasks.domains.first { $0.id == "macos-settings" }!.items).ordinary.map { $0.item.title } == ["Finder"])
+        let unknownResult = CaptureTaskPresentation(categories: model.categories, selection: model.selection, phase: .result,
+            capturedDomains: captured.capturedDomains)
+        precondition(unknownResult.domains.allSatisfy { $0.state == .unverified })
+        precondition(unknownResult.domains.flatMap(\.items).allSatisfy { $0.state != .completed })
+
         precondition(resultTasks.domains.flatMap(\.items).contains { $0.state == .attention && $0.item.reason == "source_partial" })
         let resultMetrics = CaptureSummaryPresentation(domainCount: captured.capturedDomains.count, itemCount: captured.itemCount, attentionCount: 1, unsupportedCount: 0, captured: true)
         precondition(resultMetrics.metrics.first?.title == "Captured Domains" && resultMetrics.domainCount == 2 && resultMetrics.itemCount == 2)
@@ -215,6 +279,10 @@ import SwiftUI
             await model.waitForCompletion()
             precondition(model.state != .result && model.publication == nil && model.preparation == nil)
             if mode == "stale_prepared_capture" {
+                precondition(model.failure?.presentationTitle == "Capture Preparation Is Outdated")
+                precondition(model.failure?.presentationMessage == "The selected environment has changed since confirmation. Scan this Mac again to prepare an updated capture.")
+                precondition(model.failure?.technicalReason == "stale_prepared_capture" && model.publicationEvidence == .notOccurred)
+
                 precondition(model.failure == .runtime(.coreFailure(mode)))
                 let countBefore = try String(contentsOf: core.appendingPathComponent("requests.jsonl"), encoding: .utf8).split(separator: "\n").count
                 model.create(); await model.waitForCompletion()
@@ -247,9 +315,21 @@ import SwiftUI
             category.row.includedSettings?.map(\.label) == [includedLabels[index]] && category.row.items.isEmpty
         })
         precondition(model.selectedDomainCount == 7 && model.selectedItemCount == 1 && !model.macOSSettings.hasAttention)
+        let macOSReviewRows = CaptureReviewRow.project(model.categories)
+        precondition(macOSReviewRows.map(\.id) == ["homebrew-packages", "macos-settings"])
+        precondition(macOSReviewRows.last?.categories.count == 6)
+        let fullMacOS = CaptureTaskPresentation(categories: model.categories, selection: model.selection, phase: .confirmation)
+            .domains.first { $0.id == "macos-settings" }!
+        precondition(CaptureConfirmationContents(fullMacOS.items).ordinary.map { $0.item.title } == ["Finder", "Dock", "Windows", "Keyboard", "Trackpad", "Screenshots"])
+
+
         precondition(model.availableAreaCount == 7 && model.selectionSummary == "7 domains selected · 1 item selected")
         model.selectCategory("macos-finder", included: false)
         precondition(model.macOSSettings.state == .mixed && model.macOSSettings.summary == "5 of 6 selected")
+        let partialMacOS = CaptureTaskPresentation(categories: model.categories, selection: model.selection, phase: .confirmation)
+            .domains.first { $0.id == "macos-settings" }!
+        precondition(CaptureConfirmationContents(partialMacOS.items).ordinary.map { $0.item.title } == ["Dock", "Windows", "Keyboard", "Trackpad", "Screenshots"])
+
         precondition(model.selectionSummary == "6 of 7 domains selected · 1 item selected")
         precondition(!model.selection.categories.contains("macos-finder"))
         model.selectMacOSSettings(included: false)
@@ -282,9 +362,9 @@ import SwiftUI
         precondition(model.confirmationWarnings.map(\.id) == ["ssh-configuration"])
         let sshPrepared = model.preparation!
         let sshCategory = sshPrepared.inventory.map { CaptureCategory(row: $0) }.first { $0.id == "ssh-configuration" }!
-        let sshResult = CaptureTaskPresentation(categories: sshPrepared.inventory.map { CaptureCategory(row: $0) }, selection: sshPrepared.selection!, phase: .result,
+        let sshResult = CaptureTaskPresentation(categories: sshPrepared.inventory.map { CaptureCategory(row: $0) }, selection: sshPrepared.selection!, phase: .result, capturedDomains: Set(sshPrepared.selection!.categories).union(sshPrepared.selection!.items.keys),
             notices: [DisplayCategory(id: sshCategory.id, title: sshCategory.title, symbol: sshCategory.symbol, items: sshCategory.notices)])
-        precondition(sshResult.domains.first { $0.id == "ssh-configuration" }?.state == .partial)
+        precondition(sshResult.domains.first { $0.id == "ssh-configuration" }?.state == .attention)
         precondition(sshResult.domains.first { $0.id == "ssh-configuration" }?.items.contains { $0.item.reason == "source_partial" && $0.state == .attention } == true)
         precondition(model.confirmationSummary == "7 domains selected · 1 item selected")
         model.editSelection()

@@ -141,6 +141,8 @@ These are content states, not mandatory wizard pages.
    categories or item subsets where Core permits. No hidden selection or overlap
    between a whole category and its subset. An empty selection keeps saving
    disabled with “Choose supported state to capture.”
+   Review shows Selected Domains, Selected Items and Needs Attention cards;
+   unsupported state alone is not an attention warning.
    Fully selected item domains use V1 whole-category selection to keep large
    inventories compact; partial domains send item IDs. Fresh confirmation shows
    the newly observed scope. Oversized partial requests fail visibly within the
@@ -157,10 +159,14 @@ These are content states, not mandatory wizard pages.
    continuing without identities.
 4. Choose a destination in the native save dialog, then prepare the chosen
    selection again. Desktop normalizes the filename to exactly one `.mbt` suffix.
-   Confirmation shows prepared domain/item counts, destination and expandable
-   Domain → Items summaries with relevant warnings. Back edits the selection.
-   Category-only domains retain whole-category scope; macOS Settings groups its
-   selected child domains.
+   Confirmation shows the
+   destination and **Included in this capture**, without repeated aggregate counts.
+   Read-only details use wrapping neutral labels followed by independent item and
+   category warnings with collapsed Technical Details. Back edits the selection.
+   Category-only domains retain whole-category scope. macOS Settings shows labels
+   for selected Finder, Dock, Windows, Keyboard, Trackpad and Screenshots domains.
+   VS Code Settings describes JSON configuration containing `settings.json` only;
+   other whole-domain configurations have a bounded inclusion explanation.
    Confirm **Create Saved Environment** using that
    preparation's ID. Execute rescans; changed inventory requires fresh Review and
    confirmation. Existing Bundles require explicit Replace confirmation in the
@@ -168,33 +174,49 @@ These are content states, not mandatory wizard pages.
    Replacement is bound to the observed file digest; Core validates the new Bundle
    before atomic publication, preserving the previous Bundle on failure.
 5. Result says **Environment Saved** only with successful publication evidence. Show
-   selected scope and the chosen location, with Reveal in Finder. Capture does not
+   **Domains Saved** and **Items Saved** from validated publication metadata,
+   **Needs Attention** as the number of captured Core domains with event warnings,
+   and the published destination, with Reveal in Finder. Capture does not
    claim target restoration or final Verification. If cancellation/failure follows
    publication, retain the reported publication and chosen location alongside the
    interruption; do not label the operation successful or imply removal/rollback.
 
 Stage 16E uses real V1 Capture in normal Debug/Release. Category-only rows have one
 category checkbox and read-only details; item-mode rows have native all/none/mixed
-selection and bulk actions. Groups remain collapsed by default. Capture shares
-Restore's operation summary, metric cards, status and whole-row disclosure components. Review retains independent
-native domain/item checkboxes; confirmation and result are read-only Domain → Items
-presentations. Primary actions remain outside the scrolling content. Secure Transfer
+selection and bulk actions. Review is one ordered category list, with macOS Settings
+as its only domain grouping. Categories remain collapsed by default. Capture reuses
+Restore metric cards, status and disclosure components; Review retains independent
+native domain/item checkboxes. Confirmation and Result use compact read-only details.
+Primary actions remain outside the scrolling content. Secure Transfer
 is a separate capability disclosure. Confirmation is inline with the exact prepared
 scope and destination. User-facing counts use
 domains and items; the macOS Settings group and included-settings labels add no
 selection counts. Result scope comes from the
 published Bundle metadata; selected-category event warnings remain disclosed.
-Progress shows a compact Saving Your Environment summary with real Core phase
-messages, a spinner and cancellation. Core does not report per-item Capture
+Scan, Checking Your Environment and Saving Your Environment use compact progress
+with real Core phase messages, a spinner and cancellation. Core does not report per-item Capture
 execution progress, so no waiting task list is shown during publication;
-Completed describes inclusion in a successfully published Bundle, not restoration
-or target Verification. Result warnings come from selected-category event evidence.
+**Captured Environment** follows Review order. Completed requires confirmed domain
+inclusion and, for item domains, consistent published counts over the bound prepared
+selection. Known limitations show Needs Attention; insufficient item evidence stays
+Unverified without inventing an item list. These are capture states, not target
+Verification. Core provides no separate inventory/count of omitted items. Result
+warnings come from selected-category event evidence.
 Stale preparation or any failed/interrupted attempt requires a fresh scan and
-confirmation, never a silent execute retry. Capture leaves ordinary local
-Generated Configuration/Blueprint untouched and does not rebuild the source Mac.
+confirmation, never a silent execute retry. The exact `stale_prepared_capture` code
+shows **Capture Preparation Is Outdated** and asks for Scan Again, preserving the
+original technical code and cautious publication message. Capture leaves ordinary
+local Generated Configuration/Blueprint untouched and does not rebuild the source Mac.
 The [development guide](../desktop/Macseed/README.md#real-capture-16e) provides the
 manual gate launch command. The user verified the real-Mac end-to-end gate,
 including publication with one `.mbt` extension, warnings and Reveal in Finder.
+
+Capture UI is finalized independently of the remaining Stage 16 work. User-confirmed
+real-Mac GUI scenarios cover full capture, category subsets, item subsets, successful
+publication with SSH limitations and without warnings, cancellation, stale preparation
+after a Mac state change, and successful capture after a fresh Scan. Targeted
+CaptureTests/PresentationTests and a Debug build validate the presentation checkpoint;
+these manual scenarios are not a full automated regression.
 
 Secure SSH remains part of Capture, not a top-level Credentials area or general
 password vault. Selecting none still allows an ordinary Bundle. Passphrase input

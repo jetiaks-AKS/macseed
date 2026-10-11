@@ -177,11 +177,13 @@ struct TaskDomainList: View {
     var stateTitles: [TaskRowState: String] = [:]
     var selectionStates: [String: SelectionState] = [:]
     var selectDomain: ((String, Bool) -> Void)? = nil
+    var compactReadyItems = false
+    var title = "Tasks"
     @TaskViewState<Set<String>> private var expanded = []
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
-                Text("Tasks").font(.headline).accessibilityAddTraits(.isHeader)
+                Text(title).font(.headline).accessibilityAddTraits(.isHeader)
                 Spacer()
                 Button(expanded.count == domains.count ? "Collapse All" : "Expand All") {
                     expanded = expanded.count == domains.count ? [] : Set(domains.map(\.id))
@@ -207,7 +209,7 @@ struct TaskDomainList: View {
         DisclosureGroup(isExpanded: Binding(get: { expanded.contains(domain.id) }, set: { value in
             if value { expanded.insert(domain.id) } else { expanded.remove(domain.id) }
         })) {
-            TaskDomainItems(domain: domain, stateTitles: stateTitles)
+            TaskDomainItems(domain: domain, stateTitles: stateTitles, compactReadyItems: compactReadyItems)
         } label: {
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 12) { domainTitle(domain); Spacer(); domainStatus(domain) }
@@ -216,6 +218,15 @@ struct TaskDomainList: View {
         }.disclosureGroupStyle(TaskDisclosureStyle()).padding(.horizontal, 16)
     }
     private func domainSummary(_ domain: TaskDomainPresentation) -> String {
+        if compactReadyItems {
+            let savedSubdomains = domain.items.filter { $0.captureRole == .selectedSubdomain && $0.state == .completed }.count
+            if savedSubdomains > 0 { return "\(savedSubdomains) \(savedSubdomains == 1 ? "domain" : "domains") saved" }
+            if domain.items.contains(where: { $0.captureRole == .configuration && $0.state == .completed }) { return "JSON configuration saved" }
+            if domain.items.contains(where: { $0.captureRole == .wholeCategory && $0.state == .unverified }) { return "Item contents not reported" }
+            if domain.items.contains(where: { $0.captureRole == .wholeCategory && $0.state == .completed }) { return "Supported configuration saved" }
+            let count = domain.items.filter { [.planned, .completed].contains($0.state) }.count
+            return "\(count) \(count == 1 ? "item" : "items") included"
+        }
         guard !stateTitles.isEmpty else { return domain.summary }
         let counts = Dictionary(grouping: domain.items, by: \.state)
         return TaskRowState.allCases.compactMap { state in
@@ -239,13 +250,24 @@ struct TaskDomainList: View {
 struct TaskDomainItems: View {
     let domain: TaskDomainPresentation
     var stateTitles: [TaskRowState: String] = [:]
+    var compactReadyItems = false
     var body: some View {
+        if compactReadyItems {
+            CaptureConfirmationItems(domain: domain)
+        } else {
 VStack(spacing: 0) {
                             ForEach(domain.items) { item in
                                 HStack(alignment: .top, spacing: 12) {
                                     VStack(alignment: .leading, spacing: 4) {
-                                        Text(item.item.title)
-                                        Text(item.item.action).font(.caption).foregroundStyle(.secondary)
+                                        if compactReadyItems && item.state != .planned {
+                                            Text(item.item.action.isEmpty ? item.item.title : item.item.action)
+                                                .font(.callout).foregroundStyle(.secondary)
+                                        } else {
+                                            Text(item.item.title)
+                                            if !compactReadyItems {
+                                                Text(item.item.action).font(.caption).foregroundStyle(.secondary)
+                                            }
+                                        }
                                         if item.state != .working, let reason = item.item.reason {
                                             DisclosureGroup("Technical Details") {
                                                 Text(reason).font(.caption.monospaced()).textSelection(.enabled)
@@ -256,10 +278,13 @@ VStack(spacing: 0) {
                                         }
                                     }
                                     Spacer()
-                                    TaskStatusLabel(state: item.state, title: stateTitles[item.state]).frame(width: TaskRowLayout.statusWidth, alignment: .leading)
+                                    if !compactReadyItems {
+                                        TaskStatusLabel(state: item.state, title: stateTitles[item.state]).frame(width: TaskRowLayout.statusWidth, alignment: .leading)
+                                    }
                                 }.padding(.vertical, 7)
                             }
                         }.padding(.leading, 36).padding(.vertical, 4)
+        }
     }
 }
 

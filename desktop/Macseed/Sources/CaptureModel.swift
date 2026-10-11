@@ -51,7 +51,7 @@ struct CaptureCategory: Identifiable {
                      "git-repositories": "Git Repositories", "workspace-folders": "Workspace Folders", "ssh-configuration": "SSH Configuration",
                      "shell-zsh": "Shell Configuration", "macos-finder": "Finder", "macos-dock": "Dock", "macos-windows": "Windows",
                      "macos-keyboard": "Keyboard", "macos-trackpad": "Trackpad", "macos-screenshots": "Screenshots"]
-        return names[domain] ?? "Other supported state"
+        return names[domain] ?? domain
     }
     var symbol: String {
         switch id {
@@ -64,6 +64,7 @@ struct CaptureCategory: Identifiable {
         }
     }
     var headerSummary: String {
+        if row.status == "observation_error" { return "Needs Attention" }
         if !["items", "category"].contains(row.selectionMode) { return "Not Supported" }
         if row.status != "present" { return row.status == "observation_error" ? "Needs Attention" : (row.status == "unsupported" ? "Not Supported" : "Unavailable") }
         return row.selectionMode == "items" ? "\(row.items.count) \(row.items.count == 1 ? "item" : "items")" : "Whole category"
@@ -119,7 +120,7 @@ struct CaptureMacOSSettingsGroup {
     var availableIDs: [String] { children.filter(\.selectable).map(\.id) }
     var state: SelectionState { SelectionState.summarize(selected: selected, children: availableIDs) }
     var summary: String { "\(selected.intersection(availableIDs).count) of \(availableIDs.count) selected" }
-    var hasAttention: Bool { children.contains { !$0.selectable || $0.display.hasAttention || !$0.notices.isEmpty } }
+    var hasAttention: Bool { children.contains { $0.row.status == "observation_error" || !$0.notices.isEmpty } }
 }
 
 @MainActor final class CaptureModel: ObservableObject {
