@@ -115,6 +115,16 @@ class SelectionTests(unittest.TestCase):
     def test_all_modes_narrowing_identity_privacy_and_category_flags(self):
         sections = self.populated()
         projection, sources = selection_api.inventory(selection_api.staged_files(self.stage))
+        self.assertTrue(all(row['source_present'] for row in projection['inventory']))
+        self.assertTrue(all(row['capture_selected'] for row in projection['inventory']))
+        files = selection_api.staged_files(self.stage)
+        del files['generated/brew-casks.conf']
+        files['generated/vscode/settings.json'] = b''
+        presence, _ = selection_api.inventory(files)
+        rows = {row['domain']: row for row in presence['inventory']}
+        self.assertFalse(rows['homebrew-casks']['source_present'])
+        self.assertTrue(rows['vscode-settings']['source_present'])
+
         self.assertNotIn('PRIVATE_', json.dumps(projection))
         self.assertNotIn('secure', json.dumps(projection))
         self.assertEqual(selection_api.label('https://user:SECRET@example.test/repo'), 'Private item')
@@ -131,6 +141,14 @@ class SelectionTests(unittest.TestCase):
         selection_api.correlate(records, self.stage)
         self.assertEqual(records[0]['selection_item_id'], chosen['items']['git-repositories'][0])
         self.assertEqual(selection_api.canonical(self.stage), {'categories': sorted(chosen['categories']), 'items': dict(sorted(chosen['items'].items()))})
+        selection_api.narrow(self.stage, {'categories': chosen['categories'],
+                            'items': {domain: ids for domain, ids in chosen['items'].items() if domain != 'vscode-extensions'}}, [])
+        retained, _ = selection_api.inventory(selection_api.staged_files(self.stage))
+        row = next(row for row in retained['inventory'] if row['domain'] == 'vscode-extensions')
+        self.assertTrue(row['source_present'])
+        self.assertFalse(row['capture_selected'])
+        self.assertEqual(row['items'], [])
+
 
     def test_captured_app_names_preserve_identity_and_round_trip(self):
         self.populated()

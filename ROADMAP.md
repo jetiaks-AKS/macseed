@@ -59,6 +59,8 @@ through checkpoint `08e2b469`: real Restore converged to a fresh Everything Alre
 Matches Preview, including clean Tailscale Install and matching observation.
 Capture UI is finalized and manually qualified for full/partial selection,
 publication with/without warnings, cancellation and stale preparation/re-scan.
+Branding/Home and the agreed Capture/Restore UI milestone are finalized and
+user-approved; further Desktop functional development and qualification remain open.
 Remaining Stage 16 qualification is open.** Complete the SwiftUI client for
 Capture this Mac, Restore a Mac and Environment Status.
 Provide prerequisite guidance, Check Again, structured

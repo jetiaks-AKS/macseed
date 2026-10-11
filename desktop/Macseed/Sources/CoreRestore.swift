@@ -24,11 +24,13 @@ struct CoreRestoreInspection: Decodable {
         let label: String
         let selectionMode: String
         let availability: String
+        var sourcePresent: Bool? = nil
+        var captureSelected: Bool? = nil
         let reason: String?
         let items: [Item]
         var id: String { domain }
         var selectable: Bool { availability == "available" && (selectionMode == "category" || (selectionMode == "items" && !items.isEmpty)) }
-        enum CodingKeys: String, CodingKey { case domain, label, selectionMode = "selection_mode", availability, reason, items }
+        enum CodingKeys: String, CodingKey { case domain, label, selectionMode = "selection_mode", availability, reason, items, sourcePresent = "source_present", captureSelected = "capture_selected" }
     }
     struct Item: Decodable, Identifiable {
         let itemID: String

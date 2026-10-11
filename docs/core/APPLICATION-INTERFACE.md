@@ -113,6 +113,12 @@ Clients must check this before sending the new field to an older Core.
 with `item_id`/`label`. This is captured selection eligibility, not current-Mac
 execution readiness. Missing or ineligible content is unavailable with
 `no_selectable_content`; malformed/unsupported Bundles still fail inspection.
+Rows additionally report `source_present`: whether the domain's ordinary source
+file exists in the validated archive. A present empty file remains present.
+`capture_selected` reports whole-category inclusion or nonempty selected Blueprint
+items, independently of retained complete inventories. Desktop hides explicit
+absence and explicit exclusion in Selection; missing fields retain rows and
+diagnostics. Selection eligibility and Restore draft selection are unchanged.
 
 Items are supported for formulae, casks, App Store IDs, extensions, eligible
 Workspace folders, repositories and supported Git configuration keys. VS Code

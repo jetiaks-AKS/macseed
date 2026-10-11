@@ -47,6 +47,8 @@ def inventory(files):
         rows.append({'domain': domain, 'label': LABELS[domain],
                      'selection_mode': 'items' if domain in bundle.ITEMS else 'category',
                      'availability': 'available' if available else 'unavailable',
+                     'capture_selected': bool(categories.get(domain, False) or sections.get(domain, [])),
+                     'source_present': 'generated/' + (bundle.ITEMS.get(domain) or bundle.CATEGORIES[domain]) in files,
                      'reason': None if available else 'no_selectable_content',
                      'items': [{'item_id': key, 'label': label(app_names.get(value, value) if domain == 'app-store' else value)} for key, value in sources[domain].items()]})
     return {'groups': [{'id': group, 'domains': list(domains)} for group, domains in bundle.GROUPS.items()],

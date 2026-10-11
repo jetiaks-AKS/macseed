@@ -464,7 +464,7 @@ import SwiftUI
         precondition(RestoreRowIcon.symbol(for: "vscode-settings") == "gearshape")
         precondition(aggregateSource.contains("RestoreRowIcon(symbol: \"slider.horizontal.3\")"))
         precondition(restoreView.contains("RestoreRowIcon(symbol: RestoreRowIcon.symbol(for: area.id))"))
-        precondition(restoreView.contains("RestorePresentationSection.visible(model.groups, inventory: model.areas)"))
+        precondition(restoreView.contains("RestorePresentationSection.visible(model.groups, inventory: includedAreas)"))
         func luminance(_ color: NSColor) -> Double {
             let rgb = color.usingColorSpace(.sRGB)!
             func linear(_ value: CGFloat) -> Double {

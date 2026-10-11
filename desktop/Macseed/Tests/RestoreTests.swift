@@ -807,10 +807,31 @@ import Foundation
         }
         let shellGroup = CoreRestoreInspection.Group(id: "Shell", domains: ["unavailable-area"])
         let visibleGroups = presentationGroups + [shellGroup]
+        var absent = model.areas.first { $0.id == "unavailable-area" }!
+        absent.sourcePresent = false
+        var presentEmpty = absent
+        presentEmpty.sourcePresent = true
+        precondition(RestorePresentationSection.includedAreas([absent]).isEmpty)
+        precondition(RestorePresentationSection.includedAreas([presentEmpty]).count == 1)
+        var presentUnsupported = presentEmpty
+        presentUnsupported = CoreRestoreInspection.Area(domain: "unsupported-test", label: "Unsupported", selectionMode: "category", availability: "unsupported", sourcePresent: true, reason: "unsupported", items: [])
+        precondition(RestorePresentationSection.includedAreas([presentUnsupported]).count == 1)
+        var inventoryOnly = presentEmpty
+        inventoryOnly.captureSelected = false
+        precondition(RestorePresentationSection.includedAreas([inventoryOnly]).isEmpty)
+        var wholeSelected = presentEmpty
+        wholeSelected.captureSelected = true
+        precondition(RestorePresentationSection.includedAreas([wholeSelected]).count == 1)
+        presentUnsupported.captureSelected = true
+        precondition(RestorePresentationSection.includedAreas([presentUnsupported]).count == 1)
+        let selectedError = CoreRestoreInspection.Area(domain: "error-test", label: "Error", selectionMode: "items", availability: "unavailable", sourcePresent: true, captureSelected: true, reason: "observation_error", items: [])
+        precondition(RestorePresentationSection.includedAreas([selectedError]).first?.reason == "observation_error")
+        let selectedItemsArea = model.areas.first { $0.selectionMode == "items" && !$0.items.isEmpty }!
+        precondition(RestorePresentationSection.includedAreas([selectedItemsArea]).count == 1)
         let inventoryBefore = model.areas.map(\.id)
         let selectionBefore = model.canonicalSelection
         let visible = RestorePresentationSection.visible(visibleGroups, inventory: model.areas)
-        precondition(!visible.contains { $0.id == "Shell" })
+        precondition(visible.contains { $0.id == "Shell" }, "Unknown presence must not hide unavailable state")
         precondition(visible.contains { $0.id == "Settings" } && visible.contains { $0.id == "Applications & Tools" })
         let availableShell = CoreRestoreInspection.Group(id: "Shell", domains: ["ssh-configuration", "unavailable-area"])
         precondition(RestorePresentationSection.visible([availableShell], inventory: model.areas).map(\.id) == ["Shell"])
@@ -925,7 +946,17 @@ import Foundation
         let aggregateFailure: [String: Any] = ["domain": "bootstrap", "item_id": "scope", "action": "restore", "outcome": "failure", "reason": "bootstrap_failed"]
         let mismatch: [String: Any] = ["domain": "homebrew-casks", "item_id": "appcleaner", "conformity": "mismatch"]
         let normalized = try normalize([failedCask, failedCask, aggregateFailure], [mismatch, mismatch], lifecycle: [try event("homebrew-casks", "failed")])
-        precondition(normalized.findings.count == 1 && normalized.findings[0].id == "homebrew-casks" && normalized.findings[0].status == .attention)
+        let expectedFindingReasons = [
+            "homebrew-casks:appcleaner:install:install_failed": "install_failed",
+            "bootstrap:scope:restore:bootstrap_failed": "bootstrap_failed",
+            "homebrew-casks:scope::failed": "failed",
+        ]
+        precondition(normalized.findings.count == expectedFindingReasons.count)
+        precondition(Set(normalized.findings.map(\.id)) == Set(expectedFindingReasons.keys))
+        precondition(normalized.findings.allSatisfy {
+            $0.status == .attention && $0.reason == expectedFindingReasons[$0.id]
+        })
+        precondition(normalized.details.filter { $0.reason == "install_failed" }.count == 1)
         precondition(normalized.details.filter { $0.reason == "mismatch" }.count == 1)
         precondition(normalized.details.filter { $0.reason == "bootstrap_failed" }.count == 1)
         precondition(normalized.details.contains { $0.title == "Rebuild" && $0.reason == "bootstrap_failed" })
@@ -935,10 +966,20 @@ import Foundation
         let specificFailures = try normalize([failedCask], [], lifecycle: [secondSpecificEvent])
         precondition(specificFailures.details.contains { $0.reason == "blocked" })
         let distinct = try normalize([failedCask, failedExtension], [mismatch])
-        precondition(distinct.findings.map(\.id) == ["homebrew-casks", "vscode-extensions"])
+        precondition(distinct.findings.count == 2 && Set(distinct.findings.map(\.id)) == [
+            "homebrew-casks:appcleaner:install:install_failed",
+            "vscode-extensions:extension:install:install_failed",
+        ])
+        precondition(distinct.findings.allSatisfy { $0.status == .attention && $0.reason == "install_failed" })
         var anotherFailure = failedCask; anotherFailure["reason"] = "authorization_required"
         let sameArea = try normalize([failedCask, anotherFailure], [mismatch])
-        precondition(sameArea.findings.count == 1 && sameArea.details.contains { $0.reason == "authorization_required" })
+        precondition(sameArea.findings.count == 2 && Set(sameArea.findings.map(\.id)) == [
+            "homebrew-casks:appcleaner:install:install_failed",
+            "homebrew-casks:appcleaner:install:authorization_required",
+        ])
+        precondition(sameArea.findings.allSatisfy { $0.status == .attention })
+        precondition(Set(sameArea.findings.compactMap(\.reason)) == ["install_failed", "authorization_required"])
+        precondition(sameArea.details.filter { $0.reason == "authorization_required" }.count == 1)
         let uncertain = try normalize([], [["domain": "homebrew-casks", "conformity": "unverified"]])
         precondition(uncertain.findings.count == 1 && uncertain.findings[0].status == .unverified)
         print("PASS: Structured active items, identity fallback, completion/replacement, concurrent domains and semantic result normalization")

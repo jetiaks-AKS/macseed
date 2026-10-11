@@ -326,3 +326,11 @@ the static ICNS resource, also applied to the running app at launch. The system
 leaf is 22% larger; Hero/sidebar keep their approved scale. Home shares a centered
 1080 pt container for its hero and three tiles; Settings is pinned below navigation.
 Quit and reopen the app if macOS shows a cached Dock icon.
+
+### Restore Selection presentation
+
+Inspection reports `source_present` and Blueprint-derived `capture_selected`.
+Selection hides explicit absence/exclusion, including inventory-only domains,
+while retaining whole selected categories, real limitations and unknown evidence.
+Draft selection and execution remain Core-owned. Preview cards follow Already
+Match → Changes Planned → Need Attention; detailed item rows are unchanged.

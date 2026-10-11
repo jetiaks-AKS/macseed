@@ -107,8 +107,12 @@ struct RestorePresentationSection: Identifiable {
             Self(id: title, groups: names.compactMap { name in groups.first { $0.id == name } })
         }
     }
+    static func includedAreas(_ inventory: [CoreRestoreInspection.Area]) -> [CoreRestoreInspection.Area] {
+        // Older adapters without presence evidence remain visible, including empty/unsupported state.
+        inventory.filter { $0.sourcePresent != false && $0.captureSelected != false }
+    }
     static func visible(_ groups: [CoreRestoreInspection.Group], inventory: [CoreRestoreInspection.Area]) -> [Self] {
-        project(groups).filter { $0.areas(in: inventory).contains(where: \.selectable) }
+        project(groups).filter { !$0.areas(in: inventory).isEmpty }
     }
     func areas(in inventory: [CoreRestoreInspection.Area]) -> [CoreRestoreInspection.Area] {
         let domains = groups.flatMap(\.domains)
@@ -146,7 +150,7 @@ struct RestoreMacOSSelectionView: View {
                     Spacer()
                     Text(!available ? "Unavailable" : model.groupState(group) == .none ? "Not selected" : model.groupState(group) == .all ? "Included" : "Partially included")
                         .font(.callout).foregroundStyle(.secondary)
-                    if model.areas.contains(where: { group.domains.contains($0.id) && (!$0.selectable || $0.reason != nil) }) {
+                    if model.areas.contains(where: { group.domains.contains($0.id) && $0.sourcePresent != false && $0.captureSelected != false && (!$0.selectable || $0.reason != nil) }) {
                         Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange).accessibilityLabel("Needs Attention")
                     }
                 }.frame(maxWidth: .infinity, minHeight: 28, alignment: .leading).contentShape(Rectangle())
@@ -344,12 +348,13 @@ struct RestoreView: View {
                         Spacer()
                         Button(model.bulkState.bulkActionTitle) { model.toggleAll() }.disabled(!model.areas.contains(where: \.selectable))
                     }
-                    ForEach(RestorePresentationSection.visible(model.groups, inventory: model.areas)) { section in
+                    let includedAreas = RestorePresentationSection.includedAreas(model.areas)
+                    ForEach(RestorePresentationSection.visible(model.groups, inventory: includedAreas)) { section in
                         RestoreSectionHeader(title: section.id)
-                        if let macOS = section.groups.first(where: { $0.id == "macOS Settings" }) {
+                        if let macOS = section.groups.first(where: { $0.id == "macOS Settings" }), includedAreas.contains(where: { macOS.domains.contains($0.id) }) {
                             RestoreMacOSSelectionView(model: model, group: macOS)
                         }
-                        ForEach(section.areas(in: model.areas).filter { area in
+                        ForEach(section.areas(in: includedAreas).filter { area in
                             !section.groups.contains { $0.id == "macOS Settings" && $0.domains.contains(area.id) }
                         }) { RestoreAreaSelectionView(model: model, area: $0) }
                     }
@@ -685,9 +690,9 @@ struct RestorePreviewMetrics: View {
         }
     }
     @ViewBuilder private func cards(_ counts: (changes: Int, attention: Int, matching: Int)) -> some View {
+        Self.metric("Already Match", count: counts.matching, symbol: "checkmark.circle", color: RestoreStatusTone.success.color)
         Self.metric("Changes Planned", count: counts.changes, symbol: "arrow.down.circle", color: .primary)
         Self.metric("Need Attention", count: counts.attention, symbol: "exclamationmark.triangle", color: counts.attention > 0 ? RestoreStatusTone.warning.color : .secondary)
-        Self.metric("Already Match", count: counts.matching, symbol: "checkmark.circle", color: RestoreStatusTone.success.color)
     }
     static func metric(_ title: String, count: Int?, symbol: String, color: Color, value: String? = nil, captionColor: Color? = nil, backgroundColor: Color? = nil, iconColor: Color? = nil) -> some View {
         VStack(alignment: .leading, spacing: 6) {

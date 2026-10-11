@@ -137,6 +137,10 @@ The system icon enlarges the same leaf by 22%; Hero/sidebar scales stay unchange
 Branding/Home presentation is finalized and user-approved independently of the
 remaining Desktop functional work.
 
+The user approved the current Branding/Home and Capture/Restore UI milestone on
+a real Mac. Focused Core selection tests, RestoreTests, PresentationTests and a
+Debug build passed; these checks are not a full regression or completion of Stage 16.
+
 ## Capture this Mac
 
 **Scan → Review / Select → Destination / fresh preparation → Confirm → Result**
@@ -237,6 +241,9 @@ uses a focused native secure sheet when required.
 
 **Choose Bundle → Review + Preview → Rebuild → Result**
 
+Restore Preview summary cards follow **Already Match → Changes Planned → Need
+Attention**; the existing detailed task rows, statuses and disclosures are retained.
+
 Inspection and Core Verification run within these states; neither requires a
 separate page. Prerequisites appear inline only when needed.
 
@@ -247,7 +254,11 @@ separate page. Prerequisites appear inline only when needed.
 2. Stage 16F requires `features.restore_selection.version = 1`; an older Core
    shows an explicit compatibility state. Core inspection owns groups, domain
    labels/modes, availability and stable item IDs. Available ordinary scope defaults
-   on. Whole domains and item subsets can be selected independently; category-only
+   on. Selection hides domains explicitly absent from the archive or excluded in
+   its Blueprint, including retained full inventory with zero selected items.
+   Whole selected categories and selected content with limitations stay visible;
+   missing presence/selection evidence retains conservative diagnostics.
+   Whole domains and item subsets can be selected independently; category-only
    domains remain whole. Desktop sections are Applications & Tools, Settings, Shell,
    Git, SSH Configuration and Workspace. Settings presents one macOS Settings
    aggregate toggle over all captured/available Core-advertised macOS domains,

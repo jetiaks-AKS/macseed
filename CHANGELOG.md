@@ -74,6 +74,11 @@ The format is based on the principles of **Keep a Changelog**.
 * All Tasks uses responsive native action cards; Environment Status shares Desktop
   summaries, metric cards and domain disclosures over read-only Core comparison.
 
+* Restore Selection now respects both source presence and captured Blueprint
+  selection, hiding absent/excluded inventory-only domains while preserving
+  selected limitations and unknown evidence. Preview summary cards put Already
+  Match first; detailed Preview and Restore execution are unchanged.
+
 * Finalized Home/branding: centered shared Hero/tile width, stable tile spacing,
   bottom-pinned Settings, and a larger system leaf icon applied from the bundle.
 
