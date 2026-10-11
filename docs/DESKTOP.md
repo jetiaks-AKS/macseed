@@ -16,7 +16,9 @@ through Codex remain valid. Clean Install does not qualify universal Tailscale
 Repair: ambiguous/damaged privileged Repair states remain fail-closed. Continuing
 compatibility qualification, MAS, Desktop Zsh and Secure SSH remain open.
 Private SSH identity transfer remains unavailable until 16H. The immediate next
-checkpoint is the Unified UI Scenario Catalog, followed by UI consistency/unification.
+checkpoint is a short Core/Desktop contract audit for Bundle-backed Environment
+Status, followed by implementation. Practical priorities are owned by
+[Roadmap](../ROADMAP.md#current-practical-execution-order).
 Build and review instructions are in
 [Desktop development](../desktop/Macseed/README.md). Macseed is one product with a shared Core and two official frontends: CLI (`bs`) and Desktop.
 The official CLI remains supported. **Simple by default. Detailed on demand.**
@@ -69,13 +71,14 @@ cancel or detach it. Closing during work offers Keep Working or the applicable
 Cancel / Stop Rebuild action; wait for owned-process termination before closing. No background daemon or
 persistent resumable job is introduced.
 
-## Shared design system — next UX work
+## Shared design system — approved foundation and functional consistency
 
-After the Unified UI Scenario Catalog, the next separate checkpoint is UI
-consistency/unification: reuse qualified Restore presentation across Capture,
-Environment Status, All Tasks and Settings.
-This is planned work over the existing native shell, not a completed redesign or
-permission to change Core semantics. Shared domain/item rows, status vocabulary,
+Macseed Minimal Premium is the approved style. The leaf logo/system App Icon,
+Home, Sidebar, Settings and adaptive tiles are complete; Capture was checked on a
+real Mac, and Restore Selection, Preview, Progress and Result are approved.
+Remaining functional consistency work reuses this foundation in Environment Status
+and Settings during Compatibility & Reliability, without a new large redesign or
+changes to Core semantics. Shared domain/item rows, status vocabulary,
 spacing, disclosures and accessibility must consume the same presentation model
 across **Preview → Rebuild → Verification → Result**.
 
@@ -446,10 +449,12 @@ reference for verification/status without asking for internal directories.
 Blueprint may remain Core's internal selection mechanism; users normally express
 selection through Capture/Restore category/item controls.
 
-Complete this in future Stage 16 integration/hardening before 1.0. The likely
-boundary is safely validated Bundle staging/reference extraction over the existing
-comparison engine. Current Protocol V1 accepts Generated Configuration only;
-qualify the required Core contract explicitly then. Stage 16E implements neither
+This is the immediate next functional priority, starting with a short Core/Desktop
+contract audit. The likely boundary is safely validated Bundle staging/reference
+extraction over the existing comparison engine. Preserve source selection and
+Blueprint semantics, read-only behavior and the `.mbt` format; insufficient evidence
+must not become Matches, Differences or Verified. Current Protocol V1 accepts
+Generated Configuration only; any minimal extension requires the audit first. Stage 16E implements neither
 Bundle-backed comparison nor a client-side Bundle parser or speculative V1 change.
 
 ## Status vocabulary and evidence
@@ -666,7 +671,7 @@ decrypted identity selection during Prepare and Desktop recovery remain outside
 the current contract. Any
 extension needs a precise Core contract decision, not a client-side parser.
 
-## Unified UI Scenario Catalog — next implementation checkpoint
+## Unified UI Scenario Catalog — deferred UI/dev tooling
 
 The planned catalog is a Debug-only synthetic presentation harness, distinct from
 the production presentation catalog/mapping above. It renders production models
@@ -685,13 +690,36 @@ status, labels, icons, colors, cards/rows, disclosures and action presentation;
 the catalog must not duplicate production UI. Intended coverage includes Restore,
 Capture, Environment Status and useful shared semantic states/components.
 
-A new user-visible production state, status, outcome or prerequisite should not
-silently exist without synthetic scenario coverage. Prefer structural coverage
-tests over giant pixel snapshot tests. The catalog is not implemented yet. Capture
-and Environment Status are not redesigned during its construction; visual
-unification follows as a separate checkpoint.
+The full catalog is deferred, not cancelled and not a prerequisite for functional
+work. Existing Debug design-preview, sample fixtures and DemoSession remain;
+they partially provide scenario tooling, not the complete unified catalog.
+After functional priorities, consider a Lite set of representative Capture,
+Restore and Status states: Ready, Working, Already Matches, Needs Attention,
+Error, Cancelled and Interrupted where applicable. Reuse approved Minimal Premium
+production presentation models/shared views, with minimal fixture/navigation
+infrastructure and no parallel components or copied obsolete preview styling.
+Small focused fixtures and PresentationTests may be added as needed during
+functional development without constructing the full catalog first.
 
 ## Local logs and Diagnostic Report
+
+Begin this priority after Bundle-backed Status with an independent audit of the
+existing two-level architecture and completeness of diagnostic evidence:
+
+- **Core / CLI Logging:** retain `modules/core/logger/logger.sh`, `logs/history`
+  and `logs/latest.log` as production technical journals; do not replace them with
+  a Swift logger.
+- **Desktop Operation Log:** planned separate private persistent storage of safe
+  structured Core Protocol V1 events for Capture, Restore and Environment Status,
+  available during/after operations and across application restarts.
+
+Keep these levels independent. Do not merge raw CLI logs and Desktop events into
+one file, parse `latest.log`, human CLI messages or external-tool stdout/stderr to
+build Desktop logs, or introduce a third universal logging subsystem. Investigate
+safe correlation by operation ID, phase, timestamps and typed diagnostic codes
+only where trustworthy evidence exists. Desktop logs do not promise every internal
+CLI message that Protocol V1 does not safely expose. Preserve Technical Details
+and Copy Diagnostic Details; audit their completeness alongside View Log/report.
 
 Persistent Desktop operation logs, live **View Log**, and a redacted user-requested
 Diagnostic Report are required but not yet implemented. Current in-memory activity/

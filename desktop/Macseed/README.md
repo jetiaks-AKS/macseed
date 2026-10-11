@@ -334,3 +334,29 @@ Selection hides explicit absence/exclusion, including inventory-only domains,
 while retaining whole selected categories, real limitations and unknown evidence.
 Draft selection and execution remain Core-owned. Preview cards follow Already
 Match → Changes Planned → Need Attention; detailed item rows are unchanged.
+
+## Next functional priorities and deferred tooling
+
+The Minimal Premium leaf logo/App Icon, Home, Sidebar, Settings and adaptive tiles
+are approved. Capture was checked on a real Mac; Restore Selection, Preview,
+Progress and Result are approved. Stage 16 remains open.
+
+Next is a short Core/Desktop contract audit for Bundle-backed Environment Status,
+then implementation using the existing read-only comparison engine. Capture saves,
+Restore rebuilds from, and Status will compare against a Saved Environment (`.mbt`);
+the Restored Bundle is a natural reference. Preserve source selection/Blueprint,
+unknown evidence and Bundle format; no SwiftUI Bundle parser. Minimal Protocol V1
+extensions require audit, not assumptions about current API support.
+
+Logging/diagnostics follow with an independent audit: preserve existing Core/CLI
+technical logging and plan a separate private persistent Desktop Protocol V1 event
+log, live View Log and exact reviewed Diagnostic Report export. Sanitize before
+storage, bound retention/size and support local clearing; do not merge or parse raw
+CLI logs or add a third logging subsystem. Existing in-memory events are not that
+persistent log. See the [logging contract](../../docs/DESKTOP.md#local-logs-and-diagnostic-report).
+
+The full Debug Scenario Catalog is deferred UI/dev tooling, not cancelled. Retain
+Debug design-preview, sample fixtures and DemoSession; a small Lite catalog over
+production models/views may follow functional priorities. Focused fixtures/tests
+need not wait for it. Follow [Roadmap](../../ROADMAP.md#current-practical-execution-order)
+for the remaining MAS, Secure SSH, reliability and distribution priorities.

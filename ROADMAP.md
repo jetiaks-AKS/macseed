@@ -59,17 +59,20 @@ through checkpoint `08e2b469`: real Restore converged to a fresh Everything Alre
 Matches Preview, including clean Tailscale Install and matching observation.
 Capture UI is finalized and manually qualified for full/partial selection,
 publication with/without warnings, cancellation and stale preparation/re-scan.
-Branding/Home and the agreed Capture/Restore UI milestone are finalized and
-user-approved; further Desktop functional development and qualification remain open.
+Macseed Minimal Premium, the leaf logo/system App Icon, Home, Sidebar, Settings
+and adaptive tiles are finalized and user-approved. Capture was checked on a real
+Mac; Restore Selection, Preview, Progress and Result are approved. Further Desktop
+functional development and qualification remain open.
 Remaining Stage 16 qualification is open.** Complete the SwiftUI client for
 Capture this Mac, Restore a Mac and Environment Status.
 Provide prerequisite guidance, Check Again, structured
 progress/results, separate secret input and cancellation over the existing Core.
 Desktop Secure SSH Capture/Restore remains unfinished (16H). Deliver persistent
 structured operation logs, live View Log and a redacted Diagnostic Report with
-exact preview/export. The next bounded Desktop implementation checkpoint is the
-Unified UI Scenario Catalog, followed separately by UI consistency/unification
-across Restore, Capture, Environment Status, All Tasks and Settings.
+exact preview/export. Bundle-backed Environment Status is the immediate next
+checkpoint, beginning with a short Core/Desktop contract audit. The Unified UI
+Scenario Catalog remains deferred UI/dev tooling, with a possible Lite version
+after functional priorities; existing Debug previews and fixtures are retained.
 Automatic MAS Restore is mandatory before 1.0; authorization/install qualification
 remains unresolved. Homebrew now primarily needs continuing compatibility
 qualification/maintenance over the established capability-based boundary; it is
@@ -93,17 +96,30 @@ Existing Stage 16 slice identifiers (16H Secure SSH, 16I completion, 16J diagnos
 16K hardening) retain their historical meaning; they do not prescribe today's
 implementation order. Complete one bounded checkpoint at a time:
 
-1. Unified UI Scenario Catalog.
-2. Desktop UI consistency/unification.
-3. Persistent operation journal / View Log / Diagnostic Report.
-4. Remaining capability qualification and product gaps (including MAS, Workspace/Data,
-   real Zsh and watchdog gates).
-5. Secure SSH Desktop integration.
-6. Saved Environment / Bundle-backed Environment Status.
-7. Stage 16 integration hardening.
-8. Stage 17 distribution / clean-Mac E2E.
-9. Early Access / Alpha.
-10. Macseed 1.0.
+1. Bundle-backed Environment Status: start with a short Core/Desktop contract audit.
+2. Desktop Operation Logging & Diagnostics: first audit the two existing logging levels.
+3. Automatic MAS Restore qualification, mandatory before 1.0.
+4. Secure SSH Desktop integration (16H) over the existing Core engine.
+5. Compatibility & Reliability: remaining Result, Zsh, Homebrew/Repair, watchdog,
+   partial/interrupted operations, stale plans, Workspace review, functional
+   consistency, accessibility and runtime hardening.
+6. Stage 17 Distribution & Clean-Mac Qualification: private writable runtime/workspace,
+   signing, Hardened Runtime, notarization/stapling, DMG, Gatekeeper, clean Apple
+   Silicon and separate Intel qualification where support is claimed.
+7. Early Access / Alpha.
+8. Macseed 1.0.
+
+Status must compare the current Mac with a Saved Environment (`.mbt`), using the
+existing Core comparison engine and source selection/Blueprint semantics. The
+Restored Saved Environment is its natural reference. Keep Status read-only, unknown
+evidence truthful and the Bundle format unchanged; do not parse Bundles in SwiftUI.
+Any minimal Protocol V1 extension requires technical audit first.
+
+Logging retains two independent levels: existing Core/CLI technical logs and a
+private persistent Desktop Operation Log over structured Protocol V1 events.
+Audit their diagnostic completeness and safe correlation before implementation;
+never replace the Core logger, merge raw logs/events or introduce a third subsystem.
+See the [Desktop logging contract](docs/DESKTOP.md#local-logs-and-diagnostic-report).
 
 ## Stage 17 — Distribution & Clean-Mac E2E
 

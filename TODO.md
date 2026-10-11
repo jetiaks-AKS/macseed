@@ -6,15 +6,16 @@ Concrete unfinished work. Outcomes and stage status are in [Roadmap](ROADMAP.md)
 
 Implement the [Desktop contract](docs/DESKTOP.md) in vertical slices:
 
-- [ ] Unified UI Scenario Catalog: Debug-only synthetic fixtures/navigation over
-  production presentation models/views; structural coverage for Restore, Capture,
-  Environment Status and shared semantic states. See the
-  [catalog contract](docs/DESKTOP.md#unified-ui-scenario-catalog--next-implementation-checkpoint).
+- [ ] 16K: Start Bundle-backed Environment Status with a short Core/Desktop contract
+  audit before implementation; use the existing comparison engine, preserve source
+  selection/Blueprint and read-only semantics, and audit any Protocol V1 extension.
 - [ ] 16H: Secure FD/challenge bridge, SSH opt-in, encryption/unlock/import
   confirmation and application age/OpenSSH PTY qualification.
 - [ ] 16I: Complete remaining completion qualification beyond the now-implemented
   and checkpoint-qualified Restore [result contract](docs/DESKTOP.md#restore-result-contract);
   retain mandatory Core Verification and truthful incomplete-result evidence.
+- [ ] 16J: First audit existing Core/CLI logging and Desktop event diagnostics,
+  preserving two independent levels and safe evidence-based correlation.
 - [ ] 16J: Persistent private structured operation logs with bounded retention/clear,
   live **View Log**, and a redacted Diagnostic Report with complete preview and
   exact export; current in-memory details are not persistent diagnostics.
@@ -28,7 +29,7 @@ Implement the [Desktop contract](docs/DESKTOP.md) in vertical slices:
   restored Saved Environment as natural status reference. Replace the temporary
   internal folder/Blueprint picker; qualify the Core contract when implementing.
   See [final product reference](docs/DESKTOP.md#required-final-product-reference-before-macseed-10).
-- [ ] Desktop UI consistency/unification after the Scenario Catalog: reuse
+- [ ] Functional UI consistency during Compatibility & Reliability: reuse
   qualified Restore/Capture presentation in Environment Status and Settings. Use Domain → Items and
   one presentation model across Preview → Rebuild → Verification → Result,
   retaining native accessibility and Core-owned semantics.
@@ -91,17 +92,30 @@ and verified end-to-end; it is no longer open gate work.
 Historical Stage 16 slice identifiers remain unchanged. Complete one checkpoint
 at a time, in this practical order:
 
-1. Unified UI Scenario Catalog.
-2. Desktop UI consistency/unification.
-3. Persistent operation journal / View Log / Diagnostic Report.
-4. Remaining capability qualification and product gaps (including MAS, Workspace/Data,
-   real Zsh and watchdog gates).
-5. Secure SSH Desktop integration.
-6. Saved Environment / Bundle-backed Environment Status.
-7. Stage 16 integration hardening.
-8. Stage 17 distribution / clean-Mac E2E.
-9. Early Access / Alpha.
-10. Macseed 1.0.
+1. Bundle-backed Environment Status: start with a short Core/Desktop contract audit.
+2. Desktop Operation Logging & Diagnostics: first audit the two existing logging levels.
+3. Automatic MAS Restore qualification, mandatory before 1.0.
+4. Secure SSH Desktop integration (16H) over the existing Core engine.
+5. Compatibility & Reliability: remaining Result, Zsh, Homebrew/Repair, watchdog,
+   partial/interrupted operations, stale plans, Workspace review, functional
+   consistency, accessibility and runtime hardening.
+6. Stage 17 Distribution & Clean-Mac Qualification: private writable runtime/workspace,
+   signing, Hardened Runtime, notarization/stapling, DMG, Gatekeeper, clean Apple
+   Silicon and separate Intel qualification where support is claimed.
+7. Early Access / Alpha.
+8. Macseed 1.0.
+
+### Deferred UI/dev tooling
+
+- [ ] Unified UI Scenario Catalog / possible Lite: retain existing Debug
+  design-preview, sample fixtures and DemoSession. After functional priorities,
+  consider a small Debug-only set of Capture/Restore/Status states (Ready, Working,
+  Already Matches, Needs Attention, Error, Cancelled, Interrupted where applicable)
+  using production presentation models/shared views and approved Minimal Premium.
+  Minimize infrastructure; no parallel components or copied obsolete design.
+  Small focused fixtures and PresentationTests may accompany functional changes
+  without a complete catalog first. See the
+  [catalog contract](docs/DESKTOP.md#unified-ui-scenario-catalog--deferred-uidev-tooling).
 
 ## Stage 17 — Distribution
 
