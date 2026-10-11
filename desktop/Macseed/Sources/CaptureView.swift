@@ -151,27 +151,53 @@ struct CaptureView: View {
                     Button("Scan This Mac") { model.scan() }.buttonStyle(.borderedProminent).disabled(runtime.isActive)
                 }
             case .scanning:
-                Text("Scanning this Mac").font(.title.weight(.bold)).accessibilityAddTraits(.isHeader)
-                HStack(spacing: 12) {
-                    ProgressView()
-                    Text(progressText).foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 16) {
+                    HStack(alignment: .center, spacing: 16) {
+                        ProgressView().controlSize(.large)
+                            .frame(width: 40, height: 40).accessibilityHidden(true)
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Scanning this Mac").font(.title2.weight(.bold))
+                                .accessibilityAddTraits(.isHeader)
+                            Text(progressText).font(.callout).foregroundStyle(.secondary)
+                        }
+                    }
+                    Divider()
+                    Label("Read-only scan — no changes will be made to this Mac.", systemImage: "checkmark.shield")
+                        .font(.callout).foregroundStyle(.secondary)
                 }
+                .padding(18).frame(maxWidth: .infinity, alignment: .leading)
+                .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 12))
             case .preparing:
-                Text("Checking Your Environment").font(.title.weight(.bold)).accessibilityAddTraits(.isHeader)
-                HStack(spacing: 12) {
-                    ProgressView()
-                    Text(progressText).foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 16) {
+                    HStack(alignment: .center, spacing: 16) {
+                        ProgressView().controlSize(.large)
+                            .frame(width: 40, height: 40).accessibilityHidden(true)
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Checking Your Environment").font(.title2.weight(.bold))
+                                .accessibilityAddTraits(.isHeader)
+                            Text(progressText).font(.callout).foregroundStyle(.secondary)
+                        }
+                    }
                 }
+                .padding(18).frame(maxWidth: .infinity, alignment: .leading)
+                .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 12))
             case .saving:
-                Text("Saving Your Environment").font(.title.weight(.bold)).accessibilityAddTraits(.isHeader)
-                HStack(spacing: 12) {
-                    ProgressView()
-                    Text(progressText).foregroundStyle(.secondary)
-                }
-                if model.state == .saving {
+                VStack(alignment: .leading, spacing: 16) {
+                    HStack(alignment: .center, spacing: 16) {
+                        ProgressView().controlSize(.large)
+                            .frame(width: 40, height: 40).accessibilityHidden(true)
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Saving Your Environment").font(.title2.weight(.bold))
+                                .accessibilityAddTraits(.isHeader)
+                            Text(progressText).font(.callout).foregroundStyle(.secondary)
+                        }
+                    }
+                    Divider()
                     Text("Once saving begins, stopping does not promise that a published file will be removed.")
                         .font(.callout).foregroundStyle(.secondary)
                 }
+                .padding(18).frame(maxWidth: .infinity, alignment: .leading)
+                .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 12))
             case .review:
                 let rows = CaptureReviewRow.project(model.categories)
                 HStack {

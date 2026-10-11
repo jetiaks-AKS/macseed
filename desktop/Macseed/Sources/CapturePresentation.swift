@@ -202,6 +202,37 @@ struct CaptureReviewRow: Identifiable {
     }
 }
 
+// Capture-only colors; shared metric geometry and Restore defaults remain unchanged.
+struct CaptureMetricCard: View {
+    let title: String
+    let count: Int
+    let symbol: String
+    var attention = false
+    @Environment(\.colorScheme) private var colorScheme
+    enum Tone { case blue, amber, neutral }
+    static func tone(attention: Bool, count: Int) -> Tone {
+        attention ? (count > 0 ? .amber : .neutral) : .blue
+    }
+    var body: some View {
+        let tone = Self.tone(attention: attention, count: count)
+        let dark = colorScheme == .dark
+        let background: Color = switch tone {
+        case .blue: dark ? Color(red: 0.12, green: 0.20, blue: 0.31) : Color(red: 234/255, green: 242/255, blue: 1)
+        case .amber: dark ? Color(red: 0.28, green: 0.22, blue: 0.13) : Color(red: 1, green: 242/255, blue: 222/255)
+        case .neutral: dark ? Color(red: 0.20, green: 0.21, blue: 0.23) : Color(red: 243/255, green: 244/255, blue: 246/255)
+        }
+        let value: Color = switch tone {
+        case .blue: dark ? Color(red: 0.80, green: 0.87, blue: 0.97) : Color(red: 38/255, green: 59/255, blue: 87/255)
+        case .amber: dark ? Color(red: 0.95, green: 0.77, blue: 0.45) : Color(red: 0.52, green: 0.33, blue: 0.10)
+        case .neutral: dark ? Color(red: 0.78, green: 0.79, blue: 0.82) : Color(red: 0.36, green: 0.39, blue: 0.44)
+        }
+        let caption = tone == .blue ? (dark ? Color(red: 0.67, green: 0.77, blue: 0.90) : Color(red: 82/255, green: 105/255, blue: 133/255)) : value
+        let icon = tone == .blue ? (dark ? Color(red: 0.49, green: 0.69, blue: 0.96) : Color(red: 52/255, green: 119/255, blue: 204/255)) : value
+        RestorePreviewMetrics.metric(title, count: count, symbol: symbol, color: value,
+            captionColor: caption, backgroundColor: background, iconColor: icon)
+    }
+}
+
 struct CaptureReviewMetrics: View {
     let summary: CaptureSummaryPresentation
     var body: some View {
@@ -211,10 +242,9 @@ struct CaptureReviewMetrics: View {
         }
     }
     @ViewBuilder private var cards: some View {
-        RestorePreviewMetrics.metric("Selected Domains", count: summary.domainCount, symbol: "square.stack", color: .primary)
-        RestorePreviewMetrics.metric("Selected Items", count: summary.itemCount, symbol: "checklist", color: .primary)
-        RestorePreviewMetrics.metric("Needs Attention", count: summary.attentionCount, symbol: "exclamationmark.triangle",
-            color: summary.attentionCount > 0 ? RestoreStatusTone.warning.color : .secondary)
+        CaptureMetricCard(title: "Selected Domains", count: summary.domainCount, symbol: "square.stack")
+        CaptureMetricCard(title: "Selected Items", count: summary.itemCount, symbol: "checklist")
+        CaptureMetricCard(title: "Needs Attention", count: summary.attentionCount, symbol: "exclamationmark.triangle", attention: true)
     }
 }
 
@@ -297,10 +327,9 @@ struct CaptureSavedMetrics: View {
         }
     }
     @ViewBuilder private func cards(_ attention: Int) -> some View {
-        RestorePreviewMetrics.metric("Domains Saved", count: publication.bundle.capturedDomains.count, symbol: "square.stack", color: .primary)
-        RestorePreviewMetrics.metric("Items Saved", count: publication.bundle.itemCount, symbol: "checklist", color: .primary)
-        RestorePreviewMetrics.metric("Needs Attention", count: attention, symbol: "exclamationmark.triangle",
-            color: attention > 0 ? RestoreStatusTone.warning.color : .secondary)
+        CaptureMetricCard(title: "Domains Saved", count: publication.bundle.capturedDomains.count, symbol: "square.stack")
+        CaptureMetricCard(title: "Items Saved", count: publication.bundle.itemCount, symbol: "checklist")
+        CaptureMetricCard(title: "Needs Attention", count: attention, symbol: "exclamationmark.triangle", attention: true)
     }
 }
 

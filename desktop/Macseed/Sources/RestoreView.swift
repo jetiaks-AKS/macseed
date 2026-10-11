@@ -689,12 +689,22 @@ struct RestorePreviewMetrics: View {
         Self.metric("Need Attention", count: counts.attention, symbol: "exclamationmark.triangle", color: counts.attention > 0 ? RestoreStatusTone.warning.color : .secondary)
         Self.metric("Already Match", count: counts.matching, symbol: "checkmark.circle", color: RestoreStatusTone.success.color)
     }
-    static func metric(_ title: String, count: Int?, symbol: String, color: Color, value: String? = nil, captionColor: Color? = nil) -> some View {
+    static func metric(_ title: String, count: Int?, symbol: String, color: Color, value: String? = nil, captionColor: Color? = nil, backgroundColor: Color? = nil, iconColor: Color? = nil) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Label(value ?? count.map(String.init) ?? "—", systemImage: symbol).font(.title2.weight(.semibold)).monospacedDigit().foregroundStyle(color)
+            Label {
+                Text(value ?? count.map(String.init) ?? "—").foregroundStyle(color)
+            } icon: {
+                Image(systemName: symbol).foregroundStyle(iconColor ?? color)
+            }.font(.title2.weight(.semibold)).monospacedDigit()
             Text(title).font(.callout).foregroundStyle(captionColor ?? color)
         }.frame(minWidth: 140, maxWidth: .infinity, alignment: .leading).padding(14)
-            .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 8))
+            .background {
+                if let backgroundColor {
+                    RoundedRectangle(cornerRadius: 8).fill(backgroundColor)
+                } else {
+                    RoundedRectangle(cornerRadius: 8).fill(.quaternary.opacity(0.35))
+                }
+            }
             .accessibilityElement(children: .ignore).accessibilityLabel(title).accessibilityValue(value ?? count.map(String.init) ?? "Not reported")
     }
 }

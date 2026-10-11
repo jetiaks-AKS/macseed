@@ -326,6 +326,10 @@ import SwiftUI
         precondition(fixtureSource.contains("RestorePreviewContent(title:"))
         #endif
         restoreSummaryChecks()
+        precondition(CaptureMetricCard.tone(attention: false, count: 0) == .blue)
+        precondition(CaptureMetricCard.tone(attention: false, count: 5) == .blue)
+        precondition(CaptureMetricCard.tone(attention: true, count: 0) == .neutral)
+        precondition(CaptureMetricCard.tone(attention: true, count: 1) == .amber)
         renderRestoreV2()
         renderInitialStates()
         appIconChecks()
