@@ -74,6 +74,10 @@ The format is based on the principles of **Keep a Changelog**.
 * All Tasks uses responsive native action cards; Environment Status shares Desktop
   summaries, metric cards and domain disclosures over read-only Core comparison.
 
+* Introduced the blue/lilac Macseed leaf identity and matching app/Dock icon,
+  consistent colored task navigation, and a premium Home hero with three action
+  tiles. Capture/Restore workflow behavior is unchanged.
+
 * Finalized Desktop Capture UI: live Review selection cards, compact read-only
   Confirmation/Result labels and independent warnings, selected macOS subdomains
   and bounded VS Code JSON settings details, compact Core-phase progress, and

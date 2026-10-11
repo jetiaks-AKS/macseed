@@ -120,11 +120,17 @@ Details and Export Diagnostic Report, not a primary raw-log destination.
 
 Initial Capture, Restore and Status share a tinted primary action card beneath
 WorkspaceHeader: blue Scan, green saved-environment selection and violet Compare.
-Only their explicit existing actions start the next workflow step. The working
-Orbit AppIcon uses these three colors with a uniformly enlarged internal mark
-(+20%). Both Xcode and local builds use the static `Macseed.icns` resource through
-`CFBundleIconFile`; the size variants remain in the asset catalog as source assets.
-This is provisional branding, not a final branding lock.
+Only their explicit existing actions start the next workflow step. The Macseed leaf
+mark is a shared blue/lilac vector used in the sidebar, Home hero and AppIcon.
+Home uses a blue/lilac hero and three tinted action tiles; tiles stay in three
+columns at supported main-window widths and stack only in narrower contexts.
+Task icons consistently use blue Capture, green Restore and violet Status;
+Settings retains a neutral gear. Workflow content and semantics remain unchanged.
+Both Xcode and local builds use static `Macseed.icns` through `CFBundleIconFile`.
+The asset-catalog sizes and ICNS are reproducibly exported from the same UI mark
+with `desktop/Macseed/generate-app-icon.sh`; temporary exports stay under ignored
+`build/`. macOS may retain an older Dock icon for an already-running app until it
+is quit and reopened.
 
 ## Capture this Mac
 

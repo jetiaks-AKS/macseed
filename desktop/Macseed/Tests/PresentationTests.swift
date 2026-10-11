@@ -265,6 +265,24 @@ import SwiftUI
         print("PASS: Native initial Capture/Restore cards narrow/wide; no Core execution")
     }
 
+    @MainActor static func renderHomeBranding() {
+        for scheme in [ColorScheme.light, .dark] {
+            for width in [730, 1100] {
+                let renderer = ImageRenderer(content: TaskHome(select: { _ in })
+                    .padding(28).frame(width: CGFloat(width))
+                    .background(Color(nsColor: .windowBackgroundColor))
+                    .environment(\.colorScheme, scheme))
+                renderer.scale = 1
+                guard let image = renderer.cgImage else { preconditionFailure("Home must render") }
+                let bitmap = NSBitmapImageRep(cgImage: image)
+                precondition(bitmap.pixelsWide == width && bitmap.pixelsHigh < 700)
+                try! bitmap.representation(using: .png, properties: [:])!.write(to:
+                    URL(fileURLWithPath: "build/Debug/Home-\(scheme)-\(width).png"))
+            }
+        }
+        print("PASS: Leaf Home hero and three action tiles render at supported widths in Light/Dark")
+    }
+
     static func appIconChecks() {
         let root = URL(fileURLWithPath: "Assets.xcassets/AppIcon.appiconset")
         let json = try! JSONSerialization.jsonObject(with: Data(contentsOf: root.appendingPathComponent("Contents.json"))) as! [String: Any]
@@ -274,11 +292,11 @@ import SwiftUI
             let width = Int(entry["size"]!.split(separator: "x")[0])! * Int(entry["scale"]!.dropLast())!
             let bitmap = NSBitmapImageRep(data: try! Data(contentsOf: root.appendingPathComponent(entry["filename"]!)))!
             precondition(bitmap.pixelsWide == width && bitmap.pixelsHigh == width)
-            let blue = bitmap.colorAt(x: width / 2, y: width * 274 / 1024)!.usingColorSpace(.sRGB)!
+            let blue = bitmap.colorAt(x: width / 2, y: width / 2)!.usingColorSpace(.sRGB)!
             precondition(blue.alphaComponent > 0.9 && blue.blueComponent > blue.redComponent)
         }
         precondition(NSImage(contentsOfFile: "Resources/Macseed.icns") != nil)
-        print("PASS: Static Orbit AppIcon variants, visible small-scale mark and valid ICNS")
+        print("PASS: Shared leaf AppIcon variants, visible small-scale mark and valid ICNS")
     }
 
     @MainActor static func main() {
@@ -333,6 +351,7 @@ import SwiftUI
         renderRestoreV2()
         renderInitialStates()
         appIconChecks()
+        renderHomeBranding()
         let suite = "MacseedAppearanceTests-" + UUID().uuidString
         let preferences = UserDefaults(suiteName: suite)!
         defer { preferences.removePersistentDomain(forName: suite) }
@@ -374,7 +393,7 @@ import SwiftUI
         precondition(statusView.contains("@ReferenceViewState<Bool> private var referenceDetailsExpanded = false"))
         precondition(details.contains(".disclosureGroupStyle(TaskDisclosureStyle(minimumHeight: 22))"))
         precondition(statusView.contains("EnvironmentComparisonView(result: result)"))
-        precondition(WorkspaceActionLayout.columns(899) == 1 && WorkspaceActionLayout.columns(900) == 3)
+        precondition(WorkspaceActionLayout.columns(659) == 1 && WorkspaceActionLayout.columns(660) == 3)
         precondition(WorkspaceMetricLayout.columns(899) == 2 && WorkspaceMetricLayout.columns(900) == 4)
         for task in ProductTask.allCases { precondition(NSImage(systemSymbolName: task.symbol, accessibilityDescription: nil) != nil) }
         precondition(statusView.contains("WorkspacePrimaryActionCard(title: \"Compare This Mac\""))
@@ -570,7 +589,7 @@ import SwiftUI
         print("PASS: Included settings are Core-supplied read-only labels; flow reflows by width without losing scope")
         print("PASS: macOS Settings uses separate native checkbox/header targets and plain domain rows without nested category disclosure")
         precondition(content.contains("struct WorkspaceHeader: View") && content.contains("struct InsetSidebarSurface: ViewModifier"))
-        precondition(content.contains("WorkspaceHeader(title: \"Macseed\"") && content.contains("WorkspaceHeader(title: task.rawValue"))
+        precondition(content.contains("MacseedHomeHero()") && content.contains("WorkspaceHeader(title: task.rawValue"))
         precondition(production.contains("WorkspaceHeader(title: task.rawValue"))
         precondition(content.contains(".modifier(InsetSidebarSurface())") && production.contains(".modifier(InsetSidebarSurface())"))
         precondition(!content.contains(".systemBlue") && !production.contains(".systemBlue"))

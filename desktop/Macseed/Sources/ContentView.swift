@@ -22,7 +22,9 @@ struct WorkspaceHeader: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             if let symbol {
-                Label(title, systemImage: symbol).font(.largeTitle.weight(.semibold))
+                Label { Text(title) } icon: {
+                    Image(systemName: symbol).foregroundStyle(ProductTask.allCases.first(where: { $0.symbol == symbol }).map(WorkspaceIdentity.tint) ?? .secondary)
+                }.font(.largeTitle.weight(.semibold))
             } else {
                 Text(title).font(.largeTitle.weight(.semibold))
             }
@@ -70,7 +72,7 @@ struct WorkspaceCardSurface: ViewModifier {
 
 // Explicit single/three-column modes, independent of intrinsic text measurements.
 struct WorkspaceActionLayout: Layout {
-    static func columns(_ width: CGFloat) -> Int { width >= WorkspaceGeometry.cardBreakpoint ? 3 : 1 }
+    static func columns(_ width: CGFloat) -> Int { width >= 660 ? 3 : 1 }
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
         let width = proposal.width ?? WorkspaceGeometry.cardBreakpoint
         let columns = Self.columns(width)
@@ -94,19 +96,15 @@ struct TaskHome: View {
     let select: (ProductTask) -> Void
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
-            WorkspaceHeader(title: "Macseed", subtitle: "Capture your environment. Rebuild with confidence.")
-            GeometryReader { geometry in
-                let wide = WorkspaceActionLayout.columns(geometry.size.width) == 3
-                WorkspaceActionLayout {
-                    ForEach(ProductTask.allCases) { task in
-                        Button { select(task) } label: {
-                            WorkspaceActionCard(task: task, vertical: wide)
-                                .frame(height: wide ? 180 : 100)
-                        }.buttonStyle(.plain)
-                            .accessibilityLabel(task.rawValue + ". " + task.subtitle)
-                    }
+            MacseedHomeHero()
+            WorkspaceActionLayout {
+                ForEach(ProductTask.allCases) { task in
+                    Button { select(task) } label: {
+                        WorkspaceActionCard(task: task, vertical: true).frame(height: 280)
+                    }.buttonStyle(.plain)
+                        .accessibilityLabel(task.rawValue + ". " + task.subtitle)
                 }
-            }.frame(height: 332)
+            }
 
         }
     }
@@ -126,7 +124,7 @@ struct WorkspaceCircleIcon: View {
 
 enum WorkspaceIdentity {
     static func tint(_ task: ProductTask) -> Color {
-        switch task { case .capture: .blue; case .restore: .green; case .status: .indigo }
+        switch task { case .capture: .blue; case .restore: .green; case .status: .purple }
     }
 }
 
@@ -155,28 +153,18 @@ struct WorkspaceActionCard: View {
     let vertical: Bool
     private var tint: Color { WorkspaceIdentity.tint(task) }
     var body: some View {
-        Group {
-            if vertical {
-                VStack(alignment: .leading, spacing: 12) {
-                    WorkspaceCircleIcon(symbol: task.symbol, tint: tint)
-                    Text(task.rawValue).font(.headline)
-                    HStack(alignment: .bottom, spacing: 12) {
-                        description
-                        affordance
-                    }
-                }
-            } else {
-                HStack(spacing: 16) {
-                    WorkspaceCircleIcon(symbol: task.symbol, tint: tint)
-                    VStack(alignment: .leading, spacing: 5) {
-                        Text(task.rawValue).font(.headline)
-                        description
-                    }
-                    Image(systemName: "chevron.right").font(.caption).foregroundStyle(.secondary).accessibilityHidden(true)
-                }
-            }
-        }.padding(16).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .modifier(WorkspaceCardSurface()).contentShape(Rectangle())
+        VStack(spacing: 16) {
+            Image(systemName: task.symbol).font(.system(size: 46, weight: .medium))
+                .foregroundStyle(tint).frame(width: 90, height: 90)
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 24))
+                .accessibilityHidden(true)
+            Text(task.rawValue).font(.title3.weight(.semibold))
+            description.multilineTextAlignment(.center)
+            Spacer(minLength: 0)
+            affordance
+        }.padding(22).frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(tint.opacity(0.08), in: RoundedRectangle(cornerRadius: 18))
+            .contentShape(RoundedRectangle(cornerRadius: 18))
     }
     private var description: some View {
         Text(task.subtitle).font(.callout).foregroundStyle(.secondary)
@@ -414,10 +402,14 @@ struct DemoWorkspace: View {
                     if selection == "All Tasks" { session.navigate(nil) }
                     else if let task = ProductTask(rawValue: selection) { session.navigate(task) }
                 })) {
-                Label("All Tasks", systemImage: "square.grid.2x2").tag("All Tasks")
+                MacseedSidebarBrand()
+                Label { Text("All Tasks") } icon: { Image(systemName: "house").foregroundStyle(.blue) }.tag("All Tasks")
                 ForEach(ProductTask.allCases) { task in
-                    Label(task.rawValue, systemImage: task.symbol).tag(task.rawValue)
+                    MacseedTaskLabel(task: task).tag(task.rawValue)
                 }
+                Divider()
+                SettingsLink { Label("Settings", systemImage: "gearshape") }
+                    .foregroundStyle(.secondary)
             }
             .listStyle(.sidebar)
             .scrollContentBackground(.hidden)

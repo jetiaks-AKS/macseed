@@ -27,8 +27,12 @@ struct ProductionWorkspace: View {
                 guard !busy, let value else { return }
                 navigation.task = ProductTask(rawValue: value)
             })) {
-                Label("All Tasks", systemImage: "square.grid.2x2").tag("All Tasks")
-                ForEach(ProductTask.allCases) { task in Label(task.rawValue, systemImage: task.symbol).tag(task.rawValue) }
+                MacseedSidebarBrand()
+                Label { Text("All Tasks") } icon: { Image(systemName: "house").foregroundStyle(.blue) }.tag("All Tasks")
+                ForEach(ProductTask.allCases) { task in MacseedTaskLabel(task: task).tag(task.rawValue) }
+                Divider()
+                SettingsLink { Label("Settings", systemImage: "gearshape") }
+                    .foregroundStyle(.secondary)
             }
             .listStyle(.sidebar).scrollContentBackground(.hidden)
             .modifier(InsetSidebarSurface())

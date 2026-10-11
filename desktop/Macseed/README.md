@@ -316,3 +316,10 @@ HOME and normal configuration. Run `RestoreTests` through `build.sh Debug --test
 Stage 16G's controlled manual gate passed: one disposable Workspace folder was
 created, externally confirmed and Core-verified. A fresh Preview then showed
 Already Matches, zero changes and disabled Rebuild. Secure SSH remains Stage 16H.
+
+### Branding assets
+
+`Sources/Branding.swift` owns the shared leaf silhouette and Home hero. To refresh
+all committed AppIcon PNG variants and `Resources/Macseed.icns`, run
+`./generate-app-icon.sh` from this directory, then rebuild. Both build paths use
+the static ICNS resource. Quit and reopen the app if macOS shows a cached Dock icon.

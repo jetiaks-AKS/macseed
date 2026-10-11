@@ -31,7 +31,7 @@ enum ProductTask: String, CaseIterable, Identifiable {
     var id: String { rawValue }
     var symbol: String {
         switch self {
-        case .capture: "shippingbox"
+        case .capture: "cube"
         case .restore: "arrow.down.doc"
         case .status: "checkmark.circle"
         }
