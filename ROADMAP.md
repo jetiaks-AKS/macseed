@@ -142,9 +142,32 @@ compatibility and UX problems. This is a product validation milestone.
 
 ## Later directions
 
-Post-1.0 possibilities include environment snapshots/history, semantic comparison
-and change detection, profiles, selective restore and a broader Environment Manager
-direction. Preserve these as ideas only; no design or schedule is committed.
+### Environment Manager — Post-1.0 / Future Direction
+
+Bundle-backed Environment Status is the foundation for a future Macseed
+Environment Manager: management of supported Mac environment state beyond
+Capture → Rebuild → Verify. This direction has no committed schedule or release
+scope and does not expand current Stage 16 work.
+
+Potential capabilities are independent **Profiles** (Main, Development, Minimal
+and user-defined), **Environment History** of saved states/snapshots, **Semantic
+Comparison** with a chosen profile/snapshot, **Drift Detection**, **Selective Apply**
+of explicitly selected differences, and subsequent **Verification** through Core.
+
+Profiles and History should build on the existing Saved Environment model;
+a separate configuration system requires demonstrated justification. Allow multiple
+reference environments rather than permanently assuming one global `.mbt`.
+The current Stage 16K plan covers only Bundle selection, safe read-only comparison using
+the existing Core engine and Blueprint selection semantics, and the Restored Bundle
+as a natural reference. Profiles, History, Drift Detection and Selective Apply are
+future capabilities, not part of that implementation; introduce no profile storage,
+database, versioning or new Core entities without a current need.
+
+Comparison remains read-only. Future targeted restoration initiated from Status
+must use the existing **Restore Prepare → Preview → Confirm → Execute → Verify**
+path with explicit user selection and confirmation, never a second Restore or
+Verification engine. Absence from a profile does not authorize deletion from the Mac.
+
 Direct/vendor application restoration is a distant possibility requiring separate
 value, provenance, security and maintenance assessment, not a current subsystem or
 task. Further secure migration and application adapters likewise require bounded

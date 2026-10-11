@@ -457,6 +457,14 @@ must not become Matches, Differences or Verified. Current Protocol V1 accepts
 Generated Configuration only; any minimal extension requires the audit first. Stage 16E implements neither
 Bundle-backed comparison nor a client-side Bundle parser or speculative V1 change.
 
+Bundle-backed Status also provides the foundation for the
+[future Environment Manager](../ROADMAP.md#environment-manager--post-10--future-direction).
+Stage 16K must avoid unnecessary binding to one permanent reference while adding
+no Profiles, History, Drift Detection or Selective Apply now. Future user-selected
+and confirmed Apply from Status must reuse Restore Prepare → Preview → Confirm →
+Execute → Verify; comparison stays read-only, with no second Restore/Verification
+engine and no deletion implied by absent profile items.
+
 ## Status vocabulary and evidence
 
 Use this small shared vocabulary, with flow-specific titles such as Bundle Created,
