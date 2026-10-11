@@ -100,13 +100,12 @@ struct TaskHome: View {
             WorkspaceActionLayout {
                 ForEach(ProductTask.allCases) { task in
                     Button { select(task) } label: {
-                        WorkspaceActionCard(task: task, vertical: true).frame(height: 280)
+                        WorkspaceActionCard(task: task, vertical: true)
                     }.buttonStyle(.plain)
                         .accessibilityLabel(task.rawValue + ". " + task.subtitle)
                 }
             }
-
-        }
+        }.frame(maxWidth: 1080).frame(maxWidth: .infinity, alignment: .center)
     }
 }
 
@@ -159,7 +158,9 @@ struct WorkspaceActionCard: View {
                 .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 24))
                 .accessibilityHidden(true)
             Text(task.rawValue).font(.title3.weight(.semibold))
-            description.multilineTextAlignment(.center)
+                .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
+                .frame(minHeight: 42)
+            description.multilineTextAlignment(.center).frame(minHeight: 56)
             Spacer(minLength: 0)
             affordance
         }.padding(22).frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -395,24 +396,27 @@ struct DemoWorkspace: View {
     @ViewState<Bool> private var stopConfirmation = false
     var body: some View {
         NavigationSplitView {
-            List(selection: Binding<String?>(
-                get: { session.task?.rawValue ?? "All Tasks" },
-                set: { selection in
-                    guard let selection else { return }
-                    if selection == "All Tasks" { session.navigate(nil) }
-                    else if let task = ProductTask(rawValue: selection) { session.navigate(task) }
-                })) {
-                MacseedSidebarBrand()
-                Label { Text("All Tasks") } icon: { Image(systemName: "house").foregroundStyle(.blue) }.tag("All Tasks")
-                ForEach(ProductTask.allCases) { task in
-                    MacseedTaskLabel(task: task).tag(task.rawValue)
+            VStack(alignment: .leading, spacing: 0) {
+                List(selection: Binding<String?>(
+                    get: { session.task?.rawValue ?? "All Tasks" },
+                    set: { selection in
+                        guard let selection else { return }
+                        if selection == "All Tasks" { session.navigate(nil) }
+                        else if let task = ProductTask(rawValue: selection) { session.navigate(task) }
+                    })) {
+                    MacseedSidebarBrand()
+                    Label { Text("All Tasks") } icon: { Image(systemName: "house").foregroundStyle(.blue) }.tag("All Tasks")
+                    ForEach(ProductTask.allCases) { task in
+                        MacseedTaskLabel(task: task).tag(task.rawValue)
+                    }
                 }
-                Divider()
+                .listStyle(.sidebar)
+                .scrollContentBackground(.hidden)
+                Spacer(minLength: 0)
+                Divider().padding(.horizontal, 12)
                 SettingsLink { Label("Settings", systemImage: "gearshape") }
-                    .foregroundStyle(.secondary)
+                    .buttonStyle(.plain).foregroundStyle(.secondary).padding(16)
             }
-            .listStyle(.sidebar)
-            .scrollContentBackground(.hidden)
             .modifier(InsetSidebarSurface())
             .disabled(session.busy)
             .navigationSplitViewColumnWidth(min: 200, ideal: 215)

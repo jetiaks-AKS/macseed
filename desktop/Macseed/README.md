@@ -322,4 +322,7 @@ Already Matches, zero changes and disabled Rebuild. Secure SSH remains Stage 16H
 `Sources/Branding.swift` owns the shared leaf silhouette and Home hero. To refresh
 all committed AppIcon PNG variants and `Resources/Macseed.icns`, run
 `./generate-app-icon.sh` from this directory, then rebuild. Both build paths use
-the static ICNS resource. Quit and reopen the app if macOS shows a cached Dock icon.
+the static ICNS resource, also applied to the running app at launch. The system
+leaf is 22% larger; Hero/sidebar keep their approved scale. Home shares a centered
+1080 pt container for its hero and three tiles; Settings is pinned below navigation.
+Quit and reopen the app if macOS shows a cached Dock icon.

@@ -124,13 +124,18 @@ Only their explicit existing actions start the next workflow step. The Macseed l
 mark is a shared blue/lilac vector used in the sidebar, Home hero and AppIcon.
 Home uses a blue/lilac hero and three tinted action tiles; tiles stay in three
 columns at supported main-window widths and stack only in narrower contexts.
+Hero and tiles share a centered container capped at 1080 pt; tile text regions
+retain stable spacing. Settings is pinned below the sidebar navigation list.
 Task icons consistently use blue Capture, green Restore and violet Status;
 Settings retains a neutral gear. Workflow content and semantics remain unchanged.
 Both Xcode and local builds use static `Macseed.icns` through `CFBundleIconFile`.
 The asset-catalog sizes and ICNS are reproducibly exported from the same UI mark
 with `desktop/Macseed/generate-app-icon.sh`; temporary exports stay under ignored
 `build/`. macOS may retain an older Dock icon for an already-running app until it
-is quit and reopened.
+is quit and reopened. The running app sets its icon from the packaged ICNS.
+The system icon enlarges the same leaf by 22%; Hero/sidebar scales stay unchanged.
+Branding/Home presentation is finalized and user-approved independently of the
+remaining Desktop functional work.
 
 ## Capture this Mac
 

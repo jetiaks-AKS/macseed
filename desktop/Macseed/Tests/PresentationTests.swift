@@ -266,8 +266,10 @@ import SwiftUI
     }
 
     @MainActor static func renderHomeBranding() {
+        precondition(MacseedAppIcon().leafScale == 1)
+        precondition(MacseedAppIcon.systemLeafScale == 1.22)
         for scheme in [ColorScheme.light, .dark] {
-            for width in [730, 1100] {
+            for width in [730, 1000, 1500] {
                 let renderer = ImageRenderer(content: TaskHome(select: { _ in })
                     .padding(28).frame(width: CGFloat(width))
                     .background(Color(nsColor: .windowBackgroundColor))
@@ -296,6 +298,9 @@ import SwiftUI
             precondition(blue.alphaComponent > 0.9 && blue.blueComponent > blue.redComponent)
         }
         precondition(NSImage(contentsOfFile: "Resources/Macseed.icns") != nil)
+        let bundle = Bundle(path: "build/Debug/Macseed.app")!
+        precondition(MacseedBundleIcon.load(bundle: bundle) != nil)
+        precondition(try! Data(contentsOf: bundle.url(forResource: "Macseed", withExtension: "icns")!) == Data(contentsOf: URL(fileURLWithPath: "Resources/Macseed.icns")))
         print("PASS: Shared leaf AppIcon variants, visible small-scale mark and valid ICNS")
     }
 

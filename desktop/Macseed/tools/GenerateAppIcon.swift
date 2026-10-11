@@ -12,7 +12,7 @@ import SwiftUI
         try FileManager.default.createDirectory(at: iconset, withIntermediateDirectories: true)
         for entry in entries["images"] as! [[String: String]] {
             let width = Int(entry["size"]!.split(separator: "x")[0])! * Int(entry["scale"]!.dropLast())!
-            let renderer = ImageRenderer(content: MacseedAppIcon().frame(width: CGFloat(width), height: CGFloat(width)).environment(\.colorScheme, .light))
+            let renderer = ImageRenderer(content: MacseedAppIcon(leafScale: MacseedAppIcon.systemLeafScale).frame(width: CGFloat(width), height: CGFloat(width)).environment(\.colorScheme, .light))
             renderer.scale = 1
             guard let cgImage = renderer.cgImage else { fatalError("Cannot render app icon") }
             let bitmap = NSBitmapImageRep(cgImage: cgImage)

@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 // Shared vector silhouette for the UI and all exported app-icon sizes.
 struct MacseedLeaf: Shape {
@@ -31,6 +32,8 @@ struct MacseedBrandMark: View {
 }
 
 struct MacseedAppIcon: View {
+    static let systemLeafScale: CGFloat = 1.22
+    var leafScale: CGFloat = 1
     var body: some View {
         ZStack {
             GeometryReader { geometry in
@@ -38,7 +41,7 @@ struct MacseedAppIcon: View {
                 RoundedRectangle(cornerRadius: size * 0.20)
                     .fill(LinearGradient(colors: [.white, Color(red: 0.73, green: 0.82, blue: 1)], startPoint: .topLeading, endPoint: .bottomTrailing))
                     .overlay(RoundedRectangle(cornerRadius: size * 0.20).strokeBorder(.white.opacity(0.85), lineWidth: max(1, size * 0.003)))
-                    .overlay(MacseedBrandMark().padding(size * 0.21))
+                    .overlay(MacseedBrandMark().padding(size * (1 - 0.58 * leafScale) / 2))
                     .padding(size * 0.065)
             }
         }
@@ -76,5 +79,15 @@ struct MacseedSidebarBrand: View {
             MacseedBrandMark().frame(width: 28, height: 28)
             Text("Macseed").font(.title3.weight(.semibold))
         }.padding(.horizontal, 12).padding(.top, 16).padding(.bottom, 8)
+    }
+}
+
+// The static bundle asset is exported from MacseedAppIcon, never a separate mark.
+enum MacseedBundleIcon {
+    static func load(bundle: Bundle = .main) -> NSImage? {
+        guard let name = bundle.object(forInfoDictionaryKey: "CFBundleIconFile") as? String else { return nil }
+        let file = name as NSString
+        guard let url = bundle.url(forResource: file.deletingPathExtension, withExtension: file.pathExtension) else { return nil }
+        return NSImage(contentsOf: url)
     }
 }

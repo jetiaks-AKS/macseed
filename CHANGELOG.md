@@ -74,6 +74,9 @@ The format is based on the principles of **Keep a Changelog**.
 * All Tasks uses responsive native action cards; Environment Status shares Desktop
   summaries, metric cards and domain disclosures over read-only Core comparison.
 
+* Finalized Home/branding: centered shared Hero/tile width, stable tile spacing,
+  bottom-pinned Settings, and a larger system leaf icon applied from the bundle.
+
 * Introduced the blue/lilac Macseed leaf identity and matching app/Dock icon,
   consistent colored task navigation, and a premium Home hero with three action
   tiles. Capture/Restore workflow behavior is unchanged.

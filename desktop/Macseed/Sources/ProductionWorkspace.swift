@@ -23,18 +23,21 @@ struct ProductionWorkspace: View {
     }
     var body: some View {
         NavigationSplitView {
-            List(selection: Binding<String?>(get: { navigation.task?.rawValue ?? "All Tasks" }, set: { value in
-                guard !busy, let value else { return }
-                navigation.task = ProductTask(rawValue: value)
-            })) {
-                MacseedSidebarBrand()
-                Label { Text("All Tasks") } icon: { Image(systemName: "house").foregroundStyle(.blue) }.tag("All Tasks")
-                ForEach(ProductTask.allCases) { task in MacseedTaskLabel(task: task).tag(task.rawValue) }
-                Divider()
+            VStack(alignment: .leading, spacing: 0) {
+                List(selection: Binding<String?>(get: { navigation.task?.rawValue ?? "All Tasks" }, set: { value in
+                    guard !busy, let value else { return }
+                    navigation.task = ProductTask(rawValue: value)
+                })) {
+                    MacseedSidebarBrand()
+                    Label { Text("All Tasks") } icon: { Image(systemName: "house").foregroundStyle(.blue) }.tag("All Tasks")
+                    ForEach(ProductTask.allCases) { task in MacseedTaskLabel(task: task).tag(task.rawValue) }
+                }
+                .listStyle(.sidebar).scrollContentBackground(.hidden)
+                Spacer(minLength: 0)
+                Divider().padding(.horizontal, 12)
                 SettingsLink { Label("Settings", systemImage: "gearshape") }
-                    .foregroundStyle(.secondary)
+                    .buttonStyle(.plain).foregroundStyle(.secondary).padding(16)
             }
-            .listStyle(.sidebar).scrollContentBackground(.hidden)
             .modifier(InsetSidebarSurface())
             .disabled(busy)
             .navigationSplitViewColumnWidth(min: 200, ideal: 215)

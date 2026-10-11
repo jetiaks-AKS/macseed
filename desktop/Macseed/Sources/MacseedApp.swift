@@ -68,6 +68,10 @@ struct FoundationSettingsView: View {
     func applicationWillFinishLaunching(_ notification: Notification) {
         DesktopAppearance(storedValue: UserDefaults.standard.string(forKey: DesktopAppearance.preferenceKey)).apply(to: NSApp)
     }
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        // Use the packaged Hero-derived icon for this running app, independent of Dock caching.
+        if let icon = MacseedBundleIcon.load() { NSApp.applicationIconImage = icon }
+    }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         let runtime = CoreRuntime.shared
         guard runtime.isActive else { return .terminateNow }
