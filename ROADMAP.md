@@ -62,15 +62,17 @@ publication with/without warnings, cancellation and stale preparation/re-scan.
 Macseed Minimal Premium, the leaf logo/system App Icon, Home, Sidebar, Settings
 and adaptive tiles are finalized and user-approved. Capture was checked on a real
 Mac; Restore Selection, Preview, Progress and Result are approved. Further Desktop
-functional development and qualification remain open.
+functional development and qualification remain open. Bundle-backed Environment
+Status (16K) is complete in `c529092`; the subsequent Status → Restore Bundle
+handoff is implemented and GUI-approved as a separate follow-up.
 Remaining Stage 16 qualification is open.** Complete the SwiftUI client for
 Capture this Mac, Restore a Mac and Environment Status.
 Provide prerequisite guidance, Check Again, structured
 progress/results, separate secret input and cancellation over the existing Core.
 Desktop Secure SSH Capture/Restore remains unfinished (16H). Deliver persistent
 structured operation logs, live View Log and a redacted Diagnostic Report with
-exact preview/export. Bundle-backed Environment Status is the immediate next
-checkpoint, beginning with a short Core/Desktop contract audit. The Unified UI
+exact preview/export. Desktop Operation Logging & Diagnostics is the next
+checkpoint, beginning with a separate architecture audit. The Unified UI
 Scenario Catalog remains deferred UI/dev tooling, with a possible Lite version
 after functional priorities; existing Debug previews and fixtures are retained.
 Automatic MAS Restore is mandatory before 1.0; authorization/install qualification
@@ -82,8 +84,8 @@ useful bounded Workspace/Data semantics while preserving today's structure-only
 Folders behavior. Close the existing SSH/Zsh/Git/VS Code/macOS Settings and
 application-state gaps according to their value and safety contracts. Detailed
 actions and qualification evidence belong to [TODO](TODO.md).
-Complete Saved Environment/Bundle-backed Status before 1.0; the current internal
-reference picker is a temporary development bridge (see [Desktop](docs/DESKTOP.md)).
+Saved Environment/Bundle-backed Status now replaces the internal reference picker
+(see [Desktop](docs/DESKTOP.md#environment-status)).
 
 This stage defines and implements bundled Core/runtime placement, writable
 application state, a controlled child environment and the Swift Protocol V1
@@ -96,18 +98,17 @@ Existing Stage 16 slice identifiers (16H Secure SSH, 16I completion, 16J diagnos
 16K hardening) retain their historical meaning; they do not prescribe today's
 implementation order. Complete one bounded checkpoint at a time:
 
-1. Bundle-backed Environment Status: start with a short Core/Desktop contract audit.
-2. Desktop Operation Logging & Diagnostics: first audit the two existing logging levels.
-3. Automatic MAS Restore qualification, mandatory before 1.0.
-4. Secure SSH Desktop integration (16H) over the existing Core engine.
-5. Compatibility & Reliability: remaining Result, Zsh, Homebrew/Repair, watchdog,
+1. Desktop Operation Logging & Diagnostics: first audit the two existing logging levels.
+2. Automatic MAS Restore qualification, mandatory before 1.0.
+3. Secure SSH Desktop integration (16H) over the existing Core engine.
+4. Compatibility & Reliability: remaining Result, Zsh, Homebrew/Repair, watchdog,
    partial/interrupted operations, stale plans, Workspace review, functional
    consistency, accessibility and runtime hardening.
-6. Stage 17 Distribution & Clean-Mac Qualification: private writable runtime/workspace,
+5. Stage 17 Distribution & Clean-Mac Qualification: private writable runtime/workspace,
    signing, Hardened Runtime, notarization/stapling, DMG, Gatekeeper, clean Apple
    Silicon and separate Intel qualification where support is claimed.
-7. Early Access / Alpha.
-8. Macseed 1.0.
+6. Early Access / Alpha.
+7. Macseed 1.0.
 
 Status must compare the current Mac with a Saved Environment (`.mbt`), using the
 existing Core comparison engine and source selection/Blueprint semantics. The
@@ -157,10 +158,11 @@ of explicitly selected differences, and subsequent **Verification** through Core
 Profiles and History should build on the existing Saved Environment model;
 a separate configuration system requires demonstrated justification. Allow multiple
 reference environments rather than permanently assuming one global `.mbt`.
-The current Stage 16K plan covers only Bundle selection, safe read-only comparison using
+Completed Stage 16K covers Bundle selection and safe read-only comparison using
 the existing Core engine and Blueprint selection semantics, and the Restored Bundle
-as a natural reference. Profiles, History, Drift Detection and Selective Apply are
-future capabilities, not part of that implementation; introduce no profile storage,
+as a natural reference. The subsequent handoff passes only the Bundle into existing
+Restore selection; it does not automatically select differences. Profiles, History,
+Drift Detection and Selective Apply are future capabilities, not part of that implementation; introduce no profile storage,
 database, versioning or new Core entities without a current need.
 
 Comparison remains read-only. Future targeted restoration initiated from Status

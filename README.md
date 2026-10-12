@@ -49,8 +49,9 @@ Native SwiftUI **Macseed Desktop** is implemented through Stage 16G, with real
 Capture, Restore Prepare/Execute and read-only Environment Status manually approved.
 Desktop Stage 16 remains active. Restore/Homebrew recovery passed a major real
 qualification checkpoint. Branding/Home and Capture/Restore UI are approved.
-Next is a Bundle-backed Environment Status contract audit, followed by Desktop
-logging/diagnostics, MAS Restore, secure migration integration, reliability and
+Bundle-backed Environment Status (16K) is complete; the subsequent Status → Restore
+handoff is implemented and manually approved. Next is the Desktop logging/diagnostics
+architecture audit, followed by MAS Restore, secure migration integration, reliability and
 packaged clean-Mac qualification. The CLI remains supported. **Macseed 1.0** is reserved
 for the first complete Desktop product release, preserving the toolkit/CLI history.
 

@@ -493,6 +493,24 @@ import SwiftUI
         precondition(bundleRuntime.bundleComparisonSupported == true)
         bundleModel.compare(); await bundleModel.waitForCompletion()
         precondition(bundleModel.state == .result)
+        for kind in ["matching", "differing", "missing"] {
+            try data(payload([row(0, kind)], verdict: kind == "matching" ? "no_differences_detected" : "differences_detected")).write(to: core.appendingPathComponent("response.json"))
+            bundleModel.compare()
+            precondition(bundleModel.restoreReviewBundle == nil)
+            await bundleModel.waitForCompletion()
+            precondition(bundleModel.restoreReviewBundle == (kind == "matching" ? nil : bundleURL))
+            if kind == "differing" {
+                for width in [1000, 1600] {
+                    try render(EnvironmentStatusActions(model: bundleModel, runtime: bundleRuntime, reviewInRestore: {}), name: "Status-Restore-footer-\(width)", width: width)
+                }
+            }
+
+        }
+        try data(refined).write(to: core.appendingPathComponent("response.json")) // SSH warning without differences.
+        bundleModel.compare(); await bundleModel.waitForCompletion()
+        precondition(bundleModel.restoreReviewBundle == nil)
+        precondition(model.restoreReviewBundle == nil) // Development reference is never handed off.
+
         bundleModel.selectBundle(directory.appendingPathComponent("missing.mbt"))
         precondition(bundleModel.presentation == nil)
         bundleModel.compare()
@@ -502,7 +520,7 @@ import SwiftUI
             try write(mode, core.appendingPathComponent("mode"))
             bundleModel.compare(); await bundleModel.waitForCompletion()
             precondition(bundleModel.state == .failed && bundleModel.presentation == nil)
-            precondition(bundleModel.failure?.technicalReason == mode)
+            precondition(bundleModel.failure?.technicalReason == mode && bundleModel.restoreReviewBundle == nil)
         }
 
 
@@ -519,7 +537,7 @@ import SwiftUI
         for _ in 0..<100 where runtime.events.isEmpty { try await Task.sleep(nanoseconds: 20_000_000) }
         precondition(model.state == .running && runtime.state == .running)
         model.cancel(); await model.waitForCompletion()
-        precondition(model.state == .cancelled && model.presentation == nil && model.failure == .cancelled)
+        precondition(model.state == .cancelled && model.presentation == nil && model.failure == .cancelled && model.restoreReviewBundle == nil)
         let missingRuntime = EnvironmentStatusModel(runtime: CoreRuntime(resolver: CoreLocationResolver(resources: directory.appendingPathComponent("no-runtime"))))
         missingRuntime.selectReference(reference); missingRuntime.compare(); await missingRuntime.waitForCompletion()
         precondition(missingRuntime.state == .failed && missingRuntime.failure == .runtime(.runtimeUnavailable) && missingRuntime.presentation == nil)

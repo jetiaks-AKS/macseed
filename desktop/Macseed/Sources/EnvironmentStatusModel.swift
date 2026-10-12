@@ -386,6 +386,12 @@ enum EnvironmentStatusState { case choose, running, result, failed, cancelled }
     private var work: Task<Void, Never>?
     init(runtime: CoreRuntime, location: CoreLocation? = nil) { self.runtime = runtime; self.location = location }
 
+    var restoreReviewBundle: URL? {
+        guard state == .result, let bundle = reference?.bundle, let presentation,
+              presentation.counts["differing", default: 0] > 0 || presentation.counts["missing", default: 0] > 0 else { return nil }
+        return bundle
+    }
+
     func selectBundle(_ bundle: URL) {
         guard !runtime.isActive, state != .running else { return }
         reference = EnvironmentReference(bundle: bundle, generatedDirectory: bundle, blueprint: nil)

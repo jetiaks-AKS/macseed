@@ -678,6 +678,67 @@ import Foundation
         precondition(model.state == .review && model.areas.count == inventory.count && model.groups.count == 5 && model.bulkState == .all)
         precondition(model.selectionSummary == "Everything selected" && model.canPreview)
         precondition(model.inspection?.secureComponent == true && model.selectedAreaCount == 13)
+        if CommandLine.arguments.contains("--status-handoff-only") {
+            let navigation = ProductionNavigation()
+            navigation.task = .status
+            let log = core.appendingPathComponent("requests.jsonl")
+            func requests() -> [[String: Any]] {
+                try! String(contentsOf: log).split(separator: "\n").map { try JSONSerialization.jsonObject(with: Data($0.utf8)) as! [String: Any] }
+            }
+            let originalSelection = model.selection
+            let originalRequests = requests().count
+            navigation.reviewInRestore(source, restore: model)
+            precondition(navigation.task == .restore && model.state == .review)
+            precondition(requests().count == originalRequests)
+            precondition(model.selection.categories == originalSelection.categories && model.selection.items == originalSelection.items)
+            navigation.task = .status
+            let replacement = root.appendingPathComponent("different.mbt")
+            navigation.reviewInRestore(replacement, restore: model)
+            precondition(navigation.pendingRestoreBundle == replacement && navigation.task == .status && model.source == source)
+            navigation.cancelRestoreReplacement()
+            precondition(model.source == source && model.state == .review && navigation.task == .status)
+            navigation.reviewInRestore(replacement, restore: model)
+            navigation.confirmRestoreReplacement(replacement, restore: model)
+            precondition(navigation.task == .restore && model.source == replacement && model.state == .inspecting)
+            let blockedSource = model.source
+            navigation.task = .status
+            navigation.reviewInRestore(source, restore: model)
+            precondition(navigation.task == .status && model.source == blockedSource && navigation.pendingRestoreBundle == nil)
+            await model.waitForCompletion()
+            precondition(model.state == .review)
+            let replacementRequests = requests().dropFirst(originalRequests)
+            precondition(replacementRequests.map { $0["operation"] as! String } == ["capabilities", "bundle_inspect"])
+            precondition((replacementRequests.last!["parameters"] as! [String: Any])["path"] as? String == replacement.path)
+            try write("safe", core.appendingPathComponent("mode"))
+            model.refreshPreview(); await model.waitForCompletion()
+            precondition(model.state == .preview)
+            let planID = model.preparation!.preparedPlanID
+            let previewSelection = model.selection
+            let previewRequests = requests().count
+            navigation.reviewInRestore(replacement, restore: model)
+            precondition(model.state == .preview && model.preparation?.preparedPlanID == planID)
+            precondition(model.selection.categories == previewSelection.categories && model.selection.items == previewSelection.items)
+            precondition(requests().count == previewRequests)
+            model.requestRebuild()
+            precondition(model.state == .confirming)
+            navigation.task = .status
+            navigation.reviewInRestore(source, restore: model)
+            precondition(navigation.task == .status && navigation.pendingRestoreBundle == nil && model.preparation?.preparedPlanID == planID)
+            model.cancelRebuildConfirmation()
+            let fresh = RestoreModel(runtime: runtime, location: CoreLocation(root: core, python: python, home: root, temporaryBase: root, toolDirectories: []))
+            navigation.reviewInRestore(source, restore: fresh)
+            await fresh.waitForCompletion()
+            precondition(fresh.source == source && fresh.state == .review && fresh.preparation == nil)
+            try write("bundle_invalid", core.appendingPathComponent("mode"))
+            navigation.task = .status
+            navigation.reviewInRestore(replacement, restore: fresh)
+            navigation.confirmRestoreReplacement(replacement, restore: fresh)
+            await fresh.waitForCompletion()
+            precondition(fresh.state == .failed && fresh.preview == nil && fresh.preparation == nil)
+            precondition(requests().allSatisfy { $0["operation"] as? String != "restore_execute" && $0["operation"] as? String != "environment_compare" })
+            print("PASS: Status handoff preserves Review/Preview, confirms replacement, blocks active/confirming Restore and only starts independent inspection")
+            return
+        }
         if CommandLine.arguments.contains("--plan-session-only") {
             func prepare(_ mode: String = "session") async throws {
                 try write(mode, core.appendingPathComponent("mode"))

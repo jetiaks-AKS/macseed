@@ -437,8 +437,14 @@ import SwiftUI
         let content = try! String(contentsOf: sources.appendingPathComponent("ContentView.swift"), encoding: .utf8)
         let production = try! String(contentsOf: sources.appendingPathComponent("ProductionWorkspace.swift"), encoding: .utf8)
         let scrollEnd = production.range(of: "                if navigation.task == .status && status.state == .result {")!
-        precondition(production[scrollEnd.lowerBound...].contains("EnvironmentStatusActions(model: status, runtime: runtime)"))
+        precondition(production[scrollEnd.lowerBound...].contains("EnvironmentStatusActions(model: status, runtime: runtime, reviewInRestore:"))
         precondition(production.contains("EnvironmentStatusView(model: status, runtime: runtime, showsActions: status.state != .result)"))
+        precondition(statusView.contains("Button(\"Review in Restore\", action: reviewInRestore).buttonStyle(.bordered)"))
+        precondition(statusView.contains(".disabled(busy || handoffBlocked)"))
+        precondition(production.contains("reviewInRestore: reviewStatusInRestore, handoffBlocked: busy || syntheticRestore"))
+        precondition(production.contains("Replace Current Restore Session?") && production.contains("Use Selected Environment"))
+        precondition(production.contains("restore.choose(bundle)") && production.contains("if restore.source == bundle { task = .restore; return }"))
+
 
         let app = try! String(contentsOf: sources.appendingPathComponent("MacseedApp.swift"), encoding: .utf8)
         let captureView = try! String(contentsOf: sources.appendingPathComponent("CaptureView.swift"), encoding: .utf8)

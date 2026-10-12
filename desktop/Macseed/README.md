@@ -205,7 +205,9 @@ With no Status reference, entering Status offers the current Restore session's
 Bundle without automatic comparison; Core revalidates it when Compare is chosen.
 References remain session-local. Stage 16K Bundle-backed Environment Status is
 accepted after real-Mac GUI qualification; runtime/distribution hardening remains
-separate unfinished work.
+separate unfinished work. The subsequent **Review in Restore** handoff is implemented
+and manually approved as a separate change. Its visibility, session protection and
+inspection-only behavior are specified in the [Bundle handoff contract](../../docs/DESKTOP.md#bundle-handoff).
 
 `CoreComparison.swift` decodes V1 comparison/Coverage/diagnostic/extra evidence.
 `EnvironmentStatusModel.swift` projects only a completed, validated result into
@@ -293,9 +295,10 @@ open -n desktop/Macseed/build/Debug/Macseed.app
 Choose **Capture this Mac** for the manual gate. Use no `--design-preview` argument.
 
 The canonical [Desktop contract](../../docs/DESKTOP.md#required-final-product-reference-before-macseed-10)
-owns the required Bundle-backed Environment Status before 1.0; this slice records
-it without implementing Bundle comparison or changing V1. Restore, secure transfer,
-diagnostic export and packaged-runtime qualification remain their later slices.
+owns Bundle-backed Environment Status, now completed separately in Stage 16K.
+The historical Capture slice did not implement Bundle comparison or change V1.
+Restore, secure transfer, diagnostic export and packaged-runtime qualification
+were separate slices.
 
 ## Real Restore Prepare (16F)
 

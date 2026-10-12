@@ -84,18 +84,17 @@ and verified end-to-end; it is no longer open gate work.
 Historical Stage 16 slice identifiers remain unchanged. Complete one checkpoint
 at a time, in this practical order:
 
-1. Bundle-backed Environment Status: start with a short Core/Desktop contract audit.
-2. Desktop Operation Logging & Diagnostics: first audit the two existing logging levels.
-3. Automatic MAS Restore qualification, mandatory before 1.0.
-4. Secure SSH Desktop integration (16H) over the existing Core engine.
-5. Compatibility & Reliability: remaining Result, Zsh, Homebrew/Repair, watchdog,
+1. Desktop Operation Logging & Diagnostics: first audit the two existing logging levels.
+2. Automatic MAS Restore qualification, mandatory before 1.0.
+3. Secure SSH Desktop integration (16H) over the existing Core engine.
+4. Compatibility & Reliability: remaining Result, Zsh, Homebrew/Repair, watchdog,
    partial/interrupted operations, stale plans, Workspace review, functional
    consistency, accessibility and runtime hardening.
-6. Stage 17 Distribution & Clean-Mac Qualification: private writable runtime/workspace,
+5. Stage 17 Distribution & Clean-Mac Qualification: private writable runtime/workspace,
    signing, Hardened Runtime, notarization/stapling, DMG, Gatekeeper, clean Apple
    Silicon and separate Intel qualification where support is claimed.
-7. Early Access / Alpha.
-8. Macseed 1.0.
+6. Early Access / Alpha.
+7. Macseed 1.0.
 
 ### Deferred UI/dev tooling
 

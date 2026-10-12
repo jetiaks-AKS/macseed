@@ -65,6 +65,8 @@ struct EnvironmentStatusView: View {
 struct EnvironmentStatusActions: View {
     @ObservedObject var model: EnvironmentStatusModel
     @ObservedObject var runtime: CoreRuntime
+    var reviewInRestore: (() -> Void)? = nil
+    var handoffBlocked = false
     private var busy: Bool { runtime.isActive || model.state == .running }
     var body: some View {
         HStack(spacing: 12) {
@@ -74,6 +76,10 @@ struct EnvironmentStatusActions: View {
             } else {
                 Button(model.reference == nil ? "Choose Saved Environment…" : "Choose a Different Environment…", action: chooseReference).disabled(busy)
                 if model.state != .choose { Spacer() }
+                if model.restoreReviewBundle != nil, let reviewInRestore {
+                    Button("Review in Restore", action: reviewInRestore).buttonStyle(.bordered)
+                        .disabled(busy || handoffBlocked)
+                }
                 if model.reference != nil {
                     Button(model.state == .choose ? "Compare This Mac" : "Compare Again") { model.compare() }
                         .buttonStyle(.borderedProminent).disabled(busy)

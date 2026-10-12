@@ -82,7 +82,7 @@ struct ProductionWorkspace: View {
                 }
                 if navigation.task == .status && status.state == .result {
                     Divider()
-                    EnvironmentStatusActions(model: status, runtime: runtime)
+                    EnvironmentStatusActions(model: status, runtime: runtime, reviewInRestore: reviewStatusInRestore, handoffBlocked: busy || syntheticRestore)
                         .padding(.horizontal, WorkspaceGeometry.margin).padding(.vertical, 12)
                 }
                 if navigation.task == .capture && capture.state != .idle {
@@ -126,6 +126,17 @@ struct ProductionWorkspace: View {
                 }
             }
         }
+        .alert("Replace Current Restore Session?", isPresented: Binding(
+            get: { navigation.pendingRestoreBundle != nil },
+            set: { if !$0 { navigation.cancelRestoreReplacement() } })) {
+                Button("Cancel", role: .cancel) { navigation.cancelRestoreReplacement() }
+                Button("Use Selected Environment") {
+                    guard !busy, !syntheticRestore, let bundle = status.restoreReviewBundle else { navigation.cancelRestoreReplacement(); return }
+                    navigation.confirmRestoreReplacement(bundle, restore: restore)
+                }
+            } message: {
+                Text("The selected Saved Environment will replace your current Restore selection and prepared Preview. Nothing will be restored automatically.")
+            }
         .onChange(of: navigation.task) { _, task in
             if task == .status, status.reference == nil, let source = restore.source, !busy {
                 status.selectBundle(source)
@@ -138,6 +149,10 @@ struct ProductionWorkspace: View {
             if scenario != .real { navigation.task = .restore }
         }
         #endif
+    }
+    private func reviewStatusInRestore() {
+        guard !busy, !syntheticRestore, let bundle = status.restoreReviewBundle else { return }
+        navigation.reviewInRestore(bundle, restore: restore)
     }
     private var resultActionArea: some View {
         VStack(spacing: 0) {
@@ -186,6 +201,25 @@ struct ProductionWorkspace: View {
 
 @MainActor final class ProductionNavigation: ObservableObject {
     @Published var task: ProductTask?
+    @Published private(set) var pendingRestoreBundle: URL?
+
+    func reviewInRestore(_ bundle: URL, restore: RestoreModel) {
+        guard !restore.busy, !restore.runtime.isActive else { return }
+        if restore.source == bundle { task = .restore; return }
+        let hasContext = restore.state != .choose || restore.source != nil || restore.inspection != nil
+            || restore.preparation != nil || restore.preview != nil || restore.executionResult != nil
+            || !restore.selectedCategories.isEmpty || !restore.selectedItems.isEmpty
+        if hasContext { pendingRestoreBundle = bundle; return }
+        restore.choose(bundle)
+        task = .restore
+    }
+    func cancelRestoreReplacement() { pendingRestoreBundle = nil }
+    func confirmRestoreReplacement(_ bundle: URL, restore: RestoreModel) {
+        guard pendingRestoreBundle == bundle, !restore.busy, !restore.runtime.isActive else { return }
+        pendingRestoreBundle = nil
+        if restore.source != bundle { restore.choose(bundle) }
+        task = .restore
+    }
 }
 
 // Applied only to the main scene; sheets and Settings retain native sizing.

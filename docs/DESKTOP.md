@@ -15,9 +15,10 @@ Tailscale installation and subsequent matching observation passed. Earlier Repai
 through Codex remain valid. Clean Install does not qualify universal Tailscale
 Repair: ambiguous/damaged privileged Repair states remain fail-closed. Continuing
 compatibility qualification, MAS, Desktop Zsh and Secure SSH remain open.
-Private SSH identity transfer remains unavailable until 16H. The immediate next
-checkpoint is a short Core/Desktop contract audit for Bundle-backed Environment
-Status, followed by implementation. Practical priorities are owned by
+Private SSH identity transfer remains unavailable until 16H. Bundle-backed
+Environment Status (Stage 16K) is complete; the subsequent Status → Restore handoff is implemented and manually
+approved. The next checkpoint is a separate architecture audit for Desktop
+Operation Logging & Diagnostics. Practical priorities are owned by
 [Roadmap](../ROADMAP.md#current-practical-execution-order).
 Build and review instructions are in
 [Desktop development](../desktop/Macseed/README.md). Macseed is one product with a shared Core and two official frontends: CLI (`bs`) and Desktop.
@@ -399,12 +400,12 @@ technical code in Details, rather than guessed remediation.
 
 **Choose reference → Compare → Result**, with inline expandable Details.
 Inspection and comparison are logical work, not additional navigation pages.
-The initial Compare This Mac card owns reference selection and the read-only notice.
-Results use a compact header/action toolbar, semantic Match/Different/Missing/
+The initial Choose Saved Environment card owns reference selection and the read-only notice.
+Results use the fixed action footer, semantic Match/Different/Missing/
 Not Applicable metrics and whole-row Domain → Items disclosures. Not Applicable
 counts only Core Coverage `no_requirement`; excluded, unverified, unsupported,
 unresolved and extra facts retain their own labels in summary/details. Domain
-rows align four count pills and indicate additional findings without changing
+rows show only nonzero count pills and indicate additional findings without changing
 Core comparison statuses or taxonomy.
 
 The reference is explicit: a user-selected Saved Environment (`.mbt`). Explain
@@ -422,6 +423,32 @@ extra evidence is not zero. Never offer cleanup or infer removal plans.
 An empty comparable scope says “No comparable requirements”; unavailable/invalid
 references ask for another reference, and changed references require a fresh check.
 Compare is an explicit read-only action; do not auto-run it after Restore.
+
+### Bundle handoff
+
+Both directions retain independent Status and Restore session state. On first
+opening Status without a reference, the current Restore Bundle becomes its reference;
+comparison still requires an explicit action and fresh Core validation.
+
+A completed Status result with a Bundle reference and Core-confirmed Different or
+Missing offers **Review in Restore** in the fixed result footer, beside **Compare
+Again**. No handoff is offered for a development reference, before/during comparison,
+a failed/cancelled result or coverage warnings alone. Active operations and Restore
+Rebuild confirmation block the transition without stopping or replacing their work.
+
+The action passes the original `.mbt` URL to the existing Restore workflow. An empty
+session starts Restore's own read-only Bundle inspection and ordinary Selection.
+The same Bundle preserves existing Selection and Preview, including existing error
+and refresh/recovery semantics. Replacing another session requires **Replace Current
+Restore Session?**: **Cancel** leaves Status and the prior Restore session unchanged;
+**Use Selected Environment** inspects the new Bundle afresh. Prior comparison is
+not proof of Restore eligibility; inspection failures retain normal Restore errors.
+
+Only the Bundle is passed, with no automatic selection of Different/Missing items,
+Prepare, Preview or Execute. The user selects components and explicitly requests
+Preview and Rebuild. Status reference/result and the reverse Restore → Status flow
+are preserved. Status → Restore handoff was implemented after completed Stage 16K
+and passed manual GUI acceptance.
 
 Implemented in normal Debug/Release: native Bundle file selection, the selected
 filename, Core comparison and fresh **Compare Again**. Reference changes clear
@@ -474,9 +501,8 @@ The additive Protocol V1 `bundle_path` comparison form and capability marker are
 implemented. Core validates and privately stages the Bundle, preserves its Blueprint
 selection/provenance, compares read-only and removes staging without publication or
 secure decryption. Desktop retains Bundle references only for the current window
-session. On first opening Status with no reference, the current Restore session's
-Bundle is offered as reference; Compare still requires an explicit action and fresh
-Core validation. This is not cached Verification evidence. Existing Debug sample
+session. The [Bundle handoff](#bundle-handoff) reuses this reference without cached
+Verification evidence. Existing Debug sample
 flows are unchanged. Focused automated checks and real-Mac GUI qualification are
 complete for Stage 16K Bundle-backed Status. Packaging/runtime hardening remains
 separate unfinished work.
