@@ -388,24 +388,58 @@ import SwiftUI
                 .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Sources")
         }
         let statusView = try! String(contentsOf: sources.appendingPathComponent("EnvironmentStatusView.swift"), encoding: .utf8)
-        let detailsStart = statusView.range(of: "DisclosureGroup(\"Reference Details\", isExpanded: $referenceDetailsExpanded)")!
-        let detailsEnd = statusView.range(of: "    private func chooseReference()", range: detailsStart.upperBound..<statusView.endIndex)!
-        let details = String(statusView[detailsStart.lowerBound..<detailsEnd.lowerBound])
         precondition(statusView.contains("Compare This Mac") && statusView.contains("Choose Saved Environment…"))
-        for technical in ["blueprint.path", "Generated Configuration", "No Blueprint", "Choose Blueprint…"] {
-            precondition(details.contains(technical), "Blueprint controls stay in reference disclosure")
+        precondition(statusView.contains("panel.canChooseDirectories = false") && statusView.contains("UTType(filenameExtension: \"mbt\")"))
+        precondition(statusView.contains("model.selectBundle(url)"))
+        precondition(statusView.contains("EnvironmentComparisonDomain(category: child)"))
+        precondition(statusView.contains("DisclosureGroup(isExpanded: expansion ?? $expanded)"))
+        precondition(statusView.contains("@ReferenceViewState<Bool> private var expanded = false"))
+        precondition(statusView.contains("if model.state != .choose { Spacer() }"))
+        precondition(statusView.contains("if model.reference != nil {"))
+        precondition(!statusView.contains("Text(result.summary)"))
+        precondition(statusView.contains(".font(.system(size: 13, weight: .semibold)).foregroundStyle(Color(nsColor: .labelColor))"))
+        precondition(statusView.contains("if let reason = item.comparisonTechnicalDetails"))
+        precondition(statusView.contains("if let explanation = item.comparisonExplanation"))
+        precondition(statusView.contains(".accessibilityLabel(\"Already Matches\")"))
+        precondition(statusView.contains("Image(systemName: \"checkmark\")"))
+
+        for technical in ["Choose Blueprint…", "Generated Configuration", "blueprint.path"] {
+            precondition(!statusView.contains(technical), "Status uses a Bundle, not internal reference controls")
         }
-        precondition(statusView.contains("@ReferenceViewState<Bool> private var referenceDetailsExpanded = false"))
-        precondition(details.contains(".disclosureGroupStyle(TaskDisclosureStyle(minimumHeight: 22))"))
         precondition(statusView.contains("EnvironmentComparisonView(result: result)"))
+        precondition(statusView.contains("$0 != .notApplicable || $0.count(result) > 0"))
+        precondition(statusView.contains("if Self.summaryOutcomes(result).count == 3") && statusView.contains("HStack(spacing: 10)"))
+
+        precondition(statusView.contains("result.categoryCount($0, category: entry.category, children: entry.children)"))
+        precondition(statusView.contains("counts[$0, default: 0] > 0") && statusView.contains("ComparisonOutcome.allCases.filter"))
+        precondition(statusView.contains(".foregroundStyle(outcome.tint).background(outcome.tint.opacity(0.12), in: Capsule())"))
+        precondition(statusView.contains("Full Diagnostic Details") && statusView.contains("fact.predicateTitle"))
+        let domainView = statusView.components(separatedBy: "struct EnvironmentComparisonDomain: View")[1].components(separatedBy: "struct EnvironmentComparisonItem: View")[0]
+        precondition(domainView.contains("Capsule()") && domainView.contains("if let counts"))
+        precondition(domainView.contains(".fontWeight(.semibold).foregroundStyle(.blue).frame(width: TaskRowLayout.iconWidth)"))
+        precondition(domainView.contains(".padding(.horizontal, 8).frame(minWidth: 46, minHeight: 23)"))
+        precondition(statusView.contains("Rectangle().fill(Color.primary.opacity(0.22)).frame(height: 1.5)"))
+
+        precondition(domainView.contains("if ![.different, .missing].contains(status) { statusLabel }"))
+        precondition(domainView.contains("Text(counts == nil ? category.comparisonStatusText : status.rawValue)"))
+        precondition(!domainView.contains("warningCompanion") && !domainView.contains("warning && outcomes"))
+
+        let sectionHeader = statusView.components(separatedBy: "Text(section.id)")[1].components(separatedBy: "VStack(spacing: 0)")[0]
+        precondition(!sectionHeader.contains("Capsule()") && !sectionHeader.contains("counts"))
+        precondition(domainView.contains("EnvironmentComparisonDomain(category: child)"))
+
         precondition(WorkspaceActionLayout.columns(659) == 1 && WorkspaceActionLayout.columns(660) == 3)
         precondition(WorkspaceMetricLayout.columns(899) == 2 && WorkspaceMetricLayout.columns(900) == 4)
         for task in ProductTask.allCases { precondition(NSImage(systemSymbolName: task.symbol, accessibilityDescription: nil) != nil) }
-        precondition(statusView.contains("WorkspacePrimaryActionCard(title: \"Compare This Mac\""))
-        precondition(statusView.contains("WorkspaceResultHeader(title:") && statusView.contains("ForEach(ComparisonOutcome.allCases)"))
+        precondition(statusView.contains("WorkspacePrimaryActionCard(title: \"Choose Saved Environment\""))
+        precondition(!statusView.contains("WorkspaceResultHeader(title:") && statusView.contains("ForEach(ComparisonOutcome.allCases)"))
 
         let content = try! String(contentsOf: sources.appendingPathComponent("ContentView.swift"), encoding: .utf8)
         let production = try! String(contentsOf: sources.appendingPathComponent("ProductionWorkspace.swift"), encoding: .utf8)
+        let scrollEnd = production.range(of: "                if navigation.task == .status && status.state == .result {")!
+        precondition(production[scrollEnd.lowerBound...].contains("EnvironmentStatusActions(model: status, runtime: runtime)"))
+        precondition(production.contains("EnvironmentStatusView(model: status, runtime: runtime, showsActions: status.state != .result)"))
+
         let app = try! String(contentsOf: sources.appendingPathComponent("MacseedApp.swift"), encoding: .utf8)
         let captureView = try! String(contentsOf: sources.appendingPathComponent("CaptureView.swift"), encoding: .utf8)
         precondition(!captureView.contains("Capture does not rebuild or change settings on this Mac."))
@@ -602,7 +636,7 @@ import SwiftUI
         print("PASS: Shared neutral material sidebar/header in production and preview; native Appearance setting")
         let categoryStart = content.range(of: "struct CategoryRow: View")!
         precondition(content[categoryStart.lowerBound...].contains("@ViewState<Bool> private var expanded = false"))
-        precondition(statusView.contains("ForEach(result.categories) { category in") && statusView.contains("EnvironmentComparisonDomain(category: category)"))
+        precondition(statusView.contains("ForEach(result.sections) { section in") && statusView.contains("EnvironmentComparisonDomain(category: entry.category, children: entry.children, technicalFacts: result.technicalFacts, counts: Dictionary("))
         let referenceRuntime = CoreRuntime()
         let referenceModel = EnvironmentStatusModel(runtime: referenceRuntime)
         let directory = URL(fileURLWithPath: "/private/tmp/presentation-saved-environment")

@@ -407,9 +407,9 @@ unresolved and extra facts retain their own labels in summary/details. Domain
 rows align four count pills and indicate additional findings without changing
 Core comparison statuses or taxonomy.
 
-The reference is explicit: a user-selected Generated Configuration directory and
-an optional Blueprint file, or explicitly no Blueprint. Explain this as “Compare
-this Mac with a saved configuration.” Show which reference is in use; do not
+The reference is explicit: a user-selected Saved Environment (`.mbt`). Explain
+this as “Compare your Mac with a saved environment.” Show which reference is in
+use; do not
 silently substitute ambient configuration, run Discovery or compare a Mac with a
 new scan of itself. First entry without a reference asks the user to choose one.
 
@@ -423,9 +423,27 @@ An empty comparable scope says “No comparable requirements”; unavailable/inv
 references ask for another reference, and changed references require a fresh check.
 Compare is an explicit read-only action; do not auto-run it after Restore.
 
-Implemented in normal Debug/Release: native folder/optional Blueprint selection,
-explicit reference paths, Core comparison and fresh **Compare Again**. Reference changes
-clear previous results; choosing another folder also clears the previous Blueprint.
+Implemented in normal Debug/Release: native Bundle file selection, the selected
+filename, Core comparison and fresh **Compare Again**. Reference changes clear
+previous results.
+Status shows Match, Different and Missing cards; Not Applicable appears only when
+nonzero. Blue category icons are preserved. Details reuse Core/Restore grouping,
+with one macOS Settings disclosure over participating child domains; Git Repositories
+appears in Workspace after Workspace Folders. Excluded inventory is hidden only in presentation.
+Diagnostics correlate to comparison items by their record owner and domain/item ID;
+matching evidence and independent warnings remain within one row. Matching items
+show a compact accessible checkmark without generic subtitles or Technical Details;
+problem items retain reasons and useful technical evidence. macOS child domains use
+independent collapsed disclosures inside macOS Settings; Expand All controls only
+main categories. Setting names reuse Capture labels.
+Category rows retain nonzero Core-record count pills. Already Matches indicates
+confirmed conformity; independent verification or coverage problems show Needs
+Attention. Confirmed differences alone produce Differences Found overall.
+Only Result actions use a fixed footer outside
+ScrollView; Choose/Failure actions stay with their content and Cancel sits left below
+the process card.
+App Store display names come from the validated Bundle/Restore label projection;
+missing names retain a neutral label and numeric ID in Technical Details.
 Summary omits zero counts and identifies unsupported/unknown-difference subsets.
 Collapsed categories expose descendant attention; details preserve matching, missing,
 different, unverified, unsupported and unresolved facts, plus Coverage/diagnostics.
@@ -433,14 +451,17 @@ Unavailable extra evidence is disclosed as unavailable; only Core-confirmed avai
 extras appear as items. Invalid reference, failed/interrupted operation or malformed
 result evidence cannot render a clean conclusion. Results/errors stay inline.
 The [development guide](../desktop/Macseed/README.md#real-environment-status-16d)
-provides the manual launch command. Stage 16D's real-Mac manual gate is approved.
+provides the manual launch command. The earlier Stage 16D manual gate was approved;
+Stage 16K Bundle-backed Status is accepted after real-Mac GUI qualification.
 
 ### Required final product reference before Macseed 1.0
 
-The current Generated Configuration folder/optional Blueprint picker is a
-**temporary development bridge**, not the intended final Desktop UX. Ordinary
-users must not need to find `config/generated`, choose a Blueprint file or
-understand those internal mechanisms.
+Normal Desktop now selects a Saved Environment `.mbt` through a native file picker;
+the Generated Configuration/Blueprint development bridge is no longer exposed.
+Selection shows the filename and clears old results without automatically comparing.
+Compare This Mac, Cancel, Compare Again and Choose a Different Environment remain
+explicit actions. Comparison metrics, collapsed Domain → Items and Technical
+Details preserve Core verdict/completeness and extra evidence.
 
 The final flow uses **Saved Environment / Bundle** consistently: Capture creates
 one, Restore selects one, and Environment Status selects one to compare with this
@@ -449,13 +470,16 @@ reference for verification/status without asking for internal directories.
 Blueprint may remain Core's internal selection mechanism; users normally express
 selection through Capture/Restore category/item controls.
 
-This is the immediate next functional priority, starting with a short Core/Desktop
-contract audit. The likely boundary is safely validated Bundle staging/reference
-extraction over the existing comparison engine. Preserve source selection and
-Blueprint semantics, read-only behavior and the `.mbt` format; insufficient evidence
-must not become Matches, Differences or Verified. Current Protocol V1 accepts
-Generated Configuration only; any minimal extension requires the audit first. Stage 16E implements neither
-Bundle-backed comparison nor a client-side Bundle parser or speculative V1 change.
+The additive Protocol V1 `bundle_path` comparison form and capability marker are
+implemented. Core validates and privately stages the Bundle, preserves its Blueprint
+selection/provenance, compares read-only and removes staging without publication or
+secure decryption. Desktop retains Bundle references only for the current window
+session. On first opening Status with no reference, the current Restore session's
+Bundle is offered as reference; Compare still requires an explicit action and fresh
+Core validation. This is not cached Verification evidence. Existing Debug sample
+flows are unchanged. Focused automated checks and real-Mac GUI qualification are
+complete for Stage 16K Bundle-backed Status. Packaging/runtime hardening remains
+separate unfinished work.
 
 Bundle-backed Status also provides the foundation for the
 [future Environment Manager](../ROADMAP.md#environment-manager--post-10--future-direction).
@@ -673,8 +697,8 @@ support catalog.
 structured results/events and the separate secret channel, without human stdout,
 stderr or log parsing. No blocking Core/API gap was found for these flows using signal-based Stop Rebuild;
 graceful item-boundary stopping is not provided, as specified above. Comparing
-a Bundle directly is unavailable in current V1 and tracked as the required final
-product reference above. Fine ordinary Restore selection is Core-supported;
+a Bundle directly is supported by the additive `bundle_path` form described above.
+Fine ordinary Restore selection is Core-supported;
 decrypted identity selection during Prepare and Desktop recovery remain outside
 the current contract. Any
 extension needs a precise Core contract decision, not a client-side parser.

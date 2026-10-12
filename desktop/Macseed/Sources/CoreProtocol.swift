@@ -78,6 +78,7 @@ enum CoreCommand: Sendable {
     case restorePrepare(path: String, disabledGroups: [String], includeSecure: Bool, selection: CoreRestoreSelection? = nil)
     case restoreExecute(path: String, disabledGroups: [String], includeSecure: Bool, preparedID: String, selection: CoreRestoreSelection? = nil)
     case environmentCompare(generatedDirectory: String, blueprintPath: String?)
+    case environmentCompareBundle(path: String)
 
     var operation: CoreOperation {
         switch self {
@@ -87,7 +88,7 @@ enum CoreCommand: Sendable {
         case .captureExecute: .captureExecute
         case .restorePrepare: .restorePrepare
         case .restoreExecute: .restoreExecute
-        case .environmentCompare: .environmentCompare
+        case .environmentCompare, .environmentCompareBundle: .environmentCompare
         }
     }
     var requiresSecretBridge: Bool {
@@ -122,6 +123,8 @@ enum CoreCommand: Sendable {
             values["expected_prepared_plan_id"] = .string(id)
             if let selection { values["selection"] = try JSONDecoder().decode(CoreJSON.self, from: JSONEncoder().encode(selection)) }
             return .object(values)
+        case .environmentCompareBundle(let path):
+            return .object(["bundle_path": .string(path)])
         case .environmentCompare(let directory, let blueprint):
             return .object(["generated_dir": .string(directory), "blueprint_path": blueprint.map(CoreJSON.string) ?? .null])
         }
@@ -203,6 +206,7 @@ struct CoreCapabilities: Decodable, Sendable {
     let productVersion: String
     let operations: [String]
     let features: [String: CoreJSON]?
+    var supportsBundleComparison: Bool { features?["bundle_comparison"]?.object?["version"]?.integer == 1 }
     var supportsRestoreSelection: Bool { features?["restore_selection"]?.object?["version"]?.integer == 1 }
     enum CodingKeys: String, CodingKey {
         case protocolVersion = "protocol_version", productVersion = "product_version", operations, features

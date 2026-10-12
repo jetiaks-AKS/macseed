@@ -6,9 +6,6 @@ Concrete unfinished work. Outcomes and stage status are in [Roadmap](ROADMAP.md)
 
 Implement the [Desktop contract](docs/DESKTOP.md) in vertical slices:
 
-- [ ] 16K: Start Bundle-backed Environment Status with a short Core/Desktop contract
-  audit before implementation; use the existing comparison engine, preserve source
-  selection/Blueprint and read-only semantics, and audit any Protocol V1 extension.
 - [ ] 16H: Secure FD/challenge bridge, SSH opt-in, encryption/unlock/import
   confirmation and application age/OpenSSH PTY qualification.
 - [ ] 16I: Complete remaining completion qualification beyond the now-implemented
@@ -24,11 +21,6 @@ Implement the [Desktop contract](docs/DESKTOP.md) in vertical slices:
   identity; preserve useful typed support context.
 - [ ] 16K: Qualify managed private writable Core workspace for root-relative
   logs/config before packaged workflows; retain signed resources read-only.
-- [ ] 16K: Complete Bundle-backed Environment Status before 1.0: validated
-  staging/reference extraction over the existing comparison engine, including the
-  restored Saved Environment as natural status reference. Replace the temporary
-  internal folder/Blueprint picker; qualify the Core contract when implementing.
-  See [final product reference](docs/DESKTOP.md#required-final-product-reference-before-macseed-10).
 - [ ] Functional UI consistency during Compatibility & Reliability: reuse
   qualified Restore/Capture presentation in Environment Status and Settings. Use Domain → Items and
   one presentation model across Preview → Rebuild → Verification → Result,

@@ -40,10 +40,13 @@ class CompareTests(unittest.TestCase):
  case "$TEST_MODE" in missing) exit 0;; error) exit 2;; slow) echo $$ > "$TEST_PID"; exec sleep 30;; esac
  echo git;;
 'list --cask') echo extra-app;;
+'info --json=v2 --cask reference-app') echo '{"casks":[]}' ;;
 *) echo "brew $*" >> "$TEST_MUTATIONS"; exit 99;; esac''')
         for name in ('sudo', 'defaults', 'killall', 'mas', 'code', 'curl', 'xcode-select'):
             self.mock(name, 'echo "$0 $*" >> "$TEST_MUTATIONS"; exit 99')
-        self.environment = dict(os.environ, HOME=str(self.home), PATH=str(self.bin) + ':' + os.environ['PATH'],
+        self.temporary = self.root / 'temporary'
+        self.temporary.mkdir()
+        self.environment = dict(os.environ, TMPDIR=str(self.temporary), HOME=str(self.home), PATH=str(self.bin) + ':' + os.environ['PATH'],
                                 TEST_MUTATIONS=str(self.mutations), TEST_MODE='matching', TEST_PID=str(self.root / 'pid'),
                                 GIT_CONFIG_NOSYSTEM='1', XDG_CONFIG_HOME=str(self.home / '.config'))
         self.blueprint = self.root / 'blueprint.conf'
@@ -62,7 +65,7 @@ class CompareTests(unittest.TestCase):
                                   f'[homebrew-packages]\n{packages}\n[homebrew-casks]\n{casks}\n[app-store]\n[vscode-extensions]\n[workspace-folders]\n[git-repositories]\n')
 
     def payload(self, **overrides):
-        parameters = dict(generated_dir=str(self.generated), blueprint_path=str(self.blueprint))
+        parameters = {} if "bundle_path" in overrides else dict(generated_dir=str(self.generated), blueprint_path=str(self.blueprint))
         parameters.update(overrides)
         return json.dumps(dict(protocol_version=1, operation_id='compare-test', operation='environment_compare', parameters=parameters)).encode()
 
@@ -78,10 +81,11 @@ class CompareTests(unittest.TestCase):
         self.assertEqual(before, self.snapshot())
         self.assertFalse((self.project / 'logs').exists())
         self.assertFalse(list(self.project.rglob('__pycache__')))
+        self.assertEqual(list(self.temporary.glob("macseed-compare-*")), [])
         return result, events
 
     def snapshot(self):
-        return {str(p.relative_to(self.root)): p.read_bytes() for base in (self.generated, self.home) for p in base.rglob('*') if p.is_file()}
+        return {str(p.relative_to(self.root)): p.read_bytes() for base in (self.generated, self.home, self.project / 'config') for p in base.rglob('*') if p.is_file()}
 
     def comparison(self, **overrides):
         result, events = self.invoke(**overrides)
@@ -89,6 +93,130 @@ class CompareTests(unittest.TestCase):
         self.assertEqual(events[-1]['type'], 'completed')
         self.assertTrue(any(e['type'] == 'execution_event' and e['data']['read_only'] for e in events))
         return next(e['data'] for e in events if e['type'] == 'result')
+
+    def make_bundle(self, secure=False):
+        stage = self.root / 'bundle-stage'
+        if stage.exists(): shutil.rmtree(stage)
+        stage.mkdir()
+        shutil.copytree(self.generated, stage / 'generated')
+        (stage / 'blueprint.conf').write_text(self.blueprint.read_text() + '[git-configuration]\n')
+        if secure:
+            (stage / 'secure.age').write_bytes(b'age-encryption.org/v1\nopaque encrypted fixture')
+        output = self.root / 'saved.mbt'
+        output.unlink(missing_ok=True)
+        packed = subprocess.run([sys.executable, str(self.project / 'modules/bundle/bundle.py'), 'pack',
+                                str(stage), str(output), str(self.home)], capture_output=True)
+        self.assertEqual(packed.returncode, 0, packed.stderr.decode())
+        return output
+
+    def test_bundle_reference_selection_and_read_only(self):
+        path = self.make_bundle(secure=True)
+        data = self.comparison(bundle_path=str(path))
+        self.assertEqual(data['comparison']['counts']['matching'], 1)
+        self.assertFalse(data['publication_occurred'])
+        self.environment['TEST_MODE'] = 'missing'
+        self.assertEqual(self.comparison(bundle_path=str(path))['comparison']['counts']['missing'], 1)
+        self.environment['TEST_MODE'] = 'error'
+        self.assertEqual(self.comparison(bundle_path=str(path))['comparison']['verdict'], 'incomplete')
+        self.environment['TEST_MODE'] = 'matching'
+        # Full inventory is not selected scope; retain completeness for extras.
+        self.write_blueprint(packages='', casks='')
+        inventory = self.generated / 'brew-casks.conf'
+        inventory.write_text('reference-app\n')
+        marker = self.generated / 'provenance/homebrew-casks.sha256'
+        marker.parent.mkdir()
+        marker.write_text('complete ' + hashlib.sha256(inventory.read_bytes()).hexdigest() + '\n')
+        data = self.comparison(bundle_path=str(self.make_bundle()))
+        self.assertFalse(data['comparison_records'])
+        self.assertFalse(any(r['domain'] == 'homebrew-casks' and r['disposition'] == 'resolved'
+                             for r in data['records']['coverage_records']))
+        self.assertEqual(data['extra']['items'], [])
+        self.assertEqual(data['extra']['domains'][0]['reason'], 'category_excluded')
+        self.write_blueprint(packages='', casks='reference-app')
+        data = self.comparison(bundle_path=str(self.make_bundle()))
+        self.assertEqual(data['extra']['items'], [{'domain': 'homebrew-casks', 'item_id': 'extra-app'}])
+        # Selected subset remains narrowed even with full source inventory.
+        self.write_blueprint(packages='git')
+        (self.generated / 'brew-packages.conf').write_text('git\nwget\n')
+        data = self.comparison(bundle_path=str(self.make_bundle()))
+        self.assertEqual([r['item_id'] for r in data['comparison_records']], ['git'])
+        self.write_blueprint(categories=('vscode-settings',), packages='')
+        (self.generated / 'vscode').mkdir()
+        (self.generated / 'vscode/settings.json').write_text('{"secret":"reference-token"}')
+        target = self.home / 'Library/Application Support/Code/User'
+        target.mkdir(parents=True)
+        (target / 'settings.json').write_text('{"secret":"current-token"}')
+        data = self.comparison(bundle_path=str(self.make_bundle()))
+        self.assertEqual(data['comparison']['counts']['differing'], 1)
+        self.assertNotIn('reference-token', json.dumps(data))
+
+    def test_bundle_app_store_presentation_names(self):
+        self.write_blueprint(packages='')
+        self.blueprint.write_text(self.blueprint.read_text().replace('[app-store]\n', '[app-store]\n1136220934\n'))
+        (self.generated / 'appstore.conf').write_text('1136220934|Infuse\n')
+        self.mock('mas', '[[ "$*" == list ]] || exit 99; echo "1136220934 Infuse (8.0)"')
+        data = self.comparison(bundle_path=str(self.make_bundle()))
+        self.assertEqual(data['reference_presentation']['app_store_names'], {'1136220934': 'Infuse'})
+        self.assertEqual(data['comparison_records'][0]['item_id'], '1136220934')
+        self.assertTrue(any(g['id'] == 'Applications' and 'app-store' in g['domains']
+                            for g in data['reference_presentation']['groups']))
+
+    def test_bundle_repository_display_labels_keep_diagnostics_private(self):
+        self.write_blueprint(packages='')
+        names = ['macseed', 'bootstrap-test', 'private/name']
+        self.blueprint.write_text(self.blueprint.read_text().replace('[git-repositories]\n', '[git-repositories]\n' + '\n'.join(names) + '\n'))
+        workspace = self.generated / 'workspace'
+        workspace.mkdir()
+        (workspace / 'repositories.conf').write_text(''.join(
+            f'[{name}]\nNAME="{name}"\nPATH="{self.home}/Projects/{index}/same"\nREMOTE="https://example.invalid/repo.git"\nDEFAULT_BRANCH="main"\nCURRENT_BRANCH="main"\nHAS_UNCOMMITTED_CHANGES="false"\nHAS_VSCODE_FOLDER="false"\nHAS_SETTINGS="false"\nHAS_TASKS="false"\nHAS_LAUNCH="false"\nHAS_EXTENSIONS="false"\n'
+            for index, name in enumerate(names)))
+        data = self.comparison(bundle_path=str(self.make_bundle()))
+        key = lambda name: 'opaque:' + hashlib.sha256(name.encode()).hexdigest()
+        self.assertEqual(data['reference_presentation']['repository_labels'], {key(name): name for name in names[:2]})
+        self.assertEqual(data['comparison']['counts']['missing'], 3)
+        self.assertEqual(data['comparison']['counts']['unverified'], 6)
+        self.assertEqual(data['comparison']['verdict'], 'differences_detected')
+        self.assertEqual(len(data['comparison_records']), 9)
+        raw = json.dumps({'records': data['records'], 'comparison_records': data['comparison_records']})
+        for name in names: self.assertNotIn(name, raw)
+        self.assertNotIn(str(self.home), json.dumps(data))
+        self.assertTrue(all(row['item_id'].startswith('opaque:') for row in data['comparison_records']))
+
+    def test_bundle_macos_labels_reuse_capture_definitions(self):
+        self.write_blueprint(categories=('macos-dock',), packages='')
+        directory = self.generated / 'macos'
+        directory.mkdir()
+        (directory / 'dock.conf').write_text('com.apple.dock|autohide|bool|true\ncom.apple.dock|magnification|bool|false\n')
+        self.mock('defaults', '[[ "$1" == read ]] || exit 99; [[ "$3" == autohide ]] && echo 1 || echo 0')
+        data = self.comparison(bundle_path=str(self.make_bundle()))
+        self.assertEqual(data['reference_presentation']['setting_labels']['macos-dock'], {
+            'com.apple.dock/autohide': 'Auto-hide', 'com.apple.dock/magnification': 'Magnification'})
+
+    def test_bundle_invalid_unsafe_and_changed(self):
+        path = self.make_bundle()
+        for parameters in ({'bundle_path': 'relative'}, {'bundle_path': str(path), 'generated_dir': str(self.generated)}):
+            result, events = self.invoke(**parameters)
+            self.assertEqual(events[-1]['data']['code'], 'invalid_request')
+        alias = self.root / 'alias.mbt'
+        alias.symlink_to(path)
+        self.assertEqual(self.invoke(bundle_path=str(alias))[1][-1]['data']['code'], 'bundle_invalid')
+        self.assertEqual(self.invoke(bundle_path=str(self.root / 'absent.mbt'))[1][-1]['data']['code'], 'bundle_unavailable')
+        path.write_bytes(b'corrupted archive')
+        self.assertEqual(self.invoke(bundle_path=str(path))[1][-1]['data']['code'], 'bundle_invalid')
+        # Mutation of the reference during observation cannot publish a clean result.
+        path = self.make_bundle()
+        self.environment['TEST_BUNDLE'] = str(path)
+        self.mock('brew', 'echo changed >> "$TEST_BUNDLE"; echo git')
+        result, events = self.invoke(bundle_path=str(path))
+        self.assertEqual(events[-1]['data']['code'], 'reference_changed')
+        self.assertFalse(any(e['type'] == 'result' for e in events))
+
+    def test_bundle_cancellation_cleanup(self):
+        path = self.make_bundle()
+        original = self.payload
+        self.payload = lambda **kwargs: original(bundle_path=str(path))
+        self.test_cancellation_owned_group()
+        self.assertEqual(list(self.temporary.glob("macseed-compare-*")), [])
 
     def test_matching_and_projections(self):
         data = self.comparison()

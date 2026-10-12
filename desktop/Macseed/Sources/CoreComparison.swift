@@ -2,6 +2,14 @@ import Foundation
 
 // Decodes the existing V1 projection. No observers or comparison predicates live here.
 struct CoreComparisonResult: Decodable {
+    let referencePresentation: ReferencePresentation?
+    struct ReferencePresentation: Decodable {
+        let groups: [CoreRestoreInspection.Group]
+        let appStoreNames: [String: String]
+        let repositoryLabels: [String: String]?
+        let settingLabels: [String: [String: String]]?
+        enum CodingKeys: String, CodingKey { case groups, appStoreNames = "app_store_names", settingLabels = "setting_labels", repositoryLabels = "repository_labels" }
+    }
     let readOnly: Bool
     let publicationOccurred: Bool
     let targetMutationMayHaveStarted: Bool
@@ -13,6 +21,7 @@ struct CoreComparisonResult: Decodable {
     enum CodingKeys: String, CodingKey {
         case readOnly = "read_only", publicationOccurred = "publication_occurred"
         case targetMutationMayHaveStarted = "target_mutation_may_have_started"
+        case referencePresentation = "reference_presentation"
         case comparison, comparisonRecords = "comparison_records", verification, records, extra
     }
     struct Summary: Decodable {
@@ -36,10 +45,11 @@ struct CoreComparisonResult: Decodable {
     }
     struct Verification: Decodable { let status: String }
     struct Owner: Decodable {
+        let predicate: String?
         let recordID: String
         let domain: String
         let itemID: String
-        enum CodingKeys: String, CodingKey { case recordID = "record_id", domain, itemID = "item_id" }
+        enum CodingKeys: String, CodingKey { case recordID = "record_id", domain, itemID = "item_id", predicate }
     }
     struct Coverage: Decodable {
         let recordID: String

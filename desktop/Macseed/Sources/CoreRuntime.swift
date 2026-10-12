@@ -14,6 +14,7 @@ enum CoreRuntimeState: String { case idle, launching, running, completed, failed
     @Published private(set) var latestResult: CoreEvent?
     @Published private(set) var error: CoreRuntimeError?
     @Published private(set) var termination: CoreProcessOutcome?
+    private(set) var bundleComparisonSupported: Bool?
     @Published private(set) var capabilities: CoreCapabilities?
     @Published private(set) var mutationMayHaveStarted: Bool?
     @Published private(set) var publicationOccurred: Bool?
@@ -26,6 +27,7 @@ enum CoreRuntimeState: String { case idle, launching, running, completed, failed
 
     func start(_ request: CoreRequest, location: CoreLocation? = nil) {
         guard !isActive else { return }
+        if request.command.operation == .capabilities { bundleComparisonSupported = nil }
         state = .launching
         operationID = request.operationID
         operation = request.command.operation
@@ -88,6 +90,7 @@ enum CoreRuntimeState: String { case idle, launching, running, completed, failed
                     guard value.protocolVersion == 1 else { throw CoreRuntimeError.incompatibleProtocol(value.protocolVersion) }
                     guard !value.productVersion.isEmpty else { throw CoreRuntimeError.malformedEvent }
                     capabilities = value
+                    bundleComparisonSupported = value.supportsBundleComparison
                     state = .completed
                 } catch { self.error = error as? CoreRuntimeError ?? .malformedEvent; state = .failed }
             } else { state = .completed } // Operation completion, never a conformity verdict.

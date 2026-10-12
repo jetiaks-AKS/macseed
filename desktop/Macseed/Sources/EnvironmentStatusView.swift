@@ -1,35 +1,48 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 private typealias ReferenceViewState<Value> = SwiftUI.State<Value>
 
 struct EnvironmentStatusView: View {
     @ObservedObject var model: EnvironmentStatusModel
     @ObservedObject var runtime: CoreRuntime
-    @ReferenceViewState<Bool> private var referenceDetailsExpanded = false
+    var showsActions = true
     private var busy: Bool { runtime.isActive || model.state == .running }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
             switch model.state {
             case .choose:
-                WorkspacePrimaryActionCard(title: "Compare This Mac", symbol: ProductTask.restore.symbol, tint: WorkspaceIdentity.tint(.status),
-                    message: "Choose a saved environment to compare with this Mac.", notice: "Nothing will be removed or changed.") {
-                    Button("Choose Saved Environment…", action: chooseReference).disabled(busy)
+                WorkspacePrimaryActionCard(title: "Choose Saved Environment", symbol: ProductTask.status.symbol, tint: WorkspaceIdentity.tint(.status),
+                    message: "Select a Macseed Saved Environment (.mbt) to compare with this Mac.", notice: "Read-only comparison. Nothing will be installed, removed or changed.") {
+                    if showsActions { EnvironmentStatusActions(model: model, runtime: runtime) }
                     referenceDetails
-                    Button("Compare") { model.compare() }.buttonStyle(.borderedProminent).disabled(model.reference == nil || busy)
                 }
 
             case .running:
-                OperationSummaryHeader(title: "Comparing This Mac", message: runtime.stopping ? "Stopping comparison…" : "Comparing saved environment…",
-                    state: .working, counters: [], suppliedMetrics: [], scopeSummary: "Read-only comparison")
-                Button("Cancel") { model.cancel() }.disabled(runtime.stopping)
+                VStack(alignment: .leading, spacing: 16) {
+                    HStack(spacing: 16) {
+                        ProgressView().controlSize(.large).frame(width: 40, height: 40).accessibilityHidden(true)
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Comparing Your Mac").font(.title2.weight(.bold))
+                            Text(runtime.stopping ? "Stopping comparison…" : (runtime.currentPhase == "bundle_validation" ? "Validating the saved environment…" : "Comparing supported requirements…"))
+                                .font(.callout).foregroundStyle(.secondary)
+                        }
+                    }
+                    Divider()
+                    Label("Read-only comparison. Nothing will be installed, removed or changed.", systemImage: "checkmark.shield")
+                        .font(.callout).foregroundStyle(.secondary)
+                }.padding(18).frame(maxWidth: .infinity, alignment: .leading)
+                    .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 12))
+                if showsActions { EnvironmentStatusActions(model: model, runtime: runtime) }
             case .result:
-                WorkspaceResultHeader(title: ProductTask.status.rawValue, subtitle: ProductTask.status.subtitle, symbol: ProductTask.status.symbol) {
-                    comparisonActions
-                }
-                if let result = model.presentation { EnvironmentComparisonView(result: result).id(model.operationID) }
                 referenceDetails
+                if let result = model.presentation {
+                    Text(result.headline).font(.title2.weight(.semibold))
+                    EnvironmentComparisonView(result: result).id(model.operationID)
+                }
+                if showsActions { EnvironmentStatusActions(model: model, runtime: runtime) }
             case .failed, .cancelled:
                 OperationSummaryHeader(title: model.state == .cancelled ? "Comparison Cancelled" : "Needs Attention",
                     message: model.failure?.message ?? "No complete comparison is available.",
@@ -38,95 +51,114 @@ struct EnvironmentStatusView: View {
                     DisclosureGroup("Technical Details") { Text(reason).font(.caption.monospaced()).textSelection(.enabled) }
                         .disclosureGroupStyle(TaskDisclosureStyle(minimumHeight: 22))
                 }
-                comparisonActions
+                if showsActions { EnvironmentStatusActions(model: model, runtime: runtime) }
                 referenceDetails
             }
-        }.onChange(of: model.reference) { _, _ in referenceDetailsExpanded = false }
-    }
-
-    private var comparisonActions: some View {
-        HStack {
-            Button("Choose a Different Environment…", action: chooseReference).disabled(busy)
-            Divider().frame(height: 20)
-            Button("Compare Again") { model.compare() }.buttonStyle(.borderedProminent).disabled(model.reference == nil || busy)
         }
     }
 
     @ViewBuilder private var referenceDetails: some View {
-        if let reference = model.reference {
-            VStack(alignment: .leading, spacing: 6) {
-                Label(reference.generatedDirectory.lastPathComponent, systemImage: "folder").font(.headline)
-                Text(reference.generatedDirectory.path).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
-                DisclosureGroup("Reference Details", isExpanded: $referenceDetailsExpanded) {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text("Generated Configuration · " + (reference.blueprint == nil ? "No Blueprint" : "Selected Blueprint"))
-                            .font(.callout).foregroundStyle(.secondary)
-                        if let blueprint = reference.blueprint { Text(blueprint.path).font(.caption).textSelection(.enabled) }
-                        HStack {
-                            Button("Choose Blueprint…", action: chooseBlueprint)
-                            if reference.blueprint != nil { Button("No Blueprint") { model.selectBlueprint(nil) } }
-                        }.disabled(busy)
-                    }
-                }.disclosureGroupStyle(TaskDisclosureStyle(minimumHeight: 22))
+        if let bundle = model.reference?.bundle { Label(bundle.lastPathComponent, systemImage: "shippingbox").font(.headline) }
+    }
+}
+
+struct EnvironmentStatusActions: View {
+    @ObservedObject var model: EnvironmentStatusModel
+    @ObservedObject var runtime: CoreRuntime
+    private var busy: Bool { runtime.isActive || model.state == .running }
+    var body: some View {
+        HStack(spacing: 12) {
+            if model.state == .running {
+                Button("Cancel") { model.cancel() }.disabled(runtime.stopping)
+                Spacer()
+            } else {
+                Button(model.reference == nil ? "Choose Saved Environment…" : "Choose a Different Environment…", action: chooseReference).disabled(busy)
+                if model.state != .choose { Spacer() }
+                if model.reference != nil {
+                    Button(model.state == .choose ? "Compare This Mac" : "Compare Again") { model.compare() }
+                        .buttonStyle(.borderedProminent).disabled(busy)
+                }
             }
         }
     }
-
     private func chooseReference() {
         let panel = NSOpenPanel()
         panel.title = "Choose Saved Environment"
-        panel.message = "Choose the folder containing your saved environment."
+        panel.message = "Select a Macseed Saved Environment (.mbt) to compare with this Mac."
         panel.prompt = "Choose Saved Environment"
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = false
-        panel.allowsMultipleSelection = false
-        panel.canCreateDirectories = false
-        present(panel) { model.selectReference($0) }
-    }
-    private func chooseBlueprint() {
-        let panel = NSOpenPanel()
-        panel.title = "Choose Blueprint"
-        panel.message = "Choose an optional Blueprint to limit the comparison scope."
-        panel.prompt = "Choose Blueprint"
         panel.canChooseDirectories = false
         panel.canChooseFiles = true
+        panel.allowedContentTypes = [UTType(filenameExtension: "mbt") ?? .data]
         panel.allowsMultipleSelection = false
         panel.canCreateDirectories = false
-        present(panel) { model.selectBlueprint($0) }
-    }
-    private func present(_ panel: NSOpenPanel, selected: @escaping (URL) -> Void) {
-        // A native chooser is the only modal boundary; all result/error states stay inline.
-        if let window = NSApp.keyWindow {
-            panel.beginSheetModal(for: window) { response in
-                if response == .OK, let url = panel.url { selected(url) }
-            }
-        } else {
-            panel.begin { response in if response == .OK, let url = panel.url { selected(url) } }
+        let selected: (NSApplication.ModalResponse) -> Void = { response in
+            if response == .OK, let url = panel.url { model.selectBundle(url) }
         }
+        if let window = NSApp.keyWindow { panel.beginSheetModal(for: window, completionHandler: selected) }
+        else { panel.begin(completionHandler: selected) }
     }
 }
 
 // Comparison retains its own truthful status vocabulary, using shared surfaces/disclosures.
 struct EnvironmentComparisonView: View {
     let result: EnvironmentStatusPresentation
+    @ReferenceViewState<Set<String>> private var expandedCategories = []
+    private var categoryIDs: Set<String> { Set(result.sections.flatMap(\.entries).map(\.id)) }
+    static func toggledCategories(_ expanded: Set<String>, ids: Set<String>) -> Set<String> {
+        ids.isSubset(of: expanded) ? [] : ids
+    }
+    static func summaryOutcomes(_ result: EnvironmentStatusPresentation) -> [ComparisonOutcome] {
+        ComparisonOutcome.allCases.filter { $0 != .notApplicable || $0.count(result) > 0 }
+    }
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
+            if Self.summaryOutcomes(result).count == 3 {
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 10) {
+                        ForEach(Self.summaryOutcomes(result)) { outcome in
+                            ComparisonMetricCard(outcome: outcome, count: outcome.count(result)).frame(minWidth: 220)
+                        }
+                    }
+                    VStack(spacing: 10) {
+                        ForEach(Self.summaryOutcomes(result)) { outcome in
+                            ComparisonMetricCard(outcome: outcome, count: outcome.count(result))
+                        }
+                    }
+                }
+            } else {
             WorkspaceMetricLayout {
                 ForEach(ComparisonOutcome.allCases) { outcome in
                     ComparisonMetricCard(outcome: outcome, count: outcome.count(result))
                 }
             }
-            VStack(alignment: .leading, spacing: 4) {
-                Text(result.message).font(.callout).foregroundStyle(.secondary)
-                if !result.summary.isEmpty { Text(result.summary).font(.caption).foregroundStyle(.secondary) }
             }
-            Text("Details by Domain").font(.headline).accessibilityAddTraits(.isHeader)
-            VStack(spacing: 0) {
-                ForEach(result.categories) { category in
-                    EnvironmentComparisonDomain(category: category)
-                    if category.id != result.categories.last?.id { Divider() }
+            if result.needsAttention || result.counts["extra", default: 0] > 0 || result.counts["unverified", default: 0] > 0 || result.counts["unresolved", default: 0] > 0 {
+                Text(result.message).font(.callout).foregroundStyle(.secondary)
+            }
+            HStack {
+                Text("Details by Category").font(.headline).accessibilityAddTraits(.isHeader)
+                Spacer()
+                if !categoryIDs.isEmpty {
+                    Button(categoryIDs.isSubset(of: expandedCategories) ? "Collapse All" : "Expand All") {
+                        expandedCategories = Self.toggledCategories(expandedCategories, ids: categoryIDs)
+                    }.buttonStyle(.plain).foregroundStyle(.secondary)
                 }
-            }.modifier(WorkspaceCardSurface())
+            }
+            ForEach(result.sections) { section in
+                HStack(spacing: 12) {
+                    Text(section.id).font(.system(size: 13, weight: .semibold)).foregroundStyle(Color(nsColor: .labelColor))
+                    Rectangle().fill(Color.primary.opacity(0.22)).frame(height: 1.5)
+
+                }.padding(.top, 12).padding(.bottom, 4).accessibilityAddTraits(.isHeader)
+                VStack(spacing: 0) {
+                    ForEach(section.entries) { entry in
+                        EnvironmentComparisonDomain(category: entry.category, children: entry.children, technicalFacts: result.technicalFacts, counts: Dictionary(uniqueKeysWithValues: ComparisonOutcome.allCases.map { ($0, result.categoryCount($0, category: entry.category, children: entry.children)) }), expansion: Binding(
+                            get: { expandedCategories.contains(entry.id) },
+                            set: { if $0 { expandedCategories.insert(entry.id) } else { expandedCategories.remove(entry.id) } }))
+                        if entry.id != section.entries.last?.id { Divider() }
+                    }
+                }.modifier(WorkspaceCardSurface())
+            }
             Text("Nothing will be removed or changed.").font(.callout).foregroundStyle(.secondary)
         }
     }
@@ -134,22 +166,20 @@ struct EnvironmentComparisonView: View {
 
 struct EnvironmentComparisonDomain: View {
     let category: DisplayCategory
+    var children: [DisplayCategory] = []
+    var technicalFacts: [String: [ComparisonTechnicalFact]] = [:]
+    var counts: [ComparisonOutcome: Int]? = nil
+    var expansion: Binding<Bool>? = nil
     @ReferenceViewState<Bool> private var expanded = false
     var body: some View {
-        DisclosureGroup(isExpanded: $expanded) {
+        DisclosureGroup(isExpanded: expansion ?? $expanded) {
             VStack(alignment: .leading, spacing: 0) {
-                ForEach(category.items) { item in
-                    HStack(alignment: .top, spacing: 12) {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(item.title)
-                            Text(item.action).font(.caption).foregroundStyle(.secondary)
-                            if let reason = item.reason {
-                                DisclosureGroup("Technical Details") { Text(reason).font(.caption.monospaced()).textSelection(.enabled) }
-                                    .disclosureGroupStyle(TaskDisclosureStyle(minimumHeight: 22)).font(.caption)
-                            }
-                        }.frame(maxWidth: .infinity, alignment: .leading)
-                        EnvironmentComparisonStatusLabel(status: item.status).frame(width: TaskRowLayout.statusWidth, alignment: .leading)
-                    }.padding(.vertical, 7)
+                if !children.isEmpty {
+                    ForEach(children) { child in
+                        EnvironmentComparisonDomain(category: child)
+                    }
+                } else {
+                    ForEach(category.items) { item in EnvironmentComparisonItem(item: item, facts: technicalFacts[item.id] ?? []) }
                 }
             }.padding(.leading, 36).padding(.vertical, 4)
         } label: {
@@ -161,26 +191,90 @@ struct EnvironmentComparisonDomain: View {
     }
     private var title: some View {
         HStack(spacing: 12) {
-            Image(systemName: category.symbol).foregroundStyle(.blue).frame(width: TaskRowLayout.iconWidth).accessibilityHidden(true)
+            Image(systemName: category.symbol).fontWeight(.semibold).foregroundStyle(.blue).frame(width: TaskRowLayout.iconWidth).accessibilityHidden(true)
             Text(category.title).font(.body.weight(.medium))
         }
     }
-    private var domainStatus: some View {
-        HStack(spacing: 8) {
-            ForEach(ComparisonOutcome.allCases) { outcome in
-                Text(String(category.items.filter { $0.status == outcome.status }.count))
-                    .font(.caption.weight(.medium)).monospacedDigit().foregroundStyle(outcome.tint)
-                    .frame(width: 38, height: 20).background(outcome.tint.opacity(0.10), in: Capsule())
-                    .accessibilityLabel(outcome.title).accessibilityValue(String(category.items.filter { $0.status == outcome.status }.count))
-            }
-            let other = category.items.filter { !ComparisonOutcome.allCases.map(\.status).contains($0.status) }
-            if !other.isEmpty {
-                let attention = other.contains { [.unverified, .unresolved, .unsupported, .attention].contains($0.status) }
-                Image(systemName: attention ? "exclamationmark.triangle" : "info.circle")
-                    .foregroundStyle(attention ? Color.orange : Color.secondary).frame(width: 18)
-                    .accessibilityLabel(other.map { $0.status.rawValue }.joined(separator: ", "))
-            } else { Color.clear.frame(width: 18, height: 1).accessibilityHidden(true) }
-        }
+    static func visibleOutcomes(_ counts: [ComparisonOutcome: Int]) -> [ComparisonOutcome] {
+        ComparisonOutcome.allCases.filter { counts[$0, default: 0] > 0 }
+    }
+    static func summaryStatus(_ category: DisplayCategory) -> DisplayStatus {
+        return category.comparisonStatus
+    }
+    private var status: DisplayStatus { counts == nil ? category.comparisonStatus : Self.summaryStatus(category) }
+    @ViewBuilder private var domainStatus: some View {
+        if let counts {
+            HStack(spacing: 6) {
+                if ![.different, .missing].contains(status) { statusLabel }
+                ForEach(Self.visibleOutcomes(counts)) { outcome in
+                    Text(String(counts[outcome, default: 0])).font(.caption2.weight(.semibold)).monospacedDigit()
+                        .padding(.horizontal, 8).frame(minWidth: 46, minHeight: 23)
+                        .foregroundStyle(outcome.tint).background(outcome.tint.opacity(0.12), in: Capsule())
+                        .accessibilityLabel(outcome.title).accessibilityValue(String(counts[outcome, default: 0]))
+                }
+            }.fixedSize()
+        } else { statusLabel }
+    }
+    private var statusLabel: some View {
+        Label {
+            Text(counts == nil ? category.comparisonStatusText : status.rawValue)
+        } icon: {
+            Image(systemName: status.symbol)
+        }.font(.callout).foregroundStyle(status == .matching ? RestoreStatusTone.success.color :
+            (status == .missing ? Color.red : ([.noRequirement, .information, .extra].contains(status) ? Color.secondary : Color.orange)))
+    }
+}
+
+struct EnvironmentComparisonItem: View {
+    let item: DisplayItem
+    var facts: [ComparisonTechnicalFact] = []
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(item.title)
+                if let explanation = item.comparisonExplanation {
+                    Text(explanation).font(.caption).foregroundStyle(.secondary)
+                }
+                if let reason = item.comparisonTechnicalDetails {
+                    DisclosureGroup("Technical Details") {
+                        if facts.isEmpty { Text(reason).font(.caption.monospaced()).textSelection(.enabled) }
+                        else {
+                            VStack(alignment: .leading, spacing: 6) {
+                                let phases = Set(facts.flatMap(\.phases))
+                                if phases.count == 1, let phase = phases.first { Text("Phase: " + phase).foregroundStyle(.secondary) }
+                                ForEach(facts) { fact in
+                                    ViewThatFits(in: .horizontal) {
+                                        HStack(alignment: .top, spacing: 12) {
+                                            Text(fact.predicateTitle).frame(width: 70, alignment: .leading)
+                                            Text(fact.resultTitle).frame(width: 80, alignment: .leading)
+                                            factDetails(fact, showPhases: phases.count > 1)
+                                        }
+                                        VStack(alignment: .leading, spacing: 3) {
+                                            Text(fact.predicateTitle + " · " + fact.resultTitle)
+                                            factDetails(fact, showPhases: phases.count > 1)
+                                        }
+                                    }
+                                }
+                                DisclosureGroup("Full Diagnostic Details") {
+                                    Text(reason).font(.caption.monospaced()).textSelection(.enabled)
+                                }.disclosureGroupStyle(TaskDisclosureStyle(minimumHeight: 22))
+                            }.font(.caption).textSelection(.enabled)
+                        }
+                    }
+                        .disclosureGroupStyle(TaskDisclosureStyle(minimumHeight: 22)).font(.caption)
+                }
+            }.frame(maxWidth: .infinity, alignment: .leading)
+            if item.isNormalComparisonMatch {
+                Image(systemName: "checkmark").foregroundStyle(RestoreStatusTone.success.color)
+                    .accessibilityLabel("Already Matches")
+            } else { EnvironmentComparisonStatusLabel(status: item.status) }
+        }.padding(.vertical, 7).frame(minHeight: 28)
+    }
+    private func factDetails(_ fact: ComparisonTechnicalFact, showPhases: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text((fact.codes + [fact.recordID]).joined(separator: " · ")).font(.caption.monospaced())
+            if showPhases && !fact.phases.isEmpty { Text("Phase: " + fact.phases.joined(separator: " · ")).foregroundStyle(.secondary) }
+        }.frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

@@ -2,12 +2,20 @@ import Combine
 import Foundation
 
 struct EnvironmentReference: Equatable {
+    var bundle: URL? = nil
     let generatedDirectory: URL
     let blueprint: URL?
     var command: CoreCommand {
-        .environmentCompare(generatedDirectory: generatedDirectory.path, blueprintPath: blueprint?.path)
+        if let bundle { return .environmentCompareBundle(path: bundle.path) }
+        return .environmentCompare(generatedDirectory: generatedDirectory.path, blueprintPath: blueprint?.path)
     }
     func validateAvailability() throws {
+        if let bundle {
+            let values = try? bundle.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+            guard bundle.isFileURL, values?.isRegularFile == true, values?.isSymbolicLink != true,
+                  FileManager.default.isReadableFile(atPath: bundle.path) else { throw StatusFailure.referenceUnavailable }
+            return
+        }
         var directory: ObjCBool = false
         guard generatedDirectory.isFileURL,
               FileManager.default.fileExists(atPath: generatedDirectory.path, isDirectory: &directory), directory.boolValue,
@@ -21,17 +29,21 @@ struct EnvironmentReference: Equatable {
 }
 
 enum StatusFailure: Error, Equatable {
-    case noReference, referenceUnavailable, invalidResult, cancelled, interrupted
+    case noReference, referenceUnavailable, unsupportedCapability, invalidResult, cancelled, interrupted
     case runtime(CoreRuntimeError)
     var message: String {
         switch self {
-        case .noReference: "Choose a saved Generated Configuration folder to compare with this Mac."
-        case .referenceUnavailable: "The selected reference is unavailable. Choose an accessible saved configuration and Blueprint, or check again after restoring access."
+        case .noReference: "Choose a Saved Environment (.mbt) to compare with this Mac."
+        case .unsupportedCapability: "Core has not confirmed support for Saved Environment comparison. Check Core availability or update Macseed."
+        case .referenceUnavailable: "The selected Saved Environment is unavailable. Choose an accessible file or restore access."
         case .invalidResult: "Core returned incomplete or invalid comparison evidence. No status conclusion is available."
         case .cancelled: "Comparison cancelled. Check again to inspect current state."
         case .interrupted: "Comparison interrupted. No complete status conclusion is available. Check again to inspect current state."
         case .runtime(.coreFailure(let code)):
             switch code {
+            case "bundle_unavailable": "The selected Saved Environment is unavailable. Choose an accessible file."
+            case "bundle_invalid": "The selected Saved Environment is invalid or corrupted. Choose a valid Bundle."
+            case "unsupported_bundle": "This Saved Environment uses an unsupported Bundle format."
             case "reference_unavailable": "The selected reference is unavailable. Choose an accessible saved configuration or Blueprint."
             case "reference_invalid": "The selected configuration or Blueprint is invalid. Choose a valid reference."
             case "reference_changed": "The reference changed during comparison. Check again to compare its current contents."
@@ -54,20 +66,86 @@ struct EnvironmentStatusPresentation {
     let message: String
     let summary: String
     let categories: [DisplayCategory]
+    let sections: [EnvironmentStatusSection]
     let needsAttention: Bool
     let counts: [String: Int]
+    private let comparisonRecords: [CoreComparisonResult.Row]
+    private let coverageRecords: [CoreComparisonResult.Coverage]
+    let technicalFacts: [String: [ComparisonTechnicalFact]]
+
+    func categoryCount(_ outcome: ComparisonOutcome, category: DisplayCategory, children: [DisplayCategory] = []) -> Int {
+        let domains = Set(children.isEmpty ? [category.id] : children.map(\.id))
+        switch outcome {
+        case .match, .different, .missing:
+            let kind = outcome == .match ? "matching" : (outcome == .different ? "differing" : "missing")
+            return comparisonRecords.filter { domains.contains($0.domain) && $0.comparisonKind == kind }.count
+        case .notApplicable:
+            return coverageRecords.filter { domains.contains($0.domain) && $0.disposition == "no_requirement" }.count
+        }
+    }
 
     init(_ result: CoreComparisonResult) throws {
         try result.validate()
         counts = result.comparison.counts
+        comparisonRecords = result.comparisonRecords
+        coverageRecords = result.records.coverageRecords
+        technicalFacts = Dictionary(grouping: result.comparisonRecords.filter { $0.domain == "git-repositories" }, by: { $0.domain + ":" + $0.itemID }).mapValues { rows in
+            rows.map { row in
+                ComparisonTechnicalFact(recordID: row.recordID,
+                    predicate: result.records.verificationRecords.first(where: { $0.recordID == row.recordID })?.predicate,
+                    result: row.comparisonKind, reason: row.reason, phase: row.phase, support: row.support,
+                    diagnostics: result.records.diagnostics.filter { $0.recordID == row.recordID })
+            }.sorted {
+                let order = ["worktree", "origin", "branch"]
+                return (order.firstIndex(of: $0.predicate ?? "") ?? 3, $0.recordID)
+                    < (order.firstIndex(of: $1.predicate ?? "") ?? 3, $1.recordID)
+            }
+        }
         var grouped: [String: [DisplayItem]] = [:]
         var order: [String] = []
         func add(_ domain: String, _ item: DisplayItem) {
             if grouped[domain] == nil { order.append(domain) }
-            grouped[domain, default: []].append(item)
+            if let index = grouped[domain]?.firstIndex(where: { $0.id == item.id }) {
+                let previous = grouped[domain]![index]
+                let action = [previous.action, item.action].reduce(into: [String]()) { if !$1.isEmpty && !$0.contains($1) { $0.append($1) } }.joined(separator: " ")
+                let reasons = [previous.reason, item.reason].compactMap { $0 }.reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }
+                let precedence: [DisplayStatus] = [.noRequirement, .information, .matching, .extra, .different, .missing, .unsupported, .unverified, .unresolved, .attention]
+                let status = (precedence.firstIndex(of: item.status) ?? 0) > (precedence.firstIndex(of: previous.status) ?? 0) ? item.status : previous.status
+                grouped[domain]![index] = DisplayItem(id: previous.id, title: previous.title, status: status,
+                                                     action: action, reason: reasons.isEmpty ? nil : reasons.joined(separator: "\n"))
+            } else { grouped[domain, default: []].append(item) }
         }
-        func title(_ identity: String) -> String {
-            identity.hasPrefix("opaque:") ? "Private item" : (identity == "scope" ? "Category scope" : identity)
+        func logicalID(_ domain: String, _ identity: String) -> String { domain + ":" + identity }
+        func diagnosticMessage(_ code: String) -> String {
+            switch code {
+            case "partial_source_coverage": "The saved configuration covers only part of this category."
+            case "unsupported_predicate": "Some requirements are not supported for verification."
+            case "observation_failed": "Current state could not be observed completely."
+            case "selected_input_unresolved": "A selected requirement could not be resolved."
+            case "input_invalid": "The saved configuration could not be validated."
+            case "confirmed_mismatch": "A requirement differs from the saved environment."
+            case "prerequisite_unmet": "A required inspection prerequisite is unavailable."
+            default: "An inspection issue needs review in this category."
+            }
+        }
+        let repositoryIDs = Set(result.comparisonRecords.filter { $0.domain == "git-repositories" }.map(\.itemID)
+            + result.records.coverageRecords.filter { $0.domain == "git-repositories" && $0.disposition != "excluded" }.map(\.itemID)
+            + result.records.verificationRecords.filter { $0.domain == "git-repositories" }.map(\.itemID)).sorted()
+        func title(_ identity: String, domain: String) -> String {
+            if domain == "git-repositories", identity != "scope" {
+                if let label = result.referencePresentation?.repositoryLabels?[identity],
+                   label != "Private item", label.range(of: "^[A-Za-z0-9][A-Za-z0-9_. -]{0,79}$", options: .regularExpression) != nil {
+                    return label
+                }
+                if let index = repositoryIDs.firstIndex(of: identity) { return "Repository \(index + 1)" }
+                return "Repository"
+            }
+            if let label = result.referencePresentation?.settingLabels?[domain]?[identity] { return label }
+            if domain == "app-store" {
+                if let name = result.referencePresentation?.appStoreNames[identity], !name.isEmpty, name != "Private item" { return name }
+                return "App Store Application"
+            }
+            return identity.hasPrefix("opaque:") ? "Private item" : (identity == "scope" ? "Category scope" : identity)
         }
         func technical(_ reason: String?, _ phase: String?) -> String? {
             let parts = [reason, phase.map { "Phase: " + $0 }].compactMap { $0 }
@@ -88,14 +166,16 @@ struct EnvironmentStatusPresentation {
                 default: action = row.support == "unsupported" ? "This requirement is unverified because its predicate is not supported." : "Core could not verify this requirement."
                 }
             }
-            add(row.domain, DisplayItem(id: row.recordID, title: title(row.itemID), status: status,
-                                        action: action, reason: technical(row.reason, row.phase)))
+            add(row.domain, DisplayItem(id: logicalID(row.domain, row.itemID), title: title(row.itemID, domain: row.domain), status: status,
+                                        action: action, reason: [technical(row.reason, row.phase), "Comparison: " + row.comparisonKind + " · " + row.recordID,
+                                                                row.domain == "app-store" ? "App Store ID: " + row.itemID : nil,
+                                                                row.domain == "git-repositories" ? result.records.verificationRecords.first(where: { $0.recordID == row.recordID })?.predicate.map { "Predicate: " + $0 } : nil].compactMap { $0 }.joined(separator: "\n")))
         }
-        for row in result.records.coverageRecords where row.disposition != "resolved" {
+        for row in result.records.coverageRecords where !["resolved", "excluded"].contains(row.disposition) {
             let status: DisplayStatus = row.disposition == "unresolved" ? .unresolved : (row.disposition == "excluded" ? .excluded : .noRequirement)
             let action = row.disposition == "unresolved" ? "The selected reference requirement could not be resolved."
                 : (row.disposition == "excluded" ? "Excluded from the selected comparison scope." : "No requirement in the selected scope.")
-            add(row.domain, DisplayItem(id: row.recordID, title: title(row.itemID), status: status,
+            add(row.domain, DisplayItem(id: logicalID(row.domain, row.itemID), title: title(row.itemID, domain: row.domain), status: status,
                                        action: action, reason: row.disposition == "unresolved" || row.sourceStatus != "unknown"
                                         ? "Source status: " + row.sourceStatus : nil))
         }
@@ -105,17 +185,52 @@ struct EnvironmentStatusPresentation {
             let coverage = result.records.coverageRecords.first { $0.recordID == diagnostic.recordID }
             let domain = owner?.domain ?? coverage?.domain ?? "comparison"
             let identity = owner?.itemID ?? coverage?.itemID ?? "scope"
-            // Keep diagnostics separate: a warning must not replace a matching fact.
+            // Correlate by the owner identity; retain matching facts and every diagnostic in the same row.
             let attention = ["warning", "error"].contains(diagnostic.severity)
-            add(domain, DisplayItem(id: "diagnostic:\(index)", title: title(identity), status: attention ? .attention : .information,
-                                    action: attention ? "Core reported a comparison issue." : "Core reported additional comparison information.",
-                                    reason: diagnostic.severity + ": " + diagnostic.code + "\nPhase: " + diagnostic.phase))
+            let fact = result.comparisonRecords.first { $0.recordID == diagnostic.recordID }
+            let expectedDiagnostic = fact.map { row in
+                (diagnostic.code == "confirmed_mismatch" && ["missing", "differing"].contains(row.comparisonKind))
+                    || (["observation_failed", "prerequisite_unmet", "unsupported_predicate"].contains(diagnostic.code) && row.comparisonKind == "unverified")
+            } ?? false
+            // Expected predicate diagnostics explain the typed result; independent warnings retain attention.
+            add(domain, DisplayItem(id: owner != nil || coverage != nil ? logicalID(domain, identity) : "diagnostic:\(index)", title: title(identity, domain: domain), status: attention && !expectedDiagnostic ? .attention : .information,
+                                    action: expectedDiagnostic ? "" : (attention ? diagnosticMessage(diagnostic.code) : "Additional comparison information is available."),
+                                    reason: diagnostic.severity + ": " + diagnostic.code + "\nPhase: " + diagnostic.phase + "\nRecord: " + diagnostic.recordID
+                                    + (coverage.map { "\nSource status: " + $0.sourceStatus } ?? "")))
+        }
+        var dependentRepositoryRecords = Set<String>()
+        // Summarize only the proven absent-worktree + blocked origin/branch combination.
+        for identity in repositoryIDs {
+            let rows = result.comparisonRecords.filter { $0.domain == "git-repositories" && $0.itemID == identity }
+            let predicates = result.records.verificationRecords.filter { $0.domain == "git-repositories" && $0.itemID == identity }
+            let facts = Dictionary(grouping: predicates, by: { $0.predicate ?? "" })
+            guard rows.count == 3, predicates.count == 3,
+                  Set(facts.keys) == Set(["worktree", "origin", "branch"]), facts.values.allSatisfy({ $0.count == 1 }) else { continue }
+            let valid = predicates.allSatisfy { owner in
+                guard let row = rows.first(where: { $0.recordID == owner.recordID }), row.support == "supported" else { return false }
+                let codes = result.records.diagnostics.filter { $0.recordID == owner.recordID }.map(\.code)
+                return owner.predicate == "worktree"
+                    ? row.comparisonKind == "missing" && row.reason == "confirmed_mismatch" && Set(codes) == Set(["confirmed_mismatch"])
+                    : row.comparisonKind == "unverified" && (row.reason == nil || row.reason == "prerequisite_unmet") && Set(codes) == Set(["prerequisite_unmet"])
+            }
+            let ownerIDs = Set(predicates.map(\.recordID))
+            let related = result.records.coverageRecords.filter { $0.domain == "git-repositories" && $0.itemID == identity }
+            guard valid, related.allSatisfy({ $0.disposition == "resolved" || $0.disposition == "excluded" }),
+                  !result.records.operationRecords.contains(where: { $0.domain == "git-repositories" && $0.itemID == identity }),
+                  !result.records.diagnostics.contains(where: { diagnostic in
+                      related.contains(where: { $0.recordID == diagnostic.recordID }) && !ownerIDs.contains(diagnostic.recordID)
+                  }), let index = grouped["git-repositories"]?.firstIndex(where: { $0.id == logicalID("git-repositories", identity) }) else { continue }
+            dependentRepositoryRecords.formUnion(predicates.filter { $0.predicate != "worktree" }.map(\.recordID))
+            let previous = grouped["git-repositories"]![index]
+            grouped["git-repositories"]![index] = DisplayItem(id: previous.id, title: previous.title, status: .missing,
+                action: "Repository not found on this Mac. Its remote and branch could not be verified.", reason: previous.reason)
         }
         for (index, item) in result.extra.items.enumerated() {
-            add(item.domain, DisplayItem(id: "extra:\(index)", title: title(item.itemID), status: .extra,
-                                        action: "Present on this Mac outside the complete source inventory. Nothing will be removed."))
+            add(item.domain, DisplayItem(id: "extra:\(index)", title: title(item.itemID, domain: item.domain), status: .extra,
+                                        action: "Present on this Mac outside the complete source inventory. Nothing will be removed.",
+                                        reason: item.domain == "app-store" ? "App Store ID: " + item.itemID : nil))
         }
-        for domain in result.extra.domains where domain.status == "unavailable" {
+        for domain in result.extra.domains where domain.status == "unavailable" && grouped[domain.domain] != nil {
             add(domain.domain, DisplayItem(id: "extra-availability:" + domain.domain, title: "Extra-item evidence", status: .information,
                                           action: "Unavailable. Extra items cannot be determined for this category.", reason: domain.reason))
         }
@@ -132,13 +247,29 @@ struct EnvironmentStatusPresentation {
         categories = order.map { domain in
             DisplayCategory(id: domain, title: names[domain]?.0 ?? domain, symbol: names[domain]?.1 ?? "folder", items: grouped[domain]!)
         }
-        needsAttention = result.comparison.verdict == "incomplete" || result.comparison.verdict == "differences_detected"
-            || result.comparison.alsoIncomplete || categories.contains(where: \.hasAttention)
+        sections = EnvironmentStatusSection.project(categories, groups: result.referencePresentation?.groups ?? [])
+        let independentUnverified = result.comparisonRecords.contains { $0.comparisonKind == "unverified" && !dependentRepositoryRecords.contains($0.recordID) }
+        let independentDiagnostics = result.records.diagnostics.filter { diagnostic in
+            guard ["warning", "error"].contains(diagnostic.severity) else { return false }
+            if dependentRepositoryRecords.contains(diagnostic.recordID) && diagnostic.code == "prerequisite_unmet" { return false }
+            if diagnostic.code == "confirmed_mismatch", let fact = result.comparisonRecords.first(where: { $0.recordID == diagnostic.recordID }),
+               ["missing", "differing"].contains(fact.comparisonKind) { return false }
+            return true
+        }
+        needsAttention = result.comparison.verdict == "incomplete" || independentUnverified
+            || result.records.coverageRecords.contains { $0.disposition == "unresolved" }
+            || !independentDiagnostics.isEmpty
+            || (result.comparison.alsoIncomplete && result.comparison.counts["unverified"] == 0 && result.comparison.counts["unresolved"] == 0)
         if needsAttention {
             headline = "Needs Attention"
-            message = result.comparison.verdict == "incomplete" ? "Comparison is incomplete. Some requirements could not be verified."
-                : (result.comparison.alsoIncomplete ? "Differences were found, and some requirements could not be verified."
-                    : (result.comparison.verdict == "differences_detected" ? "Differences were found in the selected scope." : "Core reported issues in the selected scope."))
+            message = independentDiagnostics.isEmpty ? "Some requirements could not be verified completely." : independentDiagnostics.map { diagnostic in
+                let domain = owners.first { $0.recordID == diagnostic.recordID }?.domain
+                    ?? result.records.coverageRecords.first { $0.recordID == diagnostic.recordID }?.domain ?? "comparison"
+                return (names[domain]?.0 ?? domain) + ": " + diagnosticMessage(diagnostic.code)
+            }.reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }.joined(separator: " ")
+        } else if result.comparison.verdict == "differences_detected" {
+            headline = "Differences Found"
+            message = "Differences were found in the selected scope."
         } else {
             headline = result.comparison.verdict == "no_comparable_requirements" ? "No comparable requirements" : "No differences detected"
             message = result.comparison.verdict == "no_comparable_requirements" ? "The selected scope contains no comparable requirements."
@@ -151,6 +282,94 @@ struct EnvironmentStatusPresentation {
             let count = result.comparison.counts[key] ?? 0
             return count > 0 ? "\(count) \(label)" : nil
         }.joined(separator: " · ")
+    }
+}
+
+struct ComparisonTechnicalFact: Identifiable {
+    let recordID: String
+    let predicate: String?
+    let result: String
+    let reason: String?
+    let phase: String?
+    let support: String
+    let diagnostics: [CoreComparisonResult.Diagnostic]
+    var id: String { recordID }
+    var predicateTitle: String { predicate.map { $0.prefix(1).uppercased() + $0.dropFirst() } ?? "Requirement" }
+    var resultTitle: String {
+        switch result { case "matching": "Matching"; case "differing": "Different"; case "missing": "Missing"; default: support == "unsupported" ? "Unsupported" : "Unverified" }
+    }
+    var phases: [String] { Array(Set(([phase].compactMap { $0 } + diagnostics.map(\.phase)).filter { !$0.isEmpty })).sorted() }
+    var codes: [String] { Array(Set([reason].compactMap { $0 } + diagnostics.map(\.code))).sorted() }
+}
+
+struct EnvironmentStatusSection: Identifiable {
+    struct Entry: Identifiable {
+        let category: DisplayCategory
+        let children: [DisplayCategory]
+        var id: String { category.id }
+    }
+    let id: String
+    let entries: [Entry]
+    static func project(_ categories: [DisplayCategory], groups: [CoreRestoreInspection.Group]) -> [Self] {
+        let order = ["Applications & Tools", "Settings", "Git", "SSH Configuration", "Workspace", "Shell"]
+        var used = Set<String>()
+        let projected = RestorePresentationSection.project(groups)
+        var sections: [Self] = []
+        for title in order {
+            var domains = projected.first { $0.id == title }?.groups.flatMap(\.domains) ?? []
+            if title == "Workspace" {
+                domains = ["workspace-folders", "git-repositories"].filter(domains.contains)
+            }
+            if title == "Applications & Tools" {
+                domains = ["homebrew-casks", "app-store", "homebrew-packages", "vscode-extensions"].filter(domains.contains)
+            }
+            var entries: [Entry] = []
+            if title == "Settings" {
+                let children = CaptureMacOSSettingsGroup.domainIDs.compactMap { id in categories.first { $0.id == id } }
+                if !children.isEmpty {
+                    let aggregate = DisplayCategory(id: "macos-settings", title: "macOS Settings", symbol: "slider.horizontal.3", items: children.flatMap(\.items))
+                    entries.append(Entry(category: aggregate, children: children))
+                    used.formUnion(children.map(\.id))
+                }
+            }
+            for domain in domains where !used.contains(domain) {
+                if let category = categories.first(where: { $0.id == domain }) {
+                    entries.append(Entry(category: category, children: [])); used.insert(domain)
+                }
+            }
+            if !entries.isEmpty { sections.append(Self(id: title, entries: entries)) }
+        }
+        let other = categories.filter { !used.contains($0.id) }.map { Entry(category: $0, children: []) }
+        if !other.isEmpty { sections.append(Self(id: "Other Findings", entries: other)) }
+        return sections
+    }
+}
+
+extension DisplayItem {
+    var isNormalComparisonMatch: Bool { status == .matching }
+    var comparisonExplanation: String? { isNormalComparisonMatch || action.isEmpty ? nil : action }
+    var comparisonTechnicalDetails: String? {
+        guard !isNormalComparisonMatch, let reason, !reason.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        return reason
+    }
+}
+
+extension DisplayCategory {
+    var comparisonStatus: DisplayStatus {
+        let statuses = Set(items.map(\.status))
+        if statuses.contains(.attention) || statuses.contains(.unresolved) { return .attention }
+        if statuses.contains(.unverified) || statuses.contains(.unsupported) { return .attention }
+        if statuses.contains(.missing) { return .missing }
+        if statuses.contains(.different) { return .different }
+        if statuses.contains(.extra) { return .extra }
+        if statuses.contains(.matching) { return .matching }
+        return .noRequirement
+    }
+    var comparisonStatusText: String {
+        if comparisonStatus == .attention { return comparisonStatus.rawValue }
+        let statuses = Set(items.map(\.status))
+        if statuses.contains(.different) && statuses.contains(.missing) { return "Differences Found" }
+        return comparisonStatus.rawValue
     }
 }
 
@@ -167,6 +386,11 @@ enum EnvironmentStatusState { case choose, running, result, failed, cancelled }
     private var work: Task<Void, Never>?
     init(runtime: CoreRuntime, location: CoreLocation? = nil) { self.runtime = runtime; self.location = location }
 
+    func selectBundle(_ bundle: URL) {
+        guard !runtime.isActive, state != .running else { return }
+        reference = EnvironmentReference(bundle: bundle, generatedDirectory: bundle, blueprint: nil)
+        reset()
+    }
     func selectReference(_ directory: URL) {
         guard !runtime.isActive, state != .running else { return }
         reference = EnvironmentReference(generatedDirectory: directory, blueprint: nil)
@@ -186,6 +410,7 @@ enum EnvironmentStatusState { case choose, running, result, failed, cancelled }
         do {
             guard let reference else { throw StatusFailure.noReference }
             try reference.validateAvailability()
+            if reference.bundle != nil, runtime.bundleComparisonSupported != true { throw StatusFailure.unsupportedCapability }
             let request = CoreRequest(reference.command)
             operationID = request.operationID
             state = .running

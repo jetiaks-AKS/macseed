@@ -672,8 +672,25 @@ def environment_compare(operation_id, parameters):
 
     try:
         with restore_signals(), tempfile.TemporaryDirectory(prefix="macseed-compare-") as temporary:
-            generated = Path(parameters["generated_dir"])
-            blueprint = parameters["blueprint_path"]
+            source = None
+            source_identity = None
+            if "bundle_path" in parameters:
+                source = Path(parameters["bundle_path"])
+                if not stat.S_ISREG(source.lstat().st_mode):
+                    raise bundle.Invalid("unsafe Bundle input")
+                source_identity = bundle.fingerprint(source)
+                event("execution_event", {"phase": "bundle_validation", "read_only": True})
+                bundle.inspect_bundle(source, os.environ["HOME"])
+                stage = Path(temporary) / "stage"
+                stage.mkdir(mode=0o700)
+                bundle.unpack(source, stage, os.environ["HOME"])
+                if bundle.fingerprint(source) != source_identity:
+                    raise ExecuteFailed("reference_changed")
+                generated = stage / "generated"
+                blueprint = str(stage / "blueprint.conf")
+            else:
+                generated = Path(parameters["generated_dir"])
+                blueprint = parameters["blueprint_path"]
             if not generated.is_dir() or not os.access(generated, os.R_OK | os.X_OK):
                 raise ExecuteFailed("reference_unavailable")
             if blueprint is not None and (not Path(blueprint).is_file() or not os.access(blueprint, os.R_OK)):
@@ -698,12 +715,58 @@ def environment_compare(operation_id, parameters):
             except BaseException:
                 owned.cancel()
                 raise
+            if source is not None and bundle.fingerprint(source) != source_identity:
+                raise ExecuteFailed("reference_changed")
+            # Display-only metadata reuses the Bundle/Restore taxonomy and labels.
+            names = {}
+            if source is not None:
+                appstore = generated / "appstore.conf"
+                if appstore.is_file():
+                    identities = {row["item_id"] for row in owned.comparison_records + owned.extra_records
+                                  if row["domain"] == "app-store"}
+                    for line in appstore.read_text().splitlines():
+                        identity, separator, name = line.partition("|")
+                        if separator and identity in identities:
+                            names[identity] = restore_selection.label(name)
+            repository_labels = {}
+            if source is not None:
+                sections, _ = bundle.parse_blueprint(bundle.checked_file(stage / "blueprint.conf"))
+                identities = {row["item_id"] for row in owned.comparison_records
+                              if row["domain"] == "git-repositories"}
+                # Exact production identity, never basename, position or display label.
+                for identity in sections["git-repositories"]:
+                    key = opaque(identity)
+                    label = restore_selection.label(identity)
+                    if (key in identities and label != "Private item"
+                            and re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_. -]{0,79}', label)):
+                        repository_labels[key] = label
+            setting_labels = {}
+            if source is not None:
+                from capture import included_settings, CaptureError
+                for domain in bundle.CATEGORIES:
+                    if domain.startswith("macos-") and (generated / bundle.CATEGORIES[domain]).is_file():
+                        try:
+                            labels = {row["id"]: row["label"] for row in
+                                      included_settings(stage, {"domain": domain, "status": "present"})}
+                            setting_labels[domain] = {row["item_id"]: labels[row["item_id"].rsplit("/", 1)[-1]]
+                                for row in owned.comparison_records if row["domain"] == domain
+                                and labels.get(row["item_id"].rsplit("/", 1)[-1])}
+                        except (CaptureError, subprocess.TimeoutExpired, UnicodeError):
+                            pass  # Display labels are optional; technical identities remain the fallback.
+            state["reference_presentation"] = {
+                "groups": [{"id": group, "domains": list(domains)} for group, domains in bundle.GROUPS.items()],
+                "app_store_names": names, "setting_labels": setting_labels,
+            }
             state.update(comparison=owned.comparison, comparison_records=owned.comparison_records,
                          extra={"domains": owned.extra_status, "items": owned.extra_records},
                          verification=owned.verification, records=owned.details)
             if owned.details["status"] != "complete" or owned.comparison is None or owned.verification is None:
                 raise ExecuteFailed("comparison_reporting_incomplete")
-            event("result", state)
+            # Labels belong only to successful display metadata, never diagnostic/failure records.
+            presentation = dict(state["reference_presentation"])
+            if status == 0:
+                presentation["repository_labels"] = repository_labels
+            event("result", dict(state, reference_presentation=presentation))
             if status != 0:
                 codes = {row["code"] for row in owned.details["diagnostics"]}
                 raise ExecuteFailed("reference_invalid" if "input_invalid" in codes else
@@ -719,6 +782,15 @@ def environment_compare(operation_id, parameters):
         return 130
     except ExecuteFailed as exc:
         event("failed", dict(state, code=exc.code))
+        return 2
+    except bundle.Unsupported:
+        event("failed", dict(state, code="unsupported_bundle"))
+        return 2
+    except (bundle.Invalid, tarfile.TarError, ValueError, UnicodeError):
+        event("failed", dict(state, code="bundle_invalid"))
+        return 2
+    except (FileNotFoundError, PermissionError):
+        event("failed", dict(state, code="bundle_unavailable" if "bundle_path" in parameters else "reference_unavailable"))
         return 2
     except OSError:
         event("failed", dict(state, code="comparison_unavailable"))
@@ -757,9 +829,9 @@ def main(version, channel=None):
             if set(value) != required | {"parameters"} or not isinstance(value["parameters"], dict):
                 raise ValueError("invalid Compare request")
             parameters = value["parameters"]
-            if set(parameters) != {"generated_dir", "blueprint_path"}:
+            if set(parameters) not in ({"generated_dir", "blueprint_path"}, {"bundle_path"}):
                 raise ValueError("invalid reference")
-            for name in ("generated_dir", "blueprint_path"):
+            for name in parameters:
                 path_value = parameters[name]
                 if name == "blueprint_path" and path_value is None:
                     continue
@@ -837,7 +909,7 @@ def main(version, channel=None):
         result = {
             "protocol_version": PROTOCOL_VERSION,
             "product_version": version,
-            "features": {"restore_selection": {"version": 1, "inventory": "bundle_inspect", "selection_modes": ["category", "items"]}},
+            "features": {"bundle_comparison": {"version": 1}, "restore_selection": {"version": 1, "inventory": "bundle_inspect", "selection_modes": ["category", "items"]}},
             "operations": ["capabilities", "bundle_inspect", "restore_prepare", "restore_execute", "capture_prepare", "capture_execute", "environment_compare"],
         }
     else:

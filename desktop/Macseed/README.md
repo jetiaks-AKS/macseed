@@ -184,21 +184,28 @@ Execute requests selecting secure identities fail before launch with
 
 ## Real Environment Status (16D)
 
-Normal Debug and Release use **Choose Saved Environment…** to select a saved
-Generated Configuration folder through the current temporary development bridge.
-The primary label is **Saved Environment** with **Change…**. Collapsed **Reference
-Details** contains paths/type and optional Blueprint controls; **No Blueprint**
-sends explicit `null`. No ambient configuration is substituted and
-no Discovery is run. A Bundle is not a reference. The selected paths remain visible
-and are held only for this window session, without copying/publishing reference files.
-Changing the folder clears the old Blueprint and result. Core validates contents.
+Normal Debug and Release use **Choose Saved Environment…** to select a `.mbt`
+file, display its name and require **Compare This Mac** explicitly. There are no
+Generated Configuration/Blueprint controls in production Status. Compare uses the
+additive Protocol V1 `bundle_path` request; older Core capability evidence produces
+an explicit compatibility state. Core validates/stages the Bundle privately and
+preserves its selected requirements and completeness evidence. Comparison remains
+read-only, with no publication, Apply or secure decryption.
 
-**Compare** sends `environment_compare` through the existing runtime. **Check Again**
-sends a new operation ID with the selected reference and inspects current state again.
-Back/navigation and reference changes are disabled while comparing. Cancellation,
-interruption, runtime/protocol failure and invalid references stay inline; an old
-success is cleared before each check and failed runs never display a clean result.
-Quit uses read-only check wording for this operation.
+The process card shows indeterminate activity with Cancel left below it. Only Result
+actions use the fixed footer; other actions remain beside their content. Results show
+Match, Different and Missing cards, with Not Applicable shown only when nonzero,
+and collapsed category/item details with Technical Details.
+Compare Again creates a fresh request; choosing another Bundle clears the old
+result. Failure, cancellation, interruption and incomplete evidence cannot preserve
+a clean prior result. Competing operations and navigation remain disabled during
+comparison. No Discovery is run.
+
+With no Status reference, entering Status offers the current Restore session's
+Bundle without automatic comparison; Core revalidates it when Compare is chosen.
+References remain session-local. Stage 16K Bundle-backed Environment Status is
+accepted after real-Mac GUI qualification; runtime/distribution hardening remains
+separate unfinished work.
 
 `CoreComparison.swift` decodes V1 comparison/Coverage/diagnostic/extra evidence.
 `EnvironmentStatusModel.swift` projects only a completed, validated result into
@@ -229,8 +236,8 @@ gate against real Core is:
 open -n desktop/Macseed/build/Debug/Macseed.app
 ```
 
-Choose **Environment Status**, select the saved Generated Configuration folder and
-optional Blueprint, then **Compare**. No `--design-preview` argument is used.
+Choose **Environment Status**, select a Saved Environment `.mbt`, then
+**Compare This Mac**. No `--design-preview` argument is used.
 
 ## Real Capture (16E)
 
@@ -341,9 +348,9 @@ The Minimal Premium leaf logo/App Icon, Home, Sidebar, Settings and adaptive til
 are approved. Capture was checked on a real Mac; Restore Selection, Preview,
 Progress and Result are approved. Stage 16 remains open.
 
-Next is a short Core/Desktop contract audit for Bundle-backed Environment Status,
-then implementation using the existing read-only comparison engine. Capture saves,
-Restore rebuilds from, and Status will compare against a Saved Environment (`.mbt`);
+Bundle-backed Environment Status is implemented and accepted after real-Mac GUI
+qualification, using the existing read-only comparison engine. Capture saves,
+Restore rebuilds from, and Status compares against a Saved Environment (`.mbt`);
 the Restored Bundle is a natural reference. Preserve source selection/Blueprint,
 unknown evidence and Bundle format; no SwiftUI Bundle parser. Minimal Protocol V1
 extensions require audit, not assumptions about current API support.

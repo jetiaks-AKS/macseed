@@ -37,7 +37,7 @@ Prepared IDs are 64 lowercase hexadecimal characters.
 | `capture_execute` | `selection`, `destination`, `expected_prepared_capture_id`, optional `replacement_sha256` | Fresh observation and Bundle publication |
 | `restore_prepare` | `path`, `disabled_groups`, `include_secure`, optional `selection` | Bundle validation, Preview and prerequisites; no publication or Apply |
 | `restore_execute` | Restore fields plus `expected_prepared_plan_id` | Fresh preparation, local-state publication and restoration |
-| `environment_compare` | `generated_dir`, `blueprint_path` | Explicit read-only reference-to-current-Mac comparison |
+| `environment_compare` | `generated_dir`, `blueprint_path` **or** `bundle_path` | Explicit read-only reference-to-current-Mac comparison |
 
 Capture publication remains no-clobber by default. After explicit native Save Panel
 Replace confirmation, Desktop may supply `replacement_sha256`: the SHA-256 of the
@@ -47,7 +47,27 @@ Creation, validation or publication failure preserves the previous Bundle.
 
 Bundle `path` and `generated_dir` are absolute. `blueprint_path` is absolute or
 `null`; null explicitly selects no Blueprint, without falling back to a local
-saved selection. Compare accepts Generated Configuration, not a Bundle.
+saved selection. Compare alternatively accepts exactly `bundle_path`, an absolute
+regular Bundle file path; mixed reference fields are rejected. No mode is inferred
+from extension. `features.bundle_comparison.version = 1` advertises this additive
+Protocol V1 form. Legacy Generated Configuration requests remain unchanged.
+
+Bundle comparison fingerprints the source before validation, uses existing Bundle
+inspection/unpacking into owner-private temporary staging, checks source identity
+before and after comparison, and cleans staging on success/failure/cancellation.
+The saved Blueprint limits selected requirements; retained inventory/provenance
+preserves existing extras evidence without selecting excluded items. The adapter
+runs the same read-only comparison engine, never configuration/Blueprint publication,
+Apply or secure decryption/import. Encrypted `secure.age` remains opaque in temporary
+staging. Additive `reference_presentation` carries authoritative Bundle groups and
+`app_store_names` keyed by stable numeric item ID. Names come only from validated
+Bundle `appstore.conf`, using the same safe label projection as Restore; no metadata
+lookup or predicate change is involved. Optional `setting_labels` maps macOS domain
+and stable comparison item IDs to labels from Capture’s existing `included_settings`
+helper and `modules/settings/macos/records.sh`; missing labels keep technical IDs.
+Legacy/missing metadata has a conservative
+Desktop fallback. Failure codes include `bundle_unavailable`, `bundle_invalid`,
+`unsupported_bundle` and `reference_changed`; no private archive contents are emitted.
 
 ## Capture selection and preparation
 
@@ -495,6 +515,13 @@ Runtime/age/OpenSSH qualification belongs to [Desktop](../DESKTOP.md) and
 
 Ordinary records expose safe IDs, setting keys and typed reasons, not original
 Git identities, setting contents, credentials, private keys, remote URLs or commands.
-Private subjects use opaque IDs; Restore repositories use selection indices.
+Private subjects use opaque IDs; Restore repositories use selection indices. Bundle-backed
+Comparison may expose optional `reference_presentation.repository_labels` only in
+successful result display metadata: exact opaque repository IDs map to safe names
+from the validated selected Blueprint. Labels reuse Restore sanitization and
+Capture's restricted repository-name character/length rules. They are local UI
+metadata, not diagnostic identities; diagnostic records, failure payloads and
+exported diagnostics must not include these labels. Clients must use neutral
+repository labels when trusted metadata is absent or unsafe.
 Public fingerprints appear only in Capture SSH candidate inventory. Capture's
 absolute `destination` result returns the necessary path supplied by the client.

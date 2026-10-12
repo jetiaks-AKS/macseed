@@ -46,11 +46,11 @@ struct ProductionWorkspace: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 20) {
                         if let task = navigation.task {
-                            if task != .status || status.state != .result {
-                                WorkspaceHeader(title: task.rawValue, subtitle: task.subtitle, symbol: task.symbol)
+                            Group {
+                                WorkspaceHeader(title: task.rawValue, subtitle: task == .status ? "Compare your Mac with a saved environment." : task.subtitle, symbol: task.symbol)
                             }
                             if task == .status {
-                                EnvironmentStatusView(model: status, runtime: runtime)
+                                EnvironmentStatusView(model: status, runtime: runtime, showsActions: status.state != .result)
                             } else if task == .capture {
                                 CaptureView(model: capture, runtime: runtime, showsActions: false)
                             } else {
@@ -79,6 +79,11 @@ struct ProductionWorkspace: View {
                     }
                     .modifier(WorkspaceContentGeometry())
                     .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                if navigation.task == .status && status.state == .result {
+                    Divider()
+                    EnvironmentStatusActions(model: status, runtime: runtime)
+                        .padding(.horizontal, WorkspaceGeometry.margin).padding(.vertical, 12)
                 }
                 if navigation.task == .capture && capture.state != .idle {
                     Divider()
@@ -119,6 +124,11 @@ struct ProductionWorkspace: View {
                         .disabled(navigation.task == nil || busy)
                         .keyboardShortcut("[", modifiers: .command)
                 }
+            }
+        }
+        .onChange(of: navigation.task) { _, task in
+            if task == .status, status.reference == nil, let source = restore.source, !busy {
+                status.selectBundle(source)
             }
         }
         .task { if !syntheticRestore && runtime.state == .idle { runtime.checkCapabilities() } }
