@@ -65,10 +65,10 @@ Mac; Restore Selection, Preview, Progress and Result are approved. Further Deskt
 functional development and qualification remain open. Bundle-backed Environment
 Status (16K) is complete in `c529092`; the subsequent Status → Restore Bundle
 handoff is implemented and GUI-approved as a separate follow-up.
-Remaining Stage 16 qualification is open.** Complete the SwiftUI client for
-Capture this Mac, Restore a Mac and Environment Status.
-Provide prerequisite guidance, Check Again, structured
-progress/results, separate secret input and cancellation over the existing Core.
+Remaining Stage 16 qualification is open.** The base SwiftUI Capture, Restore and
+Environment Status flows are implemented and have passed their corresponding GUI
+acceptance. Stage 16 remains unfinished: Cancellation Safety, Logging & Diagnostics,
+Secure SSH, MAS and further functional qualification are still ahead.
 Desktop Secure SSH Capture/Restore remains unfinished (16H). Deliver persistent
 structured operation logs, live View Log and a redacted Diagnostic Report with
 exact preview/export. Desktop Visual Unification is complete. Restore Cancellation

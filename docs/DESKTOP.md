@@ -589,10 +589,16 @@ A supported item-local skip can produce **Rebuild Needs Attention** only with
 confirmed independent success, consistent Verification and no unexplained failure.
 The original Core terminal failure remains available.
 
-Result uses three cards for the overall Result, Mismatch and Unverified, with
-nonzero Unresolved shown separately. Issues appear in one compact **Needs Attention**
-section; one initially collapsed **Technical Details** shows compact problem-only
-execution and Verification findings. **Copy Diagnostic Details** copies the available
+Result always shows the overall Result card. Mismatch and Unverified cards appear
+only for corresponding positive quantitative Core results; zero, null and absent
+counts do not create placeholder cards. Partial Verification remains explicitly
+incomplete. Nonzero Unresolved is shown separately. The lower repeating **Needs
+Attention** findings block has been removed; category statuses are retained, with
+Result category Unverified neutral grey with `questionmark.circle` and actual
+problems warning/error styled.
+One initially collapsed **Technical Details** shows compact problem-only execution
+and Verification findings. Diagnostic data is retained for future Logging & Diagnostics.
+**Copy Diagnostic Details** copies the available
 allowlisted terminal, execution, Verification, coverage and diagnostic fields,
 including successful evidence. Raw process output, arbitrary payload fields and
 secrets are excluded; this is not a raw Core log. Categories convey verified work
@@ -635,14 +641,9 @@ headers/dividers, grouped surfaces and metric-card styling. Git Repositories bel
 to Workspace. Domain IDs, selection granularity, Core execution and Verification
 remain authoritative and unchanged.
 
-Restore Result always shows Result; Mismatch and Unverified quantity cards appear
-only for corresponding positive Core aggregates. Missing/null/zero values are not
-placeholder cards; incomplete Verification remains explicitly incomplete. Result
-category Unverified is neutral grey with `questionmark.circle`; actual problems
-retain their existing warning/error styling. Detailed diagnostics remain in the
-initially collapsed Technical Details disclosure with Copy Diagnostic Details;
-the redundant lower Needs Attention findings list is no longer displayed. Diagnostic
-data is retained. Persistent Logging & Diagnostics and a complete live View Log
+Restore Result follows the [Restore result contract](#restore-result-contract),
+including conditional quantitative cards, neutral category Unverified and collapsed
+Technical Details. Persistent Logging & Diagnostics and a complete live View Log
 remain a separate future stage, not part of this completed visual checkpoint.
 
 <a id="restore-cancellation-safety"></a>
@@ -783,8 +784,12 @@ support catalog.
 
 **Protocol-fit assessment:** the flows above use only existing V1 operations,
 structured results/events and the separate secret channel, without human stdout,
-stderr or log parsing. No blocking Core/API gap was found for these flows using signal-based Stop Rebuild;
-graceful item-boundary stopping is not provided, as specified above. Comparing
+stderr or log parsing. Existing Protocol V1 supports signal-based Stop Rebuild, but
+this does not guarantee safe completion of an active installation. Graceful
+cancellation, operation-boundary stopping and confirmation of child-process quiescence
+remain subjects of the separate [Cancellation Safety checkpoint](#restore-cancellation-safety).
+Whether Protocol V1 needs changes will be decided from controlled test evidence;
+no protocol extension is presumed by this assessment. Comparing
 a Bundle directly is supported by the additive `bundle_path` form described above.
 Fine ordinary Restore selection is Core-supported;
 decrypted identity selection during Prepare and Desktop recovery remain outside
