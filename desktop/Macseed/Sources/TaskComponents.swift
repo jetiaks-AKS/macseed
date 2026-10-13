@@ -47,7 +47,7 @@ struct TaskStatusLabel: View {
             if state == .working { ProgressView().controlSize(.small).frame(width: TaskRowLayout.iconWidth).accessibilityHidden(true) }
             else { Image(systemName: state.symbol).frame(width: TaskRowLayout.iconWidth).accessibilityHidden(true) }
             Text(title ?? state.rawValue)
-        }.font(.callout.weight(.medium)).foregroundStyle(state == .planned ? Color.primary : state.tone.color)
+        }.font(.callout).foregroundStyle(state == .planned ? Color.primary : state.tone.color)
             .accessibilityElement(children: .ignore).accessibilityLabel(title ?? state.rawValue)
     }
 }
@@ -179,41 +179,72 @@ struct TaskDomainList: View {
     var selectDomain: ((String, Bool) -> Void)? = nil
     var compactReadyItems = false
     var title = "Tasks"
+    var restoreSettingsPreview = false
+    var settingsCategories: [TaskDomainPresentation] = []
+    var settingLabels: [String: [String]] = [:]
+    var itemTitles: [String: String] = [:]
+    var expansion: Binding<Set<String>>? = nil
+    var settingsExpansion: Binding<Bool>? = nil
     @TaskViewState<Set<String>> private var expanded = []
+    private var expandedIDs: Set<String> { expansion?.wrappedValue ?? expanded }
+    private func setExpanded(_ ids: Set<String>) {
+        if let expansion { expansion.wrappedValue = ids } else { expanded = ids }
+    }
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: 20) {
             HStack {
                 Text(title).font(.headline).accessibilityAddTraits(.isHeader)
                 Spacer()
-                Button(expanded.count == domains.count ? "Collapse All" : "Expand All") {
-                    expanded = expanded.count == domains.count ? [] : Set(domains.map(\.id))
+                Button(expandedIDs.count == domains.count ? "Collapse All" : "Expand All") {
+                    setExpanded(expandedIDs.count == domains.count ? [] : Set(domains.map(\.id)))
                 }.buttonStyle(.plain).foregroundStyle(.secondary)
-            }.padding(.bottom, 12)
-            VStack(spacing: 0) {
-                ForEach(domains) { domain in
-                    if let selectDomain, let selection = selectionStates[domain.id] {
-                        HStack(alignment: .top, spacing: 0) {
-                            NativeSelectionCheckbox("", state: selection, accessibilityTitle: "Select " + domain.title) {
-                                selectDomain(domain.id, $0)
-                            }.frame(width: 28, height: 48).padding(.leading, 12)
-                            domainRow(domain)
-                        }
-                    } else { domainRow(domain) }
-                    if domain.id != domains.last?.id { Divider() }
-                }
-            }.background(.background, in: RoundedRectangle(cornerRadius: 8))
-                .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.quaternary))
+            }
+            ForEach(WorkspaceCategoryStyle.sections(domains), id: \.title) { section in
+                WorkspaceSectionHeader(title: section.title)
+                VStack(spacing: 0) {
+                    ForEach(section.rows) { domain in
+                        if let selectDomain, let selection = selectionStates[domain.id] {
+                            HStack(alignment: .top, spacing: 0) {
+                                NativeSelectionCheckbox("", state: selection, accessibilityTitle: "Select " + domain.title) {
+                                    selectDomain(domain.id, $0)
+                                }.frame(width: 28, height: 48).padding(.leading, 12)
+                                domainRow(domain)
+                            }
+                        } else { domainRow(domain) }
+                        if domain.id != section.rows.last?.id { Divider() }
+                    }
+                }.modifier(WorkspaceCardSurface())
+            }
         }
     }
+
     private func domainRow(_ domain: TaskDomainPresentation) -> some View {
-        DisclosureGroup(isExpanded: Binding(get: { expanded.contains(domain.id) }, set: { value in
-            if value { expanded.insert(domain.id) } else { expanded.remove(domain.id) }
+        DisclosureGroup(isExpanded: Binding(get: { expandedIDs.contains(domain.id) }, set: { value in
+            var ids = expandedIDs
+            if value { ids.insert(domain.id) } else { ids.remove(domain.id) }
+            setExpanded(ids)
         })) {
-            TaskDomainItems(domain: domain, stateTitles: stateTitles, compactReadyItems: compactReadyItems)
+            if ["macos-settings", "macOS Settings"].contains(domain.id), !settingsCategories.isEmpty {
+                VStack(spacing: 0) {
+                    ForEach(settingsCategories) { child in
+                        TaskSettingsCategoryDetails(domain: child, stateTitles: stateTitles, compactReadyItems: compactReadyItems,
+                            settingLabels: settingLabels[child.id] ?? [], itemTitles: itemTitles, expansion: settingsExpansion,
+                            restorePreview: restoreSettingsPreview)
+                    }
+                    let known = Set(settingsCategories.flatMap(\.items).map(\.id))
+                    let remaining = domain.items.filter { !known.contains($0.id) }
+                    if !remaining.isEmpty {
+                        TaskDomainItems(domain: TaskDomainPresentation(id: domain.id, title: domain.title, symbol: domain.symbol, items: remaining),
+                            stateTitles: stateTitles, compactReadyItems: compactReadyItems, itemTitles: itemTitles)
+                    }
+                }.padding(.leading, 36).padding(.trailing, restoreSettingsPreview ? -26 : 0).padding(.vertical, 4)
+            } else {
+                TaskDomainItems(domain: domain, stateTitles: stateTitles, compactReadyItems: compactReadyItems, itemTitles: itemTitles)
+            }
         } label: {
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 12) { domainTitle(domain); Spacer(); domainStatus(domain) }
-                VStack(alignment: .leading, spacing: 8) { domainTitle(domain); domainStatus(domain) }
+                VStack(alignment: .leading, spacing: 8) { domainTitle(domain); domainStatus(domain).frame(maxWidth: .infinity, alignment: restoreSettingsPreview ? .trailing : .leading) }
             }.padding(.vertical, 6)
         }.disclosureGroupStyle(TaskDisclosureStyle()).padding(.horizontal, 16)
     }
@@ -234,15 +265,14 @@ struct TaskDomainList: View {
         }.joined(separator: " · ")
     }
     private func domainTitle(_ domain: TaskDomainPresentation) -> some View {
-        HStack(spacing: 12) {
-            Image(systemName: domain.symbol).frame(width: TaskRowLayout.iconWidth).accessibilityHidden(true)
-            Text(domain.title).font(.body.weight(.medium))
-        }.frame(maxWidth: .infinity, alignment: .leading)
+        WorkspaceCategoryTitle(id: domain.id, title: domain.title, fallbackSymbol: domain.symbol)
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
     private func domainStatus(_ domain: TaskDomainPresentation) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             TaskStatusLabel(state: domain.state, title: stateTitles[domain.state])
             Text(domainSummary(domain)).font(.caption).foregroundStyle(.secondary)
+                .padding(.leading, restoreSettingsPreview && domain.id != "ssh-configuration" ? TaskRowLayout.iconWidth + 7 : 0)
         }.frame(width: TaskRowLayout.statusWidth, alignment: .leading)
     }
 }
@@ -251,40 +281,41 @@ struct TaskDomainItems: View {
     let domain: TaskDomainPresentation
     var stateTitles: [TaskRowState: String] = [:]
     var compactReadyItems = false
+    var itemTitles: [String: String] = [:]
     var body: some View {
         if compactReadyItems {
             CaptureConfirmationItems(domain: domain)
         } else {
-VStack(spacing: 0) {
-                            ForEach(domain.items) { item in
-                                HStack(alignment: .top, spacing: 12) {
-                                    VStack(alignment: .leading, spacing: 4) {
-                                        if compactReadyItems && item.state != .planned {
-                                            Text(item.item.action.isEmpty ? item.item.title : item.item.action)
-                                                .font(.callout).foregroundStyle(.secondary)
-                                        } else {
-                                            Text(item.item.title)
-                                            if !compactReadyItems {
-                                                Text(item.item.action).font(.caption).foregroundStyle(.secondary)
-                                            }
-                                        }
-                                        if item.state != .working, let reason = item.item.reason {
-                                            DisclosureGroup("Technical Details") {
-                                                Text(reason).font(.caption.monospaced()).textSelection(.enabled)
-                                                if let diagnostic = item.diagnostic {
-                                                    Text(diagnostic.technicalDescription).font(.caption.monospaced()).textSelection(.enabled)
-                                                }
-                                            }.disclosureGroupStyle(TaskDisclosureStyle(minimumHeight: 22)).font(.caption)
-                                        }
-                                    }
-                                    Spacer()
-                                    if !compactReadyItems {
-                                        TaskStatusLabel(state: item.state, title: stateTitles[item.state]).frame(width: TaskRowLayout.statusWidth, alignment: .leading)
-                                    }
-                                }.padding(.vertical, 7)
-                            }
-                        }.padding(.leading, 36).padding(.vertical, 4)
+            VStack(spacing: 0) {
+                ForEach(domain.items) { item in
+                    ViewThatFits(in: .horizontal) {
+                        HStack(alignment: .top, spacing: 12) {
+                            details(item).frame(minWidth: 160, maxWidth: .infinity, alignment: .leading)
+                            TaskStatusLabel(state: item.state, title: stateTitles[item.state])
+                                .frame(width: TaskRowLayout.statusWidth, alignment: .leading)
+                        }
+                        VStack(alignment: .leading, spacing: 8) {
+                            details(item)
+                            TaskStatusLabel(state: item.state, title: stateTitles[item.state])
+                        }
+                    }.padding(.vertical, 7)
+                }
+            }.padding(.leading, 36).padding(.vertical, 4)
         }
+    }
+    private func details(_ item: TaskItemPresentation) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(itemTitles[item.id] ?? item.item.title)
+            Text(item.item.action).font(.caption).foregroundStyle(.secondary)
+            if item.state != .working, let reason = item.item.reason {
+                DisclosureGroup("Technical Details") {
+                    Text(reason).font(.caption.monospaced()).textSelection(.enabled)
+                    if let diagnostic = item.diagnostic {
+                        Text(diagnostic.technicalDescription).font(.caption.monospaced()).textSelection(.enabled)
+                    }
+                }.disclosureGroupStyle(TaskDisclosureStyle(minimumHeight: 22)).font(.caption)
+            }
+        }.frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -293,5 +324,100 @@ struct PendingOperationLogButton: View {
         Button {} label: { Label("View Log", systemImage: "doc.text") }
             .disabled(true).help("Persistent Desktop operation logs are not available in this build.")
             .accessibilityHint("Persistent Desktop operation logs are not available in this build.")
+    }
+}
+
+// A read-only nested category over existing task items; no selection or lifecycle logic.
+struct TaskSettingsCategoryDetails: View {
+    let domain: TaskDomainPresentation
+    let stateTitles: [TaskRowState: String]
+    let compactReadyItems: Bool
+    var settingLabels: [String] = []
+    var itemTitles: [String: String] = [:]
+    var expansion: Binding<Bool>? = nil
+    var restorePreview = false
+    @TaskViewState<Bool> private var expanded = false
+    var body: some View {
+        DisclosureGroup(isExpanded: expansion ?? $expanded) {
+            if restorePreview {
+                VStack(spacing: 0) {
+                    ForEach(domain.items) { item in
+                        RestoreSettingPreviewLeaf(item: item, title: itemTitles[item.id] ?? item.item.title, stateTitles: stateTitles)
+                    }
+                }.padding(.leading, 36).padding(.vertical, 4)
+            } else if settingLabels.isEmpty || domain.items.contains(where: {
+                $0.captureRole != .selectedSubdomain || ![.planned, .completed].contains($0.state)
+                    || $0.item.reason != nil || $0.diagnostic != nil
+            }) {
+                TaskDomainItems(domain: domain, stateTitles: stateTitles, compactReadyItems: compactReadyItems, itemTitles: itemTitles)
+            }
+            if !settingLabels.isEmpty {
+                if compactReadyItems {
+                    CaptureIncludedSettingsList(labels: settingLabels)
+                } else {
+                    VStack(alignment: .leading, spacing: 0) {
+                        ForEach(Array(settingLabels.enumerated()), id: \.offset) { _, label in
+                            Text(label).padding(.vertical, 7)
+                        }
+                    }.padding(.leading, 36).padding(.vertical, 4)
+                }
+            }
+        } label: {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 12) { title; Spacer(); TaskStatusLabel(state: domain.state, title: stateTitles[domain.state]).frame(width: restorePreview ? TaskRowLayout.statusWidth : nil, alignment: .leading) }
+                VStack(alignment: .leading, spacing: 8) { title; TaskStatusLabel(state: domain.state, title: stateTitles[domain.state]).frame(width: restorePreview ? TaskRowLayout.statusWidth : nil, alignment: .leading).frame(maxWidth: .infinity, alignment: restorePreview ? .trailing : .leading) }
+            }.padding(.vertical, 6)
+        }.disclosureGroupStyle(TaskDisclosureStyle())
+    }
+    private var title: some View { WorkspaceCategoryTitle(id: domain.id, title: domain.title, fallbackSymbol: domain.symbol) }
+}
+
+// Restore-only compact leaves retain typed task diagnostics and nonmatching statuses.
+struct RestoreSettingPreviewLeaf: View {
+    let item: TaskItemPresentation
+    let title: String
+    var stateTitles: [TaskRowState: String] = [:]
+    var compactMatch: Bool {
+        item.state == .matching && item.item.status == .matching && item.item.reason == nil && item.diagnostic == nil
+    }
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .top, spacing: 12) {
+                details.frame(minWidth: 120, maxWidth: .infinity, alignment: .leading)
+                status
+            }
+            VStack(alignment: .leading, spacing: 8) {
+                details
+                HStack { Spacer(minLength: 0); status }
+            }
+        }.padding(.vertical, 7).frame(minHeight: 28)
+    }
+    private var details: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+            if !compactMatch && !item.item.action.isEmpty {
+                Text(item.item.action).font(.caption).foregroundStyle(.secondary)
+            }
+            if let reason = item.item.reason {
+                DisclosureGroup("Technical Details") {
+                    Text(reason).font(.caption.monospaced()).textSelection(.enabled)
+                    if let diagnostic = item.diagnostic {
+                        Text(diagnostic.technicalDescription).font(.caption.monospaced()).textSelection(.enabled)
+                    }
+                }.disclosureGroupStyle(TaskDisclosureStyle(minimumHeight: 22))
+            } else if let diagnostic = item.diagnostic {
+                DisclosureGroup("Technical Details") {
+                    Text(diagnostic.technicalDescription).font(.caption.monospaced()).textSelection(.enabled)
+                }.disclosureGroupStyle(TaskDisclosureStyle(minimumHeight: 22))
+            }
+        }.frame(maxWidth: .infinity, alignment: .leading)
+    }
+    private var status: some View {
+        Group {
+            if compactMatch {
+                Image(systemName: "checkmark").foregroundStyle(RestoreStatusTone.success.color)
+                    .frame(width: TaskRowLayout.iconWidth).accessibilityLabel("Already Matches")
+            } else { TaskStatusLabel(state: item.state, title: stateTitles[item.state]) }
+        }.frame(width: TaskRowLayout.statusWidth, alignment: .leading)
     }
 }

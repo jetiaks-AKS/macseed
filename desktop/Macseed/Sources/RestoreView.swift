@@ -9,41 +9,25 @@ private typealias RestoreViewState<Value> = SwiftUI.State<Value>
 enum RestoreRowGrid {
     static let checkboxWidth: CGFloat = 28
     static let disclosureWidth: CGFloat = 12
-    static let iconWidth: CGFloat = 20
-    static let spacing: CGFloat = 8
+    static let iconWidth: CGFloat = TaskRowLayout.iconWidth
+    static let spacing: CGFloat = 12
     static let titleInset = checkboxWidth + disclosureWidth + iconWidth + spacing * 3
 }
 
 struct RestoreRowIcon: View {
     let symbol: String
     static func symbol(for domain: String) -> String {
-        domain == "vscode-settings" ? "gearshape" : "square.stack"
+        WorkspaceCategoryStyle.symbol(domain, fallback: "square.stack")
     }
     var body: some View {
-        Image(systemName: symbol).font(.body.weight(.regular))
-            .frame(width: RestoreRowGrid.iconWidth, alignment: .center).foregroundStyle(.secondary)
-            .accessibilityHidden(true)
-    }
-}
-
-struct RestoreHeaderDisclosureStyle: DisclosureGroupStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        Button { configuration.isExpanded.toggle() } label: {
-            HStack(spacing: RestoreRowGrid.spacing) {
-                Image(systemName: "chevron.right")
-                    .rotationEffect(.degrees(configuration.isExpanded ? 90 : 0))
-                    .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-                    .frame(width: RestoreRowGrid.disclosureWidth)
-                configuration.label
-            }.frame(maxWidth: .infinity, minHeight: 28, alignment: .leading).contentShape(Rectangle())
-        }.buttonStyle(.plain)
-            .accessibilityValue(configuration.isExpanded ? "Expanded" : "Collapsed")
+        WorkspaceCategoryIcon(symbol: symbol)
     }
 }
 
 struct RestoreAreaSelectionView: View {
     @ObservedObject var model: RestoreModel
     let area: CoreRestoreInspection.Area
+    var expansion: Binding<Bool>? = nil
     @RestoreViewState<Bool> private var expanded = false
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -51,45 +35,56 @@ struct RestoreAreaSelectionView: View {
                 NativeSelectionCheckbox("", state: model.selectionState(area), accessibilityTitle: "Select " + area.label) {
                     model.selectArea(area.id, included: $0)
                 }.frame(width: RestoreRowGrid.checkboxWidth, height: 28).disabled(!area.selectable)
-                if area.selectionMode == "items" {
-                    DisclosureGroup(isExpanded: $expanded) { EmptyView() } label: { header }
-                        .disclosureGroupStyle(RestoreHeaderDisclosureStyle())
+                if Self.hasDisclosure(area) {
+                    DisclosureGroup(isExpanded: expansion ?? $expanded) { EmptyView() } label: { header.padding(.vertical, 6) }
+                        .disclosureGroupStyle(TaskDisclosureStyle())
                 } else {
-                    Color.clear.frame(width: RestoreRowGrid.disclosureWidth, height: 1).accessibilityHidden(true)
-                    Button { model.selectArea(area.id, included: model.selectionState(area) != .all) } label: { header }
-                        .buttonStyle(.plain).disabled(!area.selectable)
+                    header.padding(.vertical, 6).padding(.trailing, 26).frame(minHeight: 48)
                 }
             }
-            if expanded && area.selectionMode == "items" {
-                ForEach(area.items) { item in
-                    NativeSelectionCheckbox(item.label, isOn: Binding(
-                        get: { model.selectedItems[area.id]?.contains(item.id) == true },
-                        set: { model.selectItem(area.id, item: item.id, included: $0) }))
-                        .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading).disabled(!area.selectable)
-                }.padding(.leading, CaptureChildRowGrid.leadingInset)
+            if Self.hasDisclosure(area) && (expansion?.wrappedValue ?? expanded) {
+                if area.selectionMode == "items" {
+                    ForEach(area.items) { item in
+                        NativeSelectionCheckbox(item.label, isOn: Binding(
+                            get: { model.selectedItems[area.id]?.contains(item.id) == true },
+                            set: { model.selectItem(area.id, item: item.id, included: $0) }))
+                            .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading).disabled(!area.selectable)
+                    }.padding(.leading, CaptureChildRowGrid.leadingInset)
+                } else {
+                    VStack(alignment: .leading, spacing: 7) { ForEach(area.items) { item in Text(item.label) } }
+                        .padding(.leading, 36).padding(.vertical, 4)
+                }
             }
             if !notices.isEmpty { ItemDetails(items: notices).padding(.leading, RestoreRowGrid.titleInset) }
-        }.padding(.vertical, 7)
+        }.padding(.horizontal, 16)
     }
+    static func hasDisclosure(_ area: CoreRestoreInspection.Area) -> Bool { !area.items.isEmpty }
     private var header: some View {
-        HStack(spacing: RestoreRowGrid.spacing) {
-            RestoreRowIcon(symbol: RestoreRowIcon.symbol(for: area.id))
-            Text(area.label).font(.headline)
-            Spacer()
-            Text(!area.selectable ? "Unavailable" : area.selectionMode == "items"
-                 ? "\(model.selectedItems[area.id]?.count ?? 0) of \(area.items.count) selected"
-                 : model.selectionState(area) == .none ? "Not selected" : "Included")
-                .font(.callout).foregroundStyle(.secondary)
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 12) { title; Spacer(); status }
+            VStack(alignment: .leading, spacing: 8) { title; status }
+        }
+    }
+    private var title: some View {
+        WorkspaceCategoryTitle(id: area.id, title: area.label, fallbackSymbol: RestoreRowIcon.symbol(for: area.id))
+    }
+    private var status: some View {
+        HStack(spacing: 7) {
             if !area.selectable || area.reason != nil {
                 Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange).accessibilityLabel("Needs Attention")
             }
-        }.frame(maxWidth: .infinity, minHeight: 28, alignment: .leading).contentShape(Rectangle())
+            Text(!area.selectable ? "Unavailable" : area.selectionMode == "items"
+                 ? "\(model.selectedItems[area.id]?.count ?? 0) of \(area.items.count) selected"
+                 : model.selectionState(area) == .none ? "Not selected" : "Included")
+        }.font(.callout).foregroundStyle(.secondary)
     }
-    private var notices: [DisplayItem] {
+    private var notices: [DisplayItem] { Self.notices(area) }
+    static func notices(_ area: CoreRestoreInspection.Area) -> [DisplayItem] {
         guard !area.selectable || area.reason != nil else { return [] }
-        return [DisplayItem(id: area.id + ":availability", title: area.availability == "unsupported" ? "Unsupported" : "Unavailable",
-            status: area.availability == "unsupported" ? .unsupported : .information,
-            action: "No selectable supported content is available in this saved environment.", reason: area.reason)]
+        return [DisplayItem(id: area.id + ":availability", title: area.selectable ? "Needs Attention" : area.availability == "unsupported" ? "Unsupported" : "Unavailable",
+            status: area.selectable ? .attention : area.availability == "unsupported" ? .unsupported : .information,
+            action: area.selectable ? "This category has a reported warning. Review its diagnostic details."
+                : "No selectable supported content is available in this saved environment.", reason: area.reason)]
     }
 }
 
@@ -98,14 +93,29 @@ struct RestorePresentationSection: Identifiable {
     let id: String
     let groups: [CoreRestoreInspection.Group]
     static func project(_ groups: [CoreRestoreInspection.Group]) -> [Self] {
-        let placement: [(String, [String])] = [
-            ("Applications & Tools", ["Applications", "Homebrew"]),
-            ("Settings", ["macOS Settings", "VS Code Settings"]),
-            ("Shell", ["Shell"]), ("Git", ["Git"]),
-            ("SSH Configuration", ["SSH Configuration"]), ("Workspace", ["Workspace"])]
-        return placement.map { title, names in
-            Self(id: title, groups: names.compactMap { name in groups.first { $0.id == name } })
+        let known = Set(WorkspaceCategoryStyle.groups.flatMap { $0.1 })
+        let fallbackGroups = ["Applications & Tools": ["Applications", "Homebrew"],
+            "Settings": ["macOS Settings", "VS Code Settings"], "Git": ["Git"],
+            "SSH Configuration": ["SSH Configuration"], "Workspace": ["Workspace"], "Shell": ["Shell"]]
+        var claimed = Set<String>()
+        var sections = WorkspaceCategoryStyle.groups.map { title, ids in
+            Self(id: title, groups: groups.compactMap { group in
+                // New/unknown IDs retain their Core-declared visual group. Known
+                // IDs use Status placement, including repositories in Workspace.
+                let candidates = ids.filter(group.domains.contains) + group.domains.filter {
+                    !known.contains($0) && (fallbackGroups[title] ?? []).contains(group.id)
+                }
+                let domains = candidates.filter { claimed.insert($0).inserted }
+                return domains.isEmpty ? nil : CoreRestoreInspection.Group(id: group.id, domains: domains)
+            })
         }
+        let used = Set(sections.flatMap(\.groups).flatMap(\.domains))
+        let other = groups.compactMap { group -> CoreRestoreInspection.Group? in
+            let domains = group.domains.filter { !used.contains($0) }
+            return domains.isEmpty ? nil : CoreRestoreInspection.Group(id: group.id, domains: domains)
+        }
+        if !other.isEmpty { sections.append(Self(id: "Other Findings", groups: other)) }
+        return sections
     }
     static func includedAreas(_ inventory: [CoreRestoreInspection.Area]) -> [CoreRestoreInspection.Area] {
         // Older adapters without presence evidence remain visible, including empty/unsupported state.
@@ -116,46 +126,98 @@ struct RestorePresentationSection: Identifiable {
     }
     func areas(in inventory: [CoreRestoreInspection.Area]) -> [CoreRestoreInspection.Area] {
         let domains = groups.flatMap(\.domains)
-        let order = ["homebrew-casks", "app-store", "homebrew-packages", "vscode-extensions"]
-        let arranged = id == "Applications & Tools"
-            ? domains.sorted { (order.firstIndex(of: $0) ?? order.count) < (order.firstIndex(of: $1) ?? order.count) } : domains
-        return arranged.compactMap { domain in inventory.first { $0.id == domain } }
-    }
-}
-
-struct RestoreSectionHeader: View {
-    let title: String
-    var body: some View {
-        HStack(spacing: 12) {
-            Text(title).font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
-            Rectangle().fill(Color(nsColor: .separatorColor)).frame(height: 1)
-        }.padding(.top, 12).padding(.bottom, 4).accessibilityAddTraits(.isHeader)
+        let preferred = WorkspaceCategoryStyle.groups.first { $0.0 == id }?.1 ?? []
+        let order = preferred.filter(domains.contains) + domains.filter { !preferred.contains($0) }
+        return order.compactMap { domain in inventory.first { $0.id == domain } }
     }
 }
 
 struct RestoreMacOSSelectionView: View {
     @ObservedObject var model: RestoreModel
     let group: CoreRestoreInspection.Group
+    var expansion: Binding<Bool>? = nil
+    var childExpansion: Binding<Bool>? = nil
+    @RestoreViewState<Bool> private var expanded = false
+    private var detailAreas: [CoreRestoreInspection.Area] {
+        CaptureMacOSSettingsGroup.domainIDs.compactMap { id in
+            model.areas.first { $0.id == id && group.domains.contains($0.id) && $0.sourcePresent != false && $0.captureSelected != false }
+        }
+    }
     private var available: Bool { model.areas.contains { group.domains.contains($0.id) && $0.selectable } }
     var body: some View {
-        HStack(spacing: RestoreRowGrid.spacing) {
-            NativeSelectionCheckbox("", state: model.groupState(group), accessibilityTitle: "Select " + group.id) {
-                model.selectGroup(group, included: $0)
-            }.frame(width: RestoreRowGrid.checkboxWidth, height: 28).disabled(!available)
-            Color.clear.frame(width: RestoreRowGrid.disclosureWidth, height: 1).accessibilityHidden(true)
-            Button { model.selectGroup(group, included: model.groupState(group) != .all) } label: {
-                HStack(spacing: RestoreRowGrid.spacing) {
-                    RestoreRowIcon(symbol: "slider.horizontal.3")
-                    Text(group.id).font(.headline)
-                    Spacer()
-                    Text(!available ? "Unavailable" : model.groupState(group) == .none ? "Not selected" : model.groupState(group) == .all ? "Included" : "Partially included")
-                        .font(.callout).foregroundStyle(.secondary)
-                    if model.areas.contains(where: { group.domains.contains($0.id) && $0.sourcePresent != false && $0.captureSelected != false && (!$0.selectable || $0.reason != nil) }) {
-                        Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange).accessibilityLabel("Needs Attention")
-                    }
-                }.frame(maxWidth: .infinity, minHeight: 28, alignment: .leading).contentShape(Rectangle())
-            }.buttonStyle(.plain).disabled(!available)
-        }.padding(.vertical, 7)
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .top, spacing: 12) {
+                NativeSelectionCheckbox("", state: model.groupState(group), accessibilityTitle: "Select " + group.id) {
+                    model.selectGroup(group, included: $0)
+                }.frame(width: RestoreRowGrid.checkboxWidth, height: 48).disabled(!available)
+                if !detailAreas.isEmpty {
+                    DisclosureGroup(isExpanded: expansion ?? $expanded) {
+                        VStack(alignment: .leading, spacing: 0) {
+                            ForEach(detailAreas) { area in
+                                HStack(alignment: .top, spacing: 12) {
+                                    NativeSelectionCheckbox("", state: model.selectionState(area), accessibilityTitle: "Select " + area.label) {
+                                        model.selectArea(area.id, included: $0)
+                                    }.frame(width: RestoreRowGrid.checkboxWidth, height: 48).disabled(!area.selectable)
+                                    RestoreMacOSAreaDetails(area: area, expansion: childExpansion)
+                                }
+                            }
+                        }.padding(.leading, 36).padding(.vertical, 4)
+                    } label: { header }
+                        .disclosureGroupStyle(TaskDisclosureStyle())
+                } else {
+                    header.padding(.trailing, 26).frame(minHeight: 48)
+                }
+            }
+        }.padding(.horizontal, 16)
+    }
+    private var header: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 12) { title; Spacer(); status }
+            VStack(alignment: .leading, spacing: 8) { title; status }
+        }.padding(.vertical, 6)
+    }
+    private var title: some View {
+        WorkspaceCategoryTitle(id: "macos-settings", title: group.id, fallbackSymbol: "slider.horizontal.3")
+    }
+    private var status: some View {
+        HStack(spacing: 7) {
+            if model.areas.contains(where: { group.domains.contains($0.id) && $0.sourcePresent != false && $0.captureSelected != false && (!$0.selectable || $0.reason != nil) }) {
+                Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange).accessibilityLabel("Needs Attention")
+            }
+            Text(!available ? "Unavailable" : model.groupState(group) == .none ? "Not selected" : model.groupState(group) == .all ? "Included" : "Partially included")
+        }.font(.callout).foregroundStyle(.secondary)
+    }
+}
+
+// Subdomains explain the existing category-only contract; no individual setting controls.
+struct RestoreMacOSAreaDetails: View {
+    let area: CoreRestoreInspection.Area
+    var expansion: Binding<Bool>? = nil
+    @RestoreViewState<Bool> private var expanded = false
+    static func hasDetails(_ area: CoreRestoreInspection.Area) -> Bool {
+        !area.items.isEmpty || area.reason != nil || !area.selectable
+    }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if !area.items.isEmpty {
+                DisclosureGroup(isExpanded: expansion ?? $expanded) {
+                    VStack(alignment: .leading, spacing: 7) { ForEach(area.items) { item in Text(item.label) } }
+                        .padding(.leading, 36).padding(.vertical, 4)
+                } label: { title }
+                    .disclosureGroupStyle(TaskDisclosureStyle())
+            } else { title.frame(minHeight: 48) }
+            if !area.selectable {
+                Text("No selectable supported content is available in this saved environment.")
+                    .font(.callout).foregroundStyle(.secondary).padding(.leading, 36)
+            }
+            if let reason = area.reason {
+                DisclosureGroup("Technical Details") { Text(reason).font(.caption.monospaced()).textSelection(.enabled) }
+                    .disclosureGroupStyle(TaskDisclosureStyle(minimumHeight: 22)).padding(.leading, 36)
+            }
+        }
+    }
+    private var title: some View {
+        WorkspaceCategoryTitle(id: area.id, title: area.label, fallbackSymbol: "slider.horizontal.3").padding(.vertical, 6)
     }
 }
 
@@ -296,13 +358,14 @@ struct RestorePrerequisiteView: View {
 struct RestoreView: View {
     @ObservedObject var model: RestoreModel
     @ObservedObject var runtime: CoreRuntime
+    var categoryExpansion: Binding<Bool>? = nil
     var showsRebuildActions = true
     var showsPreviewActions = true
     var showsSelectionActions = true
     var showsPreparationActions = true
     var showsResultActions = true
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
+        VStack(alignment: .leading, spacing: 20) {
             switch model.state {
             case .choose:
                 WorkspacePrimaryActionCard(title: "Choose a Saved Environment", symbol: ProductTask.restore.symbol, tint: WorkspaceIdentity.tint(.restore),
@@ -344,22 +407,29 @@ struct RestoreView: View {
                 }
                 if model.state == .review {
                     HStack {
-                        Text("Choose what to restore").font(.title2)
+                        Text("Choose what to restore").font(.headline)
                         Spacer()
-                        Button(model.bulkState.bulkActionTitle) { model.toggleAll() }.disabled(!model.areas.contains(where: \.selectable))
+                        Button(model.bulkState.bulkActionTitle) { model.toggleAll() }.buttonStyle(.plain).foregroundStyle(.secondary).disabled(!model.areas.contains(where: \.selectable))
                     }
                     let includedAreas = RestorePresentationSection.includedAreas(model.areas)
                     ForEach(RestorePresentationSection.visible(model.groups, inventory: includedAreas)) { section in
-                        RestoreSectionHeader(title: section.id)
-                        if let macOS = section.groups.first(where: { $0.id == "macOS Settings" }), includedAreas.contains(where: { macOS.domains.contains($0.id) }) {
-                            RestoreMacOSSelectionView(model: model, group: macOS)
-                        }
-                        ForEach(section.areas(in: includedAreas).filter { area in
-                            !section.groups.contains { $0.id == "macOS Settings" && $0.domains.contains(area.id) }
-                        }) { RestoreAreaSelectionView(model: model, area: $0) }
+                        WorkspaceSectionHeader(title: section.id)
+                        VStack(spacing: 0) {
+                            if let macOS = section.groups.first(where: { $0.id == "macOS Settings" }), includedAreas.contains(where: { macOS.domains.contains($0.id) }) {
+                                RestoreMacOSSelectionView(model: model, group: macOS, expansion: categoryExpansion, childExpansion: categoryExpansion)
+                                if section.areas(in: includedAreas).contains(where: { !macOS.domains.contains($0.id) }) { Divider() }
+                            }
+                            let areas = section.areas(in: includedAreas).filter { area in
+                                !section.groups.contains { $0.id == "macOS Settings" && $0.domains.contains(area.id) }
+                            }
+                            ForEach(areas) { area in
+                                RestoreAreaSelectionView(model: model, area: area, expansion: categoryExpansion)
+                                if area.id != areas.last?.id { Divider() }
+                            }
+                        }.modifier(WorkspaceCardSurface())
                     }
                     if showsSelectionActions {
-                        RestoreSelectionActions(status: model.selectionSummary, canPreview: model.canPreview, preview: { model.refreshPreview() })
+                        RestoreSelectionActions(status: model.selectionSummary, canPreview: model.canPreview, preview: { model.refreshPreview() }, reviewModel: model)
                     }
                 } else if let prepared = model.preparation, let preview = model.preview {
                     let tasks = RestoreTaskPresentation(preview: preview, plan: prepared)
@@ -371,6 +441,9 @@ struct RestoreView: View {
                         alreadyMatches: !prepared.hasPlannedChanges && prepared.plan.allSatisfy { $0.disposition == "satisfied" },
                         prerequisites: RestorePrerequisiteSummaryPresentation(conditions: prepared.readiness.conditions, ready: prepared.readiness.ready),
                         areas: model.areas,
+                        settingsCategories: RestoreSettingsPresentation.children(tasks.domains, categories: preview.categories),
+                        itemTitles: RestoreSettingsPresentation.titles(prepared.plan),
+                        categoryExpansion: categoryExpansion,
                         showsActions: showsPreviewActions, needsRefresh: model.previewNeedsRefresh, retryMessage: model.prerequisiteRetryMessage, retrying: model.retryingPrerequisites,
                         checkAgain: { Task { await model.checkPrerequisites() } },
                         back: { model.back() }, refresh: { model.refreshPreview() }, rebuild: { model.requestRebuild() }, canRebuild: model.canRebuild)
@@ -465,6 +538,9 @@ struct RestorePreviewContent: View {
     let alreadyMatches: Bool
     let prerequisites: RestorePrerequisiteSummaryPresentation
     let areas: [CoreRestoreInspection.Area]
+    var settingsCategories: [TaskDomainPresentation] = []
+    var itemTitles: [String: String] = [:]
+    var categoryExpansion: Binding<Bool>? = nil
     var showsActions = true
     var needsRefresh = false
     var retryMessage: String? = nil
@@ -475,8 +551,8 @@ struct RestorePreviewContent: View {
     var rebuild: (() -> Void)? = nil
     var canRebuild = false
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            Text(title).font(.title2.weight(.bold)).accessibilityAddTraits(.isHeader)
+        VStack(alignment: .leading, spacing: 20) {
+            Text(title).font(.title2.weight(.semibold)).accessibilityAddTraits(.isHeader)
             if needsRefresh {
                 Label("Selection changed. Refresh Preview to update counts and prerequisites. The current Preview shows the previous selection.", systemImage: "arrow.clockwise")
                     .font(.callout).foregroundStyle(.secondary)
@@ -492,7 +568,9 @@ struct RestorePreviewContent: View {
                 var previewDomain = domain
                 previewDomain.previewOnly = true
                 return previewDomain
-            })
+            }, restoreSettingsPreview: true, settingsCategories: settingsCategories, itemTitles: itemTitles,
+                expansion: categoryExpansion.map { binding in Binding(get: { binding.wrappedValue ? Set(domains.map(\.id)) : [] }, set: { binding.wrappedValue = !$0.isEmpty }) },
+                settingsExpansion: categoryExpansion)
             if showsActions {
                 RestorePreviewActions(back: back, refresh: refresh, rebuild: rebuild, canRebuild: canRebuild)
             }
@@ -505,8 +583,8 @@ struct RestorePreparationActions: View {
     let cancel: () -> Void
     var body: some View {
         HStack {
-            Spacer()
             Button("Cancel", role: .cancel, action: cancel).disabled(stopping)
+            Spacer()
         }
     }
 }
@@ -515,14 +593,38 @@ struct RestoreSelectionActions: View {
     let status: String
     let canPreview: Bool
     let preview: () -> Void
+    var reviewModel: RestoreModel? = nil
     var body: some View {
         ViewThatFits(in: .horizontal) {
-            HStack { Text(status).font(.callout).foregroundStyle(.secondary); Spacer(); action }
-            VStack(alignment: .leading, spacing: 8) { Text(status).font(.callout).foregroundStyle(.secondary); action }
+            HStack {
+                if let reviewModel { RestoreReviewCancelButton(model: reviewModel) }
+                Text(status).font(.callout).foregroundStyle(.secondary)
+                Spacer(); action
+            }
+            VStack(alignment: .leading, spacing: 8) {
+                if let reviewModel { RestoreReviewCancelButton(model: reviewModel) }
+                Text(status).font(.callout).foregroundStyle(.secondary); action
+            }
         }
     }
     private var action: some View {
         Button("Preview Restore", action: preview).buttonStyle(.borderedProminent).disabled(!canPreview)
+    }
+}
+
+struct RestoreReviewCancelButton: View {
+    @ObservedObject var model: RestoreModel
+    var body: some View {
+        Button("Cancel", action: model.requestReviewCancellation).disabled(!model.canCancelReview)
+            .alert("Discard Current Restore Selection?", isPresented: Binding(
+                get: { model.reviewCancelConfirmation },
+                set: { if !$0 { model.keepReviewSelection() } })) {
+                    Button("Keep Selection", role: .cancel, action: model.keepReviewSelection).keyboardShortcut(.defaultAction)
+                    Button("Discard and Cancel", role: .destructive, action: model.confirmReviewCancellation)
+                        .disabled(!model.canCancelReview)
+                } message: {
+                    Text("The current Restore selection and any prepared Preview will be discarded. The saved environment file will not be changed.")
+                }
     }
 }
 
@@ -535,6 +637,7 @@ struct RestorePreviewActions: View {
         HStack {
             Button("Back") { back?() }.disabled(back == nil)
             Button("Refresh Preview") { refresh?() }.disabled(refresh == nil)
+            Spacer()
             Button("Rebuild") { rebuild?() }.buttonStyle(.borderedProminent).disabled(!canRebuild || rebuild == nil)
         }
     }
@@ -558,7 +661,7 @@ struct RestoreRebuildProgressContent: View {
     let activity: String
     let stopping: Bool
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
+        VStack(alignment: .leading, spacing: 20) {
             Text("Rebuilding this Mac").font(.title.weight(.bold)).accessibilityAddTraits(.isHeader)
             HStack(spacing: 12) {
                 ProgressView()
@@ -572,15 +675,52 @@ struct RestoreRebuildProgressContent: View {
 struct RestoreExecutionCategories: View {
     let domains: [TaskDomainPresentation]
     var showsWarnings = true
+    var resultStatuses = false
+    // Unknown rows retain their original grouping and position; only known runs are reordered.
+    static func sections(_ domains: [TaskDomainPresentation]) -> [(title: String?, rows: [TaskDomainPresentation])] {
+        let known = Set(WorkspaceCategoryStyle.groups.flatMap { $0.1 })
+        var result: [(title: String?, rows: [TaskDomainPresentation])] = []
+        var pending: [TaskDomainPresentation] = []
+        func flush() {
+            result.append(contentsOf: WorkspaceCategoryStyle.sections(pending).map { (Optional($0.title), $0.rows) })
+            pending = []
+        }
+        for domain in domains {
+            if known.contains(domain.id) { pending.append(domain) }
+            else { flush(); result.append((nil, [domain])) }
+        }
+        flush()
+        return result
+    }
+    private func categoryTitle(_ domain: TaskDomainPresentation) -> some View {
+        WorkspaceCategoryTitle(id: domain.id, title: domain.title, fallbackSymbol: domain.symbol)
+    }
+    private func categoryStatus(_ domain: TaskDomainPresentation) -> some View {
+        Group {
+            if resultStatuses { RestoreResultStatusLabel(state: domain.executionStatus) }
+            else { TaskStatusLabel(state: domain.executionStatus) }
+        }.frame(width: TaskRowLayout.statusWidth, alignment: .leading)
+    }
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            ForEach(domains) { domain in
-                HStack {
-                    Label(domain.title, systemImage: domain.symbol).font(.headline).lineLimit(1)
-                    Spacer()
-                    TaskStatusLabel(state: domain.executionStatus)
-                }.frame(height: 44)
-                Divider()
+        VStack(alignment: .leading, spacing: 20) {
+            ForEach(Array(Self.sections(domains).enumerated()), id: \.offset) { _, section in
+                if let title = section.title { WorkspaceSectionHeader(title: title) }
+                VStack(spacing: 0) {
+                    ForEach(section.rows) { domain in
+                        ViewThatFits(in: .horizontal) {
+                            HStack(spacing: 12) {
+                                categoryTitle(domain)
+                                Spacer()
+                                categoryStatus(domain)
+                            }
+                            VStack(alignment: .leading, spacing: 8) {
+                                categoryTitle(domain)
+                                categoryStatus(domain).frame(maxWidth: .infinity, alignment: .trailing)
+                            }
+                        }.padding(.vertical, 6).frame(minHeight: 48).padding(.horizontal, 16)
+                        if domain.id != section.rows.last?.id { Divider() }
+                    }
+                }.modifier(WorkspaceCardSurface())
             }
         }
         let messages = Array(NSOrderedSet(array: domains.flatMap(\.executionMessages))) as? [String] ?? []
@@ -592,6 +732,22 @@ struct RestoreExecutionCategories: View {
                 }
             }
         }
+    }
+}
+
+// Result-only styling: absence of Verification remains distinct from an observed problem.
+struct RestoreResultStatusLabel: View {
+    let state: TaskRowState
+    var symbol: String { state == .unverified ? "questionmark.circle" : state.symbol }
+    var tone: RestoreStatusTone { state == .unverified ? .neutral : state.tone }
+    var body: some View {
+        if state == .unverified {
+            HStack(spacing: 7) {
+                Image(systemName: symbol).frame(width: TaskRowLayout.iconWidth).accessibilityHidden(true)
+                Text(state.rawValue)
+            }.font(.callout).foregroundStyle(tone.color)
+                .accessibilityElement(children: .ignore).accessibilityLabel(state.rawValue)
+        } else { TaskStatusLabel(state: state) }
     }
 }
 
@@ -610,17 +766,23 @@ struct RestoreVerificationResult: View {
         (count ?? 0) > 0 ? problem : .neutral
     }
 
+    static func showsCount(_ count: Int?) -> Bool { count.map { $0 > 0 } ?? false }
+
     var body: some View {
         let summary = RestoreVerificationSummary(payload: payload)
         let result = summary.overallResult(outcome: outcome)
         VStack(alignment: .leading, spacing: 8) {
             Label(summary.title, systemImage: "checkmark.shield").font(.headline)
-            HStack(spacing: 12) {
-                RestorePreviewMetrics.metric("Result", count: nil, symbol: result == "OK" ? "checkmark.shield" : result == "Failed" ? "xmark.circle" : result == "Stopped" ? "stop.circle" : "exclamationmark.triangle", color: Self.resultTone(result).color, value: result, captionColor: .primary)
-                RestorePreviewMetrics.metric("Mismatch", count: summary.mismatch, symbol: "exclamationmark.triangle",
-                    color: Self.countTone(summary.mismatch, problem: .error).color, captionColor: .primary)
-                RestorePreviewMetrics.metric("Unverified", count: summary.unverified, symbol: "questionmark.circle",
-                    color: Self.countTone(summary.unverified, problem: .warning).color, captionColor: .primary)
+            WorkspaceThreeMetrics {
+                RestorePreviewMetrics.metric("Result", count: nil, symbol: result == "OK" ? "checkmark.shield" : result == "Failed" ? "xmark.circle" : result == "Stopped" ? "stop.circle" : "exclamationmark.triangle", color: Self.resultTone(result).color, value: result)
+                if Self.showsCount(summary.mismatch) {
+                    RestorePreviewMetrics.metric("Mismatch", count: summary.mismatch, symbol: "exclamationmark.triangle",
+                        color: Self.countTone(summary.mismatch, problem: .error).color)
+                }
+                if Self.showsCount(summary.unverified) {
+                    RestorePreviewMetrics.metric("Unverified", count: summary.unverified, symbol: "questionmark.circle",
+                        color: Self.countTone(summary.unverified, problem: .warning).color)
+                }
             }
             if let count = summary.unresolved, count > 0 {
                 Label("Unresolved: \(count)", systemImage: "exclamationmark.triangle")
@@ -639,22 +801,11 @@ struct RestoreResultContent: View {
     let refresh: () -> Void
     let done: () -> Void
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
+        VStack(alignment: .leading, spacing: 20) {
             Text(result.title).font(.title.weight(.bold)).accessibilityAddTraits(.isHeader)
             Text(result.message).foregroundStyle(.secondary)
             RestoreVerificationResult(outcome: result.outcome, payload: result.structuredEvidence)
-            if let tasks { RestoreExecutionCategories(domains: tasks.domains, showsWarnings: false) }
-            if !result.findings.isEmpty {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Needs Attention").font(.headline)
-                    ForEach(result.findings) { item in
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(item.title).font(.callout.weight(.semibold))
-                            Text(item.action).font(.callout).foregroundStyle(.secondary)
-                        }
-                    }
-                }
-            }
+            if let tasks { RestoreExecutionCategories(domains: tasks.domains, showsWarnings: false, resultStatuses: true) }
             if !result.technicalDetails.isEmpty {
                 DisclosureGroup("Technical Details") {
                     ForEach(Array(result.compactTechnicalDetails.enumerated()), id: \.offset) { _, text in
@@ -684,33 +835,16 @@ struct RestorePreviewMetrics: View {
     }
     var body: some View {
         let counts = Self.counts(domains)
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: 12) { cards(counts) }
-            VStack(spacing: 8) { cards(counts) }
-        }
+        WorkspaceThreeMetrics { cards(counts) }
     }
     @ViewBuilder private func cards(_ counts: (changes: Int, attention: Int, matching: Int)) -> some View {
         Self.metric("Already Match", count: counts.matching, symbol: "checkmark.circle", color: RestoreStatusTone.success.color)
-        Self.metric("Changes Planned", count: counts.changes, symbol: "arrow.down.circle", color: .primary)
+        Self.metric("Changes Planned", count: counts.changes, symbol: "arrow.down.circle", color: .blue)
         Self.metric("Need Attention", count: counts.attention, symbol: "exclamationmark.triangle", color: counts.attention > 0 ? RestoreStatusTone.warning.color : .secondary)
     }
-    static func metric(_ title: String, count: Int?, symbol: String, color: Color, value: String? = nil, captionColor: Color? = nil, backgroundColor: Color? = nil, iconColor: Color? = nil) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Label {
-                Text(value ?? count.map(String.init) ?? "—").foregroundStyle(color)
-            } icon: {
-                Image(systemName: symbol).foregroundStyle(iconColor ?? color)
-            }.font(.title2.weight(.semibold)).monospacedDigit()
-            Text(title).font(.callout).foregroundStyle(captionColor ?? color)
-        }.frame(minWidth: 140, maxWidth: .infinity, alignment: .leading).padding(14)
-            .background {
-                if let backgroundColor {
-                    RoundedRectangle(cornerRadius: 8).fill(backgroundColor)
-                } else {
-                    RoundedRectangle(cornerRadius: 8).fill(.quaternary.opacity(0.35))
-                }
-            }
-            .accessibilityElement(children: .ignore).accessibilityLabel(title).accessibilityValue(value ?? count.map(String.init) ?? "Not reported")
+    static func metric(_ title: String, count: Int?, symbol: String, color: Color, value: String? = nil) -> some View {
+        WorkspaceMetricCard(title: title, value: value ?? count.map(String.init) ?? "—", symbol: symbol, tint: color)
+            .accessibilityValue(value ?? count.map(String.init) ?? "Not reported")
     }
 }
 
@@ -765,5 +899,25 @@ struct RestoreResultActions: View {
             if result.outcome != .clean { Button("Refresh Preview", action: refresh) }
             PendingOperationLogButton()
         }
+    }
+}
+
+// Only names and nesting are projected here. Plan rows, predicates and task states are unchanged.
+enum RestoreSettingsPresentation {
+    static func children(_ domains: [TaskDomainPresentation], categories: [DisplayCategory]) -> [TaskDomainPresentation] {
+        let items = domains.first { $0.id == "macOS Settings" || $0.id == "macos-settings" }?.items ?? []
+        return CaptureMacOSSettingsGroup.domainIDs.compactMap { id in
+            guard let category = categories.first(where: { $0.id == id }) else { return nil }
+            let ids = Set(category.items.map(\.id))
+            let members = items.filter { ids.contains($0.id) }
+            return members.isEmpty ? nil : TaskDomainPresentation(id: id, title: category.title,
+                symbol: WorkspaceCategoryStyle.symbol(id), items: members, previewOnly: true)
+        }
+    }
+    static func titles(_ plan: [CoreRestorePreparation.Row]) -> [String: String] {
+        Dictionary(uniqueKeysWithValues: plan.enumerated().compactMap { index, row in
+            guard row.action != "restart_process", let title = WorkspaceSettingLabels.title(domain: row.domain, identity: row.itemID) else { return nil }
+            return ("restore-\(index)", title)
+        })
     }
 }

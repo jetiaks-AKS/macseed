@@ -20,18 +20,24 @@ import SwiftUI
         ["domain": domain, "selection_mode": mode, "status": status, "reason": reason ?? NSNull(),
          "items": items.map { ["item_id": $0, "label": $0] }]
     }
-    @MainActor static func render(_ model: CaptureModel, _ runtime: CoreRuntime, state: String) throws {
+    @MainActor static func render(_ model: CaptureModel, _ runtime: CoreRuntime, state: String, expanded: Bool = false, settingsOnly: Bool = false) throws {
         _ = NSApplication.shared
-        for (width, height) in [(785, 660), (985, 760), (1385, 1010)] {
+        for (width, viewportHeight) in [(785, 660), (985, 760), (1385, 1010)] {
+            let height = settingsOnly ? 1120 : viewportHeight
             let content = VStack(spacing: 0) {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 20) {
                         WorkspaceHeader(title: "Capture this Mac", subtitle: ProductTask.capture.subtitle, symbol: ProductTask.capture.symbol)
-                        CaptureView(model: model, runtime: runtime, showsActions: false)
+                        if settingsOnly {
+                            CaptureMacOSSettingsView(model: model, expansion: .constant(true), childExpansion: .constant(true))
+                                .modifier(WorkspaceCardSurface())
+                        } else {
+                            CaptureView(model: model, runtime: runtime, showsActions: false, categoryExpansion: expanded ? .constant(true) : nil)
+                        }
                     }.padding(28).frame(maxWidth: .infinity, alignment: .leading)
                 }
                 Divider()
-                CaptureActionsView(model: model, runtime: runtime).padding(.horizontal, 28).padding(.vertical, 12)
+                CaptureActionsView(model: model, runtime: runtime).modifier(WorkspaceFooterPadding())
             }.frame(width: CGFloat(width), height: CGFloat(height)).background(Color(nsColor: .windowBackgroundColor))
             let host = NSHostingView(rootView: content)
             let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: height), styleMask: [.borderless], backing: .buffered, defer: false)
@@ -42,7 +48,7 @@ import SwiftUI
             host.displayIfNeeded()
             guard let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { preconditionFailure("Native Capture render unavailable") }
             host.cacheDisplay(in: host.bounds, to: bitmap)
-            try bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: "build/Debug/CaptureUIv2-\(state)-\(width).png"))
+            try bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: "build/Debug/CaptureUIv2-\(state)\(expanded ? "-expanded" : "")-\(width).png"))
             window.close()
         }
     }
@@ -118,7 +124,10 @@ import SwiftUI
         model.scan(); await model.waitForCompletion()
         precondition(model.state == .review && model.selectedDomainCount == 2 && model.selectedItemCount == 2)
         precondition(model.bulkState == .all && model.selection.secureIdentities.isEmpty)
+        let renderSelection = model.selection
         try render(model, runtime, state: "review")
+        try render(model, runtime, state: "review", expanded: true)
+        precondition(model.selection == renderSelection && model.state == .review)
         let packages = model.categories.first { $0.id == "homebrew-packages" }!
         let finder = model.categories.first { $0.id == "macos-finder" }!
         precondition(packages.itemSelectable && packages.notices[0].requiresAttention)
@@ -181,7 +190,10 @@ import SwiftUI
         precondition(future[0].categories[0].title == "future-domain" && !future[0].categories[0].selectable)
         precondition(CaptureReviewRow.attentionMessage(future) == nil)
 
+        let confirmedSelection = model.selection
         try render(model, runtime, state: "confirmation")
+        try render(model, runtime, state: "confirmation", expanded: true)
+        precondition(model.selection == confirmedSelection && model.state == .confirmation)
         let preparedScope = model.preparation!
         let plannedTasks = CaptureTaskPresentation(categories: preparedScope.inventory.map { CaptureCategory(row: $0) }, selection: preparedScope.selection!, phase: .confirmation)
         let waitingTasks = CaptureTaskPresentation(categories: model.categories, selection: model.selection, phase: .progress)
@@ -231,6 +243,7 @@ import SwiftUI
         precondition(model.state == .result && model.publicationEvidence == .occurred && model.publication?.destination == target.path)
         precondition(model.publication?.bundle.capturedDomains.count == 2 && model.resultNotices.count == 1)
         try render(model, runtime, state: "result")
+        try render(model, runtime, state: "result", expanded: true)
         let captured = model.publication!.bundle
         let resultTasks = CaptureTaskPresentation(categories: preparedScope.inventory.map { CaptureCategory(row: $0) }, selection: preparedScope.selection!,
             phase: .result, publication: model.publication, notices: model.resultNotices)
@@ -315,6 +328,15 @@ import SwiftUI
             category.row.includedSettings?.map(\.label) == [includedLabels[index]] && category.row.items.isEmpty
         })
         precondition(model.selectedDomainCount == 7 && model.selectedItemCount == 1 && !model.macOSSettings.hasAttention)
+        let settingsSelection = model.selection
+        try render(model, runtime, state: "macOS-settings", settingsOnly: true)
+        precondition(model.selection == settingsSelection && model.selectedDomainCount == 7 && model.selectedItemCount == 1)
+        let nestedTasks = CaptureTaskPresentation(categories: model.categories, selection: model.selection, phase: .confirmation)
+        let children = CaptureSettingsPresentation.children(nestedTasks.domains)
+        precondition(children.map(\.id) == macOSDomains)
+        precondition(children.flatMap(\.items).map(\.id) == nestedTasks.domains.first { $0.id == "macos-settings" }!.items.map(\.id))
+        precondition(CaptureSettingsPresentation.labels(model.inventory).values.flatMap { $0 }.count == 6)
+
         let macOSReviewRows = CaptureReviewRow.project(model.categories)
         precondition(macOSReviewRows.map(\.id) == ["homebrew-packages", "macos-settings"])
         precondition(macOSReviewRows.last?.categories.count == 6)

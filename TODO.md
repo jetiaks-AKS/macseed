@@ -28,6 +28,20 @@ Implement the [Desktop contract](docs/DESKTOP.md) in vertical slices:
 - [ ] 16K: Desktop flow/runtime/transport/security/accessibility hardening,
   including stale plans, interruptions and diagnostics acceptance.
 
+### Restore Cancellation Safety — next standalone checkpoint
+
+Desktop Visual Unification is completed; its contract and the user-reproduced
+2026-10-13 Firefox busy-DMG incident are recorded in
+[Desktop](docs/DESKTOP.md#restore-cancellation-safety). No cancellation fixes are
+claimed by the visual checkpoint.
+
+- [ ] Qualify stopping active installs and preventing new tasks; verify child and
+  detached/privileged process quiescence and truthful unknown-consequence reporting.
+- [ ] Define operation-owned DMG handling and interruption re-entry without deleting
+  user data or detaching unrelated volumes.
+- [ ] Qualify MAS separately, plus Formula, VS Code Extensions and Git re-entry.
+- [ ] Add controlled mock cancellation tests before representative installer gates.
+
 ### Restore/Homebrew checkpoint — 08e2b469
 
 Checkpoint `08e2b469ba714a6eb32a3293296943b774653415` advances the earlier
@@ -84,17 +98,19 @@ and verified end-to-end; it is no longer open gate work.
 Historical Stage 16 slice identifiers remain unchanged. Complete one checkpoint
 at a time, in this practical order:
 
-1. Desktop Operation Logging & Diagnostics: first audit the two existing logging levels.
-2. Automatic MAS Restore qualification, mandatory before 1.0.
-3. Secure SSH Desktop integration (16H) over the existing Core engine.
-4. Compatibility & Reliability: remaining Result, Zsh, Homebrew/Repair, watchdog,
+1. [Restore Cancellation Safety](docs/DESKTOP.md#restore-cancellation-safety): qualify
+   interrupted installers, operation-owned DMG handling, process quiescence and safe re-entry.
+2. Desktop Operation Logging & Diagnostics: first audit the two existing logging levels.
+3. Automatic MAS Restore qualification, mandatory before 1.0.
+4. Secure SSH Desktop integration (16H) over the existing Core engine.
+5. Compatibility & Reliability: remaining Result, Zsh, Homebrew/Repair, watchdog,
    partial/interrupted operations, stale plans, Workspace review, functional
    consistency, accessibility and runtime hardening.
-5. Stage 17 Distribution & Clean-Mac Qualification: private writable runtime/workspace,
+6. Stage 17 Distribution & Clean-Mac Qualification: private writable runtime/workspace,
    signing, Hardened Runtime, notarization/stapling, DMG, Gatekeeper, clean Apple
    Silicon and separate Intel qualification where support is claimed.
-6. Early Access / Alpha.
-7. Macseed 1.0.
+7. Early Access / Alpha.
+8. Macseed 1.0.
 
 ### Deferred UI/dev tooling
 

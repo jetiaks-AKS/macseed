@@ -71,8 +71,9 @@ Provide prerequisite guidance, Check Again, structured
 progress/results, separate secret input and cancellation over the existing Core.
 Desktop Secure SSH Capture/Restore remains unfinished (16H). Deliver persistent
 structured operation logs, live View Log and a redacted Diagnostic Report with
-exact preview/export. Desktop Operation Logging & Diagnostics is the next
-checkpoint, beginning with a separate architecture audit. The Unified UI
+exact preview/export. Desktop Visual Unification is complete. Restore Cancellation
+Safety is the next standalone checkpoint; Operation Logging & Diagnostics follows
+with a separate architecture audit. The Unified UI
 Scenario Catalog remains deferred UI/dev tooling, with a possible Lite version
 after functional priorities; existing Debug previews and fixtures are retained.
 Automatic MAS Restore is mandatory before 1.0; authorization/install qualification
@@ -98,17 +99,19 @@ Existing Stage 16 slice identifiers (16H Secure SSH, 16I completion, 16J diagnos
 16K hardening) retain their historical meaning; they do not prescribe today's
 implementation order. Complete one bounded checkpoint at a time:
 
-1. Desktop Operation Logging & Diagnostics: first audit the two existing logging levels.
-2. Automatic MAS Restore qualification, mandatory before 1.0.
-3. Secure SSH Desktop integration (16H) over the existing Core engine.
-4. Compatibility & Reliability: remaining Result, Zsh, Homebrew/Repair, watchdog,
+1. [Restore Cancellation Safety](docs/DESKTOP.md#restore-cancellation-safety): qualify
+   interrupted installers, operation-owned DMG handling, process quiescence and safe re-entry.
+2. Desktop Operation Logging & Diagnostics: first audit the two existing logging levels.
+3. Automatic MAS Restore qualification, mandatory before 1.0.
+4. Secure SSH Desktop integration (16H) over the existing Core engine.
+5. Compatibility & Reliability: remaining Result, Zsh, Homebrew/Repair, watchdog,
    partial/interrupted operations, stale plans, Workspace review, functional
    consistency, accessibility and runtime hardening.
-5. Stage 17 Distribution & Clean-Mac Qualification: private writable runtime/workspace,
+6. Stage 17 Distribution & Clean-Mac Qualification: private writable runtime/workspace,
    signing, Hardened Runtime, notarization/stapling, DMG, Gatekeeper, clean Apple
    Silicon and separate Intel qualification where support is claimed.
-6. Early Access / Alpha.
-7. Macseed 1.0.
+7. Early Access / Alpha.
+8. Macseed 1.0.
 
 Status must compare the current Mac with a Saved Environment (`.mbt`), using the
 existing Core comparison engine and source selection/Blueprint semantics. The

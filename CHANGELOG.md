@@ -50,6 +50,16 @@ The format is based on the principles of **Keep a Changelog**.
 
 ### Changed
 
+* Desktop Capture and Restore adopt Environment Status's visual groups, category
+  icons, row surfaces, summary cards and nested macOS Settings presentation while
+  preserving selection granularity and explicit Prepare/Rebuild controls.
+  Visual Unification is complete across Selection, Preview, Execution and Result;
+  Result shows only positive Core mismatch/unverified quantity cards, uses neutral
+  Unverified category labels and keeps detailed diagnostics collapsed.
+* Document Restore Cancellation Safety as an open engineering issue, including
+  the user-reproduced Firefox busy-DMG installation incident on 2026-10-13.
+  Persistent Logging & Diagnostics remains future work.
+
 * Restore freshness failures include safe plan/component fingerprints in Desktop
   diagnostic copying. A denied process observer is reported separately from an
   unavailable Bundle, preserving the original publication and mutation facts.

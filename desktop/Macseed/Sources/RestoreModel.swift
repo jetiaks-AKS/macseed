@@ -233,7 +233,9 @@ struct RestoreProgressRow {
     @Published private(set) var executionPlan: CoreRestorePreparation?
     @Published private(set) var executionStartedAt: Date?
     @Published private(set) var executionFinishedAt: Date?
+    @Published private(set) var reviewCancelConfirmation = false
     @Published private(set) var stopConfirmation = false
+    private var reviewCancelSource: URL?
     private var stopOperationID: String?
     @Published private(set) var failure: String?
     @Published private(set) var technicalReason: String?
@@ -394,6 +396,34 @@ struct RestoreProgressRow {
         categoryEvidence = [:]; categoryEvidenceEvents = []; evidenceSequence = 0
         selectedCategories = []; selectedItems = [:]; state = .choose
     }
+    var canCancelReview: Bool { state == .review && !busy && !runtime.isActive && !runtime.stopping }
+    var reviewCancellationNeedsConfirmation: Bool {
+        let initial = CoreRestoreSelection(categories: areas.filter(\.selectable).map(\.id).sorted(), items: [:])
+        return selection != initial || preparation != nil || preview != nil
+    }
+    func requestReviewCancellation() {
+        guard canCancelReview else { return }
+        if reviewCancellationNeedsConfirmation { reviewCancelSource = source; reviewCancelConfirmation = true }
+        else { resetReviewSession() }
+    }
+    func keepReviewSelection() { reviewCancelConfirmation = false; reviewCancelSource = nil }
+    func confirmReviewCancellation() {
+        guard canCancelReview, reviewCancelConfirmation, source == reviewCancelSource else { return }
+        resetReviewSession()
+    }
+    private func resetReviewSession() {
+        guard canCancelReview else { return }
+        // Review is published only after owned inspection has finished. Other
+        // owned async phases and any active shared Core operation are excluded.
+        work = nil
+        invalidate(); source = nil; inspection = nil; selectedCategories = []; selectedItems = [:]
+        failure = nil; technicalReason = nil; prerequisiteRetryMessage = nil; retryingPrerequisites = false
+        cancelRequested = false; reviewCancelConfirmation = false; reviewCancelSource = nil; stopConfirmation = false; stopOperationID = nil
+        executionResult = nil; executionPreview = nil; executionPlan = nil
+        executionStartedAt = nil; executionFinishedAt = nil; progressScope = []
+        categoryEvidence = [:]; categoryEvidenceEvents = []; evidenceSequence = 0
+        state = .choose
+    }
     func selectionState(_ area: CoreRestoreInspection.Area) -> SelectionState {
         guard area.selectable else { return .none }
         return area.selectionMode == "category" ? (selectedCategories.contains(area.id) ? .all : .none)
@@ -406,6 +436,7 @@ struct RestoreProgressRow {
     }
     func choose(_ url: URL) {
         guard !busy, !runtime.isActive else { return }
+        keepReviewSelection()
         cancelRequested = false
         source = url; inspection = nil; selectedCategories = []; selectedItems = [:]
         invalidate(); failure = nil; technicalReason = nil

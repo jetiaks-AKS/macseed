@@ -51,6 +51,8 @@ struct IncludedSettingsText: View {
 struct CaptureMacOSSettingsView: View {
     @ObservedObject var model: CaptureModel
     var editable = true
+    var expansion: Binding<Bool>? = nil
+    var childExpansion: Binding<Bool>? = nil
     @CaptureViewState<Bool> private var expanded = false
     var body: some View {
         let group = model.macOSSettings
@@ -63,60 +65,24 @@ struct CaptureMacOSSettingsView: View {
                     .frame(width: 28, height: 28)
                     .disabled(group.availableIDs.isEmpty)
                 }
-                DisclosureGroup(isExpanded: $expanded) { EmptyView() } label: {
+                DisclosureGroup(isExpanded: expansion ?? $expanded) { EmptyView() } label: {
                     ViewThatFits(in: .horizontal) {
                         HStack(spacing: 12) { categoryTitle; Spacer(); categoryStatus }
-                        VStack(alignment: .leading, spacing: 6) { categoryTitle; categoryStatus }
-                    }
-                }
-                .disclosureGroupStyle(TaskDisclosureStyle())
+                        VStack(alignment: .leading, spacing: 8) { categoryTitle; categoryStatus }
+                    }.padding(.vertical, 6)
+                }.disclosureGroupStyle(TaskDisclosureStyle())
             }
-            if expanded {
+            if (expansion?.wrappedValue ?? expanded) {
                 Text("Supported settings only").font(.caption).foregroundStyle(.secondary)
                     .padding(.leading, CaptureChildRowGrid.leadingInset)
                 ForEach(group.children.filter { editable || model.selectionState($0) != .none }) { category in
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack {
-                            if editable {
-                                NativeSelectionCheckbox(category.title, state: model.selectionState(category)) {
-                                    model.selectCategory(category.id, included: $0)
-                                }
-                                .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
-                                .disabled(!category.selectable)
-                            } else { Text(category.title) }
-                            Spacer()
-                            if !category.selectable {
-                                Text(category.headerSummary).font(.callout).foregroundStyle(.secondary)
-                                if category.row.status == "observation_error" {
-                                    Image(systemName: "exclamationmark.triangle.fill")
-                                        .foregroundStyle(.orange).accessibilityLabel("Needs Attention")
-                                }
-                            } else if !category.notices.isEmpty {
-                                Label("Needs Attention", systemImage: "exclamationmark.triangle").font(.callout).foregroundStyle(.orange)
-                            } else {
-                                Text(model.selectionState(category).captureTitle).font(.callout.weight(.medium))
-                            }
-                        }
-                        if !category.selectable {
-                            Text(category.display.items.first?.action ?? "").font(.callout).foregroundStyle(.secondary)
-                        } else if let settings = category.row.includedSettings, !settings.isEmpty {
-                            IncludedSettingsText(settings: settings).padding(.leading, editable ? CaptureChildRowGrid.titleInset : 0)
-                        }
-                        if let reason = category.row.reason {
-                            DisclosureGroup("Technical Details") {
-                                Text(reason).font(.caption.monospaced()).textSelection(.enabled)
-                            }.disclosureGroupStyle(TaskDisclosureStyle(minimumHeight: 22))
-                        }
-                    }.padding(.vertical, 4)
+                    CaptureSettingsSubcategoryView(model: model, category: category, editable: editable, expansion: childExpansion)
                 }.padding(.leading, editable ? CaptureChildRowGrid.leadingInset : 0)
             }
-        }.padding(.horizontal, 16).padding(.vertical, 4)
+        }.padding(.horizontal, 16)
     }
     private var categoryTitle: some View {
-        HStack(spacing: 12) {
-            Image(systemName: "slider.horizontal.3").frame(width: TaskRowLayout.iconWidth).accessibilityHidden(true)
-            Text("macOS Settings").font(.body.weight(.medium))
-        }
+        WorkspaceCategoryTitle(id: "macos-settings", title: "macOS Settings", fallbackSymbol: "slider.horizontal.3")
     }
     private var categoryStatus: some View {
         VStack(alignment: .leading, spacing: 3) {
@@ -132,6 +98,7 @@ struct CaptureView: View {
     @ObservedObject var model: CaptureModel
     @ObservedObject var runtime: CoreRuntime
     var showsActions = true
+    var categoryExpansion: Binding<Bool>? = nil
     private var progressText: String {
         if runtime.stopping { return "Stopping Capture…" }
         switch runtime.currentPhase {
@@ -142,7 +109,7 @@ struct CaptureView: View {
         }
     }
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
+        VStack(alignment: .leading, spacing: 20) {
             switch model.state {
             case .idle:
                 WorkspacePrimaryActionCard(title: "Scan This Mac", symbol: ProductTask.capture.symbol, tint: WorkspaceIdentity.tint(.capture),
@@ -200,6 +167,7 @@ struct CaptureView: View {
                 .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 12))
             case .review:
                 let rows = CaptureReviewRow.project(model.categories)
+                CaptureReviewMetrics(summary: selectionSummary)
                 HStack {
                     Text("Review and select").font(.headline)
                     Spacer()
@@ -207,24 +175,24 @@ struct CaptureView: View {
                         .buttonStyle(.plain).foregroundStyle(.secondary)
                         .disabled(!model.categories.contains(where: \.selectable) || runtime.isActive)
                 }
-                CaptureReviewMetrics(summary: selectionSummary)
-                VStack(spacing: 0) {
-                    ForEach(rows) { row in
-                        if row.id == "macos-settings" {
-                            CaptureMacOSSettingsView(model: model)
-                        } else if let category = row.categories.first {
-                            CaptureCategorySelectionView(model: model, category: category)
+                ForEach(WorkspaceCategoryStyle.sections(rows), id: \.title) { section in
+                    WorkspaceSectionHeader(title: section.title)
+                    VStack(spacing: 0) {
+                        ForEach(section.rows) { row in
+                            if row.id == "macos-settings" {
+                                CaptureMacOSSettingsView(model: model, expansion: categoryExpansion, childExpansion: categoryExpansion)
+                            } else if let category = row.categories.first {
+                                CaptureCategorySelectionView(model: model, category: category, expansion: categoryExpansion)
+                            }
+                            if row.id != section.rows.last?.id { Divider() }
                         }
-                        if row.id != rows.last?.id { Divider() }
-                    }
-                }.background(.background, in: RoundedRectangle(cornerRadius: 8))
-                    .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.quaternary))
-                    .id(model.operationID)
+                    }.modifier(WorkspaceCardSurface())
+                }.id(model.operationID)
                 CaptureSecureTransferView()
                 if !model.canCreate { Text("Choose supported state to capture.").foregroundStyle(.secondary) }
             case .confirmation:
                 if let prepared = model.preparation, let selection = prepared.selection {
-                    Text("Save this environment?").font(.title2.weight(.bold)).accessibilityAddTraits(.isHeader)
+                    Text("Save this environment?").font(.title2.weight(.semibold)).accessibilityAddTraits(.isHeader)
                     Text("Review the final capture before creating the saved environment.").font(.callout).foregroundStyle(.secondary)
                     if let destination = model.destination {
                         CaptureBundleLocationView(destination: destination)
@@ -238,12 +206,16 @@ struct CaptureView: View {
                     }
                     Text("The saved settings are private but unencrypted. Private SSH identities are not included.")
                         .font(.callout).foregroundStyle(.secondary)
-                    TaskDomainList(domains: CaptureTaskPresentation(categories: prepared.inventory.map { CaptureCategory(row: $0) },
-                        selection: selection, phase: .confirmation).domains, stateTitles: [.planned: "Ready to Save"], compactReadyItems: true, title: "Included in this capture")
+                    let tasks = CaptureTaskPresentation(categories: prepared.inventory.map { CaptureCategory(row: $0) }, selection: selection, phase: .confirmation)
+                    TaskDomainList(domains: tasks.domains, stateTitles: [.planned: "Ready to Save"], compactReadyItems: true, title: "Included in this capture",
+                        settingsCategories: CaptureSettingsPresentation.children(tasks.domains),
+                        settingLabels: CaptureSettingsPresentation.labels(prepared.inventory),
+                        expansion: categoryExpansion.map { binding in Binding(get: { binding.wrappedValue ? Set(tasks.domains.map(\.id)) : [] }, set: { binding.wrappedValue = !$0.isEmpty }) },
+                        settingsExpansion: categoryExpansion)
                 }
             case .result:
                 if let saved = model.publication {
-                    Text("Environment Saved").font(.title2.weight(.bold)).accessibilityAddTraits(.isHeader)
+                    Text("Environment Saved").font(.title2.weight(.semibold)).accessibilityAddTraits(.isHeader)
                     Text(model.resultNotices.isEmpty ? "Your environment was saved." : "Your environment was saved. Review the captured categories with limitations.")
                         .font(.callout).foregroundStyle(.secondary)
                     CaptureSavedMetrics(publication: saved, notices: model.resultNotices)
@@ -251,9 +223,13 @@ struct CaptureView: View {
                         .padding(14).frame(maxWidth: .infinity, alignment: .leading)
                         .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 8))
                     if let prepared = model.preparation, let selection = prepared.selection {
-                        TaskDomainList(domains: CaptureTaskPresentation(categories: prepared.inventory.map { CaptureCategory(row: $0) },
-                            selection: selection, phase: .result, publication: saved, notices: model.resultNotices).domains,
-                            compactReadyItems: true, title: "Captured Environment")
+                        let tasks = CaptureTaskPresentation(categories: prepared.inventory.map { CaptureCategory(row: $0) },
+                            selection: selection, phase: .result, publication: saved, notices: model.resultNotices)
+                        TaskDomainList(domains: tasks.domains, compactReadyItems: true, title: "Captured Environment",
+                            settingsCategories: CaptureSettingsPresentation.children(tasks.domains),
+                            settingLabels: CaptureSettingsPresentation.labels(prepared.inventory),
+                            expansion: categoryExpansion.map { binding in Binding(get: { binding.wrappedValue ? Set(tasks.domains.map(\.id)) : [] }, set: { binding.wrappedValue = !$0.isEmpty }) },
+                            settingsExpansion: categoryExpansion)
                     }
                 }
             case .failed, .cancelled:
@@ -320,8 +296,8 @@ struct CaptureActionsView: View {
                 Button("Cancel", role: .cancel) { model.cancel() }.disabled(runtime.stopping)
                 Spacer()
             case .preparing, .saving:
-                Spacer()
                 Button("Cancel", role: .cancel) { model.cancel() }.disabled(runtime.stopping)
+                Spacer()
             case .result:
                 if let saved = model.publication {
                     Button("Reveal in Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: saved.destination)]) }

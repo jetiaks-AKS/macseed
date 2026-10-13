@@ -1,7 +1,50 @@
 import Foundation
+import AppKit
+import SwiftUI
 
 @main struct RestoreTests {
     static func write(_ value: String, _ path: URL) throws { try value.write(to: path, atomically: false, encoding: .utf8) }
+    @MainActor static func render(_ model: RestoreModel, _ runtime: CoreRuntime, state: String, expanded: Bool = false, settingsOnly: Bool = false) throws {
+        _ = NSApplication.shared
+        NSApp.appearance = NSAppearance(named: .aqua)
+        for width in [785, 985] {
+            let selection = model.selection
+            let preparedID = model.preparation?.preparedPlanID
+            let content = VStack(spacing: 0) {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 20) {
+                        WorkspaceHeader(title: ProductTask.restore.rawValue, subtitle: ProductTask.restore.subtitle, symbol: ProductTask.restore.symbol)
+                        if settingsOnly, let group = model.groups.first(where: { $0.id == "macOS Settings" }) {
+                            RestoreMacOSSelectionView(model: model, group: group, expansion: .constant(true), childExpansion: .constant(true))
+                                .modifier(WorkspaceCardSurface())
+                        } else {
+                            RestoreView(model: model, runtime: runtime, categoryExpansion: expanded ? .constant(true) : nil,
+                                showsPreviewActions: false, showsSelectionActions: false)
+                        }
+                    }.padding(28).frame(maxWidth: .infinity, alignment: .leading)
+                }
+                Divider()
+                if model.state == .review {
+                    RestoreSelectionActions(status: model.selectionSummary, canPreview: model.canPreview, preview: {})
+                        .modifier(WorkspaceFooterPadding())
+                } else {
+                    RestorePreviewActions(back: {}, refresh: {}, rebuild: {}, canRebuild: model.canRebuild)
+                        .modifier(WorkspaceFooterPadding())
+                }
+            }.frame(width: CGFloat(width), height: 850).background(Color(nsColor: .windowBackgroundColor))
+            let host = NSHostingView(rootView: content)
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: 850), styleMask: [.borderless], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false; window.contentView = host
+            host.frame = window.contentView!.bounds
+            host.layoutSubtreeIfNeeded(); host.displayIfNeeded()
+            let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds)!
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            precondition(bitmap.pixelsWide == Int(CGFloat(width) * window.backingScaleFactor))
+            try bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: "build/Debug/RestoreUnified-\(state)\(expanded ? "-expanded" : "")-\(width).png"))
+            precondition(model.selection == selection && model.preparation?.preparedPlanID == preparedID)
+            window.close()
+        }
+    }
     @MainActor static func taskPresentationChecks() throws {
         let casks = ["firefox", "iina", "keka"] + (4...16).map { "cask-\($0)" }
         let packages = ["firefox"] + (2...21).map { "formula-\($0)" }
@@ -484,8 +527,10 @@ import Foundation
         print("PASS: Working retains Preview warnings; execution awaits Verification; Partial requires typed independent success; item diagnostics preserve independent problems")
     }
     @MainActor static func main() async throws {
-        try taskPresentationChecks()
-        try restoreEvidenceChecks()
+        if !CommandLine.arguments.contains("--review-cancel-only") && !CommandLine.arguments.contains("--restore-macos-only") {
+            try taskPresentationChecks()
+            try restoreEvidenceChecks()
+        }
         if CommandLine.arguments.contains("--presentation-only") { return }
         for (status, expected, prompts) in [(Int32(0), RestoreAutomationPermission.Outcome.available, 0),
                                             (-1744, .available, 1), (-1743, .denied, 0), (-10004, .unavailable, 0)] {
@@ -530,8 +575,10 @@ import Foundation
         emit('started')
         operation=request['operation']
         if operation=='capabilities':
-            features={} if mode=='old_core' else {'restore_selection':{'version':1}}
-            result=dict(protocol_version=1, product_version='3.4.0',operations=['bundle_inspect','restore_prepare'],features=features)
+            features={} if mode=='old_core' else {'restore_selection':{'version':1},'bundle_comparison':{'version':1}}
+            result=dict(protocol_version=1, product_version='3.4.0',operations=['bundle_inspect','restore_prepare','environment_compare'],features=features)
+        elif operation=='environment_compare':
+            result=json.loads(Path('comparison.json').read_text())
         elif operation=='bundle_inspect':
             if mode in ('bundle_invalid','unsupported_bundle'):
                 emit('failed',{'code':mode}); sys.exit(2)
@@ -668,6 +715,11 @@ import Foundation
         inventory.append(["domain": "empty-items", "label": "Empty items", "selection_mode": "items", "availability": "available", "reason": NSNull(), "items": []])
         let groups: [[String: Any]] = [["id": "Applications", "domains": applications], ["id": "Workspace", "domains": workspace],
                                       ["id": "macOS Settings", "domains": macOS], ["id": "SSH Configuration", "domains": ["ssh-configuration"]], ["id": "Other Core group", "domains": ["homebrew-packages", "unavailable-area", "empty-items"]]]
+        if CommandLine.arguments.contains("--restore-macos-only") {
+            for index in inventory.indices where macOS.contains(inventory[index]["domain"] as? String ?? "") {
+                inventory[index]["label"] = CaptureCategory.title(for: inventory[index]["domain"] as! String)
+            }
+        }
         let inspection: [String: Any] = ["format_version": 1, "selected_categories": macOS + ["ssh-configuration"], "selected_item_counts": [:], "secure_component": true,
                                         "restore_selection": ["groups": groups, "inventory": inventory]]
         try JSONSerialization.data(withJSONObject: inspection).write(to: core.appendingPathComponent("inspection.json"))
@@ -678,6 +730,161 @@ import Foundation
         precondition(model.state == .review && model.areas.count == inventory.count && model.groups.count == 5 && model.bulkState == .all)
         precondition(model.selectionSummary == "Everything selected" && model.canPreview)
         precondition(model.inspection?.secureComponent == true && model.selectedAreaCount == 13)
+        if CommandLine.arguments.contains("--restore-macos-only") {
+            let group = model.groups.first { $0.id == "macOS Settings" }!
+            let otherSelection = Set(model.selection.categories).subtracting(macOS)
+            for id in macOS {
+                precondition(model.areas.first { $0.id == id }!.selectionMode == "category")
+                model.selectArea(id, included: false)
+                precondition(model.groupState(group) == .mixed && !model.selection.categories.contains(id))
+                precondition(Set(model.selection.categories).intersection(macOS) == Set(macOS).subtracting([id]))
+                model.selectArea(id, included: true)
+                precondition(model.groupState(group) == .all)
+            }
+            model.selectGroup(group, included: false)
+            precondition(model.groupState(group) == .none && Set(model.selection.categories) == otherSelection)
+            model.selectGroup(group, included: true)
+            model.refreshPreview(); await model.waitForCompletion()
+            precondition(model.state == .preview && model.preparation != nil)
+            model.selectArea("macos-finder", included: false)
+            precondition(model.state == .review && model.preparation == nil && model.preview == nil)
+            model.refreshPreview(); await model.waitForCompletion()
+            precondition(model.state == .preview && !model.selection.categories.contains("macos-finder"))
+            let lines = try String(contentsOf: core.appendingPathComponent("requests.jsonl")).split(separator: "\n")
+            let requests = try lines.map { try JSONSerialization.jsonObject(with: Data($0.utf8)) as! [String: Any] }
+            let prepare = requests.last { $0["operation"] as? String == "restore_prepare" }!
+            let parameters = prepare["parameters"] as! [String: Any]
+            let selected = parameters["selection"] as! [String: Any]
+            precondition(Set(selected["categories"] as! [String]) == Set(model.selection.categories))
+            model.requestRebuild(); model.confirmRebuild(); await model.waitForCompletion()
+            precondition(model.state == .result)
+            model.finish(); model.choose(source); await model.waitForCompletion()
+            model.selectArea("macos-finder", included: false)
+            _ = NSApplication.shared; NSApp.appearance = NSAppearance(named: .aqua)
+            let content = RestoreMacOSSelectionView(model: model, group: group, expansion: .constant(true))
+                .modifier(WorkspaceCardSurface()).padding(28).frame(width: 785).background(Color(nsColor: .windowBackgroundColor))
+            // AppKit checkbox bridges require NSHostingView rather than ImageRenderer.
+            let host = NSHostingView(rootView: content)
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 785, height: 400), styleMask: [.borderless], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false; window.contentView = host
+            host.frame = window.contentView!.bounds
+            host.layoutSubtreeIfNeeded(); host.displayIfNeeded()
+            let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds)!
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            try bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: "build/Debug/Restore-macOS-Selection.png"))
+            window.close()
+            print("PASS: Six category selections, parent all/mixed/none, independent exclusion, Preview invalidation; native Selection render")
+            return
+        }
+        if CommandLine.arguments.contains("--review-cancel-only") {
+            let originalBytes = Data("disposable saved environment bytes".utf8)
+            try originalBytes.write(to: source)
+            let counts = ["matching": 1, "missing": 0, "differing": 0, "unverified": 0, "unsupported": 0,
+                "unresolved": 0, "extra": 0, "unknown_difference": 0]
+            let comparison: [String: Any] = ["read_only": true, "publication_occurred": false, "target_mutation_may_have_started": false,
+                "comparison": ["status": "complete", "verdict": "no_differences_detected", "also_incomplete": false, "counts": counts],
+                "comparison_records": [["record_id": "v:0", "domain": "homebrew-packages", "item_id": "bat", "comparison_kind": "matching", "support": "supported"]],
+                "verification": ["status": "complete"], "extra": ["domains": [], "items": []],
+                "records": ["status": "complete", "verification_records": [], "coverage_records": [], "operation_records": [], "diagnostics": []]]
+            try JSONSerialization.data(withJSONObject: comparison).write(to: core.appendingPathComponent("comparison.json"))
+            let status = EnvironmentStatusModel(runtime: runtime, location: CoreLocation(root: core, python: python, home: root, temporaryBase: root, toolDirectories: []))
+            status.selectBundle(source); status.compare(); await status.waitForCompletion()
+            precondition(status.state == .result && status.presentation?.counts["matching"] == 1)
+            let reference = status.reference, statusCounts = status.presentation!.counts, statusID = status.operationID
+            let log = core.appendingPathComponent("requests.jsonl")
+            func requestBytes() -> Data { try! Data(contentsOf: log) }
+            func unchangedStatusAndFile() {
+                precondition(status.state == .result && status.reference == reference && status.operationID == statusID && status.presentation?.counts == statusCounts)
+                precondition(try! Data(contentsOf: source) == originalBytes)
+            }
+            let originalRequests = requestBytes()
+            precondition(model.canCancelReview && !model.reviewCancellationNeedsConfirmation)
+            model.requestReviewCancellation()
+            precondition(model.state == .choose && model.source == nil && model.inspection == nil)
+            precondition(model.selectedCategories.isEmpty && model.selectedItems.isEmpty && model.preparation == nil && model.preview == nil)
+            precondition(model.executionPlan == nil && model.executionPreview == nil && model.failure == nil && model.technicalReason == nil && model.prerequisiteRetryMessage == nil)
+            precondition(!model.reviewCancelConfirmation && requestBytes() == originalRequests)
+            unchangedStatusAndFile()
+            model.choose(source)
+            precondition(model.state == .inspecting && !model.canCancelReview)
+            model.requestReviewCancellation(); model.confirmReviewCancellation()
+            precondition(model.state == .inspecting && model.source == source)
+            await model.waitForCompletion()
+            precondition(model.state == .review && model.bulkState == .all && requestBytes() != originalRequests)
+            let area = model.areas.first(where: \.selectable)!
+            model.selectArea(area.id, included: false)
+            let dirtySelection = model.selection, dirtyRequests = requestBytes()
+            model.requestReviewCancellation()
+            precondition(model.reviewCancelConfirmation && model.state == .review && model.selection == dirtySelection)
+            model.keepReviewSelection()
+            precondition(!model.reviewCancelConfirmation && model.selection == dirtySelection && model.source == source)
+            model.confirmReviewCancellation()
+            precondition(model.state == .review)
+            model.requestReviewCancellation(); model.confirmReviewCancellation()
+            precondition(model.state == .choose && model.source == nil && model.inspection == nil && requestBytes() == dirtyRequests)
+            unchangedStatusAndFile()
+            model.choose(source); await model.waitForCompletion()
+            model.selectArea(area.id, included: false); model.requestReviewCancellation()
+            precondition(model.reviewCancelConfirmation)
+            model.choose(source); await model.waitForCompletion()
+            precondition(!model.reviewCancelConfirmation && model.bulkState == .all)
+            model.confirmReviewCancellation(); precondition(model.state == .review && model.source == source)
+            // Shared-runtime activity also blocks Review cancellation, even when owned by Status.
+            status.compare()
+            precondition(runtime.isActive && !model.canCancelReview)
+            model.requestReviewCancellation(); model.confirmReviewCancellation()
+            precondition(model.state == .review && model.source == source)
+            await status.waitForCompletion()
+            let refreshedStatusID = status.operationID
+            precondition(status.state == .result && status.reference == reference && status.presentation?.counts == statusCounts)
+            model.refreshPreview()
+            precondition(model.state == .preparing && !model.canCancelReview)
+            model.requestReviewCancellation(); model.confirmReviewCancellation()
+            await model.waitForCompletion()
+            precondition(model.state == .preview && model.preparation != nil && model.reviewCancellationNeedsConfirmation)
+            let preparedID = model.preparation!.preparedPlanID, previewRequests = requestBytes()
+            model.requestReviewCancellation(); model.confirmReviewCancellation()
+            precondition(model.state == .preview && model.preparation?.preparedPlanID == preparedID && requestBytes() == previewRequests)
+            model.requestRebuild()
+            precondition(model.state == .confirming && !model.canCancelReview)
+            model.requestReviewCancellation(); model.confirmReviewCancellation()
+            precondition(model.state == .confirming && model.preparation?.preparedPlanID == preparedID)
+            model.cancelRebuildConfirmation()
+            try write("execute_stop_before", core.appendingPathComponent("mode"))
+            model.requestRebuild(); model.confirmRebuild()
+            precondition(model.state == .rebuilding && !model.canCancelReview)
+            model.requestReviewCancellation(); model.confirmReviewCancellation()
+            precondition(model.state == .rebuilding && model.source == source)
+            model.requestStop(); model.confirmStop(); await model.waitForCompletion()
+            precondition(model.state == .result)
+            let result = model.executionResult
+            model.requestReviewCancellation(); model.confirmReviewCancellation()
+            precondition(model.state == .result && model.executionResult?.title == result?.title)
+            model.finish()
+            try write("clean", core.appendingPathComponent("mode"))
+            model.choose(source); await model.waitForCompletion()
+            precondition(model.state == .review && model.bulkState == .all && model.preparation == nil && model.preview == nil)
+            precondition(status.reference == reference && status.operationID == refreshedStatusID && status.state == .result && status.presentation?.counts == statusCounts)
+            precondition(try! Data(contentsOf: source) == originalBytes)
+            // Third and final control render: real Review view and fixed footer.
+            _ = NSApplication.shared
+            let content = VStack(spacing: 0) {
+                ScrollView { RestoreView(model: model, runtime: runtime, showsSelectionActions: false).padding(28) }
+                Divider()
+                RestoreSelectionActions(status: model.selectionSummary, canPreview: model.canPreview, preview: {}, reviewModel: model)
+                    .modifier(WorkspaceFooterPadding())
+            }.frame(width: 785, height: 850).background(Color(nsColor: .windowBackgroundColor))
+            let host = NSHostingView(rootView: content)
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 785, height: 850), styleMask: [.borderless], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false; window.contentView = host; host.frame = window.contentView!.bounds
+            host.layoutSubtreeIfNeeded(); host.displayIfNeeded()
+            let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds)!
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            try bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: "build/Debug/FinalCorrections-Restore-Selection.png"))
+            window.close()
+            print("PASS: Review Cancel/reset, discard/keep confirmation, session ownership, active/inspect/prepare/preview/confirm/rebuild/result guards, Bundle/Status preservation and fresh reinspection; one native render")
+            return
+        }
         if CommandLine.arguments.contains("--status-handoff-only") {
             let navigation = ProductionNavigation()
             navigation.task = .status
@@ -832,6 +1039,9 @@ import Foundation
             print("PASS: Same-session Prepare/Refresh/Check Again/Execute use latest IDs; overlapping Refresh is blocked; stale-plan UX and independent warnings remain")
             return
         }
+        try render(model, runtime, state: "selection")
+        try render(model, runtime, state: "selection", expanded: true)
+        try render(model, runtime, state: "macOS-settings", settingsOnly: true)
         let initialSelection = model.selection
         precondition(model.selectionCategoryCounts.fully == model.areas.filter(\.selectable).count)
         precondition(model.selectionCategoryCounts.partially == 0 && model.selectionCategoryCounts.notSelected == 0)
@@ -855,10 +1065,15 @@ import Foundation
         }
         let presentationGroups = model.groups + [CoreRestoreInspection.Group(id: "Homebrew", domains: ["homebrew-packages"])]
         let sections = RestorePresentationSection.project(presentationGroups)
-        precondition(sections.map(\.id) == ["Applications & Tools", "Settings", "Shell", "Git", "SSH Configuration", "Workspace"])
+        precondition(sections.map(\.id) == ["Applications & Tools", "Settings", "Git", "SSH Configuration", "Workspace", "Shell", "Other Findings"])
         precondition(sections[0].areas(in: model.areas).map(\.id) == ["homebrew-casks", "app-store", "homebrew-packages", "vscode-extensions"])
         precondition(sections[1].groups.map(\.id) == ["macOS Settings"])
-        precondition(sections[5].areas(in: model.areas).map(\.id) == workspace)
+        precondition(sections[4].areas(in: model.areas).map(\.id) == workspace)
+        let projectedIDs = sections.flatMap { $0.areas(in: model.areas).map(\.id) }
+        precondition(Set(projectedIDs) == Set(model.areas.map(\.id)))
+        precondition(projectedIDs.count == Set(projectedIDs).count)
+        precondition(sections.last!.areas(in: model.areas).contains { $0.id == "unavailable-area" })
+
         precondition(RestorePresentationSection.project(presentationGroups.reversed()).map(\.id) == sections.map(\.id))
         for id in applications + workspace + ["homebrew-packages"] {
             let area = model.areas.first { $0.id == id }!
@@ -895,7 +1110,7 @@ import Foundation
         precondition(visible.contains { $0.id == "Shell" }, "Unknown presence must not hide unavailable state")
         precondition(visible.contains { $0.id == "Settings" } && visible.contains { $0.id == "Applications & Tools" })
         let availableShell = CoreRestoreInspection.Group(id: "Shell", domains: ["ssh-configuration", "unavailable-area"])
-        precondition(RestorePresentationSection.visible([availableShell], inventory: model.areas).map(\.id) == ["Shell"])
+        precondition(RestorePresentationSection.visible([availableShell], inventory: model.areas).map(\.id) == ["SSH Configuration", "Shell"])
         precondition(model.areas.map(\.id) == inventoryBefore && model.canonicalSelection == selectionBefore)
         precondition(model.areas.first { $0.id == "unavailable-area" }?.reason == "no_selectable_content")
         let macOSGroup = model.groups.first { $0.id == "macOS Settings" }!
@@ -912,6 +1127,9 @@ import Foundation
         model.selectArea("unavailable-area", included: true); precondition(!model.selection.categories.contains("unavailable-area"))
         model.refreshPreview(); await model.waitForCompletion()
         precondition(model.state == .preview && model.ready && model.preparation?.preparedPlanID == String(repeating: "a", count: 64))
+        try render(model, runtime, state: "preview")
+        try render(model, runtime, state: "preview", expanded: true)
+
         precondition(model.preview?.categories.first { $0.id == packages.id }?.items.first?.title == "Core item 2")
         let productPreview = model.preview!
         precondition(productPreview.sections.map(\.id) == ["Applications & Tools", "Settings", "SSH Configuration", "Workspace"])
@@ -1049,6 +1267,8 @@ import Foundation
         try write("attention", core.appendingPathComponent("mode"))
         model.refreshPreview(); await model.waitForCompletion()
         precondition(model.state == .preview && !model.ready && model.preparation?.readiness.conditions.first?.status == "external_action_required")
+        try render(model, runtime, state: "needs-attention")
+
         let projected = model.preview!.categories.first { $0.id == packages.id }!.items
         precondition(projected.map(\.action).contains("Already Matches") && projected.map(\.action).contains("Will install"))
         precondition(projected.contains { $0.action.hasPrefix("Conflict:") } && projected.contains { $0.requiresAttention })

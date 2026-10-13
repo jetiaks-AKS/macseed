@@ -1,6 +1,103 @@
 import SwiftUI
 import AppKit
 
+// Visual vocabulary copied from the approved Environment Status presentation.
+// Domain identity, selection and execution order remain with their existing owners.
+enum WorkspaceCategoryStyle {
+    static let groups: [(String, [String])] = [
+        ("Applications & Tools", ["homebrew-casks", "app-store", "homebrew-packages", "vscode-extensions"]),
+        ("Settings", ["macos-settings", "macOS Settings", "macos-finder", "macos-dock", "macos-windows", "macos-keyboard", "macos-trackpad", "macos-screenshots", "vscode-settings"]),
+        ("Git", ["git-configuration"]), ("SSH Configuration", ["ssh-configuration"]),
+        ("Workspace", ["workspace-folders", "git-repositories"]), ("Shell", ["shell-zsh"])]
+    static func symbol(_ id: String, fallback: String = "folder") -> String {
+        let symbols = ["homebrew-casks": "app", "app-store": "app", "homebrew-packages": "shippingbox",
+            "vscode-extensions": "puzzlepiece.extension", "vscode-settings": "slider.horizontal.3",
+            "git-configuration": "gearshape", "ssh-configuration": "key", "workspace-folders": "folder",
+            "git-repositories": "folder", "shell-zsh": "terminal", "macos-settings": "slider.horizontal.3", "macOS Settings": "slider.horizontal.3",
+            "macos-finder": "finder", "macos-dock": "dock.rectangle", "macos-windows": "macwindow",
+            "macos-keyboard": "keyboard", "macos-trackpad": "hand.draw", "macos-screenshots": "camera"]
+        return symbols[id] ?? fallback
+    }
+    static func sections<T: Identifiable>(_ rows: [T]) -> [(title: String, rows: [T])] where T.ID == String {
+        let known = Set(groups.flatMap { $0.1 })
+        var result = groups.compactMap { title, ids -> (title: String, rows: [T])? in
+            let members = ids.compactMap { id in rows.first { $0.id == id } }
+            return members.isEmpty ? nil : (title, members)
+        }
+        let other = rows.filter { !known.contains($0.id) }
+        if !other.isEmpty { result.append(("Other Findings", other)) }
+        return result
+    }
+}
+
+struct WorkspaceSectionHeader: View {
+    let title: String
+    var body: some View {
+        HStack(spacing: 12) {
+            Text(title).font(.system(size: 13, weight: .semibold)).foregroundStyle(Color(nsColor: .labelColor))
+            Rectangle().fill(Color.primary.opacity(0.22)).frame(height: 1.5)
+        }.padding(.top, 12).padding(.bottom, 4).accessibilityAddTraits(.isHeader)
+    }
+}
+
+struct WorkspaceCategoryIcon: View {
+    let symbol: String
+    var body: some View {
+        Image(systemName: symbol).fontWeight(.semibold).foregroundStyle(.blue)
+            .frame(width: TaskRowLayout.iconWidth).accessibilityHidden(true)
+    }
+}
+
+struct WorkspaceCategoryTitle: View {
+    let id: String
+    let title: String
+    let fallbackSymbol: String
+    var body: some View {
+        HStack(spacing: 12) {
+            WorkspaceCategoryIcon(symbol: WorkspaceCategoryStyle.symbol(id, fallback: fallbackSymbol))
+            Text(title).font(.body.weight(.medium))
+        }
+    }
+}
+
+struct WorkspaceMetricCard: View {
+    let title: String
+    let value: String
+    let symbol: String
+    let tint: Color
+    var explanation: String? = nil
+    var body: some View {
+        HStack(spacing: 12) {
+            WorkspaceCircleIcon(symbol: symbol, tint: tint, size: 44)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(value).font(.title2.weight(.semibold)).monospacedDigit()
+                Text(title).font(.callout.weight(.semibold))
+                if let explanation {
+                    Text(explanation).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                }
+            }.frame(maxWidth: .infinity, alignment: .leading)
+        }.padding(12).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+            .background(tint.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
+            .accessibilityElement(children: .ignore).accessibilityLabel(title).accessibilityValue(value)
+    }
+}
+
+struct WorkspaceThreeMetrics<Content: View>: View {
+    @ViewBuilder let content: () -> Content
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 10) { content().frame(minWidth: 220).frame(height: 80) }
+            VStack(spacing: 10) { content().frame(height: 80) }
+        }
+    }
+}
+
+struct WorkspaceFooterPadding: ViewModifier {
+    func body(content: Content) -> some View {
+        content.padding(.horizontal, WorkspaceGeometry.margin).padding(.vertical, 12)
+    }
+}
+
 // Select the standard property wrapper explicitly: the current CLT SDK also
 // exports a State macro whose plugin is available only with full Xcode.
 private typealias ViewState<Value> = SwiftUI.State<Value>
@@ -686,4 +783,53 @@ struct WorkspaceMetricLayout: Layout {
                        anchor: .topLeading, proposal: .init(width: width, height: height))
         }
     }
+}
+
+// Exact presentation labels used by Status's Core-provided setting_labels metadata.
+// This is a display-only lookup; unsupported/unknown identities keep their existing title.
+enum WorkspaceSettingLabels {
+    static let names: [String: String] = [
+        "macos-finder:NSGlobalDomain/AppleShowAllExtensions": "Show extensions",
+        "macos-finder:com.apple.finder/ShowPathbar": "Show path bar",
+        "macos-finder:com.apple.finder/ShowStatusBar": "Show status bar",
+        "macos-finder:com.apple.finder/FXPreferredViewStyle": "Default view",
+        "macos-finder:com.apple.finder/FXDefaultSearchScope": "Search scope",
+        "macos-finder:com.apple.finder/_FXSortFoldersFirst": "Folders first",
+        "macos-finder:com.apple.finder/FXRemoveOldTrashItems": "Remove old Trash items",
+        "macos-finder:com.apple.finder/AppleShowAllFiles": "Show hidden files",
+        "macos-finder:com.apple.finder/NewWindowTarget": "New window location",
+        "macos-finder:com.apple.finder/ShowHardDrivesOnDesktop": "Desktop hard drives",
+        "macos-finder:com.apple.finder/ShowExternalHardDrivesOnDesktop": "Desktop external drives",
+        "macos-finder:com.apple.finder/ShowMountedServersOnDesktop": "Desktop servers",
+        "macos-finder:com.apple.finder/FXEnableExtensionChangeWarning": "Extension change warning",
+        "macos-dock:com.apple.dock/autohide": "Auto-hide",
+        "macos-dock:com.apple.dock/show-recents": "Recent applications",
+        "macos-dock:com.apple.dock/tilesize": "Icon size",
+        "macos-dock:com.apple.dock/magnification": "Magnification",
+        "macos-dock:com.apple.dock/largesize": "Magnified icon size",
+        "macos-dock:com.apple.dock/orientation": "Position",
+        "macos-dock:com.apple.dock/mineffect": "Minimize effect",
+        "macos-dock:com.apple.dock/minimize-to-application": "Minimize into application",
+        "macos-dock:com.apple.dock/show-process-indicators": "Running indicators",
+        "macos-dock:com.apple.dock/launchanim": "Launch animation",
+        "macos-dock:com.apple.dock/mru-spaces": "Reorder Spaces",
+        "macos-windows:NSGlobalDomain/AppleActionOnDoubleClick": "Title bar double-click",
+        "macos-windows:NSGlobalDomain/AppleWindowTabbingMode": "Window tabbing",
+        "macos-windows:NSGlobalDomain/NSCloseAlwaysConfirmsChanges": "Confirm unsaved changes",
+        "macos-windows:NSGlobalDomain/NSQuitAlwaysKeepsWindows": "Restore windows on launch",
+        "macos-windows:com.apple.WindowManager/HideDesktop": "Hide Desktop items",
+        "macos-keyboard:NSGlobalDomain/KeyRepeat": "Key repeat",
+        "macos-keyboard:NSGlobalDomain/InitialKeyRepeat": "Repeat delay",
+        "macos-keyboard:NSGlobalDomain/ApplePressAndHoldEnabled": "Press and hold",
+        "macos-keyboard:NSGlobalDomain/AppleKeyboardUIMode": "Keyboard navigation",
+        "macos-keyboard:NSGlobalDomain/NSAutomaticCapitalizationEnabled": "Automatic capitalization",
+        "macos-keyboard:NSGlobalDomain/NSAutomaticSpellingCorrectionEnabled": "Spelling correction",
+        "macos-keyboard:NSGlobalDomain/NSAutomaticPeriodSubstitutionEnabled": "Period substitution",
+        "macos-keyboard:NSGlobalDomain/NSAutomaticQuoteSubstitutionEnabled": "Smart quotes",
+        "macos-keyboard:NSGlobalDomain/NSAutomaticDashSubstitutionEnabled": "Smart dashes",
+        "macos-trackpad:com.apple.AppleMultitouchTrackpad/Clicking": "Tap to click",
+        "macos-trackpad:com.apple.AppleMultitouchTrackpad/TrackpadRightClick": "Secondary click",
+        "macos-screenshots:com.apple.screencapture/location": "Save location"
+    ]
+    static func title(domain: String, identity: String) -> String? { names[domain + ":" + identity] }
 }

@@ -17,8 +17,9 @@ Repair: ambiguous/damaged privileged Repair states remain fail-closed. Continuin
 compatibility qualification, MAS, Desktop Zsh and Secure SSH remain open.
 Private SSH identity transfer remains unavailable until 16H. Bundle-backed
 Environment Status (Stage 16K) is complete; the subsequent Status → Restore handoff is implemented and manually
-approved. The next checkpoint is a separate architecture audit for Desktop
-Operation Logging & Diagnostics. Practical priorities are owned by
+approved. Desktop Visual Unification is complete. The next standalone checkpoint
+is [Restore Cancellation Safety](#restore-cancellation-safety); Operation Logging &
+Diagnostics remains future work. Practical priorities are owned by
 [Roadmap](../ROADMAP.md#current-practical-execution-order).
 Build and review instructions are in
 [Desktop development](../desktop/Macseed/README.md). Macseed is one product with a shared Core and two official frontends: CLI (`bs`) and Desktop.
@@ -202,9 +203,14 @@ These are content states, not mandatory wizard pages.
 
 Stage 16E uses real V1 Capture in normal Debug/Release. Category-only rows have one
 category checkbox and read-only details; item-mode rows have native all/none/mixed
-selection and bulk actions. Review is one ordered category list, with macOS Settings
-as its only domain grouping. Categories remain collapsed by default. Capture reuses
-Restore metric cards, status and disclosure components; Review retains independent
+selection and bulk actions. Review follows Environment Status's visual groups:
+Applications & Tools, Settings, Git, SSH Configuration, Workspace, then Shell when
+present. Git Repositories belongs to Workspace. Categories remain collapsed by default.
+Capture and Restore share Status's section headers, blue category icons, row surfaces,
+metric-card geometry and footer spacing; their models and status/count meanings stay
+independent. macOS Settings nests Finder, Dock, Windows, Keyboard, Trackpad and
+Screenshots using available Core data and exact supported display labels. Nested
+read-only settings do not add selection capabilities. Review retains independent
 native domain/item checkboxes. Confirmation and Result use compact read-only details.
 Primary actions remain outside the scrolling content. Secure Transfer
 is a separate capability disclosure. Confirmation is inline with the exact prepared
@@ -620,6 +626,62 @@ Protocol V1 can retain exit `2` / `bootstrap_failed` for item failures with
 remains authoritative. User stop with incomplete termination evidence is
 Interrupted/Unknown, not a confirmed Stopped result. Cancellation before execution
 remains Cancelled. No result promises rollback or whole-Mac identity.
+
+## Desktop Visual Unification — Completed
+
+Environment Status is the approved visual reference. Capture and Restore Selection,
+Preview, Execution and Result share category ordering, blue SF Symbols, section
+headers/dividers, grouped surfaces and metric-card styling. Git Repositories belongs
+to Workspace. Domain IDs, selection granularity, Core execution and Verification
+remain authoritative and unchanged.
+
+Restore Result always shows Result; Mismatch and Unverified quantity cards appear
+only for corresponding positive Core aggregates. Missing/null/zero values are not
+placeholder cards; incomplete Verification remains explicitly incomplete. Result
+category Unverified is neutral grey with `questionmark.circle`; actual problems
+retain their existing warning/error styling. Detailed diagnostics remain in the
+initially collapsed Technical Details disclosure with Copy Diagnostic Details;
+the redundant lower Needs Attention findings list is no longer displayed. Diagnostic
+data is retained. Persistent Logging & Diagnostics and a complete live View Log
+remain a separate future stage, not part of this completed visual checkpoint.
+
+<a id="restore-cancellation-safety"></a>
+
+## Restore Cancellation Safety — Open Engineering Issue
+
+Stop Rebuild uses SIGTERM and, when necessary, SIGKILL. It is not a safe pause
+between installer operations and provides no rollback: completed changes may remain,
+an active install may be interrupted, and termination of all detached/privileged
+processes is not guaranteed. Privileged Homebrew Cask has additional lifecycle
+ownership, locking and durable overlap protection; these protections do not cover
+all installers. MAS, Homebrew Formula, VS Code Extensions and Git need separate
+cancellation/re-entry qualification. See `CoreTransport.stop`, `OwnedBootstrap.cancel`
+and `ProcessTree.stop`; process termination is not proof of installer convergence.
+
+### Firefox Cask incident — 2026-10-13
+
+The user reproduced the following sequence:
+
+1. Stop Rebuild was requested during the Homebrew Cask installation of Firefox.
+2. Firefox remained uninstalled; a subsequent Restore reported `item_install_failed`.
+3. Direct Homebrew installation also failed with
+   `hdiutil: attach failed - Ресурс занят` (resource busy).
+4. `hdiutil info` showed a Firefox DMG still attached under
+   `/private/tmp/homebrew-dmg...`.
+5. After resolving the attached-image issue, another Macseed Restore succeeded:
+   All Done, Verification Complete, Homebrew Applications — Completed.
+
+This is a reproduced reinstallation failure associated with a busy DMG. The sequence
+is consistent with interruption leaving an attached image, but the precise mechanism
+of an orphaned mount has not been established by instrumented tracing. It warrants
+a separate Cancellation Safety stage; this checkpoint implements no mount cleanup.
+
+That stage must qualify stopping current installs and preventing new tasks, child/
+detached-process quiescence, operation-owned DMG handling, safe re-entry after
+interruption and a separate MAS re-entry contract. It must protect user data and
+never detach unrelated volumes. Controlled mock cancellation tests must distinguish
+proven termination from unknown consequences. This is the next standalone engineering
+checkpoint, independent of Visual Unification and Logging & Diagnostics.
 
 ## Progress, cancellation and re-entry
 

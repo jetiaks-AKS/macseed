@@ -190,6 +190,12 @@ import SwiftUI
         let sshGroup = precise.sections.first { $0.id == "SSH Configuration" }!
         precondition(ComparisonOutcome.allCases.allSatisfy { precise.categoryCount($0, category: sshGroup.entries[0].category) == 0 })
         try render(EnvironmentComparisonView(result: precise), name: "EnvironmentStatus-final-groups", width: 1000)
+        for width in [1000, 785] {
+            let ids = Set(precise.sections.flatMap(\.entries).map(\.id))
+            try render(EnvironmentComparisonView(result: precise), name: "StatusUnified-collapsed-\(width)", width: width)
+            try render(EnvironmentComparisonView(result: precise, categoryExpansion: .constant(ids)), name: "StatusUnified-expanded-\(width)", width: width)
+        }
+
         var variedPhases = repositoryPayload
         var variedEvidence = variedPhases["records"] as! Object
         var variedDiagnostics = repositoryDiagnostics
@@ -358,6 +364,11 @@ import SwiftUI
         precondition(EnvironmentComparisonView.toggledCategories(["macos-settings"], ids: mixedIDs) == mixedIDs)
 
         precondition(macOSEntry.children[1].items[0].title == "Magnification")
+        for width in [1000, 785] {
+            try render(EnvironmentComparisonView(result: macOS, categoryExpansion: .constant(["macos-settings"]), settingsExpansion: .constant(true)),
+                name: "StatusUnified-macOS-settings-\(width)", width: width)
+        }
+
         let plainMatch = macOSEntry.children[0].items[0]
         precondition(plainMatch.isNormalComparisonMatch && plainMatch.comparisonExplanation == nil && plainMatch.comparisonTechnicalDetails == nil)
         let problem = macOSEntry.children[1].items[0]

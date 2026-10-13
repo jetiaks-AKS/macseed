@@ -108,7 +108,10 @@ struct EnvironmentStatusActions: View {
 // Comparison retains its own truthful status vocabulary, using shared surfaces/disclosures.
 struct EnvironmentComparisonView: View {
     let result: EnvironmentStatusPresentation
+    var categoryExpansion: Binding<Set<String>>? = nil
+    var settingsExpansion: Binding<Bool>? = nil
     @ReferenceViewState<Set<String>> private var expandedCategories = []
+    private var expandedIDs: Set<String> { categoryExpansion?.wrappedValue ?? expandedCategories }
     private var categoryIDs: Set<String> { Set(result.sections.flatMap(\.entries).map(\.id)) }
     static func toggledCategories(_ expanded: Set<String>, ids: Set<String>) -> Set<String> {
         ids.isSubset(of: expanded) ? [] : ids
@@ -145,22 +148,23 @@ struct EnvironmentComparisonView: View {
                 Text("Details by Category").font(.headline).accessibilityAddTraits(.isHeader)
                 Spacer()
                 if !categoryIDs.isEmpty {
-                    Button(categoryIDs.isSubset(of: expandedCategories) ? "Collapse All" : "Expand All") {
-                        expandedCategories = Self.toggledCategories(expandedCategories, ids: categoryIDs)
+                    Button(categoryIDs.isSubset(of: expandedIDs) ? "Collapse All" : "Expand All") {
+                        let ids = Self.toggledCategories(expandedIDs, ids: categoryIDs)
+                        if let categoryExpansion { categoryExpansion.wrappedValue = ids } else { expandedCategories = ids }
                     }.buttonStyle(.plain).foregroundStyle(.secondary)
                 }
             }
             ForEach(result.sections) { section in
-                HStack(spacing: 12) {
-                    Text(section.id).font(.system(size: 13, weight: .semibold)).foregroundStyle(Color(nsColor: .labelColor))
-                    Rectangle().fill(Color.primary.opacity(0.22)).frame(height: 1.5)
-
-                }.padding(.top, 12).padding(.bottom, 4).accessibilityAddTraits(.isHeader)
+                WorkspaceSectionHeader(title: section.id)
                 VStack(spacing: 0) {
                     ForEach(section.entries) { entry in
                         EnvironmentComparisonDomain(category: entry.category, children: entry.children, technicalFacts: result.technicalFacts, counts: Dictionary(uniqueKeysWithValues: ComparisonOutcome.allCases.map { ($0, result.categoryCount($0, category: entry.category, children: entry.children)) }), expansion: Binding(
-                            get: { expandedCategories.contains(entry.id) },
-                            set: { if $0 { expandedCategories.insert(entry.id) } else { expandedCategories.remove(entry.id) } }))
+                            get: { expandedIDs.contains(entry.id) },
+                            set: { value in
+                                var ids = expandedIDs
+                                if value { ids.insert(entry.id) } else { ids.remove(entry.id) }
+                                if let categoryExpansion { categoryExpansion.wrappedValue = ids } else { expandedCategories = ids }
+                            }), childExpansion: settingsExpansion)
                         if entry.id != section.entries.last?.id { Divider() }
                     }
                 }.modifier(WorkspaceCardSurface())
@@ -176,13 +180,14 @@ struct EnvironmentComparisonDomain: View {
     var technicalFacts: [String: [ComparisonTechnicalFact]] = [:]
     var counts: [ComparisonOutcome: Int]? = nil
     var expansion: Binding<Bool>? = nil
+    var childExpansion: Binding<Bool>? = nil
     @ReferenceViewState<Bool> private var expanded = false
     var body: some View {
         DisclosureGroup(isExpanded: expansion ?? $expanded) {
             VStack(alignment: .leading, spacing: 0) {
                 if !children.isEmpty {
                     ForEach(children) { child in
-                        EnvironmentComparisonDomain(category: child)
+                        EnvironmentComparisonDomain(category: child, expansion: childExpansion)
                     }
                 } else {
                     ForEach(category.items) { item in EnvironmentComparisonItem(item: item, facts: technicalFacts[item.id] ?? []) }
@@ -197,7 +202,7 @@ struct EnvironmentComparisonDomain: View {
     }
     private var title: some View {
         HStack(spacing: 12) {
-            Image(systemName: category.symbol).fontWeight(.semibold).foregroundStyle(.blue).frame(width: TaskRowLayout.iconWidth).accessibilityHidden(true)
+            WorkspaceCategoryIcon(symbol: category.symbol)
             Text(category.title).font(.body.weight(.medium))
         }
     }
@@ -331,15 +336,7 @@ struct ComparisonMetricCard: View {
     let outcome: ComparisonOutcome
     let count: Int
     var body: some View {
-        HStack(spacing: 12) {
-            WorkspaceCircleIcon(symbol: outcome.symbol, tint: outcome.tint, size: 44)
-            VStack(alignment: .leading, spacing: 3) {
-                Text(String(count)).font(.title2.weight(.semibold)).monospacedDigit()
-                Text(outcome.title).font(.callout.weight(.semibold))
-                Text(outcome.explanation).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            }.frame(maxWidth: .infinity, alignment: .leading)
-        }.padding(12).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-            .background(outcome.tint.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
-            .accessibilityElement(children: .ignore).accessibilityLabel(outcome.title).accessibilityValue(String(count))
+        WorkspaceMetricCard(title: outcome.title, value: String(count), symbol: outcome.symbol,
+            tint: outcome.tint, explanation: outcome.explanation)
     }
 }

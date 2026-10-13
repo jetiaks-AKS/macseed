@@ -83,7 +83,18 @@ struct CaptureSummaryPresentation {
 struct CaptureCategorySelectionView: View {
     @ObservedObject var model: CaptureModel
     let category: CaptureCategory
+    var expansion: Binding<Bool>? = nil
     @CapturePresentationState<Bool> private var expanded = false
+    static func hasDisclosure(_ category: CaptureCategory) -> Bool {
+        !(category.id == "vscode-settings" && category.selectable && !category.itemSelectable
+            && category.row.reason == nil && (category.row.includedSettings?.isEmpty ?? true))
+    }
+    private var header: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 12) { title; Spacer(); status }
+            VStack(alignment: .leading, spacing: 8) { title; status }
+        }.padding(.vertical, 6)
+    }
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 12) {
@@ -91,14 +102,12 @@ struct CaptureCategorySelectionView: View {
                 NativeSelectionCheckbox("", state: model.selectionState(category), accessibilityTitle: "Select " + category.title) {
                     model.selectCategory(category.id, included: $0)
                 }.frame(width: 28, height: 28).disabled(!category.selectable)
-                DisclosureGroup(isExpanded: $expanded) { EmptyView() } label: {
-                    ViewThatFits(in: .horizontal) {
-                        HStack(spacing: 12) { title; Spacer(); status }
-                        VStack(alignment: .leading, spacing: 6) { title; status }
-                    }
-                }.disclosureGroupStyle(TaskDisclosureStyle())
+                if Self.hasDisclosure(category) {
+                    DisclosureGroup(isExpanded: expansion ?? $expanded) { EmptyView() } label: { header }
+                        .disclosureGroupStyle(TaskDisclosureStyle())
+                } else { header.padding(.trailing, 26).frame(minHeight: 48) }
             }
-            if expanded {
+            if Self.hasDisclosure(category) && (expansion?.wrappedValue ?? expanded) {
                 if category.itemSelectable {
                     ForEach(category.display.items) { item in
                         NativeSelectionCheckbox(item.title, isOn: Binding(
@@ -110,15 +119,12 @@ struct CaptureCategorySelectionView: View {
                     CaptureNoticeDetails(items: category.display.items)
                     if let settings = category.row.includedSettings, !settings.isEmpty { IncludedSettingsText(settings: settings) }
                 }
-                CaptureNoticeDetails(items: category.notices)
+                CaptureNoticeDetails(items: category.notices, suppressedDiagnosticIDs: CaptureReviewDiagnostics.repeatedNoticeIDs(category))
             }
-        }.padding(.horizontal, 16).padding(.vertical, 4)
+        }.padding(.horizontal, 16)
     }
     private var title: some View {
-        HStack(spacing: 12) {
-            Image(systemName: category.symbol).frame(width: TaskRowLayout.iconWidth).accessibilityHidden(true)
-            Text(category.title).font(.body.weight(.medium))
-        }
+        WorkspaceCategoryTitle(id: category.id, title: category.title, fallbackSymbol: category.symbol)
     }
     private var status: some View {
         VStack(alignment: .leading, spacing: 3) {
@@ -134,13 +140,24 @@ struct CaptureCategorySelectionView: View {
     }
 }
 
+// The category placeholder and warning are two projections of one row.reason.
+// Only that known presentation duplicate is suppressed; records/items remain intact.
+enum CaptureReviewDiagnostics {
+    static func repeatedNoticeIDs(_ category: CaptureCategory) -> Set<String> {
+        guard !category.itemSelectable, let reason = category.row.reason,
+              category.display.items.contains(where: { $0.id == "category-state:" + category.id && $0.reason == reason }) else { return [] }
+        return Set(category.notices.filter { $0.id == "category-warning:" + category.id && $0.reason == reason }.map(\.id))
+    }
+}
+
 struct CaptureNoticeDetails: View {
     let items: [DisplayItem]
+    var suppressedDiagnosticIDs: Set<String> = []
     var body: some View {
         ForEach(items) { item in
             VStack(alignment: .leading, spacing: 4) {
                 Text(item.action).font(.caption).foregroundStyle(.secondary)
-                if let reason = item.reason {
+                if let reason = item.reason, !suppressedDiagnosticIDs.contains(item.id) {
                     DisclosureGroup("Technical Details") { Text(reason).font(.caption.monospaced()).textSelection(.enabled) }
                         .disclosureGroupStyle(TaskDisclosureStyle(minimumHeight: 22)).font(.caption)
                 }
@@ -202,44 +219,27 @@ struct CaptureReviewRow: Identifiable {
     }
 }
 
-// Capture-only colors; shared metric geometry and Restore defaults remain unchanged.
+// Capture retains its metric meanings and attention tones on the shared Status geometry.
 struct CaptureMetricCard: View {
     let title: String
     let count: Int
     let symbol: String
     var attention = false
-    @Environment(\.colorScheme) private var colorScheme
     enum Tone { case blue, amber, neutral }
     static func tone(attention: Bool, count: Int) -> Tone {
         attention ? (count > 0 ? .amber : .neutral) : .blue
     }
     var body: some View {
         let tone = Self.tone(attention: attention, count: count)
-        let dark = colorScheme == .dark
-        let background: Color = switch tone {
-        case .blue: dark ? Color(red: 0.12, green: 0.20, blue: 0.31) : Color(red: 234/255, green: 242/255, blue: 1)
-        case .amber: dark ? Color(red: 0.28, green: 0.22, blue: 0.13) : Color(red: 1, green: 242/255, blue: 222/255)
-        case .neutral: dark ? Color(red: 0.20, green: 0.21, blue: 0.23) : Color(red: 243/255, green: 244/255, blue: 246/255)
-        }
-        let value: Color = switch tone {
-        case .blue: dark ? Color(red: 0.80, green: 0.87, blue: 0.97) : Color(red: 38/255, green: 59/255, blue: 87/255)
-        case .amber: dark ? Color(red: 0.95, green: 0.77, blue: 0.45) : Color(red: 0.52, green: 0.33, blue: 0.10)
-        case .neutral: dark ? Color(red: 0.78, green: 0.79, blue: 0.82) : Color(red: 0.36, green: 0.39, blue: 0.44)
-        }
-        let caption = tone == .blue ? (dark ? Color(red: 0.67, green: 0.77, blue: 0.90) : Color(red: 82/255, green: 105/255, blue: 133/255)) : value
-        let icon = tone == .blue ? (dark ? Color(red: 0.49, green: 0.69, blue: 0.96) : Color(red: 52/255, green: 119/255, blue: 204/255)) : value
-        RestorePreviewMetrics.metric(title, count: count, symbol: symbol, color: value,
-            captionColor: caption, backgroundColor: background, iconColor: icon)
+        WorkspaceMetricCard(title: title, value: String(count), symbol: symbol,
+            tint: tone == .blue ? .blue : tone == .amber ? .orange : .secondary)
     }
 }
 
 struct CaptureReviewMetrics: View {
     let summary: CaptureSummaryPresentation
     var body: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: 12) { cards }
-            VStack(spacing: 8) { cards }
-        }
+        WorkspaceThreeMetrics { cards }
     }
     @ViewBuilder private var cards: some View {
         CaptureMetricCard(title: "Selected Domains", count: summary.domainCount, symbol: "square.stack")
@@ -278,6 +278,24 @@ struct CaptureConfirmationContents {
     }
 }
 
+struct CaptureCompactLabel: View {
+    let title: String
+    var body: some View {
+        Text(title).font(.callout).fixedSize(horizontal: false, vertical: true)
+            .padding(.horizontal, 8).padding(.vertical, 4)
+            .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 5))
+    }
+}
+
+struct CaptureIncludedSettingsList: View {
+    let labels: [String]
+    var body: some View {
+        SettingsFlowLayout {
+            ForEach(Array(labels.enumerated()), id: \.offset) { _, label in CaptureCompactLabel(title: label) }
+        }.padding(.leading, 36).padding(.vertical, 8)
+    }
+}
+
 struct CaptureConfirmationItems: View {
     let domain: TaskDomainPresentation
     var body: some View {
@@ -285,10 +303,7 @@ struct CaptureConfirmationItems: View {
         VStack(alignment: .leading, spacing: 10) {
             SettingsFlowLayout {
                 ForEach(contents.ordinary) { item in
-                    Text(item.item.title).font(.callout)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .padding(.horizontal, 8).padding(.vertical, 4)
-                        .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 5))
+                    CaptureCompactLabel(title: item.item.title)
                 }
             }
             ForEach(contents.explanations) { item in
@@ -321,10 +336,7 @@ struct CaptureSavedMetrics: View {
     let notices: [DisplayCategory]
     var body: some View {
         let attention = Set(notices.filter { !$0.items.isEmpty && publication.bundle.capturedDomains.contains($0.id) }.map(\.id)).count
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: 12) { cards(attention) }
-            VStack(spacing: 8) { cards(attention) }
-        }
+        WorkspaceThreeMetrics { cards(attention) }
     }
     @ViewBuilder private func cards(_ attention: Int) -> some View {
         CaptureMetricCard(title: "Domains Saved", count: publication.bundle.capturedDomains.count, symbol: "square.stack")
@@ -345,5 +357,62 @@ extension CaptureFailure {
         isOutdatedPreparation
             ? "The selected environment has changed since confirmation. Scan this Mac again to prepare an updated capture."
             : message
+    }
+}
+
+struct CaptureSettingsSubcategoryView: View {
+    @ObservedObject var model: CaptureModel
+    let category: CaptureCategory
+    var editable = true
+    var expansion: Binding<Bool>? = nil
+    @CapturePresentationState<Bool> private var expanded = false
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            if editable {
+                NativeSelectionCheckbox("", state: model.selectionState(category), accessibilityTitle: "Select " + category.title) {
+                    model.selectCategory(category.id, included: $0)
+                }.frame(width: 28, height: 48).disabled(!category.selectable)
+            }
+            DisclosureGroup(isExpanded: expansion ?? $expanded) {
+                VStack(alignment: .leading, spacing: 0) {
+                    if !category.selectable {
+                        CaptureNoticeDetails(items: category.display.items)
+                    } else if let settings = category.row.includedSettings {
+                        ForEach(settings, id: \.id) { setting in Text(setting.label).padding(.vertical, 7) }
+                    }
+                    CaptureNoticeDetails(items: category.notices)
+                }.padding(.leading, 36).padding(.vertical, 4)
+            } label: {
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 12) { title; Spacer(); status }
+                    VStack(alignment: .leading, spacing: 8) { title; status }
+                }.padding(.vertical, 6)
+            }.disclosureGroupStyle(TaskDisclosureStyle())
+        }
+    }
+    private var title: some View { WorkspaceCategoryTitle(id: category.id, title: category.title, fallbackSymbol: category.symbol) }
+    private var status: some View {
+        Group {
+            if !category.selectable {
+                TaskStatusLabel(state: category.row.status == "observation_error" ? .attention : .skipped, title: category.headerSummary)
+            } else if !category.notices.isEmpty { TaskStatusLabel(state: .attention) }
+            else { Text(model.selectionState(category).captureTitle).font(.callout) }
+        }
+    }
+}
+
+// Presentation partition uses existing domain-prefixed Capture item IDs unchanged.
+enum CaptureSettingsPresentation {
+    static func children(_ domains: [TaskDomainPresentation]) -> [TaskDomainPresentation] {
+        let items = domains.first { $0.id == "macos-settings" }?.items ?? []
+        return CaptureMacOSSettingsGroup.domainIDs.compactMap { id in
+            let members = items.filter { $0.id.hasPrefix(id + ":") }
+            return members.isEmpty ? nil : TaskDomainPresentation(id: id, title: CaptureCategory.title(for: id),
+                symbol: WorkspaceCategoryStyle.symbol(id), items: members)
+        }
+    }
+    static func labels(_ inventory: [CoreCaptureInventoryRow]) -> [String: [String]] {
+        Dictionary(uniqueKeysWithValues: inventory.filter { CaptureMacOSSettingsGroup.domainIDs.contains($0.domain) }
+            .map { ($0.domain, ($0.includedSettings ?? []).map(\.label)) })
     }
 }

@@ -304,7 +304,398 @@ import SwiftUI
         print("PASS: Shared leaf AppIcon variants, visible small-scale mark and valid ICNS")
     }
 
+    @MainActor static func renderUnifiedSettings() {
+        let domainIDs = CaptureMacOSSettingsGroup.domainIDs
+        let rows: [CoreRestorePreparation.Row] = domainIDs.enumerated().map { index, domain in
+            let key = WorkspaceSettingLabels.names.keys.filter { $0.hasPrefix(domain + ":") }.sorted().first!
+            let identity = String(key.dropFirst(domain.count + 1))
+            let data = try! JSONSerialization.data(withJSONObject: ["domain": domain, "item_id": identity,
+                "action": "set_preference", "disposition": index == 5 ? "satisfied" : "planned"])
+            return try! JSONDecoder().decode(CoreRestorePreparation.Row.self, from: data)
+        }
+        let items = rows.enumerated().map { index, row in
+            TaskItemPresentation(id: "restore-\(index)", item: DisplayItem(id: "restore-\(index)", title: row.itemID,
+                status: row.disposition == "satisfied" ? .matching : .ready, action: row.disposition == "satisfied" ? "Already Matches" : "Will restore setting"),
+                state: row.disposition == "satisfied" ? .matching : .planned)
+        }
+        let parent = TaskDomainPresentation(id: "macOS Settings", title: "macOS Settings", symbol: "slider.horizontal.3", items: items, previewOnly: true)
+        let categories = domainIDs.enumerated().map { index, domain in
+            DisplayCategory(id: domain, title: CaptureCategory.title(for: domain), symbol: WorkspaceCategoryStyle.symbol(domain), items: [items[index].item])
+        }
+        let children = RestoreSettingsPresentation.children([parent], categories: categories)
+        precondition(children.map(\.id) == domainIDs && children.flatMap(\.items).map(\.id) == items.map(\.id))
+        let titles = RestoreSettingsPresentation.titles(rows)
+        precondition(titles.count == 6 && titles["restore-0"] == "Show extensions")
+        for width in [400, 785, 985] {
+            let content = VStack(alignment: .leading, spacing: 20) {
+                RestorePreviewMetrics(domains: [parent])
+                TaskDomainList(domains: [parent], settingsCategories: children, itemTitles: titles,
+                    expansion: .constant(["macOS Settings"]), settingsExpansion: .constant(true))
+            }.padding(28).frame(width: CGFloat(width)).background(Color(nsColor: .windowBackgroundColor))
+            let renderer = ImageRenderer(content: content)
+            renderer.scale = 1
+            let bitmap = NSBitmapImageRep(data: renderer.nsImage!.tiffRepresentation!)!
+            precondition(bitmap.pixelsWide == width && bitmap.pixelsHigh < 1800, "Narrow content must reflow without unbounded card/item height")
+            try! bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: "build/Debug/RestoreUnified-setting-labels-\(width).png"))
+            let unsupported = CoreRestoreInspection.Area(domain: "macos-finder", label: "Finder", selectionMode: "category", availability: "unsupported", reason: "source_unsupported", items: [])
+            precondition(ImageRenderer(content: RestoreMacOSAreaDetails(area: unsupported, expansion: .constant(true)).padding(28).frame(width: CGFloat(width))).nsImage != nil)
+        }
+        print("PASS: Native read-only nested macOS Preview, exact setting names, preserved IDs/counts and unsupported details")
+    }
+
+    @MainActor static func visualContractChecks() {
+        let source = try! String(contentsOfFile: "Sources/ContentView.swift")
+        let domains = WorkspaceCategoryStyle.groups.flatMap { $0.1 }.filter { $0 != "macOS Settings" }
+        let rows = domains.map { DisplayCategory(id: $0, title: $0, symbol: "", items: []) }
+        let sections = WorkspaceCategoryStyle.sections(rows.reversed())
+        precondition(sections.map(\.title) == ["Applications & Tools", "Settings", "Git", "SSH Configuration", "Workspace", "Shell"])
+        precondition(sections.first { $0.title == "Git" }!.rows.map(\.id) == ["git-configuration"])
+        precondition(sections.first { $0.title == "Workspace" }!.rows.map(\.id) == ["workspace-folders", "git-repositories"])
+        precondition(Set(sections.flatMap(\.rows).map(\.id)) == Set(rows.map(\.id)))
+        for id in domains {
+            precondition(RestoreRowIcon.symbol(for: id) == WorkspaceCategoryStyle.symbol(id))
+            precondition(NSImage(systemSymbolName: WorkspaceCategoryStyle.symbol(id), accessibilityDescription: nil) != nil)
+        }
+        let records = try! String(contentsOfFile: "../../modules/settings/macos/records.sh")
+        let definitions = records.components(separatedBy: "cat <<'MACOS_SETTINGS'\n")[1].components(separatedBy: "\nMACOS_SETTINGS")[0]
+        for line in definitions.split(separator: "\n") {
+            let fields = line.split(separator: "|").map(String.init)
+            precondition(WorkspaceSettingLabels.title(domain: "macos-" + fields[0], identity: fields[1] + "/" + fields[2]) == fields[4])
+        }
+        precondition(WorkspaceSettingLabels.title(domain: "macos-dock", identity: "NSGlobalDomain/tilesize") == nil)
+        precondition(WorkspaceSettingLabels.title(domain: "macos-finder", identity: "com.apple.finder/unknown") == nil)
+        precondition(source.contains("WorkspaceCircleIcon(symbol: symbol, tint: tint, size: 44)"))
+        precondition(source.contains(".padding(12)") && source.contains("tint.opacity(0.06)") && source.contains("cornerRadius: 8"))
+        let status = try! String(contentsOfFile: "Sources/EnvironmentStatusView.swift")
+        precondition(status.contains("WorkspaceSectionHeader(title: section.id)") && status.contains("WorkspaceMetricCard(title: outcome.title"))
+        for path in ["CaptureView.swift", "RestoreView.swift", "TaskComponents.swift"] {
+            let view = try! String(contentsOfFile: "Sources/" + path)
+            precondition(view.contains("WorkspaceSectionHeader(") && view.contains("WorkspaceCardSurface()"))
+        }
+        let restore = try! String(contentsOfFile: "Sources/RestoreView.swift")
+        precondition(!restore.contains("struct RestoreHeaderDisclosureStyle") && !restore.contains("struct RestoreSectionHeader"))
+        let area = restore.components(separatedBy: "struct RestoreAreaSelectionView:")[1].components(separatedBy: "struct RestorePresentationSection:")[0]
+        let disclosure = area.components(separatedBy: "DisclosureGroup(isExpanded:")[1].components(separatedBy: "if (expansion")[0]
+        precondition(!disclosure.contains("model.selectArea") && !disclosure.contains("model.selectItem"))
+        let nested = restore.components(separatedBy: "struct RestoreMacOSAreaDetails:")[1].components(separatedBy: "enum RestoreStatusTone:")[0]
+        precondition(!nested.contains("NativeSelectionCheckbox") && nested.contains("Individual settings are not separately selectable"))
+        print("PASS: Unified group order, domain identity, exact setting labels, blue SF Symbols, shared card geometry and independent disclosure/selection")
+    }
+
+    @MainActor static func finalCorrectionChecks() {
+        func captureRow(_ domain: String, reason: String? = nil) -> CoreCaptureInventoryRow {
+            let data = try! JSONSerialization.data(withJSONObject: ["domain": domain, "status": "present", "selection_mode": "category",
+                "reason": reason as Any? ?? NSNull(), "items": []])
+            return try! JSONDecoder().decode(CoreCaptureInventoryRow.self, from: data)
+        }
+        let ssh = CaptureCategory(row: captureRow("ssh-configuration", reason: "source_partial"))
+        let duplicate = CaptureReviewDiagnostics.repeatedNoticeIDs(ssh)
+        precondition(duplicate == ["category-warning:ssh-configuration"])
+        precondition(ssh.display.items[0].reason == "source_partial" && ssh.notices[0].reason == "source_partial")
+        precondition(ssh.display.items.filter { $0.reason != nil }.count + ssh.notices.filter { $0.reason != nil && !duplicate.contains($0.id) }.count == 1)
+        let selection = CoreCaptureSelection(categories: [ssh.id], items: [:], secureIdentities: [])
+        let confirmed = CaptureTaskPresentation(categories: [ssh], selection: selection, phase: .confirmation)
+        precondition(confirmed.domains.flatMap(\.items).filter { $0.item.reason == "source_partial" }.count == 1)
+        let publicationData = try! JSONSerialization.data(withJSONObject: ["publication_occurred": true, "destination": "/private/tmp/saved.mbt",
+            "prepared_capture_id": String(repeating: "a", count: 64), "bundle": ["format_version": 1, "selected_categories": [ssh.id], "selected_item_counts": [:], "secure_component": false]])
+        let publication = try! JSONDecoder().decode(CoreCapturePublication.self, from: publicationData)
+        let saved = CaptureTaskPresentation(categories: [ssh], selection: selection, phase: .result, publication: publication,
+            notices: [.init(id: ssh.id, title: ssh.title, symbol: ssh.symbol, items: ssh.notices)])
+        precondition(saved.domains.flatMap(\.items).filter { $0.item.reason == "source_partial" }.count == 1)
+        let independent = DisplayItem(id: "independent-ssh-warning", title: "Warning", status: .attention, action: "Keep this evidence", reason: "target_conflict")
+        let withIndependent = CaptureTaskPresentation(categories: [ssh], selection: selection, phase: .result, publication: publication,
+            notices: [.init(id: ssh.id, title: ssh.title, symbol: ssh.symbol, items: ssh.notices + [independent])])
+        precondition(withIndependent.domains.flatMap(\.items).filter { $0.item.reason != nil }.count == 2)
+        let categories = CaptureMacOSSettingsGroup.domainIDs.map { CaptureCategory(row: captureRow($0)) }
+        let chosen = CoreCaptureSelection(categories: categories.map(\.id), items: [:], secureIdentities: [])
+        let tasks = CaptureTaskPresentation(categories: categories, selection: chosen, phase: .confirmation)
+        let children = CaptureSettingsPresentation.children(tasks.domains)
+        let labels = Dictionary(uniqueKeysWithValues: categories.map { category in
+            (category.id, WorkspaceSettingLabels.names.filter { $0.key.hasPrefix(category.id + ":") }.sorted { $0.key < $1.key }.map(\.value))
+        })
+        precondition(children.map(\.id) == CaptureMacOSSettingsGroup.domainIDs && labels.values.reduce(0) { $0 + $1.count } == WorkspaceSettingLabels.names.count)
+        let taskSource = try! String(contentsOfFile: "Sources/TaskComponents.swift")
+        precondition(taskSource.contains("if compactReadyItems {\n                    CaptureIncludedSettingsList(labels: settingLabels)"))
+        let restoreSource = try! String(contentsOfFile: "Sources/RestoreView.swift")
+        let selectionSource = restoreSource.components(separatedBy: "struct RestoreAreaSelectionView:")[1].components(separatedBy: "enum RestoreStatusTone:")[0]
+        precondition(!selectionSource.contains("Individual settings are not separately selectable"))
+        for domain in ["vscode-settings", "ssh-configuration", "macos-finder"] {
+            let area = CoreRestoreInspection.Area(domain: domain, label: domain, selectionMode: "category", availability: "available", reason: nil, items: [])
+            precondition(!RestoreAreaSelectionView.hasDisclosure(area) && !RestoreMacOSAreaDetails.hasDetails(area))
+            for code in ["target_conflict", "source_partial", "authorization_required"] {
+                let warning = CoreRestoreInspection.Area(domain: domain, label: domain, selectionMode: "category", availability: "available", reason: code, items: [])
+                precondition(RestoreMacOSAreaDetails.hasDetails(warning) && warning.reason == code)
+                let notices = RestoreAreaSelectionView.notices(warning)
+                precondition(notices.count == 1 && notices[0].reason == code && notices[0].status == .attention && notices[0].title == "Needs Attention")
+            }
+        }
+        precondition(restoreSource.contains("Discard Current Restore Selection?") && restoreSource.contains("Keep Selection") && restoreSource.contains("Discard and Cancel"))
+        if CommandLine.arguments.contains("--no-renders") {
+            print("PASS: Addressed diagnostics, compact Capture settings, meaningful Restore disclosures and warning preservation")
+            return
+        }
+        // Exactly two native renders here; the Review/Cancel harness renders Restore once.
+        func render<V: View>(_ view: V, name: String, width: Int, height: Int) {
+            _ = NSApplication.shared
+            NSApp.appearance = NSAppearance(named: .aqua)
+            let root = view.padding(28).frame(width: CGFloat(width), height: CGFloat(height), alignment: .topLeading)
+                .background(Color(nsColor: .windowBackgroundColor))
+            let host = NSHostingView(rootView: root)
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: height), styleMask: [.borderless], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false; window.contentView = host; host.frame = window.contentView!.bounds
+            host.layoutSubtreeIfNeeded(); host.displayIfNeeded()
+            let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds)!
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            try! bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: "build/Debug/FinalCorrections-\(name).png"))
+            window.close()
+        }
+        let model = CaptureModel(runtime: CoreRuntime())
+        render(VStack(alignment: .leading, spacing: 20) {
+            Text("Capture — SSH Configuration").font(.headline)
+            CaptureCategorySelectionView(model: model, category: ssh, expansion: .constant(true)).modifier(WorkspaceCardSurface())
+        }, name: "Capture-SSH", width: 785, height: 360)
+        render(HStack(alignment: .top, spacing: 24) {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Save this environment?").font(.headline)
+                ForEach(children) { child in
+                    TaskSettingsCategoryDetails(domain: child, stateTitles: [.planned: "Ready to Save"], compactReadyItems: true,
+                        settingLabels: labels[child.id]!, expansion: .constant(true))
+                }
+            }
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Environment Saved").font(.headline)
+                ForEach(children) { child in
+                    let completed = TaskDomainPresentation(id: child.id, title: child.title, symbol: child.symbol,
+                        items: child.items.map { TaskItemPresentation(id: $0.id, item: $0.item, state: .completed, captureRole: $0.captureRole) })
+                    TaskSettingsCategoryDetails(domain: completed, stateTitles: [:], compactReadyItems: true,
+                        settingLabels: labels[child.id]!, expansion: .constant(true))
+                }
+            }
+        }, name: "Capture-macOS-Settings", width: 1200, height: 1400)
+        print("PASS: Addressed SSH diagnostics, compact Capture settings, meaningful Restore disclosures and Review-only Cancel wiring; two native renders")
+    }
+
+    @MainActor static func restoreMacOSChecks() {
+        _ = NSApplication.shared
+        NSApp.appearance = NSAppearance(named: .aqua)
+        let match = TaskItemPresentation(id: "match", item: DisplayItem(id: "match", title: "Show extensions", status: .matching, action: "Already Matches"), state: .matching)
+        precondition(RestoreSettingPreviewLeaf(item: match, title: match.item.title).compactMatch)
+        for state in [TaskRowState.unverified, .attention, .failed, .planned] {
+            let issue = TaskItemPresentation(id: "issue", item: DisplayItem(id: "issue", title: "Setting", status: .information, action: "Reported issue", reason: "retained reason"), state: state)
+            precondition(!RestoreSettingPreviewLeaf(item: issue, title: issue.item.title).compactMatch)
+        }
+        let issue = TaskItemPresentation(id: "issue", item: DisplayItem(id: "issue", title: "Show hidden files", status: .attention, action: "Inspection unavailable", reason: "Observation failed"), state: .unverified)
+        let finder = TaskDomainPresentation(id: "macos-finder", title: "Finder", symbol: "finder", items: [match, issue], previewOnly: true)
+        let parent = TaskDomainPresentation(id: "macOS Settings", title: "macOS Settings", symbol: "slider.horizontal.3", items: [match, issue], previewOnly: true)
+        let content = TaskDomainList(domains: [parent], restoreSettingsPreview: true, settingsCategories: [finder], expansion: .constant([parent.id]), settingsExpansion: .constant(true))
+            .padding(28).frame(width: 785).background(Color(nsColor: .windowBackgroundColor))
+        let renderer = ImageRenderer(content: content); renderer.scale = 1
+        let bitmap = NSBitmapImageRep(data: renderer.nsImage!.tiffRepresentation!)!
+        try! bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: "build/Debug/Restore-macOS-Preview.png"))
+        print("PASS: Restore compact matching leaves, nonmatching statuses/reasons, native expanded Finder Preview")
+    }
+
+    @MainActor static func finalUIAlignmentChecks() {
+        func category(_ domain: String, reason: String? = nil, included: Bool = false) -> CaptureCategory {
+            var row: [String: Any] = ["domain": domain, "status": "present", "selection_mode": "category", "items": []]
+            if let reason { row["reason"] = reason }
+            if included { row["included_settings"] = [["id": "verified-setting", "label": "Verified setting"]] }
+            return CaptureCategory(row: try! JSONDecoder().decode(CoreCaptureInventoryRow.self, from: JSONSerialization.data(withJSONObject: row)))
+        }
+        let vscode = category("vscode-settings")
+        precondition(!CaptureCategorySelectionView.hasDisclosure(vscode))
+        precondition(vscode.selectable && vscode.row.selectionMode == "category" && vscode.headerSummary == "Whole category")
+        precondition(CaptureCategorySelectionView.hasDisclosure(category("vscode-settings", reason: "observation_issue")))
+        precondition(CaptureCategorySelectionView.hasDisclosure(category("vscode-settings", included: true)))
+        precondition(CaptureCategorySelectionView.hasDisclosure(category("git-configuration")))
+        let match = TaskItemPresentation(id: "match", item: DisplayItem(id: "match", title: "Show extensions", status: .matching, action: "Already Matches"), state: .matching)
+        precondition(RestoreSettingPreviewLeaf(item: match, title: match.item.title).compactMatch)
+        let attention = TaskItemPresentation(id: "attention", item: DisplayItem(id: "attention", title: "Application", status: .attention, action: "Review prerequisite", reason: "Existing diagnostic"), state: .attention)
+        precondition(!RestoreSettingPreviewLeaf(item: attention, title: attention.item.title).compactMatch)
+        let children = CaptureMacOSSettingsGroup.domainIDs.enumerated().map { index, id in
+            let item = TaskItemPresentation(id: "setting-\(index)", item: DisplayItem(id: "setting-\(index)", title: index == 0 ? "Show extensions" : "Supported preference", status: .matching, action: "Already Matches"), state: .matching)
+            return TaskDomainPresentation(id: id, title: CaptureCategory.title(for: id), symbol: WorkspaceCategoryStyle.symbol(id), items: [item], previewOnly: true)
+        }
+        let domains = [TaskDomainPresentation(id: "homebrew-casks", title: "Homebrew Applications", symbol: "app", items: [attention], previewOnly: true),
+            TaskDomainPresentation(id: "homebrew-packages", title: "Homebrew Packages", symbol: "shippingbox", items: [match], previewOnly: true),
+            TaskDomainPresentation(id: "macOS Settings", title: "macOS Settings", symbol: "slider.horizontal.3", items: children.flatMap(\.items), previewOnly: true)]
+        func preview(_ width: CGFloat) -> some View {
+            TaskDomainList(domains: domains, restoreSettingsPreview: true, settingsCategories: children,
+                expansion: .constant(["macOS Settings"]), settingsExpansion: .constant(true)).frame(width: width)
+        }
+        func render<V: View>(_ view: V, name: String, width: Int, height: Int) {
+            _ = NSApplication.shared; NSApp.appearance = NSAppearance(named: .aqua)
+            let content = view.padding(28).frame(width: CGFloat(width), height: CGFloat(height), alignment: .topLeading)
+                .background(Color(nsColor: .windowBackgroundColor))
+            let host = NSHostingView(rootView: content)
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: height), styleMask: [.borderless], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false; window.contentView = host; host.frame = window.contentView!.bounds
+            host.layoutSubtreeIfNeeded(); host.displayIfNeeded()
+            let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds)!
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            try! bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: "build/Debug/FinalUI-" + name + ".png"))
+            window.close()
+        }
+        render(HStack(alignment: .top, spacing: 24) { preview(729); preview(344) }, name: "Restore-Preview", width: 1153, height: 1280)
+        if CommandLine.arguments.contains("--restore-render-only") { print("PASS: Restore wide/narrow alignment render"); return }
+        let model = CaptureModel(runtime: CoreRuntime())
+        render(VStack(alignment: .leading, spacing: 20) {
+            Text("Capture — Review and Select").font(.headline)
+            CaptureCategorySelectionView(model: model, category: vscode, expansion: .constant(true)).modifier(WorkspaceCardSurface())
+            CaptureCategorySelectionView(model: model, category: category("git-configuration"), expansion: .constant(true)).modifier(WorkspaceCardSurface())
+        }, name: "Capture-Review", width: 785, height: 350)
+        print("PASS: Aligned Restore status columns at wide/narrow widths, compact match leaves, VS Code placeholder-only disclosure removed, real details preserved; two native renders")
+    }
+
+    @MainActor static func executionVisualChecks() {
+        func domain(_ id: String, state: TaskRowState) -> TaskDomainPresentation {
+            let item = TaskItemPresentation(id: id + ":item", item: DisplayItem(id: id + ":item", title: id,
+                status: .information, action: "Existing result", reason: id == "ssh-configuration" ? "source_partial" : nil), state: state)
+            return TaskDomainPresentation(id: id, title: id == "macOS Settings" ? id : CaptureCategory.title(for: id),
+                symbol: "folder", items: [item], activityState: state, confirmedFinalState: [.completed, .matching, .unverified, .notRun].contains(state) ? state : nil)
+        }
+        let ids = ["git-repositories", "ssh-configuration", "git-configuration", "macOS Settings", "homebrew-packages", "homebrew-casks", "workspace-folders"]
+        let rows = ids.map { domain($0, state: .unverified) }
+        let sections = RestoreExecutionCategories.sections(rows)
+        precondition(sections.compactMap(\.title) == ["Applications & Tools", "Settings", "Git", "SSH Configuration", "Workspace"])
+        precondition(sections.last!.rows.map(\.id) == ["workspace-folders", "git-repositories"])
+        precondition(Set(sections.flatMap(\.rows).map(\.id)) == Set(ids))
+        precondition(sections.flatMap(\.rows).allSatisfy { $0.executionStatus == .unverified && $0.executionStatus.tone == .warning })
+        for state in [TaskRowState.working, .completed, .attention, .unverified, .notRun, .failed] {
+            let original = ids.map { domain($0, state: state) }
+            let reordered = RestoreExecutionCategories.sections(original).flatMap(\.rows)
+            for row in original {
+                let after = reordered.first { $0.id == row.id }!
+                precondition(after.executionStatus == row.executionStatus && after.executionMessages == row.executionMessages)
+                precondition(after.items.map(\.id) == row.items.map(\.id) && after.items.first!.item.reason == row.items.first!.item.reason)
+                precondition(WorkspaceCategoryStyle.symbol(row.id) == RestoreRowIcon.symbol(for: row.id))
+            }
+        }
+        let unknown = domain("future-core-group", state: .unverified)
+        let anchored = RestoreExecutionCategories.sections([rows[0], unknown, rows[1]])
+        precondition(anchored.map { $0.rows.map(\.id) } == [[rows[0].id], [unknown.id], [rows[1].id]])
+        precondition(anchored[1].title == nil && anchored[1].rows[0].title == unknown.title)
+        func render<V: View>(_ view: V, name: String) {
+            _ = NSApplication.shared; NSApp.appearance = NSAppearance(named: .aqua)
+            let content = view.padding(28).frame(width: 785, height: 1000, alignment: .topLeading)
+                .background(Color(nsColor: .windowBackgroundColor))
+            let host = NSHostingView(rootView: content)
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 785, height: 1000), styleMask: [.borderless], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false; window.contentView = host; host.frame = window.contentView!.bounds
+            host.layoutSubtreeIfNeeded(); host.displayIfNeeded()
+            let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds)!
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            try! bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: "build/Debug/ExecutionVisual-" + name + ".png"))
+            window.close()
+        }
+        render(VStack(alignment: .leading, spacing: 20) {
+            Text("Rebuilding this Mac").font(.title.weight(.bold))
+            HStack(spacing: 12) { ProgressView(); Text("Applying selected configuration…").foregroundStyle(.secondary) }
+            RestoreExecutionCategories(domains: ids.enumerated().map { domain($0.element, state: $0.offset == 5 ? .working : .waiting) })
+            RestoreRebuildActions()
+        }, name: "Rebuilding")
+        render(VStack(alignment: .leading, spacing: 20) {
+            Text("Rebuild Needs Attention").font(.title.weight(.bold))
+            RestoreVerificationResult(outcome: .attention, payload: ["verification": .object(["status": .string("complete"),
+                "verified_count": .integer(2), "mismatch_count": .integer(1), "unverified_count": .integer(4), "unresolved_count": .integer(0)])])
+            RestoreExecutionCategories(domains: ids.enumerated().map { domain($0.element, state: $0.offset == 5 ? .attention : .unverified) }, showsWarnings: false)
+        }, name: "Needs-Attention")
+        print("PASS: Execution/Result section order and shared icon mapping; all rows, statuses, warning colors, diagnostics and unknown group anchors preserved; two native renders")
+    }
+
+    @MainActor static func neutralUnverifiedChecks() {
+        let label = RestoreResultStatusLabel(state: .unverified)
+        precondition(label.symbol == "questionmark.circle" && label.tone == .neutral)
+        precondition(TaskRowState.unverified.tone == .warning && TaskRowState.unverified.symbol == "exclamationmark.triangle.fill")
+        for state in TaskRowState.allCases where state != .unverified {
+            let label = RestoreResultStatusLabel(state: state)
+            precondition(label.symbol == state.symbol && label.tone == state.tone)
+        }
+        precondition(RestoreResultStatusLabel(state: .attention).tone == .warning)
+        precondition(RestoreResultStatusLabel(state: .completed).tone == .success && RestoreResultStatusLabel(state: .matching).tone == .success)
+        let domains = ["homebrew-casks", "homebrew-packages", "macOS Settings", "ssh-configuration"].enumerated().map { index, id in
+            let state: TaskRowState = index == 0 ? .attention : .unverified
+            return TaskDomainPresentation(id: id, title: id == "macOS Settings" ? id : CaptureCategory.title(for: id), symbol: "folder",
+                items: [TaskItemPresentation(id: id + ":item", item: DisplayItem(id: id + ":item", title: id, status: .information, action: "Existing result"), state: state)], confirmedFinalState: state)
+        }
+        precondition(domains[1].executionStatus == .unverified)
+        let source = try! String(contentsOfFile: "Sources/RestoreView.swift")
+        precondition(source.contains("RestoreExecutionCategories(domains: tasks.domains, showsWarnings: false, resultStatuses: true)"))
+        _ = NSApplication.shared; NSApp.appearance = NSAppearance(named: .aqua)
+        let content = VStack(alignment: .leading, spacing: 20) {
+            Text("Rebuild Cancelled").font(.title.weight(.bold))
+            RestoreVerificationResult(outcome: .stoppedAfterMutation, payload: ["verification": .object(["status": .string("not_run")])])
+                .fixedSize(horizontal: false, vertical: true)
+            RestoreExecutionCategories(domains: domains, showsWarnings: false, resultStatuses: true)
+        }.padding(28).frame(width: 785, height: 850, alignment: .topLeading).background(Color(nsColor: .windowBackgroundColor))
+        let host = NSHostingView(rootView: content)
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 785, height: 850), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = host; host.frame = window.contentView!.bounds
+        host.layoutSubtreeIfNeeded(); host.displayIfNeeded()
+        let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds)!
+        host.cacheDisplay(in: host.bounds, to: bitmap)
+        try! bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: "build/Debug/Neutral-Unverified-Rebuild-Cancelled.png"))
+        window.close()
+        print("PASS: Result-only neutral Unverified/questionmark.circle; other colors/symbols and global Unverified unchanged; one Rebuild Cancelled render")
+    }
+
+    @MainActor static func minimalResultSummaryChecks() {
+        for value in [CoreJSON.null, .integer(0), .integer(-1), .string("2"), .integer(2)] {
+            let payload: [String: CoreJSON] = ["verification": .object(["status": .string("incomplete"), "mismatch_count": value, "unverified_count": value])]
+            let summary = RestoreVerificationSummary(payload: payload)
+            let expected = value.integer.map { $0 > 0 } ?? false
+            precondition(RestoreVerificationResult.showsCount(summary.mismatch) == expected)
+            precondition(RestoreVerificationResult.showsCount(summary.unverified) == expected)
+            precondition(summary.title == "Verification Incomplete" && summary.overallResult(outcome: .attention) == "Incomplete")
+        }
+        let missingPayloads: [[String: CoreJSON]?] = [nil, [:], ["verification": .object(["status": .string("not_run")])]]
+        for payload in missingPayloads {
+            let summary = RestoreVerificationSummary(payload: payload)
+            precondition(!RestoreVerificationResult.showsCount(summary.mismatch) && !RestoreVerificationResult.showsCount(summary.unverified))
+            precondition(summary.overallResult(outcome: .stoppedBeforeMutation) == "Stopped")
+        }
+        let notRun = RestoreVerificationSummary(payload: ["verification": .object(["status": .string("not_run"), "details": .object(["verification_records": .array([.object(["conformity": .string("unverified")])])])])])
+        precondition(notRun.title == "Verification Not Run" && notRun.unverified == nil)
+        for (mismatch, unverified, count) in [(0, 0, 1), (2, 0, 2), (0, 3, 2), (2, 3, 3)] {
+            let summary = RestoreVerificationSummary(payload: ["verification": .object(["status": .string("complete"), "verified_count": .integer(4),
+                "mismatch_count": .integer(mismatch), "unverified_count": .integer(unverified), "unresolved_count": .integer(1)])])
+            precondition(summary.complete && summary.mismatch == mismatch && summary.unverified == unverified && summary.unresolved == 1)
+            precondition(1 + (RestoreVerificationResult.showsCount(summary.mismatch) ? 1 : 0) + (RestoreVerificationResult.showsCount(summary.unverified) ? 1 : 0) == count)
+        }
+        let source = try! String(contentsOfFile: "Sources/RestoreView.swift")
+            .components(separatedBy: "struct RestoreVerificationResult: View {")[1].components(separatedBy: "struct RestoreResultContent:")[0]
+        precondition(source.contains("WorkspaceThreeMetrics {") && source.contains("metric(\"Result\""))
+        precondition(source.contains("Self.showsCount(summary.mismatch)") && source.contains("Self.showsCount(summary.unverified)"))
+        precondition(source.contains("Label(summary.title") && source.contains("Unresolved: "))
+        print("PASS: Result always present; only positive Core aggregates visible; missing/null/zero/invalid counts hidden; partial Verification caveats and Unresolved retained; no renders")
+    }
+
+    @MainActor static func resultCleanupChecks() {
+        let source = try! String(contentsOfFile: "Sources/RestoreView.swift")
+        let result = source.components(separatedBy: "struct RestoreResultContent:")[1].components(separatedBy: "struct RestorePreviewMetrics:")[0]
+        precondition(!result.contains("result.findings") && !result.contains("Text(\"Needs Attention\")"))
+        precondition(result.contains("RestoreVerificationResult(outcome: result.outcome, payload: result.structuredEvidence)"))
+        precondition(result.contains("RestoreExecutionCategories(domains: tasks.domains, showsWarnings: false, resultStatuses: true)"))
+        precondition(result.contains("Text(result.message)") && result.contains("RestoreResultActions(result: result, refresh: refresh, done: done)"))
+        precondition(result.contains("DisclosureGroup(\"Technical Details\") {") && !result.contains("isExpanded:"))
+        precondition(result.contains("result.compactTechnicalDetails") && result.contains("Copy Diagnostic Details") && result.contains("result.diagnosticReport"))
+        let model = try! String(contentsOfFile: "Sources/RestoreModel.swift")
+        precondition(model.contains("let findings: [DisplayItem]") && model.contains("findings = outcome == .clean ? [] : normalized.findings"))
+        precondition(RestoreResultStatusLabel(state: .unverified).tone == .neutral && RestoreResultStatusLabel(state: .unverified).symbol == "questionmark.circle")
+        for state in [TaskRowState.attention, .completed, .matching, .notRun] {
+            precondition(RestoreResultStatusLabel(state: state).tone == state.tone && RestoreResultStatusLabel(state: state).symbol == state.symbol)
+        }
+        print("PASS: Result findings block absent; category statuses, Summary, safety message, collapsed Technical Details and diagnostic copy retained; model findings unchanged; no renders")
+    }
+
     @MainActor static func main() {
+        if CommandLine.arguments.contains("--result-cleanup-only") { resultCleanupChecks(); return }
+        if CommandLine.arguments.contains("--minimal-result-summary-only") { minimalResultSummaryChecks(); return }
+        if CommandLine.arguments.contains("--neutral-unverified-only") { neutralUnverifiedChecks(); return }
+        if CommandLine.arguments.contains("--execution-visual-only") { executionVisualChecks(); return }
+        if CommandLine.arguments.contains("--final-ui-only") { finalUIAlignmentChecks(); return }
+        if CommandLine.arguments.contains("--restore-macos-only") { restoreMacOSChecks(); return }
+        if CommandLine.arguments.contains("--final-corrections") { finalCorrectionChecks(); return }
         if CommandLine.arguments.contains("--restore-only") { renderRestoreV2(); return }
         for count in 1...10 {
             let boundary = 300 + 28 + OperationSummaryLayout.metricWidth(count)
@@ -353,6 +744,8 @@ import SwiftUI
         precondition(CaptureMetricCard.tone(attention: false, count: 5) == .blue)
         precondition(CaptureMetricCard.tone(attention: true, count: 0) == .neutral)
         precondition(CaptureMetricCard.tone(attention: true, count: 1) == .amber)
+        visualContractChecks()
+        renderUnifiedSettings()
         renderRestoreV2()
         renderInitialStates()
         appIconChecks()
@@ -387,17 +780,18 @@ import SwiftUI
             sources = URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL
                 .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Sources")
         }
+        let content = try! String(contentsOf: sources.appendingPathComponent("ContentView.swift"), encoding: .utf8)
         let statusView = try! String(contentsOf: sources.appendingPathComponent("EnvironmentStatusView.swift"), encoding: .utf8)
         precondition(statusView.contains("Compare This Mac") && statusView.contains("Choose Saved Environment…"))
         precondition(statusView.contains("panel.canChooseDirectories = false") && statusView.contains("UTType(filenameExtension: \"mbt\")"))
         precondition(statusView.contains("model.selectBundle(url)"))
-        precondition(statusView.contains("EnvironmentComparisonDomain(category: child)"))
+        precondition(statusView.contains("EnvironmentComparisonDomain(category: child, expansion: childExpansion)"))
         precondition(statusView.contains("DisclosureGroup(isExpanded: expansion ?? $expanded)"))
         precondition(statusView.contains("@ReferenceViewState<Bool> private var expanded = false"))
         precondition(statusView.contains("if model.state != .choose { Spacer() }"))
         precondition(statusView.contains("if model.reference != nil {"))
         precondition(!statusView.contains("Text(result.summary)"))
-        precondition(statusView.contains(".font(.system(size: 13, weight: .semibold)).foregroundStyle(Color(nsColor: .labelColor))"))
+        precondition(content.contains(".font(.system(size: 13, weight: .semibold)).foregroundStyle(Color(nsColor: .labelColor))"))
         precondition(statusView.contains("if let reason = item.comparisonTechnicalDetails"))
         precondition(statusView.contains("if let explanation = item.comparisonExplanation"))
         precondition(statusView.contains(".accessibilityLabel(\"Already Matches\")"))
@@ -416,17 +810,17 @@ import SwiftUI
         precondition(statusView.contains("Full Diagnostic Details") && statusView.contains("fact.predicateTitle"))
         let domainView = statusView.components(separatedBy: "struct EnvironmentComparisonDomain: View")[1].components(separatedBy: "struct EnvironmentComparisonItem: View")[0]
         precondition(domainView.contains("Capsule()") && domainView.contains("if let counts"))
-        precondition(domainView.contains(".fontWeight(.semibold).foregroundStyle(.blue).frame(width: TaskRowLayout.iconWidth)"))
+        precondition(domainView.contains("WorkspaceCategoryIcon(symbol: category.symbol)") && content.contains(".fontWeight(.semibold).foregroundStyle(.blue)"))
         precondition(domainView.contains(".padding(.horizontal, 8).frame(minWidth: 46, minHeight: 23)"))
-        precondition(statusView.contains("Rectangle().fill(Color.primary.opacity(0.22)).frame(height: 1.5)"))
+        precondition(content.contains("Rectangle().fill(Color.primary.opacity(0.22)).frame(height: 1.5)"))
 
         precondition(domainView.contains("if ![.different, .missing].contains(status) { statusLabel }"))
         precondition(domainView.contains("Text(counts == nil ? category.comparisonStatusText : status.rawValue)"))
         precondition(!domainView.contains("warningCompanion") && !domainView.contains("warning && outcomes"))
 
-        let sectionHeader = statusView.components(separatedBy: "Text(section.id)")[1].components(separatedBy: "VStack(spacing: 0)")[0]
+        let sectionHeader = content.components(separatedBy: "struct WorkspaceSectionHeader:")[1].components(separatedBy: "struct WorkspaceCategoryIcon:")[0]
         precondition(!sectionHeader.contains("Capsule()") && !sectionHeader.contains("counts"))
-        precondition(domainView.contains("EnvironmentComparisonDomain(category: child)"))
+        precondition(domainView.contains("EnvironmentComparisonDomain(category: child, expansion: childExpansion)"))
 
         precondition(WorkspaceActionLayout.columns(659) == 1 && WorkspaceActionLayout.columns(660) == 3)
         precondition(WorkspaceMetricLayout.columns(899) == 2 && WorkspaceMetricLayout.columns(900) == 4)
@@ -434,7 +828,6 @@ import SwiftUI
         precondition(statusView.contains("WorkspacePrimaryActionCard(title: \"Choose Saved Environment\""))
         precondition(!statusView.contains("WorkspaceResultHeader(title:") && statusView.contains("ForEach(ComparisonOutcome.allCases)"))
 
-        let content = try! String(contentsOf: sources.appendingPathComponent("ContentView.swift"), encoding: .utf8)
         let production = try! String(contentsOf: sources.appendingPathComponent("ProductionWorkspace.swift"), encoding: .utf8)
         let scrollEnd = production.range(of: "                if navigation.task == .status && status.state == .result {")!
         precondition(production[scrollEnd.lowerBound...].contains("EnvironmentStatusActions(model: status, runtime: runtime, reviewInRestore:"))
@@ -479,11 +872,11 @@ import SwiftUI
         precondition(restoreView.contains("needsRefresh || retrying"))
         precondition(restoreView.contains(".disclosureGroupStyle(HeaderDisclosureStyle())") && restoreView.contains("CaptureChildRowGrid.leadingInset"))
         let sections = RestorePresentationSection.project([])
-        precondition(sections.map(\.id) == ["Applications & Tools", "Settings", "Shell", "Git", "SSH Configuration", "Workspace"])
+        precondition(sections.map(\.id) == ["Applications & Tools", "Settings", "Git", "SSH Configuration", "Workspace", "Shell"])
         let aggregateSource = String(restoreView.components(separatedBy: "struct RestoreMacOSSelectionView")[1].components(separatedBy: "enum RestoreStatusTone")[0])
-        precondition(!aggregateSource.contains("DisclosureGroup") && !aggregateSource.contains("ForEach") && !aggregateSource.contains("Supported settings only"))
+        precondition(aggregateSource.contains("DisclosureGroup") && aggregateSource.contains("ForEach(CaptureMacOSSettingsGroup.domainIDs") && !aggregateSource.contains("model.selectItem"))
         precondition(aggregateSource.contains("model.selectGroup(group") && aggregateSource.contains("Included"))
-        precondition(restoreView.contains("RestoreSectionHeader(title: section.id)"))
+        precondition(restoreView.contains("WorkspaceSectionHeader(title: section.id)"))
         precondition(restoreView.contains("showsSelectionActions") && restoreView.contains("if showsSelectionActions"))
         precondition(restoreView.components(separatedBy: "Button(\"Preview Restore\"").count == 2)
         precondition(workspaceSource.contains("showsSelectionActions: false"))
@@ -501,9 +894,9 @@ import SwiftUI
         }
         print("PASS: Selection footer narrow/wide, single Preview action, honest preparation and safe Stop confirmation bindings")
 
-        precondition(RestoreRowIcon.symbol(for: "vscode-settings") == "gearshape")
-        precondition(aggregateSource.contains("RestoreRowIcon(symbol: \"slider.horizontal.3\")"))
-        precondition(restoreView.contains("RestoreRowIcon(symbol: RestoreRowIcon.symbol(for: area.id))"))
+        precondition(RestoreRowIcon.symbol(for: "vscode-settings") == "slider.horizontal.3")
+        precondition(aggregateSource.contains("WorkspaceCategoryTitle(id: \"macos-settings\","))
+        precondition(restoreView.contains("WorkspaceCategoryTitle(id: area.id, title: area.label, fallbackSymbol: RestoreRowIcon.symbol(for: area.id))"))
         precondition(restoreView.contains("RestorePresentationSection.visible(model.groups, inventory: includedAreas)"))
         func luminance(_ color: NSColor) -> Double {
             let rgb = color.usingColorSpace(.sRGB)!
@@ -547,8 +940,8 @@ import SwiftUI
         precondition(prerequisiteSource.contains("if condition.status != \"satisfied\" {\n                Text(message)"))
         precondition(prerequisiteSource.contains("DisclosureGroup(technicalTitle)") && prerequisiteSource.contains("Text(condition.code)"))
         precondition(RestoreRowGrid.titleInset == RestoreRowGrid.checkboxWidth + RestoreRowGrid.disclosureWidth + RestoreRowGrid.iconWidth + RestoreRowGrid.spacing * 3)
-        precondition(restoreView.contains(".disclosureGroupStyle(RestoreHeaderDisclosureStyle())"))
-        precondition(restoreView.contains("Color.clear.frame(width: RestoreRowGrid.disclosureWidth") && restoreView.contains(".frame(width: RestoreRowGrid.iconWidth, alignment: .center)"))
+        precondition(restoreView.contains(".disclosureGroupStyle(TaskDisclosureStyle())"))
+        precondition(content.contains(".frame(width: TaskRowLayout.iconWidth)") && restoreView.contains("WorkspaceCategoryIcon(symbol: symbol)"))
         precondition(restoreView.contains("ItemDetails(items: notices).padding(.leading, RestoreRowGrid.titleInset)"))
         precondition(restoreView.contains("Secure Transfer is not available") && restoreView.contains("Restore Preview is read-only"))
         precondition(!restoreView.contains("restoreExecute") && restoreModel.contains(".restoreExecute(") && restoreModel.contains("includeSecure: false"))
@@ -608,16 +1001,16 @@ import SwiftUI
         let groupEnd = captureView.range(of: "struct CaptureView: View")!
         let macOSGroup = String(captureView[groupStart.lowerBound..<groupEnd.lowerBound])
         precondition(macOSGroup.contains("@CaptureViewState<Bool> private var expanded = false"))
-        precondition(macOSGroup.contains("NativeSelectionCheckbox(category.title") && macOSGroup.contains(".frame(width: 28, height: 28)"))
+        precondition(macOSGroup.contains("CaptureSettingsSubcategoryView(model: model, category: category") && macOSGroup.contains(".frame(width: 28, height: 28)"))
         precondition(macOSGroup.contains(".disclosureGroupStyle(TaskDisclosureStyle())"))
         precondition(!macOSGroup.contains("CategoryRow(") && !macOSGroup.contains("Included as a whole category"))
-        precondition(macOSGroup.components(separatedBy: "DisclosureGroup(").count == 3, "Only parent and progressive technical reasons disclose")
+        precondition(macOSGroup.components(separatedBy: "DisclosureGroup(").count == 2, "Parent disclosure delegates supported category-only details to subcategory views")
         precondition(CaptureChildRowGrid.leadingInset == 24 && CaptureChildRowGrid.titleInset == 20)
         precondition(content.contains(".padding(.leading, CaptureChildRowGrid.leadingInset).padding(.vertical, 8)"))
         precondition(macOSGroup.contains(".padding(.leading, editable ? CaptureChildRowGrid.leadingInset : 0)"), "macOS areas share the selectable child checkbox column")
-        precondition(macOSGroup.contains(".frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)"))
-        precondition(macOSGroup.contains("IncludedSettingsText(settings: settings).padding(.leading, editable ? CaptureChildRowGrid.titleInset : 0)"), "Metadata starts at the native checkbox title column")
-        precondition(macOSGroup.contains("Supported settings only") && macOSGroup.contains("category.row.includedSettings"))
+        precondition(capturePresentation.contains("accessibilityTitle: \"Select \" + category.title"))
+        precondition(capturePresentation.contains("ForEach(settings, id:") && capturePresentation.contains("Text(setting.label)"), "Nested metadata keeps authoritative labels without setting checkboxes")
+        precondition(macOSGroup.contains("Supported settings only") && capturePresentation.contains("category.row.includedSettings"))
         let metadataStart = captureView.range(of: "struct IncludedSettingsText: View")!
         let metadataView = String(captureView[metadataStart.lowerBound..<groupStart.lowerBound])
         precondition(metadataView.contains("SettingsFlowLayout") && metadataView.contains("Text(setting.label"))
@@ -632,7 +1025,7 @@ import SwiftUI
         precondition(zip(narrow, labelSizes).allSatisfy { $0.size == $1 && $0.maxX <= 180 })
         precondition(SettingsFlowLayout.frames(sizes: labelSizes, width: 600) == wide, "Re-expansion restores layout without losing labels")
         print("PASS: Included settings are Core-supplied read-only labels; flow reflows by width without losing scope")
-        print("PASS: macOS Settings uses separate native checkbox/header targets and plain domain rows without nested category disclosure")
+        print("PASS: macOS Settings uses separate native checkbox/header targets and nested domain disclosures without individual setting selection")
         precondition(content.contains("struct WorkspaceHeader: View") && content.contains("struct InsetSidebarSurface: ViewModifier"))
         precondition(content.contains("MacseedHomeHero()") && content.contains("WorkspaceHeader(title: task.rawValue"))
         precondition(production.contains("WorkspaceHeader(title: task.rawValue"))

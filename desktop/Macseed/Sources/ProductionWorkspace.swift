@@ -83,11 +83,11 @@ struct ProductionWorkspace: View {
                 if navigation.task == .status && status.state == .result {
                     Divider()
                     EnvironmentStatusActions(model: status, runtime: runtime, reviewInRestore: reviewStatusInRestore, handoffBlocked: busy || syntheticRestore)
-                        .padding(.horizontal, WorkspaceGeometry.margin).padding(.vertical, 12)
+                        .modifier(WorkspaceFooterPadding())
                 }
                 if navigation.task == .capture && capture.state != .idle {
                     Divider()
-                    CaptureActionsView(model: capture, runtime: runtime).padding(.horizontal, WorkspaceGeometry.margin).padding(.vertical, 12)
+                    CaptureActionsView(model: capture, runtime: runtime).modifier(WorkspaceFooterPadding())
                 }
                 if navigation.task == .restore {
                     #if DEBUG
@@ -160,7 +160,7 @@ struct ProductionWorkspace: View {
             if let result = restore.executionResult {
                 RestoreResultActions(result: result, refresh: { restore.checkCurrentState() }, done: { restore.finish() })
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, WorkspaceGeometry.margin).padding(.vertical, 12)
+                    .modifier(WorkspaceFooterPadding())
             }
         }
     }
@@ -169,15 +169,15 @@ struct ProductionWorkspace: View {
             Divider()
             RestorePreparationActions(stopping: runtime.stopping, cancel: { restore.cancel() })
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, WorkspaceGeometry.margin).padding(.vertical, 12)
+                .modifier(WorkspaceFooterPadding())
         }
     }
     private var selectionActionArea: some View {
         VStack(spacing: 0) {
             Divider()
-            RestoreSelectionActions(status: restore.selectionSummary, canPreview: restore.canPreview, preview: { restore.refreshPreview() })
+            RestoreSelectionActions(status: restore.selectionSummary, canPreview: restore.canPreview, preview: { restore.refreshPreview() }, reviewModel: restore)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, WorkspaceGeometry.margin).padding(.vertical, 12)
+                .modifier(WorkspaceFooterPadding())
         }
     }
     private var previewActionArea: some View {
@@ -186,7 +186,7 @@ struct ProductionWorkspace: View {
             RestorePreviewActions(back: { restore.back() }, refresh: { restore.refreshPreview() },
                                   rebuild: { restore.requestRebuild() }, canRebuild: restore.canRebuild)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, WorkspaceGeometry.margin).padding(.vertical, 12)
+                .modifier(WorkspaceFooterPadding())
                 .disabled(restore.busy || runtime.isActive)
         }
     }
@@ -194,7 +194,7 @@ struct ProductionWorkspace: View {
         VStack(spacing: 0) {
             Divider()
             RestoreRebuildActions(stopping: runtime.stopping, stop: synthetic ? nil : { restore.requestStop() })
-                .padding(.horizontal, WorkspaceGeometry.margin).padding(.vertical, 12)
+                .modifier(WorkspaceFooterPadding())
         }
     }
 }
