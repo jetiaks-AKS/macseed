@@ -28,19 +28,21 @@ Implement the [Desktop contract](docs/DESKTOP.md) in vertical slices:
 - [ ] 16K: Desktop flow/runtime/transport/security/accessibility hardening,
   including stale plans, interruptions and diagnostics acceptance.
 
-### Restore Cancellation Safety — next standalone checkpoint
+### Restore Cancellation Safety — remaining qualification and recovery
 
 Desktop Visual Unification is completed; its contract and the user-reproduced
 2026-10-13 Firefox busy-DMG incident are recorded in
 [Desktop](docs/DESKTOP.md#restore-cancellation-safety). No cancellation fixes are
-claimed by the visual checkpoint.
+claimed by the visual checkpoint. Stage 1–2 fail-closed cancellation and limited
+Homebrew Graceful Stop are now implemented; 25 mock tests, related checks and a
+Debug build passed. The bounded Firefox smoke test is recorded in Desktop.
 
-- [ ] Qualify stopping active installs and preventing new tasks; verify child and
-  detached/privileged process quiescence and truthful unknown-consequence reporting.
-- [ ] Define operation-owned DMG handling and interruption re-entry without deleting
-  user data or detaching unrelated volumes.
-- [ ] Qualify MAS separately, plus Formula, VS Code Extensions and Git re-entry.
-- [ ] Add controlled mock cancellation tests before representative installer gates.
+- [ ] Implement Stage 3C durable ordinary-Cask journal/reconciliation and safe re-entry
+  without deleting user data or detaching unrelated volumes.
+- [ ] Qualify native installer Stop timing and detached/privileged process quiescence;
+  mock coverage and the Firefox smoke test do not establish full interruption safety.
+- [ ] Qualify MAS separately, plus Formula, VS Code Extensions and Git re-entry;
+  Homebrew Graceful Stop is not a universal cancellation mechanism.
 
 ### Restore/Homebrew checkpoint — 08e2b469
 
@@ -98,8 +100,9 @@ and verified end-to-end; it is no longer open gate work.
 Historical Stage 16 slice identifiers remain unchanged. Complete one checkpoint
 at a time, in this practical order:
 
-1. [Restore Cancellation Safety](docs/DESKTOP.md#restore-cancellation-safety): qualify
-   interrupted installers, operation-owned DMG handling, process quiescence and safe re-entry.
+1. [Restore Cancellation Safety](docs/DESKTOP.md#restore-cancellation-safety): complete
+   Stage 3C durable re-entry protection and installer/process-quiescence qualification
+   after implemented Stage 1–2 and Homebrew Graceful Stop.
 2. Desktop Operation Logging & Diagnostics: first audit the two existing logging levels.
 3. Automatic MAS Restore qualification, mandatory before 1.0.
 4. Secure SSH Desktop integration (16H) over the existing Core engine.

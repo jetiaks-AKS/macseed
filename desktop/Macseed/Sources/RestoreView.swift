@@ -452,10 +452,11 @@ struct RestoreView: View {
                 if let preview = model.executionPreview, let plan = model.executionPlan {
                     let tasks = RestoreTaskPresentation(preview: preview, plan: plan, events: model.categoryPresentationEvents, executing: true, operationProgress: true)
                     RestoreRebuildProgressContent(tasks: tasks, activity: model.activity,
-                        stopping: runtime.stopping)
+                        stopping: runtime.stopping, gracefulWaiting: runtime.gracefulStopRequested)
                 }
+                if let message = runtime.gracefulStopMessage { Text(message).font(.callout).foregroundStyle(.secondary) }
                 if showsRebuildActions {
-                    RestoreRebuildActions(stopping: runtime.stopping, stop: { model.requestStop() })
+                    RestoreRebuildActions(stopping: runtime.stopping, stop: { model.requestStop() }, force: { model.requestForceStop() }, gracefulWaiting: runtime.gracefulStopRequested)
                 }
             case .result:
                 if let result = model.executionResult {
@@ -504,11 +505,13 @@ struct RestoreView: View {
         }
         .sheet(isPresented: Binding(get: { model.stopConfirmation }, set: { if !$0 { model.dismissStopConfirmation() } })) {
             VStack(alignment: .leading, spacing: 16) {
-                Text("Stop rebuilding?").font(.title2)
-                Text("Rebuild is still in progress. Stopping it may leave some changes already applied to this Mac. A fresh Restore Preview will be required before another Rebuild.")
+                Text(model.forceStopConfirmation ? "Force Stop Rebuild?" : "Stop rebuilding?").font(.title2).accessibilityAddTraits(.isHeader)
+                Text(model.forceStopConfirmation ? "Force Stop will interrupt the current operation. This may leave some changes incomplete and require additional steps before rebuilding again." : "Rebuild is still in progress. Stopping it may leave some changes already applied to this Mac. A fresh Restore Preview will be required before another Rebuild.")
                 HStack {
-                    Button("Continue Rebuild") { model.dismissStopConfirmation() }.keyboardShortcut(.defaultAction)
-                    Button("Stop Rebuild", role: .destructive) { model.confirmStop() }
+                    Button(model.forceStopConfirmation ? "Continue Waiting" : "Continue Rebuild") { model.dismissStopConfirmation() }.keyboardShortcut(.defaultAction)
+                    Button(model.forceStopConfirmation ? "Force Stop" : "Stop Rebuild", role: model.forceStopConfirmation ? .destructive : nil) { model.confirmStop() }
+                        .tint(model.forceStopConfirmation ? .red : .accentColor)
+                        .foregroundStyle(model.forceStopConfirmation ? Color.red : Color.primary)
                 }
             }.padding(24).frame(width: 420).interactiveDismissDisabled()
                 .onExitCommand { model.dismissStopConfirmation() }
@@ -646,11 +649,14 @@ struct RestorePreviewActions: View {
 struct RestoreRebuildActions: View {
     var stopping = false
     var stop: (() -> Void)? = nil
+    var force: (() -> Void)? = nil
+    var gracefulWaiting = false
     var body: some View {
         HStack {
             PendingOperationLogButton()
             Spacer()
-            Button("Stop Rebuild", role: .cancel) { stop?() }.disabled(stopping || stop == nil)
+            Button("Stop Rebuild", role: .cancel) { stop?() }.disabled(stopping || gracefulWaiting || stop == nil)
+            Button("Force Stop", role: .destructive) { force?() }.tint(.red).foregroundStyle(.red).disabled(stopping || force == nil)
         }
     }
 }
@@ -660,12 +666,13 @@ struct RestoreRebuildProgressContent: View {
     let tasks: RestoreTaskPresentation
     let activity: String
     let stopping: Bool
+    var gracefulWaiting = false
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
             Text("Rebuilding this Mac").font(.title.weight(.bold)).accessibilityAddTraits(.isHeader)
             HStack(spacing: 12) {
                 ProgressView()
-                Text(stopping ? "Stopping… Completed changes may remain." : activity).foregroundStyle(.secondary)
+                Text(stopping ? "Stopping… Completed changes may remain." : gracefulWaiting ? "Finishing Current Installation…" : activity).foregroundStyle(.secondary)
             }
             RestoreExecutionCategories(domains: tasks.domains)
         }

@@ -24,7 +24,14 @@ final class CoreTransport: @unchecked Sendable {
     private var cancellationRequested = false
     private var reaped = false
     private var consumed = false
+    private var controlWriter: FileHandle?
 
+    func requestGracefulStop() -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        guard let writer = controlWriter, pid != nil else { return false }
+        var command: UInt8 = 83
+        return Darwin.write(writer.fileDescriptor, &command, 1) == 1
+    }
     func cancel() { stop(userRequested: true) }
     private func stop(userRequested: Bool) {
         lock.lock()
@@ -78,6 +85,11 @@ final class CoreTransport: @unchecked Sendable {
         catch { return failure(.ioFailed(Int32(errno))) }
         defer { try? FileManager.default.removeItem(at: temporary) }
         let input = Pipe(), output = Pipe(), diagnostics = Pipe()
+        let control: Pipe? = request.command.operation == .restoreExecute ? Pipe() : nil
+        defer {
+            lock.lock(); controlWriter = nil; lock.unlock()
+            try? control?.fileHandleForReading.close(); try? control?.fileHandleForWriting.close()
+        }
         let actionsResult: Int32
         var actions: posix_spawn_file_actions_t?
         var attributes: posix_spawnattr_t?
@@ -85,9 +97,10 @@ final class CoreTransport: @unchecked Sendable {
         defer { posix_spawn_file_actions_destroy(&actions) }
         guard posix_spawnattr_init(&attributes) == 0 else { return failure(.launchFailed(errno)) }
         defer { posix_spawnattr_destroy(&attributes) }
-        let descriptors: [(Int32, Int32)] = [(input.fileHandleForReading.fileDescriptor, STDIN_FILENO),
+        var descriptors: [(Int32, Int32)] = [(input.fileHandleForReading.fileDescriptor, STDIN_FILENO),
                                            (output.fileHandleForWriting.fileDescriptor, STDOUT_FILENO),
                                            (diagnostics.fileHandleForWriting.fileDescriptor, STDERR_FILENO)]
+        if let control { descriptors.append((control.fileHandleForReading.fileDescriptor, 3)) }
         var setupError: Int32 = 0
         for (source, target) in descriptors {
             let code = posix_spawn_file_actions_adddup2(&actions, source, target)
@@ -106,7 +119,9 @@ final class CoreTransport: @unchecked Sendable {
         if actionsResult != 0 { setupError = actionsResult }
         guard setupError == 0 else { return failure(.launchFailed(setupError)) }
         let arguments = ["/bin/bash", location.launcher.path].map { strdup($0) }
-        let environment = location.environment(temporary: temporary).sorted { $0.key < $1.key }
+        var childEnvironment = location.environment(temporary: temporary)
+        if control != nil { childEnvironment["MACSEED_GRACEFUL_FD"] = "3" }
+        let environment = childEnvironment.sorted { $0.key < $1.key }
             .map { strdup($0.key + "=" + $0.value) }
         defer { arguments.forEach { free($0) }; environment.forEach { free($0) } }
         var child: pid_t = 0
@@ -119,6 +134,10 @@ final class CoreTransport: @unchecked Sendable {
         guard launch == 0 else { return failure(.launchFailed(launch)) }
         lock.lock()
         pid = child
+        if let control {
+            _ = fcntl(control.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
+            controlWriter = control.fileHandleForWriting
+        }
         let cancelAfterLaunch = cancellationRequested
         lock.unlock()
         if cancelAfterLaunch { stop(userRequested: true) }

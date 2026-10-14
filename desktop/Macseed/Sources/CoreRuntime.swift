@@ -15,6 +15,9 @@ enum CoreRuntimeState: String { case idle, launching, running, completed, failed
     @Published private(set) var error: CoreRuntimeError?
     @Published private(set) var termination: CoreProcessOutcome?
     private(set) var bundleComparisonSupported: Bool?
+    private(set) var homebrewGracefulSupported = false
+    @Published private(set) var gracefulStopRequested = false
+    @Published private(set) var gracefulStopMessage: String?
     @Published private(set) var capabilities: CoreCapabilities?
     @Published private(set) var mutationMayHaveStarted: Bool?
     @Published private(set) var publicationOccurred: Bool?
@@ -41,6 +44,7 @@ enum CoreRuntimeState: String { case idle, launching, running, completed, failed
         mutationMayHaveStarted = nil
         publicationOccurred = nil
         stopping = false
+        gracefulStopRequested = false; gracefulStopMessage = nil
         let channel = AsyncStream<CoreEvent>.makeStream()
         let transport = CoreTransport()
         self.transport = transport
@@ -62,6 +66,10 @@ enum CoreRuntimeState: String { case idle, launching, running, completed, failed
             }
             for await event in channel.stream {
                 state = .running
+                if event.data?["state"]?.string == "graceful_stop_unavailable" {
+                    gracefulStopRequested = false
+                    gracefulStopMessage = "Graceful Stop is unavailable for the current operation. Force Stop remains available."
+                }
                 events.append(event)
                 if events.count > 256 { events.removeFirst(); historyTruncated = true }
                 if let phase = event.phase { currentPhase = phase }
@@ -89,12 +97,21 @@ enum CoreRuntimeState: String { case idle, launching, running, completed, failed
                     let value = try latestResult.decodeData(CoreCapabilities.self)
                     guard value.protocolVersion == 1 else { throw CoreRuntimeError.incompatibleProtocol(value.protocolVersion) }
                     guard !value.productVersion.isEmpty else { throw CoreRuntimeError.malformedEvent }
+                    homebrewGracefulSupported = value.features?["homebrew_graceful_stop"]?.object?["version"]?.integer == 1
                     capabilities = value
                     bundleComparisonSupported = value.supportsBundleComparison
                     state = .completed
                 } catch { self.error = error as? CoreRuntimeError ?? .malformedEvent; state = .failed }
             } else { state = .completed } // Operation completion, never a conformity verdict.
         }
+    }
+    func requestGracefulStop() {
+        guard isActive, operation == .restoreExecute, !gracefulStopRequested else { return }
+        guard homebrewGracefulSupported, transport?.requestGracefulStop() == true else {
+            gracefulStopMessage = "Graceful Stop could not be delivered. Force Stop remains available."
+            return
+        }
+        gracefulStopRequested = true; gracefulStopMessage = nil
     }
     func cancel() {
         guard isActive else { return }

@@ -30,6 +30,6 @@ elif [[ "$kind" == formula && "$operation" == install ]]; then
         printf '%s\n' "$HOMEBREW_ADAPTER_CONTEXT" > "$MACSEED_ITEM_STATE_DIR/homebrew-precondition.json"
         exit 128
     fi
-    exec brew install "$item"
+    exec python3 -B modules/apps/adapters/homebrew_lifecycle.py --formula "$item"
 fi
 exit 128

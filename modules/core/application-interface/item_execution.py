@@ -39,7 +39,12 @@ def process_table():
 
 
 class ProcessTree:
-    """Remember birth identities before descendants create groups or are reparented."""
+    """Remember birth identities before descendants create groups or are reparented.
+
+    Quiescence covers observed descendants/private-session members only. A child
+    that detaches and loses its parent before the first scan may be unobservable;
+    a true stop result is not a global guarantee about external services.
+    """
     def __init__(self, pid, initialize=True):
         self.root = pid
         self.known = {}
@@ -184,9 +189,21 @@ class ItemExecutor:
         # A bounded metadata response goes to a private file, never a pipe that can deadlock.
         import tempfile
         with tempfile.TemporaryFile() as output:
-            process = subprocess.Popen(command, stdin=subprocess.DEVNULL,
-                                       stdout=output if capture else subprocess.DEVNULL,
-                                       stderr=subprocess.DEVNULL, start_new_session=True)
+            from homebrew_stop import State, StopAccepted, KEY, STOPPED
+            def launch(arguments):
+                return subprocess.Popen(arguments, stdin=subprocess.DEVNULL,
+                                        stdout=output if capture else subprocess.DEVNULL,
+                                        stderr=subprocess.DEVNULL, start_new_session=True)
+            try:
+                if os.environ.get(KEY) and command[:2] in (['brew', 'install'], ['brew', 'reinstall']):
+                    process = State(os.environ[KEY]).launch(command, launch)
+                else:
+                    process = launch(command)
+            except StopAccepted:
+                return STOPPED, b''
+            except (OSError, ValueError):
+                self.reason = 'progress_observation_failed'
+                return OBSERVATION_FAILED, b
             tree = None
             try:
                 tree = ProcessTree(process.pid)
@@ -199,7 +216,8 @@ class ItemExecutor:
                     progress = probe.sample(tree.scan())
                     if process.poll() is not None:
                         break
-                    if timer.observe(time.monotonic(), progress):
+                    from homebrew_stop import stopped
+                    if timer.observe(time.monotonic(), progress) and not stopped():
                         self.reason = 'item_stalled_timeout'; tree.stop(); process.wait()
                         return STALLED, b''
                     time.sleep(self.poll)

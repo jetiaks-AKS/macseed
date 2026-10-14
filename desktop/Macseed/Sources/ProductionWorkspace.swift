@@ -193,7 +193,7 @@ struct ProductionWorkspace: View {
     private func rebuildActionArea(synthetic: Bool) -> some View {
         VStack(spacing: 0) {
             Divider()
-            RestoreRebuildActions(stopping: runtime.stopping, stop: synthetic ? nil : { restore.requestStop() })
+            RestoreRebuildActions(stopping: runtime.stopping, stop: synthetic ? nil : { restore.requestStop() }, force: synthetic ? nil : { restore.requestForceStop() }, gracefulWaiting: runtime.gracefulStopRequested)
                 .modifier(WorkspaceFooterPadding())
         }
     }

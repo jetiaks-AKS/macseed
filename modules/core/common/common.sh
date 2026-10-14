@@ -134,6 +134,7 @@ run_module_body() {
     $module_function
 
     local result=$?
+    [[ $result -ne 132 ]] || return 132
 
     if [[ "$MODULE_CHANGED" == true ]]; then
         ((INSTALLED_COUNT++))
@@ -156,6 +157,9 @@ run_module_body() {
             return 1
             ;;
 
+        132)
+            return 132
+            ;;
         2)
             ((ERROR_COUNT++))
             log "[MODULE] RESULT: ERROR"
@@ -528,6 +532,12 @@ application_record() {
 }
 
 run_module() {
+    if [[ -n "${MACSEED_HOMEBREW_STOP:-}" ]]; then
+        python3 -B modules/core/application-interface/homebrew_stop.py "$2" || {
+            [[ ${ERROR_COUNT:-0} -eq 0 ]] || exit 2
+            exit 132
+        }
+    fi
     if [[ "${MACSEED_APPLICATION_EXECUTION:-false}" == true &&
           -f "${MACSEED_ITEM_STATE_DIR:-}/external-tool-active.json" ]]; then
         error "External lifecycle consequences are unknown; further mutation is blocked"
@@ -536,11 +546,21 @@ run_module() {
     application_module_record "$2" started '' false
     run_module_body "$@"
     local status=$?
+    if [[ $status -eq 132 ]]; then
+        application_module_record "$2" interrupted '' "$MODULE_CHANGED"
+        exit 132
+    fi
     application_module_record "$2" finished "$status" "$MODULE_CHANGED"
     return "$status"
 }
 
 run_configuration() {
+    if [[ -n "${MACSEED_HOMEBREW_STOP:-}" ]]; then
+        python3 -B modules/core/application-interface/homebrew_stop.py "$2" || {
+            [[ ${ERROR_COUNT:-0} -eq 0 ]] || exit 2
+            exit 132
+        }
+    fi
     if [[ "${MACSEED_APPLICATION_EXECUTION:-false}" == true &&
           -f "${MACSEED_ITEM_STATE_DIR:-}/external-tool-active.json" ]]; then
         return 2

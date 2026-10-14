@@ -237,6 +237,7 @@ struct RestoreProgressRow {
     @Published private(set) var stopConfirmation = false
     private var reviewCancelSource: URL?
     private var stopOperationID: String?
+    @Published private(set) var forceStopConfirmation = false
     @Published private(set) var failure: String?
     @Published private(set) var technicalReason: String?
     @Published private(set) var retryingPrerequisites = false
@@ -370,6 +371,7 @@ struct RestoreProgressRow {
     func requestStop() {
         guard state == .rebuilding, runtime.isActive, runtime.operation == .restoreExecute,
               !runtime.stopping, !stopConfirmation, let id = runtime.operationID else { return }
+        forceStopConfirmation = false
         stopOperationID = id
         stopConfirmation = true
     }
@@ -377,13 +379,18 @@ struct RestoreProgressRow {
         stopConfirmation = false
         stopOperationID = nil
     }
+    func requestForceStop() {
+        guard state == .rebuilding, runtime.isActive, !runtime.stopping, let id = runtime.operationID else { return }
+        forceStopConfirmation = true; stopOperationID = id; stopConfirmation = true
+    }
     func confirmStop() {
         let id = stopOperationID
+        let force = forceStopConfirmation
         let pending = stopConfirmation
         dismissStopConfirmation()
         guard pending, let id, state == .rebuilding, runtime.isActive,
               runtime.operation == .restoreExecute, runtime.operationID == id, !runtime.stopping else { return }
-        runtime.cancel()
+        if force { runtime.cancel() } else { runtime.requestGracefulStop() }
     }
     func checkCurrentState() {
         guard state == .result, !runtime.isActive else { return }
@@ -592,7 +599,7 @@ struct RestoreExecutionPresentation {
         let verified = verification?["verdict"]?.string == "selected_requirements_verified"
             && verification?["status"]?.string == "complete"
             && ["mismatch_count", "unverified_count", "unresolved_count", "warning_count", "error_count"].allSatisfy { verification?[$0]?.integer == 0 }
-        if !validTerminal || terminal == nil || payload?["target_mutation_may_have_started"]?.boolean == nil {
+        if payload?["unknown_consequences"]?.boolean == true || !validTerminal || terminal == nil || payload?["target_mutation_may_have_started"]?.boolean == nil {
             outcome = .interrupted
         } else if terminal?.isCancellation == true {
             outcome = mayMutate ? .stoppedAfterMutation : .stoppedBeforeMutation

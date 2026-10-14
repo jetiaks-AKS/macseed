@@ -205,6 +205,7 @@ install_brew_cask() {
                         printf '%s\n' '{"tool":"homebrew","state":"unknown_consequences"}' > "$MACSEED_ITEM_STATE_DIR/external-tool-active.json" ;;
                 131) reason=cask_authorization_required ;;
                 130) return 130 ;;
+                132) return 132 ;;
             esac
         fi
         declare -F verification_application_operation_hook >/dev/null && verification_application_operation_hook homebrew-casks "$cask" "$install_command" "$outcome" "$reason"
@@ -281,6 +282,12 @@ install_brew_casks() {
         [[ -z "$cask" ]] && continue
         [[ "$cask" =~ ^# ]] && continue
         blueprint_item_selected homebrew-casks "$cask" || continue
+        if [[ -n "${MACSEED_HOMEBREW_STOP:-}" ]]; then
+            python3 -B modules/core/application-interface/homebrew_stop.py || {
+                [[ ${item_errors:-0} -eq 0 ]] || return 2
+                return 132
+            }
+        fi
 
         is_cask_installed "$cask"
         local inspection_result=$?
@@ -323,6 +330,7 @@ install_brew_casks() {
         local item_result=$?
         if [[ $item_result -ne 0 ]]; then
             [[ $item_result -ne 130 ]] || return 130
+            [[ $item_result -ne 132 ]] || return 132
             [[ $item_result -ne 129 ]] || return 2
             [[ "${MACSEED_APPLICATION_EXECUTION:-false}" == true ]] || return 2
             item_errors=$((item_errors + 1))

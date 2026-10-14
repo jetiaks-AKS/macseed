@@ -56,9 +56,17 @@ The format is based on the principles of **Keep a Changelog**.
   Visual Unification is complete across Selection, Preview, Execution and Result;
   Result shows only positive Core mismatch/unverified quantity cards, uses neutral
   Unverified category labels and keeps detailed diagnostics collapsed.
-* Document Restore Cancellation Safety as an open engineering issue, including
-  the user-reproduced Firefox busy-DMG installation incident on 2026-10-13.
-  Persistent Logging & Diagnostics remains future work.
+* Restore cancellation preserves unknown consequences when process termination or
+  observation cannot be confirmed (Cancellation Safety Stage 1–2).
+* Homebrew Cask and Formula support Graceful Stop: the current native installation
+  and post-checks finish before further items or Bootstrap modules can start.
+  Force Stop remains a separate emergency action; other categories are not covered
+  by this graceful guarantee. Validation includes 25 mock tests, related checks and
+  a Debug build. The 2026-10-14 Firefox smoke test passed, without event-log proof of
+  Stop timing during installation; full installer-interruption qualification remains open.
+* Retain the 2026-10-13 Firefox busy-DMG incident and remaining Cancellation Safety
+  limits. Stage 3C durable ordinary-Cask journal/reconciliation is not implemented;
+  Operation Logging & Diagnostics follows completion of Cancellation Safety.
 
 * Restore freshness failures include safe plan/component fingerprints in Desktop
   diagnostic copying. A denied process observer is reported separately from an

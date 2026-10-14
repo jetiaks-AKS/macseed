@@ -1092,6 +1092,9 @@ case "$MODE" in
 esac
 
 if [[ "$MODE" == --bootstrap ]]; then
+    if [[ -n "${MACSEED_HOMEBREW_STOP:-}" ]]; then
+        python3 -B modules/core/application-interface/homebrew_stop.py || { [[ ${ERROR_COUNT:-0} -eq 0 ]] || exit 2; exit 132; }
+    fi
     if [[ "${MACSEED_APPLICATION_EXECUTION:-false}" == true && -d "${MACSEED_ITEM_STATE_DIR:-}" &&
           ! -f "$MACSEED_ITEM_STATE_DIR/external-tool-active.json" ]]; then
         # Traversal completed; individual outcomes and final Verification still own success.

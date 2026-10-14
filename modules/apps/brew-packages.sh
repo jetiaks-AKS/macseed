@@ -158,6 +158,12 @@ install_brew_packages() {
         [[ -z "$package" ]] && continue
         [[ "$package" =~ ^# ]] && continue
         blueprint_item_selected homebrew-packages "$package" || continue
+        if [[ -n "${MACSEED_HOMEBREW_STOP:-}" ]]; then
+            python3 -B modules/core/application-interface/homebrew_stop.py || {
+                [[ ${item_errors:-0} -eq 0 ]] || return 2
+                return 132
+            }
+        fi
 
         is_brew_package_installed "$package"
         inspection_result=$?
@@ -206,6 +212,7 @@ install_brew_packages() {
                     127) reason=progress_observation_failed ;;
                     128) reason="$(jq -er '.reason' "$MACSEED_ITEM_STATE_DIR/homebrew-precondition.json" 2>/dev/null)" || reason=homebrew_precondition_changed; outcome=skipped ;;
                     130) return 130 ;;
+                132) return 132 ;;
                 esac
             fi
             declare -F verification_operation_hook >/dev/null && verification_operation_hook homebrew-packages "$package" install "$outcome" "$reason"

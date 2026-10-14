@@ -459,6 +459,22 @@ def readiness(stage, include_secure, secure_ready=False, secure_only=False):
         raise ExecuteFailed(status, item_index)
 
 
+def restore_cancelled_result(state, owned, failure):
+    state['unknown_consequences'] = bool(owned and getattr(owned, 'unknown_consequences', False))
+    if state['unknown_consequences']:
+        return failure('privileged_lifecycle_unknown', 2)
+    return failure('cancelled', 130)
+
+
+def restore_graceful_result(state, owned, failure):
+    control = getattr(owned, 'graceful', None)
+    if not control or not control.accepted or state['unknown_consequences']:
+        state['unknown_consequences'] = True
+        return failure('privileged_lifecycle_unknown', 2)
+    state['bootstrap_status'] = 'warning'
+    return failure('cancelled', 130)
+
+
 def restore_execute(operation_id, path, disabled_groups, include_secure, expected_id, channel=None, selection=None):
     sequence = 1  # started has already been emitted by main().
     state = {"prepared_plan_id": None, "execution_status": "not_started",
@@ -585,6 +601,12 @@ def restore_execute(operation_id, path, disabled_groups, include_secure, expecte
                 state['unknown_consequences'] = getattr(owned, 'unknown_consequences', False)
                 if getattr(owned, 'external_lifecycle_cause', None):
                     state['external_lifecycle_cause'] = owned.external_lifecycle_cause
+                if bootstrap_exit == 132:
+                    state['verification']['details'] = owned.details
+                    return restore_graceful_result(state, owned, failure)
+                if state['unknown_consequences']:
+                    state['verification']['details'] = owned.details
+                    return failure('privileged_lifecycle_unknown', 2)
                 state["bootstrap_status"] = ({0: "success", 1: "warning"}.get(bootstrap_exit, "failure"))
                 if owned.verification is not None:
                     state["verification"] = {key: value for key, value in owned.verification.items()
@@ -645,8 +667,7 @@ def restore_execute(operation_id, path, disabled_groups, include_secure, expecte
     except PreviewFailed:
         return failure("preview_failed")
     except Cancelled:
-        state['unknown_consequences'] = bool(owned and getattr(owned, 'unknown_consequences', False))
-        return failure('privileged_lifecycle_unknown' if state['unknown_consequences'] else "cancelled", 130)
+        return restore_cancelled_result(state, owned, failure)
     except bundle.Unsupported:
         return failure("unsupported_bundle")
     except ProcessObservationUnavailable:
@@ -909,7 +930,7 @@ def main(version, channel=None):
         result = {
             "protocol_version": PROTOCOL_VERSION,
             "product_version": version,
-            "features": {"bundle_comparison": {"version": 1}, "restore_selection": {"version": 1, "inventory": "bundle_inspect", "selection_modes": ["category", "items"]}},
+            "features": {"bundle_comparison": {"version": 1}, "homebrew_graceful_stop": {"version": 1}, "restore_selection": {"version": 1, "inventory": "bundle_inspect", "selection_modes": ["category", "items"]}},
             "operations": ["capabilities", "bundle_inspect", "restore_prepare", "restore_execute", "capture_prepare", "capture_execute", "environment_compare"],
         }
     else:

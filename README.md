@@ -51,8 +51,10 @@ Desktop Stage 16 remains active. Restore/Homebrew recovery passed a major real
 qualification checkpoint. Branding/Home and Capture/Restore UI are approved.
 Bundle-backed Environment Status (16K) is complete; the subsequent Status → Restore
 handoff is implemented and manually approved. Desktop Visual Unification is completed.
-Restore Cancellation Safety is next; Operation Logging & Diagnostics is planned after
-Cancellation Safety, followed by MAS Restore, secure migration integration, reliability
+Restore Cancellation Safety Stage 1–2 and Homebrew Graceful Stop are implemented;
+durable re-entry protection and further installer qualification remain open. Operation
+Logging & Diagnostics is planned after completion of Cancellation Safety, followed by
+MAS Restore, secure migration integration, reliability
 and packaged clean-Mac qualification. The CLI remains supported. **Macseed 1.0** is reserved
 for the first complete Desktop product release, preserving the toolkit/CLI history.
 

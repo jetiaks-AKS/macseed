@@ -72,8 +72,10 @@ Secure SSH, MAS and further functional qualification are still ahead.
 Desktop Secure SSH Capture/Restore remains unfinished (16H). Deliver persistent
 structured operation logs, live View Log and a redacted Diagnostic Report with
 exact preview/export. Desktop Visual Unification is complete. Restore Cancellation
-Safety is the next standalone checkpoint; Operation Logging & Diagnostics follows
-with a separate architecture audit. The Unified UI
+Safety is in progress: Stage 1–2 fail-closed cancellation and Homebrew Graceful Stop
+are implemented; durable journal/reconciliation (Stage 3C) and further installer
+qualification remain open. Operation Logging & Diagnostics follows completion of
+Cancellation Safety with a separate architecture audit. The Unified UI
 Scenario Catalog remains deferred UI/dev tooling, with a possible Lite version
 after functional priorities; existing Debug previews and fixtures are retained.
 Automatic MAS Restore is mandatory before 1.0; authorization/install qualification
@@ -99,8 +101,9 @@ Existing Stage 16 slice identifiers (16H Secure SSH, 16I completion, 16J diagnos
 16K hardening) retain their historical meaning; they do not prescribe today's
 implementation order. Complete one bounded checkpoint at a time:
 
-1. [Restore Cancellation Safety](docs/DESKTOP.md#restore-cancellation-safety): qualify
-   interrupted installers, operation-owned DMG handling, process quiescence and safe re-entry.
+1. [Restore Cancellation Safety](docs/DESKTOP.md#restore-cancellation-safety): complete
+   Stage 3C durable re-entry protection and installer/process-quiescence qualification
+   after implemented Stage 1–2 and Homebrew Graceful Stop.
 2. Desktop Operation Logging & Diagnostics: first audit the two existing logging levels.
 3. Automatic MAS Restore qualification, mandatory before 1.0.
 4. Secure SSH Desktop integration (16H) over the existing Core engine.

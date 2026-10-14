@@ -49,6 +49,11 @@ class OwnedBootstrap:
         self.reporting_invalid = False
         self.item_state = tempfile.TemporaryDirectory(prefix='macseed-items-', dir='/private/tmp')
         os.chmod(self.item_state.name, 0o700)
+        self.graceful = None
+        if mode == '--bootstrap' and environment.get('MACSEED_GRACEFUL_FD'):
+            from homebrew_stop import Controller, KEY
+            self.graceful = Controller(self.item_state.name, int(environment['MACSEED_GRACEFUL_FD']))
+            environment = dict(environment, **{KEY: str(self.graceful.state.path)})
         child_env = dict(environment)
         child_env.update(MACSEED_APPLICATION_EXECUTION="true", MACSEED_ITEM_STATE_DIR=self.item_state.name,
                          MACSEED_EXECUTION_SIGNAL_FD=str(write_fd),
@@ -260,7 +265,7 @@ class OwnedBootstrap:
             self.details["status"] = "invalid"
 
     def _collect(self):
-        self.unknown_consequences = Path(self.item_state.name, 'external-tool-active.json').exists()
+        self.unknown_consequences = getattr(self, 'unknown_consequences', False) or Path(self.item_state.name, 'external-tool-active.json').exists()
         self.external_lifecycle_cause = None
         if self.unknown_consequences:
             try:
@@ -270,6 +275,10 @@ class OwnedBootstrap:
             except (OSError, ValueError, TypeError, AttributeError):
                 pass
         self.independent_work_completed = getattr(self, 'independent_work_completed', False) or Path(self.item_state.name, 'execution-complete').is_file()
+        if getattr(self, 'graceful', None):
+            self.graceful.close()
+            self._control_events()
+            self.unknown_consequences |= self.graceful.lost
         self.item_state.cleanup()
         self._drain()
         if self.report_fd is not None:
@@ -304,8 +313,13 @@ class OwnedBootstrap:
                     except ValueError:
                         pass
 
+    def _control_events(self):
+        if self.graceful and self.on_record:
+            self.graceful.drain(lambda kind, record: self.on_record('lifecycle', record))
+
     def wait(self):
         while self.process.poll() is None:
+            self._control_events()
             if self.tree is not None and time.monotonic() - self.last_tree_scan >= .5:
                 self.tree.scan(); self.last_tree_scan = time.monotonic()
             if self.report_fd is not None:
@@ -331,11 +345,17 @@ class OwnedBootstrap:
     def cancel(self):
         was_running = self.process.poll() is None
         if self.tree is not None:
-            self.tree.stop()
-            if was_running:
-                self.process.wait()
+            try:
+                stopped = self.tree.stop()
+            except (OSError, ValueError, RuntimeError, subprocess.SubprocessError):
+                stopped = False
+            if not stopped:
+                self.unknown_consequences = True
+            if self.process.poll() is not None:
                 self._collect()
-                return 130
+                return 130 if was_running else self.process.returncode
+            # A failed observation/stop must still attempt bounded root/session
+            # termination below, without claiming descendant quiescence.
         if self.process.poll() is not None:
             self._stop_compare_descendants()
             self._collect()
@@ -344,6 +364,8 @@ class OwnedBootstrap:
             os.killpg(self.process.pid, signal.SIGTERM)
         except ProcessLookupError:
             pass
+        except PermissionError:
+            self.unknown_consequences = True
         try:
             # Drain while stopping: the child may be blocked writing reports.
             import time
@@ -360,7 +382,12 @@ class OwnedBootstrap:
                 os.killpg(self.process.pid, signal.SIGKILL)
             except ProcessLookupError:
                 pass
-            self.process.wait()
+            except PermissionError:
+                self.unknown_consequences = True
+            try:
+                self.process.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                self.unknown_consequences = True
         self._stop_compare_descendants()
         self._collect()
         return 130

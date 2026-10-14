@@ -37,6 +37,42 @@ import Foundation
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("macseed-runtime-tests-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
         defer { try? FileManager.default.removeItem(at: directory) }
+        if CommandLine.arguments.contains("--graceful-control-only") {
+            let location = try fixture(directory, body: "#!/bin/sh\nexec /Library/Developer/CommandLineTools/usr/bin/python3 -B control.py\n")
+            try """
+            import json,os,sys
+            request=json.load(sys.stdin)
+            def emit(sequence,kind,data=None):
+                event=dict(protocol_version=1,operation_id=request['operation_id'],sequence=sequence,type=kind)
+                if data is not None: event['data']=data
+                print(json.dumps(event),flush=True)
+            emit(1,'started')
+            if request['operation']=='capabilities':
+                emit(2,'result',dict(protocol_version=1,product_version='mock',operations=['restore_execute'],features={'homebrew_graceful_stop':{'version':1}}))
+                emit(3,'completed');sys.exit(0)
+            assert os.read(int(os.environ['MACSEED_GRACEFUL_FD']),1)==b'S'
+            emit(2,'execution_event',dict(domain='orchestration',item_id='stop',state='graceful_stop_accepted'))
+            emit(3,'failed',dict(code='cancelled',target_mutation_may_have_started=True,unknown_consequences=False))
+            sys.exit(130)
+            """.write(to: location.root.appendingPathComponent("control.py"), atomically: false, encoding: .utf8)
+            let runtime = CoreRuntime()
+            runtime.start(CoreRequest(.capabilities), location: location); await runtime.waitForCompletion()
+            precondition(runtime.homebrewGracefulSupported)
+            runtime.start(CoreRequest(.restoreExecute(path: directory.appendingPathComponent("sample.mbt").path,
+                disabledGroups: [], includeSecure: false, preparedID: String(repeating: "a", count: 64))), location: location)
+            let deadline = Date().addingTimeInterval(8)
+            while runtime.state == .launching && Date() < deadline { try await Task.sleep(for: .milliseconds(10)) }
+            guard runtime.state == .running else {
+                runtime.cancel(); await runtime.waitForCompletion(); preconditionFailure("mock launch failed")
+            }
+            runtime.requestGracefulStop(); runtime.requestGracefulStop()
+            await runtime.waitForCompletion()
+            precondition(runtime.state == .cancelled && runtime.termination?.exitCode == 130 && runtime.termination?.signalled == false)
+            precondition(runtime.events.contains { $0.data?["state"]?.string == "graceful_stop_accepted" })
+            precondition(!runtime.stopping && runtime.error == nil)
+            print("PASS: Swift private control FD, capability binding, repeated Graceful Stop, continued events and real cancellation terminal without TERM/KILL")
+            return
+        }
         let valid = [encodedEvent(1, "started"), encodedEvent(2, "result", data: caps), encodedEvent(3, "completed")]
         let success = try fixture(directory, body: script(valid, before: "printf 'not JSON and secrets must not be rendered\\n' >&2"))
         let runtime = await run(success)

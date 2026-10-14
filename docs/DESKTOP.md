@@ -17,9 +17,11 @@ Repair: ambiguous/damaged privileged Repair states remain fail-closed. Continuin
 compatibility qualification, MAS, Desktop Zsh and Secure SSH remain open.
 Private SSH identity transfer remains unavailable until 16H. Bundle-backed
 Environment Status (Stage 16K) is complete; the subsequent Status → Restore handoff is implemented and manually
-approved. Desktop Visual Unification is complete. The next standalone checkpoint
-is [Restore Cancellation Safety](#restore-cancellation-safety); Operation Logging &
-Diagnostics remains future work. Practical priorities are owned by
+approved. Desktop Visual Unification is complete.
+[Restore Cancellation Safety](#restore-cancellation-safety) is in progress: Stage 1–2
+and Homebrew Graceful Stop are implemented; Stage 3C and installer qualification
+remain open. Operation Logging & Diagnostics follows completion of Cancellation Safety.
+Practical priorities are owned by
 [Roadmap](../ROADMAP.md#current-practical-execution-order).
 Build and review instructions are in
 [Desktop development](../desktop/Macseed/README.md). Macseed is one product with a shared Core and two official frontends: CLI (`bs`) and Desktop.
@@ -337,8 +339,12 @@ not by itself prove target-state changes. See the
 [Core diagnostic contract](core/APPLICATION-INTERFACE.md#restore-plans-and-re-entry).
 Indeterminate activity uses structured Core phases/records, never synthetic percentages.
 Stop Rebuild confirms for every active Rebuild, with Continue Rebuild as the
-default and Escape action, before sending operation-bound cancellation. It uses owned process-group
-cancellation. Completed changes may remain; there is no rollback. Missing terminal
+default and Escape action. For supported Homebrew work, an accepted graceful request
+lets the active native installation and its post-checks finish, then prevents the next
+Homebrew item or Bootstrap module from starting. Force Stop is a separate confirmed
+emergency action using owned-process cancellation. Graceful Stop is not supported
+for every Restore category. Completed changes may remain; there is no rollback.
+Missing terminal
 or malformed result evidence is interrupted/unknown, not success. Results require
 structured Verification for clean completion and distinguish attention, cancellation,
 failure and interruption. Re-entry runs fresh Restore Prepare; there is no Resume.
@@ -648,16 +654,35 @@ remain a separate future stage, not part of this completed visual checkpoint.
 
 <a id="restore-cancellation-safety"></a>
 
-## Restore Cancellation Safety — Open Engineering Issue
+## Restore Cancellation Safety — implementation and remaining qualification
 
-Stop Rebuild uses SIGTERM and, when necessary, SIGKILL. It is not a safe pause
-between installer operations and provides no rollback: completed changes may remain,
-an active install may be interrupted, and termination of all detached/privileged
-processes is not guaranteed. Privileged Homebrew Cask has additional lifecycle
-ownership, locking and durable overlap protection; these protections do not cover
-all installers. MAS, Homebrew Formula, VS Code Extensions and Git need separate
-cancellation/re-entry qualification. See `CoreTransport.stop`, `OwnedBootstrap.cancel`
-and `ProcessTree.stop`; process termination is not proof of installer convergence.
+Stage 1–2 fail-closed cancellation is implemented. A negative `ProcessTree.stop()`
+result or unavailable process observation preserves `unknown_consequences` through
+`OwnedBootstrap.cancel()` and Core terminal reporting; Desktop presents the existing
+Interrupted/Unknown outcome rather than claiming confirmed termination.
+
+Homebrew Cask and Formula Graceful Stop is implemented. A private control channel
+and Homebrew-specific launch coordinator atomically order Stop acceptance against
+native `brew` launch. Accepted Stop does not signal an active brew: its installation,
+post-checks and records finish before stopping further Homebrew items and Bootstrap
+modules. Desktop continues receiving events while showing **Finishing Current
+Installation**. Installer failure and control-channel uncertainty remain failures,
+not successful stops. Full remaining-scope Verification is not run after a stop;
+re-entry uses fresh Prepare → Preview → Execute → Verify, without Resume or rollback.
+
+**Force Stop** remains a separate confirmed emergency action using the existing
+SIGTERM/SIGKILL path. It may interrupt an installer and does not guarantee termination
+of all detached or privileged processes. Stage 1–2 truthfully reports observed
+uncertainty; a detached child lost before the first scan can remain unknown to the
+process tree. Graceful Stop is not universal across Restore categories. Existing
+privileged-Cask lifecycle locking and durable overlap protection do not provide
+ordinary-Cask recovery: Stage 3C durable journal/reconciliation is not implemented.
+No automatic DMG detach or arbitrary cache/temp cleanup is provided.
+
+Validation passed: 25 cancellation mock tests (15 Homebrew Graceful Stop and 10
+Stage 1–2), related Core capability/terminal and Desktop transport/presentation
+checks, and one Debug build. These checks establish mock behavior, not comprehensive
+native-installer interruption or global process-quiescence qualification.
 
 ### Firefox Cask incident — 2026-10-13
 
@@ -677,12 +702,27 @@ is consistent with interruption leaving an attached image, but the precise mecha
 of an orphaned mount has not been established by instrumented tracing. It warrants
 a separate Cancellation Safety stage; this checkpoint implements no mount cleanup.
 
-That stage must qualify stopping current installs and preventing new tasks, child/
-detached-process quiescence, operation-owned DMG handling, safe re-entry after
-interruption and a separate MAS re-entry contract. It must protect user data and
-never detach unrelated volumes. Controlled mock cancellation tests must distinguish
-proven termination from unknown consequences. This is the next standalone engineering
-checkpoint, independent of Visual Unification and Logging & Diagnostics.
+### Firefox Graceful Stop smoke test — 2026-10-14
+
+The user removed Firefox beforehand and ran Restore from `Test_1.mbt`, then pressed
+Stop Rebuild. Desktop showed **Rebuild Stopped** and **Verification Not Run**.
+Subsequent user checks found:
+
+- `brew list --cask --versions firefox` → `firefox 157.0.1`.
+- `/Applications/Firefox.app` existed.
+- `hdiutil info` showed no Firefox DMG.
+- A fresh Restore Preview reported **120 Already Match**, **0 Changes Planned** and
+  **0 Need Attention**.
+
+This smoke test passed, but an event log did not confirm the exact Stop-acceptance
+time relative to completion of the native installation. It does not establish full
+installer-interruption qualification or prove Stop was accepted during installation.
+
+Remaining Cancellation Safety work includes Stage 3C durable ordinary-Cask
+journal/reconciliation, operation-owned DMG/re-entry evidence, detached/privileged
+process quiescence and separate MAS and other-category qualification. It must protect
+user data and never detach unrelated volumes. Logging & Diagnostics remains a separate
+next direction after completion of Cancellation Safety.
 
 ## Progress, cancellation and re-entry
 
@@ -697,15 +737,15 @@ changes occurred” only when Core evidence establishes that fact; local configu
 publication is a separate effect. Once mutation may have begun, use **Stop Rebuild**.
 A small native confirmation says: “Stop rebuilding? Macseed will stop further work.
 Changes already completed will remain. You can inspect the Mac and plan another
-rebuild later.” Show “Stopping…” until owned-process termination.
+rebuild later.” Supported Homebrew graceful requests show “Finishing Current Installation”
+while the current work finishes; emergency Force Stop retains cancellation reporting.
 
-**Current V1 constraint:** stopping sends the supported signal to Core, which
-terminates owned process groups using SIGTERM and, if needed, SIGKILL. It can
-interrupt an in-flight tool. There is no graceful stop-at-item-boundary request or
-acknowledgement; Desktop must not claim it waits for an item to finish. Boundary-aware
-stopping is desirable where practical but requires a separately scoped Core contract
-change, not a UI workaround. “Safe Stop” means no rollback promise and fresh
-re-inspection, not guaranteed atomic item completion or unchanged current work.
+**Current V1 constraint:** limited Homebrew Graceful Stop uses an additive capability,
+a private control channel and structured acknowledgement/events; existing V1 terminal
+semantics are retained. Force Stop uses signals and may interrupt an in-flight tool.
+Neither path promises global detached-process quiescence, atomic installation or
+rollback. Unsupported categories require separate qualification; fresh re-inspection
+is required before another Restore.
 Transactional rollback is explicitly outside Macseed 1.0 scope.
 
 Secret sheets may send secret-channel cancellation. Handle Capture/Restore
@@ -784,12 +824,12 @@ support catalog.
 
 **Protocol-fit assessment:** the flows above use only existing V1 operations,
 structured results/events and the separate secret channel, without human stdout,
-stderr or log parsing. Existing Protocol V1 supports signal-based Stop Rebuild, but
-this does not guarantee safe completion of an active installation. Graceful
-cancellation, operation-boundary stopping and confirmation of child-process quiescence
-remain subjects of the separate [Cancellation Safety checkpoint](#restore-cancellation-safety).
-Whether Protocol V1 needs changes will be decided from controlled test evidence;
-no protocol extension is presumed by this assessment. Comparing
+stderr or log parsing. Limited Homebrew Graceful Stop is implemented with an additive
+capability and private control channel; no new public V1 status is introduced.
+Signal-based Force Stop does not guarantee safe completion of an active installation.
+Global child-process quiescence, ordinary-Cask durable recovery and other-category
+qualification remain open in the [Cancellation Safety checkpoint](#restore-cancellation-safety).
+Any further Protocol V1 changes require test evidence. Comparing
 a Bundle directly is supported by the additive `bundle_path` form described above.
 Fine ordinary Restore selection is Core-supported;
 decrypted identity selection during Prepare and Desktop recovery remain outside

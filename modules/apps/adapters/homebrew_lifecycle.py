@@ -119,6 +119,10 @@ def authorized_run(operation, token, qualification):
                 (directory / 'active.json').unlink()
                 active.unlink()
                 return 0
+            if status == 132:
+                (directory / 'active.json').unlink()
+                active.unlink()
+                return status
             # Even a normal nonzero pkg exit can leave installer-service work.
             cause = {124: 'item_stalled_timeout', 127: 'progress_observation_failed',
                      130: 'cancelled'}.get(status, 'item_install_failed')
@@ -161,6 +165,14 @@ def unprivileged_run(operation, token):
 
 def main():
     try:
+        if len(sys.argv) == 3 and sys.argv[1] == '--formula':
+            from homebrew_cask import NAME
+            if not NAME.fullmatch(sys.argv[2]) or os.environ.get('MACSEED_APPLICATION_EXECUTION') != 'true':
+                return DENIED
+            executor = ItemExecutor()
+            signal.signal(signal.SIGTERM, executor.cancel)
+            signal.signal(signal.SIGINT, executor.cancel)
+            return executor.run(['brew', 'install', sys.argv[2]])[0]
         if sys.argv[1:] == ['--pending']:
             return 0 if pending() else 1
         from homebrew_cask import NAME
