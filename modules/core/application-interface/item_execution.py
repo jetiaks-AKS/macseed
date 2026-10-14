@@ -26,15 +26,19 @@ class StallTimer:
 
 def process_table():
     # Kernel process fields only; never arguments, environment or tool diagnostics.
-    result = subprocess.run(['/bin/ps', '-axo', 'pid=,ppid=,lstart=,time=,comm='],
+    result = subprocess.run(['/bin/ps', '-axo', 'pid=,ppid=,lstart=,time=,stat=,comm='],
                             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=2, check=True)
     rows = {}
     for line in result.stdout.decode(errors='replace').splitlines():
-        fields = line.split(None, 8)
-        if len(fields) != 9:
+        fields = line.split(None, 9)
+        if len(fields) != 10:
+            continue
+        # Exited children may remain visible until their owner reaps them. They
+        # cannot execute or mutate state and are not unquiescent descendants.
+        if fields[8].startswith('Z'):
             continue
         pid, parent = map(int, fields[:2])
-        rows[pid] = (parent, ' '.join(fields[2:7]), fields[7], fields[8])
+        rows[pid] = (parent, ' '.join(fields[2:7]), fields[7], fields[9])
     return rows
 
 
@@ -98,14 +102,23 @@ class ProcessTree:
                 break
             time.sleep(.05)
         # A TERM-ignoring, reparented child still has its remembered birth identity.
-        for pid in self.scan():
-            try:
-                os.kill(pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            except PermissionError:
-                pass
-        return not bool(self.scan())
+        deadline = time.monotonic() + 1
+        while True:
+            rows = self.scan()
+            if not rows:
+                return True
+            if time.monotonic() >= deadline:
+                return False
+            for pid in sorted(rows, key=lambda pid: pid == self.root):
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                except PermissionError:
+                    pass
+            # Signal delivery is asynchronous; confirm quiescence rather than
+            # treating the first post-KILL observation as a surviving process.
+            time.sleep(.05)
 
 
 class ProgressProbe:

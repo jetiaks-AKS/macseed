@@ -70,7 +70,7 @@ class CancellationMocks(unittest.TestCase):
                 self.births[pid] = table[pid][1]
         return data
 
-    def launch(self, mode, owned=False, ignore=False):
+    def launch(self, mode, owned=False, ignore=False, reap=True):
         if ignore:
             (self.directory / 'ignore').touch()
         if owned:
@@ -87,7 +87,8 @@ class CancellationMocks(unittest.TestCase):
         self.births[self.process.pid] = items.process_table()[self.process.pid][1]
         data = self.ready()
         # Reap root promptly so zombies are not confused with running processes.
-        threading.Thread(target=self.process.wait, daemon=True).start()
+        if reap:
+            threading.Thread(target=self.process.wait, daemon=True).start()
         return data
 
     def record(self, scenario, started, stop_return, **extra):
@@ -130,6 +131,7 @@ class CancellationMocks(unittest.TestCase):
         started = time.monotonic()
         with patch.object(items.os, 'kill', side_effect=self.signal_owned):
             stopped = tree.stop()
+        self.assertTrue(stopped)
         self.assertFalse(self.record(mode + ('-ignore-term' if ignore else ''), started, stopped))
 
     def test_01_plain(self):
@@ -176,7 +178,9 @@ class CancellationMocks(unittest.TestCase):
                                      unknown_consequences=self.owned.unknown_consequences))
 
     def test_09_owned_normal_cancel(self):
-        self.launch('plain', owned=True)
+        # OwnedBootstrap reaps after tree.stop(), just as the real Restore path.
+        # An exited but unreaped root must not produce unknown consequences.
+        self.launch('plain', owned=True, reap=False)
         self.owned.tree.scan()
         original_stop = self.owned.tree.stop
         returned = []

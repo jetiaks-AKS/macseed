@@ -604,9 +604,6 @@ def restore_execute(operation_id, path, disabled_groups, include_secure, expecte
                 if bootstrap_exit == 132:
                     state['verification']['details'] = owned.details
                     return restore_graceful_result(state, owned, failure)
-                if state['unknown_consequences']:
-                    state['verification']['details'] = owned.details
-                    return failure('privileged_lifecycle_unknown', 2)
                 state["bootstrap_status"] = ({0: "success", 1: "warning"}.get(bootstrap_exit, "failure"))
                 if owned.verification is not None:
                     state["verification"] = {key: value for key, value in owned.verification.items()
@@ -617,7 +614,7 @@ def restore_execute(operation_id, path, disabled_groups, include_secure, expecte
                     state["verification"] = {"status": "unavailable", "verdict": "incomplete"}
                     state["warning_count"] = 1 if bootstrap_exit == 1 else 0
                 state["verification"]["details"] = owned.details
-                if bootstrap_exit not in (0, 1):
+                if bootstrap_exit not in (0, 1) or state['unknown_consequences']:
                     state["independent_work_completed"] = owned.independent_work_completed
                     # Preserve typed authoritative outcomes alongside the compatible code.
                     state["operation_failures"] = [row for row in owned.details["operation_records"]

@@ -852,8 +852,18 @@ class CapabilityTests(unittest.TestCase):
         tree = lifecycle.ProcessTree(123456, initialize=False)
         rows = {123456: (1, 'birth', '0:00', 'installer')}
         with patch.object(tree, 'scan', return_value=rows), patch.object(lifecycle.os, 'kill', side_effect=PermissionError), \
-                patch('item_execution.time.monotonic', side_effect=[0, 2, 2]):
+                patch('item_execution.time.monotonic', side_effect=[0, 2, 2, 2, 4]):
             self.assertFalse(tree.stop())
+
+    def test_process_stop_waits_for_kill_confirmation(self):
+        tree = lifecycle.ProcessTree(123456, initialize=False)
+        rows = {123456: (1, 'birth', '0:00', 'installer')}
+        with patch.object(tree, 'scan', side_effect=[rows, rows, {}]), \
+                patch.object(lifecycle.os, 'kill') as kill, \
+                patch('item_execution.time.monotonic', side_effect=[0, 2, 2, 2, 2]), \
+                patch('item_execution.time.sleep'):
+            self.assertTrue(tree.stop())
+        self.assertTrue(all(call.args[1] == signal.SIGKILL for call in kill.call_args_list))
 
 
 class RestoreCapabilityTests(unittest.TestCase):
