@@ -28,7 +28,16 @@ if [[ "${2:-}" == --test ]]; then
     xcrun swiftc "${compiler_options[@]}" -parse-as-library "${presentation_sources[@]}" Tests/PresentationTests.swift \
         -o "$output_dir/PresentationTests"
     "$output_dir/PresentationTests"
-    xcrun swiftc "${compiler_options[@]}" -parse-as-library Sources/Core*.swift Tests/CoreRuntimeTests.swift \
+    xcrun swiftc "${compiler_options[@]}" -parse-as-library "${presentation_sources[@]}" Tests/DiagnosticReportTests.swift \
+        -o "$output_dir/DiagnosticReportTests"
+    "$output_dir/DiagnosticReportTests"
+    xcrun swiftc "${compiler_options[@]}" -parse-as-library "${presentation_sources[@]}" Tests/OperationLogViewTests.swift \
+        -o "$output_dir/OperationLogViewTests"
+    "$output_dir/OperationLogViewTests"
+    xcrun swiftc "${compiler_options[@]}" -parse-as-library Sources/Core*.swift Sources/OperationLog.swift Tests/OperationLogTests.swift \
+        -o "$output_dir/OperationLogTests"
+    "$output_dir/OperationLogTests"
+    xcrun swiftc "${compiler_options[@]}" -parse-as-library Sources/Core*.swift Sources/OperationLog.swift Tests/CoreRuntimeTests.swift \
         -o "$output_dir/CoreRuntimeTests"
     "$output_dir/CoreRuntimeTests" "$(cd ../.. && pwd -P)" "$(xcrun --find python3)"
     xcrun swiftc "${compiler_options[@]}" -parse-as-library "${presentation_sources[@]}" Tests/EnvironmentStatusTests.swift \

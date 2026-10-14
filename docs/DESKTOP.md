@@ -20,7 +20,8 @@ Environment Status (Stage 16K) is complete; the subsequent Status → Restore ha
 approved. Desktop Visual Unification is complete.
 [Restore Cancellation Safety](#restore-cancellation-safety) is in progress: Stage 1–2
 and Homebrew Graceful Stop are implemented; Stage 3C and installer qualification
-remain open. Operation Logging & Diagnostics follows completion of Cancellation Safety.
+remain open. Stage 16J Logging & Diagnostics is complete in the working tree;
+remaining cancellation/recovery work is not closed by diagnostics.
 Practical priorities are owned by
 [Roadmap](../ROADMAP.md#current-practical-execution-order).
 Build and review instructions are in
@@ -46,14 +47,16 @@ workflow qualification; current bundled resolution rejects those writes. Secure
 Execute needs the future 16H socket bridge and is rejected before launch today.
 Handled cancellation retains Core evidence; forced termination without a terminal
 event is interruption with unknown effects, never rollback or item-boundary stop.
-Diagnostic persistence/export remains Stage 16J. Restore Result presentation is
+Diagnostic persistence, viewing and report export are implemented in Stage 16J.
+Restore Result presentation is
 implemented and checkpoint-qualified; broader completion qualification remains open.
 
 ## Window and navigation
 
 Use one main window with three sidebar destinations: **Capture this Mac**,
 **Restore a Mac**, and **Environment Status**. An operation detail view belongs to
-the active flow; diagnostics are available from its Details and the Help menu.
+the active flow. Settings → Operation Logs opens the shared native log window;
+terminal flow results offer a local View Log for the corresponding operation.
 Use native file dialogs, accessible controls, text plus icons for status, and
 keyboard navigation. Never rely on color alone.
 
@@ -116,14 +119,14 @@ application appearance as the single owner; windows, SwiftUI content, Settings
 and native dialogs inherit it without separate color-scheme overrides. This
 preference has no Core, Blueprint or Bundle meaning.
 
-Settings remains small: General may offer a default Bundle location and useful
-confirmation preferences if implementation demonstrates value. Preferences must
-not bypass fresh-plan confirmation or secure import consent. Privacy / Diagnostics
-provides diagnostic controls and Open Logs Folder where appropriate, preserving
-private storage and sanitization. Reserve Updates only if the eventual Stage 17
-mechanism needs it; no updater is defined here. Use standard macOS About behavior,
-not a custom About settings page. Diagnostics remains contextual through View
-Details and Export Diagnostic Report, not a primary raw-log destination.
+Settings remains small: General owns Appearance; Operation Logs opens the shared
+viewer/history without a second storage implementation. A default Bundle location,
+confirmation preferences and Open Logs Folder remain conditional future options,
+not implemented controls. Preferences must not bypass fresh-plan confirmation or
+secure import consent. Reserve Updates only if the eventual Stage 17 mechanism
+needs it; no updater is defined here. Use standard macOS About behavior, not a
+custom About settings page. Diagnostic Report is an explicit action for the
+selected operation in Operation Logs; there is no raw-log destination.
 
 Initial Capture, Restore and Status share a tinted primary action card beneath
 WorkspaceHeader: blue Scan, green saved-environment selection and violet Compare.
@@ -603,7 +606,8 @@ Attention** findings block has been removed; category statuses are retained, wit
 Result category Unverified neutral grey with `questionmark.circle` and actual
 problems warning/error styled.
 One initially collapsed **Technical Details** shows compact problem-only execution
-and Verification findings. Diagnostic data is retained for future Logging & Diagnostics.
+and Verification findings. The persistent Operation Log preserves safe structured
+diagnostics independently of the current flow details.
 **Copy Diagnostic Details** copies the available
 allowlisted terminal, execution, Verification, coverage and diagnostic fields,
 including successful evidence. Raw process output, arbitrary payload fields and
@@ -649,8 +653,9 @@ remain authoritative and unchanged.
 
 Restore Result follows the [Restore result contract](#restore-result-contract),
 including conditional quantitative cards, neutral category Unverified and collapsed
-Technical Details. Persistent Logging & Diagnostics and a complete live View Log
-remain a separate future stage, not part of this completed visual checkpoint.
+Technical Details. Logging & Diagnostics was completed separately in Stage 16J;
+remaining Restore Final Result UI work is tracked in TODO, without reopening the
+approved visual foundation.
 
 <a id="restore-cancellation-safety"></a>
 
@@ -721,8 +726,8 @@ installer-interruption qualification or prove Stop was accepted during installat
 Remaining Cancellation Safety work includes Stage 3C durable ordinary-Cask
 journal/reconciliation, operation-owned DMG/re-entry evidence, detached/privileged
 process quiescence and separate MAS and other-category qualification. It must protect
-user data and never detach unrelated volumes. Logging & Diagnostics remains a separate
-next direction after completion of Cancellation Safety.
+user data and never detach unrelated volumes. Completed Stage 16J diagnostics
+records evidence; it provides no durable recovery/reconciliation or re-entry authority.
 
 ## Progress, cancellation and re-entry
 
@@ -868,83 +873,113 @@ functional development without constructing the full catalog first.
 
 ## Local logs and Diagnostic Report
 
-Begin this priority after Bundle-backed Status with an independent audit of the
-existing two-level architecture and completeness of diagnostic evidence:
+**Stage 16J completed in the working tree.** Two logging levels remain independent:
 
-- **Core / CLI Logging:** retain `modules/core/logger/logger.sh`, `logs/history`
-  and `logs/latest.log` as production technical journals; do not replace them with
-  a Swift logger.
-- **Desktop Operation Log:** planned separate private persistent storage of safe
-  structured Core Protocol V1 events for Capture, Restore and Environment Status,
-  available during/after operations and across application restarts.
+- **Core / CLI technical logs:** existing `modules/core/logger/logger.sh`,
+  `logs/history` and `logs/latest.log`; unchanged by Desktop logging.
+- **Desktop Operation Log:** typed, persisted, sanitized Protocol V1 records for
+  Capture Prepare/Execute, Bundle inspection, Restore Prepare/Execute and
+  Environment Status Compare. This is not a complete Core/CLI technical journal.
 
-Keep these levels independent. Do not merge raw CLI logs and Desktop events into
-one file, parse `latest.log`, human CLI messages or external-tool stdout/stderr to
-build Desktop logs, or introduce a third universal logging subsystem. Investigate
-safe correlation by operation ID, phase, timestamps and typed diagnostic codes
-only where trustworthy evidence exists. Desktop logs do not promise every internal
-CLI message that Protocol V1 does not safely expose. Preserve Technical Details
-and Copy Diagnostic Details; audit their completeness alongside View Log/report.
+Desktop does not parse `latest.log`, CLI messages or raw stdout/stderr, merge these
+levels, add a third logger or extend Protocol V1 for correlation. The Desktop
+request ID identifies the operation; it does not prove linkage to a particular Core
+technical-log file. Existing flow Technical Details / Copy Diagnostic Details
+remain separate presentations, not access to arbitrary Core logs.
 
-Persistent Desktop operation logs, live **View Log**, and a redacted user-requested
-Diagnostic Report are required but not yet implemented. Current in-memory activity/
-Details and Core CLI logs do not satisfy this Desktop contract. View Log must show
-a live sanitized structured projection during work and remain available afterward,
-without a raw stdout/stderr viewer. Logs record client receipt timestamp (distinct
-from Core `observed_at`),
-Macseed/Core version, operation ID/type, event sequence/type, phase, safe domain/item
-reference, warning/conflict/error code, prerequisite, Verification outcome and
-cancellation/interruption. Client-only events are explicitly marked and do not
-fabricate Core sequence numbers. Log partial operations and transport failures as
-such. Core events do not supply every log field; client time/platform context fills
-only client-owned metadata. No raw JSONL archive or arbitrary payload dumping.
+### Storage and completeness
 
-Keep logs in defined private user-writable application storage with owner-only
-permissions, bounded retention/rotation and a user-accessible Clear Logs action.
-Log retention, storage placement and serialization limits must be fixed during
-implementation. Operation Details is a readable projection of structured facts,
-with technical codes behind disclosure. No raw stdout/stderr viewer is required.
+Foundation Application Support stores one typed NDJSON file per Core operation in
+`org.macseed.desktop/Operations`, with 0700 directories and 0600 files. Limits are
+8 MiB per journal, 16 KiB per record, 100 operations, 64 MiB total and 30-day
+retention. A reserved budget permits explicit truncation/finish records. Cleanup
+and confirmed **Clear Logs** delete only recognized inactive Store-owned journals;
+active journals, Core logs, Bundles and unrelated files are preserved.
 
-**Create Diagnostic Report** is an explicit user action from Help or operation
-Details. Build a sanitized snapshot containing Macseed/Core version, macOS
-version/build, architecture, operation type/ID, selected-category counts, relevant
-capabilities/prerequisites, sanitized event timeline, Verification/Comparison
-summary, detail completeness and typed errors/reasons. Include interrupted-run
-context without claiming completion. Missing context is marked unavailable.
+Ownership, regular-file, hardlink and symlink checks protect storage; locks protect
+active journals across Store instances. Sanitization and append/read work run off
+MainActor with bounded ingress. Closed vocabularies and bounded evidence drop
+unknown/private values. Private item identities become per-operation local aliases;
+the private identity-to-alias mapping is not saved. Omitted evidence and truncation
+are explicit. Events include client receipt times, Core sequences/types and safe
+phase/domain/action/reason/count/Verification facts. Client records identify only
+confirmed transport/stop requests or delivery evidence, without invented Core
+sequences or a promise of safe rollback.
 
-Preview the complete export content, not just a summary. The native save action
-writes exactly the reviewed immutable snapshot; any regeneration requires another
-preview. Export a readable UTF-8 structured report with a report schema version.
-The user may attach it to a GitHub Issue/support request. Desktop does not upload,
-open a prefilled issue containing diagnostic data, send telemetry, integrate crash
-reporting SaaS or submit background network requests.
+Append and controlled sync preserve complete valid prefixes after a crash. A
+missing finish, invalid terminal evidence or damaged/partial tail does not establish
+success. Persistence failure changes diagnostic availability, not Capture, Restore
+or Status outcomes. Reopening history never retries or resumes a workflow. Signed
+application resources remain read-only; private Desktop log placement does not
+solve the separate packaged Core writable-workspace requirement.
 
-### Privacy and sanitization boundary
+### Viewer and history
 
-Sanitize before persistence, Details rendering and report assembly. Use a typed
-allowlist of fields and validated values, then a stricter export projection.
-Operation IDs generated by Desktop contain no personal data. Replace private item
-subjects with report-local aliases; omit public SSH fingerprints and key filenames
-from exported support context. Treat labels/IDs as potentially personal even when
-Core considers them display-safe. Export counts and stable domain/reason/action
-codes rather than arbitrary user strings; unknown fields are dropped. Never rely
-only on pattern-based replacement after dumping payloads.
+**Settings → Operation Logs** opens one shared native window with compact Previous
+Operations history. A local **View Log** appears only after an established terminal
+result in Capture, Restore and Environment Status, including failed, needs-attention
+and stopped results. It is absent during active work and intermediate stages;
+Inspect/Preview logs remain accessible through Settings history. A local entry
+initially selects its corresponding operation. Selection switches summary, timeline,
+reader cursor and disclosure state together; obsolete asynchronous reads cannot
+repopulate a different operation.
 
-Exclude passwords/passphrases, secret frames/challenge responses, private key
-material, tokens/API keys, Git credentials, embedded URL credentials, environment
-variables and tool output. Omit unnecessary personal filesystem paths, Bundle
-names/destinations, usernames, repository names/remotes and setting contents.
-Interactive views may show the user-selected Bundle location or safe Capture
-labels when needed for the task; those values do not cross the persistent
-log/report boundary. Platform context is limited to the stated OS/build/architecture;
-no arbitrary machine inventory. Error text comes from typed codes and the
-presentation catalog, never unsanitized exceptions or subprocess output.
+**Important** shows deduplicated issues and key events. **All** provides access to
+every saved event through bounded incremental pages, including earlier events
+outside the 512-record visible window. This does not recover records never saved
+because of truncation or omissions. The viewer can follow an active operation from
+Settings; disk reading stays off MainActor. Technical Details uses bounded native
+TextKit rendering and complete safe detail copying. Stop/Force Stop continues
+through the existing Runtime controls.
 
-Dedicated Stage 16 regression tests must cover secrets in nested/unknown fields,
-credential-bearing URLs, paths, labels/IDs, malformed events, partial failures,
-secure cancellation/timeouts and report regeneration. Assert absence in logs,
-Details and reports, preservation of useful typed support context, and byte-for-byte
-preview/export identity. Tests use disposable fixtures; never real keys or secrets.
+Summary separates **Process Result**, **Verification** and **Log completeness**.
+Only available counters are shown. Successful execution can coexist with incomplete
+Verification or an incomplete log; Log Incomplete is a neutral diagnostic limitation,
+not an execution error. Truncated, unavailable, interrupted/unknown and partial
+evidence remain explicit.
+
+### Diagnostic Report snapshot and privacy
+
+**Diagnostic Report** in Operation Logs captures the selected operation into one
+immutable UTF-8 snapshot. A simple monospaced TextKit preview displays it;
+**Copy Report** copies it and **Save Report…** writes the same bytes to a text file
+through the native save panel. **Refresh Report** explicitly creates a replacement
+snapshot; incoming events do not silently change an open report. Cancelling Save
+writes nothing; a write error retains the snapshot and shows a safe error message.
+
+An independent strict export allowlist projects already sanitized typed records.
+It includes available application/Core versions, report-host macOS version and Mac
+architecture, operation type/action/IDs/times, process exit/reason/terminal validity,
+Verification status/details completeness/verdict/counters, phase chronology,
+errors/warnings/skipped/unsupported and evidenced Graceful Stop/Force Stop facts.
+Publication, possible target mutation and unknown-consequences flags appear only
+when recorded. Missing facts remain unknown rather than fabricated zero counts.
+
+Export excludes even local item aliases, user/object names, paths, filenames,
+repository names/remotes, setting contents, environment, SSH material, credentials,
+tokens, arbitrary Core text, raw output and Protocol payloads, including nested
+fields. Only closed codes, validated versions, bounded counts and typed flags cross
+the report boundary; sanitization is not merely regex replacement of dumped data.
+No telemetry, automatic upload or implicit Core/CLI-log access is introduced.
+
+Generation streams existing reader pages off MainActor with bounded memory. Report
+text is capped at 256 KiB with explicit chronology omissions and retained summary;
+this report cap is separate from persistent-log truncation. Incomplete, damaged,
+truncated and unavailable sources are stated honestly, including missing finish
+records. The report is an operation snapshot, not a crash dump or full machine inventory.
+
+### Qualification and remaining checks
+
+Local foundation/viewer/report tests and Debug builds passed. Stage 16J.4 validation
+included DiagnosticReportTests, related OperationLogViewTests, one full
+PresentationTests run and a Debug build. Tests covered nested privacy exclusions,
+exact preview/copy/save bytes, snapshot stability/explicit refresh, save cancellation
+and errors, unavailable/crash-tail sources, close-during-load, and bounded generation
+with a native TextKit preview of a 6000-record fixture. Operation Logs UX was manually
+accepted by the user. The report's native Save panel interaction and user-driven
+scrolling were not manually verified in that implementation pass. No hosted CI or
+signed/notarized clean-Mac result is claimed. Stage 17 must qualify those packaged
+flows; future Secure SSH integration needs corresponding privacy fixtures.
 
 ## Implementation slices and qualification
 
@@ -953,12 +988,12 @@ preview/export identity. Tests use disposable fixtures; never real keys or secre
 | 16B — Native shell and design foundation | Native navigation, stable content states, small Settings, reusable rows, vocabulary, accessibility and empty states |
 | 16C — Core process integration and capabilities | Core/Python layout, writable state/temp, controlled child HOME/PATH/environment, JSONL validation, process ownership and cancellation |
 | 16D — Environment Status | Explicit reference picker, read-only Compare, summary and record details |
-| 16E — Capture | Inventory/selection, fresh preparation, Bundle publication and interruption states; secure opt-in completed in 16H |
+| 16E — Capture | Inventory/selection, fresh preparation, Bundle publication and interruption states; secure interactions remain 16H |
 | 16F — Restore preparation | Core-supported domain/item selection, Bundle inspection, prerequisites, Check Again, Preview and fresh confirmation |
 | 16G — Restore execution | Rebuild phases, records, Stop Rebuild over current signal cancellation, partial failure and re-entry |
 | 16H — Secure SSH interactions | FD bridge/challenges, encryption/unlock/import confirmation and age/OpenSSH PTY qualification for Capture and Restore |
 | 16I — Verification and completion | Concise Result with disclosed verdict/coverage, no-op, already-matching and incomplete outcomes |
-| 16J — Diagnostics and support | Persistent structured logs, live View Log, retention/clear controls, redacted Diagnostic Report preview/export and sanitization tests |
+| 16J — Diagnostics and support | Completed: persisted typed logs, shared viewer/history, Important/All, retention/clear and immutable Diagnostic Report preview/copy/save |
 | 16K — Desktop integration hardening | Full flow/transport/security/accessibility checks, stale inputs, interruptions and diagnostic acceptance |
 
 Slice identifiers above retain their historical meaning; practical execution order
@@ -966,9 +1001,10 @@ is tracked in [Roadmap](../ROADMAP.md#current-practical-execution-order).
 
 Every slice uses existing Core operations; early flow slices retain incomplete
 features as unavailable rather than pretending secure or verification support.
-Persistent logging must sanitize before recording flow events; 16J owns the
-unimplemented logging and support experience. Today's repository Core and external
-Python are not an installed-app runtime. Stage 16 must qualify runtime and secure tool integration.
+Persistent logging sanitizes before recording flow events; completed 16J owns the
+Desktop logging and support experience, not Core technical logging or recovery.
+Today's repository Core and external Python are not an installed-app runtime.
+Stage 16 must qualify runtime and secure tool integration.
 
 [Distribution](DISTRIBUTION.md) owns Stage 17 signed/notarized packaged clean-Mac
 proof, including operation logs, interruption details and exact Diagnostic Report

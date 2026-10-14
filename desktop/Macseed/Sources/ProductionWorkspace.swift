@@ -126,6 +126,7 @@ struct ProductionWorkspace: View {
                 }
             }
         }
+        .modifier(OperationLogPresenter(runtime: runtime))
         .alert("Replace Current Restore Session?", isPresented: Binding(
             get: { navigation.pendingRestoreBundle != nil },
             set: { if !$0 { navigation.cancelRestoreReplacement() } })) {
@@ -158,7 +159,7 @@ struct ProductionWorkspace: View {
         VStack(spacing: 0) {
             Divider()
             if let result = restore.executionResult {
-                RestoreResultActions(result: result, refresh: { restore.checkCurrentState() }, done: { restore.finish() })
+                RestoreResultActions(result: result, refresh: { restore.checkCurrentState() }, done: { restore.finish() }, logRuntime: runtime)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .modifier(WorkspaceFooterPadding())
             }
@@ -193,7 +194,7 @@ struct ProductionWorkspace: View {
     private func rebuildActionArea(synthetic: Bool) -> some View {
         VStack(spacing: 0) {
             Divider()
-            RestoreRebuildActions(stopping: runtime.stopping, stop: synthetic ? nil : { restore.requestStop() }, force: synthetic ? nil : { restore.requestForceStop() }, gracefulWaiting: runtime.gracefulStopRequested)
+            RestoreRebuildActions(stopping: runtime.stopping, stop: synthetic ? nil : { restore.requestStop() }, force: synthetic ? nil : { restore.requestForceStop() }, gracefulWaiting: runtime.gracefulStopRequested, logRuntime: synthetic ? nil : runtime)
                 .modifier(WorkspaceFooterPadding())
         }
     }

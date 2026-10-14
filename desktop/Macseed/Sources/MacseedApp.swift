@@ -21,10 +21,13 @@ import SwiftUI
     }
 }
 
+private typealias SettingsViewState<Value> = SwiftUI.State<Value>
+
 struct FoundationSettingsView: View {
     @AppStorage(DesktopAppearance.preferenceKey) private var appearanceValue = DesktopAppearance.system.rawValue
+    @SettingsViewState private var selectedTab = "general"
     var body: some View {
-        TabView {
+        TabView(selection: $selectedTab) {
             VStack(alignment: .leading, spacing: 16) {
                 GroupBox("Appearance") {
                     Picker("Appearance", selection: Binding(
@@ -47,15 +50,15 @@ struct FoundationSettingsView: View {
                 #endif
             }
             .padding(24)
-            .tabItem { Label("General", systemImage: "gearshape") }
-            VStack(alignment: .leading, spacing: 16) {
-                Text("Privacy / Diagnostics").font(.headline)
-                Text("This foundation does not save operation logs, export reports or send telemetry.")
-                Text("Diagnostic controls will appear when structured logging is implemented.")
-                    .foregroundStyle(.secondary)
+            .tabItem { Label("General", systemImage: "gearshape") }.tag("general")
+            Color.clear
+                .tabItem { Label("Operation Logs", systemImage: "clock") }.tag("logs")
+        }
+        .onChange(of: selectedTab) { _, tab in
+            if tab == "logs" {
+                OperationLogWindowController.shared.open(runtime: CoreRuntime.shared, target: nil)
+                selectedTab = "general"
             }
-            .padding(24)
-            .tabItem { Label("Privacy / Diagnostics", systemImage: "hand.raised") }
         }
         .frame(width: 440, height: 300)
     }

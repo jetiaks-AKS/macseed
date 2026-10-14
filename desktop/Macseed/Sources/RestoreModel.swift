@@ -583,6 +583,8 @@ struct RestoreExecutionPresentation {
     let successfulAreas: [String]
     let structuredEvidence: [String: CoreJSON]?
     let diagnosticEvents: [CoreEvent]
+    // Keep the exact request identity even when transport fails before an event.
+    let operationID: String?
     private let expectedPlanID: String
     private let expectedDiagnostics: [String: String]?
     @MainActor init(runtime: CoreRuntime, payload: [String: CoreJSON]?, expectedID: String, catalog: CoreRestoreInspection.Inventory? = nil, itemNames: [String: [String: String]] = [:], expectedDiagnostics: [String: String]? = nil) {
@@ -590,6 +592,7 @@ struct RestoreExecutionPresentation {
         self.expectedDiagnostics = expectedDiagnostics
         structuredEvidence = payload
         diagnosticEvents = runtime.events
+        operationID = runtime.operation == .restoreExecute ? runtime.operationID : nil
         let terminal = runtime.termination?.terminal
         let validTerminal: Bool
         if case .coreFailure = runtime.error { validTerminal = true }

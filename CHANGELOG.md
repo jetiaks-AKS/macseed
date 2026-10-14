@@ -11,6 +11,14 @@ The format is based on the principles of **Keep a Changelog**.
 
 ### Added
 
+* Desktop Operation Logs persist private typed events with bounded retention,
+  restart history, terminal View Log and Settings access, Important/All viewing
+  and safe clearing of inactive logs. Process Result, Verification and diagnostic
+  completeness remain independent.
+* Diagnostic Report adds an independent privacy allowlist and immutable UTF-8
+  preview/copy/save snapshot, explicit refresh and honest partial/truncated/
+  unavailable evidence; Core/CLI technical logs remain separate.
+
 * Clean native package Install with checksum-bound root-app payload inspection,
   separate installer authorization and conservative Repair qualification.
 
@@ -66,7 +74,7 @@ The format is based on the principles of **Keep a Changelog**.
   Stop timing during installation; full installer-interruption qualification remains open.
 * Retain the 2026-10-13 Firefox busy-DMG incident and remaining Cancellation Safety
   limits. Stage 3C durable ordinary-Cask journal/reconciliation is not implemented;
-  Operation Logging & Diagnostics follows completion of Cancellation Safety.
+  Stage 16J diagnostics is implemented separately and provides no recovery authority.
 
 * Restore freshness failures include safe plan/component fingerprints in Desktop
   diagnostic copying. A denied process observer is reported separately from an

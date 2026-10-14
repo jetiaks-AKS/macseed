@@ -54,7 +54,7 @@ struct EnvironmentStatusView: View {
                 if showsActions { EnvironmentStatusActions(model: model, runtime: runtime) }
                 referenceDetails
             }
-        }
+        }.modifier(OperationLogPresenter(runtime: runtime))
     }
 
     @ViewBuilder private var referenceDetails: some View {
@@ -70,6 +70,10 @@ struct EnvironmentStatusActions: View {
     private var busy: Bool { runtime.isActive || model.state == .running }
     var body: some View {
         HStack(spacing: 12) {
+            if let reference = runtime.operationLogReference(matching: model.operationID),
+               OperationLogVisibility.status(model.state, active: runtime.isActive, reference: reference, terminal: runtime.termination != nil && runtime.operationID == model.operationID) {
+                OperationLogButton(runtime: runtime, reference: reference)
+            }
             if model.state == .running {
                 Button("Cancel") { model.cancel() }.disabled(runtime.stopping)
                 Spacer()

@@ -2,6 +2,12 @@ import Combine
 import Foundation
 
 enum CoreRuntimeState: String { case idle, launching, running, completed, failed, cancelled }
+struct OperationLogReference: Sendable {
+    let id: UUID
+    let operationID: String
+    let operation: CoreOperation
+    let time: Date
+}
 
 @MainActor final class CoreRuntime: ObservableObject {
     static let shared = CoreRuntime()
@@ -22,8 +28,17 @@ enum CoreRuntimeState: String { case idle, launching, running, completed, failed
     @Published private(set) var mutationMayHaveStarted: Bool?
     @Published private(set) var publicationOccurred: Bool?
     @Published private(set) var stopping = false
+    @Published private(set) var operationLogStatus: OperationLogStatus = .inactive
+    @Published private(set) var operationLogReferences: [CoreOperation: OperationLogReference] = [:]
     private let resolver: CoreLocationResolver
-    init(resolver: CoreLocationResolver = CoreLocationResolver()) { self.resolver = resolver }
+    private let operationLogs: OperationLogStore?
+    private var logSession: OperationLogSession?
+    private var logGeneration = UUID()
+    private var logFinished = false
+    private var coreProductVersion: String?
+    init(resolver: CoreLocationResolver = CoreLocationResolver(), operationLogs: OperationLogStore? = .shared) {
+        self.resolver = resolver; self.operationLogs = operationLogs
+    }
     private var transport: CoreTransport?
     private var work: Task<Void, Never>?
     var isActive: Bool { state == .launching || state == .running }
@@ -45,6 +60,25 @@ enum CoreRuntimeState: String { case idle, launching, running, completed, failed
         publicationOccurred = nil
         stopping = false
         gracefulStopRequested = false; gracefulStopMessage = nil
+        let generation = UUID()
+        logGeneration = generation
+        logFinished = false
+        operationLogStatus = .inactive
+        let log: OperationLogSession?
+        if request.command.operation != .capabilities, let operationLogs {
+            operationLogStatus = .recording
+            log = operationLogs.begin(request, coreVersion: coreProductVersion) { [weak self] status in
+                Task { @MainActor in
+                    guard let self, self.logGeneration == generation, !self.logFinished else { return }
+                    self.operationLogStatus = status
+                }
+            }
+        } else { log = nil }
+        logSession = log
+        if let log {
+            operationLogReferences[request.command.operation] = OperationLogReference(id: log.id, operationID: request.operationID,
+                operation: request.command.operation, time: Date())
+        }
         let channel = AsyncStream<CoreEvent>.makeStream()
         let transport = CoreTransport()
         self.transport = transport
@@ -52,13 +86,19 @@ enum CoreRuntimeState: String { case idle, launching, running, completed, failed
             let resolved: CoreLocation
             do { resolved = try location ?? resolver.resolve() }
             catch {
-                self.error = error as? CoreRuntimeError ?? .invalidRuntimeConfiguration
+                let failure = error as? CoreRuntimeError ?? .invalidRuntimeConfiguration
+                self.error = failure
                 state = .failed
                 self.transport = nil
+                if let log {
+                    let status = await log.finish(nil, error: failure)
+                    if logGeneration == generation { logFinished = true; operationLogStatus = status }
+                }
                 return
             }
             let producer = Task {
                 let result = await transport.run(request: request, location: resolved) { event in
+                    log?.receive(event)
                     channel.continuation.yield(event)
                 }
                 channel.continuation.finish()
@@ -99,25 +139,43 @@ enum CoreRuntimeState: String { case idle, launching, running, completed, failed
                     guard !value.productVersion.isEmpty else { throw CoreRuntimeError.malformedEvent }
                     homebrewGracefulSupported = value.features?["homebrew_graceful_stop"]?.object?["version"]?.integer == 1
                     capabilities = value
+                    coreProductVersion = value.productVersion // Header metadata is sanitized on the log queue.
                     bundleComparisonSupported = value.supportsBundleComparison
                     state = .completed
                 } catch { self.error = error as? CoreRuntimeError ?? .malformedEvent; state = .failed }
             } else { state = .completed } // Operation completion, never a conformity verdict.
+            if let log {
+                let terminalError: CoreRuntimeError? = outcome.terminal?.type == "failed" && outcome.terminal?.isCancellation == false
+                    ? .coreFailure(outcome.terminal?.code ?? "unknown_failure") : nil
+                let status = await log.finish(outcome, error: outcome.error ?? terminalError)
+                if logGeneration == generation { logFinished = true; operationLogStatus = status }
+            }
         }
     }
     func requestGracefulStop() {
         guard isActive, operation == .restoreExecute, !gracefulStopRequested else { return }
         guard homebrewGracefulSupported, transport?.requestGracefulStop() == true else {
+            logSession?.client(.gracefulStopDeliveryFailed)
             gracefulStopMessage = "Graceful Stop could not be delivered. Force Stop remains available."
             return
         }
         gracefulStopRequested = true; gracefulStopMessage = nil
+        logSession?.client(.gracefulStopDelivered)
     }
     func cancel() {
         guard isActive else { return }
         stopping = true
+        logSession?.client(.forceStopRequested)
         transport?.cancel()
     }
     func waitForCompletion() async { await work?.value }
+    func operationLogHistory() async throws -> [OperationLogHistory] { try await operationLogs?.history() ?? [] }
+    var operationLogStore: OperationLogStore? { operationLogs }
+    func operationLogReference(matching id: String?) -> OperationLogReference? {
+        operationLogReferences.values.first { $0.operationID == id }
+    }
+    func latestOperationLog(_ operations: Set<CoreOperation>) -> OperationLogReference? {
+        operationLogReferences.values.filter { operations.contains($0.operation) }.max { $0.time < $1.time }
+    }
     func checkCapabilities() { start(CoreRequest(.capabilities)) }
 }

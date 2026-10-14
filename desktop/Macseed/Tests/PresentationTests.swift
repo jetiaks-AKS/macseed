@@ -375,10 +375,20 @@ import SwiftUI
         let restore = try! String(contentsOfFile: "Sources/RestoreView.swift")
         precondition(!restore.contains("struct RestoreHeaderDisclosureStyle") && !restore.contains("struct RestoreSectionHeader"))
         let area = restore.components(separatedBy: "struct RestoreAreaSelectionView:")[1].components(separatedBy: "struct RestorePresentationSection:")[0]
-        let disclosure = area.components(separatedBy: "DisclosureGroup(isExpanded:")[1].components(separatedBy: "if (expansion")[0]
+        // Include the binding, content and label, stopping at the disclosure's
+        // own style modifier before the adjacent item-selection controls.
+        guard let disclosureStart = area.range(of: "DisclosureGroup(isExpanded:"),
+              let disclosureEnd = area.range(of: ".disclosureGroupStyle(", range: disclosureStart.upperBound..<area.endIndex) else {
+            preconditionFailure("Restore area disclosure boundaries are missing")
+        }
+        let disclosure = String(area[disclosureStart.lowerBound..<disclosureEnd.lowerBound])
         precondition(!disclosure.contains("model.selectArea") && !disclosure.contains("model.selectItem"))
         let nested = restore.components(separatedBy: "struct RestoreMacOSAreaDetails:")[1].components(separatedBy: "enum RestoreStatusTone:")[0]
-        precondition(!nested.contains("NativeSelectionCheckbox") && nested.contains("Individual settings are not separately selectable"))
+        // Included settings are read-only labels; Core's domain/item selection
+        // remains in the surrounding Review controls, not these details.
+        precondition(nested.contains("ForEach(area.items) { item in Text(item.label) }"))
+        precondition(!nested.contains("NativeSelectionCheckbox") && !nested.contains("Toggle("))
+        precondition(!nested.contains("model.selectArea") && !nested.contains("model.selectItem"))
         print("PASS: Unified group order, domain identity, exact setting labels, blue SF Symbols, shared card geometry and independent disclosure/selection")
     }
 
@@ -676,7 +686,7 @@ import SwiftUI
         precondition(!result.contains("result.findings") && !result.contains("Text(\"Needs Attention\")"))
         precondition(result.contains("RestoreVerificationResult(outcome: result.outcome, payload: result.structuredEvidence)"))
         precondition(result.contains("RestoreExecutionCategories(domains: tasks.domains, showsWarnings: false, resultStatuses: true)"))
-        precondition(result.contains("Text(result.message)") && result.contains("RestoreResultActions(result: result, refresh: refresh, done: done)"))
+        precondition(result.contains("Text(result.message)") && result.contains("RestoreResultActions(result: result, refresh: refresh, done: done, logRuntime: logRuntime)"))
         precondition(result.contains("DisclosureGroup(\"Technical Details\") {") && !result.contains("isExpanded:"))
         precondition(result.contains("result.compactTechnicalDetails") && result.contains("Copy Diagnostic Details") && result.contains("result.diagnosticReport"))
         let model = try! String(contentsOfFile: "Sources/RestoreModel.swift")
@@ -688,7 +698,63 @@ import SwiftUI
         print("PASS: Result findings block absent; category statuses, Summary, safety message, collapsed Technical Details and diagnostic copy retained; model findings unchanged; no renders")
     }
 
+    @MainActor static func operationLogChecks() {
+        let app = try! String(contentsOfFile: "Sources/MacseedApp.swift", encoding: .utf8)
+        let captureView = try! String(contentsOfFile: "Sources/CaptureView.swift", encoding: .utf8)
+        let restoreView = try! String(contentsOfFile: "Sources/RestoreView.swift", encoding: .utf8)
+        let statusView = try! String(contentsOfFile: "Sources/EnvironmentStatusView.swift", encoding: .utf8)
+        let production = try! String(contentsOfFile: "Sources/ProductionWorkspace.swift", encoding: .utf8)
+        precondition(app.contains(".tabItem { Label(\"Operation Logs\", systemImage: \"clock\") }")
+                     && app.contains("OperationLogWindowController.shared.open(runtime: CoreRuntime.shared, target: nil)")
+                     && app.contains(".onChange(of: selectedTab)"))
+        precondition(!production.contains("historyOnly: true"), "Global history belongs in Settings, not a duplicate task footer")
+        for localView in [captureView, restoreView, statusView] {
+            precondition(localView.contains("OperationLogButton(runtime:"), "Each task retains its local View Log")
+        }
+        let reference: (CoreOperation) -> OperationLogReference = {
+            OperationLogReference(id: UUID(), operationID: "fixture", operation: $0, time: Date())
+        }
+        let captureStates: [CaptureFlowState] = [.idle, .scanning, .review, .preparing, .confirmation, .saving, .result, .failed, .cancelled]
+        for state in captureStates {
+            let terminal = state == .result || state == .failed || state == .cancelled
+            precondition(OperationLogVisibility.capture(state, active: false, reference: reference(.captureExecute), terminal: true) == terminal)
+            precondition(!OperationLogVisibility.capture(state, active: true, reference: reference(.captureExecute), terminal: true))
+            precondition(!OperationLogVisibility.capture(state, active: false, reference: nil, terminal: true))
+            precondition(!OperationLogVisibility.capture(state, active: false, reference: reference(.restoreExecute), terminal: true))
+        }
+        precondition(!OperationLogVisibility.capture(.failed, active: false, reference: reference(.capturePrepare), failure: .invalidDestination, terminal: true), "A local preflight failure must not open the preceding scan log")
+        let restoreStates: [RestoreFlowState] = [.choose, .inspecting, .preparing, .review, .preview, .confirming, .rebuilding, .result, .failed, .cancelled]
+        for state in restoreStates {
+            precondition(OperationLogVisibility.restore(state, active: false, reference: reference(.restoreExecute), terminal: true) == (state == .result))
+            precondition(!OperationLogVisibility.restore(state, active: true, reference: reference(.restoreExecute), terminal: true))
+            for operation in [CoreOperation.bundleInspect, .restorePrepare] {
+                precondition(!OperationLogVisibility.restore(state, active: false, reference: reference(operation), terminal: true))
+            }
+        }
+        for state: EnvironmentStatusState in [.choose, .running, .result, .failed, .cancelled] {
+            let terminal = state == .result || state == .failed || state == .cancelled
+            precondition(OperationLogVisibility.status(state, active: false, reference: reference(.environmentCompare), terminal: true) == terminal)
+            precondition(!OperationLogVisibility.status(state, active: true, reference: reference(.environmentCompare), terminal: true))
+            precondition(!OperationLogVisibility.status(state, active: false, reference: nil, terminal: true))
+        }
+        precondition(captureView.contains("OperationLogVisibility.capture(model.state"))
+        precondition(statusView.contains("OperationLogVisibility.status(model.state"))
+        precondition(restoreView.contains("OperationLogVisibility.restore(.result") && restoreView.contains("matching: result.operationID") && !restoreView.contains("latestOperationLog("))
+        precondition(!OperationLogVisibility.capture(.result, active: false, reference: reference(.captureExecute), terminal: false))
+        precondition(!OperationLogVisibility.status(.failed, active: false, reference: reference(.environmentCompare), terminal: false))
+        precondition(!OperationLogVisibility.restore(.result, active: false, reference: reference(.restoreExecute), terminal: false))
+        let problem = TaskItemPresentation(id: "fixture", item: DisplayItem(id: "fixture", title: "Fixture", status: .attention, action: ""), state: .failed)
+        var working = TaskDomainPresentation(id: "homebrew-casks", title: "Applications", symbol: "app", items: [problem], activityState: .working)
+        precondition(working.executionStatus == .working && working.executionStatusTitle == "Working · Needs Attention")
+        working.activityState = nil
+        precondition(working.executionStatus == .attention && working.executionStatusTitle == "Needs Attention")
+        print("PASS: shared terminal-only Capture/Restore/Status View Log matrix, exact operation references and direct Settings history")
+        print("PASS: Settings owns shared operation history; Capture/Restore/Status retain local View Log without a duplicate footer")
+    }
+
     @MainActor static func main() {
+        if CommandLine.arguments.contains("--operation-log-only") { operationLogChecks(); return }
+        if CommandLine.arguments.contains("--visual-contract-only") { visualContractChecks(); return }
         if CommandLine.arguments.contains("--result-cleanup-only") { resultCleanupChecks(); return }
         if CommandLine.arguments.contains("--minimal-result-summary-only") { minimalResultSummaryChecks(); return }
         if CommandLine.arguments.contains("--neutral-unverified-only") { neutralUnverifiedChecks(); return }
@@ -873,8 +939,11 @@ import SwiftUI
         precondition(restoreView.contains(".disclosureGroupStyle(HeaderDisclosureStyle())") && restoreView.contains("CaptureChildRowGrid.leadingInset"))
         let sections = RestorePresentationSection.project([])
         precondition(sections.map(\.id) == ["Applications & Tools", "Settings", "Git", "SSH Configuration", "Workspace", "Shell"])
-        let aggregateSource = String(restoreView.components(separatedBy: "struct RestoreMacOSSelectionView")[1].components(separatedBy: "enum RestoreStatusTone")[0])
-        precondition(aggregateSource.contains("DisclosureGroup") && aggregateSource.contains("ForEach(CaptureMacOSSettingsGroup.domainIDs") && !aggregateSource.contains("model.selectItem"))
+        let aggregateSource = String(restoreView.components(separatedBy: "struct RestoreMacOSSelectionView:")[1].components(separatedBy: "struct RestoreMacOSAreaDetails:")[0])
+        precondition(aggregateSource.contains("DisclosureGroup") && aggregateSource.contains("ForEach(detailAreas)") && !aggregateSource.contains("model.selectItem"))
+        precondition(aggregateSource.contains("CaptureMacOSSettingsGroup.domainIDs.compactMap") && aggregateSource.contains("group.domains.contains($0.id)")
+                     && aggregateSource.contains("$0.sourcePresent != false") && aggregateSource.contains("$0.captureSelected != false"))
+        precondition(aggregateSource.contains("model.selectArea(area.id") && aggregateSource.contains("RestoreMacOSAreaDetails(area: area"))
         precondition(aggregateSource.contains("model.selectGroup(group") && aggregateSource.contains("Included"))
         precondition(restoreView.contains("WorkspaceSectionHeader(title: section.id)"))
         precondition(restoreView.contains("showsSelectionActions") && restoreView.contains("if showsSelectionActions"))
@@ -884,7 +953,9 @@ import SwiftUI
         precondition(workspaceSource.range(of: "selectionActionArea: some View")!.lowerBound > workspaceSource.range(of: "ScrollView {")!.lowerBound)
         precondition(restoreView.contains("Preparing Restore Preview") && restoreView.contains("Stopping Preview…"))
         precondition(restoreView.contains("Read-only inspection — no changes will be made to this Mac."))
-        precondition(restoreView.contains("Button(\"Continue Rebuild\")") && restoreView.contains(".keyboardShortcut(.defaultAction)"))
+        let stopConfirmation = restoreView.components(separatedBy: ".sheet(isPresented: Binding(get: { model.stopConfirmation")[1]
+            .components(separatedBy: "private func chooseBundle()")[0]
+        precondition(stopConfirmation.contains("Button(model.forceStopConfirmation ? \"Continue Waiting\" : \"Continue Rebuild\") { model.dismissStopConfirmation() }.keyboardShortcut(.defaultAction)"))
         precondition(restoreView.contains(".onExitCommand { model.dismissStopConfirmation() }"))
         precondition(restoreView.contains("Button(\"Change…\", action: chooseBundle).disabled(model.busy || runtime.isActive)"))
         for width in [400, 1000] {
@@ -944,7 +1015,11 @@ import SwiftUI
         precondition(content.contains(".frame(width: TaskRowLayout.iconWidth)") && restoreView.contains("WorkspaceCategoryIcon(symbol: symbol)"))
         precondition(restoreView.contains("ItemDetails(items: notices).padding(.leading, RestoreRowGrid.titleInset)"))
         precondition(restoreView.contains("Secure Transfer is not available") && restoreView.contains("Restore Preview is read-only"))
-        precondition(!restoreView.contains("restoreExecute") && restoreModel.contains(".restoreExecute(") && restoreModel.contains("includeSecure: false"))
+        // Views may reference the operation type for logs, but only the model
+        // constructs Execute requests and starts the Core operation.
+        precondition(!restoreView.contains(".restoreExecute(") && !restoreView.contains("runtime.start("))
+        precondition(restoreView.contains("model.confirmRebuild()") && restoreModel.contains("CoreRequest(.restoreExecute(")
+                     && restoreModel.contains("runtime.start(request, location: location)") && restoreModel.contains("includeSecure: false"))
         precondition(!restoreModel.contains("areas selected ·") && !restoreModel.contains("items selected"))
         precondition(restoreModel.contains("Everything selected") && restoreModel.contains("Some items excluded") && restoreModel.contains("Nothing selected"))
         precondition(restoreView.contains("RestoreSelectionActions(status: model.selectionSummary, canPreview: model.canPreview"))
@@ -1032,6 +1107,7 @@ import SwiftUI
         precondition(content.contains(".modifier(InsetSidebarSurface())") && production.contains(".modifier(InsetSidebarSurface())"))
         precondition(!content.contains(".systemBlue") && !production.contains(".systemBlue"))
         precondition(app.contains(".pickerStyle(.segmented)") && !app.contains(".preferredColorScheme(") && !app.contains(".onChange(of: appearanceValue)"))
+        operationLogChecks()
         print("PASS: Shared neutral material sidebar/header in production and preview; native Appearance setting")
         let categoryStart = content.range(of: "struct CategoryRow: View")!
         precondition(content[categoryStart.lowerBound...].contains("@ViewState<Bool> private var expanded = false"))

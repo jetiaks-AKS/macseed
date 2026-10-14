@@ -28,7 +28,7 @@ import Foundation
         return CoreLocation(root: core, python: python, home: root, temporaryBase: root)
     }
     @MainActor static func run(_ location: CoreLocation, command: CoreCommand = .capabilities) async -> CoreRuntime {
-        let runtime = CoreRuntime()
+        let runtime = CoreRuntime(operationLogs: nil)
         runtime.start(CoreRequest(command, operationID: "test"), location: location)
         await runtime.waitForCompletion()
         return runtime
@@ -55,7 +55,7 @@ import Foundation
             emit(3,'failed',dict(code='cancelled',target_mutation_may_have_started=True,unknown_consequences=False))
             sys.exit(130)
             """.write(to: location.root.appendingPathComponent("control.py"), atomically: false, encoding: .utf8)
-            let runtime = CoreRuntime()
+            let runtime = CoreRuntime(operationLogs: nil)
             runtime.start(CoreRequest(.capabilities), location: location); await runtime.waitForCompletion()
             precondition(runtime.homebrewGracefulSupported)
             runtime.start(CoreRequest(.restoreExecute(path: directory.appendingPathComponent("sample.mbt").path,
@@ -107,7 +107,7 @@ import Foundation
         let started = encodedEvent(1, "started")
         let cancelled = encodedEvent(2, "failed", data: .object(["code": .string("cancelled"), "target_mutation_may_have_started": .bool(true)]))
         let cancellationBody = "#!/bin/bash\n/bin/cat >/dev/null\ntrap '/bin/cat <<\"EVENT\"\n\(cancelled)\nEVENT\nexit 130' TERM\nprintf '%s\\n' '\(started)'\nwhile true; do /bin/sleep 0.05; done\n"
-        let active = CoreRuntime()
+        let active = CoreRuntime(operationLogs: nil)
         active.start(CoreRequest(.capabilities, operationID: "test"), location: try fixture(directory, body: cancellationBody))
         for _ in 0..<100 where active.events.isEmpty { try await Task.sleep(nanoseconds: 20_000_000) }
         precondition(active.state == .running)
@@ -117,7 +117,7 @@ import Foundation
         precondition(active.termination?.exitCode == 130)
         print("PASS: Owned process-group cancellation retains possible mutation evidence")
 
-        let interrupted = CoreRuntime()
+        let interrupted = CoreRuntime(operationLogs: nil)
         let ignoresStop = "#!/bin/bash\n/bin/cat >/dev/null\ntrap '' TERM\nprintf '%s\\n' '\(started)'\nwhile true; do /bin/sleep 0.05; done\n"
         interrupted.start(CoreRequest(.capabilities, operationID: "test"), location: try fixture(directory, body: ignoresStop))
         for _ in 0..<100 where interrupted.events.isEmpty { try await Task.sleep(nanoseconds: 20_000_000) }

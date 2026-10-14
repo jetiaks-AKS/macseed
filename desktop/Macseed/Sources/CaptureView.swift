@@ -261,7 +261,7 @@ struct CaptureView: View {
                 }
             }
             if showsActions { CaptureActionsView(model: model, runtime: runtime) }
-        }
+        }.modifier(OperationLogPresenter(runtime: runtime))
     }
     private var selectionSummary: CaptureSummaryPresentation {
         CaptureSummaryPresentation.review(categories: model.state == .review ? model.categories : model.categories.filter { model.selectionState($0) != .none }, domainCount: model.selectedDomainCount, itemCount: model.selectedItemCount)
@@ -283,6 +283,10 @@ struct CaptureActionsView: View {
     @ObservedObject var runtime: CoreRuntime
     var body: some View {
         HStack {
+            if let reference = runtime.operationLogReference(matching: model.operationID),
+               OperationLogVisibility.capture(model.state, active: runtime.isActive, reference: reference, failure: model.failure, terminal: runtime.termination != nil && runtime.operationID == model.operationID) {
+                OperationLogButton(runtime: runtime, reference: reference)
+            }
             switch model.state {
             case .review:
                 Button("Cancel") { model.cancelReview() }.disabled(runtime.isActive)

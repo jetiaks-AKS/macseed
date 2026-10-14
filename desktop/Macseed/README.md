@@ -79,8 +79,9 @@ keep View Details collapsed; attention results show problem rows directly, with
 technical reasons still collapsed.
 
 Design-preview Status compares against a sample Generated Configuration reference, not a Bundle.
-Settings has only informative General and Privacy / Diagnostics tabs. No decorative
-preferences, log folder, report export, updater or telemetry are implemented.
+Settings keeps native Appearance and the shared Operation Logs history entry.
+Operation Logs/Diagnostic Report consume persisted Runtime records, not demo
+fixtures. No log-folder shortcut, updater or telemetry is implemented.
 Normal macOS About is supplied by the application lifecycle.
 
 ## Structure and validation
@@ -90,7 +91,8 @@ build and `git diff --check` (plus syntax/lint when code requires it). Run canon
 `./scripts/test.sh` full regression at major checkpoints/releases or when broad
 contracts require it, not mechanically after every small slice. Documentation-only
 changes require consistency/link review and diff-check, not runtime tests or builds.
-The `Debug --test` command below runs all five Desktop suites; select focused
+The `Debug --test` command below runs the registered Desktop suites, including
+OperationLogTests, OperationLogViewTests and DiagnosticReportTests; select focused
 harnesses for narrower work.
 
 - `Sources/Presentation.swift`: small shared display values, no domain algorithms.
@@ -141,10 +143,23 @@ a production observer/planner/verification engine.
   publication/mutation evidence, exit and typed errors. Holds at most 256 history
   events (with a truncation flag); latest result stays available. JSONL limits are
   64 MiB per event and 256 MiB per operation, not Core's per-record limits.
+- `OperationLog.swift`: typed privacy projection and private bounded Application
+  Support journals, background append/read/retention, crash-tail handling and
+  Runtime diagnostic availability. No raw Protocol or process-output archive.
+- `OperationLogView.swift`: shared native viewer/history, bounded incremental All
+  and Important projection; terminal local View Log and Settings history access.
+- `DiagnosticReport.swift`: independent export allowlist, background bounded report
+  generation, immutable UTF-8 preview/copy/save and explicit refresh.
 - `ProductionWorkspace.swift`: approved shell with real capability readiness,
   Capture/Status navigation, cancellation and typed error guidance.
 - `CoreRuntimeTests.swift`: deterministic fake-child transport/lifecycle tests
   plus a read-only real Core capabilities smoke test in both configurations.
+- `OperationLogTests.swift`: disposable storage/process fixtures for sanitization,
+  permissions, caps, retention, crash/restart, Stop evidence and result independence.
+- `OperationLogViewTests.swift`: selection/lifecycle, bounded full-history access,
+  presentation and Runtime controls.
+- `DiagnosticReportTests.swift`: privacy, exact UTF-8 bytes, immutable/refresh
+  snapshots, partial/unavailable sources, save errors and bounded native preview.
 
 `prepare-runtime.sh` is shared by local and Xcode builds. It generates a private
 build resource `CoreRuntime.plist` with Version=1, Mode=development and explicit
@@ -169,13 +184,16 @@ Events preserve unknown fields/types; invalid envelope/version, wrong operation
 ID, non-increasing sequence, bad lifecycle/framing or inconsistent terminal exit
 fails explicitly. Unknown events do not become completion. Stderr is drained and
 tracked only as byte count/read error, never raw persisted/rendered output. Runtime
-keeps structured events in memory only; logging/report sanitization and export
-remain 16J. Operation completion never substitutes for Verification.
+keeps a bounded structured in-memory buffer and records validated events through
+the independent persistent Desktop Operation Log before eviction. Stage 16J
+viewing/history and report export are implemented. Operation completion never
+substitutes for Verification.
 
 Cancellation signals the owned root group. Core owns its tool groups and handled
 cleanup; forced termination cannot guarantee all separately owned descendants or
 in-flight mutations are settled. Missing terminal evidence is interruption, not
-rollback or confirmed no-change. There is no cooperative item-boundary stop.
+rollback or confirmed no-change. Homebrew Cask/Formula Graceful Stop is a separate
+limited cooperative control; it is not universal interruption/recovery safety.
 Application Quit waits for cancellation; closing a window leaves the shared client
 owned by the running app. Restore retains session ownership across window close/reopen; close/quit interaction
 remains subject to Stage 16K lifecycle hardening.
@@ -358,15 +376,33 @@ the Restored Bundle is a natural reference. Preserve source selection/Blueprint,
 unknown evidence and Bundle format; no SwiftUI Bundle parser. Minimal Protocol V1
 extensions require audit, not assumptions about current API support.
 
-Logging/diagnostics follow with an independent audit: preserve existing Core/CLI
-technical logging and plan a separate private persistent Desktop Protocol V1 event
-log, live View Log and exact reviewed Diagnostic Report export. Sanitize before
-storage, bound retention/size and support local clearing; do not merge or parse raw
-CLI logs or add a third logging subsystem. Existing in-memory events are not that
-persistent log. See the [logging contract](../../docs/DESKTOP.md#local-logs-and-diagnostic-report).
+Stage 16J Logging & Diagnostics is complete in the working tree. Settings →
+Operation Logs opens the shared native window; local View Log selects the matching
+operation only after a terminal flow result, never during active/intermediate
+Capture/Restore/Status. Inspect/Preview remain accessible through global history.
+Important shows compact deduplicated issues; All reaches every saved event through
+bounded pages beyond the 512-record visible window. Process Result, Verification
+and Log completeness remain independent; incomplete successful logs are neutral.
+
+Private Application Support journals use 0700 directories / 0600 files, with
+8 MiB per operation, 16 KiB records, 100 operations, 64 MiB total and 30-day
+retention. Clear Logs preserves active and unrelated files. Reports use an
+independent strict allowlist and one immutable UTF-8 snapshot for Preview, Copy
+and Save; only explicit Refresh replaces it. Reading/formatting is off MainActor,
+report text is bounded to 256 KiB and native TextKit owns scrolling. Core technical
+logs stay independent; reports contain no raw Protocol/process output or private
+object identities. See the [logging contract](../../docs/DESKTOP.md#local-logs-and-diagnostic-report).
+
+Local DiagnosticReportTests, related viewer tests, full PresentationTests and a
+Debug build passed; the native 6000-record report fixture stayed bounded and
+responsive. Operation Logs UX was manually accepted. Report Save panel interaction
+and user-driven scrolling still need manual checks; no signed/clean-Mac or hosted
+CI success is claimed. The next functional checkpoints are Cask/Tailscale execution
+requirements, Restore Final Result UI, then MAS/remaining Restore capability gaps;
+Stage 3C, Secure SSH and broader reliability/distribution qualification remain open.
 
 The full Debug Scenario Catalog is deferred UI/dev tooling, not cancelled. Retain
 Debug design-preview, sample fixtures and DemoSession; a small Lite catalog over
 production models/views may follow functional priorities. Focused fixtures/tests
 need not wait for it. Follow [Roadmap](../../ROADMAP.md#current-practical-execution-order)
-for the remaining MAS, Secure SSH, reliability and distribution priorities.
+for the remaining functional, Secure SSH, reliability and distribution priorities.

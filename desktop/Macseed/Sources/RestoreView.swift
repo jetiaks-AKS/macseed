@@ -456,7 +456,7 @@ struct RestoreView: View {
                 }
                 if let message = runtime.gracefulStopMessage { Text(message).font(.callout).foregroundStyle(.secondary) }
                 if showsRebuildActions {
-                    RestoreRebuildActions(stopping: runtime.stopping, stop: { model.requestStop() }, force: { model.requestForceStop() }, gracefulWaiting: runtime.gracefulStopRequested)
+                    RestoreRebuildActions(stopping: runtime.stopping, stop: { model.requestStop() }, force: { model.requestForceStop() }, gracefulWaiting: runtime.gracefulStopRequested, logRuntime: runtime)
                 }
             case .result:
                 if let result = model.executionResult {
@@ -466,7 +466,7 @@ struct RestoreView: View {
                             RestoreTaskPresentation(preview: preview, plan: plan, events: model.categoryPresentationEvents,
                                 result: result, executing: true, operationProgress: true)
                         } },
-                        refresh: { model.checkCurrentState() }, done: { model.finish() })
+                        refresh: { model.checkCurrentState() }, done: { model.finish() }, logRuntime: runtime)
                 }
             case .failed, .cancelled:
                 Label(model.state == .cancelled ? "Restore Preparation Cancelled" : "Can't Prepare Restore", systemImage: "exclamationmark.triangle").font(.title2)
@@ -486,6 +486,7 @@ struct RestoreView: View {
                     .font(.callout).foregroundStyle(.secondary)
             }
         }
+        .modifier(OperationLogPresenter(runtime: runtime))
         .sheet(isPresented: Binding(get: { model.state == .confirming }, set: { if !$0 { model.cancelRebuildConfirmation() } })) {
             VStack(alignment: .leading, spacing: 16) {
                 Text("Rebuild this Mac?").font(.title2)
@@ -651,9 +652,9 @@ struct RestoreRebuildActions: View {
     var stop: (() -> Void)? = nil
     var force: (() -> Void)? = nil
     var gracefulWaiting = false
+    var logRuntime: CoreRuntime? = nil
     var body: some View {
         HStack {
-            PendingOperationLogButton()
             Spacer()
             Button("Stop Rebuild", role: .cancel) { stop?() }.disabled(stopping || gracefulWaiting || stop == nil)
             Button("Force Stop", role: .destructive) { force?() }.tint(.red).foregroundStyle(.red).disabled(stopping || force == nil)
@@ -705,7 +706,7 @@ struct RestoreExecutionCategories: View {
     private func categoryStatus(_ domain: TaskDomainPresentation) -> some View {
         Group {
             if resultStatuses { RestoreResultStatusLabel(state: domain.executionStatus) }
-            else { TaskStatusLabel(state: domain.executionStatus) }
+            else { TaskStatusLabel(state: domain.executionStatus, title: domain.executionStatusTitle) }
         }.frame(width: TaskRowLayout.statusWidth, alignment: .leading)
     }
     var body: some View {
@@ -807,6 +808,7 @@ struct RestoreResultContent: View {
     var tasks: RestoreTaskPresentation? = nil
     let refresh: () -> Void
     let done: () -> Void
+    var logRuntime: CoreRuntime? = nil
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
             Text(result.title).font(.title.weight(.bold)).accessibilityAddTraits(.isHeader)
@@ -826,7 +828,7 @@ struct RestoreResultContent: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }.disclosureGroupStyle(HeaderDisclosureStyle())
             }
-            if showsActions { RestoreResultActions(result: result, refresh: refresh, done: done) }
+            if showsActions { RestoreResultActions(result: result, refresh: refresh, done: done, logRuntime: logRuntime) }
         }
     }
 }
@@ -900,11 +902,16 @@ struct RestoreResultActions: View {
     let result: RestoreExecutionPresentation
     let refresh: () -> Void
     let done: () -> Void
+    var logRuntime: CoreRuntime? = nil
     var body: some View {
         HStack {
             Button("Done", action: done).buttonStyle(.borderedProminent)
             if result.outcome != .clean { Button("Refresh Preview", action: refresh) }
-            PendingOperationLogButton()
+            if let logRuntime,
+               let reference = logRuntime.operationLogReference(matching: result.operationID),
+               OperationLogVisibility.restore(.result, active: logRuntime.isActive, reference: reference, terminal: logRuntime.termination != nil && logRuntime.operationID == result.operationID) {
+                OperationLogButton(runtime: logRuntime, reference: reference)
+            }
         }
     }
 }

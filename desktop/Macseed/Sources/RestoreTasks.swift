@@ -52,8 +52,13 @@ struct TaskDomainPresentation: Identifiable {
     var activityState: TaskRowState? = nil
     var previewOnly = false
     var confirmedFinalState: TaskRowState? = nil
+    var executionStatusTitle: String {
+        if activityState == .working && (RestoreOperationSummary(domains: [self]).attention > 0 || confirmedFinalState == .attention) { return "Working · Needs Attention" }
+        return executionStatus.rawValue
+    }
     var executionStatus: TaskRowState {
         if confirmedFinalState == .notRun { return .notRun }
+        if activityState == .working { return .working }
         if RestoreOperationSummary(domains: [self]).attention > 0 || confirmedFinalState == .attention { return .attention }
         if let confirmedFinalState, [.completed, .matching].contains(confirmedFinalState) { return confirmedFinalState }
         if state == .working { return .working }
