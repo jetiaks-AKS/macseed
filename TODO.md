@@ -22,11 +22,6 @@ closed 16J → Cask/Tailscale → Restore Final Result UI → MAS/remaining Rest
 
 ## Next — Restore Final Result UI / completion (16I)
 
-- [ ] Reuse Environment Status's category/item result structure, expandable
-  categories, statuses and numeric indicators in terminal Restore Result. During
-  execution categories remain non-expandable; details become available afterward.
-- [ ] Qualify Working · Needs Attention on every applicable Restore category,
-  including partial progress and independent item failures.
 - [ ] Complete remaining Result/completion qualification: preserve Core terminal
   outcome separately from Verification, expose partial/incomplete/unresolved
   evidence, and show only confirmed available counts.
@@ -61,7 +56,7 @@ closed 16J → Cask/Tailscale → Restore Final Result UI → MAS/remaining Rest
 
 ## Cancellation, recovery and runtime reliability
 
-Stage 1–2 fail-closed cancellation and limited Homebrew Graceful Stop are implemented;
+Stage 1–2 fail-closed cancellation and operation-wide checkpoint Graceful Stop are implemented;
 [Desktop](docs/DESKTOP.md#restore-cancellation-safety) records the incident/smoke-test
 limits. Diagnostic records do not establish durable recovery or installer safety.
 
@@ -71,7 +66,7 @@ limits. Diagnostic records do not establish durable recovery or installer safety
 - [ ] Qualify native installer Stop timing and detached/privileged process
   quiescence; mock tests and the Firefox smoke test do not prove universal safety.
 - [ ] Qualify MAS interruption separately, plus Formula, VS Code Extensions and
-  Git re-entry. Homebrew Graceful Stop is not a universal cancellation mechanism.
+  Git re-entry. Operation-wide Stop admission does not qualify every native lifecycle.
 - [ ] Independently qualify a real approximately 180-second no-progress watchdog
   stall, owned descendant termination and continued independent work.
 - [ ] **16K:** qualify stale plans/inputs, partial or interrupted operations,

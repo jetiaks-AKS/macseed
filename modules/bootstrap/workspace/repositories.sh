@@ -77,6 +77,7 @@ bootstrap_workspace_repositories() {
     local repository path remote branch
     while IFS=$'\t' read -r repository path remote branch; do
         [[ -n "$repository" ]] || continue
+        if declare -F application_stop_checkpoint >/dev/null; then application_stop_checkpoint; fi
 
     info "Repository: $repository"
 

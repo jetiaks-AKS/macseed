@@ -19,7 +19,7 @@ Private SSH identity transfer remains unavailable until 16H. Bundle-backed
 Environment Status (Stage 16K) is complete; the subsequent Status → Restore handoff is implemented and manually
 approved. Desktop Visual Unification is complete.
 [Restore Cancellation Safety](#restore-cancellation-safety) is in progress: Stage 1–2
-and Homebrew Graceful Stop are implemented; Stage 3C and installer qualification
+and operation-wide checkpoint Graceful Stop are implemented/automated-tested; Stage 3C and installer qualification
 remain open. Stage 16J Logging & Diagnostics is complete in the working tree;
 remaining cancellation/recovery work is not closed by diagnostics.
 Practical priorities are owned by
@@ -342,11 +342,11 @@ not by itself prove target-state changes. See the
 [Core diagnostic contract](core/APPLICATION-INTERFACE.md#restore-plans-and-re-entry).
 Indeterminate activity uses structured Core phases/records, never synthetic percentages.
 Stop Rebuild confirms for every active Rebuild, with Continue Rebuild as the
-default and Escape action. For supported Homebrew work, an accepted graceful request
-lets the active native installation and its post-checks finish, then prevents the next
-Homebrew item or Bootstrap module from starting. Force Stop is a separate confirmed
-emergency action using owned-process cancellation. Graceful Stop is not supported
-for every Restore category. Completed changes may remain; there is no rollback.
+default and Escape action. An accepted operation-wide graceful request waits for
+the current indivisible action and required post-checks, then prevents further
+admission at safe checkpoints. Force Stop is a separate confirmed emergency action
+using owned-process cancellation. Individual native operations are not universally
+interruptible or real-Mac qualified. Completed changes may remain; there is no rollback.
 Missing terminal
 or malformed result evidence is interrupted/unknown, not success. Results require
 structured Verification for clean completion and distinguish attention, cancellation,
@@ -598,16 +598,21 @@ A supported item-local skip can produce **Rebuild Needs Attention** only with
 confirmed independent success, consistent Verification and no unexplained failure.
 The original Core terminal failure remains available.
 
-Result always shows the overall Result card. Mismatch and Unverified cards appear
-only for corresponding positive quantitative Core results; zero, null and absent
-counts do not create placeholder cards. Partial Verification remains explicitly
-incomplete. Nonzero Unresolved is shown separately. The lower repeating **Needs
-Attention** findings block has been removed; category statuses are retained, with
-Result category Unverified neutral grey with `questionmark.circle` and actual
-problems warning/error styled.
-One initially collapsed **Technical Details** shows compact problem-only execution
-and Verification findings. The persistent Operation Log preserves safe structured
-diagnostics independently of the current flow details.
+Result keeps the operation outcome in its heading/compact status and a separate
+Verification completeness line. At most three positive-count cards summarize selected
+plan rows: Successful, Needs Attention and Skipped. Their disjoint breakdowns use
+the same row classification as categories, never global Verification predicates.
+Applied or Already Matches without Verification remains positive, explicitly marked
+not verified; a confirmed failure, mismatch, conflict or blocking unsupported state
+takes priority. Neutral skips require a reported skip with an eligible reason.
+Unestablished/not-run rows do not become failed or skipped; incomplete scope is stated.
+Positive global Mismatch/Unverified counts and Unresolved remain separate text,
+not additional cards. Missing counts remain unknown. Process Result stays independent.
+Confirmed user Stop/Force Stop intent is kept only for the current operation ID in
+memory: Stopped by User requires a matching handled stop outcome; Force Stop Requested
+never replaces an Interrupted outcome or claims that all work stopped.
+The persistent Operation Log preserves safe structured diagnostics. The lower
+collapsed Technical Details/copy fallback appears only when View Log is unavailable.
 **Copy Diagnostic Details** copies the available
 allowlisted terminal, execution, Verification, coverage and diagnostic fields,
 including successful evidence. Raw process output, arbitrary payload fields and
@@ -652,10 +657,35 @@ to Workspace. Domain IDs, selection granularity, Core execution and Verification
 remain authoritative and unchanged.
 
 Restore Result follows the [Restore result contract](#restore-result-contract),
-including conditional quantitative cards, neutral category Unverified and collapsed
+including conditional plan-row cards, neutral category Unverified and fallback
 Technical Details. Logging & Diagnostics was completed separately in Stage 16J;
-remaining Restore Final Result UI work is tracked in TODO, without reopening the
-approved visual foundation.
+terminal Restore categories now reuse Environment Status's disclosure style,
+functional sections, shared category icons/surfaces and compact colored counters.
+Running categories remain compact and non-expandable. Terminal rows expose safe
+Preview names and existing item-local operation/Verification evidence, including
+stopped and failed results. Applied, Already Matches and Verified are independent
+evidence. Each terminal item contributes to at most one counter: Success, Needs
+Attention or Skipped. Blocking unsupported skips remain Needs Attention. Successful rows show Applied or Already Matches without a second
+green Verified label; independent Verification problems remain visible. The running
+category list has no lower warning banner. Final categories support Expand All /
+Collapse All and start collapsed. Successful items omit local Technical Details;
+problem evidence remains local and in the shared log. Current failed/blocked/conflict
+evidence takes priority over earlier Applied evidence without discarding that action.
+Auxiliary macOS restarts without a completion receipt show Completion Not Reported,
+contribute no outcome count, and do not claim Apply or Verification.
+Final category rows retain one evidence-based status and number-only pills with
+accessible labels; one legend explains their colors. macOS Settings uses independent
+collapsed Finder/Dock/Windows/Keyboard/Trackpad/Screenshots children and shared exact
+setting labels. Execution records are matched to the plan action as well as item.
+Running Stop uses neutral Stopping Rebuild wording. Long Graceful Stop waits remain
+an external-lifecycle limitation; this presentation change does not alter timeouts.
+Unknown item outcomes show Outcome Unknown; confirmed absence of execution shows
+Not Run. Neither creates a numeric result. Preview blocked/conflict reasons retain
+their own meaning rather than becoming Verification failures. Positive counters count evidenced plan
+items, not Verification predicates. Category-only coverage and incomplete evidence
+remain visible through category status and View Log or fallback Technical Details. No new
+operations run when expanding results. Manual wide/narrow, keyboard/disclosure and
+real stopped-result checks remain qualification work.
 
 <a id="restore-cancellation-safety"></a>
 
@@ -666,28 +696,37 @@ result or unavailable process observation preserves `unknown_consequences` throu
 `OwnedBootstrap.cancel()` and Core terminal reporting; Desktop presents the existing
 Interrupted/Unknown outcome rather than claiming confirmed termination.
 
-Homebrew Cask and Formula Graceful Stop is implemented. A private control channel
-and Homebrew-specific launch coordinator atomically order Stop acceptance against
-native `brew` launch. Accepted Stop does not signal an active brew: its installation,
-post-checks and records finish before stopping further Homebrew items and Bootstrap
-modules. Desktop continues receiving events while showing **Finishing Current
-Installation**. Installer failure and control-channel uncertainty remain failures,
-not successful stops. Full remaining-scope Verification is not run after a stop;
-re-entry uses fresh Prepare → Preview → Execute → Verify, without Resume or rollback.
+Operation-wide Restore Graceful Stop is implemented over the existing private
+control pipe and locked controller. Requests latch during preparation and every
+module scope. Safe checkpoints apply Stop around preparation/publication/Bootstrap,
+between modules, Workspace folder/repository items, VS Code/App Store items and
+macOS settings categories, and before/after Global Verification. Atomic publication,
+a current clone/install with post-checks, settings category, Git configuration,
+SSH/Shell application and secure import finish as indivisible work. Already-running
+Verification may finish; handled Stop does not start a new full-scope Verification.
+Homebrew retains atomic Stop/native-launch admission and never receives a Graceful
+Stop signal. Partial records and actual publication/mutation facts remain authoritative.
 
-**Force Stop** remains a separate confirmed emergency action using the existing
-SIGTERM/SIGKILL path. It may interrupt an installer and does not guarantee termination
-of all detached or privileged processes. Stage 1–2 truthfully reports observed
-uncertainty; a detached child lost before the first scan can remain unknown to the
-process tree. Graceful Stop is not universal across Restore categories. Existing
-privileged-Cask lifecycle locking and durable overlap protection do not provide
-ordinary-Cask recovery: Stage 3C durable journal/reconciliation is not implemented.
-No automatic DMG detach or arbitrary cache/temp cleanup is provided.
+Desktop distinguishes delivered **Stop Requested**, accepted **Stopping Rebuild**,
+**Stop Unavailable**, delivery failure and terminal **Stopped by User**. Rejected
+requests do not leave Stop Requested on an ordinary final result. Force Stop stays
+separate, confirmed and available while waiting; its existing TERM/KILL mechanics
+may leave unknown detached/privileged effects. Stop-state is operation-bound.
 
-Validation passed: 25 cancellation mock tests (15 Homebrew Graceful Stop and 10
-Stage 1–2), related Core capability/terminal and Desktop transport/presentation
-checks, and one Debug build. These checks establish mock behavior, not comprehensive
-native-installer interruption or global process-quiescence qualification.
+Graceful waiting has no guaranteed time bound for an unresponsive active installer.
+No automatic installer kill, rollback, Resume or DMG cleanup is introduced. Re-entry
+requires fresh Prepare → Preview → Execute. Stage 3C ordinary-Cask durable
+journal/reconciliation and complete installer-quiescence qualification remain open.
+
+Unreported auxiliary Finder/Dock restart rows are hidden only without a specific
+or unexplained scope failure, and never count as success. Independent category
+problems remain visible; aggregates explained by established item problems do not
+repeat a generic warning. Raw plan/evidence and logs remain intact.
+
+Automated Stop fixtures pass 23 checks, including pre-preparation, preparation,
+publication, non-Homebrew scopes, repeated requests, module/settings boundaries,
+shared-controller ownership and native launch races. This is automated-tested behavior, not real-Mac qualification.
+The historical Firefox smoke evidence below remains narrower than this extension.
 
 ### Firefox Cask incident — 2026-10-13
 
@@ -742,14 +781,15 @@ changes occurred” only when Core evidence establishes that fact; local configu
 publication is a separate effect. Once mutation may have begun, use **Stop Rebuild**.
 A small native confirmation says: “Stop rebuilding? Macseed will stop further work.
 Changes already completed will remain. You can inspect the Mac and plan another
-rebuild later.” Supported Homebrew graceful requests show “Finishing Current Installation”
-while the current work finishes; emergency Force Stop retains cancellation reporting.
+rebuild later.” Delivered requests show “Stop Requested”; accepted requests show
+“Stopping Rebuild” while the current indivisible work finishes. Emergency Force Stop
+retains separate cancellation reporting.
 
-**Current V1 constraint:** limited Homebrew Graceful Stop uses an additive capability,
+**Current V1 constraint:** operation-wide checkpoint Graceful Stop reuses the existing capability,
 a private control channel and structured acknowledgement/events; existing V1 terminal
 semantics are retained. Force Stop uses signals and may interrupt an in-flight tool.
 Neither path promises global detached-process quiescence, atomic installation or
-rollback. Unsupported categories require separate qualification; fresh re-inspection
+rollback. Native lifecycle boundaries require real-Mac qualification; fresh re-inspection
 is required before another Restore.
 Transactional rollback is explicitly outside Macseed 1.0 scope.
 

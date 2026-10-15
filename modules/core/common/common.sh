@@ -531,6 +531,16 @@ application_record() {
     return 0
 }
 
+# Safe boundary after an indivisible module, and around final Verification.
+# No-op outside application Restore; never sends a signal to active work.
+application_stop_checkpoint() {
+    [[ -n "${MACSEED_HOMEBREW_STOP:-}" ]] || return 0
+    python3 -B modules/core/application-interface/homebrew_stop.py --idle || {
+        [[ ${ERROR_COUNT:-0} -eq 0 && ${1:-0} -le 1 ]] || exit 2
+        exit 132
+    }
+}
+
 run_module() {
     if [[ -n "${MACSEED_HOMEBREW_STOP:-}" ]]; then
         python3 -B modules/core/application-interface/homebrew_stop.py "$2" || {
@@ -551,6 +561,7 @@ run_module() {
         exit 132
     fi
     application_module_record "$2" finished "$status" "$MODULE_CHANGED"
+    application_stop_checkpoint "$status"
     return "$status"
 }
 
@@ -569,6 +580,7 @@ run_configuration() {
     run_configuration_body "$@"
     local status=$?
     application_module_record "$2" finished "$status" "$MODULE_CHANGED"
+    application_stop_checkpoint "$status"
     return "$status"
 }
 

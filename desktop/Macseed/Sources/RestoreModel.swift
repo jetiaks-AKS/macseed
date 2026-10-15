@@ -237,6 +237,7 @@ struct RestoreProgressRow {
     @Published private(set) var stopConfirmation = false
     private var reviewCancelSource: URL?
     private var stopOperationID: String?
+    private var confirmedStopRequest: RestoreStopRequest?
     @Published private(set) var forceStopConfirmation = false
     @Published private(set) var failure: String?
     @Published private(set) var technicalReason: String?
@@ -315,6 +316,9 @@ struct RestoreProgressRow {
             var changed = false
             for event in events where event.sequence > self.evidenceSequence {
                 self.evidenceSequence = event.sequence
+                if event.operationID == self.runtime.operationID && event.data?["state"]?.string == "graceful_stop_unavailable" && self.confirmedStopRequest?.force == false {
+                    self.confirmedStopRequest = nil
+                }
                 guard ["verification_record", "coverage_record", "operation_record"].contains(event.type),
                       let domain = event.data?["domain"]?.string, let item = event.data?["item_id"]?.string else { continue }
                 let key = [event.type, domain, item, event.data?["predicate"]?.string ?? "", event.data?["action"]?.string ?? ""].joined(separator: "|")
@@ -352,6 +356,7 @@ struct RestoreProgressRow {
         executionPreview = preview; executionPlan = plan
         executionStartedAt = Date(); executionFinishedAt = nil
         categoryEvidence = [:]; categoryEvidenceEvents = []; evidenceSequence = 0
+        confirmedStopRequest = nil
         executionResult = nil; dismissStopConfirmation(); state = .rebuilding
         // Start synchronously so a second activation cannot launch another operation.
         runtime.start(request, location: location)
@@ -364,7 +369,7 @@ struct RestoreProgressRow {
             let names = progressScope.reduce(into: [String: [String: String]]()) { result, row in
                 result.merge(row.itemNames) { previous, _ in previous }
             }
-            executionResult = RestoreExecutionPresentation(runtime: runtime, payload: payload, expectedID: plan.preparedPlanID, catalog: inspection?.restoreSelection, itemNames: names, expectedDiagnostics: plan.planDiagnostics)
+            executionResult = RestoreExecutionPresentation(runtime: runtime, payload: payload, expectedID: plan.preparedPlanID, catalog: inspection?.restoreSelection, itemNames: names, expectedDiagnostics: plan.planDiagnostics, stopRequest: confirmedStopRequest)
             invalidate(); state = .result
         }
     }
@@ -390,7 +395,12 @@ struct RestoreProgressRow {
         dismissStopConfirmation()
         guard pending, let id, state == .rebuilding, runtime.isActive,
               runtime.operation == .restoreExecute, runtime.operationID == id, !runtime.stopping else { return }
-        if force { runtime.cancel() } else { runtime.requestGracefulStop() }
+        if force {
+            confirmedStopRequest = RestoreStopRequest(operationID: id, force: true)
+            runtime.cancel()
+        } else if runtime.requestGracefulStop() {
+            confirmedStopRequest = RestoreStopRequest(operationID: id, force: false)
+        }
     }
     func checkCurrentState() {
         guard state == .result, !runtime.isActive else { return }
@@ -573,9 +583,29 @@ struct RestoreProgressRow {
     func waitForCompletion() async { await work?.value }
 }
 
+struct RestoreStopRequest {
+    let operationID: String
+    let force: Bool
+    func notice(operationID: String?, outcome: RestoreExecutionPresentation.Outcome, response: GracefulStopState = .requested) -> String? {
+        guard self.operationID == operationID else { return nil }
+        if force { return "Force Stop Requested" }
+        guard ![GracefulStopState.unavailable, .deliveryFailed].contains(response) else { return nil }
+        if response == .accepted && ![RestoreExecutionPresentation.Outcome.stoppedBeforeMutation, .stoppedAfterMutation, .interrupted].contains(outcome) { return nil }
+        return [.stoppedBeforeMutation, .stoppedAfterMutation].contains(outcome) ? "Stopped by User" : "Stop Requested"
+    }
+}
+
 struct RestoreExecutionPresentation {
     enum Outcome { case clean, partial, attention, stoppedBeforeMutation, stoppedAfterMutation, interrupted, failedBeforeMutation, failedAfterMutation }
+    var stopRequestExplanation: String? {
+        Self.stopRequestExplanation(outcome: outcome, notice: stopNotice)
+    }
+    static func stopRequestExplanation(outcome: Outcome, notice: String?) -> String? {
+        guard notice != nil, ![Outcome.stoppedBeforeMutation, .stoppedAfterMutation].contains(outcome) else { return nil }
+        return "Completed changes may remain. A stop request does not confirm that all work stopped."
+    }
     let outcome: Outcome
+    let stopNotice: String?
     let title: String
     let message: String
     let details: [DisplayItem]
@@ -587,7 +617,7 @@ struct RestoreExecutionPresentation {
     let operationID: String?
     private let expectedPlanID: String
     private let expectedDiagnostics: [String: String]?
-    @MainActor init(runtime: CoreRuntime, payload: [String: CoreJSON]?, expectedID: String, catalog: CoreRestoreInspection.Inventory? = nil, itemNames: [String: [String: String]] = [:], expectedDiagnostics: [String: String]? = nil) {
+    @MainActor init(runtime: CoreRuntime, payload: [String: CoreJSON]?, expectedID: String, catalog: CoreRestoreInspection.Inventory? = nil, itemNames: [String: [String: String]] = [:], expectedDiagnostics: [String: String]? = nil, stopRequest: RestoreStopRequest? = nil) {
         self.expectedPlanID = expectedID
         self.expectedDiagnostics = expectedDiagnostics
         structuredEvidence = payload
@@ -613,12 +643,13 @@ struct RestoreExecutionPresentation {
                     && payload?["prepared_plan_id"]?.string == expectedID {
             outcome = verified && payload?["warning_count"]?.integer == 0 && payload?["error_count"]?.integer == 0 ? .clean : .attention
         } else { outcome = .interrupted }
+        stopNotice = stopRequest?.notice(operationID: operationID, outcome: outcome, response: runtime.gracefulStopState)
         switch outcome {
         case .clean: title = "All Done"; message = "Your selected environment has been restored and verified."
         case .partial: title = "Rebuild Needs Attention"; message = "Some selected changes completed. Refresh Preview to inspect unresolved items before rebuilding again."
         case .attention: title = "Rebuild Completed with Issues"; message = "Review the observed results, then Refresh Preview to check current state."
-        case .stoppedBeforeMutation: title = "Rebuild Cancelled"; message = "Core reports that no target mutation started. Refresh Preview before another Rebuild."
-        case .stoppedAfterMutation: title = "Rebuild Stopped"; message = "Completed changes may remain. Refresh Preview to inspect current state before rebuilding again."
+        case .stoppedBeforeMutation: title = "Rebuild Cancelled"; message = "Rebuild cancelled before target changes began. Refresh Preview before rebuilding again."
+        case .stoppedAfterMutation: title = "Rebuild Stopped"; message = "Rebuild stopped safely. Completed changes remain. Refresh Preview before rebuilding again."
         case .interrupted: title = "Rebuild Interrupted"; message = "Final consequences are unknown. Changes may remain. Refresh Preview to inspect current state."
         case .failedBeforeMutation:
             if payload?["code"]?.string == "stale_plan" || terminal?.code == "stale_plan" {
@@ -999,5 +1030,19 @@ struct RestoreResultFindings {
         }
         findings = issues
         details = detailRows
+    }
+}
+
+// Presentation-only global issues; item/category diagnostics remain in their own rows.
+extension RestoreExecutionPresentation {
+    func globalProblemMessages(knownDomains: Set<String>) -> [String] {
+        var seen = Set<String>()
+        return findings.filter { finding in
+            let domain = String(finding.id.split(separator: ":").first ?? "")
+            return finding.id != "result-incomplete" && !knownDomains.contains(domain)
+                && !["bootstrap_failed", "cancelled", "secure_cancelled"].contains(finding.reason ?? "")
+        }.compactMap { finding in
+            seen.insert(finding.action).inserted ? finding.action : nil
+        }
     }
 }

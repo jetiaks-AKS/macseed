@@ -666,17 +666,18 @@ import SwiftUI
         }
         let notRun = RestoreVerificationSummary(payload: ["verification": .object(["status": .string("not_run"), "details": .object(["verification_records": .array([.object(["conformity": .string("unverified")])])])])])
         precondition(notRun.title == "Verification Not Run" && notRun.unverified == nil)
-        for (mismatch, unverified, count) in [(0, 0, 1), (2, 0, 2), (0, 3, 2), (2, 3, 3)] {
+        for (mismatch, unverified) in [(0, 0), (2, 0), (0, 3), (2, 3)] {
             let summary = RestoreVerificationSummary(payload: ["verification": .object(["status": .string("complete"), "verified_count": .integer(4),
                 "mismatch_count": .integer(mismatch), "unverified_count": .integer(unverified), "unresolved_count": .integer(1)])])
             precondition(summary.complete && summary.mismatch == mismatch && summary.unverified == unverified && summary.unresolved == 1)
-            precondition(1 + (RestoreVerificationResult.showsCount(summary.mismatch) ? 1 : 0) + (RestoreVerificationResult.showsCount(summary.unverified) ? 1 : 0) == count)
+            precondition(RestoreVerificationResult.showsCount(summary.mismatch) == (mismatch > 0) && RestoreVerificationResult.showsCount(summary.unverified) == (unverified > 0))
+            precondition(RestoreResultSummary(domains: []).cards.isEmpty, "Global predicates must not create plan-row cards")
         }
         let source = try! String(contentsOfFile: "Sources/RestoreView.swift")
             .components(separatedBy: "struct RestoreVerificationResult: View {")[1].components(separatedBy: "struct RestoreResultContent:")[0]
-        precondition(source.contains("WorkspaceThreeMetrics {") && source.contains("metric(\"Result\""))
-        precondition(source.contains("Self.showsCount(summary.mismatch)") && source.contains("Self.showsCount(summary.unverified)"))
-        precondition(source.contains("Label(summary.title") && source.contains("Unresolved: "))
+        precondition(source.contains("WorkspaceThreeMetrics {") && !source.contains("metric(\"Result\"") && source.contains("ForEach(rows.cards)"))
+        precondition(!source.contains("Verification mismatches:") && !source.contains("Verification unverified:"))
+        precondition(source.contains("Label(summary.title") && source.contains("Some selected scope remains unresolved"))
         print("PASS: Result always present; only positive Core aggregates visible; missing/null/zero/invalid counts hidden; partial Verification caveats and Unresolved retained; no renders")
     }
 
@@ -684,7 +685,7 @@ import SwiftUI
         let source = try! String(contentsOfFile: "Sources/RestoreView.swift")
         let result = source.components(separatedBy: "struct RestoreResultContent:")[1].components(separatedBy: "struct RestorePreviewMetrics:")[0]
         precondition(!result.contains("result.findings") && !result.contains("Text(\"Needs Attention\")"))
-        precondition(result.contains("RestoreVerificationResult(outcome: result.outcome, payload: result.structuredEvidence)"))
+        precondition(result.contains("RestoreVerificationResult(outcome: result.outcome, payload: result.structuredEvidence, domains: tasks?.domains)"))
         precondition(result.contains("RestoreExecutionCategories(domains: tasks.domains, showsWarnings: false, resultStatuses: true)"))
         precondition(result.contains("Text(result.message)") && result.contains("RestoreResultActions(result: result, refresh: refresh, done: done, logRuntime: logRuntime)"))
         precondition(result.contains("DisclosureGroup(\"Technical Details\") {") && !result.contains("isExpanded:"))
@@ -752,7 +753,139 @@ import SwiftUI
         print("PASS: Settings owns shared operation history; Capture/Restore/Status retain local View Log without a duplicate footer")
     }
 
+    static func restoreResultSummaryChecks() {
+        func item(_ id: String, _ labels: [String], state: TaskRowState = .completed, reason: String? = nil, known: Bool? = nil) -> TaskItemPresentation {
+            TaskItemPresentation(id: id, item: DisplayItem(id: id, title: id, status: .information, action: "", reason: reason), state: state, resultLabels: labels, resultEvidenceAvailable: known)
+        }
+        let fixtures: [(TaskItemPresentation, String?)] = [
+            (item("verified", ["Applied", "Verified"]), "Success"),
+            (item("applied", ["Applied"]), "Success"),
+            (item("matching", ["Already Matches"]), "Success"),
+            (item("not-verified", ["Applied", "Unverified"], state: .attention), "Success"),
+            (item("mismatch", ["Applied", "Mismatch"]), "Needs Attention"),
+            (item("failed", ["Applied", "Failed"], state: .failed), "Needs Attention"),
+            (item("unsupported", ["Skipped", "Unsupported"]), "Needs Attention"),
+            (item("skip", ["Skipped"], state: .skipped, reason: "not_applicable"), "Skipped"),
+            (item("unknown", ["Unverified"], state: .unverified, known: false), nil),
+            (item("unverified", ["Unverified"], state: .unverified, known: true), "Needs Attention"),
+            (item("waiting", ["Unverified"], state: .waiting), nil)]
+        for (row, expected) in fixtures {
+            precondition(row.resultGroup == expected && RestoreFinalDomain.group(row) == expected)
+            let domain = TaskDomainPresentation(id: row.id, title: row.id, symbol: "folder", items: [row])
+            let summary = RestoreResultSummary(domains: [domain, domain])
+            precondition(summary.cards.count == (expected == nil ? 0 : 1))
+            precondition(summary.cards.first?.count == (expected == nil ? nil : 1))
+            precondition(summary.cards.first?.id == expected)
+            precondition(RestoreFinalDomain.counts(domain).first?.0 == expected)
+        }
+        let domain = TaskDomainPresentation(id: "all", title: "All", symbol: "folder", items: fixtures.map { $0.0 })
+        let summary = RestoreResultSummary(domains: [domain])
+        precondition(summary.cards.map(\.count) == [4, 4, 1] && summary.uncounted == 2)
+        precondition(summary.cards[0].explanation == "1 already matches, not verified · 2 applied, not verified · 1 verified")
+        for outcome in [RestoreExecutionPresentation.Outcome.clean, .partial, .attention, .failedBeforeMutation, .failedAfterMutation, .stoppedBeforeMutation, .stoppedAfterMutation, .interrupted] {
+            for force in [false, true] {
+                let request = RestoreStopRequest(operationID: "current", force: force)
+                precondition(request.notice(operationID: "another", outcome: outcome) == nil)
+                precondition(request.notice(operationID: nil, outcome: outcome) == nil)
+                let expected = force ? "Force Stop Requested" : [.stoppedBeforeMutation, .stoppedAfterMutation].contains(outcome) ? "Stopped by User" : "Stop Requested"
+                precondition(request.notice(operationID: "current", outcome: outcome) == expected)
+            }
+        }
+        var untouched = item("untouched", ["Unverified"], state: .unverified, known: false)
+        untouched.resultNotRun = true
+        precondition(untouched.resultTitle == "Not Run" && untouched.resultGroup == nil)
+        var unknown = untouched; unknown.resultNotRun = false
+        precondition(unknown.resultTitle == "Outcome Unknown" && unknown.resultGroup == nil)
+        var startedUnknown = unknown
+        startedUnknown.resultEvidenceAvailable = true
+        startedUnknown.verificationEvidenceAvailable = false
+        precondition(startedUnknown.resultTitle == "Outcome Unknown" && startedUnknown.resultGroup == nil)
+        precondition(startedUnknown.hasResultProblemDetails)
+        var verifiedUnknown = startedUnknown; verifiedUnknown.verificationEvidenceAvailable = true
+        precondition(verifiedUnknown.resultTitle == "Unverified" && verifiedUnknown.resultGroup == "Needs Attention")
+        var blocked = untouched; blocked.previewProblem = "target_conflict"
+        precondition(blocked.resultGroup == "Needs Attention" && blocked.resultBreakdown == "conflict")
+        var applied = item("applied", ["Applied"], known: true)
+        applied.sourceDomain = "macos-finder"
+        var matching = item("matching", ["Already Matches"], known: true)
+        matching.sourceDomain = "macos-dock"
+        let settings = TaskDomainPresentation(id: "macOS Settings", title: "macOS Settings", symbol: "gearshape", items: [applied, matching])
+        precondition(settings.resultTitle == "Completed")
+        precondition(settings.resultChildren.map(\.id) == ["macos-finder", "macos-dock"])
+        precondition(settings.resultChildren[0].resultTitle == "Completed" && settings.resultChildren[1].resultTitle == "Already Matches")
+        precondition(settings.resultChildren.flatMap(\.items).map(\.id) == [applied.id, matching.id])
+        precondition(TaskDomainPresentation(id: "notrun", title: "", symbol: "", items: [untouched]).resultTitle == "Not Run")
+        precondition(TaskDomainPresentation(id: "unknown", title: "", symbol: "", items: [unknown]).resultTitle == "Outcome Unknown")
+        precondition(TaskDomainPresentation(id: "blocked", title: "", symbol: "", items: [blocked]).resultTitle == "Needs Attention")
+        let partial = TaskDomainPresentation(id: "partial", title: "", symbol: "", items: [applied, unknown])
+        precondition(partial.resultTitle == "Partial")
+        precondition(RestoreFinalDomain.counts(partial).map(\.1) == [1])
+        let partialStyle = RestoreResultStatusLabel(state: RestoreFinalDomain.finalStatus(partial), title: partial.resultTitle)
+        precondition(partialStyle.tone == .neutral && partialStyle.symbol == "circle.lefthalf.filled")
+        let unknownDomain = TaskDomainPresentation(id: "unknown", title: "", symbol: "", items: [unknown])
+        let unknownStyle = RestoreResultStatusLabel(state: RestoreFinalDomain.finalStatus(unknownDomain), title: unknownDomain.resultTitle)
+        precondition(unknownStyle.tone == .neutral && unknownStyle.symbol == "questionmark.circle")
+        precondition(RestoreFinalDomain.visibleLabels(unknown) == ["Outcome Unknown"])
+        let mixed = TaskDomainPresentation(id: "mixed", title: "", symbol: "", items: [applied, item("second-applied", ["Applied"], known: true), fixtures[6].0, unknown, item("second-unknown", ["Unverified"], state: .unverified, known: false)])
+        precondition(mixed.resultTitle == "Needs Attention")
+        precondition(RestoreResultSummary(domains: [mixed]).cards.map(\.count) == [2, 1])
+        precondition(RestoreFinalDomain.counts(mixed).map(\.1) == [2, 1])
+        for outcome in [RestoreExecutionPresentation.Outcome.stoppedBeforeMutation, .stoppedAfterMutation] {
+            precondition(RestoreExecutionPresentation.stopRequestExplanation(outcome: outcome, notice: "Stopped by User") == nil)
+        }
+        precondition(RestoreExecutionPresentation.stopRequestExplanation(outcome: .interrupted, notice: "Stop Requested")?.contains("does not confirm") == true)
+        precondition(RestoreExecutionPresentation.stopRequestExplanation(outcome: .interrupted, notice: nil) == nil)
+
+        precondition(GracefulStopState.receiving("graceful_stop_accepted", current: .requested) == .accepted)
+        precondition(GracefulStopState.receiving("graceful_stop_unavailable", current: .requested) == .unavailable)
+        let rejectedRequest = RestoreStopRequest(operationID: "current", force: false)
+        for outcome in [RestoreExecutionPresentation.Outcome.clean, .partial, .failedBeforeMutation, .failedAfterMutation, .stoppedAfterMutation] {
+            precondition(rejectedRequest.notice(operationID: "current", outcome: outcome, response: .unavailable) == nil)
+            precondition(rejectedRequest.notice(operationID: "current", outcome: outcome, response: .deliveryFailed) == nil)
+        }
+        precondition(rejectedRequest.notice(operationID: "current", outcome: .stoppedAfterMutation, response: .accepted) == "Stopped by User")
+        precondition(rejectedRequest.notice(operationID: "another", outcome: .stoppedAfterMutation, response: .accepted) == nil)
+        var restart = item("restart", ["Unverified"], state: .unverified, known: false)
+        restart.auxiliaryCompletionUnreported = true
+        var finder = TaskDomainPresentation(id: "macos-finder", title: "Finder", symbol: "finder", items: [applied, restart])
+        precondition(finder.resultVisibleItems.map(\.id) == [applied.id])
+        precondition(finder.items.count == 2 && restart.resultGroup == nil)
+        let completedWithRestart = RestoreResultSummary(domains: [finder])
+        precondition(completedWithRestart.uncounted == 0 && completedWithRestart.cards.map(\.count) == [1])
+        let unsupportedOnly = TaskDomainPresentation(id: "unsupported", title: "", symbol: "", items: [fixtures[6].0])
+        precondition(RestoreResultSummary(domains: [unsupportedOnly]).uncounted == 0)
+        let withUnknown = TaskDomainPresentation(id: "unknown", title: "", symbol: "", items: [applied, item("unknown-requirement", ["Unverified"], state: .unverified, known: false), untouched, restart])
+        precondition(RestoreResultSummary(domains: [withUnknown]).uncounted == 2)
+        precondition(RestoreResultSummary(domains: [withUnknown]).cards.map(\.id) == ["Success"])
+        let skippedOnly = TaskDomainPresentation(id: "skipped", title: "", symbol: "", items: [fixtures[7].0])
+        precondition(RestoreResultSummary(domains: [skippedOnly]).cards.map(\.id) == ["Skipped"])
+        precondition(RestoreFinalDomain.tone("Skipped") == .secondary)
+        precondition(summary.cards.count == 3 && summary.cards.reduce(0) { $0 + $1.count } == fixtures.count - summary.uncounted)
+        precondition(applied.resultTitle == "Applied, not verified" && applied.resultBreakdown == "applied, not verified")
+        precondition(fixtures[0].0.resultTitle == "Verified" && fixtures[0].0.resultBreakdown == "verified")
+
+        finder.resultCategoryIssue = true
+        precondition(finder.resultTitle == "Needs Attention" && finder.resultVisibleItems.count == 2)
+        precondition(finder.resultCategoryExplanation.contains("exact failed step"))
+        var failedRestart = restart
+        failedRestart.resultLabels = ["Failed"]; failedRestart.auxiliaryCompletionUnreported = false
+        precondition(TaskDomainPresentation(id: "macos-dock", title: "Dock", symbol: "dock", items: [failedRestart]).resultVisibleItems.count == 1)
+        precondition(RestoreTaskPresentation.scopeProblemExplained(reason: "module_failed", hasItemProblems: true, independentProblem: false))
+        precondition(!RestoreTaskPresentation.scopeProblemExplained(reason: "module_failed", hasItemProblems: true, independentProblem: true))
+        precondition(!RestoreTaskPresentation.scopeProblemExplained(reason: "module_failed", hasItemProblems: false, independentProblem: false))
+        precondition(!RestoreTaskPresentation.scopeProblemExplained(reason: "another_error", hasItemProblems: true, independentProblem: false))
+        precondition(RestoreResultSummary(domains: []).cards.isEmpty)
+        let source = try! String(contentsOfFile: "Sources/RestoreView.swift")
+        precondition(source.contains("if !hasOperationLog && !result.technicalDetails.isEmpty"))
+        precondition(source.contains("result.stopNotice") && source.contains("Counts cover confirmed outcomes only"))
+        precondition(source.contains("Text(String(count))") && !source.contains("Text(label + \" \" + String(count))"))
+        precondition(!source.contains("No item-level completion or Verification was reported.") && !source.contains("Finishing Current Installation"))
+        precondition(source.contains("ForEach(domain.resultChildren)") && source.contains("Stopping Rebuild…"))
+        print("PASS: shared plan-row summary, disjoint breakdowns, unknown scope, Apply without Verification and operation-bound Stop notices")
+    }
+
     @MainActor static func main() {
+        restoreResultSummaryChecks()
         if CommandLine.arguments.contains("--operation-log-only") { operationLogChecks(); return }
         if CommandLine.arguments.contains("--visual-contract-only") { visualContractChecks(); return }
         if CommandLine.arguments.contains("--result-cleanup-only") { resultCleanupChecks(); return }
@@ -763,6 +896,16 @@ import SwiftUI
         if CommandLine.arguments.contains("--restore-macos-only") { restoreMacOSChecks(); return }
         if CommandLine.arguments.contains("--final-corrections") { finalCorrectionChecks(); return }
         if CommandLine.arguments.contains("--restore-only") { renderRestoreV2(); return }
+        let finalItem = TaskItemPresentation(id: "result-item", item: DisplayItem(id: "result-item", title: "Example", status: .information, action: "Confirmed outcome"), state: .completed, resultLabels: ["Applied", "Verified"])
+        for state in [TaskRowState.completed, .attention, .failed, .unverified, .notRun] {
+            let domain = TaskDomainPresentation(id: "homebrew-casks", title: "Homebrew Applications", symbol: "app", items: [finalItem], confirmedFinalState: state)
+            for width in [CGFloat(500), CGFloat(900)] {
+                for expanded in [false, true] {
+                    let renderer = ImageRenderer(content: RestoreFinalDomain(domain: domain, expansion: .constant(expanded)).frame(width: width))
+                    precondition(renderer.nsImage != nil)
+                }
+            }
+        }
         for count in 1...10 {
             let boundary = 300 + 28 + OperationSummaryLayout.metricWidth(count)
             precondition(!OperationSummaryLayout.horizontal(width: boundary - 1, count: count))

@@ -391,9 +391,34 @@ or mutation does not imply rollback. Capture cancellation after Bundle publicati
 retains `publication_occurred=true`.
 
 Core owns child process groups, closes interactive stdin, isolates tool output
-from JSONL and terminates owned processes on cancellation. Private staging is
+from JSONL and terminates owned processes on forced cancellation. Graceful Stop
+uses the safe checkpoints below. Private staging is
 cleaned on handled exit; SIGKILL/power loss cannot guarantee cleanup. There is no
 daemon, XPC service, persistent session/resume database or Bootstrap transaction.
+
+### Restore Graceful Stop checkpoints
+
+The existing private control pipe and locked state now cover the whole Execute
+operation, starting before preparation. A delivered `S` is latched independently
+of the current module and emits the existing `graceful_stop_accepted` event.
+Preparation completes to its next checkpoint; atomic publication finishes before
+Stop is applied. No Bootstrap starts after an observed pre-Bootstrap stop.
+The same controller/state is shared with OwnedBootstrap; there is no second reader.
+
+Bootstrap checks Stop before/after modules, between Workspace folder/repository
+items, VS Code/App Store items and macOS settings categories, and before/after
+Global Verification. A clone, individual install with required local post-checks,
+settings-category application, Git configuration, SSH/Shell application and secure
+import remain indivisible. A Verification already in progress may finish; Stop does
+not start a new full-scope Verification. Homebrew admission still orders Stop and
+native launch under the same `flock`; Graceful Stop never signals an active installer.
+Errors retain precedence and partial records/publication/mutation facts are preserved.
+
+An active installer may take unbounded time after accepted Stop: the ordinary
+no-progress termination remains suppressed while stopping. Force Stop is separate
+and may leave unknown consequences. This is not rollback, Resume, Stage 3C durable
+ordinary-Cask reconciliation, or qualification of arbitrary privileged descendants.
+Automated fixtures establish checkpoint behavior, not real-Mac installer safety.
 
 ### Independent Homebrew items
 

@@ -209,6 +209,7 @@ install_appstore_apps() {
         [[ -z "$app_id" ]] && continue
         [[ "$app_id" =~ ^# ]] && continue
         blueprint_item_selected app-store "$app_id" || continue
+        if declare -F application_stop_checkpoint >/dev/null; then application_stop_checkpoint; fi
 
         is_appstore_app_installed "$app_id"
         inspection_result=$?

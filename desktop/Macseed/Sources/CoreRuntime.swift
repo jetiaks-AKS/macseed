@@ -1,6 +1,13 @@
 import Combine
 import Foundation
 
+enum GracefulStopState: String { case idle, requested, accepted, unavailable, deliveryFailed
+    static func receiving(_ state: String, current: Self) -> Self {
+        if state == "graceful_stop_accepted" { return .accepted }
+        if state == "graceful_stop_unavailable" { return .unavailable }
+        return current
+    }
+}
 enum CoreRuntimeState: String { case idle, launching, running, completed, failed, cancelled }
 struct OperationLogReference: Sendable {
     let id: UUID
@@ -23,6 +30,7 @@ struct OperationLogReference: Sendable {
     private(set) var bundleComparisonSupported: Bool?
     private(set) var homebrewGracefulSupported = false
     @Published private(set) var gracefulStopRequested = false
+    @Published private(set) var gracefulStopState: GracefulStopState = .idle
     @Published private(set) var gracefulStopMessage: String?
     @Published private(set) var capabilities: CoreCapabilities?
     @Published private(set) var mutationMayHaveStarted: Bool?
@@ -59,7 +67,7 @@ struct OperationLogReference: Sendable {
         mutationMayHaveStarted = nil
         publicationOccurred = nil
         stopping = false
-        gracefulStopRequested = false; gracefulStopMessage = nil
+        gracefulStopRequested = false; gracefulStopState = .idle; gracefulStopMessage = nil
         let generation = UUID()
         logGeneration = generation
         logFinished = false
@@ -106,9 +114,11 @@ struct OperationLogReference: Sendable {
             }
             for await event in channel.stream {
                 state = .running
+                gracefulStopState = GracefulStopState.receiving(event.data?["state"]?.string ?? "", current: gracefulStopState)
+                if gracefulStopState == .accepted { gracefulStopMessage = nil }
                 if event.data?["state"]?.string == "graceful_stop_unavailable" {
                     gracefulStopRequested = false
-                    gracefulStopMessage = "Graceful Stop is unavailable for the current operation. Force Stop remains available."
+                    gracefulStopMessage = "Stop Unavailable. Force Stop remains available."
                 }
                 events.append(event)
                 if events.count > 256 { events.removeFirst(); historyTruncated = true }
@@ -152,19 +162,22 @@ struct OperationLogReference: Sendable {
             }
         }
     }
-    func requestGracefulStop() {
-        guard isActive, operation == .restoreExecute, !gracefulStopRequested else { return }
+    @discardableResult func requestGracefulStop() -> Bool {
+        guard isActive, operation == .restoreExecute, !gracefulStopRequested else { return false }
         guard homebrewGracefulSupported, transport?.requestGracefulStop() == true else {
             logSession?.client(.gracefulStopDeliveryFailed)
+            gracefulStopState = .deliveryFailed
             gracefulStopMessage = "Graceful Stop could not be delivered. Force Stop remains available."
-            return
+            return false
         }
-        gracefulStopRequested = true; gracefulStopMessage = nil
+        gracefulStopRequested = true; gracefulStopState = .requested; gracefulStopMessage = "Stop Requested"
         logSession?.client(.gracefulStopDelivered)
+        return true
     }
     func cancel() {
         guard isActive else { return }
         stopping = true
+        gracefulStopMessage = nil
         logSession?.client(.forceStopRequested)
         transport?.cancel()
     }

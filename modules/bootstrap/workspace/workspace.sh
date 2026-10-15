@@ -78,6 +78,7 @@ bootstrap_workspace() {
 
     echo
 
+    if declare -F application_stop_checkpoint >/dev/null; then application_stop_checkpoint "$workspace_result"; fi
     bootstrap_workspace_repositories
     submodule_result=$?
 

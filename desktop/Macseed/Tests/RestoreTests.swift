@@ -87,6 +87,25 @@ import SwiftUI
         func operationTasks(_ events: [CoreEvent]) -> RestoreTaskPresentation {
             RestoreTaskPresentation(preview: preview, plan: plan, events: events, executing: true, operationProgress: true)
         }
+        var multiActionRaw = raw
+        var secondAction = rows[0]
+        secondAction["action"] = "install"
+        multiActionRaw["plan"] = [rows[0], secondAction]
+        let multiPlan = try JSONDecoder().decode(CoreRestorePreparation.self, from: JSONSerialization.data(withJSONObject: multiActionRaw))
+        let multiPreview = RestorePreviewPresentation(multiPlan, catalog: catalog)
+        let multiTasks = RestoreTaskPresentation(preview: multiPreview, plan: multiPlan, events: [finished], executing: true, operationProgress: true)
+        let multiItems = multiTasks.domains.flatMap(\.items)
+        precondition(multiItems[0].resultLabels.contains("Applied") && !multiItems[1].resultLabels.contains("Applied"))
+        let verifiedRepair = try event("verification_record", domains[0], "firefox", "conformity", "verified")
+        let verifiedTasks = operationTasks([finished, verifiedRepair])
+        let verifiedRow = verifiedTasks.domains.flatMap(\.items).first { $0.id == "restore-0" }!
+        precondition(verifiedRow.resultLabels == ["Applied", "Verified"] && verifiedRow.resultTitle == "Verified")
+        precondition(verifiedRow.resultBreakdown == "verified")
+        precondition(operationTasks([finished]).domains.flatMap(\.items).first { $0.id == "restore-0" }!.resultBreakdown == "applied, not verified")
+        let multiVerified = RestoreTaskPresentation(preview: multiPreview, plan: multiPlan, events: [finished, verifiedRepair], executing: true, operationProgress: true)
+        precondition(multiVerified.domains.flatMap(\.items).allSatisfy { $0.resultLabels.contains("Verified") })
+        precondition(!multiVerified.domains.flatMap(\.items)[1].resultLabels.contains("Applied"))
+        precondition(RestoreResultSummary(domains: multiVerified.domains).cards.first?.count == 2)
         let emptyProgress = operationTasks([])
         precondition(emptyProgress.domains.count == 2 && emptyProgress.domains.flatMap(\.items).count == 37)
         precondition(RestoreOperationSummary(domains: emptyProgress.domains).completed == 0)
@@ -95,11 +114,28 @@ import SwiftUI
         let projected = operationTasks([finished, activeEvent, failure])
         let counts = RestoreOperationSummary(domains: projected.domains)
         precondition(counts.completed == 1 && counts.working == 1 && counts.attention == 1)
+        for problem in ["failed", "blocked", "conflict"] {
+            let changed = try event("execution_event", domains[0], "firefox", "state", "changed", action: "reinstall")
+            let trouble = try event("execution_event", domains[0], "firefox", "state", problem, action: "reinstall")
+            let tasks = operationTasks([changed, trouble])
+            let item = tasks.domains.flatMap(\.items).first { $0.id == "restore-0" }!
+            precondition(item.resultLabels.contains("Applied"))
+            precondition(RestoreFinalDomain.group(item) == "Needs Attention")
+            precondition(RestoreFinalDomain.finalStatus(tasks.domains[0]) == .attention)
+            precondition(RestoreFinalDomain.showsItemDetails(item))
+            precondition(item.resultTechnicalDetails!.contains("state: " + problem))
+            precondition(RestoreFinalDomain.visibleLabels(item) == [problem == "failed" ? "Failed" : "Needs Attention"])
+        }
         let skippedItem = TaskItemPresentation(id: "skip", item: DisplayItem(id: "skip", title: "Dependent item",
             status: .attention, action: "Skipped", reason: "dependency_failed"), state: .skipped)
         precondition(RestoreOperationSummary(domains: [.init(id: "skip", title: "Skipped", symbol: "app", items: [skippedItem])]).attention == 1)
         let checking = operationTasks([finished, activeEvent, verifiedOnly, phase])
         precondition(RestoreOperationSummary(domains: checking.domains).completed == 1)
+        let itemResults = checking.domains.flatMap(\.items)
+        precondition(itemResults.first { $0.id == "restore-0" }!.resultLabels == ["Applied"])
+        precondition(itemResults.first { $0.id == "restore-1" }!.resultLabels == ["Verified"])
+        precondition(emptyProgress.domains.flatMap(\.items).allSatisfy { $0.resultLabels == ["Unverified"] })
+        precondition(operationTasks([unrelatedAction]).domains.flatMap(\.items).allSatisfy { !$0.resultLabels.contains("Applied") })
         precondition(checking.domains.flatMap(\.items).first { $0.id == "restore-1" }!.state == .unverified)
         precondition(RestoreOperationSummary(domains: checking.domains).working == 0)
         var twoRaw = raw
@@ -167,6 +203,13 @@ import SwiftUI
         let macVerified = try event("verification_record", macDomains[1], "com.apple.screencapture/location", "conformity", "verified", action: "set_preference")
         let missing = macTasks([macVerified, phase])
         precondition(missing.domains.flatMap(\.items).count == 3)
+        let restart = missing.domains.flatMap(\.items).first { $0.id == "restore-2" }!
+        precondition(restart.auxiliaryCompletionUnreported)
+        precondition(RestoreFinalDomain.group(restart) == nil)
+        precondition(RestoreFinalDomain.visibleLabels(restart) == ["Completion Not Reported"])
+        precondition(!RestoreFinalDomain.showsItemDetails(restart))
+        precondition(!restart.resultLabels.contains("Applied") && !restart.resultLabels.contains("Verified"))
+
         precondition(missing.domains.allSatisfy { $0.state == .unverified })
         precondition(RestoreOperationSummary(domains: missing.domains).completed == 0)
         precondition(RestoreOperationSummary(domains: missing.domains).attention == 0)
@@ -178,7 +221,7 @@ import SwiftUI
         precondition(missing.domains.allSatisfy { $0.executionStatus == .awaitingVerification && $0.executionMessages.isEmpty })
         precondition(projected.domains[0].executionStatus == .attention)
         precondition(projected.domains[1].executionStatus == .working)
-        let warning = try event("operation_record", domains[0], "firefox", "outcome", "warning")
+        let warning = try event("operation_record", domains[0], "firefox", "outcome", "warning", action: "reinstall")
         precondition(operationTasks([warning]).domains[0].executionStatus == .attention)
         precondition(operationTasks([warning, warning]).domains[0].executionMessages.count == 1)
         let matchingDomain = TaskDomainPresentation(id: "matching", title: "Matching", symbol: "app", items: [
@@ -367,7 +410,7 @@ import SwiftUI
             precondition(project().domains.flatMap(\.items).filter { $0.state == .working }.map { $0.item.title } == [item])
             precondition(project().domains[0].summary.contains("1 working"))
             precondition(project().counters.first { $0.state == .working }?.count == 1)
-            events.append(try event("operation_record", domains[0], item, "outcome", "success"))
+            events.append(try event("operation_record", domains[0], item, "outcome", "success", action: item == "firefox" ? "reinstall" : "install"))
             precondition(state(item) == .awaitingVerification, "Operation success awaits authoritative conformity")
             precondition(state(item).tone == .neutral && state(item).symbol == "clock")
             precondition(!project().domains.flatMap(\.items).contains { $0.state == .working })
@@ -464,7 +507,7 @@ import SwiftUI
         let caskActive = try event("homebrew-casks", "iina", "applying")
         let working = RestoreTaskPresentation(preview: preview, plan: plan, events: [caskActive], executing: true, operationProgress: true)
         let caskRow = working.domains.first { $0.id == "homebrew-casks" }!
-        precondition(caskRow.executionStatus == .attention && !caskRow.executionMessages.isEmpty)
+        precondition(caskRow.executionStatus == .working && caskRow.executionStatusTitle == "Working · Needs Attention" && !caskRow.executionMessages.isEmpty)
         let changed = try event("macos-dock", "com.apple.dock/tilesize", "changed")
         let verifying = try event("verification", "scope", "started")
         let localVerifying = try event("macos-dock", "com.apple.dock/tilesize", "verifying")
@@ -528,6 +571,43 @@ import SwiftUI
     }
     @MainActor static func main() async throws {
         if !CommandLine.arguments.contains("--review-cancel-only") && !CommandLine.arguments.contains("--restore-macos-only") {
+            for id in WorkspaceCategoryStyle.groups.flatMap({ $0.1 }) {
+                let problem = TaskItemPresentation(id: "problem", item: DisplayItem(id: "problem", title: "Problem", status: .attention, action: "Needs inspection"), state: .failed, resultLabels: ["Failed", "Mismatch"])
+                var category = TaskDomainPresentation(id: id, title: id, symbol: "folder", items: [problem], activityState: .working)
+                precondition(category.executionStatusTitle == "Working · Needs Attention")
+                category.activityState = nil
+                precondition(category.executionStatusTitle == "Needs Attention")
+                let counts = Dictionary(uniqueKeysWithValues: RestoreFinalDomain.counts(category))
+                precondition(counts == ["Needs Attention": 1])
+                precondition(counts["Applied"] == nil && counts["Verified"] == nil)
+            }
+            func resultItem(_ labels: [String], state: TaskRowState = .completed, reason: String? = nil) -> TaskItemPresentation {
+                TaskItemPresentation(id: labels.joined(separator: ":"), item: DisplayItem(id: "fixture", title: "Fixture", status: .information, action: "", reason: reason), state: state, resultLabels: labels)
+            }
+            let success = resultItem(["Applied", "Verified"])
+            let matching = resultItem(["Already Matches", "Verified"])
+            let unsupported = resultItem(["Skipped", "Unsupported"], state: .skipped, reason: "cask_execution_requirements_unsupported")
+            let skipped = resultItem(["Skipped", "Verified"], state: .skipped, reason: "not_applicable")
+            let unverified = resultItem(["Applied", "Unverified"])
+            let waiting = resultItem(["Unverified"], state: .waiting)
+            let category = TaskDomainPresentation(id: "fixture", title: "Fixture", symbol: "folder", items: [success, matching, unsupported, skipped, unverified, waiting])
+            precondition(Dictionary(uniqueKeysWithValues: RestoreFinalDomain.counts(category)) == ["Success": 3, "Needs Attention": 1, "Skipped": 1])
+            precondition(RestoreFinalDomain.visibleLabels(success) == ["Verified"])
+            precondition(!RestoreFinalDomain.showsItemDetails(success))
+            precondition(!RestoreFinalDomain.showsItemDetails(matching))
+            precondition(RestoreFinalDomain.group(unverified) == "Success")
+            let ids = Set(WorkspaceCategoryStyle.groups.flatMap { $0.1 })
+            precondition(RestoreExecutionCategories.toggledCategories([], ids: ids) == ids)
+            precondition(RestoreExecutionCategories.toggledCategories(ids, ids: ids).isEmpty)
+            precondition(RestoreExecutionCategories.toggledCategories(["homebrew-casks"], ids: ids) == ids)
+
+            precondition(RestoreFinalDomain.visibleLabels(matching) == ["Already Matches"])
+            precondition(RestoreFinalDomain.visibleLabels(unverified) == ["Applied, not verified"] && RestoreFinalDomain.showsItemDetails(unverified))
+            precondition(RestoreFinalDomain.visibleLabels(unsupported) == ["Needs Attention"] && unsupported.resultLabels.contains("Unsupported"))
+            precondition(RestoreFinalDomain.visibleLabels(success, notRun: true) == ["Verified"])
+            precondition(RestoreFinalDomain.group(resultItem(["Skipped", "Unverified"], state: .skipped)) == "Needs Attention")
+            precondition(RestoreFinalDomain.group(resultItem(["Verified"])) == "Success")
+            precondition(RestoreFinalDomain.counts(TaskDomainPresentation(id: "not-run", title: "Not Run", symbol: "folder", items: [waiting], confirmedFinalState: .notRun)).isEmpty)
             try taskPresentationChecks()
             try restoreEvidenceChecks()
         }

@@ -41,6 +41,7 @@ import Foundation
             let location = try fixture(directory, body: "#!/bin/sh\nexec /Library/Developer/CommandLineTools/usr/bin/python3 -B control.py\n")
             try """
             import json,os,sys
+            from pathlib import Path
             request=json.load(sys.stdin)
             def emit(sequence,kind,data=None):
                 event=dict(protocol_version=1,operation_id=request['operation_id'],sequence=sequence,type=kind)
@@ -51,9 +52,10 @@ import Foundation
                 emit(2,'result',dict(protocol_version=1,product_version='mock',operations=['restore_execute'],features={'homebrew_graceful_stop':{'version':1}}))
                 emit(3,'completed');sys.exit(0)
             assert os.read(int(os.environ['MACSEED_GRACEFUL_FD']),1)==b'S'
-            emit(2,'execution_event',dict(domain='orchestration',item_id='stop',state='graceful_stop_accepted'))
-            emit(3,'failed',dict(code='cancelled',target_mutation_may_have_started=True,unknown_consequences=False))
-            sys.exit(130)
+            rejected=Path('reject-stop').exists()
+            emit(2,'execution_event',dict(domain='orchestration',item_id='stop',state='graceful_stop_unavailable' if rejected else 'graceful_stop_accepted'))
+            emit(3,'failed',dict(code='bootstrap_failed' if rejected else 'cancelled',target_mutation_may_have_started=not rejected,unknown_consequences=False))
+            sys.exit(2 if rejected else 130)
             """.write(to: location.root.appendingPathComponent("control.py"), atomically: false, encoding: .utf8)
             let runtime = CoreRuntime(operationLogs: nil)
             runtime.start(CoreRequest(.capabilities), location: location); await runtime.waitForCompletion()
@@ -65,11 +67,28 @@ import Foundation
             guard runtime.state == .running else {
                 runtime.cancel(); await runtime.waitForCompletion(); preconditionFailure("mock launch failed")
             }
-            runtime.requestGracefulStop(); runtime.requestGracefulStop()
+            precondition(runtime.requestGracefulStop())
+            precondition(runtime.gracefulStopState == .requested && runtime.gracefulStopRequested)
+            precondition(!runtime.requestGracefulStop())
             await runtime.waitForCompletion()
             precondition(runtime.state == .cancelled && runtime.termination?.exitCode == 130 && runtime.termination?.signalled == false)
             precondition(runtime.events.contains { $0.data?["state"]?.string == "graceful_stop_accepted" })
-            precondition(!runtime.stopping && runtime.error == nil)
+            precondition(!runtime.stopping && runtime.error == nil && runtime.gracefulStopState == .accepted)
+            let acceptedID = runtime.operationID
+            try Data().write(to: location.root.appendingPathComponent("reject-stop"))
+            runtime.start(CoreRequest(.restoreExecute(path: directory.appendingPathComponent("sample.mbt").path,
+                disabledGroups: [], includeSecure: false, preparedID: String(repeating: "a", count: 64))), location: location)
+            precondition(runtime.operationID != acceptedID && runtime.gracefulStopState == .idle)
+            let rejectionDeadline = Date().addingTimeInterval(8)
+            while runtime.state == .launching && Date() < rejectionDeadline { try await Task.sleep(for: .milliseconds(10)) }
+            precondition(runtime.requestGracefulStop())
+            await runtime.waitForCompletion()
+            precondition(runtime.gracefulStopState == .unavailable && !runtime.gracefulStopRequested)
+            precondition(runtime.state == .failed && runtime.termination?.exitCode == 2)
+            precondition(runtime.gracefulStopMessage?.contains("Stop Unavailable") == true)
+            runtime.start(CoreRequest(.capabilities), location: location); await runtime.waitForCompletion()
+            precondition(runtime.gracefulStopState == .idle && runtime.gracefulStopMessage == nil)
+            print("PASS: Requested/Accepted/Unavailable transitions, ordinary failure after refusal and operation isolation")
             print("PASS: Swift private control FD, capability binding, repeated Graceful Stop, continued events and real cancellation terminal without TERM/KILL")
             return
         }

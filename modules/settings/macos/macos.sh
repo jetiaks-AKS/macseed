@@ -147,6 +147,7 @@ apply_macos_components() {
     local apply_result=0
     local category_result
 
+    if declare -F application_stop_checkpoint >/dev/null; then application_stop_checkpoint "$apply_result"; fi
     if blueprint_category_enabled macos-finder; then
         check_finder
         category_result=$?
@@ -154,12 +155,21 @@ apply_macos_components() {
         case $category_result in
             0) ;;
             1)
-                apply_finder_settings || apply_result=2
+                if apply_finder_settings; then
+                    category_result=0
+                else
+                    category_result=$?
+                    apply_result=2
+                fi
                 ;;
             *) apply_result=2 ;;
         esac
+        if [[ $category_result -ne 0 ]] && declare -F application_module_record >/dev/null; then
+            application_module_record check_finder finished 2 "$MODULE_CHANGED"
+        fi
     fi
 
+    if declare -F application_stop_checkpoint >/dev/null; then application_stop_checkpoint "$apply_result"; fi
     if blueprint_category_enabled macos-dock; then
         check_dock
         category_result=$?
@@ -167,12 +177,21 @@ apply_macos_components() {
         case $category_result in
             0) ;;
             1)
-                apply_dock_settings || apply_result=2
+                if apply_dock_settings; then
+                    category_result=0
+                else
+                    category_result=$?
+                    apply_result=2
+                fi
                 ;;
             *) apply_result=2 ;;
         esac
+        if [[ $category_result -ne 0 ]] && declare -F application_module_record >/dev/null; then
+            application_module_record check_dock finished 2 "$MODULE_CHANGED"
+        fi
     fi
 
+    if declare -F application_stop_checkpoint >/dev/null; then application_stop_checkpoint "$apply_result"; fi
     if blueprint_category_enabled macos-windows; then
         check_windows
         category_result=$?
@@ -180,12 +199,21 @@ apply_macos_components() {
         case $category_result in
             0) ;;
             1)
-                apply_windows_settings || apply_result=2
+                if apply_windows_settings; then
+                    category_result=0
+                else
+                    category_result=$?
+                    apply_result=2
+                fi
                 ;;
             *) apply_result=2 ;;
         esac
+        if [[ $category_result -ne 0 ]] && declare -F application_module_record >/dev/null; then
+            application_module_record check_windows finished 2 "$MODULE_CHANGED"
+        fi
     fi
 
+    if declare -F application_stop_checkpoint >/dev/null; then application_stop_checkpoint "$apply_result"; fi
     if blueprint_category_enabled macos-keyboard; then
         check_keyboard
         category_result=$?
@@ -193,12 +221,21 @@ apply_macos_components() {
         case $category_result in
             0) ;;
             1)
-                apply_keyboard_settings || apply_result=2
+                if apply_keyboard_settings; then
+                    category_result=0
+                else
+                    category_result=$?
+                    apply_result=2
+                fi
                 ;;
             *) apply_result=2 ;;
         esac
+        if [[ $category_result -ne 0 ]] && declare -F application_module_record >/dev/null; then
+            application_module_record check_keyboard finished 2 "$MODULE_CHANGED"
+        fi
     fi
 
+    if declare -F application_stop_checkpoint >/dev/null; then application_stop_checkpoint "$apply_result"; fi
     if blueprint_category_enabled macos-trackpad; then
         check_trackpad
         category_result=$?
@@ -206,12 +243,21 @@ apply_macos_components() {
         case $category_result in
             0) ;;
             1)
-                apply_trackpad_settings || apply_result=2
+                if apply_trackpad_settings; then
+                    category_result=0
+                else
+                    category_result=$?
+                    apply_result=2
+                fi
                 ;;
             *) apply_result=2 ;;
         esac
+        if [[ $category_result -ne 0 ]] && declare -F application_module_record >/dev/null; then
+            application_module_record check_trackpad finished 2 "$MODULE_CHANGED"
+        fi
     fi
 
+    if declare -F application_stop_checkpoint >/dev/null; then application_stop_checkpoint "$apply_result"; fi
     if blueprint_category_enabled macos-screenshots; then
         check_screenshots
         category_result=$?
@@ -219,10 +265,18 @@ apply_macos_components() {
         case $category_result in
             0) ;;
             1)
-                apply_screenshots_settings || apply_result=2
+                if apply_screenshots_settings; then
+                    category_result=0
+                else
+                    category_result=$?
+                    apply_result=2
+                fi
                 ;;
             *) apply_result=2 ;;
         esac
+        if [[ $category_result -ne 0 ]] && declare -F application_module_record >/dev/null; then
+            application_module_record check_screenshots finished 2 "$MODULE_CHANGED"
+        fi
     fi
 
     [[ $apply_result -ne 2 ]] || return 2

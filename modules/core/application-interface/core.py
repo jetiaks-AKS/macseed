@@ -23,6 +23,7 @@ from execution import OwnedBootstrap, ProcessObservationUnavailable
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from external_tool import diagnostic_valid
 from reporting import opaque
+from homebrew_stop import Controller, StopAccepted
 import restore_selection
 from secure import launch_channel, import_secure, SecureError
 
@@ -487,6 +488,8 @@ def restore_execute(operation_id, path, disabled_groups, include_secure, expecte
                  "operation_records": [], "diagnostics": [], "module_outcomes": []}},
              "warning_count": 0, "error_count": 0}
     owned = None
+    control = None
+    control_directory = None
 
     def event(kind, data=None):
         nonlocal sequence
@@ -497,7 +500,25 @@ def restore_execute(operation_id, path, disabled_groups, include_secure, expecte
         # Record events are additive; only completed/failed terminate an operation.
         event("execution_event" if kind == "lifecycle" else kind + "_record", record)
 
+    def checkpoint():
+        if control is None:
+            return
+        control.drain(event)
+        if control.lost:
+            state['unknown_consequences'] = True
+            raise ExecuteFailed('privileged_lifecycle_unknown')
+        with control.lock:
+            control.state.boundary('idle')
+
     def failure(code, exit_status=2, selected_item_index=None):
+        if control is not None:
+            try:
+                with control.lock:
+                    control.state.locked(lambda data: data.update(scope='finished'))
+                control.drain(event)
+            except (OSError, ValueError):
+                state['unknown_consequences'] = True
+                code, exit_status = 'privileged_lifecycle_unknown', 2
         state["execution_status"] = ("failed_after_mutation_may_have_started"
                                      if state["target_mutation_may_have_started"]
                                      else "failed_before_mutation")
@@ -509,7 +530,11 @@ def restore_execute(operation_id, path, disabled_groups, include_secure, expecte
         return exit_status
 
     try:
+        if os.environ.get('MACSEED_GRACEFUL_FD'):
+            control_directory = tempfile.TemporaryDirectory(prefix='macseed-stop-', dir='/private/tmp')
+            control = Controller(control_directory.name, int(os.environ['MACSEED_GRACEFUL_FD']))
         with restore_signals():
+            checkpoint()
             event("phase_started", {"phase": "preparation"})
             with prepared_restore(path, disabled_groups, include_secure, selection) as (plan, stage, source_id, stage_id):
                 event("phase_completed", {"phase": "preparation"})
@@ -518,6 +543,7 @@ def restore_execute(operation_id, path, disabled_groups, include_secure, expecte
                         "recomputed_id": plan["prepared_plan_id"], "components": plan["plan_diagnostics"]}
                     raise ExecuteFailed("stale_plan")
                 state["prepared_plan_id"] = plan["prepared_plan_id"]
+                checkpoint()
                 if not plan["has_executable_changes"] and any(
                         row.get("scope") == "item" for row in plan["readiness"]["conditions"]):
                     raise ExecuteFailed("no_executable_work")
@@ -543,6 +569,7 @@ def restore_execute(operation_id, path, disabled_groups, include_secure, expecte
                     raise ExecuteFailed("stale_plan")
                 if bundle.RECOVERY.exists() or bundle.RECOVERY.is_symlink():
                     raise RecoveryRequired()
+                checkpoint()
                 event("phase_started", {"phase": "publication"})
                 state["publication_started"] = True
                 previous_mask = signal.pthread_sigmask(signal.SIG_BLOCK,
@@ -553,6 +580,7 @@ def restore_execute(operation_id, path, disabled_groups, include_secure, expecte
                 finally:
                     signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
                 event("phase_completed", {"phase": "publication"})
+                checkpoint()
                 secure_evidence = None
                 if include_secure:
                     def secure_mutation():
@@ -562,6 +590,7 @@ def restore_execute(operation_id, path, disabled_groups, include_secure, expecte
                     secure_evidence = import_secure(ROOT, stage / "secure.age", channel,
                                                     operation_id, event, secure_mutation)
                     state["secure_restore_status"] = "completed"
+                checkpoint()
                 environment = dict(os.environ, BUNDLE_RESTORE_ACTIVE="true",
                                    BUNDLE_RESTORE_SECURE_FILE="application-evidence" if include_secure else "",
                                    MACSEED_APPLICATION_SECURE_SELECTED=str(include_secure).lower(),
@@ -587,7 +616,8 @@ def restore_execute(operation_id, path, disabled_groups, include_secure, expecte
                         owned = OwnedBootstrap(ROOT, environment, secure_evidence, record_event,
                                                identities, skipped_casks=skipped_casks,
                                                cask_plans={row['item_id']: row['qualification_id'] for row in plan['plan']
-                                                           if row['domain'] == 'homebrew-casks' and row.get('qualification_id')})
+                                                           if row['domain'] == 'homebrew-casks' and row.get('qualification_id')},
+                                               **({'graceful_control': control} if control is not None else {}))
                     finally:
                         signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
                     bootstrap_exit = owned.wait()
@@ -601,9 +631,6 @@ def restore_execute(operation_id, path, disabled_groups, include_secure, expecte
                 state['unknown_consequences'] = getattr(owned, 'unknown_consequences', False)
                 if getattr(owned, 'external_lifecycle_cause', None):
                     state['external_lifecycle_cause'] = owned.external_lifecycle_cause
-                if bootstrap_exit == 132:
-                    state['verification']['details'] = owned.details
-                    return restore_graceful_result(state, owned, failure)
                 state["bootstrap_status"] = ({0: "success", 1: "warning"}.get(bootstrap_exit, "failure"))
                 if owned.verification is not None:
                     state["verification"] = {key: value for key, value in owned.verification.items()
@@ -614,17 +641,31 @@ def restore_execute(operation_id, path, disabled_groups, include_secure, expecte
                     state["verification"] = {"status": "unavailable", "verdict": "incomplete"}
                     state["warning_count"] = 1 if bootstrap_exit == 1 else 0
                 state["verification"]["details"] = owned.details
+                state["independent_work_completed"] = getattr(owned, "independent_work_completed", False)
+                if bootstrap_exit == 132:
+                    return restore_graceful_result(state, owned, failure)
                 if bootstrap_exit not in (0, 1) or state['unknown_consequences']:
                     state["independent_work_completed"] = owned.independent_work_completed
                     # Preserve typed authoritative outcomes alongside the compatible code.
                     state["operation_failures"] = [row for row in owned.details["operation_records"]
                                                    if row["outcome"] == "failure"]
                     raise ExecuteFailed('privileged_lifecycle_unknown' if state.get('unknown_consequences') else "bootstrap_failed")
+                checkpoint()
+                if control is not None:
+                    with control.lock:
+                        control.state.boundary('finished')
                 event("phase_completed", {"phase": "bootstrap"})
                 state["execution_status"] = "completed"
                 event("result", state)
                 event("completed")
                 return 0
+    except StopAccepted:
+        if control is not None:
+            control.drain(event)
+        if control is None or not control.accepted or control.lost:
+            state['unknown_consequences'] = True
+            return failure('privileged_lifecycle_unknown')
+        return failure('cancelled', 130)
     except SecureError as exc:
         receipt = getattr(exc, "evidence", None)
         if receipt is not None:
@@ -635,7 +676,8 @@ def restore_execute(operation_id, path, disabled_groups, include_secure, expecte
                 environment.pop(name, None)
             try:
                 with restore_signals():
-                    observer = OwnedBootstrap(ROOT, environment, receipt, record_event)
+                    observer = OwnedBootstrap(ROOT, environment, receipt, record_event,
+                                              **({"graceful_control": control} if control is not None else {}))
                     try:
                         observer.wait()
                     except BaseException:
@@ -675,6 +717,11 @@ def restore_execute(operation_id, path, disabled_groups, include_secure, expecte
         return failure("publication_failed" if state["publication_started"] else "bundle_invalid")
     except Exception:
         return failure("internal_error")
+    finally:
+        if control is not None:
+            control.close()
+        if control_directory is not None:
+            control_directory.cleanup()
 
 
 def environment_compare(operation_id, parameters):

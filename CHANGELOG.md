@@ -11,6 +11,18 @@ The format is based on the principles of **Keep a Changelog**.
 
 ### Added
 
+* Restore Graceful Stop now latches operation-wide and applies at safe checkpoints,
+  preserving active operations/post-checks and Homebrew launch atomicity. Desktop
+  distinguishes delivery, acceptance and refusal; unreported benign restart rows
+  and explained aggregate category warnings no longer repeat in results. Force Stop
+  and unknown-consequence safeguards remain separate; real-Mac qualification is open.
+
+* Restore terminal results reuse Environment Status category disclosures, local
+  item details and evidence-based counters, keeping execution compact and operation
+  completion separate from Verification. A compact three-card plan-row summary
+  distinguishes verified and not-yet-verified positive outcomes, and operation-bound
+  Stop/Force Stop notices retain uncertainty about final consequences.
+
 * Desktop Operation Logs persist private typed events with bounded retention,
   restart history, terminal View Log and Settings access, Important/All viewing
   and safe clearing of inactive logs. Process Result, Verification and diagnostic

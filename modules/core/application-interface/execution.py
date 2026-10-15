@@ -21,7 +21,7 @@ class ProcessObservationUnavailable(Exception):
 
 
 class OwnedBootstrap:
-    def __init__(self, root, environment, secure_evidence=None, on_record=None, identities=None, mode="--bootstrap", skipped_casks=None, cask_plans=None):
+    def __init__(self, root, environment, secure_evidence=None, on_record=None, identities=None, mode="--bootstrap", skipped_casks=None, cask_plans=None, graceful_control=None):
         if mode not in {"--bootstrap", "--application-compare"}:
             raise ValueError("unsupported owned mode")
         if mode == "--bootstrap":
@@ -49,8 +49,12 @@ class OwnedBootstrap:
         self.reporting_invalid = False
         self.item_state = tempfile.TemporaryDirectory(prefix='macseed-items-', dir='/private/tmp')
         os.chmod(self.item_state.name, 0o700)
-        self.graceful = None
-        if mode == '--bootstrap' and environment.get('MACSEED_GRACEFUL_FD'):
+        self.graceful = graceful_control
+        self.owns_graceful = graceful_control is None
+        if self.graceful is not None:
+            from homebrew_stop import KEY
+            environment = dict(environment, **{KEY: str(self.graceful.state.path)})
+        if self.graceful is None and mode == '--bootstrap' and environment.get('MACSEED_GRACEFUL_FD'):
             from homebrew_stop import Controller, KEY
             self.graceful = Controller(self.item_state.name, int(environment['MACSEED_GRACEFUL_FD']))
             environment = dict(environment, **{KEY: str(self.graceful.state.path)})
@@ -276,7 +280,8 @@ class OwnedBootstrap:
                 pass
         self.independent_work_completed = getattr(self, 'independent_work_completed', False) or Path(self.item_state.name, 'execution-complete').is_file()
         if getattr(self, 'graceful', None):
-            self.graceful.close()
+            if getattr(self, "owns_graceful", True):
+                self.graceful.close()
             self._control_events()
             self.unknown_consequences |= self.graceful.lost
         self.item_state.cleanup()

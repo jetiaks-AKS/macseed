@@ -215,6 +215,7 @@ install_vscode_extensions() {
         [[ -z "$extension" ]] && continue
         [[ "$extension" =~ ^# ]] && continue
         blueprint_item_selected vscode-extensions "$extension" || continue
+        if declare -F application_stop_checkpoint >/dev/null; then application_stop_checkpoint; fi
 
         is_vscode_extension_installed "$extension"
         inspection_result=$?

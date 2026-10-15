@@ -1,4 +1,4 @@
-"""Private Homebrew launch/Stop lock; never signals an installer."""
+"""Private operation-wide Restore Stop and Homebrew launch lock; never signals work."""
 import fcntl
 import json
 import os
@@ -35,10 +35,10 @@ class State:
             os.close(fd)
     def request(self):
         def apply(data):
+            if data['scope'] == 'finished':
+                return False
             if data['stop']:
                 return True
-            if data['scope'] != 'homebrew' and data['scope'] != 'idle':
-                return False
             data['stop'] = True
             return True
         return self.locked(apply)
@@ -101,9 +101,9 @@ class Controller:
                     self.lost = True
                     self.state.locked(lambda data: data.update(stop=True))
                     return
-                accepted = self.state.request()
-                self.accepted |= accepted
                 with self.lock:
+                    accepted = self.state.request()
+                    self.accepted |= accepted
                     self.events.append('graceful_stop_accepted' if accepted else 'graceful_stop_unavailable')
             except (OSError, ValueError):
                 self.lost = True
@@ -124,7 +124,7 @@ if __name__ == '__main__':
     try:
         state = State(path)
         if len(sys.argv) > 1:
-            state.boundary('homebrew' if sys.argv[1] in ('install_brew_packages', 'install_brew_casks') else 'unsupported')
+            state.boundary('homebrew' if sys.argv[1] in ('install_brew_packages', 'install_brew_casks') else 'idle' if sys.argv[1] == '--idle' else sys.argv[1])
         elif state.stopped():
             raise StopAccepted()
     except StopAccepted:

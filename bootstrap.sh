@@ -1021,7 +1021,9 @@ case "$MODE" in
             prerequisite_result=$?
             if [[ $prerequisite_result -ne 0 ]]; then
                 verification_operation orchestration bootstrap execute skipped prerequisite_failed
+                application_stop_checkpoint "$prerequisite_result"
                 verification_run
+                application_stop_checkpoint "$prerequisite_result"
                 show_summary
                 toolkit_exit_code
                 prerequisite_result=$?
@@ -1107,7 +1109,9 @@ if [[ "$MODE" == --bootstrap ]]; then
     else
         verification_operation orchestration bootstrap execute success
     fi
+    application_stop_checkpoint
     verification_run
+    application_stop_checkpoint
 fi
 
 show_summary

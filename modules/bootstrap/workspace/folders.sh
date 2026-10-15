@@ -111,6 +111,7 @@ bootstrap_workspace_folders() {
 
     while IFS= read -r folder; do
         [[ -n "$folder" ]] || continue
+        if declare -F application_stop_checkpoint >/dev/null; then application_stop_checkpoint; fi
 
         target="$HOME/$folder"
         workspace_folder_state "$folder"

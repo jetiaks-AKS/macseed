@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Homebrew-only admission/control mocks; never uses real brew or user state."""
+"""Operation-wide Restore boundaries and Homebrew admission mocks; no real user state."""
 import os
 from pathlib import Path
 import subprocess
@@ -44,6 +44,9 @@ class GracefulMocks(unittest.TestCase):
         while not self.state.stopped():
             self.assertLess(time.monotonic(), deadline)
             time.sleep(.01)
+        # Acceptance and its acknowledgement are committed under the controller lock.
+        with self.control.lock:
+            self.assertTrue(self.control.accepted)
     def install(self, status=0):
         code = "import sys,time; from pathlib import Path; p=Path(sys.argv[1]); (p/'started').touch();\nwhile not (p/'release').exists(): time.sleep(.01)\n(p/'completed').touch();sys.exit(int(sys.argv[2]))"
         child = self.state.launch([sys.executable, '-B', '-c', code, str(self.base), str(status)], self.launch)
@@ -94,13 +97,32 @@ class GracefulMocks(unittest.TestCase):
         self.assertIsNone(child.poll())
         (self.base / 'release').touch(); child.wait(timeout=3)
         with self.assertRaises(StopAccepted): self.state.launch(['not-launched'], self.launch)
-    def test_unsupported_scope_is_not_accepted(self):
-        self.state.boundary('unsupported'); os.write(self.write_fd, b'S')
+    def test_non_homebrew_scope_accepts_and_retains_stop(self):
+        for scope in ['preparation', 'publication', 'git', 'workspace', 'settings', 'verification']:
+            self.state.boundary(scope)
+        self.request()
+        self.assertTrue(self.control.accepted)
+        for scope in ['idle', 'homebrew', 'git']:
+            with self.assertRaises(StopAccepted): self.state.boundary(scope)
+
+    def test_scope_returns_idle_after_module(self):
+        script = 'source modules/core/common/common.sh\nrun_module_body() { return 0; }\napplication_module_record() { :; }\nrun_module next configure_git\n'
+        result = subprocess.run(['bash', '-c', script], cwd=ROOT, env=os.environ, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.state.locked(lambda data: data['scope']), 'idle')
+
+    def test_non_homebrew_current_module_finishes_then_stops(self):
+        script = 'source modules/core/common/common.sh\napplication_module_record() { :; }\nrun_module_body() { touch "$MOCK/started"; while [[ ! -f "$MOCK/release" ]]; do sleep .02; done; touch "$MOCK/finished"; }\nrun_module current configure_git\ntouch "$MOCK/next"\n'
+        child = subprocess.Popen(['bash', '-c', script], cwd=ROOT, env=dict(os.environ, MOCK=str(self.base)))
+        self.children.append(child)
         deadline = time.monotonic() + 2
-        while not self.control.events:
+        while not (self.base / 'started').exists():
             self.assertLess(time.monotonic(), deadline); time.sleep(.01)
-        self.assertEqual(self.control.events, ['graceful_stop_unavailable'])
-        self.assertFalse(self.state.stopped())
+        self.request(); self.assertIsNone(child.poll())
+        (self.base / 'release').touch()
+        self.assertEqual(child.wait(timeout=3), 132)
+        self.assertTrue((self.base / 'finished').exists()); self.assertFalse((self.base / 'next').exists())
+
     def test_bootstrap_next_module_never_runs(self):
         self.request()
         script = "source modules/core/common/common.sh\nrun_module_body() { touch \"$NEXT_MARKER\"; }\nrun_module next install_appstore_apps\n"
@@ -128,6 +150,89 @@ class GracefulMocks(unittest.TestCase):
             result = core.restore_graceful_result(state, owner, lambda code, status: codes.append(code) or status)
             self.assertEqual(result, expected)
             self.assertEqual(codes, ['cancelled'] if expected == 130 else ['privileged_lifecycle_unknown'])
+
+    def test_settings_checkpoint_stops_before_next_category(self):
+        self.check_settings_stop(False)
+    def test_settings_error_wins_and_has_scope_record(self):
+        self.check_settings_stop(True)
+    def check_settings_stop(self, failed):
+        script = """source modules/core/common/common.sh
+source modules/settings/macos/macos.sh
+blueprint_category_enabled() { return 0; }
+check_finder() { return 1; }
+apply_finder_settings() {
+    touch "$MOCK/started"
+    while [[ ! -f "$MOCK/release" ]]; do sleep .02; done
+    return "$FAIL_CODE"
+}
+check_dock() { touch "$MOCK/next"; return 0; }
+application_module_record() { printf '%s %s %s\\n' "$1" "$2" "$3" >> "$MOCK/records"; }
+MODULE_CHANGED=false
+apply_macos_components
+"""
+        child = subprocess.Popen(['bash', '-c', script], cwd=ROOT,
+            env=dict(os.environ, MOCK=str(self.base), FAIL_CODE='2' if failed else '0'))
+        self.children.append(child)
+        deadline = time.monotonic() + 2
+        while not (self.base / 'started').exists():
+            self.assertLess(time.monotonic(), deadline); time.sleep(.01)
+        self.request(); (self.base / 'release').touch()
+        self.assertEqual(child.wait(timeout=3), 2 if failed else 132)
+        self.assertFalse((self.base / 'next').exists())
+        if failed: self.assertIn('check_finder finished 2', (self.base / 'records').read_text())
+
+    def test_owned_bootstrap_shares_controller_without_closing_it(self):
+        from execution import OwnedBootstrap
+        root = self.base / 'owned'; root.mkdir()
+        bootstrap = root / 'bootstrap.sh'
+        bootstrap.write_text('#!/bin/bash\nexit 0\n'); bootstrap.chmod(0o700)
+        with patch('homebrew_stop.Controller', side_effect=AssertionError('second controller')):
+            owned = OwnedBootstrap(root, dict(os.environ, MACSEED_GRACEFUL_FD=str(self.read_fd)), graceful_control=self.control)
+            self.assertIs(owned.graceful, self.control)
+            self.assertEqual(owned.wait(), 0)
+        self.assertFalse(self.control.closed.is_set())
+
+    def test_restore_preparation_stop_preserves_flags(self):
+        self.check_core_checkpoint('preparation')
+    def test_restore_publication_finishes_before_stop(self):
+        self.check_core_checkpoint('publication')
+    def test_restore_stop_before_preparation(self):
+        self.check_core_checkpoint('initial')
+    def check_core_checkpoint(self, point):
+        import importlib.util
+        from contextlib import contextmanager
+        spec = importlib.util.spec_from_file_location('checkpoint_core', ROOT / 'modules/core/application-interface/core.py')
+        core = importlib.util.module_from_spec(spec); spec.loader.exec_module(core)
+        plan_id = 'a' * 64
+        plan = {'prepared_plan_id': plan_id, 'has_executable_changes': True, 'readiness': {'conditions': []}, 'error_count': 0}
+        (self.base / 'blueprint.conf').write_text('fixture')
+        @contextmanager
+        def prepared(*args):
+            if point == 'preparation': self.request()
+            yield plan, self.base, 'digest', 'digest'
+        def publish(stage):
+            self.assertEqual(point, 'publication')
+            self.request()
+        events = []
+        if point == 'initial': self.request()
+        with patch.dict(os.environ, {'MACSEED_GRACEFUL_FD': str(self.read_fd)}), \
+             patch.object(core, 'Controller', return_value=self.control), \
+             patch.object(core, 'prepared_restore', prepared), patch.object(core, 'readiness'), \
+             patch.object(core.bundle, 'parse_blueprint', return_value=({}, {})), \
+             patch.object(core.bundle, 'fingerprint', return_value='digest'), \
+             patch.object(core.bundle, 'RECOVERY', self.base / 'no-recovery'), \
+             patch.object(core.bundle, 'publish', side_effect=publish) as publication, \
+             patch.object(core, 'OwnedBootstrap') as bootstrap, \
+             patch.object(core, 'emit', side_effect=lambda sequence, kind, operation, data=None: events.append((kind, data))):
+            result = core.restore_execute('fixture', str(self.base), [], False, plan_id)
+        self.assertEqual(result, 130)
+        terminal = events[-1][1]
+        self.assertEqual(events[-1][0], 'failed'); self.assertEqual(terminal['code'], 'cancelled')
+        self.assertFalse(terminal['target_mutation_may_have_started']); self.assertFalse(terminal['unknown_consequences'])
+        self.assertEqual(terminal['publication_occurred'], point == 'publication')
+        self.assertEqual(terminal['verification']['status'], 'not_run')
+        self.assertEqual(publication.call_count, int(point == 'publication')); bootstrap.assert_not_called()
+        self.assertTrue(any(kind == 'execution_event' and row.get('state') == 'graceful_stop_accepted' for kind, row in events))
 
     def check_bash_consumer(self, kind, failed=False):
         fifo = self.base / 'finish'; os.mkfifo(fifo, 0o600)

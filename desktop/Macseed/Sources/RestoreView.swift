@@ -452,7 +452,7 @@ struct RestoreView: View {
                 if let preview = model.executionPreview, let plan = model.executionPlan {
                     let tasks = RestoreTaskPresentation(preview: preview, plan: plan, events: model.categoryPresentationEvents, executing: true, operationProgress: true)
                     RestoreRebuildProgressContent(tasks: tasks, activity: model.activity,
-                        stopping: runtime.stopping, gracefulWaiting: runtime.gracefulStopRequested)
+                        stopping: runtime.stopping, gracefulWaiting: runtime.gracefulStopState == .accepted)
                 }
                 if let message = runtime.gracefulStopMessage { Text(message).font(.callout).foregroundStyle(.secondary) }
                 if showsRebuildActions {
@@ -673,7 +673,7 @@ struct RestoreRebuildProgressContent: View {
             Text("Rebuilding this Mac").font(.title.weight(.bold)).accessibilityAddTraits(.isHeader)
             HStack(spacing: 12) {
                 ProgressView()
-                Text(stopping ? "Stopping… Completed changes may remain." : gracefulWaiting ? "Finishing Current Installation…" : activity).foregroundStyle(.secondary)
+                Text(stopping ? "Force Stop Requested. Completed changes may remain." : gracefulWaiting ? "Stopping Rebuild…" : activity).foregroundStyle(.secondary)
             }
             RestoreExecutionCategories(domains: tasks.domains)
         }
@@ -684,6 +684,10 @@ struct RestoreExecutionCategories: View {
     let domains: [TaskDomainPresentation]
     var showsWarnings = true
     var resultStatuses = false
+    @RestoreViewState private var expandedCategories: Set<String> = []
+    static func toggledCategories(_ expanded: Set<String>, ids: Set<String>) -> Set<String> {
+        ids.isSubset(of: expanded) ? [] : ids
+    }
     // Unknown rows retain their original grouping and position; only known runs are reordered.
     static func sections(_ domains: [TaskDomainPresentation]) -> [(title: String?, rows: [TaskDomainPresentation])] {
         let known = Set(WorkspaceCategoryStyle.groups.flatMap { $0.1 })
@@ -711,10 +715,35 @@ struct RestoreExecutionCategories: View {
     }
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
+            if resultStatuses && !domains.isEmpty {
+                HStack {
+                    Text("Details by Category").font(.headline).accessibilityAddTraits(.isHeader)
+                    Spacer()
+                    let ids = Set(domains.map(\.id))
+                    Button(ids.isSubset(of: expandedCategories) ? "Collapse All" : "Expand All") {
+                        expandedCategories = Self.toggledCategories(expandedCategories, ids: ids)
+                    }.buttonStyle(.plain).foregroundStyle(.secondary)
+                }
+            }
+            if resultStatuses {
+                HStack(spacing: 12) {
+                    ForEach(RestoreFinalDomain.outcomes, id: \.self) { label in
+                        Label(label == "Success" ? "Successful" : label, systemImage: "circle.fill")
+                            .font(.caption).foregroundStyle(RestoreFinalDomain.tone(label))
+                    }
+                }
+            }
             ForEach(Array(Self.sections(domains).enumerated()), id: \.offset) { _, section in
                 if let title = section.title { WorkspaceSectionHeader(title: title) }
                 VStack(spacing: 0) {
                     ForEach(section.rows) { domain in
+                        if resultStatuses {
+                            RestoreFinalDomain(domain: domain, expansion: Binding(
+                                get: { expandedCategories.contains(domain.id) },
+                                set: { value in
+                                    if value { expandedCategories.insert(domain.id) } else { expandedCategories.remove(domain.id) }
+                                }))
+                        } else {
                         ViewThatFits(in: .horizontal) {
                             HStack(spacing: 12) {
                                 categoryTitle(domain)
@@ -726,18 +755,108 @@ struct RestoreExecutionCategories: View {
                                 categoryStatus(domain).frame(maxWidth: .infinity, alignment: .trailing)
                             }
                         }.padding(.vertical, 6).frame(minHeight: 48).padding(.horizontal, 16)
+                        }
                         if domain.id != section.rows.last?.id { Divider() }
                     }
                 }.modifier(WorkspaceCardSurface())
             }
         }
-        let messages = Array(NSOrderedSet(array: domains.flatMap(\.executionMessages))) as? [String] ?? []
-        if showsWarnings && !messages.isEmpty {
-            VStack(alignment: .leading, spacing: 6) {
-                ForEach(messages, id: \.self) { message in
-                    Label(message, systemImage: "exclamationmark.triangle")
-                        .font(.callout).foregroundStyle(RestoreStatusTone.warning.color)
+
+    }
+}
+
+// Uses the same category surfaces, disclosure style and density as Environment Status.
+struct RestoreFinalDomain: View {
+    let domain: TaskDomainPresentation
+    var expansion: Binding<Bool>? = nil
+    @RestoreViewState private var expanded = false
+    static let outcomes = ["Success", "Needs Attention", "Skipped"]
+    // One terminal item, one group. Operation and Verification evidence stay independent.
+    static func group(_ item: TaskItemPresentation) -> String? {
+        item.resultGroup
+    }
+
+    static func counts(_ domain: TaskDomainPresentation) -> [(String, Int)] {
+        guard domain.resultTitle != "Not Run" else { return [] }
+        return outcomes.compactMap { label in
+            let count = domain.items.filter { group($0) == label }.count
+            return count > 0 ? (label, count) : nil
+        }
+    }
+    static func visibleLabels(_ item: TaskItemPresentation, notRun: Bool = false) -> [String] {
+        notRun && item.resultGroup == nil ? ["Not Run"] : [item.resultTitle]
+    }
+    static func showsItemDetails(_ item: TaskItemPresentation) -> Bool {
+        item.hasResultProblemDetails
+    }
+    static func finalStatus(_ domain: TaskDomainPresentation) -> TaskRowState {
+        switch domain.resultTitle {
+        case "Needs Attention": .attention
+        case "Already Matches": .matching
+        case "Completed": .completed
+        case "Not Run": .notRun
+        default: .unverified
+        }
+    }
+    static func tone(_ label: String) -> Color {
+        switch label {
+        case "Success", "Applied", "Already Matches", "Verified": RestoreStatusTone.success.color
+        case "Needs Attention", "Failed", "Mismatch", "Unverified", "Unsupported", "Unresolved": .orange
+        default: .secondary
+        }
+    }
+    var body: some View {
+        DisclosureGroup(isExpanded: expansion ?? $expanded) {
+            VStack(alignment: .leading, spacing: 0) {
+                if !domain.resultChildren.isEmpty {
+                    ForEach(domain.resultChildren) { child in RestoreFinalDomain(domain: child) }
+                } else {
+                ForEach(domain.resultVisibleItems) { item in
+                    HStack(alignment: .top, spacing: 12) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(item.item.title)
+                            if Self.showsItemDetails(item), let explanation = item.resultExplanation {
+                                Text(explanation).font(.caption).foregroundStyle(.secondary)
+                            }
+                            if Self.showsItemDetails(item) && (item.resultTechnicalDetails != nil || item.item.reason != nil) {
+                                DisclosureGroup("Technical Details") {
+                                    Text([item.item.reason, item.resultTechnicalDetails].compactMap { $0 }.joined(separator: "\n"))
+                                        .font(.caption.monospaced()).textSelection(.enabled)
+                                }.disclosureGroupStyle(TaskDisclosureStyle(minimumHeight: 22)).font(.caption)
+                            }
+                        }.frame(maxWidth: .infinity, alignment: .leading)
+                        VStack(alignment: .trailing, spacing: 4) {
+                            ForEach(Self.visibleLabels(item, notRun: domain.executionStatus == .notRun), id: \.self) { label in
+                                Label(label, systemImage: label == "Verified" ? "checkmark.shield" : label == "Failed" || label == "Mismatch" ? "xmark.circle" : ["Unverified", "Outcome Unknown"].contains(label) ? "questionmark.circle" : "circle.fill")
+                                    .font(.callout).foregroundStyle((item.resultGroup == "Success" ? RestoreStatusTone.success.color : item.resultGroup == "Needs Attention" ? .orange : .secondary))
+                            }
+                        }
+                    }.padding(.vertical, 7).frame(minHeight: 28)
                 }
+                }
+                if domain.resultCategoryIssue {
+                    Text(domain.resultCategoryExplanation)
+                        .font(.caption).foregroundStyle(.orange).padding(.vertical, 4)
+                }
+            }.padding(.leading, 36).padding(.vertical, 4)
+        } label: {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 12) { title; Spacer(); status }
+                VStack(alignment: .leading, spacing: 8) { title; status }
+            }.padding(.vertical, 6)
+        }.disclosureGroupStyle(TaskDisclosureStyle()).padding(.horizontal, 16)
+    }
+    private var title: some View {
+        WorkspaceCategoryTitle(id: domain.id, title: domain.title, fallbackSymbol: domain.symbol)
+    }
+    private var status: some View {
+        HStack(spacing: 6) {
+            RestoreResultStatusLabel(state: Self.finalStatus(domain), title: domain.resultTitle)
+            ForEach(Self.counts(domain), id: \.0) { label, count in
+                Text(String(count)).font(.caption2.weight(.semibold)).monospacedDigit()
+                    .padding(.horizontal, 8).frame(minWidth: 46, minHeight: 23)
+                    .foregroundStyle(Self.tone(label)).background(Self.tone(label).opacity(0.12), in: Capsule())
+                    .help(label).accessibilityLabel(label).accessibilityValue(String(count))
             }
         }
     }
@@ -746,22 +865,24 @@ struct RestoreExecutionCategories: View {
 // Result-only styling: absence of Verification remains distinct from an observed problem.
 struct RestoreResultStatusLabel: View {
     let state: TaskRowState
-    var symbol: String { state == .unverified ? "questionmark.circle" : state.symbol }
+    var title: String? = nil
+    var symbol: String { title == "Partial" ? "circle.lefthalf.filled" : state == .unverified ? "questionmark.circle" : state.symbol }
     var tone: RestoreStatusTone { state == .unverified ? .neutral : state.tone }
     var body: some View {
         if state == .unverified {
             HStack(spacing: 7) {
                 Image(systemName: symbol).frame(width: TaskRowLayout.iconWidth).accessibilityHidden(true)
-                Text(state.rawValue)
+                Text(title ?? state.rawValue)
             }.font(.callout).foregroundStyle(tone.color)
-                .accessibilityElement(children: .ignore).accessibilityLabel(state.rawValue)
-        } else { TaskStatusLabel(state: state) }
+                .accessibilityElement(children: .ignore).accessibilityLabel(title ?? state.rawValue)
+        } else { TaskStatusLabel(state: state, title: title) }
     }
 }
 
 struct RestoreVerificationResult: View {
     let outcome: RestoreExecutionPresentation.Outcome
     let payload: [String: CoreJSON]?
+    var domains: [TaskDomainPresentation]? = nil
     static func resultTone(_ result: String) -> RestoreStatusTone {
         switch result {
         case "OK": .success
@@ -778,26 +899,31 @@ struct RestoreVerificationResult: View {
 
     var body: some View {
         let summary = RestoreVerificationSummary(payload: payload)
-        let result = summary.overallResult(outcome: outcome)
         VStack(alignment: .leading, spacing: 8) {
             Label(summary.title, systemImage: "checkmark.shield").font(.headline)
-            WorkspaceThreeMetrics {
-                RestorePreviewMetrics.metric("Result", count: nil, symbol: result == "OK" ? "checkmark.shield" : result == "Failed" ? "xmark.circle" : result == "Stopped" ? "stop.circle" : "exclamationmark.triangle", color: Self.resultTone(result).color, value: result)
-                if Self.showsCount(summary.mismatch) {
-                    RestorePreviewMetrics.metric("Mismatch", count: summary.mismatch, symbol: "exclamationmark.triangle",
-                        color: Self.countTone(summary.mismatch, problem: .error).color)
+            if let domains {
+                let rows = RestoreResultSummary(domains: domains)
+                if !rows.cards.isEmpty {
+                    WorkspaceThreeMetrics {
+                        ForEach(rows.cards) { card in
+                            WorkspaceMetricCard(title: card.id == "Success" ? "Successful" : card.id,
+                                value: String(card.count), symbol: card.id == "Success" ? "checkmark.circle" : card.id == "Skipped" ? "minus.circle" : "exclamationmark.triangle",
+                                tint: RestoreFinalDomain.tone(card.id), explanation: card.explanation)
+                        }
+                    }
                 }
-                if Self.showsCount(summary.unverified) {
-                    RestorePreviewMetrics.metric("Unverified", count: summary.unverified, symbol: "questionmark.circle",
-                        color: Self.countTone(summary.unverified, problem: .warning).color)
+                if rows.uncounted > 0 {
+                    Text("Counts cover confirmed outcomes only. Some plan rows were not run or have no established outcome.")
+                        .font(.callout).foregroundStyle(.secondary)
                 }
+            } else {
+                Text("Plan-row counts are unavailable.").font(.callout).foregroundStyle(.secondary)
             }
-            if let count = summary.unresolved, count > 0 {
-                Label("Unresolved: \(count)", systemImage: "exclamationmark.triangle")
-                    .font(.callout).foregroundStyle(RestoreStatusTone.warning.color)
-            } else if summary.unresolved == nil {
-                Text("Unresolved: —").font(.callout).foregroundStyle(.secondary)
+            if let count = summary.unresolved, count > 0, !(domains?.contains { $0.items.contains { $0.resultLabels.contains("Unresolved") } } ?? false) {
+                Text("Some selected scope remains unresolved. Review the category details or View Log.")
+                    .font(.callout).foregroundStyle(.orange)
             }
+
         }
     }
 }
@@ -809,13 +935,32 @@ struct RestoreResultContent: View {
     let refresh: () -> Void
     let done: () -> Void
     var logRuntime: CoreRuntime? = nil
+    private var hasOperationLog: Bool {
+        guard let logRuntime, ![OperationLogStatus.unavailable, .inactive].contains(logRuntime.operationLogStatus),
+              let reference = logRuntime.operationLogReference(matching: result.operationID) else { return false }
+        return OperationLogVisibility.restore(.result, active: logRuntime.isActive, reference: reference,
+            terminal: logRuntime.termination != nil && logRuntime.operationID == result.operationID)
+    }
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
-            Text(result.title).font(.title.weight(.bold)).accessibilityAddTraits(.isHeader)
+            HStack(spacing: 10) {
+                Image(systemName: result.outcome == .clean ? "checkmark.circle" : [.stoppedBeforeMutation, .stoppedAfterMutation].contains(result.outcome) ? "stop.circle" : "exclamationmark.triangle")
+                    .foregroundStyle(result.outcome == .clean ? RestoreStatusTone.success.color : .orange).accessibilityHidden(true)
+                Text(result.title)
+            }.font(.title.weight(.bold)).accessibilityAddTraits(.isHeader)
             Text(result.message).foregroundStyle(.secondary)
-            RestoreVerificationResult(outcome: result.outcome, payload: result.structuredEvidence)
+            ForEach(result.globalProblemMessages(knownDomains: Set(tasks?.domains.flatMap { $0.items.compactMap(\.sourceDomain) } ?? [])), id: \.self) { message in
+                Text(message).font(.callout).foregroundStyle(.orange)
+            }
+            if let notice = result.stopNotice {
+                Label(notice, systemImage: "stop.circle").font(.callout.weight(.semibold))
+                if let explanation = result.stopRequestExplanation {
+                    Text(explanation).font(.callout).foregroundStyle(.secondary)
+                }
+            }
+            RestoreVerificationResult(outcome: result.outcome, payload: result.structuredEvidence, domains: tasks?.domains)
             if let tasks { RestoreExecutionCategories(domains: tasks.domains, showsWarnings: false, resultStatuses: true) }
-            if !result.technicalDetails.isEmpty {
+            if !hasOperationLog && !result.technicalDetails.isEmpty {
                 DisclosureGroup("Technical Details") {
                     ForEach(Array(result.compactTechnicalDetails.enumerated()), id: \.offset) { _, text in
                         Text(text).font(.caption.monospaced()).textSelection(.enabled)

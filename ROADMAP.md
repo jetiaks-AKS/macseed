@@ -50,7 +50,7 @@ identifiers, not execution order.
 | 16J — Logging & Diagnostics | Completed | Typed persistent logs, history, Important/All and immutable Diagnostic Report preview/copy/save |
 | 16K — Desktop integration hardening | Partially complete | Bundle-backed Status completed; runtime, transport, security, accessibility and packaged-state hardening remain |
 | Visual Unification | Completed | Approved shared style; remaining functional Result UI is a separate bounded task |
-| Restore Cancellation Safety | Partially complete | Stage 1–2 fail-closed handling and limited Homebrew Graceful Stop implemented; Stage 3C and installer quiescence open |
+| Restore Cancellation Safety | Partially complete | Stage 1–2 fail-closed handling and operation-wide checkpoint Graceful Stop implemented/automated-tested; real-Mac qualification, Stage 3C and installer quiescence open |
 | Unified UI Scenario Catalog | Deferred tooling | Existing Debug fixtures retained; optional Lite catalog after functional priorities |
 
 Stage 16J is closed by this documentation iteration. It preserves two independent

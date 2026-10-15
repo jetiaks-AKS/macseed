@@ -43,6 +43,14 @@ struct TaskItemPresentation: Identifiable {
     var technicalName: String? = nil
     var executionAction: String? = nil
     var captureRole: CaptureItemRole? = nil
+    var resultLabels: [String] = []
+    var resultTechnicalDetails: String? = nil
+    var auxiliaryCompletionUnreported = false
+    var resultEvidenceAvailable: Bool? = nil
+    var verificationEvidenceAvailable: Bool? = nil
+    var resultNotRun = false
+    var previewProblem: String? = nil
+    var sourceDomain: String? = nil
 }
 struct TaskDomainPresentation: Identifiable {
     let id: String
@@ -51,6 +59,10 @@ struct TaskDomainPresentation: Identifiable {
     let items: [TaskItemPresentation]
     var activityState: TaskRowState? = nil
     var previewOnly = false
+    var resultCategoryIssue = false
+    var resultProblemDomains: Set<String> = []
+    var resultCategoryMessage: String? = nil
+    var resultProblemMessages: [String: String] = [:]
     var confirmedFinalState: TaskRowState? = nil
     var executionStatusTitle: String {
         if activityState == .working && (RestoreOperationSummary(domains: [self]).attention > 0 || confirmedFinalState == .attention) { return "Working · Needs Attention" }
@@ -145,9 +157,9 @@ struct RestoreTaskPresentation {
                 func belongs(_ row: [String: CoreJSON]) -> Bool {
                     row["domain"]?.string == entry?.domain && row["item_id"]?.string == entry?.itemID
                 }
-                let operation = operations.last(where: belongs)
+                let operation = operations.last { belongs($0) && $0["action"]?.string == entry?.action }
                 let observed = verification.last(where: belongs)
-                let activity = events.last { $0.type == "execution_event" && belongs($0.data ?? [:]) }
+                let activity = events.last { $0.type == "execution_event" && belongs($0.data ?? [:]) && $0.data?["action"]?.string == entry?.action }
                 let completedOperation = operation?["outcome"]?.string == "success"
                     && operation?["action"]?.string == entry?.action
                 let completedActivity = events.contains { event in
@@ -209,10 +221,43 @@ struct RestoreTaskPresentation {
                     : state == .awaitingVerification
                         ? "Awaiting Verification." : item.action
                 }
+                // Final labels describe independent evidence, never inferred installations.
+                var labels: [String] = []
+                let observations = verification.filter(belongs)
+                var predicates: [String: [String: CoreJSON]] = [:]
+                for row in observations { predicates[row["predicate"]?.string ?? "unknown"] = row }
+                let conformities = Set(predicates.values.compactMap { $0["conformity"]?.string })
+                if activity?.data?["state"]?.string == "failed" { labels.append("Failed") }
+                else if ["blocked", "conflict", "warning", "interrupted"].contains(activity?.data?["state"]?.string ?? "") { labels.append("Needs Attention") }
+                if operation?["outcome"]?.string == "failure" && !labels.contains("Failed") { labels.append("Failed") }
+                if operation?["outcome"]?.string == "skipped" { labels.append("Skipped") }
+                if operation?["outcome"]?.string == "warning" && !labels.contains("Needs Attention") { labels.append("Needs Attention") }
+                if completedOperation || completedActivity { labels.append("Applied") }
+                if operation?["outcome"]?.string == "noop" { labels.append("Already Matches") }
+                if conformities.contains("mismatch") { labels.append("Mismatch") }
+                if conformities.contains("unsupported") { labels.append("Unsupported") }
+                if conformities.contains("unresolved") { labels.append("Unresolved") }
+                if conformities.contains("unverified") { labels.append("Unverified") }
+                if entry?.action != "restart_process" && !predicates.isEmpty && conformities == ["verified"] { labels.append("Verified") }
+                if labels.isEmpty { labels = ["Unverified"] }
+                let technical = ([operation, activity?.data].compactMap { $0 } + Array(predicates.values))
+                    .map { row in ["domain", "item_id", "action", "state", "outcome", "predicate", "conformity", "reason", "record_id"].compactMap { key in row[key]?.string.map { key + ": " + $0 } }.joined(separator: " · ") }
+                    .sorted().joined(separator: "\n")
                 return TaskItemPresentation(id: item.id,
-                    item: DisplayItem(id: item.id, title: operationProgress ? Self.operationTitle(item.title, entry: entry) : item.title, status: item.status, action: message, reason: reason), state: state, diagnostic: entry?.diagnostic,
+                    item: DisplayItem(id: item.id, title: operationProgress ? (entry.flatMap { WorkspaceSettingLabels.title(domain: $0.domain, identity: $0.itemID) } ?? Self.operationTitle(item.title, entry: entry)) : item.title, status: item.status, action: message, reason: reason), state: state, diagnostic: entry?.diagnostic,
                     technicalName: operationProgress ? entry.flatMap { $0.itemID.hasPrefix("opaque:") ? nil : "\($0.domain) / \($0.itemID)" } : nil,
-                    executionAction: operationProgress ? entry?.action.replacingOccurrences(of: "_", with: " ").capitalized : nil)
+                    executionAction: operationProgress ? entry?.action.replacingOccurrences(of: "_", with: " ").capitalized : nil,
+                    resultLabels: labels, resultTechnicalDetails: technical.isEmpty ? nil : technical,
+                    auxiliaryCompletionUnreported: entry?.domain.hasPrefix("macos-") == true && entry?.action == "restart_process"
+                        && operation == nil && !completedActivity && activity == nil,
+                    resultEvidenceAvailable: operation != nil || activity != nil || observed != nil,
+                    verificationEvidenceAvailable: observed != nil,
+                    resultNotRun: result != nil && result?.outcome != .interrupted
+                        && result?.structuredEvidence?["target_mutation_may_have_started"]?.boolean == false
+                        && result?.structuredEvidence?["unknown_consequences"]?.boolean != true
+                        && operation == nil && activity == nil && observed == nil,
+                    previewProblem: entry.flatMap { ["blocked", "conflict", "warning"].contains($0.disposition) ? ($0.reason ?? $0.disposition) : nil },
+                    sourceDomain: entry?.domain)
             }
             if items.isEmpty { continue }
             var domain = TaskDomainPresentation(id: domainID, title: category.title,
@@ -231,6 +276,57 @@ struct RestoreTaskPresentation {
                 }
                 let coverage = (events.filter { $0.type == "coverage_record" }.compactMap(\.data) + records("coverage_records"))
                     .filter { domainScope.contains($0["domain"]?.string ?? "") }
+                let diagnostics = events.filter { $0.type == "diagnostic_record" }.compactMap(\.data) + records("diagnostics")
+                for scope in domainScope {
+                    let scopedRecords = (operations + verification + coverage).filter { $0["domain"]?.string == scope }
+                    let recordIDs = Set(scopedRecords.compactMap { $0["record_id"]?.string })
+                    let scopeItems = items.filter { $0.sourceDomain == scope }
+                    let explainedItemIDs = Set(scopeItems.filter { $0.resultGroup == "Needs Attention" }.compactMap { task -> String? in
+                        guard let index = Int(task.id.replacingOccurrences(of: "restore-", with: "")), plan.plan.indices.contains(index) else { return nil }
+                        return plan.plan[index].itemID
+                    })
+                    let unexplainedOperation = operations.contains { record in
+                        record["domain"]?.string == scope && ["failure", "warning"].contains(record["outcome"]?.string ?? "")
+                            && !entries.contains { $0.domain == scope && $0.itemID == record["item_id"]?.string && $0.action == record["action"]?.string }
+                    }
+                    let unresolvedCoverage = coverage.contains { $0["domain"]?.string == scope && $0["disposition"]?.string == "unresolved" }
+                    let independentDiagnostics = diagnostics.filter { diagnostic in
+                        guard ["error", "warning"].contains(diagnostic["severity"]?.string ?? ""),
+                              let owner = diagnostic["record_id"]?.string, recordIDs.contains(owner) else { return false }
+                        let linked = scopedRecords.first { $0["record_id"]?.string == owner }
+                        let code = diagnostic["code"]?.string ?? ""
+                        let explainedCode = ["operation_failed", "confirmed_mismatch", "observation_failed", "unsupported_predicate", "prerequisite_unmet"].contains(code)
+                        return !explainedCode || !explainedItemIDs.contains(linked?["item_id"]?.string ?? "")
+                    }
+                    let independentDiagnostic = !independentDiagnostics.isEmpty
+                    let unexplainedScope = events.contains { event in
+                        guard event.type == "execution_event", event.data?["domain"]?.string == scope,
+                              event.data?["item_id"]?.string == "scope", ["failed", "blocked", "conflict", "warning"].contains(event.data?["state"]?.string ?? "") else { return false }
+                        return !Self.scopeProblemExplained(reason: event.data?["reason"]?.string,
+                            hasItemProblems: !explainedItemIDs.isEmpty && (result == nil || evidence?["status"]?.string == "complete") && scopeItems.filter { !$0.auxiliaryCompletionUnreported }.allSatisfy { $0.resultGroup != nil }, independentProblem: unresolvedCoverage || unexplainedOperation || independentDiagnostic)
+                    }
+                    let hasProblem = unresolvedCoverage || unexplainedOperation || independentDiagnostic || unexplainedScope
+                    if hasProblem {
+                        domain.resultProblemDomains.insert(scope)
+                        let message: String
+                        if unresolvedCoverage { message = "Some selected requirements in this category could not be resolved." }
+                        else if independentDiagnostic {
+                            switch independentDiagnostics.first?["code"]?.string {
+                            case "observation_failed": message = "This category's current state could not be inspected reliably."
+                            case "input_invalid", "input_changed": message = "The selected input for this category could not be validated."
+                            case "selected_input_unresolved": message = "Some selected input in this category could not be resolved."
+                            case "unsupported_predicate": message = "Some requirements in this category cannot be verified."
+                            default: message = "Core reported an independent diagnostic issue for this category."
+                            }
+                        }
+                        else if unexplainedOperation { message = "Category-level work needs attention; the exact item was not reported." }
+                        else { message = "The category operation did not complete; the exact failed step was not reported." }
+                        domain.resultProblemMessages[scope] = message
+                    }
+                }
+                domain.resultCategoryIssue = !domain.resultProblemDomains.isEmpty
+                let messages = Set(domain.resultProblemMessages.values)
+                domain.resultCategoryMessage = messages.count == 1 ? messages.first : messages.isEmpty ? nil : "Several independent category issues were reported. Expand the affected categories or review View Log."
                 let finalComplete = result?.structuredEvidence?["verification"]?.object?["status"]?.string == "complete"
                     && evidence?["status"]?.string == "complete"
                     && result?.structuredEvidence?["prepared_plan_id"]?.string == plan.preparedPlanID
@@ -272,6 +368,9 @@ struct RestoreTaskPresentation {
             output.append(domain)
         }
         domains = output
+    }
+    static func scopeProblemExplained(reason: String?, hasItemProblems: Bool, independentProblem: Bool) -> Bool {
+        hasItemProblems && !independentProblem && ["module_failed", "module_warning"].contains(reason ?? "")
     }
     static func hasVerifiedRequirements(entries: [CoreRestorePreparation.Row], observations: [[String: CoreJSON]], operations: [[String: CoreJSON]]) -> Bool {
         !entries.isEmpty && entries.allSatisfy { entry in
@@ -388,5 +487,148 @@ extension TaskDomainPresentation {
             }
             return seen.insert(message).inserted ? message : nil
         }
+    }
+}
+
+// Shared final-result classification. Counts selected plan rows, never predicates or apps.
+extension TaskItemPresentation {
+    var resultGroup: String? {
+        let labels = Set(resultLabels)
+        if state == .failed || !labels.isDisjoint(with: ["Failed", "Needs Attention", "Mismatch", "Unsupported"]) { return "Needs Attention" }
+        if previewProblem != nil && labels.isDisjoint(with: ["Applied", "Already Matches", "Verified"]) { return "Needs Attention" }
+        if resultNotRun || auxiliaryCompletionUnreported { return nil }
+        if labels.contains("Skipped") {
+            return ["not_applicable", "not_selected", "no_requirement", "intentionally_skipped"].contains(item.reason ?? "") ? "Skipped" : "Needs Attention"
+        }
+        if !labels.isDisjoint(with: ["Applied", "Already Matches", "Verified"]) { return "Success" }
+        if resultEvidenceAvailable == false || (labels == ["Unverified"] && verificationEvidenceAvailable == false) { return nil }
+        if labels.isEmpty || (labels == ["Unverified"] && [.waiting, .notRun, .awaitingVerification].contains(state)) { return nil }
+        return "Needs Attention"
+    }
+    var resultTitle: String {
+        if resultGroup == "Needs Attention" {
+            if resultLabels.contains("Failed") || state == .failed { return "Failed" }
+            if resultLabels.contains("Mismatch") { return "Mismatch" }
+            if resultLabels.contains("Unresolved") && previewProblem == nil { return "Unresolved" }
+            if resultLabels == ["Unverified"] && resultEvidenceAvailable == true && previewProblem == nil { return "Unverified" }
+            return "Needs Attention"
+        }
+        if resultNotRun { return "Not Run" }
+        if auxiliaryCompletionUnreported { return "Completion Not Reported" }
+        if resultGroup == "Skipped" { return "Skipped" }
+        if resultGroup == "Success" {
+            if resultLabels.contains("Applied") { return resultLabels.contains("Verified") ? "Verified" : "Applied, not verified" }
+            if resultLabels.contains("Already Matches") { return resultLabels.contains("Verified") ? "Already Matches" : "Already Matches, not verified" }
+            return "Verified"
+        }
+        return "Outcome Unknown"
+    }
+    var hasResultProblemDetails: Bool {
+        resultGroup == "Needs Attention" || !Set(resultLabels).isDisjoint(with: ["Mismatch", "Unverified", "Unresolved", "Unsupported"]) && resultEvidenceAvailable != false
+    }
+    var resultExplanation: String? {
+        let reason = previewProblem ?? item.reason
+        if reason == "cask_execution_requirements_unsupported" || resultLabels.contains("Unsupported") { return "This requirement's installation conditions are not supported." }
+        if reason == "target_conflict" || reason == "conflict" { return "Existing state conflicts with the selected requirement and is preserved." }
+        if resultLabels.contains("Mismatch") { return "Verification found a difference from the selected requirement." }
+        if resultLabels.contains("Unresolved") { return "The selected requirement could not be resolved." }
+        if resultLabels.contains("Unverified") && verificationEvidenceAvailable != false && resultEvidenceAvailable == true { return "Verification could not establish this requirement's final state." }
+        if previewProblem != nil { return "A prerequisite or selected requirement needs attention." }
+        if ["item_stalled_timeout", "dependency_failed", "privileged_lifecycle_unknown", "cask_authorization_required"].contains(reason ?? "") { return item.action }
+        return nil
+    }
+    var resultBreakdown: String? {
+        switch resultGroup {
+        case "Success":
+            if resultLabels.contains("Verified") { return "verified" }
+            return resultLabels.contains("Applied") ? "applied, not verified" : "already matches, not verified"
+        case "Skipped":
+            return ["not_applicable", "no_requirement"].contains(item.reason ?? "") ? "not applicable" : "intentionally skipped"
+        case "Needs Attention":
+            if state == .failed || resultLabels.contains("Failed") { return "failed" }
+            if let previewProblem {
+                if previewProblem.contains("unsupported") { return "unsupported" }
+                return previewProblem.contains("conflict") ? "conflict" : "prerequisite or blocked"
+            }
+            if resultLabels.contains("Mismatch") { return "mismatch" }
+            if resultLabels.contains("Unsupported") { return "unsupported" }
+            if resultLabels.contains("Needs Attention") || state == .attention && !resultLabels.contains("Unverified") { return "blocked or needs attention" }
+            if resultLabels.contains("Unresolved") { return "unresolved" }
+            if resultLabels.contains("Skipped") { return "problematic skip" }
+            return "unverified"
+        default: return nil
+        }
+    }
+}
+
+struct RestoreResultSummary {
+    struct Card: Identifiable {
+        let id: String
+        let count: Int
+        let explanation: String
+    }
+    let cards: [Card]
+    let uncounted: Int
+    init(domains: [TaskDomainPresentation]) {
+        // Identity is the plan row ID, even when several actions share an item name.
+        var rows: [String: TaskItemPresentation] = [:]
+        var notRun = Set<String>()
+        for domain in domains {
+            for item in domain.items {
+                rows[item.id] = item
+                if domain.resultTitle == "Not Run" { notRun.insert(item.id) }
+            }
+        }
+        var groups: [String: [String: Int]] = [:]
+        for item in rows.values where !notRun.contains(item.id) {
+            if let group = item.resultGroup, let reason = item.resultBreakdown {
+                groups[group, default: [:]][reason, default: 0] += 1
+            }
+        }
+        cards = ["Success", "Needs Attention", "Skipped"].compactMap { group in
+            guard let reasons = groups[group] else { return nil }
+            let count = reasons.values.reduce(0, +)
+            guard count > 0 else { return nil }
+            return Card(id: group, count: count, explanation: reasons.keys.sorted().map { "\(reasons[$0]!) \($0)" }.joined(separator: " · "))
+        }
+        // Unreported auxiliary restarts are intentionally hidden, not unknown requirements.
+        uncounted = rows.values.filter {
+            !$0.auxiliaryCompletionUnreported && (notRun.contains($0.id) || $0.resultGroup == nil)
+        }.count
+    }
+}
+
+extension TaskDomainPresentation {
+    var resultTitle: String {
+        if resultCategoryIssue || items.contains(where: { $0.resultGroup == "Needs Attention" }) { return "Needs Attention" }
+        if confirmedFinalState == .notRun || (!items.isEmpty && items.allSatisfy(\.resultNotRun)) { return "Not Run" }
+        let requirements = items.filter { !$0.auxiliaryCompletionUnreported }
+        if requirements.contains(where: { $0.resultGroup == "Success" }) && requirements.contains(where: { $0.resultGroup == nil && !$0.resultNotRun }) { return "Partial" }
+        guard !requirements.isEmpty, requirements.allSatisfy({ $0.resultGroup == "Success" || $0.resultGroup == "Skipped" }) else { return "Outcome Unknown" }
+        if requirements.allSatisfy({ ($0.resultLabels.contains("Already Matches") || $0.item.status == .matching) && !$0.resultLabels.contains("Applied") }) { return "Already Matches" }
+        return "Completed"
+    }
+    var resultChildren: [TaskDomainPresentation] {
+        guard id == "macOS Settings" || id == "macos-settings" else { return [] }
+        let known = CaptureMacOSSettingsGroup.domainIDs
+        let ids = known + Set(items.compactMap(\.sourceDomain)).subtracting(known).sorted()
+        return ids.compactMap { domain in
+            let members = items.filter { $0.sourceDomain == domain }
+            guard !members.isEmpty else { return nil }
+            return TaskDomainPresentation(id: domain, title: CaptureCategory.title(for: domain),
+                symbol: WorkspaceCategoryStyle.symbol(domain), items: members, resultCategoryIssue: resultProblemDomains.contains(domain), resultCategoryMessage: resultProblemMessages[domain])
+        }
+    }
+}
+
+extension TaskDomainPresentation {
+    var resultVisibleItems: [TaskItemPresentation] {
+        items.filter { !$0.auxiliaryCompletionUnreported || resultCategoryIssue || $0.resultGroup == "Needs Attention" }
+    }
+    var resultCategoryExplanation: String {
+        if let resultCategoryMessage { return resultCategoryMessage }
+        return id.hasPrefix("macos-") || id == "macOS Settings"
+            ? "Settings operation did not complete; the exact failed step was not reported."
+            : "This category has an unresolved scope or an independent diagnostic issue. Review View Log for the reported cause."
     }
 }
