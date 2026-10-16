@@ -75,7 +75,7 @@ enum CoreCommand: Sendable {
     case bundleInspect(path: String)
     case capturePrepare(selection: CoreCaptureSelection?)
     case captureExecute(selection: CoreCaptureSelection, destination: String, preparedID: String, replacementSHA256: String? = nil)
-    case restorePrepare(path: String, disabledGroups: [String], includeSecure: Bool, selection: CoreRestoreSelection? = nil)
+    case restorePrepare(path: String, disabledGroups: [String], includeSecure: Bool, selection: CoreRestoreSelection? = nil, installerPreparations: [String]? = nil)
     case restoreExecute(path: String, disabledGroups: [String], includeSecure: Bool, preparedID: String, selection: CoreRestoreSelection? = nil)
     case environmentCompare(generatedDirectory: String, blueprintPath: String?)
     case environmentCompareBundle(path: String)
@@ -114,8 +114,9 @@ enum CoreCommand: Sendable {
             var parameters: [String: CoreJSON] = ["selection": try selection(value), "destination": .string(destination), "expected_prepared_capture_id": .string(id)]
             if let replacement { parameters["replacement_sha256"] = .string(replacement) }
             return .object(parameters)
-        case .restorePrepare(let path, let groups, let secure, let selection):
+        case .restorePrepare(let path, let groups, let secure, let selection, let installers):
             var values = restore(path, groups, secure)
+            if let installers { values["installer_preparations"] = .array(installers.map(CoreJSON.string)) }
             if let selection { values["selection"] = try JSONDecoder().decode(CoreJSON.self, from: JSONEncoder().encode(selection)) }
             return .object(values)
         case .restoreExecute(let path, let groups, let secure, let id, let selection):

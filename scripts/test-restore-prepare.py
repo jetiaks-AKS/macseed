@@ -69,13 +69,15 @@ class RestorePrepareTests(unittest.TestCase):
             bundle.write_file(self.stage / "secure.age", b"age-encryption.org/v1\nprivate-ciphertext")
         bundle.pack(self.stage, self.archive, "/Users/source")
 
-    def invoke(self, *, groups=(), secure=False, path=None, selection=None):
+    def invoke(self, *, groups=(), secure=False, path=None, selection=None, installer_preparations=None):
         request = {"protocol_version": 1, "operation_id": "prepare-1",
                    "operation": "restore_prepare",
                    "parameters": {"path": str(path or self.archive),
                                   "disabled_groups": list(groups), "include_secure": secure}}
         if selection is not None:
             request["parameters"]["selection"] = selection
+        if installer_preparations is not None:
+            request["parameters"]["installer_preparations"] = installer_preparations
         result = subprocess.run(
             ["bash", str(self.project / "modules/core/application-interface/core.sh")],
             input=json.dumps(request).encode(), cwd=self.project, env=self.environment,
@@ -460,6 +462,189 @@ class RestorePrepareTests(unittest.TestCase):
         self.pack()
         result = self.plan_result()
         self.assertTrue(any(row['status'] == 'unsupported' for row in result['readiness']['conditions']), result)
+
+    def pkg_preparation_fixture(self):
+        metadata = self.cask_fixture()
+        metadata['casks'][0]['artifacts'] = [
+            {'pkg': ['Fixture.pkg']}, {'uninstall': [{'pkgutil': 'org.example.Fixture'}]}]
+        Path(self.environment['TEST_CASK_METADATA']).write_text(json.dumps(metadata))
+        # Native PKG authorization uses the same bounded mocked bridge as the
+        # existing privileged lifecycle fixtures; never invoke real sudo.
+        bridge = self.project / 'modules/apps/adapters/homebrew_lifecycle.py'
+        bridge.write_text(bridge.read_text().replace('/usr/bin/sudo', str(self.root / 'bin/sudo')))
+        brew = self.root / 'bin/brew'
+        brew.write_text(brew.read_text().replace('"$HOMEBREW_NO_SUDO" == 1', '"${HOMEBREW_NO_SUDO:-}" != 1'))
+        self.environment['TEST_PKG_APPLICATIONS'] = str(self.home / 'Applications')
+        self.environment['TEST_PKG_INSPECTIONS'] = str(self.root / 'pkg-inspections')
+        provider = self.project / 'modules/apps/adapters/homebrew_cask.py'
+        fixture_observer = """
+class PreparationFixtureObserver(PublicObserver):
+    def packages(self, selectors):
+        present = Path(os.environ['TEST_CASK_STATE']).exists()
+        app = os.environ['TEST_CASK_TARGET']
+        return [{'id': value, 'present': present,
+                 'paths': [app + '/Contents/MacOS/Fixture'] if present else []} for value in selectors]
+    def package_install_payloads(self, row, selectors):
+        with open(os.environ['TEST_PKG_INSPECTIONS'], 'a') as output: output.write(row['token'] + '\\n')
+        if os.environ.get('TEST_PKG_PAYLOAD_FAILURE'):
+            import io
+            from unittest.mock import patch
+            data = b'local inert pkg fixture'
+            inspected = dict(row, sha256=hashlib.sha256(data).hexdigest())
+            response = io.BytesIO(data)
+            response.geturl = lambda: row['url']
+            def expand(arguments):
+                root = Path(arguments[-1])
+                root.mkdir()
+                info = ('<broken' if os.environ['TEST_PKG_PAYLOAD_FAILURE'] == 'package_info_invalid'
+                        else '<pkg-info identifier="org.example.Wrong" install-location="/Applications/Fixture.app"/>')
+                (root / 'PackageInfo').write_text(info)
+                return b''
+            with patch.object(urllib.request, 'urlopen', return_value=response), patch.object(self, 'read', side_effect=expand):
+                return super().package_install_payloads(inspected, selectors)
+        if os.environ.get('TEST_PKG_CHECKSUM_MISMATCH'):
+            import io
+            from unittest.mock import patch
+            response = io.BytesIO(b'fixture checksum mismatch')
+            response.geturl = lambda: row['url']
+            with patch.object(urllib.request, 'urlopen', return_value=response):
+                return super().package_install_payloads(row, selectors)
+        return [{'kind': 'app', 'path': os.environ['TEST_CASK_TARGET'],
+                 'package': selectors[0], 'bundle_id': 'org.example.Fixture'}]
+PublicObserver = PreparationFixtureObserver
+"""
+        provider.write_text(provider.read_text().replace("Path('/Applications')", "Path(os.environ['TEST_PKG_APPLICATIONS'])").replace(
+            "if __name__ == '__main__':", fixture_observer + "\nif __name__ == '__main__':"))
+        self.pack()
+        return metadata
+
+    def test_pkg_payload_predicates_preserve_diagnostic(self):
+        self.pkg_preparation_fixture()
+        first = self.plan_result()
+        key = next(row['installer_preparation_id'] for row in first['plan'] if row['domain'] == 'homebrew-casks')
+        for predicate in ('package_info_invalid', 'receipt_identity_mismatch'):
+            with self.subTest(predicate=predicate):
+                self.environment['TEST_PKG_PAYLOAD_FAILURE'] = predicate
+                result, events = self.invoke(installer_preparations=[key])
+                self.assertEqual(result.returncode, 2)
+                self.assertEqual(events[-1]['data'], {'code': 'pkg_preparation_failed', 'diagnostic': {
+                    'stage': 'payload_validation', 'reason': 'requirements_unproven', 'predicate': predicate}})
+                self.assertFalse((self.home / 'Library/Application Support/Macseed/Homebrew/pkg-preparations').exists())
+                self.assertFalse((self.root / 'mutations').exists())
+
+    def test_pkg_checksum_mismatch_preserves_diagnostic(self):
+        self.pkg_preparation_fixture()
+        first = self.plan_result()
+        key = next(row['installer_preparation_id'] for row in first['plan'] if row['domain'] == 'homebrew-casks')
+        before = {p.name: p.read_bytes() for p in (self.project / 'logs/history').glob('preview-*.log')}
+        self.environment['TEST_PKG_CHECKSUM_MISMATCH'] = '1'
+        result, events = self.invoke(installer_preparations=[key])
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(events[-1]['data'], {'code': 'pkg_preparation_failed',
+                         'diagnostic': {'stage': 'checksum', 'reason': 'checksum_mismatch'}})
+        self.assertFalse((self.home / 'Library/Application Support/Macseed/Homebrew/pkg-preparations').exists())
+        after = {p.name: p.read_bytes() for p in (self.project / 'logs/history').glob('preview-*.log')}
+        self.assertEqual(before, after)
+        self.assertFalse((self.root / 'mutations').exists())
+
+    def test_pkg_consent_prepare_reuse_execute_and_noop(self):
+        self.pkg_preparation_fixture()
+        original = self.archive.read_bytes()
+        first = self.plan_result()
+        row = next(row for row in first['plan'] if row['domain'] == 'homebrew-casks')
+        key = row['installer_preparation_id']
+        self.assertFalse(Path(self.environment['TEST_PKG_INSPECTIONS']).exists())
+        self.assertFalse((self.project / 'config/generated').exists())
+        # Consent must use this Bundle's staged evidence, not ambient published data.
+        ambient = self.project / 'config/generated/homebrew-casks.json'
+        ambient.parent.mkdir()
+        ambient.write_text('{"contract": 999}')
+        for invalid in ([key, key], ['x'], [], 'all'):
+            result, events = self.invoke(installer_preparations=invalid)
+            self.assertEqual(events[-1]['data']['code'], 'invalid_request')
+        result, events = self.invoke(installer_preparations=['f' * 64])
+        self.assertEqual(events[-1]['data']['code'], 'pkg_preparation_failed')
+        self.assertFalse(Path(self.environment['TEST_PKG_INSPECTIONS']).exists())
+        result, events = self.invoke(installer_preparations=[key])
+        self.assertEqual(result.returncode, 0, events)
+        prepared = events[1]['data']
+        self.assertEqual(ambient.read_text(), '{"contract": 999}')
+        self.assertTrue(prepared['has_executable_changes'], prepared)
+        self.assertNotEqual(first['prepared_plan_id'], prepared['prepared_plan_id'])
+        self.assertFalse(Path(self.environment['TEST_CASK_LOG']).exists())
+        self.assertEqual(self.plan_result()['prepared_plan_id'], prepared['prepared_plan_id'])
+        self.assertEqual(Path(self.environment['TEST_PKG_INSPECTIONS']).read_text(), 'fixture-cask\n')
+        result, events = self.execute(prepared['prepared_plan_id'])
+        self.assertEqual(result.returncode, 0, events)
+        self.assertEqual(events[-2]['data']['verification']['verdict'], 'selected_requirements_verified')
+        fresh = self.plan_result()
+        self.assertFalse(fresh['has_executable_changes'], fresh)
+        self.assertEqual(Path(self.environment['TEST_PKG_INSPECTIONS']).read_text(), 'fixture-cask\n')
+        self.assertEqual(self.archive.read_bytes(), original)
+
+    def test_pkg_consent_is_bound_to_metadata_bundle_selection_and_expiry(self):
+        metadata = self.pkg_preparation_fixture()
+        first = self.plan_result()
+        key = next(row['installer_preparation_id'] for row in first['plan'] if row['domain'] == 'homebrew-casks')
+        metadata['casks'][0]['version'] = '2.0'
+        Path(self.environment['TEST_CASK_METADATA']).write_text(json.dumps(metadata))
+        result, events = self.invoke(installer_preparations=[key])
+        self.assertEqual(events[-1]['data']['code'], 'pkg_preparation_failed')
+        self.assertFalse(Path(self.environment['TEST_PKG_INSPECTIONS']).exists())
+        metadata['casks'][0]['version'] = '1.0'
+        Path(self.environment['TEST_CASK_METADATA']).write_text(json.dumps(metadata))
+        self.assertEqual(self.invoke(installer_preparations=[key])[0].returncode, 0)
+        prepared = self.plan_result()
+        records = self.home / 'Library/Application Support/Macseed/Homebrew/pkg-preparations'
+        record = next(records.glob('*.json'))
+        evidence = json.loads(record.read_text()); evidence['created'] -= 1801
+        record.write_text(json.dumps(evidence))
+        self.assertEqual(next(r['disposition'] for r in self.plan_result()['plan'] if r['domain'] == 'homebrew-casks'), 'blocked')
+        result, events = self.execute(prepared['prepared_plan_id'])
+        self.assertEqual(events[-1]['data']['code'], 'stale_plan')
+        self.assertFalse(events[-1]['data']['publication_occurred'])
+        self.assertEqual(self.invoke(installer_preparations=[key])[0].returncode, 0)
+        # Changed source bytes invalidate local evidence even with identical cask selection.
+        blueprint = self.stage / 'blueprint.conf'
+        blueprint.write_text(blueprint.read_text() + '\n# changed source\n')
+        self.archive = self.root / 'changed-source.mbt'
+        self.pack()
+        changed = self.plan_result()
+        self.assertEqual(next(r['disposition'] for r in changed['plan'] if r['domain'] == 'homebrew-casks'), 'blocked')
+        self.assertNotEqual(changed['prepared_plan_id'], prepared['prepared_plan_id'])
+        result, events = self.invoke(installer_preparations=[key])
+        self.assertEqual(events[-1]['data']['code'], 'pkg_preparation_failed')
+        result, events = self.invoke(selection={'categories': [], 'items': {}}, installer_preparations=[key])
+        self.assertEqual(events[-1]['data']['code'], 'pkg_preparation_failed')
+        # The original plan cannot admit Apply after changed metadata/source.
+        result, events = self.execute(prepared['prepared_plan_id'])
+        self.assertEqual(events[-1]['data']['code'], 'stale_plan')
+        self.assertFalse(events[-1]['data']['publication_occurred'])
+        self.assertFalse(Path(self.environment['TEST_CASK_LOG']).exists())
+
+    def test_pkg_incomplete_capture_and_conflicting_receipt_fail_closed(self):
+        self.pkg_preparation_fixture()
+        capabilities = {'contract': 1, 'casks': {'fixture-cask': {
+            'state': 'unsupported', 'reason': 'cask_execution_requirements_unsupported', 'required': []}}}
+        bundle.write_file(self.stage / 'generated/homebrew-casks.json', json.dumps(capabilities).encode())
+        self.archive = self.root / 'incomplete.mbt'
+        self.pack()
+        first = self.plan_result()
+        key = next(row['installer_preparation_id'] for row in first['plan'] if row['domain'] == 'homebrew-casks')
+        self.assertEqual(self.invoke(installer_preparations=[key])[0].returncode, 0)
+        prepared = self.plan_result()
+        # A receipt appearing without Homebrew registration invalidates admission.
+        provider = self.project / 'modules/apps/adapters/homebrew_cask.py'
+        original = provider.read_text()
+        provider.write_text(original.replace("present = Path(os.environ['TEST_CASK_STATE']).exists()", "present = True"))
+        result, events = self.execute(prepared['prepared_plan_id'])
+        self.assertEqual(result.returncode, 2)
+        self.assertFalse(events[-1]['data']['publication_occurred'])
+        self.assertFalse(Path(self.environment['TEST_CASK_LOG']).exists())
+        provider.write_text(original)
+        result, events = self.execute(prepared['prepared_plan_id'])
+        self.assertEqual(result.returncode, 0, events)
+        self.assertFalse(self.plan_result()['has_executable_changes'])
 
     def test_pkg_without_local_payload_is_unsupported_without_download(self):
         metadata = self.cask_fixture()
@@ -1274,6 +1459,43 @@ time.sleep(60)
         self.assertEqual(check(), b"secure_bridge_required")
         self.assertFalse(Path(self.environment["TEST_CASK_LOG"]).exists())
         self.assertFalse((self.project / "config/.bundle-publication").exists())
+
+    def test_ownership_conflict_skips_item_and_preserves_independent_work(self):
+        metadata, prefix, caskroot = self.repair_cask_fixture()
+        target = self.root / 'unowned-wrapper'
+        target.write_text('foreign component')
+        metadata['casks'][0]['artifacts'].append({'uninstall': [{'delete': str(target)}]})
+        Path(self.environment['TEST_CASK_METADATA']).write_text(json.dumps(metadata))
+        blueprint = self.stage / 'blueprint.conf'
+        blueprint.write_text(blueprint.read_text().replace('[homebrew-packages]\n', '[homebrew-packages]\nfixture-formula\n'))
+        bundle.write_file(self.stage / 'generated/brew-packages.conf', b'fixture-formula\n')
+        # Simulate a secondary inspection prerequisite in the later report only.
+        entrypoint = self.project / 'bootstrap.sh'
+        original = entrypoint.read_text()
+        original = original.replace("printf '%s\\t%s\\n' \"$CASK_APPLICATION_CONDITION\" \"$index\"",
+                                    "printf '%s\\t%s\\n' cask_metadata_unavailable \"$index\"")
+        entrypoint.write_text(original)
+        self.pack()
+        prepared = self.plan_result()
+        self.assertTrue(prepared['readiness']['ready'], prepared)
+        cask = next(row for row in prepared['plan'] if row['domain'] == 'homebrew-casks')
+        self.assertEqual(cask['reason'], 'cask_target_conflict')
+        self.assertEqual(cask['diagnostic'], {'primitive': 'lifecycle', 'condition': 'ownership_unproven'})
+        self.assertNotIn('qualification_id', cask)
+        local = [c for c in prepared['readiness']['conditions'] if c.get('selected_item_index') == 1 and c['domain'] == 'homebrew-casks']
+        self.assertTrue(local)
+        self.assertTrue(all(c['scope'] == 'item' and c['code'] == 'cask_target_conflict' for c in local))
+        result, events = self.execute(prepared['prepared_plan_id'])
+        final = events[-1]['data']
+        self.assertEqual(result.returncode, 2, events)
+        self.assertTrue(final['independent_work_completed'])
+        self.assertEqual(final['verification']['status'], 'complete')
+        self.assertNotEqual(final['verification']['verdict'], 'selected_requirements_verified')
+        self.assertTrue(Path(self.environment['TEST_CASK_STATE'] + '.formula').exists())
+        self.assertFalse(Path(self.environment['TEST_CASK_LOG']).exists())
+        self.assertEqual(target.read_text(), 'foreign component')
+        self.assertTrue(any(e['type'] == 'operation_record' and e['data'].get('outcome') == 'skipped'
+                            and e['data'].get('reason') == 'cask_execution_requirements_unsupported' for e in events))
 
     def test_unsupported_cask_continues_independent_formula(self):
         metadata = self.cask_fixture(mixed=True)

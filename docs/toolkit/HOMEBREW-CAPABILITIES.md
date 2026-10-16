@@ -25,7 +25,7 @@ These labels summarize existing provider states; they do not add a state machine
 | `binary`, `manpage`, static shell completions | S: owned symlink; executable check for binary | I/R | Owned dangling/non-executable link: R | Link inside exact Caskroom namespace or exact declared app source: R | Wrong source / ordinary replacement file: C | Unprovable source: C | O | A if destination not writable | Old/current artifact identities and targets required | Q |
 | `command_wrapper` | S: executable symlink in exact cask namespace | I/R | Owned dangling/non-executable link: R | Owned cask-namespace link: R | Foreign link / regular replacement: C | C | O | A if destination not writable | Same wrapper identity/target; bounded executable, arguments and environment metadata | Q |
 | Generated completions | S: regular nonempty outputs plus separately declared executable | I/R | Missing/empty outputs: R only with required provenance for remaining outputs | Existing outputs require matching Macseed-owned hashes during Repair | C | C | O | A if destination not writable | Generator, command, shell, format and targets must remain compatible | Q |
-| `pkg` / `pkgutil` | S: exact receipts plus nonempty required real payload | Fresh I with local payload requirements; absent requirements: U; registered missing required receipt blocks Repair: C | R with exclusive package ownership and qualifying old/current cleanup | Receipt alone never S; bounded missing payload can be R | Shared/unselected owners: C | C | O | Native administrator authorization | Changed archive/version allowed; exact cleanup receipt set and replacement evidence required | Q |
+| `pkg` / `pkgutil` | S: exact receipts plus nonempty required real payload | Fresh I with local payload requirements; absent requirements: U; registered missing required receipt blocks Repair: C | R with exclusive package ownership and qualifying old/current cleanup | Receipt alone never S; bounded missing payload can be R | Shared/unselected owners: C | C | O | Native administrator authorization | Recorded provenance rejects source/receipt changes; exact cleanup receipt set and replacement evidence required | Q |
 | `quit` | Exact declared bundle IDs; not a payload predicate | Bounded declared lifecycle accepted | Does not establish payload/ownership | Cannot alone authorize any orphan | Wildcards / non-ID selectors: U | Unprovable surrounding cleanup: C | Surrounding contract O | Homebrew owns quit behavior | Old/current declarations independently qualified; versions not compared | Q |
 | `launchctl` | Exact loaded program + owned plist; shared LaunchAgents allowed in GUI/user domain | No service/plist: accepted | Malformed evidence: O; incompatible ownership: C | Inactive service beneath exact missing app, installed declaration or exact current-declared native XPC identity/path, no conflicting plist: R | Outside expected payload: C | Multiple concrete domains / fallback-only identity: C | O; malformed inventory cannot mean absence | System daemon/plist requires native authorization; plistless system orphan: C | Both old and current cleanup qualified; new orphan identity requires direct native XPC evidence; otherwise C | Q; live unproven orphan: C |
 | `login_item` | Unique declared identity pointing at exact expected app | Absent identity: accepted | Concrete different target: C | Observed unavailable target + exact missing app + installed declaration: R | Different concrete app: C | Duplicate name / multiple expected apps: O/C | O, separate from ownership conflict | Automation denial/consent unavailable is readiness; Preview never asks | Both lifecycle contracts qualified; missing-target orphan requires installed declaration | Q if surrounding native lifecycle is unknown |
@@ -113,6 +113,8 @@ contents, typed metadata and portable captured payload requirements. Since
 missing requirements by downloading a PKG. Insufficient local payload evidence
 remains U (unsupported/unverified), including when Homebrew registration exists;
 known local evidence can still qualify installed, missing or repairable PKG Casks.
+Explicit preparation below can supply missing Clean Install requirements for older
+Bundles; it never substitutes for target installation evidence.
 Homebrew metadata/preflight network behavior is unchanged. During a qualified
 Install/Repair, Homebrew owns installer downloads and native execution.
 
@@ -124,12 +126,39 @@ native command or prior observation is not substituted for that evidence.
 Repair with unresolved caveats remains
 unsupported; extension/VPN activation and license conditions remain vendor/user work.
 
+### Receipt-backed PKG Repair provenance
+
+PKG caveats are informational for Repair only when the complete native lifecycle
+passes preflight. Macseed checks both installed and current cleanup declarations,
+exact receipts, native ownership and target conflicts before allowing Homebrew
+`reinstall`; administrator approval is separate from qualification.
+
+After a verified controlled operation, the existing private lifecycle record may
+include `pkg_ownership`: source metadata/checksum/version and cleanup identities,
+receipt identities, and bounded fingerprints of receipt-owned cleanup files. The
+receipt ownership is the authority; fingerprints only detect subsequent changes
+or replacement. Preview never creates this record. Repair rechecks native owners
+and rejects stale metadata, receipts, changed files or unsafe record permissions.
+
+Legacy installations without this record may use the existing exact receipts and
+native ownership checks. Unreceipted files are not adopted from their path, owner,
+contents, timestamps or an installation-time filesystem difference. In particular,
+a script that creates a wrapper only if absent cannot prove that a legacy wrapper
+was created by that installer. Such cleanup remains unsupported with
+`lifecycle / ownership_unproven`; Macseed does not delete it or bypass Homebrew.
+Installer inspection and consent-bound preparation retain their existing lifetime
+and identity rules; this provenance adds no Preview download or automatic Repair.
+
 ### Explicit inert archive inspection
 
 The internal `PublicObserver.package_install_payloads()` helper remains available
-for explicitly invoked, checksum-bound preliminary analysis. It has no automatic
-production caller in the current provider and is not a Preview/readiness or
-Verification fallback. It downloads over HTTPS, checks SHA-256 and uses public
+for explicitly approved, checksum-bound preparation of clean native PKG installs.
+Ordinary Preview/readiness and Verification never invoke it. Missing local payload
+evidence may offer preparation through Check Again; only a subsequent explicitly
+approved Core request invokes the inspector. The additive consent/identity and
+30-minute private evidence lifetime are defined in the
+[Core contract](../core/APPLICATION-INTERFACE.md#explicit-pkg-installer-preparation).
+Repair and known unsupported profiles do not acquire download permission. It downloads over HTTPS, checks SHA-256 and uses public
 `pkgutil --expand-full` in private temporary storage without running scripts or
 the installer. It accepts exact selected receipt IDs and root `.app` installation
 locations in `/Applications`, with valid source bundle identity/executable.

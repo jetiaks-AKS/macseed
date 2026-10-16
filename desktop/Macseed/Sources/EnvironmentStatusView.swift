@@ -244,7 +244,7 @@ struct EnvironmentComparisonItem: View {
     let item: DisplayItem
     var facts: [ComparisonTechnicalFact] = []
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
+        TaskTextStatusLayout {
             VStack(alignment: .leading, spacing: 4) {
                 Text(item.title)
                 if let explanation = item.comparisonExplanation {
@@ -278,7 +278,7 @@ struct EnvironmentComparisonItem: View {
                     }
                         .disclosureGroupStyle(TaskDisclosureStyle(minimumHeight: 22)).font(.caption)
                 }
-            }.frame(maxWidth: .infinity, alignment: .leading)
+            }.frame(maxWidth: .infinity, alignment: .leading).fixedSize(horizontal: false, vertical: true)
             if item.isNormalComparisonMatch {
                 Image(systemName: "checkmark").foregroundStyle(RestoreStatusTone.success.color)
                     .accessibilityLabel("Already Matches")

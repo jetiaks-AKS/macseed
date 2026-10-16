@@ -208,18 +208,26 @@ struct RestoreTaskPresentation {
                 }
                 let reason = operation?["reason"]?.string ?? activity?.data?["reason"]?.string ?? observed?["reason"]?.string ?? item.reason
                 let message: String
-                switch reason {
-                case "cask_execution_requirements_unsupported": message = "This application's installation requirements are not supported."
-                case "item_stalled_timeout": message = "No observable progress. Check the network or VPN, then Refresh Preview."
-                case "dependency_failed": message = "A required dependency did not complete."
-                case "privileged_lifecycle_unknown": message = "Privileged work may continue. Inspect Homebrew before another Rebuild."
-                case "cask_authorization_required": message = "Administrator authorization was not completed."
-                default: message = state == .completed ? (operationProgress ? "Core confirmed operation completion." : "Verified against the saved environment.")
-                    : operationProgress && state == .unverified ? "Core has not confirmed completion of this operation."
-                    : executing && state == .working
-                        ? (entry?.action == "reinstall" ? "Repairing or verifying this item…" : "Applying or verifying this item…")
-                    : state == .awaitingVerification
-                        ? "Awaiting Verification." : item.action
+                if result == nil && !executing && !operationProgress, let explanation = entry?.unsupportedRepairExplanation {
+                    message = explanation
+                } else {
+                    switch reason {
+                    case "cask_execution_requirements_unsupported":
+                        message = result == nil && !executing && !operationProgress
+                            && entry?.diagnostic?.primitive == "pkgutil" && entry?.diagnostic?.condition == "preparation_required"
+                            ? "Installer preparation required before this application can be restored."
+                            : "This application's installation requirements are not supported."
+                    case "item_stalled_timeout": message = "No observable progress. Check the network or VPN, then Refresh Preview."
+                    case "dependency_failed": message = "A required dependency did not complete."
+                    case "privileged_lifecycle_unknown": message = "Privileged work may continue. Inspect Homebrew before another Rebuild."
+                    case "cask_authorization_required": message = "Administrator authorization was not completed."
+                    default: message = state == .completed ? (operationProgress ? "Core confirmed operation completion." : "Verified against the saved environment.")
+                        : operationProgress && state == .unverified ? "Core has not confirmed completion of this operation."
+                        : executing && state == .working
+                            ? (entry?.action == "reinstall" ? "Repairing or verifying this item…" : "Applying or verifying this item…")
+                        : state == .awaitingVerification
+                            ? "Awaiting Verification." : item.action
+                    }
                 }
                 // Final labels describe independent evidence, never inferred installations.
                 var labels: [String] = []

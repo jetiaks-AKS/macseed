@@ -19,6 +19,8 @@ import tempfile
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "bundle"))
 import bundle
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "apps/adapters"))
+import homebrew_pkg_preparation as pkg_preparation
 from execution import OwnedBootstrap, ProcessObservationUnavailable
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from performance_trace import timed, add, ENABLED
@@ -53,9 +55,10 @@ class Cancelled(Exception):
 
 
 class ExecuteFailed(Exception):
-    def __init__(self, code, selected_item_index=None):
+    def __init__(self, code, selected_item_index=None, diagnostic=None):
         self.code = code
         self.selected_item_index = selected_item_index
+        self.diagnostic = diagnostic
 
 
 def emit(sequence, kind, operation_id, data=None):
@@ -103,8 +106,8 @@ def restore_signals():
         signal.signal(signal.SIGTERM, previous_term)
 
 
-def restore_prepare(path, disabled_groups, include_secure, selection=None):
-    with restore_signals(), prepared_restore(path, disabled_groups, include_secure, selection) as (summary, _stage, _source, _staged):
+def restore_prepare(path, disabled_groups, include_secure, selection=None, installer_preparations=None):
+    with restore_signals(), prepared_restore(path, disabled_groups, include_secure, selection, installer_preparations) as (summary, _stage, _source, _staged):
         return summary
 
 
@@ -119,7 +122,7 @@ def restore_unpack(*args):
 
 
 @contextmanager
-def prepared_restore(path, disabled_groups, include_secure, selection=None):
+def prepared_restore(path, disabled_groups, include_secure, selection=None, installer_preparations=None):
     if bundle.RECOVERY.exists() or bundle.RECOVERY.is_symlink():
         raise RecoveryRequired()
     input_path = Path(path)
@@ -144,12 +147,34 @@ def prepared_restore(path, disabled_groups, include_secure, selection=None):
             raise InvalidSelection() from None
         bundle.narrow(stage, disabled_groups)
         stage_identity = restore_fingerprint(stage)
+        preparation_context = pkg_preparation.context(source_identity, stage_identity)
+        if installer_preparations:
+            from homebrew_cask import prepare_packages, Unsafe, PreparationFailure
+            sections, _ = bundle.parse_blueprint(bundle.checked_file(stage / "blueprint.conf"))
+            scoped = {pkg_preparation.CONTEXT: preparation_context,
+                      'BLUEPRINT_GENERATED_DIR': str(stage / 'generated')}
+            previous = {name: os.environ.get(name) for name in scoped}
+            os.environ.update(scoped)
+            try:
+                prepare_packages(sections['homebrew-casks'], installer_preparations)
+            except PreparationFailure as exc:
+                raise ExecuteFailed('pkg_preparation_failed', diagnostic=exc.preparation_diagnostic) from None
+            except (Unsafe, OSError, ValueError, subprocess.SubprocessError):
+                raise ExecuteFailed('pkg_preparation_failed') from None
+            finally:
+                for name, value in previous.items():
+                    if value is None:
+                        os.environ.pop(name, None)
+                    else:
+                        os.environ[name] = value
+            if restore_fingerprint(input_path) != source_identity:
+                raise ExecuteFailed('stale_plan')
         summary_file = private / "preview.summary"
         descriptor = os.open(summary_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         os.close(descriptor)
         plan_file = private / "preview.plan"
         plan_file.touch(mode=0o600)
-        environment = dict(os.environ, BLUEPRINT_FILE=str(stage / "blueprint.conf"),
+        environment = dict(os.environ, MACSEED_PKG_PREPARATION_CONTEXT=preparation_context, BLUEPRINT_FILE=str(stage / "blueprint.conf"),
                            BLUEPRINT_GENERATED_DIR=str(stage / "generated"),
                            BUNDLE_RESTORE_PREVIEW="true", MACSEED_PERFORMANCE_SCOPE="preview", PREVIEW_SUMMARY_FILE=str(summary_file),
                            MACSEED_APPLICATION_EXECUTION="true", PREVIEW_PLAN_FILE=str(plan_file))
@@ -189,7 +214,7 @@ def prepared_restore(path, disabled_groups, include_secure, selection=None):
                               for item in modules):
             raise PreviewFailed()
         sections, categories = bundle.parse_blueprint((stage / "blueprint.conf").read_bytes())
-        requirements = prepared_requirements(stage, include_secure)
+        requirements = prepared_requirements(stage, include_secure, preparation_context)
         records = []
         domains = set(bundle.ITEMS) | set(bundle.CATEGORIES) | {"secure-ssh-identities"}
         for line in plan_file.read_text().splitlines():
@@ -203,7 +228,7 @@ def prepared_restore(path, disabled_groups, include_secure, selection=None):
                 if domain != 'homebrew-casks' or not isinstance(capability, dict):
                     raise PreviewFailed()
                 keys = set(capability)
-                if keys - {'qualification_id', 'authorization_required', 'diagnostic'}:
+                if keys - {'qualification_id', 'authorization_required', 'diagnostic', 'installer_preparation_id'}:
                     raise PreviewFailed()
                 if disposition == 'planned' and not {'qualification_id', 'authorization_required'} <= keys:
                     raise PreviewFailed()
@@ -213,6 +238,11 @@ def prepared_restore(path, disabled_groups, include_secure, selection=None):
                             type(capability['authorization_required']) is not bool):
                         raise PreviewFailed()
                 if 'diagnostic' in keys and not diagnostic_valid(capability['diagnostic']):
+                    raise PreviewFailed()
+                if 'installer_preparation_id' in keys and (
+                        not PREPARED_PLAN_ID.fullmatch(str(capability['installer_preparation_id'])) or
+                        disposition != 'blocked' or reason != 'cask_execution_requirements_unsupported' or
+                        capability.get('diagnostic') != {'primitive': 'pkgutil', 'condition': 'preparation_required'}):
                     raise PreviewFailed()
             # Production inspection follows config section order, which need not
             # match Blueprint order. Correlate by section identity before exposing
@@ -251,6 +281,23 @@ def prepared_restore(path, disabled_groups, include_secure, selection=None):
                 label = sections["git-repositories"][int(row["item_id"]) - 1]
                 if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_. -]{0,127}", label, re.ASCII):
                     row["display_name"] = label
+        # A terminal item-local Preview decision takes precedence over a later
+        # inspection prerequisite for that same item. Keep unrelated/global gates.
+        for condition in requirements['conditions']:
+            index = condition.get('selected_item_index')
+            if condition['domain'] != 'homebrew-casks' or index is None:
+                continue
+            identity = sections['homebrew-casks'][index - 1]
+            primary = next((row for row in records if row['domain'] == 'homebrew-casks'
+                            and row['item_id'] == identity and row['disposition'] == 'blocked'
+                            and row['reason'] in {'cask_execution_requirements_unsupported', 'cask_target_conflict'}), None)
+            if primary is not None:
+                condition.update(code=primary['reason'], status='unsupported', scope='item', compatibility='item_unsupported')
+                if primary.get('diagnostic'):
+                    condition['diagnostic'] = primary['diagnostic']
+        requirements['ready'] = all(condition['status'] in ('satisfied', 'safely_satisfiable')
+                                    or condition.get('scope') in ('item', 'execution_launch')
+                                    for condition in requirements['conditions'])
         # Correlate bounded provider context to the same selected item and reason.
         for condition in requirements['conditions']:
             index = condition.get('selected_item_index')
@@ -269,6 +316,12 @@ def prepared_restore(path, disabled_groups, include_secure, selection=None):
                     if selected_index is not None and row["item_id"] != sections[condition["domain"]][selected_index - 1]:
                         continue
                     if row["domain"] == condition["domain"] and row["disposition"] in ("planned", "unknown", "blocked"):
+                        if row['reason'] != condition['code']:
+                            # Context belongs to its original reason, not a later
+                            # readiness failure observed for the same application.
+                            row.pop('diagnostic', None)
+                        if condition.get('diagnostic'):
+                            row['diagnostic'] = condition['diagnostic']
                         row["disposition"] = "blocked"
                         row["reason"] = condition["code"]
         module_domains = {"preview_brew_packages": "homebrew-packages", "preview_brew_casks": "homebrew-casks",
@@ -347,8 +400,8 @@ READINESS_CODES = {
 
 
 @timed("readiness.requirements")
-def prepared_requirements(stage, include_secure):
-    environment = dict(os.environ, BLUEPRINT_FILE=str(stage / "blueprint.conf"),
+def prepared_requirements(stage, include_secure, preparation_context=""):
+    environment = dict(os.environ, MACSEED_PKG_PREPARATION_CONTEXT=preparation_context, BLUEPRINT_FILE=str(stage / "blueprint.conf"),
                        BLUEPRINT_GENERATED_DIR=str(stage / "generated"),
                        BUNDLE_RESTORE_ACTIVE="true", BUNDLE_RESTORE_SECURE_FILE="",
                        MACSEED_APPLICATION_EXECUTION="true",
@@ -385,7 +438,7 @@ def prepared_requirements(stage, include_secure):
             raise PreviewFailed()
         status = ("satisfied" if code == "ready" else "safely_satisfiable" if code in {
                   "homebrew_path_activation", "vscode_bundled_cli"} else "unsupported" if code in {
-                  "unsupported_interactive_operation", "cask_execution_requirements_unsupported",
+                  "unsupported_interactive_operation", "cask_execution_requirements_unsupported", "cask_target_conflict",
                   "cask_repair_not_supported"} else "external_action_required")
         condition = {"domain": domain, "code": code, "status": status, "scope": "operation"}
         if len(fields) == 3:
@@ -393,7 +446,7 @@ def prepared_requirements(stage, include_secure):
                     not 1 <= int(fields[2]) <= len(sections[domain])):
                 raise PreviewFailed()
             condition["selected_item_index"] = int(fields[2])
-            if domain == "homebrew-casks" and code == "cask_execution_requirements_unsupported":
+            if domain == "homebrew-casks" and code in {"cask_execution_requirements_unsupported", "cask_target_conflict"}:
                 condition["scope"] = "item"
         conditions.append(condition)
     if include_secure:
@@ -421,6 +474,7 @@ def prepared_requirements(stage, include_secure):
         'cask_metadata_unavailable': 'observation_failure',
         'cask_launchctl_observation_failed': 'observation_failure',
         'cask_execution_requirements_unsupported': 'item_unsupported',
+        'cask_target_conflict': 'item_unsupported',
     }
     for condition in conditions:
         if condition['code'] in compatibility_codes:
@@ -431,8 +485,8 @@ def prepared_requirements(stage, include_secure):
 
 
 @timed("readiness.publication")
-def readiness(stage, include_secure, secure_ready=False, secure_only=False):
-    environment = dict(os.environ, MACSEED_PERFORMANCE_SCOPE="publication", BLUEPRINT_FILE=str(stage / "blueprint.conf"),
+def readiness(stage, include_secure, secure_ready=False, secure_only=False, preparation_context=""):
+    environment = dict(os.environ, MACSEED_PKG_PREPARATION_CONTEXT=preparation_context, MACSEED_PERFORMANCE_SCOPE="publication", BLUEPRINT_FILE=str(stage / "blueprint.conf"),
                        BLUEPRINT_GENERATED_DIR=str(stage / "generated"),
                        BUNDLE_RESTORE_ACTIVE="true", BUNDLE_RESTORE_SECURE_FILE="",
                        MACSEED_APPLICATION_EXECUTION="true",
@@ -575,7 +629,8 @@ def restore_execute(operation_id, path, disabled_groups, include_secure, expecte
                     if select.select([channel], [], [], 0)[0]:
                         raise SecureError("secure_cancelled" if not channel.recv(1, socket.MSG_PEEK)
                                           else "secure_channel_invalid")
-                readiness(stage, include_secure, channel is not None, secure_only)
+                readiness(stage, include_secure, channel is not None, secure_only,
+                          pkg_preparation.context(source_id, stage_id))
                 if plan["error_count"]:
                     raise ExecuteFailed("preview_observation_failed")
                 current_stage = restore_fingerprint(stage)
@@ -612,7 +667,7 @@ def restore_execute(operation_id, path, disabled_groups, include_secure, expecte
                                                     operation_id, event, secure_mutation)
                     state["secure_restore_status"] = "completed"
                 checkpoint()
-                environment = dict(os.environ, BUNDLE_RESTORE_ACTIVE="true",
+                environment = dict(os.environ, MACSEED_PKG_PREPARATION_CONTEXT=pkg_preparation.context(source_id, stage_id), BUNDLE_RESTORE_ACTIVE="true",
                                    BUNDLE_RESTORE_SECURE_FILE="application-evidence" if include_secure else "",
                                    MACSEED_APPLICATION_SECURE_SELECTED=str(include_secure).lower(),
                                    MACSEED_APPLICATION_SECURE_READY=str(include_secure).lower(),
@@ -635,7 +690,7 @@ def restore_execute(operation_id, path, disabled_groups, include_secure, expecte
                         skipped_casks = [row["item_id"] for row in plan["plan"]
                                          if row["domain"] == "homebrew-casks" and
                                          row["disposition"] == "blocked" and
-                                         row["reason"] == "cask_execution_requirements_unsupported"]
+                                         row["reason"] in {"cask_execution_requirements_unsupported", "cask_target_conflict"}]
                         owned = OwnedBootstrap(ROOT, dict(environment, MACSEED_PERFORMANCE_SCOPE="bootstrap"), secure_evidence, record_event,
                                                identities, skipped_casks=skipped_casks,
                                                cask_plans={row['item_id']: row['qualification_id'] for row in plan['plan']
@@ -899,7 +954,7 @@ def main(version, channel=None):
                  "MACSEED_APPLICATION_SECURE_VERIFY_ONLY", "MACSEED_SECURE_EVIDENCE_FD",
                  "MACSEED_SECURE_ATTEMPT", "MACSEED_SECURE_EXIT", "MACSEED_REPORT_FD",
                  "MACSEED_REPORT_COUNT", "MACSEED_REPORT_INVALID", "MACSEED_APPLICATION_CAPTURE",
-                 "MACSEED_CAPTURE_INVENTORY"):
+                 "MACSEED_CAPTURE_INVENTORY", pkg_preparation.CONTEXT):
         os.environ.pop(name, None)
     try:
         value = request()
@@ -950,8 +1005,16 @@ def main(version, channel=None):
             expected = {"path"} if operation == "bundle_inspect" else {"path", "disabled_groups", "include_secure"}
             if operation == "restore_execute":
                 expected = expected | {"expected_prepared_plan_id"}
-            if not isinstance(parameters, dict) or (set(parameters) != expected and not (operation != "bundle_inspect" and set(parameters) == expected | {"selection"})):
+            optional = ({'selection', 'installer_preparations'} if operation == 'restore_prepare' else
+                        {'selection'} if operation == 'restore_execute' else set())
+            if not isinstance(parameters, dict) or not expected <= set(parameters) or set(parameters) - expected - optional:
                 raise ValueError("invalid Bundle parameters")
+            if 'installer_preparations' in parameters:
+                approvals = parameters['installer_preparations']
+                if (not isinstance(approvals, list) or not 1 <= len(approvals) <= 32 or
+                        any(not isinstance(key, str) or not PREPARED_PLAN_ID.fullmatch(key) for key in approvals) or
+                        len(set(approvals)) != len(approvals)):
+                    raise ValueError('invalid installer consent')
             path = parameters["path"]
             if not isinstance(path, str) or not path.startswith("/") or "\0" in path:
                 raise ValueError("invalid Bundle path")
@@ -1002,7 +1065,7 @@ def main(version, channel=None):
         result = {
             "protocol_version": PROTOCOL_VERSION,
             "product_version": version,
-            "features": {"bundle_comparison": {"version": 1}, "homebrew_graceful_stop": {"version": 1}, "restore_selection": {"version": 1, "inventory": "bundle_inspect", "selection_modes": ["category", "items"]}},
+            "features": {"pkg_installer_preparation": {"version": 1}, "bundle_comparison": {"version": 1}, "homebrew_graceful_stop": {"version": 1}, "restore_selection": {"version": 1, "inventory": "bundle_inspect", "selection_modes": ["category", "items"]}},
             "operations": ["capabilities", "bundle_inspect", "restore_prepare", "restore_execute", "capture_prepare", "capture_execute", "environment_compare"],
         }
     else:
@@ -1010,7 +1073,7 @@ def main(version, channel=None):
             if operation == "restore_prepare":
                 if len(disabled_groups) != len(set(disabled_groups)) or any(item not in bundle.GROUPS for item in disabled_groups):
                     raise InvalidSelection()
-                result = restore_prepare(path, disabled_groups, include_secure, parameters.get("selection"))
+                result = restore_prepare(path, disabled_groups, include_secure, parameters.get("selection"), parameters.get("installer_preparations"))
             else:
                 input_path = Path(path)
                 mode = input_path.lstat().st_mode
@@ -1021,6 +1084,12 @@ def main(version, channel=None):
                 result["restore_selection"], _ = restore_selection.inventory(bundle.validate_archive(input_path))
                 if bundle.fingerprint(input_path) != source_identity:
                     raise bundle.Invalid("Bundle changed during inspection")
+        except ExecuteFailed as exc:
+            data = {"code": exc.code}
+            if exc.code == 'pkg_preparation_failed' and exc.diagnostic:
+                data['diagnostic'] = exc.diagnostic
+            emit(2, "failed", operation_id, data)
+            return 2
         except RecoveryRequired:
             emit(2, "failed", operation_id, {"code": "recovery_required"})
             return 2

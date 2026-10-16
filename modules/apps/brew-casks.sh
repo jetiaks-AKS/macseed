@@ -91,7 +91,7 @@ preview_brew_casks() {
                     preview_record homebrew-casks "$cask" reinstall planned none "$(jq -c '{qualification_id, authorization_required}' <<< "$HOMEBREW_ADAPTER_RESULT")"
                     preview_action "Would repair Homebrew cask: $cask" ;;
                 unsupported)
-                    preview_record homebrew-casks "$cask" "${HOMEBREW_ADAPTER_OPERATION:-install}" blocked "$HOMEBREW_ADAPTER_CONDITION" "$(jq -c 'if .diagnostic then {diagnostic} else {} end' <<< "$HOMEBREW_ADAPTER_RESULT")" ;;
+                    preview_record homebrew-casks "$cask" "${HOMEBREW_ADAPTER_OPERATION:-install}" blocked "$HOMEBREW_ADAPTER_CONDITION" "$(jq -c '{diagnostic, installer_preparation_id} | with_entries(select(.value != null))' <<< "$HOMEBREW_ADAPTER_RESULT")" ;;
                 *)
                     preview_record homebrew-casks "$cask" install blocked "$HOMEBREW_ADAPTER_CONDITION" "$(jq -c 'if .diagnostic then {diagnostic} else {} end' <<< "$HOMEBREW_ADAPTER_RESULT")"
                     error "Failed to qualify Homebrew cask: $cask"
@@ -164,8 +164,9 @@ install_brew_cask() {
         fi
         cask_application_readiness "$cask" "$install_command" || {
             if [[ "${MACSEED_APPLICATION_ALLOW_ITEM_SKIPS:-false}" == true &&
-                  "$CASK_APPLICATION_CONDITION" == cask_execution_requirements_unsupported ]]; then
-                declare -F verification_application_operation_hook >/dev/null && verification_application_operation_hook homebrew-casks "$cask" "$install_command" skipped "$CASK_APPLICATION_CONDITION"
+                  ( "$CASK_APPLICATION_CONDITION" == cask_execution_requirements_unsupported ||
+                    "$CASK_APPLICATION_CONDITION" == cask_target_conflict ) ]]; then
+                declare -F verification_application_operation_hook >/dev/null && verification_application_operation_hook homebrew-casks "$cask" "$install_command" skipped cask_execution_requirements_unsupported
                 warning "Homebrew cask requires unsupported execution: $cask"
             else
                 error "$CASK_APPLICATION_CONDITION"
@@ -308,7 +309,8 @@ install_brew_casks() {
             if [[ "${MACSEED_APPLICATION_EXECUTION:-false}" == true &&
                   "${MACSEED_APPLICATION_ALLOW_ITEM_SKIPS:-false}" == true &&
                   "${HOMEBREW_ADAPTER_STATE:-}" == unsupported &&
-                  "${HOMEBREW_ADAPTER_CONDITION:-}" == cask_execution_requirements_unsupported ]]; then
+                  ( "${HOMEBREW_ADAPTER_CONDITION:-}" == cask_execution_requirements_unsupported ||
+                    "${HOMEBREW_ADAPTER_CONDITION:-}" == cask_target_conflict ) ]]; then
                 install_brew_cask "$cask" install
                 item_errors=$((item_errors + 1))
                 continue
@@ -369,7 +371,8 @@ verify_brew_casks() {
         is_cask_installed "$item"
         result=$?
         if [[ $result -eq 2 && "${HOMEBREW_ADAPTER_STATE:-}" == unsupported &&
-              "${HOMEBREW_ADAPTER_CONDITION:-}" == cask_execution_requirements_unsupported ]]; then
+              ( "${HOMEBREW_ADAPTER_CONDITION:-}" == cask_execution_requirements_unsupported ||
+                    "${HOMEBREW_ADAPTER_CONDITION:-}" == cask_target_conflict ) ]]; then
             verification_unsupported homebrew-casks "$item" installed || return 2
             declare -F comparison_note >/dev/null && comparison_note unverified "$GV_LAST_REF"
             continue

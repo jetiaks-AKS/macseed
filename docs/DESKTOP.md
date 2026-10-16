@@ -308,15 +308,15 @@ that target state is unchanged; no intermediate phases or percentages are inferr
    retain its evidence as stale until explicit Refresh Preview.
    Cancelled, failed or interrupted refreshes clear the old Preview. Back retains
    selection and requires a fresh Prepare.
-4. Inline prerequisites show selected-work conditions, **How to Resolve /
-   Instructions** and **Check Again**; no dedicated prerequisite page by default.
-   Ready prerequisites collapse to one **Prerequisites · Ready** row. Actionable
-   findings stay visible; a specific structured cause replaces a duplicate aggregate
-   inspection consequence in presentation, while Core evidence remains intact.
-   For login-item Automation, user-initiated Check Again checks permission without
-   prompting, requests consent only if undetermined, and continues fresh Prepare
-   after access becomes available. Denied/restricted access requires System Settings
-   or administrator recovery; ordinary Preview never requests permission.
+4. Inline **Needs Preparation** and one **Fix Issues…** action appear before Tasks
+   only when structured state offers supported PKG preparation or Automation access.
+   Ready prerequisites without preparation actions are hidden. Manual blockers retain
+   their instructions without promising an automatic fix. Specific structured causes
+   replace duplicate aggregate inspection consequences; Core evidence remains intact.
+   Fix Issues checks Automation permission first, prompting only if undetermined,
+   then requests separate consent for explicitly listed PKG installers. A fresh
+   Prepare retains unresolved conditions and errors. Denied/restricted access requires
+   System Settings or administrator recovery; ordinary Preview never requests permission.
    The explanation states that login-item inspection requires System Events access;
    a successful recheck replaces permission warnings while retaining independent item issues.
    Recheck calls fresh Prepare with the same current inputs,
@@ -665,6 +665,16 @@ Protocol V1 can retain exit `2` / `bootstrap_failed` for item failures with
 remains authoritative. User stop with incomplete termination evidence is
 Interrupted/Unknown, not a confirmed Stopped result. Cancellation before execution
 remains Cancelled. No result promises rollback or whole-Mac identity.
+
+Fix Issues also handles explicit PKG installer preparation. When Core offers a
+preparation identity for a clean native package, Desktop lists the concrete casks
+and asks before downloading/inspecting them. A PKG-only refusal retains the existing
+Preview; if Automation was already checked, refusal rechecks without PKG consent.
+Consent applies only to the displayed identities and current selection; after
+inspection a new Preview requires a separate Rebuild confirmation. A changed or
+expired identity requires new consent. No archive download occurs on ordinary
+Refresh Preview. Real Tailscale qualification of this flow remains open; see the
+[Core contract](core/APPLICATION-INTERFACE.md#explicit-pkg-installer-preparation).
 
 ## Recent Restore qualification and performance
 

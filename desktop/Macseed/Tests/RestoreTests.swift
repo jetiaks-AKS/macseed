@@ -570,7 +570,7 @@ import SwiftUI
         print("PASS: Working retains Preview warnings; execution awaits Verification; Partial requires typed independent success; item diagnostics preserve independent problems")
     }
     @MainActor static func main() async throws {
-        if !CommandLine.arguments.contains("--review-cancel-only") && !CommandLine.arguments.contains("--restore-macos-only") {
+        if !CommandLine.arguments.contains("--independent-ownership-only") && !CommandLine.arguments.contains("--review-cancel-only") && !CommandLine.arguments.contains("--restore-macos-only") && !CommandLine.arguments.contains("--pkg-preparation-only") && !CommandLine.arguments.contains("--fix-issues-only") {
             for id in WorkspaceCategoryStyle.groups.flatMap({ $0.1 }) {
                 let problem = TaskItemPresentation(id: "problem", item: DisplayItem(id: "problem", title: "Problem", status: .attention, action: "Needs inspection"), state: .failed, resultLabels: ["Failed", "Mismatch"])
                 var category = TaskDomainPresentation(id: id, title: id, symbol: "folder", items: [problem], activityState: .working)
@@ -718,6 +718,29 @@ import SwiftUI
                     preserved.update(action='none',disposition='conflict',reason='target_conflict')
                 result['readiness']['ready']=True
                 result['has_executable_changes']=any(row['disposition']=='planned' for row in result['plan'])
+            if mode=='ownership_conflict':
+                casks=[row for row in result['plan'] if row['domain']=='homebrew-casks']
+                blocked=casks[1]
+                ready=[row for row in result['plan'] if row is not blocked][:4]
+                for row in result['plan']: row['disposition']='planned' if row in ready else 'satisfied'
+                blocked.update(action='reinstall',disposition='blocked',reason='cask_target_conflict',diagnostic=dict(primitive='lifecycle',condition='ownership_unproven'))
+                result['readiness'].update(ready=True,conditions=[dict(domain='homebrew-casks',code='cask_target_conflict',status='unsupported',scope='item',selected_item_index=2,diagnostic=blocked['diagnostic'])])
+                result['has_executable_changes']=True
+            if mode in ('pkg-preparation','pkg-and-automation'):
+                approved=request['parameters'].get('installer_preparations')
+                assert approved is None or approved==['c'*64]
+                cask=next(row for row in result['plan'] if row['domain']=='homebrew-casks')
+                if approved is None:
+                    cask.update(disposition='blocked',reason='cask_execution_requirements_unsupported',installer_preparation_id='c'*64,diagnostic=dict(primitive='pkgutil',condition='preparation_required'))
+                    result['readiness']['conditions']=[dict(domain='homebrew-casks',code='cask_execution_requirements_unsupported',status='unsupported',scope='item',selected_item_index=1)]
+                result['readiness']['ready']=True
+                result['prepared_plan_id']=('d' if approved else 'a')*64
+                if mode=='pkg-and-automation' and not Path('automation-fixed').exists():
+                    second=next(row for row in result['plan'] if row['domain']=='homebrew-casks' and row is not cask)
+                    second.update(disposition='blocked',reason='cask_metadata_unavailable',diagnostic=dict(primitive='login_item',condition='application_unavailable'))
+                    result['readiness']['conditions'].append(dict(domain='homebrew-casks',code='cask_metadata_unavailable',status='external_action_required',scope='operation',selected_item_index=2,diagnostic=dict(primitive='login_item',condition='application_unavailable')))
+                    result['readiness']['ready']=False
+                    result['prepared_plan_id']='e'*64
             if mode=='scoped_ssh':
                 if 'ssh-configuration' in selected_categories:
                     result['readiness']['conditions'].append(dict(domain='ssh-configuration',code='ssh_configuration_not_ready',status='external_action_required',scope='operation'))
@@ -746,12 +769,12 @@ import SwiftUI
             assert request['parameters']['selection']==last_prepare['parameters']['selection']
             assert request['parameters']['expected_prepared_plan_id']==(session_id if session else 'a'*64)
             if mode=='execute_missing_result': emit('completed'); sys.exit(0)
-            if mode in ('execute_partial','execute_item_skip'):
+            if mode in ('execute_partial','execute_item_skip','execute_ownership_skip'):
                 emit('phase_started',dict(phase='bootstrap'))
-                item_reason='cask_execution_requirements_unsupported' if mode=='execute_item_skip' else 'item_stalled_timeout'
-                item_outcome='skipped' if mode=='execute_item_skip' else 'failure'
-                emit('operation_record',dict(domain='homebrew-casks',item_id='1',action='install',outcome=item_outcome,reason=item_reason))
-                details=dict(status='complete',operation_records=[dict(domain='homebrew-casks',item_id='1',action='install',outcome=item_outcome,reason=item_reason),dict(domain='vscode-extensions',item_id='1',action='install',outcome='success',reason=None)],verification_records=[dict(domain='homebrew-casks',item_id='1',conformity='mismatch'),dict(domain='vscode-extensions',item_id='1',conformity='verified')])
+                item_reason='cask_execution_requirements_unsupported' if mode in ('execute_item_skip','execute_ownership_skip') else 'item_stalled_timeout'
+                item_outcome='skipped' if mode in ('execute_item_skip','execute_ownership_skip') else 'failure'
+                emit('operation_record',dict(domain='homebrew-casks',item_id=('2' if mode=='execute_ownership_skip' else '1'),action='install',outcome=item_outcome,reason=item_reason))
+                details=dict(status='complete',operation_records=[dict(domain='homebrew-casks',item_id=('2' if mode=='execute_ownership_skip' else '1'),action='install',outcome=item_outcome,reason=item_reason),dict(domain='vscode-extensions',item_id=('2' if mode=='execute_ownership_skip' else '1'),action='install',outcome='success',reason=None)],verification_records=[dict(domain='homebrew-casks',item_id=('2' if mode=='execute_ownership_skip' else '1'),conformity='mismatch'),dict(domain='vscode-extensions',item_id=('2' if mode=='execute_ownership_skip' else '1'),conformity='verified')])
                 verification=dict(status='complete',verdict='differences_detected',mismatch_count=1,unverified_count=0,unresolved_count=0,warning_count=0,error_count=1,details=details)
                 emit('failed',dict(code='bootstrap_failed',prepared_plan_id='a'*64,target_mutation_may_have_started=True,independent_work_completed=True,verification=verification)); sys.exit(2)
             if mode=='execute_interrupted':
@@ -810,6 +833,102 @@ import SwiftUI
         precondition(model.state == .review && model.areas.count == inventory.count && model.groups.count == 5 && model.bulkState == .all)
         precondition(model.selectionSummary == "Everything selected" && model.canPreview)
         precondition(model.inspection?.secureComponent == true && model.selectedAreaCount == 13)
+        if CommandLine.arguments.contains("--independent-ownership-only") {
+            try write("ownership_conflict", core.appendingPathComponent("mode"))
+            model.refreshPreview(); await model.waitForCompletion()
+            precondition(model.state == .preview && model.canRebuild && model.ready)
+            let plan = model.preparation!
+            precondition(plan.plan.filter { $0.disposition == "planned" }.count == 4)
+            let blocked = plan.plan.first { $0.reason == "cask_target_conflict" }!
+            precondition(plan.isItemLocalSkip(blocked))
+            let item = model.preview!.categories.flatMap(\.items).first { $0.reason == "cask_target_conflict" }!
+            precondition(item.action.contains("ownership") && !item.action.contains("System Events"))
+            let tasks = RestoreTaskPresentation(preview: model.preview!, plan: plan, events: [])
+            let task = tasks.domains.flatMap(\.items).first { $0.item.reason == "cask_target_conflict" }!
+            precondition(task.item.action == item.action && task.diagnostic?.technicalDescription.contains("ownership_unproven") == true)
+            model.requestRebuild(); precondition(model.state == .confirming)
+            try write("execute_ownership_skip", core.appendingPathComponent("mode"))
+            model.confirmRebuild(); await model.waitForCompletion()
+            precondition(model.executionResult?.outcome == .partial)
+            model.choose(source); await model.waitForCompletion()
+            try write("attention", core.appendingPathComponent("mode"))
+            model.refreshPreview(); await model.waitForCompletion()
+            precondition(!model.canRebuild)
+            print("PASS: four ready operations plus ownership skip, primary diagnostic, partial Result and global blocker")
+            return
+        }
+        if CommandLine.arguments.contains("--pkg-preparation-only") || CommandLine.arguments.contains("--fix-issues-only") {
+            try write("pkg-preparation", core.appendingPathComponent("mode"))
+            model.refreshPreview(); await model.waitForCompletion()
+            precondition(model.state == .preview && model.installerPreparationRows.count == 1)
+            let plan = model.preparation!.preparedPlanID
+            let requests = core.appendingPathComponent("requests.jsonl")
+            let before = try Data(contentsOf: requests)
+            await model.checkPrerequisites()
+            precondition(model.installerConsent && model.preparation!.preparedPlanID == plan)
+            let unchanged = try Data(contentsOf: requests); precondition(unchanged == before)
+            model.cancelInstallerPreparation()
+            precondition(!model.installerConsent && model.preparation!.preparedPlanID == plan)
+            let refused = try Data(contentsOf: requests); precondition(refused == before)
+            await model.checkPrerequisites()
+            model.confirmInstallerPreparation(); await model.waitForCompletion()
+            precondition(model.state == .preview && model.preparation!.preparedPlanID == String(repeating: "d", count: 64))
+            precondition(model.installerPreparationRows.isEmpty && !model.installerConsent)
+            let sent = try String(contentsOf: requests).split(separator: "\n").map {
+                try JSONSerialization.jsonObject(with: Data($0.utf8)) as! [String: Any]
+            }
+            precondition(sent.allSatisfy { $0["operation"] as? String != "restore_execute" })
+            precondition((sent.last!["parameters"] as! [String: Any])["installer_preparations"] as? [String] == [String(repeating: "c", count: 64)])
+            model.refreshPreview(); await model.waitForCompletion()
+            await model.checkPrerequisites()
+            let recorded = try Data(contentsOf: requests)
+            model.selectItem("homebrew-casks", item: "stable-homebrew-casks-1", included: false)
+            model.confirmInstallerPreparation()
+            let stale = try Data(contentsOf: requests); precondition(stale == recorded && !model.installerConsent)
+            // One Fix Issues action processes Automation first, then a separate
+            // explicit PKG decision. Neither choice grants the other permission.
+            for outcome in [RestoreAutomationPermission.Outcome.available, .denied, .unavailable] {
+                for approve in [false, true] {
+                    try? FileManager.default.removeItem(at: core.appendingPathComponent("automation-fixed"))
+                    model.choose(source); await model.waitForCompletion()
+                    try write("pkg-and-automation", core.appendingPathComponent("mode"))
+                    model.refreshPreview(); await model.waitForCompletion()
+                    let retainedID = model.preparation!.preparedPlanID
+                    let beforeFix = try Data(contentsOf: requests)
+                    var permissionCalls = 0
+                    await model.checkPrerequisites(permission: {
+                        permissionCalls += 1
+                        if outcome == .available { try! write("yes", core.appendingPathComponent("automation-fixed")) }
+                        return outcome
+                    })
+                    precondition(permissionCalls == 1 && model.installerConsent && model.preparation!.preparedPlanID == retainedID)
+                    let pending = try Data(contentsOf: requests); precondition(pending == beforeFix)
+                    if approve { model.confirmInstallerPreparation() } else { model.cancelInstallerPreparation() }
+                    await model.waitForCompletion()
+                    precondition(model.state == .preview && !model.installerConsent)
+                    precondition(model.installerPreparationRows.isEmpty == approve)
+                    precondition(model.preparation!.readiness.conditions.contains { $0.diagnostic?.automationRequirement == true } == (outcome != .available))
+                    precondition((model.prerequisiteRetryMessage != nil) == (outcome != .available))
+                    let last = try String(contentsOf: requests).split(separator: "\n").last!
+                    let request = try JSONSerialization.jsonObject(with: Data(last.utf8)) as! [String: Any]
+                    let ids = (request["parameters"] as! [String: Any])["installer_preparations"] as? [String]
+                    precondition(ids == (approve ? [String(repeating: "c", count: 64)] : nil))
+                }
+            }
+            model.choose(source); await model.waitForCompletion()
+            try write("automation", core.appendingPathComponent("mode"))
+            model.refreshPreview(); await model.waitForCompletion()
+            precondition(model.installerPreparationRows.isEmpty)
+            await model.checkPrerequisites(permission: {
+                try! write("clean", core.appendingPathComponent("mode")); return .available
+            })
+            await model.waitForCompletion()
+            precondition(model.state == .preview && model.preparation!.readiness.ready && !model.installerConsent)
+            let allRequests = try String(contentsOf: requests).split(separator: "\n")
+            precondition(allRequests.allSatisfy { !$0.contains("restore_execute") })
+            print("PASS: Unified fixes: Automation, PKG consent/refusal, both outcomes, errors, stale selection and no Execute")
+            return
+        }
         if CommandLine.arguments.contains("--restore-macos-only") {
             let group = model.groups.first { $0.id == "macOS Settings" }!
             let otherSelection = Set(model.selection.categories).subtracting(macOS)
@@ -1077,6 +1196,7 @@ import SwiftUI
             model.refreshPreview(); await model.waitForCompletion()
             precondition(!model.canRebuild && model.preparation!.readiness.conditions.contains { $0.diagnostic?.automationRequirement == true })
             await model.checkPrerequisites(permission: { .denied })
+            await model.waitForCompletion()
             precondition(model.prerequisiteRetryMessage!.contains("Privacy & Security → Automation"))
             await model.checkPrerequisites(permission: {
                 try! write("session-skip", core.appendingPathComponent("mode")); return .available
@@ -1394,9 +1514,10 @@ import SwiftUI
         let blockedAutomationID = model.preparation!.preparedPlanID
         let retryRequestsBefore = try String(contentsOf: core.appendingPathComponent("requests.jsonl"), encoding: .utf8)
         await model.checkPrerequisites(permission: { .denied })
+        await model.waitForCompletion()
         precondition(model.prerequisiteRetryMessage != nil && !model.canRebuild && model.preparation!.preparedPlanID == blockedAutomationID)
         let deniedRequests = try String(contentsOf: core.appendingPathComponent("requests.jsonl"), encoding: .utf8)
-        precondition(deniedRequests == retryRequestsBefore)
+        precondition(deniedRequests.split(separator: "\n").count == retryRequestsBefore.split(separator: "\n").count + 1)
         var permissionCalls = 0
         await model.checkPrerequisites(permission: {
             permissionCalls += 1
@@ -1406,7 +1527,7 @@ import SwiftUI
         await model.waitForCompletion()
         precondition(permissionCalls == 1 && model.canRebuild && model.prerequisiteRetryMessage == nil)
         let retryRequestsAfter = try String(contentsOf: core.appendingPathComponent("requests.jsonl"), encoding: .utf8)
-        precondition(retryRequestsAfter.split(separator: "\n").count == retryRequestsBefore.split(separator: "\n").count + 1)
+        precondition(retryRequestsAfter.split(separator: "\n").count == retryRequestsBefore.split(separator: "\n").count + 2)
         print("PASS: Actionable Automation denial preserves fail-closed Preview; user retry performs one Prepare after access")
         try write("scoped_ssh", core.appendingPathComponent("mode"))
         model.refreshPreview(); await model.waitForCompletion()

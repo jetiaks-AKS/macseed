@@ -11,6 +11,15 @@ The format is based on the principles of **Keep a Changelog**.
 
 ### Added
 
+* Receipt-backed PKG Cask Repair qualification with private ownership provenance
+  and stale-component checks. Unproven legacy cleanup remains blocked.
+
+* Explicit, consent-bound preparation of supported native PKG casks from older
+  Bundles missing payload requirements. Check Again lists installers before inert
+  inspection; short-lived identity-bound evidence enables a fresh Preview without
+  automatic downloads. Installation still requires separate Rebuild confirmation.
+  Real Tailscale qualification remains open.
+
 * Restore Graceful Stop now latches operation-wide and applies at safe checkpoints,
   preserving active operations/post-checks and Homebrew launch atomicity. Desktop
   distinguishes delivery, acceptance and refusal; unreported benign restart rows

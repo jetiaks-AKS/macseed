@@ -75,21 +75,47 @@ struct CoreRestorePreparation: Decodable {
     struct Diagnostic: Decodable, Equatable {
         let primitive: String
         let condition: String
+        var stage: String? = nil
+        var predicate: String? = nil
+        var reasonCode: String? = nil
+        enum CodingKeys: String, CodingKey {
+            case primitive, condition, stage, predicate, reasonCode = "reason_code"
+        }
+        private func safeCode(_ value: String?) -> String? {
+            guard let value, value.range(of: "^[a-z][a-z0-9_]{0,63}$", options: .regularExpression) != nil else { return nil }
+            return value
+        }
+        var repairExplanation: String? {
+            if safeCode(reasonCode) == "script_effects_unbounded" {
+                return "Macseed could not verify that the installer's scripts are safe to run again. Review the official installer’s instructions before restoring the application manually."
+            }
+            switch condition {
+            case "ownership_unproven", "ownership_ambiguous", "live_ownership_unproven", "identity_ambiguous":
+                return "Macseed could not verify ownership of components that Repair may change or remove. Review the existing installation or restore it manually using the official installer, then Refresh Preview."
+            case "foreign_target", "conflicting_plist":
+                return "Existing components conflict with the expected installation. Review the conflict before restoring the application manually using the official installer."
+            default: return nil
+            }
+        }
         var valid: Bool {
             [primitive, condition].allSatisfy { $0.range(of: "^[a-z][a-z0-9_]{0,63}$", options: .regularExpression) != nil }
         }
         var automationRequirement: Bool {
             primitive == "login_item" && ["authorization_required", "authorization_denied", "application_unavailable"].contains(condition)
         }
+        var automationPreparationAvailable: Bool {
+            automationRequirement && condition != "authorization_denied"
+        }
         var explanation: String {
             if automationRequirement {
                 return condition == "application_unavailable"
-                    ? "Macseed cannot inspect login items without System Events permission. Choose Check Again to allow access and check the current state again."
+                    ? "Macseed cannot inspect login items without System Events permission. Choose Fix Issues… to allow access and check the current state again."
                     : condition == "authorization_denied"
-                        ? "Allow Macseed → System Events in System Settings → Privacy & Security → Automation, then Check Again."
-                        : "Macseed cannot inspect login items without System Events permission. Choose Check Again to allow access and check the current state again."
+                        ? "Allow Macseed → System Events in System Settings → Privacy & Security → Automation, then Refresh Preview."
+                        : "Macseed cannot inspect login items without System Events permission. Choose Fix Issues… to allow access and check the current state again."
             }
             switch condition {
+            case "preparation_required": return "Installer preparation required before this application can be restored."
             case "foreign_target": return "This " + primitiveName + " points outside the expected application. Existing state will be preserved."
             case "conflicting_plist": return "The launch service has conflicting configuration ownership. Existing state will be preserved."
             case "identity_ambiguous", "ownership_ambiguous": return "Ownership of this " + primitiveName + " is ambiguous. Existing state will be preserved."
@@ -108,7 +134,13 @@ struct CoreRestorePreparation: Decodable {
             default: primitive.replacingOccurrences(of: "_", with: " ")
             }
         }
-        var technicalDescription: String { "primitive: " + primitive + "\ncondition: " + condition }
+        var technicalDescription: String {
+            var lines = ["primitive: " + primitive, "condition: " + condition]
+            for (key, value) in [("stage", stage), ("predicate", predicate), ("reason_code", reasonCode)] {
+                if let value = safeCode(value) { lines.append(key + ": " + value) }
+            }
+            return lines.joined(separator: "\n")
+        }
     }
     struct Row: Decodable {
         let domain: String
@@ -120,7 +152,16 @@ struct CoreRestorePreparation: Decodable {
         let selectionItemID: String?
         var authorizationRequired: Bool? = nil
         var diagnostic: Diagnostic? = nil
-        enum CodingKeys: String, CodingKey { case diagnostic, domain, itemID = "item_id", action, disposition, reason, displayName = "display_name", selectionItemID = "selection_item_id", authorizationRequired = "authorization_required" }
+        var installerPreparationID: String? = nil
+        var unsupportedRepairExplanation: String? {
+            guard domain == "homebrew-casks", action == "reinstall",
+                  !["planned", "satisfied"].contains(disposition),
+                  diagnostic?.automationRequirement != true,
+                  diagnostic?.condition != "preparation_required" else { return nil }
+            return diagnostic?.repairExplanation
+                ?? "Automatic repair is unavailable. Macseed could not verify that the operation is safe."
+        }
+        enum CodingKeys: String, CodingKey { case installerPreparationID = "installer_preparation_id", diagnostic, domain, itemID = "item_id", action, disposition, reason, displayName = "display_name", selectionItemID = "selection_item_id", authorizationRequired = "authorization_required" }
     }
     struct Readiness: Decodable {
         let ready: Bool
@@ -137,7 +178,7 @@ struct CoreRestorePreparation: Decodable {
         let scope: String?
         var diagnostic: Diagnostic? = nil
         var isItemLocal: Bool {
-            scope == "item" && domain == "homebrew-casks" && code == "cask_execution_requirements_unsupported"
+            scope == "item" && domain == "homebrew-casks" && ["cask_execution_requirements_unsupported", "cask_target_conflict"].contains(code)
                 && status == "unsupported" && (selectedItemIndex ?? 0) > 0
         }
         var id: String { domain + ":" + code + ":" + String(selectedItemIndex ?? 0) }
@@ -151,7 +192,7 @@ struct CoreRestorePreparation: Decodable {
     }
     func isItemLocalSkip(_ row: Row) -> Bool {
         row.disposition == "blocked" && row.domain == "homebrew-casks"
-            && row.reason == "cask_execution_requirements_unsupported"
+            && ["cask_execution_requirements_unsupported", "cask_target_conflict"].contains(row.reason ?? "")
             && readiness.conditions.contains { $0.isItemLocal && $0.domain == row.domain && $0.code == row.reason }
     }
     func validate(expected: CoreRestoreSelection, catalog: CoreRestoreInspection.Inventory) throws {
@@ -168,6 +209,14 @@ struct CoreRestorePreparation: Decodable {
               plan.allSatisfy({ ["satisfied", "planned", "blocked", "conflict", "warning", "unknown", "pending_unlock"].contains($0.disposition) }) else {
             throw CoreRuntimeError.malformedEvent
         }
+        let installers = plan.compactMap(\.installerPreparationID)
+        guard Set(installers).count == installers.count, installers.count <= 2048,
+              plan.allSatisfy({ row in
+                  row.installerPreparationID == nil || (row.domain == "homebrew-casks" && row.disposition == "blocked"
+                    && row.reason == "cask_execution_requirements_unsupported"
+                    && row.diagnostic?.condition == "preparation_required"
+                    && row.installerPreparationID!.range(of: "^[0-9a-f]{64}$", options: .regularExpression) != nil)
+              }) else { throw CoreRuntimeError.malformedEvent }
         let domains = Set(expected.categories).union(expected.items.keys)
         guard plan.allSatisfy({ row in
             (row.diagnostic?.valid ?? true) && domains.contains(row.domain) && (row.selectionItemID == nil || expected.items[row.domain]?.contains(row.selectionItemID!) == true)

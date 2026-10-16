@@ -18,6 +18,29 @@ enum TaskRowLayout {
     static let iconWidth: CGFloat = 22
 }
 
+// Two bounded columns keep each status beside its own title at every row height.
+struct TaskTextStatusLayout: Layout {
+    static func widths(_ width: CGFloat) -> (text: CGFloat, status: CGFloat) {
+        let available = max(0, width - 12)
+        let status = min(TaskRowLayout.statusWidth, available * 0.42)
+        return (available - status, status)
+    }
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let width = proposal.width ?? 520
+        let columns = Self.widths(width)
+        let text = subviews[0].sizeThatFits(.init(width: columns.text, height: nil))
+        let status = subviews[1].sizeThatFits(.init(width: columns.status, height: nil))
+        return CGSize(width: width, height: max(text.height, status.height))
+    }
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let columns = Self.widths(bounds.width)
+        subviews[0].place(at: bounds.origin, anchor: .topLeading,
+                          proposal: .init(width: columns.text, height: nil))
+        subviews[1].place(at: CGPoint(x: bounds.maxX - columns.status, y: bounds.minY), anchor: .topLeading,
+                          proposal: .init(width: columns.status, height: nil))
+    }
+}
+
 // A native Button owns the whole disclosure header, including its empty space.
 struct TaskDisclosureStyle: DisclosureGroupStyle {
     var minimumHeight: CGFloat = 48
@@ -288,16 +311,10 @@ struct TaskDomainItems: View {
         } else {
             VStack(spacing: 0) {
                 ForEach(domain.items) { item in
-                    ViewThatFits(in: .horizontal) {
-                        HStack(alignment: .top, spacing: 12) {
-                            details(item).frame(minWidth: 160, maxWidth: .infinity, alignment: .leading)
-                            TaskStatusLabel(state: item.state, title: stateTitles[item.state])
-                                .frame(width: TaskRowLayout.statusWidth, alignment: .leading)
-                        }
-                        VStack(alignment: .leading, spacing: 8) {
-                            details(item)
-                            TaskStatusLabel(state: item.state, title: stateTitles[item.state])
-                        }
+                    TaskTextStatusLayout {
+                        details(item).fixedSize(horizontal: false, vertical: true)
+                        TaskStatusLabel(state: item.state, title: stateTitles[item.state])
+                            .fixedSize(horizontal: false, vertical: true)
                     }.padding(.vertical, 7)
                 }
             }.padding(.leading, 36).padding(.vertical, 4)
@@ -381,15 +398,9 @@ struct RestoreSettingPreviewLeaf: View {
         item.state == .matching && item.item.status == .matching && item.item.reason == nil && item.diagnostic == nil
     }
     var body: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(alignment: .top, spacing: 12) {
-                details.frame(minWidth: 120, maxWidth: .infinity, alignment: .leading)
-                status
-            }
-            VStack(alignment: .leading, spacing: 8) {
-                details
-                HStack { Spacer(minLength: 0); status }
-            }
+        TaskTextStatusLayout {
+            details.fixedSize(horizontal: false, vertical: true)
+            status.fixedSize(horizontal: false, vertical: true)
         }.padding(.vertical, 7).frame(minHeight: 28)
     }
     private var details: some View {
@@ -418,6 +429,6 @@ struct RestoreSettingPreviewLeaf: View {
                 Image(systemName: "checkmark").foregroundStyle(RestoreStatusTone.success.color)
                     .frame(width: TaskRowLayout.iconWidth).accessibilityLabel("Already Matches")
             } else { TaskStatusLabel(state: item.state, title: stateTitles[item.state]) }
-        }.frame(width: TaskRowLayout.statusWidth, alignment: .leading)
+        }
     }
 }

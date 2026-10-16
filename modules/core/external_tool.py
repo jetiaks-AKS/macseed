@@ -23,7 +23,7 @@ DIAGNOSTIC_PRIMITIVES = frozenset({'payload', 'metadata', 'historical_metadata',
 DIAGNOSTIC_CONDITIONS = frozenset({'ownership_unproven', 'unsupported_capability', 'observation_failed',
     'malformed_observation', 'observation_limit', 'ownership_ambiguous', 'foreign_target',
     'conflicting_plist', 'live_ownership_unproven', 'identity_ambiguous', 'authorization_required',
-    'authorization_denied', 'application_unavailable'})
+    'authorization_denied', 'application_unavailable', 'preparation_required'})
 
 
 def diagnostic_valid(value):

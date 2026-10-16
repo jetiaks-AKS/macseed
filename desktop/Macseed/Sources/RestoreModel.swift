@@ -66,7 +66,7 @@ struct RestorePreviewPresentation {
             }
             let inventoryLabel = row.selectionItemID.flatMap { id in catalog.inventory.first { $0.id == row.domain }?.items.first { $0.id == id }?.label }
             let title = inventoryLabel ?? row.displayName ?? (row.itemID.hasPrefix("opaque:") ? "Private item" : (row.itemID == "scope" ? "Selected area" : row.itemID))
-            let action = row.diagnostic?.explanation ?? reasonMessage ?? (row.authorizationRequired == true ? message + " · Administrator authorization required" : message)
+            let action = row.unsupportedRepairExplanation ?? row.diagnostic?.explanation ?? reasonMessage ?? (row.authorizationRequired == true ? message + " · Administrator authorization required" : message)
             rows[row.domain, default: []].append(DisplayItem(id: "restore-\(index)", title: title, status: status, action: action, reason: row.reason, restoreReadyText: status == .ready ? Self.readyText(action: row.action) : nil))
         }
         categories = order.map { domain in
@@ -516,24 +516,61 @@ struct RestoreProgressRow {
         let included = bulkState != .all
         for area in areas { selectArea(area.id, included: included) }
     }
+    @Published private(set) var installerConsent = false
+    private var installerConsentPlanID: String?
+    private var installerConsentNeedsRecheck = false
+    private var installerConsentRetryMessage: String?
+    var installerPreparationRows: [CoreRestorePreparation.Row] {
+        Array((preparation?.plan.filter { $0.installerPreparationID != nil } ?? []).prefix(32))
+    }
+    private func dismissInstallerPreparation() {
+        installerConsent = false; installerConsentPlanID = nil
+        installerConsentNeedsRecheck = false; installerConsentRetryMessage = nil
+    }
+    func cancelInstallerPreparation() {
+        let recheck = installerConsent && installerConsentNeedsRecheck && state == .preview
+            && !busy && !runtime.isActive && !previewNeedsRefresh && preparation?.preparedPlanID == installerConsentPlanID
+        let message = installerConsentRetryMessage
+        dismissInstallerPreparation()
+        if recheck { refreshPreview(retryMessage: message) }
+    }
+    func confirmInstallerPreparation() {
+        guard installerConsent, state == .preview, !busy, !runtime.isActive, !previewNeedsRefresh,
+              preparation?.preparedPlanID == installerConsentPlanID else { dismissInstallerPreparation(); return }
+        let identities = installerPreparationRows.compactMap(\.installerPreparationID)
+        let message = installerConsentRetryMessage
+        dismissInstallerPreparation()
+        guard !identities.isEmpty else { return }
+        refreshPreview(installerPreparations: identities, retryMessage: message)
+    }
     func checkPrerequisites(permission: () async -> RestoreAutomationPermission.Outcome = RestoreAutomationPermission.requestAccess) async {
-        guard state == .preview, !busy, !runtime.isActive, !previewNeedsRefresh, let plan = preparation else { return }
+        guard state == .preview, !installerConsent, !busy, !runtime.isActive, !previewNeedsRefresh, let plan = preparation else { return }
         prerequisiteRetryMessage = nil
-        if plan.readiness.conditions.contains(where: { $0.diagnostic?.automationRequirement == true }) {
+        let automation = plan.readiness.conditions.contains {
+            ["external_action_required", "unsupported"].contains($0.status) && $0.diagnostic?.automationPreparationAvailable == true
+        }
+        if automation {
             retryingPrerequisites = true
             let outcome = await permission()
             retryingPrerequisites = false
             guard preparation?.preparedPlanID == plan.preparedPlanID, !previewNeedsRefresh else { return }
-            if outcome != .available { prerequisiteRetryMessage = outcome.message; return }
+            prerequisiteRetryMessage = outcome.message
         }
-        refreshPreview()
+        if !installerPreparationRows.isEmpty {
+            installerConsentPlanID = plan.preparedPlanID
+            installerConsentNeedsRecheck = automation
+            installerConsentRetryMessage = prerequisiteRetryMessage
+            installerConsent = true
+            return
+        }
+        refreshPreview(retryMessage: prerequisiteRetryMessage)
     }
-    func refreshPreview() {
+    func refreshPreview(installerPreparations: [String]? = nil, retryMessage: String? = nil) {
         guard canPreview, let source, let catalog = inspection?.restoreSelection else { return }
         cancelRequested = false
-        prerequisiteRetryMessage = nil
+        prerequisiteRetryMessage = retryMessage
         let expected = canonicalSelection
-        let request = CoreRequest(.restorePrepare(path: source.path, disabledGroups: [], includeSecure: false, selection: selection))
+        let request = CoreRequest(.restorePrepare(path: source.path, disabledGroups: [], includeSecure: false, selection: selection, installerPreparations: installerPreparations))
         invalidate(); failure = nil; technicalReason = nil; state = .preparing
         work = Task {
             guard await receive(request) else { return }
@@ -550,7 +587,7 @@ struct RestoreProgressRow {
         invalidate(); state = inspection == nil ? .choose : .review
     }
     func cancel() { if busy { cancelRequested = true; invalidate(); runtime.cancel() } }
-    private func invalidate() { preparation = nil; preview = nil }
+    private func invalidate() { dismissInstallerPreparation(); preparation = nil; preview = nil }
     private func receive(_ request: CoreRequest) async -> Bool {
         if cancelRequested {
             invalidate(); failure = "Restore preparation cancelled. No target changes were made."; state = .cancelled; return false
@@ -574,9 +611,32 @@ struct RestoreProgressRow {
             case "bundle_unavailable": message = "The saved environment is unavailable. Choose an accessible file."
             case "recovery_required": message = "An earlier Restore needs recovery through the CLI before another Preview."
             case "stale_plan": message = "The inputs changed. Refresh Preview to inspect the current state."
+            case "pkg_preparation_failed":
+                let diagnostic = runtime.events.last(where: { $0.type == "failed" })?.data?["diagnostic"]?.object
+                if diagnostic?["reason"]?.string == "checksum_mismatch" {
+                    message = "The installer did not match Homebrew’s checksum. No installer requirements were saved. Refresh Preview before trying again."
+                } else {
+                    switch diagnostic?["stage"]?.string {
+                    case "metadata_source": message = "Installer metadata or source requirements could not be confirmed. Refresh Preview."
+                    case "download": message = "The installer download could not complete safely. Check connectivity and available disk space before trying again."
+                    case "archive_inspection": message = "The installer archive could not be inspected safely. This installer may be unsupported."
+                    case "payload_validation": message = "The installer’s payload requirements could not be confirmed. This installer may be unsupported."
+                    case "evidence_storage": message = "Prepared installer requirements could not be saved. Check available disk space and access before trying again."
+                    default: message = "Installer preparation failed. Refresh Preview before trying again."
+                    }
+                }
             default: message = error == .interrupted ? "Restore preparation was interrupted. No complete Preview is available. Try again." : "Restore preparation could not complete. Try again or choose another saved environment."
             }
-            fail(message, code: code); return false
+            fail(message, code: code)
+            if code == "pkg_preparation_failed",
+               let predicate = runtime.events.last(where: { $0.type == "failed" })?.data?["diagnostic"]?.object?["predicate"]?.string,
+               ["payload_depth_limit", "payload_entry_limit", "payload_size_limit", "package_info_invalid",
+                "receipt_identity_mismatch", "install_location_unsupported", "app_bundle_missing", "bundle_info_invalid",
+                "bundle_info_missing", "bundle_identity_mismatch", "executable_path_unsupported", "executable_missing",
+                "portable_requirements_invalid", "receipt_requirements_mismatch", "payload_structure_unsupported"].contains(predicate) {
+                technicalReason = "pkg_preparation_failed · payload_validation · " + predicate
+            }
+            return false
         }
     }
     private func fail(_ message: String, code: String?) { invalidate(); failure = message; technicalReason = code; state = .failed }

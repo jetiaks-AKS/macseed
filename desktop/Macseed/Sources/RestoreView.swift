@@ -335,21 +335,21 @@ struct RestorePrerequisiteView: View {
     private var message: String {
         if let diagnostic = condition.diagnostic { return diagnostic.explanation }
         return switch condition.code {
-        case "homebrew_installation_requires_interaction": "Install Homebrew outside Macseed, then Check Again. Macseed will not install it during Preview."
-        case "homebrew_unavailable": "Make the existing Homebrew installation usable, then Check Again."
-        case "vscode_cli_required", "vscode_cli_unavailable": "Make the Visual Studio Code command-line tool available, then Check Again."
-        case "vscode_cli_ambiguous": "Resolve the multiple Visual Studio Code installations, then Check Again."
-        case "git_required", "git_unavailable": "Make Git available, then Check Again."
-        case "mas_required", "mas_unavailable": "Make the App Store command-line tool available, then Check Again."
-        case "internet_required": "Connect this Mac to the internet, then Check Again."
-        case "command_line_tools_required": "Install the macOS Command Line Tools outside Macseed, then Check Again."
-        case "authorization_required", "cask_authorization_required": "Selected work requires external authorization. Resolve it outside this Preview, then Check Again."
-        case "preview_observation_failed": "Current state could not be inspected reliably. Resolve the inspection issue, then Check Again."
+        case "homebrew_installation_requires_interaction": "Install Homebrew outside Macseed, then Refresh Preview. Macseed will not install it during Preview."
+        case "homebrew_unavailable": "Make the existing Homebrew installation usable, then Refresh Preview."
+        case "vscode_cli_required", "vscode_cli_unavailable": "Make the Visual Studio Code command-line tool available, then Refresh Preview."
+        case "vscode_cli_ambiguous": "Resolve the multiple Visual Studio Code installations, then Refresh Preview."
+        case "git_required", "git_unavailable": "Make Git available, then Refresh Preview."
+        case "mas_required", "mas_unavailable": "Make the App Store command-line tool available, then Refresh Preview."
+        case "internet_required": "Connect this Mac to the internet, then Refresh Preview."
+        case "command_line_tools_required": "Install the macOS Command Line Tools outside Macseed, then Refresh Preview."
+        case "authorization_required", "cask_authorization_required": "Selected work requires external authorization. Resolve it outside this Preview, then Refresh Preview."
+        case "preview_observation_failed": "Current state could not be inspected reliably. Resolve the inspection issue, then Refresh Preview."
         default:
             switch condition.status {
             case "safely_satisfiable": "Core can satisfy this condition later using its existing Rebuild behavior. Preview makes no changes."
             case "unsupported": "This selected requirement is not supported by the current application execution path."
-            default: "Resolve this requirement outside Macseed, then Check Again to inspect the current state."
+            default: "Resolve this requirement outside Macseed, then Refresh Preview to inspect the current state."
             }
         }
     }
@@ -439,7 +439,7 @@ struct RestoreView: View {
                         message: preview.summary, state: needsAttention ? .attention : prepared.hasExecutableChanges ? .planned : .matching,
                         domains: tasks.domains, counters: tasks.counters,
                         alreadyMatches: !prepared.hasPlannedChanges && prepared.plan.allSatisfy { $0.disposition == "satisfied" },
-                        prerequisites: RestorePrerequisiteSummaryPresentation(conditions: prepared.readiness.conditions, ready: prepared.readiness.ready),
+                        prerequisites: RestorePrerequisiteSummaryPresentation(conditions: prepared.readiness.conditions, ready: prepared.readiness.ready, hasInstallerPreparations: !model.installerPreparationRows.isEmpty),
                         areas: model.areas,
                         settingsCategories: RestoreSettingsPresentation.children(tasks.domains, categories: preview.categories),
                         itemTitles: RestoreSettingsPresentation.titles(prepared.plan),
@@ -487,6 +487,17 @@ struct RestoreView: View {
             }
         }
         .modifier(OperationLogPresenter(runtime: runtime))
+        .sheet(isPresented: Binding(get: { model.installerConsent }, set: { if !$0 { model.cancelInstallerPreparation() } })) {
+            VStack(alignment: .leading, spacing: 16) {
+                Text("Prepare installers?").font(.title2)
+                Text("Macseed will download and inspect the following installers to determine their application payloads. Installer scripts will not run and no applications will be installed. Rebuild requires separate confirmation.")
+                ForEach(model.installerPreparationRows, id: \.itemID) { row in Text(row.displayName ?? row.itemID) }
+                HStack {
+                    Button("Cancel", role: .cancel) { model.cancelInstallerPreparation() }
+                    Button("Download and Inspect") { model.confirmInstallerPreparation() }.buttonStyle(.borderedProminent)
+                }
+            }.padding(24).frame(width: 460).interactiveDismissDisabled()
+        }
         .sheet(isPresented: Binding(get: { model.state == .confirming }, set: { if !$0 { model.cancelRebuildConfirmation() } })) {
             VStack(alignment: .leading, spacing: 16) {
                 Text("Rebuild this Mac?").font(.title2)
@@ -554,6 +565,7 @@ struct RestorePreviewContent: View {
     var refresh: (() -> Void)? = nil
     var rebuild: (() -> Void)? = nil
     var canRebuild = false
+    var showsFixIssues: Bool { prerequisites.canFixIssues }
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
             Text(title).font(.title2.weight(.semibold)).accessibilityAddTraits(.isHeader)
@@ -564,10 +576,12 @@ struct RestorePreviewContent: View {
             RestorePreviewMetrics(domains: domains)
             if alreadyMatches { Text("Selected requirements already match this Mac.") }
             RestorePrerequisiteSummaryView(summary: prerequisites, areas: areas)
-            if !prerequisites.blockers.isEmpty {
-                Button(retrying ? "Checking…" : "Check Again") { checkAgain?() }.disabled(checkAgain == nil || needsRefresh || retrying)
-                if let retryMessage { Text(retryMessage).font(.callout).foregroundStyle(.secondary) }
+            if showsFixIssues {
+                Button(retrying ? "Checking…" : "Fix Issues…") { checkAgain?() }.disabled(checkAgain == nil || needsRefresh || retrying)
+                Text("Macseed will guide you through available fixes. Your approval may be required. No applications will be installed yet.")
+                    .font(.callout).foregroundStyle(.secondary)
             }
+            if let retryMessage { Text(retryMessage).font(.callout).foregroundStyle(.secondary) }
             TaskDomainList(domains: domains.map { domain in
                 var previewDomain = domain
                 previewDomain.previewOnly = true
@@ -812,7 +826,7 @@ struct RestoreFinalDomain: View {
                     ForEach(domain.resultChildren) { child in RestoreFinalDomain(domain: child) }
                 } else {
                 ForEach(domain.resultVisibleItems) { item in
-                    HStack(alignment: .top, spacing: 12) {
+                    TaskTextStatusLayout {
                         VStack(alignment: .leading, spacing: 4) {
                             Text(item.item.title)
                             if Self.showsItemDetails(item), let explanation = item.resultExplanation {
@@ -824,7 +838,7 @@ struct RestoreFinalDomain: View {
                                         .font(.caption.monospaced()).textSelection(.enabled)
                                 }.disclosureGroupStyle(TaskDisclosureStyle(minimumHeight: 22)).font(.caption)
                             }
-                        }.frame(maxWidth: .infinity, alignment: .leading)
+                        }.frame(maxWidth: .infinity, alignment: .leading).fixedSize(horizontal: false, vertical: true)
                         VStack(alignment: .trailing, spacing: 4) {
                             ForEach(Self.visibleLabels(item, notRun: domain.executionStatus == .notRun), id: \.self) { label in
                                 Label(label, systemImage: label == "Verified" ? "checkmark.shield" : label == "Failed" || label == "Mismatch" ? "xmark.circle" : ["Unverified", "Outcome Unknown"].contains(label) ? "questionmark.circle" : "circle.fill")
@@ -1009,8 +1023,8 @@ enum RestoreAutomationPermission {
         var message: String? {
             switch self {
             case .available: nil
-            case .denied: "Allow Macseed → System Events in System Settings → Privacy & Security → Automation, then Check Again. Access may be restricted by your administrator."
-            case .unavailable: "System Events access is unavailable. Resolve the system restriction, then Check Again."
+            case .denied: "Allow Macseed → System Events in System Settings → Privacy & Security → Automation, then Refresh Preview. Access may be restricted by your administrator."
+            case .unavailable: "System Events access is unavailable. Resolve the system restriction, then Refresh Preview."
             }
         }
     }

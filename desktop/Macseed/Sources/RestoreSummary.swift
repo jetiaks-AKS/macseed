@@ -66,6 +66,13 @@ struct RestoreIssueSummaryPresentation {
 struct RestorePrerequisiteSummaryPresentation {
     let conditions: [CoreRestorePreparation.Condition]
     let ready: Bool
+    var hasInstallerPreparations = false
+    var canFixIssues: Bool { hasInstallerPreparations || blockers.contains { $0.diagnostic?.automationPreparationAvailable == true } }
+    var isVisible: Bool { !isTerminalReady || hasInstallerPreparations }
+    var displayConditions: [CoreRestorePreparation.Condition] {
+        blockers + conditions.filter { hasInstallerPreparations && $0.isItemLocal
+            && $0.diagnostic?.primitive == "pkgutil" && $0.diagnostic?.condition == "preparation_required" }
+    }
     var blockers: [CoreRestorePreparation.Condition] {
         let actionable = conditions.filter { ["external_action_required", "unsupported"].contains($0.status) && !$0.isItemLocal }
         var seen = Set<String>()
@@ -84,15 +91,31 @@ struct RestorePrerequisiteSummaryPresentation {
         }
     }
     var affectedDomains: [String] {
-        blockers.reduce(into: []) { if !$0.contains($1.domain) { $0.append($1.domain) } }
+        displayConditions.reduce(into: []) { if !$0.contains($1.domain) { $0.append($1.domain) } }
+    }
+    var preparationCount: Int {
+        let installers = displayConditions.filter { $0.isItemLocal }
+        let installerCount = Set(installers.map { $0.domain + ":" + String($0.selectedItemIndex ?? 0) }).count
+        return max(installerCount, hasInstallerPreparations ? 1 : 0)
+            + blockers.filter { $0.diagnostic?.automationPreparationAvailable == true }.count
+    }
+    var preparationMessage: String {
+        "\(preparationCount) preparation \(preparationCount == 1 ? "requirement needs" : "requirements need") attention."
+    }
+    var manualConditions: [CoreRestorePreparation.Condition] {
+        blockers.filter { $0.diagnostic?.automationPreparationAvailable != true }
+    }
+    var manualDomains: [String] {
+        manualConditions.reduce(into: []) { if !$0.contains($1.domain) { $0.append($1.domain) } }
     }
     static func status(_ conditions: [CoreRestorePreparation.Condition]) -> String {
         if conditions.contains(where: { ["authorization_required", "cask_authorization_required"].contains($0.code) }) { return "Authorization Required" }
-        if conditions.contains(where: { $0.status == "unsupported" }) { return "Unsupported" }
+        if conditions.contains(where: { $0.status == "unsupported" && $0.diagnostic?.condition != "preparation_required" }) { return "Unsupported" }
+        if conditions.contains(where: { $0.diagnostic?.condition == "preparation_required" }) { return "Preparation Required" }
         return "Action Required"
     }
     var isTerminalReady: Bool { ready && blockers.isEmpty }
-    var title: String { isTerminalReady ? "Ready" : "Needs Attention" }
+    var title: String { canFixIssues ? "Needs Preparation" : isTerminalReady ? "Ready" : "Needs Attention" }
     var detailsInitiallyExpanded: Bool { false }
 }
 
@@ -127,27 +150,18 @@ struct RestorePrerequisiteSummaryView: View {
     let summary: RestorePrerequisiteSummaryPresentation
     let areas: [CoreRestoreInspection.Area]
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            if summary.isTerminalReady {
-                HStack {
-                    Text("Prerequisites").font(.headline)
-                    Spacer()
-                    Label("Ready", systemImage: "checkmark")
-                        .foregroundStyle(RestoreStatusTone.success.color)
-                        .frame(width: TaskRowLayout.statusWidth, alignment: .leading)
+        if !summary.manualConditions.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                if !summary.manualConditions.isEmpty {
+                    Text("Prerequisites — \(summary.manualConditions.count) \(summary.manualConditions.count == 1 ? "action" : "actions") required").font(.headline)
+                    ForEach(summary.manualDomains, id: \.self) { domain in
+                        RestoreBlockingPrerequisiteAreaView(
+                            title: areas.first { $0.id == domain }?.label ?? "Selected work",
+                            conditions: summary.manualConditions.filter { $0.domain == domain })
+                    }
                 }
-                    .accessibilityLabel("Prerequisites")
-                    .accessibilityValue("Ready")
-            } else {
-                Text("Prerequisites — \(summary.blockers.count) \(summary.blockers.count == 1 ? "action" : "actions") required").font(.headline)
-                ForEach(summary.affectedDomains, id: \.self) { domain in
-                    RestoreBlockingPrerequisiteAreaView(
-                        title: areas.first { $0.id == domain }?.label ?? "Selected work",
-                        conditions: summary.blockers.filter { $0.domain == domain })
-                }
-                if summary.blockers.isEmpty { Text("Needs Attention").foregroundStyle(RestoreStatusTone.warning.color) }
-            }
-        }.padding(.horizontal, 16)
+            }.padding(.horizontal, 16)
+        }
     }
 }
 

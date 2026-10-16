@@ -5,6 +5,8 @@ separate contracts. Homebrew alone performs lifecycle operations. All subprocess
 observations below are public, read-only interfaces.
 """
 from functools import wraps
+from itertools import islice
+from contextlib import contextmanager, nullcontext
 import hashlib
 import json
 import os
@@ -24,6 +26,7 @@ from urllib.parse import urlsplit
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'core'))
 from external_tool import result
 from performance_trace import timed, measure, add, ENABLED
+import homebrew_pkg_preparation as pkg_preparation
 
 LABEL = re.compile(r'[A-Za-z0-9][A-Za-z0-9_-]*(?:\.[A-Za-z0-9][A-Za-z0-9_-]*)+')
 NAME = re.compile(r'[A-Za-z0-9][A-Za-z0-9+_.@-]*')
@@ -109,6 +112,40 @@ def contract(primitive):
                 raise Unsafe(OBSERVATION, {'primitive': primitive, 'condition': 'observation_failed'}) from None
         return checked
     return decorate
+
+
+class PreparationFailure(Unsafe):
+    """Fixed labels only; preserve the provider's existing Unsafe behavior."""
+    def __init__(self, stage, reason, condition=OBSERVATION, diagnostic=None):
+        super().__init__(condition, diagnostic)
+        self.preparation_diagnostic = {'stage': stage, 'reason': reason}
+
+
+@contextmanager
+def preparation_stage(stage):
+    try:
+        yield
+    except PreparationFailure:
+        raise
+    except Unsafe as exc:
+        raise PreparationFailure(stage, 'requirements_unproven', exc.condition, exc.diagnostic) from None
+    except (OSError, ValueError, TypeError, KeyError, IndexError, AttributeError, subprocess.SubprocessError):
+        raise PreparationFailure(stage, 'operation_failed') from None
+
+
+@contextmanager
+def payload_predicate(predicate):
+    try:
+        with preparation_stage('payload_validation'):
+            yield
+    except PreparationFailure as exc:
+        exc.preparation_diagnostic.setdefault('predicate', predicate)
+        raise
+
+
+def payload_require(value, predicate, condition=UNSUPPORTED):
+    with payload_predicate(predicate):
+        require(value, condition)
 
 
 def clean(value):
@@ -222,55 +259,99 @@ class PublicObserver:
         Never run installer/scripts. Unsupported layouts stay fail closed.
         Temporary artifacts are private and removed on every handled return.
         """
-        require(re.fullmatch(r'[0-9a-f]{64}', row.get('sha256', '')))
-        source = urlsplit(row.get('url', ''))
-        require(source.scheme == 'https' and source.hostname and not source.username and not source.password)
+        with preparation_stage('metadata_source'):
+            require(re.fullmatch(r'[0-9a-f]{64}', row.get('sha256', '')))
+            source = urlsplit(row.get('url', ''))
+            require(source.scheme == 'https' and source.hostname and not source.username and not source.password)
         with tempfile.TemporaryDirectory(prefix='macseed-package-inspect-') as directory:
             root = Path(directory)
             archive = root / 'source.pkg'
             digest, size, started = hashlib.sha256(), 0, time.monotonic()
-            with measure('cask.pkg_download'):
-                with urllib.request.urlopen(row['url'], timeout=30) as response, archive.open('wb') as output:
-                    destination = urlsplit(response.geturl())
-                    require(destination.scheme == 'https' and destination.hostname and not destination.username and not destination.password)
-                    while True:
-                        chunk = response.read(1024 * 1024)
-                        if not chunk:
-                            break
-                        size += len(chunk)
-                        require(size <= 128 * 1024 * 1024 and time.monotonic() - started <= 60, OBSERVATION)
-                        digest.update(chunk); output.write(chunk)
-            require(digest.hexdigest() == row['sha256'], OBSERVATION)
+            with preparation_stage('download'):
+                with measure('cask.pkg_download'):
+                    with urllib.request.urlopen(row['url'], timeout=30) as response, archive.open('wb') as output:
+                        destination = urlsplit(response.geturl())
+                        require(destination.scheme == 'https' and destination.hostname and not destination.username and not destination.password)
+                        while True:
+                            chunk = response.read(1024 * 1024)
+                            if not chunk:
+                                break
+                            size += len(chunk)
+                            require(size <= 128 * 1024 * 1024 and time.monotonic() - started <= 60, OBSERVATION)
+                            digest.update(chunk); output.write(chunk)
+            if digest.hexdigest() != row['sha256']:
+                raise PreparationFailure('checksum', 'checksum_mismatch')
             expanded = root / 'expanded'
-            self.read(['/usr/sbin/pkgutil', '--expand-full', str(archive), str(expanded)])
-            records, payloads, count, total = set(), [], 0, 0
-            for location, directories, files in os.walk(expanded, followlinks=False):
-                require(len(Path(location).relative_to(expanded).parts) <= 24, OBSERVATION)
-                count += len(directories) + len(files)
-                require(count <= 8192, OBSERVATION)
-                for name in files:
-                    target = Path(location) / name
-                    total += target.lstat().st_size
-                    require(total <= 512 * 1024 * 1024, OBSERVATION)
-                    if name != 'PackageInfo':
-                        continue
-                    require(not target.is_symlink() and target.stat().st_size <= 65536, OBSERVATION)
-                    try:
-                        info = ET.fromstring(target.read_bytes())
-                    except ET.ParseError:
-                        raise Unsafe(OBSERVATION) from None
-                    require(info.tag == 'pkg-info')
-                    identifier = info.get('identifier')
-                    require(identifier in selectors and identifier not in records)
-                    records.add(identifier)
-                    application = path(info.get('install-location'))
-                    require(application.parent == Path('/Applications') and application.suffix == '.app')
-                    payload = target.parent / 'Payload'
-                    require(bundle_matches(payload), OBSERVATION)
-                    identity = plistlib.loads((payload / 'Contents/Info.plist').read_bytes())['CFBundleIdentifier']
-                    payloads.append({'kind': 'app', 'path': str(application), 'package': identifier, 'bundle_id': identity})
-            require(records == set(selectors) and len(payloads) > 0)
-            return payloads
+            with preparation_stage('archive_inspection'):
+                self.read(['/usr/sbin/pkgutil', '--expand-full', str(archive), str(expanded)])
+            with preparation_stage('payload_validation'):
+                records, payloads, count, total = set(), [], 0, 0
+                for location, directories, files in os.walk(expanded, followlinks=False):
+                    payload_require(len(Path(location).relative_to(expanded).parts) <= 24, 'payload_depth_limit', OBSERVATION)
+                    count += len(directories) + len(files)
+                    payload_require(count <= 8192, 'payload_entry_limit', OBSERVATION)
+                    for name in files:
+                        target = Path(location) / name
+                        total += target.lstat().st_size
+                        payload_require(total <= 512 * 1024 * 1024, 'payload_size_limit', OBSERVATION)
+                        if name != 'PackageInfo':
+                            continue
+                        payload_require(not target.is_symlink() and target.stat().st_size <= 65536, 'package_info_invalid', OBSERVATION)
+                        try:
+                            info = ET.fromstring(target.read_bytes())
+                        except ET.ParseError:
+                            failure = PreparationFailure('payload_validation', 'requirements_unproven')
+                            failure.preparation_diagnostic['predicate'] = 'package_info_invalid'
+                            raise failure from None
+                        payload_require(info.tag == 'pkg-info', 'package_info_invalid')
+                        identifier = info.get('identifier')
+                        payload_require(identifier in selectors and identifier not in records, 'receipt_identity_mismatch')
+                        records.add(identifier)
+                        with payload_predicate('install_location_unsupported'):
+                            application = path(info.get('install-location'))
+                        payload = target.parent / 'Payload'
+                        if application == Path('/Applications'):
+                            payload_require(payload.is_dir() and not payload.is_symlink(), 'payload_structure_unsupported')
+                            children = list(islice(payload.iterdir(), 2))
+                            payload_require(len(children) == 1, 'payload_structure_unsupported')
+                            app = children[0]
+                            with payload_predicate('payload_structure_unsupported'):
+                                relative = path(app.name, absolute=False)
+                            payload_require(relative.suffix == '.app' and app.is_dir() and not app.is_symlink(),
+                                            'payload_structure_unsupported')
+                            # Framework links must resolve inside this app. Hardlinked
+                            # files, dangling links and special entries stay unsupported.
+                            entries = 0
+                            for location, directories, files in os.walk(app, followlinks=False):
+                                payload_require(len(Path(location).relative_to(app).parts) <= 24,
+                                                'payload_depth_limit', OBSERVATION)
+                                for name in directories + files:
+                                    entries += 1
+                                    payload_require(entries <= 8192, 'payload_entry_limit', OBSERVATION)
+                                    candidate = Path(location) / name
+                                    entry = candidate.lstat()
+                                    if stat.S_ISLNK(entry.st_mode):
+                                        with payload_predicate('payload_structure_unsupported'):
+                                            payload_require(not candidate.readlink().is_absolute(),
+                                                            'payload_structure_unsupported')
+                                            try:
+                                                resolved = candidate.resolve(strict=True)
+                                            except (OSError, RuntimeError):
+                                                payload_require(False, 'payload_structure_unsupported')
+                                            payload_require(beneath(resolved, app.resolve()),
+                                                            'payload_structure_unsupported')
+                                    else:
+                                        payload_require(stat.S_ISDIR(entry.st_mode) or
+                                                        (stat.S_ISREG(entry.st_mode) and entry.st_nlink == 1),
+                                                        'payload_structure_unsupported')
+                            application = application / relative
+                            payload = app
+                        payload_require(application.parent == Path('/Applications') and application.suffix == '.app', 'install_location_unsupported')
+                        payload_require(bundle_matches(payload, payload_diagnostics=True), 'app_bundle_missing', OBSERVATION)
+                        identity = plistlib.loads((payload / 'Contents/Info.plist').read_bytes())['CFBundleIdentifier']
+                        payloads.append({'kind': 'app', 'path': str(application), 'package': identifier, 'bundle_id': identity})
+                payload_require(records == set(selectors) and len(payloads) > 0, 'receipt_requirements_mismatch')
+                return payloads
 
     @contract('pkgutil')
     @timed("cask.ownership")
@@ -634,23 +715,34 @@ def predicates(row, prefix, observer):
     return payloads, packages
 
 
-def bundle_matches(target, app=True, expected_id=None):
-    require(target.is_dir() and not target.is_symlink(), CONFLICT)
+def bundle_matches(target, app=True, expected_id=None, payload_diagnostics=False):
+    def check(value, predicate):
+        if payload_diagnostics:
+            payload_require(value, predicate, CONFLICT)
+        else:
+            require(value, CONFLICT)
+    check(target.is_dir() and not target.is_symlink(), 'app_bundle_missing')
     info = target / 'Contents/Info.plist'
     if not info.exists():
+        if payload_diagnostics:
+            payload_require(False, 'bundle_info_missing', OBSERVATION)
         return False
-    require(not info.is_symlink(), CONFLICT)
-    data = plistlib.loads(info.read_bytes())
+    check(not info.is_symlink(), 'bundle_info_invalid')
+    with payload_predicate('bundle_info_invalid') if payload_diagnostics else nullcontext():
+        data = plistlib.loads(info.read_bytes())
     identifier, executable = data.get('CFBundleIdentifier'), data.get('CFBundleExecutable')
-    require(isinstance(identifier, str) and LABEL.fullmatch(identifier), CONFLICT)
-    require(expected_id is None or identifier == expected_id, CONFLICT)
+    check(isinstance(identifier, str) and LABEL.fullmatch(identifier), 'bundle_info_invalid')
+    check(expected_id is None or identifier == expected_id, 'bundle_identity_mismatch')
     if not app and executable is None:
         return True
-    require(clean(executable) and '/' not in executable, CONFLICT)
+    check(clean(executable) and '/' not in executable, 'bundle_info_invalid')
     binary = target / 'Contents/MacOS' / executable
     if binary.exists():
-        require(beneath(binary.resolve(), target.resolve()), CONFLICT)
-    return binary.is_file() and os.access(binary, os.X_OK)
+        check(beneath(binary.resolve(), target.resolve()), 'executable_path_unsupported')
+    matches = binary.is_file() and os.access(binary, os.X_OK)
+    if payload_diagnostics:
+        payload_require(matches, 'executable_missing', OBSERVATION)
+    return matches
 
 
 @contract('payload')
@@ -739,6 +831,92 @@ def installed_contract(row, prefix):
     return artifacts, appdir
 
 
+def pkg_metadata_identity(row):
+    metadata = {key: value for key, value in row.items()
+                if key not in ('installed', 'installed_time', 'outdated')}
+    return hashlib.sha256(json.dumps(metadata, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+
+
+def pkg_receipt_identity(packages):
+    records = [{key: record.get(key) for key in ('id', 'version', 'location', 'paths')}
+               for record in sorted(packages, key=lambda record: record['id'])]
+    return hashlib.sha256(json.dumps(records, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+
+
+def pkg_component_identity(target):
+    # An observed hash is a freshness guard, never the ownership authority.
+    descriptor = os.open(target, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(descriptor, 'rb') as stream:
+        before = os.fstat(stream.fileno())
+        require(stat.S_ISREG(before.st_mode) and before.st_nlink == 1 and before.st_size <= 16 * 1024 * 1024,
+                CONFLICT, 'ownership_ambiguous')
+        content = stream.read(16 * 1024 * 1024 + 1)
+        require(len(content) <= 16 * 1024 * 1024, CONFLICT, 'ownership_ambiguous')
+        digest = hashlib.sha256(content).hexdigest()
+        after = os.fstat(stream.fileno())
+        def stable(info):
+            return (info.st_dev, info.st_ino, info.st_mode, info.st_uid, info.st_gid, info.st_nlink,
+                    info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+        require(stable(before) == stable(after) == stable(target.lstat()), CONFLICT, 'ownership_ambiguous')
+    return {'sha256': digest, 'device': after.st_dev, 'inode': after.st_ino,
+            'uid': after.st_uid, 'gid': after.st_gid, 'mode': after.st_mode,
+            'size': after.st_size, 'mtime_ns': after.st_mtime_ns, 'ctime_ns': after.st_ctime_ns,
+            'parent': str(target.parent.resolve())}
+
+
+def pkg_ownership_manifest(row, packages, observer):
+    # OS receipt ownership is independent evidence. Files merely appearing during
+    # an install, or script declarations without creation proof, are never adopted.
+    observer.package_ownership(packages)
+    declared = {entry for record in packages for entry in record['paths']}
+    components = {}
+    for key, entries in lifecycle(row['artifacts']).items():
+        if key not in ('delete', 'trash', 'rmdir'):
+            continue
+        for entry in entries:
+            target = path(entry)
+            if entry in declared and target.is_file() and not target.is_symlink():
+                require(len(components) < 64, OBSERVATION)
+                components[entry] = pkg_component_identity(target)
+    return {'contract': 1, 'source': 'pkg_receipt_ownership', 'created': time.time(),
+            'token': row['token'], 'installed': row['installed'],
+            'metadata': pkg_metadata_identity(row),
+            'artifacts': hashlib.sha256(json.dumps(row['artifacts'], sort_keys=True).encode()).hexdigest(),
+            'receipts': pkg_receipt_identity(packages),
+            'components': components}
+
+
+@contract('lifecycle')
+def pkg_repair_provenance(row, packages, observer):
+    record_path = Path.home().resolve() / 'Library/Application Support/Macseed/Homebrew/contracts' / (row['token'] + '.json')
+    record = read_json(record_path) if record_path.exists() else {}
+    manifest = record.get('pkg_ownership')
+    if manifest is None:
+        # Legacy recovery uses native receipt ownership directly; it cannot grant
+        # authority over unreceipted wrappers, even when their bytes look familiar.
+        return {'source': 'legacy_receipts', 'receipts': pkg_receipt_identity(packages)}
+    pkg_preparation.checked_directory(record_path.parent)
+    info = record_path.lstat()
+    require(info.st_nlink == 1 and not info.st_mode & 0o077, CONFLICT, 'ownership_ambiguous')
+    require(isinstance(manifest, dict) and manifest.get('contract') == 1
+            and manifest.get('source') == 'pkg_receipt_ownership'
+            and manifest.get('token') == row['token'] and manifest.get('installed') == row['installed']
+            and manifest.get('metadata') == pkg_metadata_identity(row)
+            and manifest.get('artifacts') == hashlib.sha256(json.dumps(record.get('artifacts'), sort_keys=True).encode()).hexdigest()
+            and manifest.get('receipts') == pkg_receipt_identity(packages), CONFLICT, 'ownership_ambiguous')
+    components = manifest.get('components')
+    require(isinstance(components, dict) and len(components) <= 64, CONFLICT, 'ownership_ambiguous')
+    # A private record is only corroboration: recheck native owners on every Repair.
+    observer.package_ownership(packages)
+    declared = {entry for receipt in packages for entry in receipt['paths']}
+    for entry, identity in components.items():
+        require(entry in declared, CONFLICT, 'ownership_ambiguous')
+        target = path(entry)
+        if os.path.lexists(target):
+            require(pkg_component_identity(target) == identity, CONFLICT, 'ownership_ambiguous')
+    return manifest
+
+
 @contract('lifecycle')
 def qualify_cleanup(directives, payloads, packages, observer, orphan=None):
     privileged = False
@@ -773,7 +951,7 @@ def qualify_cleanup(directives, payloads, packages, observer, orphan=None):
                         (preference and not os.path.lexists(target)) or
                         (target.parent in (Path('/usr/local/bin'), Path('/opt/homebrew/bin')) and
                          target.is_symlink() and any(p['kind'] == 'app' and
-                             beneath(target.resolve(strict=False), Path(p['path'])) for p in payloads)), CONFLICT)
+                             beneath(target.resolve(strict=False), Path(p['path'])) for p in payloads)), CONFLICT, 'ownership_unproven')
                 if target.is_symlink():
                     require((target in declared and any(p['kind'] in ('link', 'wrapper') and p.get('path') == entry for p in payloads)) or
                             any(p['kind'] == 'app' and beneath(target.resolve(strict=False), Path(p['path'])) for p in payloads), CONFLICT)
@@ -793,10 +971,11 @@ def requirements(row, observer, operation=None):
     require(not row.get('container') and not row.get('rename'))
     # Public Homebrew caveats are installation information, not executable
     # cleanup directives. Native package installation is distinct from activation.
-    # Keep Repair conservative and keep Rosetta requirements independently blocked.
+    # PKG caveats are informational only after the selected native lifecycle has
+    # passed the same requirements and full cleanup/ownership qualification.
     caveats = row.get('caveats')
-    native_install = operation == 'install' and any(kind == 'pkg' for kind, _ in artifact_rows(row['artifacts']))
-    require(not caveats or (native_install and isinstance(caveats, str) and len(caveats) <= 16384))
+    native_package = operation in ('install', 'reinstall') and any(kind == 'pkg' for kind, _ in artifact_rows(row['artifacts']))
+    require(not caveats or (native_package and isinstance(caveats, str) and len(caveats) <= 16384))
     require(not row.get('caveats_rosetta'))
     checksum = row.get('sha256')
     require(isinstance(checksum, str) and (re.fullmatch(r'[0-9a-f]{64}', checksum) or checksum == 'no_check'))
@@ -852,7 +1031,10 @@ def operation_contract(row, payloads, packages, prefix, observer, operation):
     for p in payloads:
         if 'path' in p:
             privileged |= not writable_parent(Path(p['path']))
+    provenance = None
     if operation == 'reinstall':
+        if packages:
+            provenance = pkg_repair_provenance(row, packages, observer)
         require(not row.get('pinned'), CONFLICT)
         installed, appdir = installed_contract(row, prefix)
         old = lifecycle(installed)
@@ -911,7 +1093,65 @@ def operation_contract(row, payloads, packages, prefix, observer, operation):
             'payloads': payloads, 'cleanup': current if operation == 'reinstall' else {},
             'historical_cleanup': old if operation == 'reinstall' else {},
             'requirements': {k: row.get(k) for k in ('depends_on', 'conflicts_with', 'sha256', 'url', 'url_specs', 'version', 'caveats')},
-            'operation': operation}
+            'operation': operation, **({'pkg_ownership': provenance} if provenance is not None else {})}
+
+
+def prepared_package_payloads(required, packages, prefix):
+    payload_require(isinstance(required, list) and 0 < len(required) <= 64, 'portable_requirements_invalid')
+    payloads = []
+    for value in required:
+        payload_require(isinstance(value, dict) and set(value) == {'target', 'bundle_id', 'receipt'}, 'portable_requirements_invalid')
+        with payload_predicate('portable_requirements_invalid'):
+            target = target_from_capture(value['target'], prefix)
+        payload_require(target.parent == Path('/Applications') and target.suffix == '.app', 'portable_requirements_invalid')
+        payload_require(isinstance(value['bundle_id'], str) and LABEL.fullmatch(value['bundle_id']), 'portable_requirements_invalid')
+        payload_require(value['receipt'] in {p['id'] for p in packages}, 'receipt_requirements_mismatch')
+        payloads.append({'kind': 'app', 'path': str(target), 'bundle_id': value['bundle_id'],
+                         'package': value['receipt']})
+    payload_require({p['package'] for p in payloads} == {p['id'] for p in packages}, 'receipt_requirements_mismatch')
+    return payloads
+
+
+def package_preparation_identity(row, payloads, packages, prefix, observer):
+    # Only the already bounded, exact-receipt native package profile can opt in.
+    require(not row.get('installed') and packages and not any(p['present'] for p in packages))
+    artifacts = [kind for kind, _ in artifact_rows(row['artifacts']) if kind not in ('uninstall', 'zap')]
+    require(artifacts == ['pkg'] and re.fullmatch(r'[0-9a-f]{64}', row.get('sha256', '')))
+    operation_contract(row, payloads, packages, prefix, observer, 'install')
+    return pkg_preparation.identity(row)
+
+
+def prepare_packages(tokens, approvals):
+    """Explicit Core consent only; ordinary classification never calls the inspector."""
+    with preparation_stage('metadata_source'):
+        from homebrew_lifecycle import pending
+        require(not pending())
+        observer = PublicObserver()
+        prefix = Path(observer.read(['brew', '--prefix']).decode().strip())
+        require(str(prefix) in ('/opt/homebrew', '/usr/local'))
+        candidates = {}
+        for token in tokens:
+            row = observer.cask(token)
+            value = classify(row, prefix, observer)
+            key = value.get('installer_preparation_id')
+            if key in approvals:
+                candidates[key] = row
+        require(set(candidates) == set(approvals))
+    # Validate the complete explicit list before the first download.
+    for key, row in candidates.items():
+        with preparation_stage('metadata_source'):
+            require(classify(observer.cask(row['token']), prefix, observer).get('installer_preparation_id') == key)
+        payloads = observer.package_install_payloads(row, package_selectors(row['artifacts']))
+        with preparation_stage('payload_validation'):
+            required = [{'target': portable_target(Path(p['path']), prefix),
+                         'bundle_id': p['bundle_id'], 'receipt': p['package']} for p in payloads]
+            prepared_package_payloads(required, observer.packages(package_selectors(row['artifacts'])), prefix)
+        # Downloads can take time: metadata/state changes invalidate this consent.
+        with preparation_stage('metadata_source'):
+            current = observer.cask(row['token'])
+            require(classify(current, prefix, observer).get('installer_preparation_id') == key)
+        with preparation_stage('evidence_storage'):
+            pkg_preparation.save(key, required)
 
 
 @timed("cask.classify")
@@ -933,6 +1173,14 @@ def classify(row, prefix, observer=None, operation=None, observation_only=False,
             if saved is not None:
                 require(isinstance(saved, dict) and set(saved) == {'state', 'reason', 'required'} and
                         isinstance(saved['required'], list), 'homebrew_metadata_incompatible')
+            if (packages and isinstance(saved, dict)
+                    and isinstance(saved.get('required'), list)
+                    and not any(p.get('kind') != 'receipt' for p in saved['required'])):
+                receipts = [p['identity'] for p in saved['required']]
+                require(not receipts or sorted(receipts) == sorted(p['id'] for p in packages),
+                        'homebrew_metadata_incompatible')
+                saved = None  # Valid old Capture may have recorded no usable PKG payload.
+            if saved is not None:
                 if packages and not any(record['present'] for record in packages):
                     # Portable source receipt evidence defines fresh-package
                     # postconditions; it never becomes target registration proof.
@@ -975,7 +1223,30 @@ def classify(row, prefix, observer=None, operation=None, observation_only=False,
             # State inspection must not download an installer to discover its
             # expected payload. Local metadata, receipts or the captured contract
             # must identify payload predicates; registration alone is not proof.
-            require(any('path' in p for p in payloads))
+            if not any('path' in p for p in payloads):
+                key = package_preparation_identity(row, payloads, packages, prefix, observer)
+                required = pkg_preparation.load(key)
+                if required is not None:
+                    payloads.extend(prepared_package_payloads(required, packages, prefix))
+                elif key:
+                    value = result('homebrew', 'unsupported', 'item_unsupported', UNSUPPORTED)
+                    value.update(installer_preparation_id=key,
+                                 diagnostic={'primitive': 'pkgutil', 'condition': 'preparation_required'})
+                    return value
+                else:
+                    require(False)
+        if packages and any(record['present'] for record in packages):
+            required = pkg_preparation.load(pkg_preparation.identity(row))
+            if required is not None:
+                # Prepared postconditions strengthen post-install observation; receipts
+                # still come exclusively from the target, never this record.
+                for expected in prepared_package_payloads(required, packages, prefix):
+                    current = next((p for p in payloads if p.get('path') == expected['path']
+                                    and p.get('package') == expected['package']), None)
+                    if current is None:
+                        payloads.append(expected)
+                    else:
+                        current['bundle_id'] = expected['bundle_id']
         missing, _ = observe(payloads, row, prefix)
         registered = bool(row.get('installed'))
         if registered and not missing and not operation:
@@ -1048,10 +1319,22 @@ def capture_rows(metadata, prefix, observer=None):
 
 
 def save_contract(row, prefix, executed=None):
-    value = classify(row, prefix, observation_only=True)
+    observer = PublicObserver()
+    value = classify(row, prefix, observer, observation_only=True)
     require(value['state'] == 'satisfied', OBSERVATION)
     executed = executed or row
     require(executed.get('token') == row['token'] and executed.get('version') == row.get('installed'), OBSERVATION)
+    packages = observer.packages(package_selectors(executed['artifacts'])) if any(
+        kind == 'pkg' for kind, _ in artifact_rows(executed['artifacts'])) else []
+    # Bind evidence to the metadata actually used for the successful operation.
+    manifest = None
+    if packages:
+        try:
+            manifest = pkg_ownership_manifest(dict(executed, installed=row['installed']), packages, observer)
+        except (Unsafe, OSError, ValueError, subprocess.SubprocessError):
+            # Missing provenance must not turn a verified Install into a failure.
+            # Subsequent Repair still has to pass all native ownership checks.
+            pass
     from homebrew_lifecycle import private_directory, state_directory
     private_directory(state_directory())
     directory = state_directory() / 'contracts'
@@ -1068,6 +1351,7 @@ def save_contract(row, prefix, executed=None):
                                       for p in value['evidence'] if p['kind'] == 'app'},
                        'completion_hashes': {p['path']: hashlib.sha256(Path(p['path']).read_bytes()).hexdigest()
                                              for p in value['evidence'] if p.get('artifact') == GENERATED_COMPLETIONS},
+                       **({'pkg_ownership': manifest} if manifest is not None else {}),
                        'suite_members': {p['path']: [{'name': member.name,
                            'bundle_id': plistlib.loads((member / 'Contents/Info.plist').read_bytes())['CFBundleIdentifier']}
                            for member in sorted(Path(p['path']).glob('*.app'))]

@@ -35,8 +35,8 @@ Prepared IDs are 64 lowercase hexadecimal characters.
 | `bundle_inspect` | `path` | Returns Bundle summary and Core-owned `restore_selection` inventory; no Apply |
 | `capture_prepare` | `selection` | Private staged observation and prepared selection |
 | `capture_execute` | `selection`, `destination`, `expected_prepared_capture_id`, optional `replacement_sha256` | Fresh observation and Bundle publication |
-| `restore_prepare` | `path`, `disabled_groups`, `include_secure`, optional `selection` | Bundle validation, Preview and prerequisites; no publication or Apply |
-| `restore_execute` | Restore fields plus `expected_prepared_plan_id` | Fresh preparation, local-state publication and restoration |
+| `restore_prepare` | `path`, `disabled_groups`, `include_secure`, optional `selection`, `installer_preparations` | Bundle validation, Preview and prerequisites; no publication or Apply |
+| `restore_execute` | `path`, `disabled_groups`, `include_secure`, `expected_prepared_plan_id`, optional `selection` | Fresh preparation, local-state publication and restoration |
 | `environment_compare` | `generated_dir`, `blueprint_path` **or** `bundle_path` | Explicit read-only reference-to-current-Mac comparison |
 
 Capture publication remains no-clobber by default. After explicit native Save Panel
@@ -220,6 +220,40 @@ and rechecks launch prerequisites and source/staged fingerprints. `stale_plan`
 rejects publication. After external preparation, use **Check Again → Prepare
 → confirm the new plan**. Neither ID nor `ready` is authorization, a transaction
 or proof that target state cannot change.
+
+### Explicit PKG installer preparation
+
+For an unregistered native PKG cask without usable captured/local payload
+requirements, a blocked plan row may include `installer_preparation_id` and
+`diagnostic: {primitive: "pkgutil", condition: "preparation_required"}`. The stable
+reason remains `cask_execution_requirements_unsupported`; no installation is planned
+yet. Known unsupported profiles do not offer preparation. Ordinary Prepare,
+readiness and Verification never download archives.
+
+After explicit consent listing the casks, `restore_prepare` accepts optional
+`installer_preparations`: 1–32 unique opaque IDs from the retained plan. Consent is
+for this request only, not future downloads or Rebuild. Core validates the complete
+approved list against the selected Bundle/selection and current metadata before
+calling the existing inert inspector. Failure returns `pkg_preparation_failed`
+without publishing configuration or installing applications. No URLs or local
+archive paths enter this contract. Older requests remain unchanged;
+`features.pkg_installer_preparation.version=1` advertises the additive support.
+
+Only portable app/receipt requirements are retained under private Homebrew workflow
+state (`pkg-preparations`, directories 0700/files 0600), bound to Bundle/staged
+selection fingerprints and installer metadata, including token, version, URL,
+checksum and artifacts. Registration/time observations are not installer identity.
+Records expire after 30 minutes, with bounded lazy cleanup during explicit
+preparation (maximum 64 records/temporaries); ordinary Preview only reads evidence.
+Archives and consent are not retained; interruption may leave only a private,
+unusable temporary requirements file for later expiry cleanup. The source `.mbt`
+is never modified. Expired/changed evidence requires new explicit consent.
+
+Successful preparation returns a fresh plan. Execute repeats preparation and
+native qualification without download permission, then uses ordinary Homebrew
+Install and actual target receipts/payload Verification. Evidence never creates
+receipts or authorizes ambiguous Repair. A native command's success alone cannot
+establish installation. Rebuild confirmation remains separate.
 
 Optional diagnostic response fields preserve V1 requests and the existing plan-ID
 calculation. Prepare returns `plan_diagnostics`: SHA-256 fingerprints for `bundle`,

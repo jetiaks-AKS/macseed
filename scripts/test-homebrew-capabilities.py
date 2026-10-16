@@ -347,6 +347,121 @@ class CapabilityTests(unittest.TestCase):
             with patch.object(self.observer, 'packages', side_effect=cask.Unsafe(cask.OBSERVATION)):
                 self.assertEqual(self.classify(observation_only=True)['state'], 'observation_error')
 
+    def pkg_preparation_fixture(self):
+        self.row['artifacts'] = [{'pkg': ['Example.pkg']}, {'uninstall': [{'pkgutil': 'org.example.Package'}]}]
+        self.observer.receipts = []
+        self.observer.package_payloads = [{'kind': 'app', 'path': '/Applications/Example.app',
+            'package': 'org.example.Package', 'bundle_id': 'org.example.Application'}]
+        os.environ[cask.pkg_preparation.CONTEXT] = 'b' * 64
+        self.observer.cask = lambda token: copy.deepcopy(self.row)
+        self.observer.read = lambda args: b'/opt/homebrew'
+
+    def test_pkg_explicit_consent_preparation_reuse_and_invalidation(self):
+        self.pkg_preparation_fixture()
+        with patch.object(self.observer, 'package_install_payloads', wraps=self.observer.package_install_payloads) as inspect:
+            first = self.classify()
+            self.assertEqual(first['diagnostic']['condition'], 'preparation_required')
+            key = first['installer_preparation_id']
+            self.classify(); inspect.assert_not_called()
+            with patch.object(cask, 'PublicObserver', return_value=self.observer):
+                with self.assertRaises(cask.Unsafe):
+                    cask.prepare_packages([self.row['token']], ['f' * 64])
+                inspect.assert_not_called()
+                cask.prepare_packages([self.row['token']], [key])
+            inspect.assert_called_once()
+            prepared = self.classify()
+            self.assertEqual(prepared['state'], 'installable', prepared)
+            self.assertEqual(prepared['operation'], 'install')
+            self.assertEqual(self.classify(), prepared)
+            inspect.assert_called_once()
+            for field, changed in [('version', '3.0'), ('sha256', 'c' * 64),
+                                   ('url', 'https://example.org/new.pkg'), ('caveats', 'new conditions'),
+                                   ('artifacts', [{'pkg': ['Other.pkg']}, {'uninstall': [{'pkgutil': 'org.example.Package'}]}])]:
+                original = self.row.get(field)
+                self.row[field] = changed
+                self.assertNotEqual(self.classify().get('state'), 'installable', field)
+                if original is None: self.row.pop(field, None)
+                else: self.row[field] = original
+            with patch.dict(os.environ, {cask.pkg_preparation.CONTEXT: 'd' * 64}):
+                self.assertNotEqual(self.classify().get('state'), 'installable')
+            record = cask.pkg_preparation.directory() / (key + '.json')
+            value = json.loads(record.read_text()); value['created'] -= cask.pkg_preparation.TTL + 1
+            record.write_text(json.dumps(value))
+            self.assertEqual(self.classify()['state'], 'unsupported')
+            self.assertEqual(record.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(record.parent.parent.stat().st_mode & 0o777, 0o700)
+            self.assertNotIn(self.row['url'], record.read_text())
+
+    def test_pkg_consent_only_prepares_listed_current_installers(self):
+        self.pkg_preparation_fixture()
+        second = copy.deepcopy(self.row); second['token'] = 'another-example'
+        rows = {self.row['token']: self.row, second['token']: second}
+        self.observer.cask = lambda token: copy.deepcopy(rows[token])
+        key = self.classify()['installer_preparation_id']
+        with patch.object(cask, 'PublicObserver', return_value=self.observer), \
+             patch.object(self.observer, 'package_install_payloads', wraps=self.observer.package_install_payloads) as inspect:
+            cask.prepare_packages(list(rows), [key])
+            inspect.assert_called_once()
+            self.assertEqual(inspect.call_args.args[0]['token'], self.row['token'])
+        self.assertEqual(cask.classify(second, self.prefix, self.observer)['state'], 'unsupported')
+        key = cask.classify(second, self.prefix, self.observer)['installer_preparation_id']
+        payloads = copy.deepcopy(self.observer.package_payloads)
+        def changed(row, selectors):
+            second['sha256'] = 'c' * 64
+            return payloads
+        with patch.object(cask, 'PublicObserver', return_value=self.observer), \
+             patch.object(self.observer, 'package_install_payloads', side_effect=changed), self.assertRaises(cask.Unsafe):
+            cask.prepare_packages(list(rows), [key])
+        self.assertIsNone(cask.pkg_preparation.load(key))
+
+    def test_pkg_preparation_storage_rejects_foreign_links_and_special_files(self):
+        self.pkg_preparation_fixture()
+        key = self.classify()['installer_preparation_id']
+        cask.pkg_preparation.save(key, [{'target': {'root': 'applications', 'relative': 'Example.app'},
+            'bundle_id': 'org.example.Application', 'receipt': 'org.example.Package'}])
+        record = cask.pkg_preparation.directory() / (key + '.json')
+        self.assertIsNotNone(cask.pkg_preparation.load(key))
+        foreign = self.root / 'foreign'; foreign.write_text(record.read_text())
+        original = foreign.read_bytes()
+        record.unlink(); record.symlink_to(foreign)
+        self.assertIsNone(cask.pkg_preparation.load(key))
+        self.assertEqual(foreign.read_bytes(), original)
+        record.unlink(); os.mkfifo(record, 0o600)
+        self.assertIsNone(cask.pkg_preparation.load(key))
+
+    def test_pkg_incomplete_capture_preserves_receipt_identity(self):
+        self.pkg_preparation_fixture()
+        generated = self.root / 'generated'; generated.mkdir()
+        source = generated / 'homebrew-casks.json'
+        value = {'contract': 1, 'casks': {self.row['token']: {'state': 'unsupported',
+            'reason': cask.UNSUPPORTED, 'required': []}}}
+        source.write_text(json.dumps(value))
+        self.assertIn('installer_preparation_id', self.classify())
+        value['casks'][self.row['token']]['required'] = [{'kind': 'receipt', 'identity': 'org.foreign.Other'}]
+        source.write_text(json.dumps(value))
+        self.assertEqual(self.classify()['reason'], 'homebrew_metadata_incompatible')
+        self.assertNotIn('installer_preparation_id', self.classify())
+
+    def test_pkg_preparation_does_not_expand_repair_or_opaque_profiles(self):
+        self.pkg_preparation_fixture()
+        for field, value in [('installed', '1.0'), ('sha256', 'no_check'), ('caveats_rosetta', True)]:
+            original = self.row.get(field)
+            self.row[field] = value
+            self.assertNotIn('installer_preparation_id', self.classify())
+            if original is None: self.row.pop(field, None)
+            else: self.row[field] = original
+        key = self.classify()['installer_preparation_id']
+        self.observer.package_payloads = []
+        with patch.object(cask, 'PublicObserver', return_value=self.observer), self.assertRaises(cask.Unsafe):
+            cask.prepare_packages([self.row['token']], [key])
+        self.assertIsNone(cask.pkg_preparation.load(key))
+        self.row['installed'] = '1.0'
+        with patch.object(cask, 'observe', return_value=([], [])), \
+             patch.object(self.observer, 'package_install_payloads', side_effect=AssertionError('matching download')):
+            self.observer.receipts = [{'id': 'org.example.Package', 'present': True,
+                                      'paths': ['/Applications/Example.app/Contents/MacOS/Example']}]
+            self.assertEqual(self.classify()['state'], 'satisfied')
+
     def test_performance_external_timing_is_private_and_observational(self):
         import performance_trace as trace
         command = ['/usr/sbin/pkgutil', '--expand-full', '/private/secret.pkg', '/private/output']
@@ -375,13 +490,34 @@ class CapabilityTests(unittest.TestCase):
         row['sha256'] = hashlib.sha256(content).hexdigest()
         observer = cask.PublicObserver()
         commands = []
+        layout = "direct"
         def expand(arguments):
             commands.append(arguments)
             self.assertEqual(arguments[:2], ['/usr/sbin/pkgutil', '--expand-full'])
             component = Path(arguments[-1]) / 'component.pkg'
             component.mkdir(parents=True)
-            (component / 'PackageInfo').write_text('<pkg-info identifier="org.example.Package" install-location="/Applications/Example.app"/>')
-            self.application(component / 'Payload')
+            destination = '/Applications/Example.app' if layout == 'direct' else '/Applications'
+            (component / 'PackageInfo').write_text('<pkg-info identifier="org.example.Package" install-location="' + destination + '"/>')
+            payload = component / 'Payload'
+            app = payload if layout == 'direct' else payload / 'Example.app'
+            self.application(app)
+            if layout == 'ambiguous':
+                self.application(payload / 'Other.app')
+            elif layout == 'framework':
+                framework = app / 'Contents/Frameworks/Example.framework'
+                (framework / 'Versions/B/Resources').mkdir(parents=True)
+                (framework / 'Versions/Current').symlink_to('B')
+                (framework / 'Resources').symlink_to('Versions/Current/Resources')
+            elif layout == 'dangling':
+                (app / 'missing').symlink_to('absent')
+            elif layout == 'cycle':
+                (app / 'cycle').symlink_to('cycle')
+            elif layout == 'relative_escape':
+                (app / 'escape').symlink_to('..')
+            elif layout == 'symlink':
+                (app / 'escape').symlink_to('/private')
+            elif layout == 'hardlink':
+                os.link(app / 'Contents/Info.plist', app / 'linked-info')
             return b''
         def response(*args, **kwargs):
             value = io.BytesIO(content)
@@ -394,6 +530,18 @@ class CapabilityTests(unittest.TestCase):
             self.assertFalse(Path(commands[-1][-1]).exists())
             with self.assertRaises(cask.Unsafe):
                 observer.package_install_payloads(row, ['org.example.Foreign'])
+            layout = 'applications'
+            self.assertEqual(observer.package_install_payloads(row, ['org.example.Package']), payload)
+            layout = 'framework'
+            self.assertEqual(observer.package_install_payloads(row, ['org.example.Package']), payload)
+            for layout in ('ambiguous', 'symlink', 'hardlink', 'dangling', 'cycle', 'relative_escape'):
+                with self.subTest(layout=layout), self.assertRaises(cask.PreparationFailure) as failure:
+                    observer.package_install_payloads(row, ['org.example.Package'])
+                self.assertEqual(failure.exception.preparation_diagnostic['predicate'], 'payload_structure_unsupported')
+            model = (ROOT / 'desktop/Macseed/Sources/RestoreModel.swift').read_text()
+            self.assertIn('"payload_structure_unsupported"].contains(predicate)', model)
+            self.assertIn('technicalReason = "pkg_preparation_failed · payload_validation · " + predicate', model)
+            layout = 'direct'
             row['sha256'] = 'b' * 64
             previous = len(commands)
             with self.assertRaises(cask.Unsafe):
@@ -411,7 +559,8 @@ class CapabilityTests(unittest.TestCase):
         self.assertEqual(value['execution']['requirements']['caveats'], self.row['caveats'])
         self.historical()
         self.assertEqual(self.classify()['state'], 'unsupported')
-        self.assertEqual(self.classify()['diagnostic']['primitive'], 'requirements')
+        self.assertEqual(self.classify()['diagnostic']['primitive'], 'lifecycle')
+        self.assertEqual(self.classify()['reason'], cask.CONFLICT)
 
     def test_native_package_clean_install_rejects_receipts_and_delete_residuals(self):
         self.package()
@@ -443,6 +592,89 @@ class CapabilityTests(unittest.TestCase):
         self.assertNotEqual(self.classify(observation_only=True)['state'], 'satisfied')
         self.row['installed'] = None
         self.row['artifacts'].append({'installer': [{'script': {'executable': 'opaque.sh'}}]})
+        self.assertEqual(self.classify()['state'], 'unsupported')
+
+    def pkg_repair_fixture(self):
+        self.package()
+        self.row['caveats'] = 'Activation requires separate user approval.'
+        self.historical()
+        target = self.root / 'receipt-owned-helper'
+        target.write_text('installer-declared helper')
+        self.observer.receipts[0]['paths'].append(str(target))
+        self.row['artifacts'][1]['uninstall'][0]['delete'] = str(target)
+        # Persist the same installed cleanup declaration, rather than inferring it.
+        receipt = self.prefix / 'Caskroom/generic-example/.metadata/INSTALL_RECEIPT.json'
+        data = json.loads(receipt.read_text())
+        data['uninstall_artifacts'] = copy.deepcopy(self.row['artifacts'])
+        receipt.write_text(json.dumps(data))
+        return target
+
+    def record_pkg_repair_fixture(self):
+        target = self.pkg_repair_fixture()
+        self.application()
+        self.row['installed'] = self.row['version']
+        self.observer.receipts[0]['version'] = self.row['version']
+        with patch.object(cask, 'PublicObserver', return_value=self.observer):
+            cask.save_contract(self.row, self.prefix)
+        shutil.rmtree(self.app)
+        return target
+
+    def test_pkg_repair_legacy_receipt_ownership_and_caveats(self):
+        self.pkg_repair_fixture()
+        value = self.classify()
+        self.assertEqual(value['state'], 'repairable', value)
+        self.assertEqual(value['operation'], 'reinstall')
+        self.assertEqual(value['execution']['pkg_ownership']['source'], 'legacy_receipts')
+        self.assertTrue(value['authorization_required'])
+        self.assertFalse((self.home / 'Library/Application Support/Macseed/Homebrew/contracts').exists())
+        self.observer.shared = True
+        self.assertEqual(self.classify()['reason'], cask.CONFLICT)
+
+    def test_pkg_repair_manifest_and_missing_app(self):
+        self.record_pkg_repair_fixture()
+        value = self.classify()
+        self.assertEqual(value['state'], 'repairable', value)
+        manifest = value['execution']['pkg_ownership']
+        self.assertEqual(manifest['source'], 'pkg_receipt_ownership')
+        self.assertEqual(manifest['token'], self.row['token'])
+        self.assertEqual(len(manifest['components']), 1)
+        self.assertEqual(self.classify()['qualification_id'], value['qualification_id'])
+
+    def test_pkg_repair_rejects_modified_or_replaced_component(self):
+        target = self.record_pkg_repair_fixture()
+        original = target.read_bytes()
+        target.write_bytes(b'foreign replacement')
+        self.assertEqual(self.classify()['diagnostic']['condition'], 'ownership_ambiguous')
+        target.unlink()
+        target.write_bytes(original)
+        self.assertNotEqual(self.classify()['state'], 'repairable')
+
+    def test_pkg_repair_rejects_stale_source_metadata_and_receipts(self):
+        self.record_pkg_repair_fixture()
+        self.row['sha256'] = 'b' * 64
+        self.assertEqual(self.classify()['diagnostic']['condition'], 'ownership_ambiguous')
+        self.row['sha256'] = 'a' * 64
+        self.observer.receipts[0]['version'] = 'other'
+        self.assertEqual(self.classify()['diagnostic']['condition'], 'ownership_ambiguous')
+
+    def test_pkg_repair_legacy_unreceipted_wrapper_is_not_adopted(self):
+        target = self.pkg_repair_fixture()
+        self.observer.receipts[0]['paths'].remove(str(target))
+        target.write_text('#!/bin/sh\n' + str(self.app / 'Contents/MacOS/Example') + ' "$@"\n')
+        value = self.classify()
+        self.assertEqual(value['state'], 'unsupported', value)
+        self.assertEqual(value['diagnostic'], {'primitive': 'lifecycle', 'condition': 'ownership_unproven'})
+        # A recorded installation must not grant authority over the same wrapper.
+        self.application()
+        self.row['installed'] = self.row['version']
+        with patch.object(cask, 'PublicObserver', return_value=self.observer):
+            cask.save_contract(self.row, self.prefix)
+        shutil.rmtree(self.app)
+        self.assertEqual(self.classify()['diagnostic']['condition'], 'ownership_unproven')
+
+    def test_pkg_repair_caveats_do_not_allow_unknown_lifecycle(self):
+        self.pkg_repair_fixture()
+        self.row['artifacts'][1]['uninstall'][0]['script'] = '/opaque/uninstall'
         self.assertEqual(self.classify()['state'], 'unsupported')
 
     def test_package_receipt_plus_real_payload_and_repair(self):

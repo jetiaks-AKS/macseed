@@ -53,8 +53,8 @@ import SwiftUI
         precondition(previewSource.contains("Text(String(area.items.count))") && previewSource.contains(".accessibilityLabel(area.title)"))
         precondition(prerequisiteSummarySource.contains("DisclosureGroup(isExpanded: $expanded)"))
         precondition(!prerequisiteSummarySource.contains("Show Details"))
-        precondition(prerequisiteSummarySource.contains("Label(\"Ready\"") && prerequisiteSummarySource.contains("systemImage: \"checkmark\""))
-        precondition(prerequisiteSummarySource.contains("ForEach(summary.affectedDomains"))
+        precondition(prerequisiteSummarySource.contains("if !summary.manualConditions.isEmpty") && !prerequisiteSummarySource.contains("Needs Preparation"))
+        precondition(prerequisiteSummarySource.contains("ForEach(summary.manualDomains"))
         precondition(prerequisiteSummarySource.contains("showsHeading: false") && prerequisiteSummarySource.contains("technicalTitle: \"Technical Details\""))
         for areaSource in [previewSource, prerequisiteSummarySource] {
             let labelSource = areaSource == previewSource
@@ -884,7 +884,143 @@ import SwiftUI
         print("PASS: shared plan-row summary, disjoint breakdowns, unknown scope, Apply without Verification and operation-bound Stop notices")
     }
 
+    @MainActor static func textStatusLayoutChecks() {
+        let long = "Macseed cannot inspect login items without System Events permission. Choose Fix Issues… to allow access and check the current state again."
+        for width in [CGFloat(280), 420, 760] {
+            let columns = TaskTextStatusLayout.widths(width)
+            precondition(columns.text > 0 && columns.status > 0)
+            precondition(abs(columns.text + 12 + columns.status - width) < 0.01)
+            for size in [DynamicTypeSize.large, .accessibility3] {
+                var heights: [CGFloat] = []
+                for (action, state, label) in [("Matches.", TaskRowState.matching, "Already Matches"),
+                                                (long, TaskRowState.attention, "Needs Attention")] {
+                    let item = TaskItemPresentation(id: "fixture", item: DisplayItem(id: "fixture", title: "Application", status: state == .matching ? .matching : .attention, action: action), state: state)
+                    let domain = TaskDomainPresentation(id: "homebrew-casks", title: "Homebrew Applications", symbol: "app", items: [item])
+                    let renderer = ImageRenderer(content: TaskDomainItems(domain: domain, stateTitles: [state: label])
+                        .frame(width: width).environment(\.dynamicTypeSize, size))
+                    guard let image = renderer.nsImage else { preconditionFailure("Task row did not render") }
+                    precondition(abs(image.size.width - width) < 1 && image.size.height > 0)
+                    heights.append(image.size.height)
+                    let leaf = ImageRenderer(content: RestoreSettingPreviewLeaf(item: item, title: "Application", stateTitles: [state: label])
+                        .frame(width: width).environment(\.dynamicTypeSize, size))
+                    precondition(leaf.nsImage != nil)
+                    let comparison = ImageRenderer(content: EnvironmentComparisonItem(item: item.item)
+                        .frame(width: width).environment(\.dynamicTypeSize, size))
+                    precondition(comparison.nsImage != nil)
+                }
+                precondition(heights[1] > heights[0], "Long descriptions must increase row height")
+            }
+        }
+        let source = try! String(contentsOfFile: "Sources/TaskComponents.swift")
+        let items = source.components(separatedBy: "struct TaskDomainItems: View {")[1]
+            .components(separatedBy: "struct PendingOperationLogButton:")[0]
+        precondition(items.contains("TaskTextStatusLayout") && !items.contains("ViewThatFits"))
+        let leaf = source.components(separatedBy: "struct RestoreSettingPreviewLeaf: View {")[1]
+        precondition(leaf.contains("TaskTextStatusLayout") && !leaf.contains("ViewThatFits"))
+        print("PASS: text/status columns, long and short descriptions, narrow widths and larger text")
+    }
+
+    @MainActor static func unsupportedRepairExplanationChecks() {
+        func row(_ diagnostic: [String: String]?) -> CoreRestorePreparation.Row {
+            var value: [String: Any] = ["domain": "homebrew-casks", "item_id": "fixture", "action": "reinstall",
+                                       "disposition": "blocked", "reason": "cask_execution_requirements_unsupported"]
+            if let diagnostic { value["diagnostic"] = diagnostic }
+            return try! JSONDecoder().decode(CoreRestorePreparation.Row.self, from: JSONSerialization.data(withJSONObject: value))
+        }
+        let specific = row(["primitive": "lifecycle", "condition": "ownership_unproven",
+                            "stage": "qualification", "predicate": "cleanup_ownership", "reason_code": "ownership_unproven"])
+        precondition(specific.unsupportedRepairExplanation!.contains("ownership"))
+        precondition(specific.unsupportedRepairExplanation!.contains("official installer"))
+        let details = specific.diagnostic!.technicalDescription
+        for line in ["stage: qualification", "predicate: cleanup_ownership", "reason_code: ownership_unproven"] {
+            precondition(details.contains(line))
+        }
+        let fallback = "Automatic repair is unavailable. Macseed could not verify that the operation is safe."
+        for unknown in [row(nil), row(["primitive": "requirements", "condition": "unsupported_capability"]),
+                        row(["primitive": "lifecycle", "condition": "future_condition", "reason_code": "future_reason"])] {
+            precondition(unknown.unsupportedRepairExplanation == fallback)
+            precondition(!unknown.unsupportedRepairExplanation!.contains("scripts"))
+            precondition(unknown.diagnostic?.technicalDescription.contains("stage:") != true)
+        }
+        let script = row(["primitive": "requirements", "condition": "unsupported_capability", "reason_code": "script_effects_unbounded"])
+        precondition(script.unsupportedRepairExplanation!.contains("scripts"))
+        var preparation = specific
+        preparation.diagnostic = .init(primitive: "pkgutil", condition: "preparation_required")
+        precondition(preparation.unsupportedRepairExplanation == nil)
+        preparation.diagnostic = .init(primitive: "login_item", condition: "authorization_required")
+        precondition(preparation.unsupportedRepairExplanation == nil)
+        let source = try! String(contentsOfFile: "Sources/RestoreTasks.swift")
+        precondition(source.contains("result == nil && !executing && !operationProgress, let explanation = entry?.unsupportedRepairExplanation"))
+        for row in [specific, row(nil)] {
+            let item = TaskItemPresentation(id: "fixture", item: DisplayItem(id: "fixture", title: "Application", status: .attention,
+                action: row.unsupportedRepairExplanation!, reason: row.reason), state: .attention, diagnostic: row.diagnostic)
+            let domain = TaskDomainPresentation(id: "homebrew-casks", title: "Homebrew Applications", symbol: "app", items: [item])
+            precondition(ImageRenderer(content: TaskDomainItems(domain: domain, stateTitles: [.attention: "Needs Attention"]).frame(width: 420)).nsImage != nil)
+        }
+        print("PASS: unsupported Repair explanation, Core diagnostic fields, neutral fallback and existing consent presentation")
+    }
+
     @MainActor static func main() {
+        if CommandLine.arguments.contains("--unsupported-repair-explanation-only") { unsupportedRepairExplanationChecks(); return }
+        if CommandLine.arguments.contains("--text-status-layout-only") { textStatusLayoutChecks(); return }
+        if CommandLine.arguments.contains("--pkg-preparation-only") || CommandLine.arguments.contains("--fix-issues-only") {
+            let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+            let view = try! String(contentsOf: root.appendingPathComponent("Sources/RestoreView.swift"))
+            let model = try! String(contentsOf: root.appendingPathComponent("Sources/RestoreModel.swift"))
+            precondition(view.contains("Prepare installers?") && view.contains("Download and Inspect"))
+            precondition(view.contains("model.installerPreparationRows") && view.contains("model.cancelInstallerPreparation()"))
+            precondition(model.contains("installerConsentPlanID") && model.contains("installerPreparations: identities"))
+            let pkg = CoreRestorePreparation.Condition(domain: "homebrew-casks",
+                code: "cask_execution_requirements_unsupported", status: "unsupported", selectedItemIndex: 1, scope: "item",
+                diagnostic: .init(primitive: "pkgutil", condition: "preparation_required"))
+            let automation = CoreRestorePreparation.Condition(domain: "homebrew-casks",
+                code: "cask_metadata_unavailable", status: "external_action_required", selectedItemIndex: 2, scope: "operation",
+                diagnostic: .init(primitive: "login_item", condition: "application_unavailable"))
+            let ready = RestorePrerequisiteSummaryPresentation(conditions: [], ready: true)
+            precondition(!ready.isVisible && !ready.canFixIssues)
+            let pkgOnly = RestorePrerequisiteSummaryPresentation(conditions: [pkg], ready: true, hasInstallerPreparations: true)
+            precondition(pkgOnly.title == "Needs Preparation" && pkgOnly.isVisible && pkgOnly.canFixIssues && pkgOnly.displayConditions.count == 1)
+            precondition(pkg.diagnostic!.explanation == "Installer preparation required before this application can be restored.")
+            let permissionOnly = RestorePrerequisiteSummaryPresentation(conditions: [automation], ready: false)
+            precondition(permissionOnly.title == "Needs Preparation" && permissionOnly.canFixIssues && permissionOnly.isVisible)
+            let denied = CoreRestorePreparation.Condition(domain: "homebrew-casks",
+                code: "cask_metadata_unavailable", status: "external_action_required", selectedItemIndex: 2, scope: "operation",
+                diagnostic: .init(primitive: "login_item", condition: "authorization_denied"))
+            let manualPermission = RestorePrerequisiteSummaryPresentation(conditions: [denied], ready: false)
+            precondition(manualPermission.isVisible && !manualPermission.canFixIssues)
+            precondition(denied.diagnostic!.explanation.contains("System Settings"))
+            let both = RestorePrerequisiteSummaryPresentation(conditions: [pkg, automation], ready: false, hasInstallerPreparations: true)
+            precondition(both.canFixIssues && both.displayConditions.count == 2 && both.affectedDomains == ["homebrew-casks"])
+            let manual = CoreRestorePreparation.Condition(domain: "homebrew-casks", code: "homebrew_unavailable",
+                status: "external_action_required", selectedItemIndex: nil, scope: "operation")
+            let blocked = RestorePrerequisiteSummaryPresentation(conditions: [manual], ready: false)
+            precondition(blocked.isVisible && !blocked.canFixIssues && blocked.displayConditions.count == 1)
+            for (summary, visible) in [(ready, false), (pkgOnly, true), (permissionOnly, true), (both, true), (blocked, false)] {
+                let preview = RestorePreviewContent(title: "Needs Attention", message: "", state: .attention,
+                    domains: [], counters: [], alreadyMatches: false, prerequisites: summary, areas: [])
+                precondition(preview.showsFixIssues == visible && !preview.canRebuild)
+            }
+            precondition(pkgOnly.preparationCount == 1 && pkgOnly.manualConditions.isEmpty)
+            precondition(pkgOnly.preparationMessage == "1 preparation requirement needs attention.")
+            precondition(permissionOnly.preparationCount == 1 && permissionOnly.manualConditions.isEmpty)
+            precondition(both.preparationCount == 2 && both.manualConditions.isEmpty)
+            precondition(both.preparationMessage == "2 preparation requirements need attention.")
+            precondition(manualPermission.manualConditions.count == 1 && blocked.manualConditions.count == 1)
+            let mixed = RestorePrerequisiteSummaryPresentation(conditions: [pkg, automation, denied], ready: false, hasInstallerPreparations: true)
+            precondition(mixed.preparationCount == 2 && mixed.manualConditions.count == 1)
+            let summarySource = try! String(contentsOf: root.appendingPathComponent("Sources/RestoreSummary.swift"))
+            let summaryView = summarySource.components(separatedBy: "struct RestorePrerequisiteSummaryView: View {")[1]
+                .components(separatedBy: "private struct RestoreBlockingPrerequisiteAreaView:")[0]
+            precondition(!summaryView.contains("Needs Preparation") && !summaryView.contains("preparationMessage"))
+            precondition(summaryView.contains("if !summary.manualConditions.isEmpty"))
+            precondition(summaryView.contains("conditions: summary.manualConditions.filter"))
+            precondition(!summaryView.contains("summary.displayConditions") && !summaryView.contains("summary.affectedDomains"))
+            let content = view.components(separatedBy: "struct RestorePreviewContent: View {")[1]
+            precondition(content.range(of: "if showsFixIssues {")!.lowerBound < content.range(of: "TaskDomainList(")!.lowerBound)
+            precondition(view.contains("Macseed will guide you through available fixes. Your approval may be required. No applications will be installed yet."))
+            print("PASS: Fix Issues presentation: hidden ready state, PKG, Automation, combined conditions and manual blockers")
+            return
+        }
         restoreResultSummaryChecks()
         if CommandLine.arguments.contains("--operation-log-only") { operationLogChecks(); return }
         if CommandLine.arguments.contains("--visual-contract-only") { visualContractChecks(); return }
@@ -1077,7 +1213,7 @@ import SwiftUI
         let restoreModel = try! String(contentsOf: sources.appendingPathComponent("RestoreModel.swift"), encoding: .utf8)
         precondition(restoreView.contains("NSOpenPanel()") && restoreView.contains("panel.canChooseDirectories = false"))
         precondition(restoreView.contains("canRebuild: model.canRebuild") && restoreView.contains(".disabled(!canRebuild || rebuild == nil)") && restoreView.contains("model.confirmRebuild()"))
-        precondition(restoreView.contains("await model.checkPrerequisites()") && restoreView.contains("\"Check Again\"") && restoreView.contains("checkAgain?()"))
+        precondition(restoreView.contains("await model.checkPrerequisites()") && restoreView.contains("\"Fix Issues…\"") && restoreView.contains("checkAgain?()"))
         precondition(restoreView.contains("needsRefresh || retrying"))
         precondition(restoreView.contains(".disclosureGroupStyle(HeaderDisclosureStyle())") && restoreView.contains("CaptureChildRowGrid.leadingInset"))
         let sections = RestorePresentationSection.project([])
