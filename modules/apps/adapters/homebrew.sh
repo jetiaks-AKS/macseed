@@ -4,6 +4,27 @@
 # lifecycle qualification and native command construction stay here.
 [[ "${MACSEED_HOMEBREW_ADAPTER_LOADED:-false}" != true ]] || return 0
 MACSEED_HOMEBREW_ADAPTER_LOADED=true
+declare -F performance_measure >/dev/null || source modules/core/performance_trace.sh
+# Never inherit observation snapshots from a caller/environment or an Apply phase.
+OBSERVED_FORMULA_STATUS='' OBSERVED_CASK_STATUS=''
+HOMEBREW_RESULT_JSON=
+
+observe_brew_formula_inventory() {
+    local inventory
+    inventory="$(brew list --formula --full-name)" || return 2
+    LC_ALL=C awk '
+        /^$/ { next }
+        { n=split($0,p,"/"); if (n != 1 && n != 3) exit 2
+          for(i=1;i<=n;i++) if(p[i] !~ /^[A-Za-z0-9][A-Za-z0-9+_.@-]*$/) exit 2
+          print }
+    ' <<< "$inventory"
+}
+
+observe_brew_cask_inventory() {
+    local inventory
+    inventory="$(HOMEBREW_NO_AUTO_UPDATE=1 performance_measure cask.inventory.external brew list --cask)" || return 2
+    LC_ALL=C awk '/^$/ { next } { if ($0 !~ /^[A-Za-z0-9][A-Za-z0-9+_.@-]*$/) exit 2; print }' <<< "$inventory"
+}
 
 homebrew_adapter_capture_provenance() {
     local version
@@ -32,8 +53,20 @@ homebrew_adapter_result() {
     HOMEBREW_ADAPTER_STATE="$1"
     HOMEBREW_ADAPTER_CONDITION="${3:-ready}"
     HOMEBREW_ADAPTER_OPERATION="${4:-}"
-    HOMEBREW_ADAPTER_RESULT="$(python3 -B modules/apps/adapters/homebrew.py result \
-        "$1" "$2" "${3:-}" "${4:-}" "$context")"
+    # Memoize only the pure JSON projection, never a live-state observation.
+    # Compare every argument independently; no delimiter-based cache identity.
+    if [[ -n "${HOMEBREW_RESULT_JSON:-}" && "${HOMEBREW_RESULT_STATE:-}" == "$1" &&
+          "${HOMEBREW_RESULT_COMPATIBILITY:-}" == "$2" && "${HOMEBREW_RESULT_REASON:-}" == "${3:-}" &&
+          "${HOMEBREW_RESULT_OPERATION:-}" == "${4:-}" && "${HOMEBREW_RESULT_CONTEXT:-}" == "$context" ]]; then
+        HOMEBREW_ADAPTER_RESULT="$HOMEBREW_RESULT_JSON"
+    else
+        HOMEBREW_ADAPTER_RESULT="$(python3 -B modules/apps/adapters/homebrew.py result \
+            "$1" "$2" "${3:-}" "${4:-}" "$context")"
+        [[ -n "$HOMEBREW_ADAPTER_RESULT" ]] || return 1
+        HOMEBREW_RESULT_STATE="$1" HOMEBREW_RESULT_COMPATIBILITY="$2"
+        HOMEBREW_RESULT_REASON="${3:-}" HOMEBREW_RESULT_OPERATION="${4:-}"
+        HOMEBREW_RESULT_CONTEXT="$context" HOMEBREW_RESULT_JSON="$HOMEBREW_ADAPTER_RESULT"
+    fi
     # Result classification is data; callers decide whether this item can run.
     [[ -n "$HOMEBREW_ADAPTER_RESULT" ]]
 }
@@ -77,7 +110,16 @@ is_brew_package_installed() {
     local package="$1"
     local inventory
 
-    inventory="$(brew list --formula --full-name)" || return 2
+    if [[ "${OBSERVED_FORMULA_STATUS:-}" == pending ]]; then
+        OBSERVED_FORMULA_STATUS=2
+        OBSERVED_FORMULA_INVENTORY="$(observe_brew_formula_inventory)" && OBSERVED_FORMULA_STATUS=0
+    fi
+    if [[ -n "${OBSERVED_FORMULA_STATUS:-}" ]]; then
+        [[ "$OBSERVED_FORMULA_STATUS" == 0 ]] || return 2
+        inventory="$OBSERVED_FORMULA_INVENTORY"
+    else
+        inventory="$(brew list --formula --full-name)" || return 2
+    fi
 
     # Discovery emits short names. Qualified inputs must match the tap too;
     # ambiguous short names are an observation error, not confirmed absence.
@@ -96,21 +138,39 @@ CASK_REINSTALL_REQUIRED=false
 
 # One provider projection drives Preview, execution requalification and independent
 # Verification. Payload evidence is never inferred from registration alone.
-homebrew_cask_result() {
+homebrew_cask_result() { performance_measure cask.observation homebrew_cask_result_timed "$@"; }
+
+homebrew_cask_result_timed() {
     local item="$1" mode="$2" operation="${3:-}" metadata prefix status
     homebrew_adapter_result observation_error observation_failure homebrew_unavailable "$operation" || return 2
     CASK_REINSTALL_REQUIRED=false
     CASK_OBSERVATION_CONDITION=homebrew_unavailable
-    metadata="$(HOMEBREW_NO_AUTO_UPDATE=1 brew info --json=v2 --cask "$item")" || return 2
+    metadata="$(HOMEBREW_NO_AUTO_UPDATE=1 performance_measure cask.metadata.external brew info --json=v2 --cask "$item")" || return 2
     HOMEBREW_ADAPTER_METADATA="$metadata"
     jq -e --arg token "$item" '(.casks | length == 1) and .casks[0].token == $token' <<< "$metadata" >/dev/null || {
         homebrew_adapter_failure homebrew_metadata_incompatible "$operation"; return 2;
     }
-    prefix="$(HOMEBREW_NO_AUTO_UPDATE=1 brew --prefix)" || return 2
+    # Collect shared data lazily, after valid item metadata. Invalid metadata
+    # must not introduce new prefix/inventory probes that the observer never needed.
+    if [[ "${OBSERVED_CASK_STATUS:-}" == pending ]]; then
+        OBSERVED_CASK_STATUS=2
+        OBSERVED_CASK_PREFIX="$(HOMEBREW_NO_AUTO_UPDATE=1 performance_measure cask.prefix.external brew --prefix)" &&
+            OBSERVED_CASK_INVENTORY="$(observe_brew_cask_inventory)" && OBSERVED_CASK_STATUS=0
+    fi
+    if [[ -n "${OBSERVED_CASK_STATUS:-}" ]]; then
+        [[ "$OBSERVED_CASK_STATUS" == 0 ]] || return 2
+        prefix="$OBSERVED_CASK_PREFIX"
+    else
+        prefix="$(HOMEBREW_NO_AUTO_UPDATE=1 performance_measure cask.prefix.external brew --prefix)" || return 2
+    fi
     # Public info reports registration; cross-check public inventory rather than
     # silently treating malformed/missing installed fields as confirmed absence.
     local inventory registered=false
-    inventory="$(HOMEBREW_NO_AUTO_UPDATE=1 brew list --cask)" || return 2
+    if [[ -n "${OBSERVED_CASK_STATUS:-}" ]]; then
+        inventory="$OBSERVED_CASK_INVENTORY"
+    else
+        inventory="$(HOMEBREW_NO_AUTO_UPDATE=1 performance_measure cask.inventory.external brew list --cask)" || return 2
+    fi
     if grep -Fxq "$item" <<< "$inventory"; then registered=true; fi
     if [[ "$registered" == true ]] && ! jq -e '.casks[0].installed | type == "string" and length > 0' <<< "$metadata" >/dev/null; then
         homebrew_adapter_failure homebrew_metadata_incompatible "$operation"; return 2

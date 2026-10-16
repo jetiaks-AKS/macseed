@@ -1,5 +1,16 @@
 #!/bin/bash
 
+OBSERVED_MAS_STATUS=
+observe_appstore_inventory() {
+    local inventory
+    if [[ "${MACSEED_APPLICATION_EXECUTION:-false}" == true ]]; then
+        inventory="$(MAS_NO_AUTO_INDEX=1 mas list 2>/dev/null)" || return 2
+    else
+        inventory="$(MAS_NO_AUTO_INDEX=1 mas list)" || return 2
+    fi
+    LC_ALL=C awk '/^$/ { next } { line=$0; gsub(/\t/, "", line); if ($1 !~ /^[0-9]+$/ || NF < 2 || line ~ /[[:cntrl:]]/) exit 2; print }' <<< "$inventory"
+}
+
 # Application prerequisites are local only: no account or network probing.
 # shellcheck disable=SC2034
 mas_application_cli_readiness() {
@@ -65,7 +76,14 @@ read_appstore_configuration() {
 is_appstore_app_installed() {
 
     local inventory
-    if [[ "${MACSEED_APPLICATION_EXECUTION:-false}" == true ]]; then
+    if [[ "${OBSERVED_MAS_STATUS:-}" == pending ]]; then
+        OBSERVED_MAS_STATUS=2
+        OBSERVED_MAS_INVENTORY="$(observe_appstore_inventory)" && OBSERVED_MAS_STATUS=0
+    fi
+    if [[ -n "${OBSERVED_MAS_STATUS:-}" ]]; then
+        [[ "$OBSERVED_MAS_STATUS" == 0 ]] || return 2
+        inventory="$OBSERVED_MAS_INVENTORY"
+    elif [[ "${MACSEED_APPLICATION_EXECUTION:-false}" == true ]]; then
         inventory="$(MAS_NO_AUTO_INDEX=1 mas list 2>/dev/null)" || return 2
     else
         inventory="$(MAS_NO_AUTO_INDEX=1 mas list)" || return 2
@@ -106,6 +124,10 @@ preview_appstore_apps() {
     local app_id
     local app_name
     local inspection_result
+    local OBSERVED_MAS_STATUS='' OBSERVED_MAS_INVENTORY
+    if [[ "${BUNDLE_RESTORE_PREVIEW:-false}" == true && "${MACSEED_APPLICATION_EXECUTION:-false}" == true ]]; then
+        OBSERVED_MAS_STATUS=pending
+    fi
 
     while IFS='|' read -r app_id app_name || [[ -n "$app_id" ]]; do
         [[ -z "$app_id" ]] && continue
@@ -282,6 +304,13 @@ verify_appstore_apps() {
     }
     records="$(cut -d '|' -f 1 <<< "$records")" || return 2
     verification_select_subjects app-store "$records" || return 2
+    [[ ${#GV_SUBJECTS[@]} -gt 0 ]] || return 0
+    local OBSERVED_MAS_STATUS=2 OBSERVED_MAS_INVENTORY
+    if command -v mas >/dev/null 2>&1; then
+        OBSERVED_MAS_INVENTORY="$(observe_appstore_inventory)" && OBSERVED_MAS_STATUS=0
+    fi
+    local observed_at
+    observed_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     for item in "${GV_SUBJECTS[@]}"; do
         if ! command -v mas >/dev/null 2>&1; then
             verification_record app-store "$item" installed unverified supported "" || return 2
@@ -290,6 +319,6 @@ verify_appstore_apps() {
         fi
         is_appstore_app_installed "$item"
         result=$?
-        verification_result app-store "$item" installed "$result" '' absent || return 2
+        verification_result app-store "$item" installed "$result" '' absent "$observed_at" || return 2
     done
 }

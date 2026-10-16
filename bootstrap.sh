@@ -19,6 +19,13 @@ fi
 # ==========================================
 
 source modules/core/common/common.sh
+source modules/core/performance_trace.sh
+case "${1:-}" in
+    --bootstrap|--dry-run|--application-readiness)
+        performance_trace_start
+        performance_trace_edge begin shell.startup
+        ;;
+esac
 source modules/core/logger/logger.sh
 source modules/core/homebrew/homebrew.sh
 source modules/core/git/git.sh
@@ -407,7 +414,9 @@ bootstrap_validate_selected_inputs() {
 
 }
 
-bootstrap_run_startup_validation() {
+bootstrap_run_startup_validation() { performance_measure startup.validation bootstrap_run_startup_validation_timed; }
+
+bootstrap_run_startup_validation_timed() {
 
     local blueprint_result=0
     local bootstrap_validation_result
@@ -440,7 +449,10 @@ bootstrap_run_startup_validation() {
 
 # Internal, read-only gate for a future structured Restore caller. It must run
 # against the same staged Blueprint and generated inputs used by Preview.
-bootstrap_application_readiness() (
+BOOTSTRAP_READINESS_VALIDATED=false
+bootstrap_application_readiness() { performance_measure readiness.live bootstrap_application_readiness_timed "$@"; }
+
+bootstrap_application_readiness_timed() (
     local focus="${1:-all}" needs_network=false needs_clt=false needs_authorization=false
     python3 -B modules/apps/adapters/homebrew_lifecycle.py --pending
     local lifecycle_state=$?
@@ -512,11 +524,12 @@ bootstrap_application_readiness() (
             [[ $? -ne 1 ]] || needs_network=true
         done <<< "$repositories"
     fi
-    if ! bootstrap_run_startup_validation >/dev/null 2>&1; then
+    if [[ "$BOOTSTRAP_READINESS_VALIDATED" != true ]] && ! bootstrap_run_startup_validation >/dev/null 2>&1; then
         echo invalid_selected_input
         return 2
     fi
     if application_scope_selected app-store; then
+        local OBSERVED_MAS_STATUS=pending OBSERVED_MAS_INVENTORY
         if ! mas_application_readiness >/dev/null 2>&1; then
             echo "$MAS_APPLICATION_CONDITION"
             return 2
@@ -556,6 +569,7 @@ bootstrap_application_readiness() (
     fi
     if application_scope_selected homebrew-packages; then
         local package packages
+        local OBSERVED_FORMULA_STATUS=pending OBSERVED_FORMULA_INVENTORY
         packages="$(read_brew_packages_configuration "$(blueprint_generated_file homebrew-packages)")" || {
             echo invalid_selected_input
             return 2
@@ -575,6 +589,7 @@ bootstrap_application_readiness() (
     if application_scope_selected homebrew-casks; then
         command -v jq >/dev/null 2>&1 || { echo missing_required_dependency; return 2; }
         local cask casks index=0
+        local OBSERVED_CASK_STATUS=pending OBSERVED_CASK_PREFIX OBSERVED_CASK_INVENTORY
         casks="$(read_brew_casks_configuration "$(blueprint_generated_file homebrew-casks)")" || {
             echo invalid_selected_input
             return 2
@@ -623,6 +638,7 @@ bootstrap_application_readiness() (
             return 2
         fi
         local extension extensions
+        local OBSERVED_VSCODE_STATUS=pending OBSERVED_VSCODE_INVENTORY
         extensions="$(read_vscode_extensions_configuration "$(blueprint_generated_file vscode-extensions)")" || {
             echo invalid_selected_input
             return 2
@@ -645,11 +661,11 @@ bootstrap_application_readiness() (
         echo missing_required_dependency
         return 2
     fi
-    if [[ "$needs_clt" == true ]] && ! check_xcode >/dev/null 2>&1; then
+    if [[ "$needs_clt" == true ]] && ! performance_measure readiness.clt check_xcode >/dev/null 2>&1; then
         echo command_line_tools_required
         return 2
     fi
-    if [[ "$needs_network" == true ]] && ! check_internet >/dev/null 2>&1; then
+    if [[ "$needs_network" == true ]] && ! performance_measure readiness.network check_internet >/dev/null 2>&1; then
         echo internet_required
         return 2
     fi
@@ -663,8 +679,11 @@ bootstrap_application_readiness() (
 
 # Each selected domain runs the same production gate in isolation. A failed
 # dependency stops that domain's dependent checks; subsequent domains continue.
-bootstrap_application_readiness_report() {
+bootstrap_application_readiness_report() { performance_measure readiness.report bootstrap_application_readiness_report_timed; }
+
+bootstrap_application_readiness_report_timed() {
     local domain condition line
+    local BOOTSTRAP_READINESS_VALIDATED=false validation_attempted=false
     for domain in homebrew-packages homebrew-casks app-store vscode-extensions git-repositories git-configuration ssh-configuration; do
         if [[ "$domain" == git-configuration || "$domain" == ssh-configuration ]]; then
             blueprint_category_enabled "$domain" || continue
@@ -675,6 +694,12 @@ bootstrap_application_readiness_report() {
             fi
         else
             bootstrap_item_scope_selected "$domain" || continue
+        fi
+        # Validate private read-only inputs once, only when a domain needs this
+        # report. Live-state checks still run at every readiness boundary.
+        if [[ "$validation_attempted" != true ]]; then
+            validation_attempted=true
+            if bootstrap_run_startup_validation >/dev/null 2>&1; then BOOTSTRAP_READINESS_VALIDATED=true; fi
         fi
         condition="$(bootstrap_application_readiness "$domain")"
         while IFS= read -r line; do
@@ -1032,6 +1057,7 @@ case "$MODE" in
             fi
         fi
 
+        performance_trace_edge end shell.startup
         run_module "bs Launcher" configure_bs_launcher
 
         run_module "Workspace" bootstrap_workspace

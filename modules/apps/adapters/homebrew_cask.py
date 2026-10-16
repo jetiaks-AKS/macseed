@@ -23,6 +23,7 @@ from urllib.parse import urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'core'))
 from external_tool import result
+from performance_trace import timed, measure, add, ENABLED
 
 LABEL = re.compile(r'[A-Za-z0-9][A-Za-z0-9_-]*(?:\.[A-Za-z0-9][A-Za-z0-9_-]*)+')
 NAME = re.compile(r'[A-Za-z0-9][A-Za-z0-9+_.@-]*')
@@ -167,8 +168,20 @@ def read_json(value):
 
 
 class PublicObserver:
+    @timed("cask.external")
     def read(self, arguments):
-        observed = subprocess.run(arguments, env=dict(os.environ, HOMEBREW_NO_AUTO_UPDATE='1',
+        command = arguments[:2]
+        label = {('/usr/sbin/pkgutil', '--pkgs'): 'pkgutil.inventory',
+                 ('brew', 'info'): 'brew.metadata',
+                 ('brew', 'list'): 'brew.inventory',
+                 ('/bin/launchctl', 'print'): 'launchctl',
+                 ('/usr/bin/sw_vers', '-productVersion'): 'platform',
+                 ('/usr/sbin/pkgutil', '--pkg-info-plist'): 'pkgutil.receipt',
+                 ('/usr/sbin/pkgutil', '--only-files'): 'pkgutil.files',
+                 ('/usr/sbin/pkgutil', '--expand-full'): 'pkgutil.expand',
+                 ('/usr/sbin/pkgutil', '--file-info-plist'): 'pkgutil.ownership'}.get(tuple(command), 'other')
+        with measure('cask.external.' + label):
+            observed = subprocess.run(arguments, env=dict(os.environ, HOMEBREW_NO_AUTO_UPDATE='1',
                                   HOMEBREW_NO_SUDO='1'), stdin=subprocess.DEVNULL,
                                   capture_output=True, timeout=30, check=False)
         require(observed.returncode == 0, OBSERVATION)
@@ -176,6 +189,7 @@ class PublicObserver:
         return observed.stdout
 
     @contract('pkgutil')
+    @timed("cask.receipts")
     def packages(self, selectors):
         inventory = self.read(['/usr/sbin/pkgutil', '--pkgs']).decode().splitlines()
         records = []
@@ -201,6 +215,7 @@ class PublicObserver:
         return records
 
     @contract('pkgutil')
+    @timed("cask.pkg_payload")
     def package_install_payloads(self, row, selectors):
         """Checksum-bound, inert inspection of a root-app native package.
 
@@ -214,16 +229,17 @@ class PublicObserver:
             root = Path(directory)
             archive = root / 'source.pkg'
             digest, size, started = hashlib.sha256(), 0, time.monotonic()
-            with urllib.request.urlopen(row['url'], timeout=30) as response, archive.open('wb') as output:
-                destination = urlsplit(response.geturl())
-                require(destination.scheme == 'https' and destination.hostname and not destination.username and not destination.password)
-                while True:
-                    chunk = response.read(1024 * 1024)
-                    if not chunk:
-                        break
-                    size += len(chunk)
-                    require(size <= 128 * 1024 * 1024 and time.monotonic() - started <= 60, OBSERVATION)
-                    digest.update(chunk); output.write(chunk)
+            with measure('cask.pkg_download'):
+                with urllib.request.urlopen(row['url'], timeout=30) as response, archive.open('wb') as output:
+                    destination = urlsplit(response.geturl())
+                    require(destination.scheme == 'https' and destination.hostname and not destination.username and not destination.password)
+                    while True:
+                        chunk = response.read(1024 * 1024)
+                        if not chunk:
+                            break
+                        size += len(chunk)
+                        require(size <= 128 * 1024 * 1024 and time.monotonic() - started <= 60, OBSERVATION)
+                        digest.update(chunk); output.write(chunk)
             require(digest.hexdigest() == row['sha256'], OBSERVATION)
             expanded = root / 'expanded'
             self.read(['/usr/sbin/pkgutil', '--expand-full', str(archive), str(expanded)])
@@ -257,6 +273,7 @@ class PublicObserver:
             return payloads
 
     @contract('pkgutil')
+    @timed("cask.ownership")
     def package_ownership(self, packages):
         selected = {record['id'] for record in packages}
         filenames = sorted({f for record in packages for f in record['paths'] if os.path.lexists(f)})
@@ -486,6 +503,7 @@ def package_selectors(artifacts):
 
 
 @contract('metadata')
+@timed("cask.predicates")
 def predicates(row, prefix, observer):
     payloads, packages = [], []
     home = Path.home()
@@ -636,6 +654,7 @@ def bundle_matches(target, app=True, expected_id=None):
 
 
 @contract('payload')
+@timed("cask.payload_observation")
 def observe(payloads, row, prefix):
     require(bool(payloads))
     missing, owned = [], []
@@ -691,6 +710,7 @@ def observe(payloads, row, prefix):
 
 
 @contract('historical_metadata')
+@timed("cask.installed_contract")
 def installed_contract(row, prefix):
     """Prefer Macseed's own observation record. Legacy receipt import is inert,
     structurally checked compatibility evidence, not a Ruby API/version rule.
@@ -767,6 +787,7 @@ def version_tuple(value):
 
 
 @contract('requirements')
+@timed("cask.requirements")
 def requirements(row, observer, operation=None):
     require(row.get('tap') == 'homebrew/cask' and row.get('disabled') is False)
     require(not row.get('container') and not row.get('rename'))
@@ -809,6 +830,7 @@ def requirements(row, observer, operation=None):
 
 
 @contract('replacement')
+@timed("cask.execution_contract")
 def operation_contract(row, payloads, packages, prefix, observer, operation):
     requirements(row, observer, operation)
     generated = [p for p in payloads if p.get('artifact') == GENERATED_COMPLETIONS]
@@ -892,6 +914,7 @@ def operation_contract(row, payloads, packages, prefix, observer, operation):
             'operation': operation}
 
 
+@timed("cask.classify")
 def classify(row, prefix, observer=None, operation=None, observation_only=False, visited=(), capture=False):
     observer = observer or PublicObserver()
     selected_operation = operation
@@ -948,8 +971,11 @@ def classify(row, prefix, observer=None, operation=None, observation_only=False,
                         predicate['members'] = record['suite_members'][predicate['path']]
         if packages and not row.get('installed'):
             require(not any(record['present'] for record in packages), CONFLICT)
-        if packages and not row.get('installed') and not any('path' in p for p in payloads):
-            payloads.extend(observer.package_install_payloads(row, [record['id'] for record in packages]))
+        if packages:
+            # State inspection must not download an installer to discover its
+            # expected payload. Local metadata, receipts or the captured contract
+            # must identify payload predicates; registration alone is not proof.
+            require(any('path' in p for p in payloads))
         missing, _ = observe(payloads, row, prefix)
         registered = bool(row.get('installed'))
         if registered and not missing and not operation:
@@ -1065,8 +1091,11 @@ def main():
             executed = read_json(snapshot)['casks'][0]
             save_contract(row, prefix, executed)
             return 0
+        trace_started = time.monotonic() if ENABLED else None
         value = classify(row, prefix, operation=sys.argv[3] if len(sys.argv) > 3 else None,
                          observation_only=mode == '--observe')
+        if trace_started is not None and value.get('state') == 'unsupported':
+            add('cask.unsupported', time.monotonic() - trace_started)
         print(json.dumps(value, sort_keys=True))
         return (0 if value['state'] == 'satisfied' else 1 if value['state'] in ('installable', 'repairable') else 2) if mode == '--observe' else 0
     except (Unsafe, OSError, ValueError, KeyError, IndexError):

@@ -76,6 +76,10 @@ preview_brew_packages() {
 
     local package
     local inspection_result
+    local OBSERVED_FORMULA_STATUS='' OBSERVED_FORMULA_INVENTORY
+    if [[ "${BUNDLE_RESTORE_PREVIEW:-false}" == true && "${MACSEED_APPLICATION_EXECUTION:-false}" == true ]]; then
+        OBSERVED_FORMULA_STATUS=pending
+    fi
 
     while IFS= read -r package || [[ -n "$package" ]]; do
         [[ -z "$package" ]] && continue
@@ -272,9 +276,14 @@ verify_brew_packages() {
         verification_input_error homebrew-packages; return 0;
     }
     verification_select_subjects homebrew-packages "$packages" || return 2
+    [[ ${#GV_SUBJECTS[@]} -gt 0 ]] || return 0
+    local OBSERVED_FORMULA_STATUS=2 OBSERVED_FORMULA_INVENTORY
+    OBSERVED_FORMULA_INVENTORY="$(observe_brew_formula_inventory)" && OBSERVED_FORMULA_STATUS=0
+    local observed_at
+    observed_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     for package in "${GV_SUBJECTS[@]}"; do
         is_brew_package_installed "$package"
         result=$?
-        verification_result homebrew-packages "$package" installed "$result" '' absent
+        verification_result homebrew-packages "$package" installed "$result" '' absent "$observed_at"
     done
 }

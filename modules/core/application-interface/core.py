@@ -21,6 +21,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "bundle"))
 import bundle
 from execution import OwnedBootstrap, ProcessObservationUnavailable
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from performance_trace import timed, add, ENABLED
+from time import monotonic
 from external_tool import diagnostic_valid
 from reporting import opaque
 from homebrew_stop import Controller, StopAccepted
@@ -106,21 +108,33 @@ def restore_prepare(path, disabled_groups, include_secure, selection=None):
         return summary
 
 
+@timed("bundle.fingerprint")
+def restore_fingerprint(path):
+    return bundle.fingerprint(path)
+
+
+@timed("bundle.unpack")
+def restore_unpack(*args):
+    return bundle.unpack(*args)
+
+
 @contextmanager
 def prepared_restore(path, disabled_groups, include_secure, selection=None):
     if bundle.RECOVERY.exists() or bundle.RECOVERY.is_symlink():
         raise RecoveryRequired()
     input_path = Path(path)
-    if not stat.S_ISREG(input_path.lstat().st_mode):
-        raise bundle.Invalid("unsafe Bundle input")
-    bundle.inspect_bundle(input_path, os.environ["HOME"])
-    source_identity = bundle.fingerprint(input_path)
+    source_info = input_path.lstat()
+    if not stat.S_ISREG(source_info.st_mode) or source_info.st_size > bundle.MAX_ARCHIVE:
+        raise bundle.Invalid("unsafe or oversized Bundle input")
+    # unpack performs authoritative archive/path/Blueprint validation. Bind that
+    # read to the source identity instead of validating the same archive twice.
+    source_identity = restore_fingerprint(input_path)
     with tempfile.TemporaryDirectory(prefix="mbt-bundle-", dir=os.environ.get("TMPDIR") or "/tmp") as temporary:
         private = Path(temporary)
         stage = private / "stage"
         stage.mkdir(mode=0o700)
-        bundle.unpack(input_path, stage, os.environ["HOME"])
-        if bundle.fingerprint(input_path) != source_identity:
+        restore_unpack(input_path, stage, os.environ["HOME"])
+        if restore_fingerprint(input_path) != source_identity:
             raise bundle.Invalid("Bundle changed during preparation")
         if include_secure and not (stage / "secure.age").is_file():
             raise InvalidSelection()
@@ -129,7 +143,7 @@ def prepared_restore(path, disabled_groups, include_secure, selection=None):
         except restore_selection.InvalidSelection:
             raise InvalidSelection() from None
         bundle.narrow(stage, disabled_groups)
-        stage_identity = bundle.fingerprint(stage)
+        stage_identity = restore_fingerprint(stage)
         summary_file = private / "preview.summary"
         descriptor = os.open(summary_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         os.close(descriptor)
@@ -137,7 +151,7 @@ def prepared_restore(path, disabled_groups, include_secure, selection=None):
         plan_file.touch(mode=0o600)
         environment = dict(os.environ, BLUEPRINT_FILE=str(stage / "blueprint.conf"),
                            BLUEPRINT_GENERATED_DIR=str(stage / "generated"),
-                           BUNDLE_RESTORE_PREVIEW="true", PREVIEW_SUMMARY_FILE=str(summary_file),
+                           BUNDLE_RESTORE_PREVIEW="true", MACSEED_PERFORMANCE_SCOPE="preview", PREVIEW_SUMMARY_FILE=str(summary_file),
                            MACSEED_APPLICATION_EXECUTION="true", PREVIEW_PLAN_FILE=str(plan_file))
         preview = subprocess.Popen(["./bootstrap.sh", "--dry-run"], cwd=ROOT, env=environment,
                                    stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
@@ -158,9 +172,9 @@ def prepared_restore(path, disabled_groups, include_secure, selection=None):
             raise
         if bundle.RECOVERY.exists() or bundle.RECOVERY.is_symlink():
             raise RecoveryRequired()
-        if preview_status not in (0, 1, 2) or bundle.fingerprint(stage) != stage_identity:
+        if preview_status not in (0, 1, 2) or restore_fingerprint(stage) != stage_identity:
             raise PreviewFailed()
-        if bundle.fingerprint(input_path) != source_identity:
+        if restore_fingerprint(input_path) != source_identity:
             raise bundle.Invalid("Bundle changed during preparation")
         modules = []
         for line in summary_file.read_text().splitlines():
@@ -332,12 +346,13 @@ READINESS_CODES = {
 }
 
 
+@timed("readiness.requirements")
 def prepared_requirements(stage, include_secure):
     environment = dict(os.environ, BLUEPRINT_FILE=str(stage / "blueprint.conf"),
                        BLUEPRINT_GENERATED_DIR=str(stage / "generated"),
                        BUNDLE_RESTORE_ACTIVE="true", BUNDLE_RESTORE_SECURE_FILE="",
                        MACSEED_APPLICATION_EXECUTION="true",
-                       MACSEED_APPLICATION_READINESS_REPORT="true",
+                       MACSEED_APPLICATION_READINESS_REPORT="true", MACSEED_PERFORMANCE_SCOPE="requirements",
                        MACSEED_APPLICATION_ALLOW_ITEM_SKIPS="true",
                        MACSEED_APPLICATION_SECURE_SELECTED=str(include_secure).lower(),
                        MACSEED_APPLICATION_SECURE_READY="true")
@@ -415,8 +430,9 @@ def prepared_requirements(stage, include_secure):
             "check_policy": "all_cask_item_conditions_then_first_operation_blocker_per_domain", "reentry": "restore_prepare"}
 
 
+@timed("readiness.publication")
 def readiness(stage, include_secure, secure_ready=False, secure_only=False):
-    environment = dict(os.environ, BLUEPRINT_FILE=str(stage / "blueprint.conf"),
+    environment = dict(os.environ, MACSEED_PERFORMANCE_SCOPE="publication", BLUEPRINT_FILE=str(stage / "blueprint.conf"),
                        BLUEPRINT_GENERATED_DIR=str(stage / "generated"),
                        BUNDLE_RESTORE_ACTIVE="true", BUNDLE_RESTORE_SECURE_FILE="",
                        MACSEED_APPLICATION_EXECUTION="true",
@@ -490,6 +506,7 @@ def restore_execute(operation_id, path, disabled_groups, include_secure, expecte
     owned = None
     control = None
     control_directory = None
+    bootstrap_trace_start = None
 
     def event(kind, data=None):
         nonlocal sequence
@@ -497,6 +514,10 @@ def restore_execute(operation_id, path, disabled_groups, include_secure, expecte
         emit(sequence, kind, operation_id, data)
 
     def record_event(kind, record):
+        nonlocal bootstrap_trace_start
+        if bootstrap_trace_start is not None and kind == "lifecycle":
+            add("bootstrap.first_event", monotonic() - bootstrap_trace_start)
+            bootstrap_trace_start = None
         # Record events are additive; only completed/failed terminate an operation.
         event("execution_event" if kind == "lifecycle" else kind + "_record", record)
 
@@ -557,9 +578,9 @@ def restore_execute(operation_id, path, disabled_groups, include_secure, expecte
                 readiness(stage, include_secure, channel is not None, secure_only)
                 if plan["error_count"]:
                     raise ExecuteFailed("preview_observation_failed")
-                current_stage = bundle.fingerprint(stage)
+                current_stage = restore_fingerprint(stage)
                 # Preserve the original short-circuit: a changed stage already rejects.
-                current_source = bundle.fingerprint(Path(path)) if current_stage == stage_id else None
+                current_source = restore_fingerprint(Path(path)) if current_stage == stage_id else None
                 if current_stage != stage_id or current_source != source_id:
                     state["plan_validation"] = {"check": "input_recheck", "expected_id": expected_id,
                         "recomputed_id": plan["prepared_plan_id"], "components": plan["plan_diagnostics"],
@@ -602,6 +623,8 @@ def restore_execute(operation_id, path, disabled_groups, include_secure, expecte
                 for name in ("BLUEPRINT_FILE", "BLUEPRINT_GENERATED_DIR",
                              "SSH_SNAPSHOT_FILE", "ZSH_SNAPSHOT_FILE"):
                     environment.pop(name, None)
+                if ENABLED:
+                    bootstrap_trace_start = monotonic()
                 event("phase_started", {"phase": "bootstrap"})
                 try:
                     previous_mask = signal.pthread_sigmask(signal.SIG_BLOCK,
@@ -613,7 +636,7 @@ def restore_execute(operation_id, path, disabled_groups, include_secure, expecte
                                          if row["domain"] == "homebrew-casks" and
                                          row["disposition"] == "blocked" and
                                          row["reason"] == "cask_execution_requirements_unsupported"]
-                        owned = OwnedBootstrap(ROOT, environment, secure_evidence, record_event,
+                        owned = OwnedBootstrap(ROOT, dict(environment, MACSEED_PERFORMANCE_SCOPE="bootstrap"), secure_evidence, record_event,
                                                identities, skipped_casks=skipped_casks,
                                                cask_plans={row['item_id']: row['qualification_id'] for row in plan['plan']
                                                            if row['domain'] == 'homebrew-casks' and row.get('qualification_id')},

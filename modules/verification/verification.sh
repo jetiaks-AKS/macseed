@@ -1,8 +1,10 @@
 #!/bin/bash
 
 source modules/verification/ssh-identities.sh
+declare -F performance_measure >/dev/null || source modules/core/performance_trace.sh
 
 # Scope/dispatch only. Comparisons remain with production domain readers.
+# Inventory snapshots may supply their actual observation timestamp as argument 7.
 verification_result() {
     local domain="$1" subject="$2" predicate="$3" result="$4" code="${5:-}" conformity
     case "$result" in
@@ -10,7 +12,7 @@ verification_result() {
         1) conformity=mismatch; code="${code:-confirmed_mismatch}" ;;
         *) conformity=unverified; code="${code:-observation_failed}" ;;
     esac
-    verification_record "$domain" "$subject" "$predicate" "$conformity" supported "$(date -u +%Y-%m-%dT%H:%M:%SZ)" || return 2
+    verification_record "$domain" "$subject" "$predicate" "$conformity" supported "${7:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}" || return 2
     if declare -F comparison_note >/dev/null; then
         comparison_note "${6:-unknown}" "$GV_LAST_REF"
     fi
@@ -134,22 +136,22 @@ verification_run() {
     elif ! blueprint_validate_syntax_if_present; then
         verification_input_error blueprint
     else
-        verify_brew_packages || verification_input_error homebrew-packages
-        verify_git_configuration || verification_input_error git-configuration
-        verify_ssh_configuration || verification_input_error ssh-configuration
-        verify_workspace_repositories || verification_input_error git-repositories
-        verify_brew_casks || verification_input_error homebrew-casks
-        verify_appstore_apps || verification_input_error app-store
-        verify_zsh || verification_input_error shell-zsh
-        verify_vscode_extensions || verification_input_error vscode-extensions
-        verify_vscode_settings || verification_input_error vscode-settings
-        verify_workspace_folders || verification_input_error workspace-folders
-        verify_macos_scalar_category finder "$FINDER_CONFIG" || verification_input_error macos-finder
-        verify_macos_scalar_category dock "$DOCK_CONFIG" || verification_input_error macos-dock
-        verify_macos_scalar_category windows "$WINDOWS_CONFIG" || verification_input_error macos-windows
-        verify_macos_scalar_category keyboard "$KEYBOARD_CONFIG" || verification_input_error macos-keyboard
-        verify_macos_scalar_category trackpad "$TRACKPAD_CONFIG" || verification_input_error macos-trackpad
-        verify_screenshots || verification_input_error macos-screenshots
+        performance_measure verification.homebrew_packages verify_brew_packages || verification_input_error homebrew-packages
+        performance_measure verification.git_configuration verify_git_configuration || verification_input_error git-configuration
+        performance_measure verification.ssh_configuration verify_ssh_configuration || verification_input_error ssh-configuration
+        performance_measure verification.git_repositories verify_workspace_repositories || verification_input_error git-repositories
+        performance_measure verification.homebrew_casks verify_brew_casks || verification_input_error homebrew-casks
+        performance_measure verification.app_store verify_appstore_apps || verification_input_error app-store
+        performance_measure verification.shell_zsh verify_zsh || verification_input_error shell-zsh
+        performance_measure verification.vscode_extensions verify_vscode_extensions || verification_input_error vscode-extensions
+        performance_measure verification.vscode_settings verify_vscode_settings || verification_input_error vscode-settings
+        performance_measure verification.workspace_folders verify_workspace_folders || verification_input_error workspace-folders
+        performance_measure verification.macos_finder verify_macos_scalar_category finder "$FINDER_CONFIG" || verification_input_error macos-finder
+        performance_measure verification.macos_dock verify_macos_scalar_category dock "$DOCK_CONFIG" || verification_input_error macos-dock
+        performance_measure verification.macos_windows verify_macos_scalar_category windows "$WINDOWS_CONFIG" || verification_input_error macos-windows
+        performance_measure verification.macos_keyboard verify_macos_scalar_category keyboard "$KEYBOARD_CONFIG" || verification_input_error macos-keyboard
+        performance_measure verification.macos_trackpad verify_macos_scalar_category trackpad "$TRACKPAD_CONFIG" || verification_input_error macos-trackpad
+        performance_measure verification.macos_screenshots verify_screenshots || verification_input_error macos-screenshots
         verify_ssh_identity_evidence
         if ! final_identity="$(verification_input_identity)" || [[ "$final_identity" != "$GV_INPUT_ID" ]]; then
             GV_STATUS=incomplete

@@ -461,6 +461,50 @@ class RestorePrepareTests(unittest.TestCase):
         result = self.plan_result()
         self.assertTrue(any(row['status'] == 'unsupported' for row in result['readiness']['conditions']), result)
 
+    def test_pkg_without_local_payload_is_unsupported_without_download(self):
+        metadata = self.cask_fixture()
+        metadata['casks'][0]['artifacts'] = [
+            {'pkg': ['Fixture.pkg']}, {'uninstall': [{'pkgutil': 'org.example.Fixture'}]}]
+        Path(self.environment['TEST_CASK_METADATA']).write_text(json.dumps(metadata))
+        provider = self.project / 'modules/apps/adapters/homebrew_cask.py'
+        fixture_observer = """
+class LocalOnlyFixtureObserver(PublicObserver):
+    def packages(self, selectors):
+        return [{'id': value, 'present': False, 'paths': []} for value in selectors]
+    def package_install_payloads(self, row, selectors):
+        raise AssertionError('state inspection attempted installer download')
+PublicObserver = LocalOnlyFixtureObserver
+"""
+        provider.write_text(provider.read_text().replace(
+            "if __name__ == '__main__':", fixture_observer + "\nif __name__ == '__main__':"))
+        self.pack()
+        for _ in range(2):
+            plan = self.plan_result()
+            row = next(row for row in plan['plan'] if row['domain'] == 'homebrew-casks')
+            self.assertEqual((row['disposition'], row['reason']),
+                             ('blocked', 'cask_execution_requirements_unsupported'))
+            self.assertTrue(any(row['status'] == 'unsupported' for row in plan['readiness']['conditions']))
+        modules = ('core/common/common', 'core/config/config', 'core/verification/verification',
+                   'blueprint/blueprint', 'apps/brew-casks', 'verification/verification')
+        script = '\n'.join('source modules/' + module + '.sh' for module in modules)
+        script += '\nverification_reset bootstrap\nverify_brew_casks\n'
+        with tempfile.TemporaryFile() as records:
+            environment = dict(self.environment, MACSEED_APPLICATION_EXECUTION='true',
+                               BLUEPRINT_FILE=str(self.stage / 'blueprint.conf'),
+                               BLUEPRINT_GENERATED_DIR=str(self.stage / 'generated'),
+                               MACSEED_REPORT_FD=str(records.fileno()))
+            for _ in range(2):
+                result = subprocess.run(['bash', '-c', script], cwd=self.project, env=environment,
+                                        pass_fds=(records.fileno(),), capture_output=True)
+                self.assertEqual((result.returncode, result.stderr), (0, b''))
+            records.seek(0)
+            verified = [json.loads(line) for line in records if json.loads(line)['kind'] == 'verification']
+        self.assertEqual(len(verified), 2)
+        self.assertTrue(all((row['domain'], row['predicate'], row['conformity'], row['support']) ==
+                            ('homebrew-casks', 'installed', 'unverified', 'unsupported') for row in verified))
+        self.assertFalse(Path(self.environment['TEST_CASK_LOG']).exists())
+        self.assertFalse(Path(self.environment['TEST_BOUNDARY']).exists())
+
     def test_execution_events_changed_noop_and_detailed_records(self):
         self.vscode_fixture()
         self.pack()
@@ -653,6 +697,83 @@ os.write(fd, b'{"kind":"details_complete"}\\n')
         self.assertEqual(events[-1]['data']['code'], 'bundle_unavailable')
         self.assertFalse(events[-1]['data']['publication_occurred'])
         self.assertFalse(events[-1]['data']['target_mutation_may_have_started'])
+
+    def test_opt_in_performance_trace_preserves_protocol(self):
+        self.mas_fixture()
+        Path(self.environment['TEST_MAS_STATE']).touch()
+        self.pack()
+        trace = self.root / 'performance'
+        trace.mkdir(mode=0o700)
+        self.environment['MACSEED_PERFORMANCE_TRACE_DIR'] = str(trace)
+        self.environment.pop('MACSEED_PERFORMANCE_TRACE', None)
+        ordinary, _ = self.invoke()
+        self.assertEqual(ordinary.returncode, 0, ordinary.stderr)
+        self.assertFalse(list(trace.iterdir()))
+        self.environment['MACSEED_PERFORMANCE_TRACE'] = '0'
+        disabled, _ = self.invoke()
+        self.assertEqual((disabled.returncode, disabled.stdout, disabled.stderr),
+                         (ordinary.returncode, ordinary.stdout, ordinary.stderr))
+        self.assertFalse(list(trace.iterdir()))
+        self.environment['MACSEED_PERFORMANCE_TRACE'] = '1'
+        enabled, enabled_events = self.invoke()
+        self.assertEqual((enabled.returncode, enabled.stdout, enabled.stderr),
+                         (ordinary.returncode, ordinary.stdout, ordinary.stderr))
+        destination = trace / 'totals.json'
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            if destination.exists():
+                totals = json.loads(destination.read_text())
+                if 'requirements.readiness.report' in totals:
+                    break
+            time.sleep(0.05)
+        else:
+            self.fail('clock helper did not flush aggregate timings')
+        for label in ('core.bundle.unpack', 'core.bundle.fingerprint',
+                      'core.readiness.requirements', 'preview.startup.validation',
+                      'requirements.startup.validation', 'requirements.readiness.report'):
+            self.assertGreaterEqual(totals[label]['count'], 1, label)
+            self.assertGreaterEqual(totals[label]['seconds'], 0)
+        self.assertNotIn(str(self.root), destination.read_text())
+        self.assertEqual(destination.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(sorted(p.name for p in trace.iterdir()), ['totals.json'])
+        # The same helper measures shell/external-command spans and retains a
+        # failing command's stdout and exit code; no timer subprocess per span.
+        command = ('source modules/core/performance_trace.sh; performance_trace_start; '
+                   'performance_measure verification.homebrew_casks '
+                   'performance_measure cask.metadata.external bash -c '
+                   '\'printf fixture-output; exit 7\'')
+        result = subprocess.run(['bash', '-c', command], cwd=self.project,
+                                env=self.environment, capture_output=True)
+        self.assertEqual((result.returncode, result.stdout, result.stderr),
+                         (7, b'fixture-output', b''))
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            totals = json.loads(destination.read_text())
+            if 'core.verification.cask.metadata.external' in totals:
+                break
+            time.sleep(0.05)
+        else:
+            self.fail('external-command timing was not flushed')
+        self.assertEqual(totals['core.verification.cask.metadata.external']['count'], 1)
+
+        # Execute only the same disposable fixture: both MAS entries are already
+        # installed; all target paths are inside this test's private HOME.
+        executed, events = self.execute(enabled_events[1]['data']['prepared_plan_id'])
+        self.assertEqual(executed.returncode, 0, events)
+        deadline = time.monotonic() + 5
+        required = ('core.bootstrap.first_event', 'core.readiness.publication',
+                    'publication.readiness.live', 'bootstrap.readiness.live',
+                    'bootstrap.startup.validation', 'bootstrap.shell.startup',
+                    'bootstrap.verification.app_store')
+        while time.monotonic() < deadline:
+            totals = json.loads(destination.read_text())
+            if all(label in totals for label in required):
+                break
+            time.sleep(0.05)
+        else:
+            self.fail('missing Execute timing: ' + str([label for label in required if label not in totals]))
+        self.assertFalse(Path(self.environment['TEST_MAS_LOG']).exists())
+        self.assertNotIn(str(self.root), destination.read_text())
 
     def test_prepare_plan_and_recomputation(self):
         self.pack()
@@ -1954,6 +2075,30 @@ exit 0
         bundle.write_file(self.stage / "generated/appstore.conf",
                           b"111|Installed Fixture\n222|Missing Fixture\n")
         return mas
+
+    def test_readiness_report_validates_private_inputs_once(self):
+        self.mas_fixture()
+        self.select_formula()
+        self.formula_cli()
+        self.pack()
+        calls = self.root / 'startup-validations'
+        self.environment['TEST_VALIDATIONS'] = str(calls)
+        inventories = self.root / 'mas-inventories'
+        self.environment['TEST_MAS_INVENTORIES'] = str(inventories)
+        mas = self.root / 'bin/mas'
+        mas.write_text(mas.read_text().replace(' list)\n',
+            ' list)\n   printf "%s\\n" "${BUNDLE_RESTORE_PREVIEW:-false}" >> "$TEST_MAS_INVENTORIES"\n'))
+        entrypoint = self.project / 'bootstrap.sh'
+        original = entrypoint.read_text()
+        entrypoint.write_text(original.replace('bootstrap_run_startup_validation() {',
+            'bootstrap_run_startup_validation() {\n    printf "validation\\n" >> "$TEST_VALIDATIONS"'))
+        self.plan_result()
+        # Preview validates once; the separate read-only requirements report once,
+        # regardless of how many domains it then inspects.
+        self.assertEqual(calls.read_text().splitlines(), ['validation', 'validation'])
+        # Independent fresh snapshots: one in Preview and one in readiness,
+        # including its nested MAS preflight and repeated per-item consumers.
+        self.assertEqual(inventories.read_text().splitlines(), ['true', 'false'])
 
     def test_mas_production_install_and_convergence(self):
         self.mas_fixture(mixed=True)

@@ -267,6 +267,13 @@ use explicitly supported standard destinations. Package evidence combines exact
 macOS receipt IDs with actual required apps/files; receipts alone cannot verify a
 package. Shared/ambiguous package ownership blocks cleanup.
 
+PKG state inspection does not download installer archives to discover expected
+payloads. Preview/readiness, Apply admission and Verification use local receipt
+contents, typed metadata and portable captured payload requirements. Without
+enough local payload evidence, the item remains unsupported/unverified; this does
+not make every PKG unsupported. Homebrew still owns downloads during qualified
+installation, and source requirements alone never establish target conformity.
+
 Qualified generated completions use the public
 `generate_completions_from_executable` declaration, an associated declared binary
 or application executable, bounded completion commands/formats and standard shell
@@ -457,7 +464,56 @@ Verification/details, matching prepared-plan identity and successful operation
 records with matching verified observations. Failure, cancellation and interruption never authorize rollback or resume.
 The temporary failed-item ledger is private and removed on handled completion.
 
+## Opt-in Restore performance trace
+
+For a diagnostic run only, start Desktop from a shell with an explicitly private
+output directory (use a fresh directory for each operation):
+
+```bash
+trace_dir="$(mktemp -d /private/tmp/macseed-performance.XXXXXXXX)"
+MACSEED_PERFORMANCE_TRACE=1 MACSEED_PERFORMANCE_TRACE_DIR="$trace_dir" \
+  /path/to/Macseed.app/Contents/MacOS/Macseed
+# After the operation: read "$trace_dir/totals.json".
+```
+
+The executable must be launched directly; an already-running Desktop process does
+not inherit newly set shell variables. No workflow runs merely by enabling trace.
+Quit the diagnostic instance and launch normally to disable it. Unset/`0` starts
+no clock helpers and writes no trace. Capture and Environment Status are not
+instrumented by this Restore trace.
+
+`totals.json` is a private `0600` aggregate in a user-owned `0700` directory. It
+contains fixed metric names and `count`, `seconds`, `max_seconds` only; no item
+identifiers, argv, paths, URLs, Bundle data or secrets. Concurrent writers merge
+under a file lock. Scopes distinguish `preview`, `requirements`, `publication`,
+`bootstrap`, `verification` and the outer `core` process. Timings include Bundle validation/unpack
+and fingerprints, readiness passes, startup validation, Bootstrap launch-to-first-lifecycle delivery and the shell interval before
+the Launcher module, Cask metadata/prefix/inventory commands, PKG download
+and external observer commands, unsupported classification and Verification domains.
+
+Python uses `time.monotonic()`. Bash uses one persistent opt-in clock helper per
+Bootstrap process, with acknowledged begin/end messages; no Python is launched
+per measurement. Nested timings are inclusive and must not be summed as disjoint
+phases. `cask.unsupported` measures classification that returned unsupported,
+not installation. Metrics aggregate across items: a maximum does not identify a
+specific Cask. Instrumentation adds diagnostic IPC/I/O overhead; it is for locating
+expensive work, not comparing small timing differences. The helper flushes on idle
+and exit; allow a second after completion before reading. Forced termination can
+omit unfinished/unflushed spans. Invalid/unwritable output or unavailable helper
+disables diagnostics without changing operation outcomes. No trace enters Protocol
+V1, operation JSONL or Diagnostic Report. This trace is not restoration evidence.
+
 ## Verification and Environment Status
+
+Each structured Restore Preview, read-only readiness invocation and Global
+Verification domain pass obtains fresh formula, App Store and VS Code inventories. Cask passes reuse only their
+common prefix/registration inventory; item metadata and payload observations stay
+independent. These shell-local snapshots never survive into Apply or a later
+pass. Capture and ordinary CLI Preview retain their existing observation path.
+Failed or malformed inventories remain observation errors, not absence.
+Inventory-based Verification records use the snapshot's observation timestamp.
+Readiness reports validate their private inputs once while retaining live-state
+checks per domain and mandatory fresh readiness before publication/execution.
 
 Results project existing Verification, Coverage and Operation records, without
 a second observer. `verification` contains status, verdict and counts. Restore

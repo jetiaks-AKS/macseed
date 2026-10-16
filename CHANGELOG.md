@@ -70,6 +70,11 @@ The format is based on the principles of **Keep a Changelog**.
 
 ### Changed
 
+* Reduce repeated inventories and input validation in Restore Preview/readiness and
+  Global Verification, reuse immutable Homebrew result serialization, and avoid duplicate
+  Bundle validation during preparation while retaining integrity and stale-plan gates.
+
+
 * Desktop Capture and Restore adopt Environment Status's visual groups, category
   icons, row surfaces, summary cards and nested macOS Settings presentation while
   preserving selection granularity and explicit Prepare/Rebuild controls.
@@ -138,6 +143,9 @@ The format is based on the principles of **Keep a Changelog**.
   informational labels for the settings included in the current preparation.
 
 ### Fixed
+
+* Cask readiness and Verification no longer download PKG installers to infer
+  payload requirements; insufficient local evidence remains unsupported/unverified.
 
 * SSH Restore readiness now catches selected configuration conflicts and
   observation failures before publication, fixing the bug found during the real

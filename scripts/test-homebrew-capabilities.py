@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import plistlib
 import signal
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -310,6 +311,64 @@ class CapabilityTests(unittest.TestCase):
                                   'version': '1.0', 'paths': [str(self.app / 'Contents/Info.plist'),
                                                             str(self.app / 'Contents/MacOS/Example')]}]
 
+    def captured_package(self):
+        source = copy.deepcopy(self.row)
+        source['installed'] = '1.0'
+        value = cask.capture_rows({'casks': [source]}, self.prefix, self.observer)
+        generated = self.root / 'generated'
+        generated.mkdir(exist_ok=True)
+        (generated / 'homebrew-casks.json').write_text(json.dumps(value))
+
+    def test_package_local_evidence_never_downloads_during_classification(self):
+        self.package()
+        with patch.object(self.observer, 'package_install_payloads', side_effect=AssertionError('installer download')), \
+             patch('homebrew_cask.urllib.request.urlopen', side_effect=AssertionError('network')):
+            self.row['installed'] = '1.0'
+            self.application()
+            for options in ({}, {'observation_only': True}):
+                self.assertEqual(self.classify(**options)['state'], 'satisfied')
+            (self.app / 'Contents/MacOS/Example').unlink()
+            self.assertEqual(self.classify(observation_only=True)['state'], 'repairable')
+            self.captured_package()
+            self.row['installed'] = None
+            self.observer.receipts = []
+            shutil.rmtree(self.app)
+            for options in ({}, {'observation_only': True}, {'operation': 'install'}):
+                value = self.classify(**options)
+                self.assertEqual(value['state'], 'installable', value)
+                self.assertTrue(any(p['kind'] == 'app' for p in value['evidence']))
+            (self.root / 'generated/homebrew-casks.json').unlink()
+            for installed in (None, '1.0'):
+                self.row['installed'] = installed
+                for options in ({}, {'observation_only': True}):
+                    value = self.classify(**options)
+                    self.assertEqual(value['state'], 'unsupported', value)
+                    self.assertEqual(value['reason'], cask.UNSUPPORTED)
+            with patch.object(self.observer, 'packages', side_effect=cask.Unsafe(cask.OBSERVATION)):
+                self.assertEqual(self.classify(observation_only=True)['state'], 'observation_error')
+
+    def test_performance_external_timing_is_private_and_observational(self):
+        import performance_trace as trace
+        command = ['/usr/sbin/pkgutil', '--expand-full', '/private/secret.pkg', '/private/output']
+        observer = cask.PublicObserver()
+        completed = subprocess.CompletedProcess(command, 0, stdout=b'fixture', stderr=b'')
+        with patch.object(trace, 'ENABLED', False), patch.object(trace, 'TOTALS', {}), \
+             patch.object(trace.time, 'monotonic', side_effect=AssertionError('disabled clock')), \
+             patch('homebrew_cask.subprocess.run', return_value=completed):
+            self.assertEqual(observer.read(command), b'fixture')
+            self.assertEqual(trace.TOTALS, {})
+        with patch.object(trace, 'ENABLED', True), patch.object(trace, 'TOTALS', {}), \
+             patch('homebrew_cask.subprocess.run', side_effect=[
+                 completed, subprocess.TimeoutExpired(command, 30)]):
+            self.assertEqual(observer.read(command), b'fixture')
+            with self.assertRaises(subprocess.TimeoutExpired):
+                observer.read(command)
+            row = trace.TOTALS[trace.SCOPE + '.cask.external.pkgutil.expand']
+            self.assertEqual(row['count'], 2)
+            self.assertGreaterEqual(row['seconds'], row['max_seconds'])
+            self.assertNotIn('/private', json.dumps(trace.TOTALS))
+            self.assertNotIn('secret', json.dumps(trace.TOTALS))
+
     def test_public_native_package_inspection_binds_checksum_identity_and_target(self):
         row = copy.deepcopy(self.row)
         content = b'inert fixture package'
@@ -343,6 +402,7 @@ class CapabilityTests(unittest.TestCase):
 
     def test_native_package_caveats_clean_install_and_repair_are_distinct(self):
         self.package()
+        self.captured_package()
         self.observer.receipts = []
         self.row['caveats'] = 'Activation may require user consent. See vendor license before installation.'
         value = self.classify()
@@ -355,6 +415,7 @@ class CapabilityTests(unittest.TestCase):
 
     def test_native_package_clean_install_rejects_receipts_and_delete_residuals(self):
         self.package()
+        self.captured_package()
         self.assertEqual(self.classify()['reason'], cask.CONFLICT)
         self.observer.receipts = []
         target = self.home / 'owned-wrapper'
@@ -366,6 +427,7 @@ class CapabilityTests(unittest.TestCase):
 
     def test_absent_package_install_does_not_require_repair_cleanup_capability(self):
         self.package()
+        self.captured_package()
         self.observer.receipts = []
         self.row['artifacts'][1]['uninstall'][0]['script'] = '/opaque/cleanup'
         self.assertEqual(self.classify()['state'], 'installable')
@@ -417,6 +479,7 @@ class CapabilityTests(unittest.TestCase):
 
     def test_package_fresh_install_and_missing_shared_receipt(self):
         self.package()
+        self.captured_package()
         self.observer.receipts = []
         value = self.classify()
         self.assertEqual(value['state'], 'installable', value)

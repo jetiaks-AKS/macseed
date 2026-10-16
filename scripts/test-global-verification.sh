@@ -825,5 +825,92 @@ assert grep -q 'homebrew-casks: 1' "$TEST_ROOT/comparison"
 assert test "$CV_VERDICT" = 'Differences detected'
 CV_ACTIVE=false
 
+
+# One fresh, validated inventory per read-only domain pass; command substitutions
+# cannot hide counts because every mock records to an operation-local file.
+eval "$(declare -f brew | sed '1s/^brew/brew_before_snapshot/')"
+SNAPSHOT_CALLS="$TEST_ROOT/snapshot-calls"
+SNAPSHOT_MODE=present
+brew() {
+    printf 'brew %s\n' "$*" >> "$SNAPSHOT_CALLS"
+    case "$*" in
+        'list --formula --full-name'|'list --cask')
+            case "$SNAPSHOT_MODE" in
+                invalid) printf 'invalid inventory !\n'; return 0 ;;
+                error) return 2 ;;
+                empty) return 0 ;;
+            esac
+            if [[ "$*" == 'list --cask' ]]; then printf 'example\nexample2\n'; else printf 'git\njq\n'; fi
+            [[ "$SNAPSHOT_MODE" != partial ]] || return 2
+            return 0 ;;
+        'info --json=v2 --cask example2')
+            brew_before_snapshot info --json=v2 --cask example | sed 's/"token":"example"/"token":"example2"/'
+            return 0 ;;
+        *) brew_before_snapshot "$@" ;;
+    esac
+}
+mas() {
+    printf 'mas %s\n' "$*" >> "$SNAPSHOT_CALLS"
+    [[ "$*" == list ]] || return 2
+    case "$SNAPSHOT_MODE" in invalid) printf 'private invalid inventory\n'; return 0 ;; error) return 2 ;; empty) return 0 ;; esac
+    printf '123 Example (1.0)\n456 Other (2.0)\n'
+    [[ "$SNAPSHOT_MODE" != partial ]]
+}
+code() {
+    printf 'code %s\n' "$*" >> "$SNAPSHOT_CALLS"
+    [[ "$*" == --list-extensions ]] || return 2
+    case "$SNAPSHOT_MODE" in invalid) printf 'invalid extension !\n'; return 0 ;; error) return 2 ;; empty) return 0 ;; esac
+    printf 'example.extension\nother.extension\n'
+    [[ "$SNAPSHOT_MODE" != partial ]]
+}
+printf 'git\njq\n' > "$BLUEPRINT_GENERATED_DIR/brew-packages.conf"
+printf 'example\nexample2\n' > "$BLUEPRINT_GENERATED_DIR/brew-casks.conf"
+printf '123|Example\n456|Other\n' > "$BLUEPRINT_GENERATED_DIR/appstore.conf"
+printf 'example.extension\nother.extension\n' > "$BLUEPRINT_GENERATED_DIR/vscode-extensions.conf"
+command rm -f "$BLUEPRINT_FILE"
+CASK_STATE=present MAS_STATE=present CODE_STATE=present
+for SNAPSHOT_MODE in present invalid error partial present; do
+    : > "$SNAPSHOT_CALLS"
+    verification_reset bootstrap
+    verify_brew_packages
+    verify_brew_casks
+    verify_appstore_apps
+    verify_vscode_extensions
+    for command_name in 'brew list --formula --full-name' 'brew list --cask' 'brew --prefix' 'mas list' 'code --list-extensions'; do
+        assert test "$(grep -Fxc -- "$command_name" "$SNAPSHOT_CALLS")" -eq 1
+    done
+    expected=unverified
+    [[ "$SNAPSHOT_MODE" != present ]] || expected=verified
+    for subject in git jq example example2 123 456 example.extension other.extension; do
+        assert record_is "$subject" installed "$expected"
+    done
+    assert test "${#GV_V[@]}" -eq 48
+ done
+# The snapshot is gone on return: ordinary observers still re-observe live state.
+SNAPSHOT_MODE=empty
+is_brew_package_installed git; assert test "$?" -eq 1
+is_appstore_app_installed 123; assert test "$?" -eq 1
+is_vscode_extension_installed example.extension; assert test "$?" -eq 1
+verification_reset bootstrap
+verify_brew_packages
+verify_appstore_apps
+verify_vscode_extensions
+for subject in git jq 123 456 example.extension other.extension; do
+    assert record_is "$subject" installed mismatch
+ done
+
+# Reusing pure result serialization must never reuse a different context/state.
+HOMEBREW_ADAPTER_CONTEXT='{"provenance":{"version":"first"}}'
+homebrew_adapter_result satisfied compatible
+first_result="$HOMEBREW_ADAPTER_RESULT"
+homebrew_adapter_result satisfied compatible
+assert test "$HOMEBREW_ADAPTER_RESULT" = "$first_result"
+HOMEBREW_ADAPTER_CONTEXT='{"provenance":{"version":"second"}}'
+homebrew_adapter_result satisfied compatible
+assert test "$HOMEBREW_ADAPTER_RESULT" != "$first_result"
+assert test "$(jq -r .provenance.version <<< "$HOMEBREW_ADAPTER_RESULT")" = second
+homebrew_adapter_result installable compatible '' install
+assert test "$(jq -r .state <<< "$HOMEBREW_ADAPTER_RESULT")" = installable
+
 printf 'Global Verification focused: %s assertions, %s failures\n' "$CASES" "$FAILURES"
 [[ "$FAILURES" -eq 0 ]]

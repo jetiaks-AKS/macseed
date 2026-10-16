@@ -1,6 +1,39 @@
 import Foundation
 
 @main struct CoreRuntimeTests {
+    static func performanceTraceEnvironment(_ location: CoreLocation, temporary: URL) {
+        let names = ["MACSEED_PERFORMANCE_TRACE", "MACSEED_PERFORMANCE_TRACE_DIR", "MACSEED_PERFORMANCE_SCOPE", "PYTHONPATH"]
+        let original = ProcessInfo.processInfo.environment
+        defer {
+            for name in names {
+                if let value = original[name] { setenv(name, value, 1) }
+                else { unsetenv(name) }
+            }
+        }
+        for name in names { unsetenv(name) }
+        let baseline = location.environment(temporary: temporary)
+        precondition(baseline["MACSEED_PERFORMANCE_TRACE"] == nil && baseline["MACSEED_PERFORMANCE_TRACE_DIR"] == nil)
+        setenv("MACSEED_PERFORMANCE_TRACE_DIR", temporary.appendingPathComponent("not-created").path, 1)
+        setenv("MACSEED_PERFORMANCE_SCOPE", "bootstrap", 1)
+        setenv("PYTHONPATH", "/untrusted", 1)
+        for flag in [nil, "0", "true"] as [String?] {
+            if let flag { setenv("MACSEED_PERFORMANCE_TRACE", flag, 1) }
+            else { unsetenv("MACSEED_PERFORMANCE_TRACE") }
+            precondition(location.environment(temporary: temporary) == baseline)
+        }
+        setenv("MACSEED_PERFORMANCE_TRACE", "1", 1)
+        var expected = baseline
+        expected["MACSEED_PERFORMANCE_TRACE"] = "1"
+        expected["MACSEED_PERFORMANCE_TRACE_DIR"] = temporary.appendingPathComponent("not-created").path
+        precondition(location.environment(temporary: temporary) == expected)
+        precondition(!FileManager.default.fileExists(atPath: expected["MACSEED_PERFORMANCE_TRACE_DIR"]!))
+        expected.removeValue(forKey: "MACSEED_PERFORMANCE_TRACE_DIR")
+        setenv("MACSEED_PERFORMANCE_TRACE_DIR", "", 1)
+        precondition(location.environment(temporary: temporary) == expected)
+        unsetenv("MACSEED_PERFORMANCE_TRACE_DIR")
+        precondition(location.environment(temporary: temporary) == expected)
+        print("PASS: Performance trace environment is opt-in, bounded and does not create its directory")
+    }
     static func encodedEvent(_ sequence: Int, _ type: String, data: CoreJSON? = nil,
                              id: String = "test", version: Int = 1) -> String {
         var fields: [String: CoreJSON] = ["protocol_version": .integer(version), "operation_id": .string(id),
@@ -206,6 +239,7 @@ import Foundation
         catch { precondition(error as? CoreRuntimeError == .writableCoreRequired) }
         let environment = success.environment(temporary: directory)
         precondition(environment["HOME"] == directory.path && environment["BLUEPRINT_FILE"] == nil && environment["PYTHONPATH"] == nil)
+        performanceTraceEnvironment(success, temporary: directory)
         let secure = CoreCaptureSelection(categories: [], items: [:], secureIdentities: ["fixture"])
         let refused = await run(success, command: .captureExecute(selection: secure, destination: "/sample.mbt", preparedID: String(repeating: "a", count: 64)))
         precondition(refused.error == .secureBridgeUnavailable && refused.events.isEmpty)

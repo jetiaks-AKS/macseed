@@ -41,8 +41,16 @@ struct CoreLocation: Sendable {
     func environment(temporary: URL) -> [String: String] {
         // Never inherit arbitrary BLUEPRINT_*, credentials, PYTHONPATH or loader vars.
         let path = ([python.deletingLastPathComponent().path] + toolDirectories.map(\.path) + ["/usr/bin", "/bin", "/usr/sbin", "/sbin"]).joined(separator: ":")
-        return ["HOME": home.path, "PATH": path,
+        var environment = ["HOME": home.path, "PATH": path,
          "TMPDIR": temporary.path, "LC_ALL": "en_US.UTF-8", "PYTHONDONTWRITEBYTECODE": "1"]
+        let parent = ProcessInfo.processInfo.environment
+        if parent["MACSEED_PERFORMANCE_TRACE"] == "1" {
+            environment["MACSEED_PERFORMANCE_TRACE"] = "1"
+            if let directory = parent["MACSEED_PERFORMANCE_TRACE_DIR"], !directory.isEmpty {
+                environment["MACSEED_PERFORMANCE_TRACE_DIR"] = directory
+            }
+        }
+        return environment
     }
 }
 

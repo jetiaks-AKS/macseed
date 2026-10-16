@@ -1,5 +1,12 @@
 #!/bin/bash
 
+OBSERVED_VSCODE_STATUS=
+observe_vscode_inventory() {
+    local inventory
+    inventory="$(vscode_cli --list-extensions)" || return 2
+    LC_ALL=C awk '/^$/ { next } { if ($0 !~ /^[A-Za-z0-9][A-Za-z0-9_-]*\.[A-Za-z0-9][A-Za-z0-9_-]*$/) exit 2; print }' <<< "$inventory"
+}
+
 # ==========================================
 # Check VS Code CLI
 # ==========================================
@@ -88,7 +95,16 @@ check_vscode_cli() {
 is_vscode_extension_installed() {
 
     local inventory
-    inventory="$(vscode_cli --list-extensions)" || return 2
+    if [[ "${OBSERVED_VSCODE_STATUS:-}" == pending ]]; then
+        OBSERVED_VSCODE_STATUS=2
+        OBSERVED_VSCODE_INVENTORY="$(observe_vscode_inventory)" && OBSERVED_VSCODE_STATUS=0
+    fi
+    if [[ -n "${OBSERVED_VSCODE_STATUS:-}" ]]; then
+        [[ "$OBSERVED_VSCODE_STATUS" == 0 ]] || return 2
+        inventory="$OBSERVED_VSCODE_INVENTORY"
+    else
+        inventory="$(vscode_cli --list-extensions)" || return 2
+    fi
     grep -Fxq -- "$1" <<< "$inventory"
 
 }
@@ -117,6 +133,10 @@ preview_vscode_extensions() {
 
     local extension
     local inspection_result
+    local OBSERVED_VSCODE_STATUS='' OBSERVED_VSCODE_INVENTORY
+    if [[ "${BUNDLE_RESTORE_PREVIEW:-false}" == true && "${MACSEED_APPLICATION_EXECUTION:-false}" == true ]]; then
+        OBSERVED_VSCODE_STATUS=pending
+    fi
 
     while IFS= read -r extension || [[ -n "$extension" ]]; do
         [[ -z "$extension" ]] && continue
@@ -287,6 +307,11 @@ verify_vscode_extensions() {
         verification_input_error vscode-extensions; return 0;
     }
     verification_select_subjects vscode-extensions "$records" || return 2
+    [[ ${#GV_SUBJECTS[@]} -gt 0 ]] || return 0
+    local OBSERVED_VSCODE_STATUS=2 OBSERVED_VSCODE_INVENTORY
+    OBSERVED_VSCODE_INVENTORY="$(observe_vscode_inventory)" && OBSERVED_VSCODE_STATUS=0
+    local observed_at
+    observed_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     for item in "${GV_SUBJECTS[@]}"; do
         if ! vscode_cli_resolve; then
             verification_record vscode-extensions "$item" installed unverified supported "" || return 2
@@ -295,6 +320,6 @@ verify_vscode_extensions() {
         fi
         is_vscode_extension_installed "$item"
         result=$?
-        verification_result vscode-extensions "$item" installed "$result" '' absent || return 2
+        verification_result vscode-extensions "$item" installed "$result" '' absent "$observed_at" || return 2
     done
 }
