@@ -1,26 +1,32 @@
 # Macseed Desktop
 
-**Stage 16B–16G complete and manually approved. Secure SSH remains Stage 16H.**
+**Stage 16 remains in development. Supported 16B–16G flows and the final Restore
+Result UI are implemented and manually accepted; 16J is complete. Secure SSH
+Desktop integration remains open in 16H.**
 Normal launch checks real Core capabilities over Protocol V1. The approved sample
 flows remain available only in explicit DEBUG design-preview mode. Environment
 Status uses real read-only Core comparison. Capture scans/selects/prepares and
 publishes a real Saved Environment through Core. Restore inspects a Saved Environment
 and prepares a read-only Preview, then executes through Core with confirmation,
 structured progress, Safe Stop and Verification-aware results/fresh-plan re-entry.
-Restore presentation/recovery and capability-based Homebrew qualification advanced
-substantially through checkpoint `08e2b469ba714a6eb32a3293296943b774653415`.
-Real Restore converged to a fresh **Everything Already Matches** Preview; clean
+Historical checkpoint `08e2b469ba714a6eb32a3293296943b774653415` advanced
+Restore presentation/recovery and capability-based Homebrew qualification.
+That real Restore converged to a fresh **Everything Already Matches** Preview; clean
 Tailscale installation and subsequent matching observation passed. Earlier Repair
 → Verify → fresh no-op gates for Keka, Termius and VLC and generated completions
 through Codex remain valid. Clean Install does not qualify universal Tailscale
 Repair: ambiguous/damaged privileged Repair states remain fail-closed. Continuing
-compatibility qualification, MAS, Desktop Zsh and Secure SSH remain open.
+compatibility qualification, MAS, Desktop Zsh and Secure SSH remain open. The
+[latest qualification snapshot](#recent-restore-qualification-and-performance)
+retains a current unsupported Tailscale result; historical success is not a
+qualification of every metadata/state combination.
 Private SSH identity transfer remains unavailable until 16H. Bundle-backed
 Environment Status (Stage 16K) is complete; the subsequent Status → Restore handoff is implemented and manually
 approved. Desktop Visual Unification is complete.
 [Restore Cancellation Safety](#restore-cancellation-safety) is in progress: Stage 1–2
-and operation-wide checkpoint Graceful Stop are implemented/automated-tested; Stage 3C and installer qualification
-remain open. Stage 16J Logging & Diagnostics is complete in the working tree;
+and operation-wide checkpoint Graceful Stop are implemented/automated-tested, with
+controlled real-Mac cancellation checks accepted. Stage 3C and broader installer
+qualification remain open. Stage 16J Logging & Diagnostics is complete;
 remaining cancellation/recovery work is not closed by diagnostics.
 Practical priorities are owned by
 [Roadmap](../ROADMAP.md#current-practical-execution-order).
@@ -83,9 +89,9 @@ persistent resumable job is introduced.
 Macseed Minimal Premium is the approved style. The leaf logo/system App Icon,
 Home, Sidebar, Settings and adaptive tiles are complete; Capture was checked on a
 real Mac, and Restore Selection, Preview, Progress and Result are approved.
-Remaining functional consistency work reuses this foundation in Environment Status
-and Settings during Compatibility & Reliability, without a new large redesign or
-changes to Core semantics. Shared domain/item rows, status vocabulary,
+Remaining consistency qualification in 16I/16K checks this implemented foundation
+in Environment Status and Settings, including accessibility and unexercised edge
+cases; the accepted functional UI is not pending reimplementation. Shared domain/item rows, status vocabulary,
 spacing, disclosures and accessibility must consume the same presentation model
 across **Preview → Rebuild → Verification → Result**.
 
@@ -350,7 +356,9 @@ interruptible or real-Mac qualified. Completed changes may remain; there is no r
 Missing terminal
 or malformed result evidence is interrupted/unknown, not success. Results require
 structured Verification for clean completion and distinguish attention, cancellation,
-failure and interruption. Re-entry runs fresh Restore Prepare; there is no Resume.
+failure and interruption. Refresh Preview / Check Current State retains the chosen
+Bundle and selection while running fresh Restore Prepare; Finish explicitly clears
+the session. Re-entry is not Resume.
 The app retains Restore session ownership across window closure; Quit confirms and
 waits for owned cancellation. Window-close/quit interaction remains part of Stage 16K
 qualification. Private SSH identities remain Stage 16H (`include_secure: false`).
@@ -496,6 +504,12 @@ The [development guide](../desktop/Macseed/README.md#real-environment-status-16d
 provides the manual launch command. The earlier Stage 16D manual gate was approved;
 Stage 16K Bundle-backed Status is accepted after real-Mac GUI qualification.
 
+Confirmed Environment Status Cancel returns to reference selection while retaining
+the chosen Bundle. A missing/invalid terminal outcome remains interrupted/unknown;
+it is not inferred to be successful cancellation. Internal staging/reporting I/O
+failures no longer masquerade as `bundle_unavailable`, which is reserved for source
+Bundle availability failures. This does not change Restore Stop semantics.
+
 ### Required final product reference before Macseed 1.0
 
 Normal Desktop now selects a Saved Environment `.mbt` through a native file picker;
@@ -600,12 +614,15 @@ The original Core terminal failure remains available.
 
 Result keeps the operation outcome in its heading/compact status and a separate
 Verification completeness line. At most three positive-count cards summarize selected
-plan rows: Successful, Needs Attention and Skipped. Their disjoint breakdowns use
+plan rows: Successful, Needs Attention and neutral Skipped. Zero-count cards are
+hidden; unavailable counts are not fabricated as zero. Their disjoint breakdowns use
 the same row classification as categories, never global Verification predicates.
 Applied or Already Matches without Verification remains positive, explicitly marked
 not verified; a confirmed failure, mismatch, conflict or blocking unsupported state
 takes priority. Neutral skips require a reported skip with an eligible reason.
-Unestablished/not-run rows do not become failed or skipped; incomplete scope is stated.
+Unestablished/not-run rows do not become failed or skipped; the incomplete-scope
+explanation appears only when such rows actually exist. A confirmed unsupported
+outcome is counted as Needs Attention, not automatically as unknown.
 Positive global Mismatch/Unverified counts and Unresolved remain separate text,
 not additional cards. Missing counts remain unknown. Process Result stays independent.
 Confirmed user Stop/Force Stop intent is kept only for the current operation ID in
@@ -622,8 +639,9 @@ actions remain in the fixed footer. This does not close packaged-runtime qualifi
 
 User-confirmed real-Mac GUI validation covered Preview → Rebuild → Verification,
 the running **Waiting**, **Working** and **Awaiting Verification** states, and
-evidence-based **Completed** / **Already Matches**. Partial Restore with the known
-`tailscale-app` limitation reported **Mismatch: 1**, **Unverified: 0**. An intentional
+evidence-based **Completed** / **Already Matches**. An earlier Partial Restore with the known
+`tailscale-app` limitation reported **Mismatch: 1**, **Unverified: 0**; this historical
+observation is superseded for current status by the snapshot below. An intentional
 `stale_plan` was rejected before target mutation and displayed **Restore Plan Is
 Outdated** with nine neutral **Not Run** categories. **Refresh Preview → Rebuild**
 in the same session then completed successfully without another `stale_plan`.
@@ -648,6 +666,41 @@ remains authoritative. User stop with incomplete termination evidence is
 Interrupted/Unknown, not a confirmed Stopped result. Cancellation before execution
 remains Cancelled. No result promises rollback or whole-Mac identity.
 
+## Recent Restore qualification and performance
+
+Status reviewed against `develop` at `c06e530` (2026-10-16). User-reported controlled
+real-Mac checks accepted the final category/item Result UI, nested macOS settings,
+compact confirmed counters, Early Cancelled and Partial Stopped presentation.
+This closes the functional Result UI checkpoint, not all Stage 16I completion,
+interruption/accessibility or packaged-runtime gates.
+
+The performance checkpoint reuses per-pass inventories and input validation,
+removes duplicate Bundle validation without weakening integrity/stale-plan gates,
+and removes PKG downloads from Cask state classification. Local receipts, metadata
+and captured payload contracts retain conservative unsupported/unverified outcomes.
+[Core](core/APPLICATION-INTERFACE.md#opt-in-restore-performance-trace) owns the opt-in
+trace and measurement contract. It is disabled by default and outside Protocol V1.
+
+| User-reported real-Mac measurement | Before | After |
+|---|---:|---:|
+| Restore Execute | 191.2 s | 87.2 s (about 54.4% lower) |
+| Readiness requirements | 30.47 s | about 9.8–10.8 s |
+| Homebrew Cask Verification | Not isolated in the comparison | about 6.23 s |
+
+Repeated approximately 20-second PKG downloads were eliminated. These are individual
+runs with differing conditions/actions, not a controlled benchmark or guaranteed
+performance on another Mac. Existing focused tests cover local PKG evidence,
+no-download classification, Verification, trace behavior and Desktop's environment
+allowlist; this documentation audit did not rerun tests or workflows.
+
+The latest reported Restore still has **127/128 Verified, 1 unsupported/unverified,
+0 Mismatch**, with `tailscale-app` unresolved. **Process Result: Failed**,
+**Reason: `bootstrap_failed`**, **Verification verdict: `incomplete`** remain the
+reported facts. Verification collection completeness and conformity verdict are
+separate; global predicate counts are not Successful plan-row counts. Removing
+network delays does not qualify Tailscale installation/repair, VPN activation or
+application health, and does not convert this partial result into success.
+
 ## Desktop Visual Unification — Completed
 
 Environment Status is the approved visual reference. Capture and Restore Selection,
@@ -665,14 +718,17 @@ Running categories remain compact and non-expandable. Terminal rows expose safe
 Preview names and existing item-local operation/Verification evidence, including
 stopped and failed results. Applied, Already Matches and Verified are independent
 evidence. Each terminal item contributes to at most one counter: Success, Needs
-Attention or Skipped. Blocking unsupported skips remain Needs Attention. Successful rows show Applied or Already Matches without a second
-green Verified label; independent Verification problems remain visible. The running
+Attention or Skipped. Blocking unsupported skips remain Needs Attention. Verified
+evidence takes precedence over Applied in the item label and Successful breakdown;
+Applied/Already Matches without that evidence is explicitly not verified. Independent
+Verification problems remain visible. The running
 category list has no lower warning banner. Final categories support Expand All /
 Collapse All and start collapsed. Successful items omit local Technical Details;
 problem evidence remains local and in the shared log. Current failed/blocked/conflict
 evidence takes priority over earlier Applied evidence without discarding that action.
-Auxiliary macOS restarts without a completion receipt show Completion Not Reported,
-contribute no outcome count, and do not claim Apply or Verification.
+Unreported auxiliary macOS restart rows are hidden when no specific or unexplained
+scope failure requires them; they contribute no outcome count and never imply Apply
+or Verification. Underlying plan/evidence remains available for diagnostics.
 Final category rows retain one evidence-based status and number-only pills with
 accessible labels; one legend explains their colors. macOS Settings uses independent
 collapsed Finder/Dock/Windows/Keyboard/Trackpad/Screenshots children and shared exact
@@ -684,8 +740,9 @@ Not Run. Neither creates a numeric result. Preview blocked/conflict reasons reta
 their own meaning rather than becoming Verification failures. Positive counters count evidenced plan
 items, not Verification predicates. Category-only coverage and incomplete evidence
 remain visible through category status and View Log or fallback Technical Details. No new
-operations run when expanding results. Manual wide/narrow, keyboard/disclosure and
-real stopped-result checks remain qualification work.
+operations run when expanding results. Functional categories/disclosures and real
+stopped-result presentation are manually accepted. Unexercised accessibility,
+window-size and completion edge cases remain bounded qualification work.
 
 <a id="restore-cancellation-safety"></a>
 
@@ -725,8 +782,11 @@ repeat a generic warning. Raw plan/evidence and logs remain intact.
 
 Automated Stop fixtures pass 23 checks, including pre-preparation, preparation,
 publication, non-Homebrew scopes, repeated requests, module/settings boundaries,
-shared-controller ownership and native launch races. This is automated-tested behavior, not real-Mac qualification.
-The historical Firefox smoke evidence below remains narrower than this extension.
+shared-controller ownership and native launch races. These fixtures establish automated checkpoint behavior. The user subsequently
+confirmed operation-wide Graceful Stop and Early Cancelled / Partial Stopped on a
+real Mac. Those controlled scenarios do not qualify every installer timing,
+detached/privileged process or interruption path. The historical Firefox evidence
+below retains its original narrower scope.
 
 ### Firefox Cask incident — 2026-10-13
 
@@ -826,6 +886,10 @@ rebuild, without an extra blocking modal. The fresh Preview is the safety gate.
 
 ## Secure interactions
 
+**Planned Desktop contract — Stage 16H.** Core has the separate secret-channel
+engine; current Desktop rejects secure Execute before launch. The following
+interaction requirements are not implemented Desktop functionality.
+
 Execute alone opens the separate inherited Unix-socket FD bridge. Use native secure
 text fields for Bundle encryption/unlock and protected-key unlock, with distinct
 labels; keys retain their original encryption. Import confirmation is an explicit
@@ -869,8 +933,8 @@ support catalog.
 
 **Protocol-fit assessment:** the flows above use only existing V1 operations,
 structured results/events and the separate secret channel, without human stdout,
-stderr or log parsing. Limited Homebrew Graceful Stop is implemented with an additive
-capability and private control channel; no new public V1 status is introduced.
+stderr or log parsing. Operation-wide checkpoint Graceful Stop reuses the additive
+Homebrew capability and private control channel; no new public V1 status is introduced.
 Signal-based Force Stop does not guarantee safe completion of an active installation.
 Global child-process quiescence, ordinary-Cask durable recovery and other-category
 qualification remain open in the [Cancellation Safety checkpoint](#restore-cancellation-safety).
@@ -913,7 +977,7 @@ functional development without constructing the full catalog first.
 
 ## Local logs and Diagnostic Report
 
-**Stage 16J completed in the working tree.** Two logging levels remain independent:
+**Stage 16J completed.** Two logging levels remain independent:
 
 - **Core / CLI technical logs:** existing `modules/core/logger/logger.sh`,
   `logs/history` and `logs/latest.log`; unchanged by Desktop logging.
@@ -1030,9 +1094,9 @@ flows; future Secure SSH integration needs corresponding privacy fixtures.
 | 16D — Environment Status | Explicit reference picker, read-only Compare, summary and record details |
 | 16E — Capture | Inventory/selection, fresh preparation, Bundle publication and interruption states; secure interactions remain 16H |
 | 16F — Restore preparation | Core-supported domain/item selection, Bundle inspection, prerequisites, Check Again, Preview and fresh confirmation |
-| 16G — Restore execution | Rebuild phases, records, Stop Rebuild over current signal cancellation, partial failure and re-entry |
+| 16G — Restore execution | Implemented: Rebuild phases/records, operation-wide checkpoint Graceful Stop, separate Force Stop, partial failure and fresh-plan re-entry; capability/installer qualification remains open |
 | 16H — Secure SSH interactions | FD bridge/challenges, encryption/unlock/import confirmation and age/OpenSSH PTY qualification for Capture and Restore |
-| 16I — Verification and completion | Concise Result with disclosed verdict/coverage, no-op, already-matching and incomplete outcomes |
+| 16I — Verification and completion | Functional Result UI implemented/manually accepted; confirmed plan-row cards and item evidence; remaining completion edge-case qualification open |
 | 16J — Diagnostics and support | Completed: persisted typed logs, shared viewer/history, Important/All, retention/clear and immutable Diagnostic Report preview/copy/save |
 | 16K — Desktop integration hardening | Full flow/transport/security/accessibility checks, stale inputs, interruptions and diagnostic acceptance |
 

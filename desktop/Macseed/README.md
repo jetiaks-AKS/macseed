@@ -192,8 +192,10 @@ substitutes for Verification.
 Cancellation signals the owned root group. Core owns its tool groups and handled
 cleanup; forced termination cannot guarantee all separately owned descendants or
 in-flight mutations are settled. Missing terminal evidence is interruption, not
-rollback or confirmed no-change. Homebrew Cask/Formula Graceful Stop is a separate
-limited cooperative control; it is not universal interruption/recovery safety.
+rollback or confirmed no-change. Restore Graceful Stop now latches operation-wide,
+finishes the active indivisible action/post-checks and stops admission at safe
+checkpoints. Homebrew native-launch admission remains atomic. Force Stop is the
+separate signal path; neither proves universal privileged quiescence or recovery.
 Application Quit waits for cancellation; closing a window leaves the shared client
 owned by the running app. Restore retains session ownership across window close/reopen; close/quit interaction
 remains subject to Stage 16K lifecycle hardening.
@@ -363,6 +365,16 @@ while retaining whole selected categories, real limitations and unknown evidence
 Draft selection and execution remain Core-owned. Preview cards follow Already
 Match → Changes Planned → Need Attention; detailed item rows are unchanged.
 
+## Performance diagnostics
+
+Core optimization and opt-in aggregate Performance Trace are implemented through
+`c06e530`. Desktop's minimal child environment forwards only the two explicit
+trace variables when enabled; Core still validates the private output directory.
+See [trace activation and limits](../../docs/core/APPLICATION-INTERFACE.md#opt-in-restore-performance-trace)
+and [real-Mac observations](../../docs/DESKTOP.md#recent-restore-qualification-and-performance).
+The trace is off by default, outside Protocol V1 and Diagnostic Report, and contains
+no private item identifiers. It does not establish restoration success.
+
 ## Next functional priorities and deferred tooling
 
 The Minimal Premium leaf logo/App Icon, Home, Sidebar, Settings and adaptive tiles
@@ -376,7 +388,7 @@ the Restored Bundle is a natural reference. Preserve source selection/Blueprint,
 unknown evidence and Bundle format; no SwiftUI Bundle parser. Minimal Protocol V1
 extensions require audit, not assumptions about current API support.
 
-Stage 16J Logging & Diagnostics is complete in the working tree. Settings →
+Stage 16J Logging & Diagnostics is complete. Settings →
 Operation Logs opens the shared native window; local View Log selects the matching
 operation only after a terminal flow result, never during active/intermediate
 Capture/Restore/Status. Inspect/Preview remain accessible through global history.
@@ -397,9 +409,13 @@ Local DiagnosticReportTests, related viewer tests, full PresentationTests and a
 Debug build passed; the native 6000-record report fixture stayed bounded and
 responsive. Operation Logs UX was manually accepted. Report Save panel interaction
 and user-driven scrolling still need manual checks; no signed/clean-Mac or hosted
-CI success is claimed. The next functional checkpoints are Cask/Tailscale execution
-requirements, Restore Final Result UI, then MAS/remaining Restore capability gaps;
-Stage 3C, Secure SSH and broader reliability/distribution qualification remain open.
+CI success is claimed. Final Restore Result categories/disclosures and confirmed
+Successful / Needs Attention / Skipped cards are implemented and manually accepted;
+Verified evidence is distinct from Applied, and Process Result from Verification.
+Controlled Early Cancelled/Partial Stopped checks are accepted. These do not close
+all 16I/16K qualification, Stage 3C or native installer quiescence. The next checkpoint
+is the current Cask/Tailscale unsupported capability, followed by MAS and remaining
+Restore/Secure SSH gaps in the authoritative Roadmap order.
 
 The full Debug Scenario Catalog is deferred UI/dev tooling, not cancelled. Retain
 Debug design-preview, sample fixtures and DemoSession; a small Lite catalog over

@@ -25,7 +25,7 @@ These labels summarize existing provider states; they do not add a state machine
 | `binary`, `manpage`, static shell completions | S: owned symlink; executable check for binary | I/R | Owned dangling/non-executable link: R | Link inside exact Caskroom namespace or exact declared app source: R | Wrong source / ordinary replacement file: C | Unprovable source: C | O | A if destination not writable | Old/current artifact identities and targets required | Q |
 | `command_wrapper` | S: executable symlink in exact cask namespace | I/R | Owned dangling/non-executable link: R | Owned cask-namespace link: R | Foreign link / regular replacement: C | C | O | A if destination not writable | Same wrapper identity/target; bounded executable, arguments and environment metadata | Q |
 | Generated completions | S: regular nonempty outputs plus separately declared executable | I/R | Missing/empty outputs: R only with required provenance for remaining outputs | Existing outputs require matching Macseed-owned hashes during Repair | C | C | O | A if destination not writable | Generator, command, shell, format and targets must remain compatible | Q |
-| `pkg` / `pkgutil` | S: exact receipts plus nonempty required real payload | Fresh I; registered missing required receipt: C | R with exclusive package ownership and qualifying old/current cleanup | Receipt alone never S; bounded missing payload can be R | Shared/unselected owners: C | C | O | Native administrator authorization | Changed archive/version allowed; exact cleanup receipt set and replacement evidence required | Q |
+| `pkg` / `pkgutil` | S: exact receipts plus nonempty required real payload | Fresh I with local payload requirements; absent requirements: U; registered missing required receipt blocks Repair: C | R with exclusive package ownership and qualifying old/current cleanup | Receipt alone never S; bounded missing payload can be R | Shared/unselected owners: C | C | O | Native administrator authorization | Changed archive/version allowed; exact cleanup receipt set and replacement evidence required | Q |
 | `quit` | Exact declared bundle IDs; not a payload predicate | Bounded declared lifecycle accepted | Does not establish payload/ownership | Cannot alone authorize any orphan | Wildcards / non-ID selectors: U | Unprovable surrounding cleanup: C | Surrounding contract O | Homebrew owns quit behavior | Old/current declarations independently qualified; versions not compared | Q |
 | `launchctl` | Exact loaded program + owned plist; shared LaunchAgents allowed in GUI/user domain | No service/plist: accepted | Malformed evidence: O; incompatible ownership: C | Inactive service beneath exact missing app, installed declaration or exact current-declared native XPC identity/path, no conflicting plist: R | Outside expected payload: C | Multiple concrete domains / fallback-only identity: C | O; malformed inventory cannot mean absence | System daemon/plist requires native authorization; plistless system orphan: C | Both old and current cleanup qualified; new orphan identity requires direct native XPC evidence; otherwise C | Q; live unproven orphan: C |
 | `login_item` | Unique declared identity pointing at exact expected app | Absent identity: accepted | Concrete different target: C | Observed unavailable target + exact missing app + installed declaration: R | Different concrete app: C | Duplicate name / multiple expected apps: O/C | O, separate from ownership conflict | Automation denial/consent unavailable is readiness; Preview never asks | Both lifecycle contracts qualified; missing-target orphan requires installed declaration | Q if surrounding native lifecycle is unknown |
@@ -107,14 +107,33 @@ no receipts, and expected payload plus declared delete targets must be absent; e
 adopted or cleaned by Install. Native installer authorization remains separate from
 support. Homebrew owns package scripts, which may launch applications or present
 vendor dialogs; package installation does not promise unattended application setup.
-If source predicates are unavailable, Preview downloads the checksum-bound package
-and inspects it with public `pkgutil --expand-full` in private temporary storage;
-no scripts or installer are executed. The bounded fallback accepts exact selected
-receipt IDs and root `.app` installation locations in `/Applications`, with valid
-source bundle identity/executable. It rejects other layouts and uses 128 MiB download,
-60-second transfer, 8192-entry and 512 MiB expanded-size limits. Network/inspection
-failure blocks only the affected package. Temporary data is removed after inspection.
+Preview/readiness, pre-Apply qualification and Verification use local receipt
+contents, typed metadata and portable captured payload requirements. Since
+`c06e530`, `classify()` does not call `package_install_payloads()` to discover
+missing requirements by downloading a PKG. Insufficient local payload evidence
+remains U (unsupported/unverified), including when Homebrew registration exists;
+known local evidence can still qualify installed, missing or repairable PKG Casks.
+Homebrew metadata/preflight network behavior is unchanged. During a qualified
+Install/Repair, Homebrew owns installer downloads and native execution.
+
 Verification requires receipt-backed typed payload observation on disk, never cask
 registration or a receipt alone. Captured source payload predicates add stronger
-pre-install postconditions where available. Repair with unresolved caveats remains
+pre-install postconditions where available, not target installation evidence.
+Post-install checks and final Global Verification observe state again; a successful
+native command or prior observation is not substituted for that evidence.
+Repair with unresolved caveats remains
 unsupported; extension/VPN activation and license conditions remain vendor/user work.
+
+### Explicit inert archive inspection
+
+The internal `PublicObserver.package_install_payloads()` helper remains available
+for explicitly invoked, checksum-bound preliminary analysis. It has no automatic
+production caller in the current provider and is not a Preview/readiness or
+Verification fallback. It downloads over HTTPS, checks SHA-256 and uses public
+`pkgutil --expand-full` in private temporary storage without running scripts or
+the installer. It accepts exact selected receipt IDs and root `.app` installation
+locations in `/Applications`, with valid source bundle identity/executable.
+Other layouts fail closed. Bounds include a 128 MiB download, 30-second network
+timeout, a 60-second elapsed-transfer check between reads, 8192 entries and 512 MiB
+expanded size. Failure rejects the inspection; handled exit removes temporary data.
+Archive analysis alone does not establish installation on the target Mac.

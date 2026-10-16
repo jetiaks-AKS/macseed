@@ -672,8 +672,10 @@ os.write(fd, b'{"kind":"details_complete"}\\n')
             plan = self.plan_result()
             mutation = ('Path(path).write_bytes(b"fixture archive changed")' if component == 'bundle'
                         else '(stage / "fixture-extra").write_bytes(b"fixture stage changed")')
-            copied.write_text(original.replace('                current_stage = bundle.fingerprint(stage)',
-                '                ' + mutation + '\n                current_stage = bundle.fingerprint(stage)', 1))
+            boundary = '                current_stage = restore_fingerprint(stage)'
+            self.assertIn(boundary, original)
+            copied.write_text(original.replace(boundary,
+                '                ' + mutation + '\n' + boundary, 1))
             result, events = self.execute(plan['prepared_plan_id'])
             self.assertEqual(result.returncode, 2)
             result = events[-1]['data']

@@ -38,8 +38,10 @@ run_inspection() {
     run_module "$@"
 }
 
+source "$PROJECT_ROOT/modules/core/performance_trace.sh"
+
 startup_function="$(awk '
-    /^bootstrap_run_startup_validation\(\)/ { capture = 1 }
+    /^bootstrap_run_startup_validation(_timed)?\(\)/ { capture = 1 }
     capture { print }
     capture && /^}/ { exit }
 ' "$PROJECT_ROOT/bootstrap.sh")"

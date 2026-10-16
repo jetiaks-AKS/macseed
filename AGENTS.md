@@ -6,10 +6,14 @@ Macseed reconstructs supported environment state: **Capture → Rebuild → Veri
 Core owns Discovery, Generated Configuration, Selection / Blueprint, Preview,
 Bootstrap, Verification, Comparison, Bundle and Secure Migration. The official CLI
 is implemented; native SwiftUI Desktop consumes the same Core. Core/CLI 3.4.0
-includes completed Stage 15 Protocol V1. Desktop Stage 16 is in progress: 16B–16G
-are complete; Restore/Homebrew presentation and recovery advanced through
-`08e2b469`. The immediate next implementation checkpoint is Unified UI Scenario
-Catalog, followed by Desktop UI consistency/unification. Follow the current
+includes completed Stage 15 Protocol V1. Desktop Stage 16 is in progress: supported
+16B–16G flows, final Restore Result/Visual Unification and Stage 16J diagnostics are
+implemented; Result UI and controlled Graceful Stop cases are manually accepted.
+Performance optimization/opt-in trace is implemented through `c06e530`. The next
+checkpoint is the current unsupported Homebrew Cask / Tailscale capability and real
+Install → Verify → no-op qualification. MAS automatic Restore, Secure SSH Desktop
+(16H), remaining 16I/16K qualification and Stage 3C recovery remain open. Unified UI
+Scenario Catalog is deferred tooling. Follow the current
 [execution order](ROADMAP.md#current-practical-execution-order), one checkpoint
 at a time without unrelated task hopping; historical slice IDs are unchanged.
 Stage 17 owns packaging and clean-Mac qualification.

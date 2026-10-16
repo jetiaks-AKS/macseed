@@ -68,6 +68,9 @@ helper and `modules/settings/macos/records.sh`; missing labels keep technical ID
 Legacy/missing metadata has a conservative
 Desktop fallback. Failure codes include `bundle_unavailable`, `bundle_invalid`,
 `unsupported_bundle` and `reference_changed`; no private archive contents are emitted.
+`bundle_unavailable` requires an availability error on the selected source path;
+internal staging/reporting I/O failures use `comparison_unavailable`. Confirmed
+Compare cancellation remains a separate terminal fact, not a missing-Bundle result.
 
 ## Capture selection and preparation
 
@@ -478,18 +481,23 @@ MACSEED_PERFORMANCE_TRACE=1 MACSEED_PERFORMANCE_TRACE_DIR="$trace_dir" \
 
 The executable must be launched directly; an already-running Desktop process does
 not inherit newly set shell variables. No workflow runs merely by enabling trace.
-Quit the diagnostic instance and launch normally to disable it. Unset/`0` starts
-no clock helpers and writes no trace. Capture and Environment Status are not
+Desktop forwards only `MACSEED_PERFORMANCE_TRACE=1` and a nonempty
+`MACSEED_PERFORMANCE_TRACE_DIR` from its parent environment; it neither creates
+the directory nor inherits arbitrary diagnostic variables. Core retains ownership,
+permission and symlink checks. Quit the diagnostic instance and launch normally
+to disable it. Unset/`0` starts no clock helpers and writes no trace. Capture and Environment Status are not
 instrumented by this Restore trace.
 
 `totals.json` is a private `0600` aggregate in a user-owned `0700` directory. It
 contains fixed metric names and `count`, `seconds`, `max_seconds` only; no item
 identifiers, argv, paths, URLs, Bundle data or secrets. Concurrent writers merge
 under a file lock. Scopes distinguish `preview`, `requirements`, `publication`,
-`bootstrap`, `verification` and the outer `core` process. Timings include Bundle validation/unpack
-and fingerprints, readiness passes, startup validation, Bootstrap launch-to-first-lifecycle delivery and the shell interval before
-the Launcher module, Cask metadata/prefix/inventory commands, PKG download
-and external observer commands, unsupported classification and Verification domains.
+`bootstrap`, `verification` and the outer `core` process. Timings include Bundle
+validation/unpack and fingerprints, readiness passes, startup validation, Bootstrap
+launch-to-first-lifecycle delivery and the shell interval before the Launcher module, Cask metadata/prefix/inventory commands and external observer
+commands. The explicit PKG inspector retains a download timer, but state
+classification no longer invokes that download. Timings also include unsupported
+classification and Verification domains.
 
 Python uses `time.monotonic()`. Bash uses one persistent opt-in clock helper per
 Bootstrap process, with acknowledged begin/end messages; no Python is launched

@@ -1,7 +1,10 @@
 # Distribution & Clean-Mac E2E
 
-**Planned — Stage 17.** A packaged, signed and notarized `Macseed.app` and DMG
-do not exist yet. Current users use the repository and [CLI](toolkit/CLI.md).
+**Planned — Stage 17.** A source-built development `Macseed.app` exists; a qualified
+packaged, signed/notarized app and DMG do not. Current development paths use the
+repository [CLI](toolkit/CLI.md) or [Desktop source build](../desktop/Macseed/README.md).
+Completed UI, diagnostics and controlled real-Mac Restore checks do not replace
+packaged clean-Mac qualification.
 
 ## Delivery boundary
 

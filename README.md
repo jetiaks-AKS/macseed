@@ -45,18 +45,23 @@ The current Core/CLI version is **3.4.0**, including Global Verification,
 Environment Comparison and the completed Protocol V1 application interface.
 Macseed Core owns the behavior shared by its clients.
 
-Native SwiftUI **Macseed Desktop** is implemented through Stage 16G, with real
-Capture, Restore Prepare/Execute and read-only Environment Status manually approved.
-Desktop Stage 16 remains active. Restore/Homebrew recovery passed a major real
-qualification checkpoint. Branding/Home and Capture/Restore UI are approved.
-Bundle-backed Environment Status (16K) is complete; the subsequent Status → Restore
-handoff is implemented and manually approved. Desktop Visual Unification is completed.
-Restore Cancellation Safety Stage 1–2 and Homebrew Graceful Stop are implemented;
-durable re-entry protection and further installer qualification remain open. Operation
-Logging & Diagnostics is planned after completion of Cancellation Safety, followed by
-MAS Restore, secure migration integration, reliability
-and packaged clean-Mac qualification. The CLI remains supported. **Macseed 1.0** is reserved
-for the first complete Desktop product release, preserving the toolkit/CLI history.
+Native SwiftUI **Macseed Desktop** has real Capture, Restore Prepare/Execute and
+read-only Bundle-backed Environment Status/handoff. Functional Restore Result and
+Visual Unification are implemented and manually accepted. Stage 16J Operation Logs
+and Diagnostic Reports are complete. Operation-wide checkpoint Graceful Stop and
+separate Force Stop are implemented, with controlled real-Mac Stop checks accepted.
+Performance optimization and an opt-in private trace are implemented through
+`c06e530`; individual real-Mac measurements and limits are recorded in
+[Desktop qualification](docs/DESKTOP.md#recent-restore-qualification-and-performance).
+
+**Stage 16 remains open.** The next checkpoint is current Homebrew Cask / Tailscale
+capability qualification; the latest reported Restore still has one unsupported/
+unverified requirement and a failed process result. MAS automatic Restore,
+Secure SSH Desktop, remaining completion/runtime qualification and Stage 3C durable
+recovery remain open. Stage 17 packaged clean-Mac qualification and Early Access
+precede **Macseed 1.0**, the first complete Desktop product release. See the
+[Current Execution Order](ROADMAP.md#current-practical-execution-order). The CLI
+remains supported and released toolkit/CLI history is preserved.
 
 ## Documentation
 

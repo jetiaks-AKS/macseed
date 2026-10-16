@@ -253,7 +253,20 @@ class CompareTests(unittest.TestCase):
         self.assertEqual(path.read_bytes(), before)
         self.assertEqual(list(self.temporary.glob("macseed-compare-*")), [])
 
+    def deny_compare_descendant_kill(self):
+        execution = self.project / 'modules/core/application-interface/execution.py'
+        original = execution.read_text()
+        boundary = '                os.killpg(self.process.pid, signal.SIGKILL)'
+        self.assertIn(boundary, original)
+        execution.write_text(original.replace(boundary,
+            '                raise PermissionError(1, "fixture descendant stop denied")', 1))
+
+    def test_cancel_descendant_kill_denied(self):
+        self.deny_compare_descendant_kill()
+        self.test_cancellation_owned_group()
+
     def test_cancel_does_not_hide_source_error(self):
+        self.deny_compare_descendant_kill()
         path = self.make_bundle()
         execution = self.project / 'modules/core/application-interface/execution.py'
         original = execution.read_text()

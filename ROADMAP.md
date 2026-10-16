@@ -18,7 +18,7 @@ contracts, [TODO](TODO.md) owns concrete unfinished actions, and
 | 8 — Dry-run / Preview and Release 3.1.0 | Completed | Read-only Preview and guided Workflow |
 | 9 — macOS Coverage Expansion | Completed; release 3.2.0 | Supported Finder, Dock, Window Management, Keyboard, Trackpad and Screenshots settings |
 | 10 — Shell & Developer Environment | Completed; release 3.2.0 | Restricted standalone Zsh, direct global Git settings and SSH Host profiles |
-| 11 — Application Configuration Modules | Audited / Deferred | No additional adapters justified by the assessed portability, privacy and value |
+| 11 — Application Configuration Modules | Completed assessment; adapters deferred | No additional adapters justified by the assessed portability, privacy and value |
 | 12 — Secure Migration Engine | Completed v1; release 3.3.0 | Explicit encrypted SSH identity transfer and one-Bundle Capture / Restore |
 | 13 — Reporting & Global Verification | Completed | Selected conformity and coverage gaps, separate from operation outcomes |
 | 14 — Environment Comparison | Completed | Explicit read-only comparison; extras require completeness evidence, never authorize removal |
@@ -34,7 +34,10 @@ owns the implemented application contract.
 
 **In progress.** Completed slices do not establish full Restore qualification,
 secure integration or packaged clean-Mac readiness. Slice IDs are historical
-identifiers, not execution order.
+identifiers, not execution order. Status is reviewed against `develop` at
+`c06e530` (2026-10-16). Implemented means code exists; automated-tested and
+real-Mac qualified describe separate evidence. Partial qualification does not close
+open/deferred gates, and no completed slice alone establishes release readiness.
 
 | Direction / slice | Status | Outcome / remaining boundary |
 |---|---|---|
@@ -46,14 +49,14 @@ identifiers, not execution order.
 | 16F — Restore preparation | Completed in supported scope | Inspection, selection, prerequisites and fresh Preview |
 | 16G — Restore execution | Implemented; qualification open | Core Rebuild/Verification; Cask requirements, MAS and interruption/re-entry gaps remain |
 | 16H — Secure SSH interactions | Open | Desktop FD/challenge bridge and secure Capture/Restore qualification |
-| 16I — Verification and completion | Partially complete | Existing Result contract implemented; final category/item UI and completion qualification remain |
+| 16I — Verification and completion | UI implemented/manually accepted; qualification open | Final category/item Result, disjoint confirmed cards and Process/Verification separation; remaining completion edge cases open |
 | 16J — Logging & Diagnostics | Completed | Typed persistent logs, history, Important/All and immutable Diagnostic Report preview/copy/save |
 | 16K — Desktop integration hardening | Partially complete | Bundle-backed Status completed; runtime, transport, security, accessibility and packaged-state hardening remain |
-| Visual Unification | Completed | Approved shared style; remaining functional Result UI is a separate bounded task |
-| Restore Cancellation Safety | Partially complete | Stage 1–2 fail-closed handling and operation-wide checkpoint Graceful Stop implemented/automated-tested; real-Mac qualification, Stage 3C and installer quiescence open |
+| Visual Unification | Completed/manually accepted | Environment Status-style categories, disclosures, local results and compact counters, including final Restore Result |
+| Restore Cancellation Safety | Implemented; partially qualified | Operation-wide checkpoint Graceful Stop and separate Force Stop; automated tests and controlled real-Mac Early Cancelled/Partial Stopped checks; Stage 3C and broader installer quiescence open |
 | Unified UI Scenario Catalog | Deferred tooling | Existing Debug fixtures retained; optional Lite catalog after functional priorities |
 
-Stage 16J is closed by this documentation iteration. It preserves two independent
+Stage 16J is complete. It preserves two independent
 levels: Core/CLI technical logs and private Desktop operation records. Reports are
 privacy-safe projections of Desktop evidence, not complete Core logs or recovery
 journals. Local validation and manually accepted Operation Logs UX are documented
@@ -64,28 +67,31 @@ checks and signed/clean-Mac qualification remain separate.
 
 ## Current Execution Order
 
-Complete one bounded checkpoint at a time:
+Complete one bounded checkpoint at a time. Functional Restore Result/Visual
+Unification, operation-wide Graceful Stop implementation and Stage 16J are already
+implemented; remaining qualifications do not reopen those UI implementations.
 
-1. **Stage 16J — closed:** Logging & Diagnostics implementation, local validation
-   and documentation are complete; retain the recorded qualification limits.
-2. **Homebrew Cask / Tailscale:** investigate and fix unsupported execution
-   requirements, including `tailscale-app` installation on a clean Mac. Prior
-   successful Install evidence does not qualify all current metadata or Repair.
-3. **Restore Final Result UI:** reuse Environment Status's expandable categories,
-   item results, counts and truthful statuses. Running categories stay collapsed;
-   terminal categories expose details. Qualify Working · Needs Attention everywhere
-   applicable without changing Core result/Verification semantics.
-4. **MAS automatic restoration and remaining Restore functionality:** safely
-   qualify App Store authorization/install; automatic MAS Restore is mandatory
-   before 1.0. Complete Secure SSH Desktop integration (16H) and remaining
-   supported-domain gaps through the existing Core.
-5. **Reliability / security:** Stage 3C Cask interruption/recovery safety, installer
-   and privileged-process quiescence, remaining Homebrew/Repair, Zsh, watchdog,
-   partial/interrupted Verification, stale plans, Workspace review, accessibility
-   and Runtime hardening. No diagnostic log substitutes for recovery authority.
-6. **Stage 17 — Distribution & Clean-Mac Qualification.**
-7. **Early Access / Alpha.**
-8. **Macseed 1.0.**
+1. **Next — Homebrew Cask / Tailscale:** identify the missing local evidence or
+   unsupported capability behind `tailscale-app`, implement only a justified generic
+   fix, then qualify clean Install → Verify → fresh no-op. The performance fix is
+   complete; current real Restore remains Failed / `bootstrap_failed`, with
+   127/128 Verified, one unsupported/unverified and verdict `incomplete`.
+2. **MAS automatic restoration:** close native authorization/install/post-Verify
+   and repeat/no-op qualification through the existing Core; mandatory before 1.0.
+   Complete the remaining supported-domain Restore gates tracked in TODO.
+3. **Secure SSH Desktop (16H):** implement and qualify the inherited secret-channel
+   interaction, encryption/unlock/import confirmation and secure privacy coverage.
+4. **Reliability / security and remaining 16I/16K qualification:** Stage 3C durable
+   Cask reconciliation, installer/privileged-process quiescence, watchdog, partial
+   and interrupted Verification, stale inputs, transport, accessibility and lifecycle
+   ownership. Diagnostic logs do not provide recovery authority.
+5. **Stage 17 — Distribution & Clean-Mac Qualification.**
+6. **Early Access / Alpha.**
+7. **Macseed 1.0.** Release Readiness is not the current checkpoint.
+
+Real-Mac performance observations and their differing-run limitations are recorded
+in [Desktop qualification](docs/DESKTOP.md#recent-restore-qualification-and-performance),
+not a performance guarantee or closure of Homebrew capability qualification.
 
 ## Stage 17 — Distribution & Clean-Mac E2E
 

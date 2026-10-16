@@ -310,6 +310,13 @@ sources, and packages require exact macOS receipts plus actual required payload.
 An empty observation set or receipt alone never proves satisfaction. Optional
 `homebrew-casks.json` captures selected requirement identities and portable package
 postconditions; registration with missing payload remains explicitly different.
+Preview/readiness, pre-Apply qualification and Verification classify PKG state
+from local metadata, receipts and captured payload requirements without downloading
+an installer archive. Insufficient local payload evidence remains unsupported,
+reported as unverified by Verification; captured requirements never prove target
+presence. Qualified Install/Repair still lets Homebrew obtain and execute the
+installer. The matrix separately describes the retained explicit archive-inspection
+helper; it is no longer an automatic state-classification fallback.
 Native Install/Repair qualification separately checks installation, historical
 cleanup, ownership, requirements and privilege. Homebrew owns all lifecycle writes.
 Unknown observation is not absence; unknown execution behavior fails closed.

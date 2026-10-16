@@ -63,7 +63,7 @@ Desktop should make Capture, Restore and Environment Status approachable without
 reimplementing their behavior. Missing prerequisites should lead to clear guidance
 and a fresh check, rather than being mistaken for permanent lack of support.
 
-The next outcomes are a native application and a qualified signed distribution.
+The next outcomes are completion of the native Desktop and a qualified signed distribution.
 The first complete Desktop release is planned as Macseed 1.0, built on the mature
 Core from the toolkit/CLI v1.x–v3.4.x line. This does not rename released history
 or change the current version. See the [Roadmap](../ROADMAP.md) for stages and

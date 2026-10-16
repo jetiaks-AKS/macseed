@@ -23,6 +23,8 @@ while IFS= read -r source_file; do
     printf '%s\n' '#!/bin/bash' > "$FIXTURE_ROOT/$source_file"
 done < <(awk '/^source / { print $2 }' "$PROJECT_ROOT/bootstrap.sh")
 
+cp "$PROJECT_ROOT/modules/core/performance_trace.sh" \
+    "$FIXTURE_ROOT/modules/core/performance_trace.sh"
 cp "$PROJECT_ROOT/modules/core/common/common.sh" \
     "$FIXTURE_ROOT/modules/core/common/common.sh"
 cp "$PROJECT_ROOT/modules/core/logger/logger.sh" \

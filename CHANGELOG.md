@@ -15,7 +15,9 @@ The format is based on the principles of **Keep a Changelog**.
   preserving active operations/post-checks and Homebrew launch atomicity. Desktop
   distinguishes delivery, acceptance and refusal; unreported benign restart rows
   and explained aggregate category warnings no longer repeat in results. Force Stop
-  and unknown-consequence safeguards remain separate; real-Mac qualification is open.
+  and unknown-consequence safeguards remain separate. Controlled real-Mac Early
+  Cancelled and Partial Stopped checks passed; broader native-installer and
+  detached/privileged-process qualification remains open.
 
 * Restore terminal results reuse Environment Status category disclosures, local
   item details and evidence-based counters, keeping execution compact and operation
@@ -73,20 +75,26 @@ The format is based on the principles of **Keep a Changelog**.
 * Reduce repeated inventories and input validation in Restore Preview/readiness and
   Global Verification, reuse immutable Homebrew result serialization, and avoid duplicate
   Bundle validation during preparation while retaining integrity and stale-plan gates.
-
+  Opt-in aggregate Performance Trace is off by default and outside Protocol V1;
+  Desktop forwards only its explicitly enabled diagnostic variables. Individual
+  [real-Mac measurements](docs/DESKTOP.md#recent-restore-qualification-and-performance)
+  improved after the PKG fallback fix, without a cross-machine performance guarantee.
 
 * Desktop Capture and Restore adopt Environment Status's visual groups, category
   icons, row surfaces, summary cards and nested macOS Settings presentation while
   preserving selection granularity and explicit Prepare/Rebuild controls.
   Visual Unification is complete across Selection, Preview, Execution and Result;
-  Result shows only positive Core mismatch/unverified quantity cards, uses neutral
-  Unverified category labels and keeps detailed diagnostics collapsed.
+  final Result uses disjoint positive-count Successful / Needs Attention / Skipped
+  plan-row cards, preserves unknown outcomes and keeps technical details on demand.
+  Verified evidence takes precedence over Applied without inferring Verification
+  from process completion.
 * Restore cancellation preserves unknown consequences when process termination or
   observation cannot be confirmed (Cancellation Safety Stage 1–2).
 * Homebrew Cask and Formula support Graceful Stop: the current native installation
   and post-checks finish before further items or Bootstrap modules can start.
-  Force Stop remains a separate emergency action; other categories are not covered
-  by this graceful guarantee. Validation includes 25 mock tests, related checks and
+  Force Stop remains a separate emergency action. Operation-wide safe-checkpoint
+  coverage is recorded above; native lifecycle qualification remains separate.
+  Historical Homebrew validation included 25 mock tests, related checks and
   a Debug build. The 2026-10-14 Firefox smoke test passed, without event-log proof of
   Stop timing during installation; full installer-interruption qualification remains open.
 * Retain the 2026-10-13 Firefox busy-DMG incident and remaining Cancellation Safety
@@ -144,6 +152,8 @@ The format is based on the principles of **Keep a Changelog**.
 
 ### Fixed
 
+* Environment Status Cancel retains the selected reference and returns to selection;
+  internal comparison I/O failures no longer masquerade as an unavailable source Bundle.
 * Cask readiness and Verification no longer download PKG installers to infer
   payload requirements; insufficient local evidence remains unsupported/unverified.
 

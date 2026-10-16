@@ -346,6 +346,8 @@ class OwnedBootstrap:
                 os.killpg(self.process.pid, signal.SIGKILL)
             except ProcessLookupError:
                 pass
+            except PermissionError:
+                self.unknown_consequences = True
 
     def cancel(self):
         was_running = self.process.poll() is None

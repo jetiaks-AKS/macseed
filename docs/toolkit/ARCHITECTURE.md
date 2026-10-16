@@ -1,8 +1,10 @@
 # Macseed Architecture
 
 Macseed has one authoritative Core and two client boundaries. The CLI is
-implemented; native Desktop is under development with Stage 16B–16G complete.
-Packaged distribution and clean-Mac qualification remain planned.
+implemented; native Desktop is under development with supported Capture/Restore/
+Status flows, final Result presentation and persistent diagnostics implemented.
+Secure Desktop interaction, recovery/runtime qualification and packaged clean-Mac
+proof remain open; [Roadmap](../../ROADMAP.md) owns stage status and order.
 
 ```text
 Macseed
