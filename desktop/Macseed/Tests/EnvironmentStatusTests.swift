@@ -434,6 +434,10 @@ import SwiftUI
             if data is not None: event['data'] = data
             print(json.dumps(event), flush=True)
         def stop(signum, frame):
+            if mode in ('cancel_source_failure', 'cancel_cleanup_failure'):
+                emit('failed', dict(code='bundle_unavailable' if mode == 'cancel_source_failure' else 'comparison_unavailable', read_only=True))
+                sys.exit(2)
+            if mode == 'cancel_interrupt': os.kill(os.getpid(), signal.SIGKILL)
             emit('cancelled', dict(read_only=True, publication_occurred=False, target_mutation_may_have_started=False))
             sys.exit(130)
         signal.signal(signal.SIGTERM, stop)
@@ -441,8 +445,14 @@ import SwiftUI
         if request['operation'] == 'capabilities':
             emit('result', dict(protocol_version=1, product_version='fixture', operations=['environment_compare'], features={'bundle_comparison': {'version': 1}}))
             emit('completed'); sys.exit(0)
-        if mode == 'slow':
+        if mode in ('slow', 'slow_validation', 'slow_verification', 'cancel_source_failure', 'cancel_cleanup_failure', 'cancel_interrupt'):
+            emit('execution_event', dict(phase='bundle_validation' if mode == 'slow_validation' else 'verification', read_only=True))
             while True: time.sleep(.05)
+        if mode == 'terminal_before_cancel':
+            signal.signal(signal.SIGTERM, signal.SIG_IGN)
+            emit('result', json.loads(pathlib.Path('response.json').read_text()))
+            emit('completed', dict(read_only=True))
+            time.sleep(.3); sys.exit(0)
         if mode == 'interrupt': os.kill(os.getpid(), signal.SIGKILL)
         if mode == 'protocol': print('not JSON', flush=True); sys.exit(0)
         if mode == 'success' or mode == 'reference_invalid_after_result': emit('result', json.loads(pathlib.Path('response.json').read_text()))
@@ -548,7 +558,34 @@ import SwiftUI
         for _ in 0..<100 where runtime.events.isEmpty { try await Task.sleep(nanoseconds: 20_000_000) }
         precondition(model.state == .running && runtime.state == .running)
         model.cancel(); await model.waitForCompletion()
-        precondition(model.state == .cancelled && model.presentation == nil && model.failure == .cancelled && model.restoreReviewBundle == nil)
+        precondition(model.state == .choose && model.presentation == nil && model.failure == nil && model.restoreReviewBundle == nil)
+        precondition(model.reference?.generatedDirectory == reference)
+        try write("success", core.appendingPathComponent("mode"))
+        model.compare(); await model.waitForCompletion()
+        precondition(model.state == .result)
+        for mode in ["slow", "slow_validation", "slow_verification", "cancel_source_failure", "cancel_cleanup_failure", "cancel_interrupt", "terminal_before_cancel"] {
+            try write(mode, core.appendingPathComponent("mode"))
+            bundleModel.compare()
+            if mode != "slow" {
+                for _ in 0..<100 {
+                    if bundleRuntime.events.contains(where: { mode == "terminal_before_cancel" ? $0.type == "completed" : $0.type == "execution_event" }) { break }
+                    try await Task.sleep(nanoseconds: 20_000_000)
+                }
+            }
+            bundleModel.cancel(); await bundleModel.waitForCompletion()
+            precondition(bundleModel.reference?.bundle == bundleURL)
+            precondition(bundleModel.presentation == nil || mode == "terminal_before_cancel")
+            switch mode {
+            case "cancel_source_failure": precondition(bundleModel.state == .failed && bundleModel.failure == .runtime(.coreFailure("bundle_unavailable")))
+            case "cancel_cleanup_failure": precondition(bundleModel.state == .failed && bundleModel.failure == .runtime(.coreFailure("comparison_unavailable")))
+            case "cancel_interrupt": precondition(bundleModel.state == .failed && bundleModel.failure == .interrupted)
+            case "terminal_before_cancel": precondition(bundleModel.state == .result)
+            default: precondition(bundleModel.state == .choose && bundleModel.failure == nil)
+            }
+            try write("success", core.appendingPathComponent("mode"))
+            bundleModel.compare(); await bundleModel.waitForCompletion()
+            precondition(bundleModel.state == .result && bundleModel.reference?.bundle == bundleURL)
+        }
         let missingRuntime = EnvironmentStatusModel(runtime: CoreRuntime(resolver: CoreLocationResolver(resources: directory.appendingPathComponent("no-runtime"))))
         missingRuntime.selectReference(reference); missingRuntime.compare(); await missingRuntime.waitForCompletion()
         precondition(missingRuntime.state == .failed && missingRuntime.failure == .runtime(.runtimeUnavailable) && missingRuntime.presentation == nil)

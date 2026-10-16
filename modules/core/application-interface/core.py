@@ -727,6 +727,7 @@ def restore_execute(operation_id, path, disabled_groups, include_secure, expecte
 def environment_compare(operation_id, parameters):
     sequence = 1
     owned = None
+    source = None
     state = {"read_only": True, "publication_occurred": False,
              "target_mutation_may_have_started": False}
 
@@ -737,7 +738,6 @@ def environment_compare(operation_id, parameters):
 
     try:
         with restore_signals(), tempfile.TemporaryDirectory(prefix="macseed-compare-") as temporary:
-            source = None
             source_identity = None
             if "bundle_path" in parameters:
                 source = Path(parameters["bundle_path"])
@@ -854,8 +854,13 @@ def environment_compare(operation_id, parameters):
     except (bundle.Invalid, tarfile.TarError, ValueError, UnicodeError):
         event("failed", dict(state, code="bundle_invalid"))
         return 2
-    except (FileNotFoundError, PermissionError):
-        event("failed", dict(state, code="bundle_unavailable" if "bundle_path" in parameters else "reference_unavailable"))
+    except (FileNotFoundError, PermissionError) as exc:
+        # Missing staging/reporting files (including during cancellation cleanup)
+        # do not establish that the selected source Bundle is unavailable.
+        source_unavailable = source is not None and exc.filename is not None and Path(exc.filename) == source
+        code = "bundle_unavailable" if source_unavailable else (
+            "comparison_unavailable" if "bundle_path" in parameters else "reference_unavailable")
+        event("failed", dict(state, code=code))
         return 2
     except OSError:
         event("failed", dict(state, code="comparison_unavailable"))

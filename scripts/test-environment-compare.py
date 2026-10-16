@@ -215,8 +215,53 @@ class CompareTests(unittest.TestCase):
         path = self.make_bundle()
         original = self.payload
         self.payload = lambda **kwargs: original(bundle_path=str(path))
+        before = path.read_bytes()
         self.test_cancellation_owned_group()
+        self.assertEqual(path.read_bytes(), before)
         self.assertEqual(list(self.temporary.glob("macseed-compare-*")), [])
+        self.environment['TEST_MODE'] = 'matching'
+        self.comparison(bundle_path=str(path))
+
+    def test_cancel_during_bundle_validation(self):
+        path = self.make_bundle()
+        before = path.read_bytes()
+        adapter = self.project / 'modules/core/application-interface/core.py'
+        original = adapter.read_text()
+        for boundary in ('                bundle.inspect_bundle(source, os.environ["HOME"])',
+                         '                bundle.unpack(source, stage, os.environ["HOME"])'):
+            partial_stage = '                (stage / "partial-fixture").write_bytes(b"fixture")\n' if 'unpack' in boundary else ''
+            adapter.write_text(original.replace(boundary,
+                partial_stage + '                os.kill(os.getpid(), signal.SIGTERM)\n' + boundary))
+            result, events = self.invoke(bundle_path=str(path))
+            self.assertEqual(result.returncode, 130)
+            self.assertEqual(events[-1]['type'], 'cancelled')
+            self.assertEqual(path.read_bytes(), before)
+        adapter.write_text(original)
+        self.comparison(bundle_path=str(path))
+
+    def test_cancel_cleanup_error_is_not_bundle_unavailable(self):
+        path = self.make_bundle()
+        before = path.read_bytes()
+        execution = self.project / 'modules/core/application-interface/execution.py'
+        original = execution.read_text()
+        # Fault only after the owned readers have been stopped and collected.
+        execution.write_text(original.replace('        self._collect()\n        return 130',
+            '        self._collect()\n        raise FileNotFoundError(2, "fixture staging vanished", self.item_state.name)\n        return 130'))
+        payload = self.payload
+        self.payload = lambda **kwargs: payload(bundle_path=str(path))
+        self.test_cancellation_owned_group(expected_code='comparison_unavailable')
+        self.assertEqual(path.read_bytes(), before)
+        self.assertEqual(list(self.temporary.glob("macseed-compare-*")), [])
+
+    def test_cancel_does_not_hide_source_error(self):
+        path = self.make_bundle()
+        execution = self.project / 'modules/core/application-interface/execution.py'
+        original = execution.read_text()
+        execution.write_text(original.replace('        self._collect()\n        return 130',
+            '        self._collect()\n        from pathlib import Path\n        source = Path(' + repr(str(path)) + ')\n        source.unlink()\n        source.read_bytes()\n        return 130'))
+        payload = self.payload
+        self.payload = lambda **kwargs: payload(bundle_path=str(path))
+        self.test_cancellation_owned_group(expected_code='bundle_unavailable')
 
     def test_matching_and_projections(self):
         data = self.comparison()
@@ -352,11 +397,11 @@ for i in range(8193):
             self.assertNotIn('raw secret', result.stdout.decode())
             self.assertLessEqual(len(events[-1]['data']['records']['coverage_records']), 8192)
 
-    def test_cancellation_owned_group(self):
+    def test_cancellation_owned_group(self, expected_code=None):
         self.environment['TEST_MODE'] = 'slow'
         process = subprocess.Popen(['bash', str(self.project / 'modules/core/application-interface/core.sh')],
                                    stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                   env=self.environment, cwd=self.project)
+                                   env=self.environment, cwd=self.project, start_new_session=True)
         process.stdin.write(self.payload())
         process.stdin.close()
         process.stdin = None
@@ -365,12 +410,14 @@ for i in range(8193):
         while not pid_file.exists() and time.monotonic() < deadline:
             time.sleep(.05)
         self.assertTrue(pid_file.exists())
-        process.send_signal(signal.SIGTERM)
+        os.killpg(process.pid, signal.SIGTERM)
         stdout, stderr = process.communicate(timeout=10)
-        self.assertEqual(process.returncode, 130, stderr)
+        self.assertEqual(process.returncode, 2 if expected_code else 130, stderr)
         events = [json.loads(line) for line in stdout.splitlines()]
         self.assertEqual(sum(e['type'] in ('completed', 'failed', 'cancelled') for e in events), 1)
-        self.assertEqual(events[-1]['type'], 'cancelled')
+        self.assertEqual(events[-1]['type'], 'failed' if expected_code else 'cancelled')
+        if expected_code:
+            self.assertEqual(events[-1]['data']['code'], expected_code)
         pid = int(pid_file.read_text())
         deadline = time.monotonic() + 3
         while time.monotonic() < deadline:

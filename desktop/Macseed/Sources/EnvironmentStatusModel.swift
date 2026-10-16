@@ -48,6 +48,7 @@ enum StatusFailure: Error, Equatable {
             case "reference_invalid": "The selected configuration or Blueprint is invalid. Choose a valid reference."
             case "reference_changed": "The reference changed during comparison. Check again to compare its current contents."
             case "comparison_reporting_incomplete": "Core could not provide complete comparison evidence. No status conclusion is available."
+            case "comparison_unavailable": "Comparison could not finish. No complete status conclusion is available. Check again to inspect current state."
             case "comparison_failed": "Core could not complete the comparison. Check the reference and try again."
             default: "Core could not compare this Mac with the selected reference."
             }
@@ -431,7 +432,7 @@ enum EnvironmentStatusState { case choose, running, result, failed, cancelled }
                         presentation = try EnvironmentStatusPresentation(event.decodeData(CoreComparisonResult.self))
                         state = .result
                     } catch { fail(.invalidResult) }
-                case .cancelled: failure = .cancelled; state = .cancelled
+                case .cancelled: reset() // Keep the selected reference; confirmed cancellation has no result screen.
                 case .failed:
                     let error = runtime.error ?? .malformedEvent
                     fail(error == .interrupted ? .interrupted : .runtime(error))
