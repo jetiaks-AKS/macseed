@@ -297,6 +297,45 @@ class RestorePrepareTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, events)
         self.assertFalse((self.root / "mutations").exists())
 
+    def test_windows_expansion_preview_is_read_only(self):
+        blueprint = self.stage / 'blueprint.conf'
+        blueprint.write_text(blueprint.read_text().replace('macos-windows="false"', 'macos-windows="true"'))
+        keys = ['EnableStandardClickToShowDesktop', 'EnableTilingByEdgeDrag', 'EnableTopTilingByEdgeDrag', 'EnableTiledWindowMargins']
+        bundle.write_file(self.stage / 'generated/macos/windows.conf',
+            ''.join('com.apple.WindowManager|' + key + '|bool|false\n' for key in keys).encode())
+        defaults = self.root / 'bin/defaults'
+        defaults.write_text('#!/bin/bash\nif [[ "$1" == write ]]; then echo write >> "$TEST_MUTATIONS"; exit 2; fi\necho "does not exist" >&2; exit 1\n')
+        defaults.chmod(0o700)
+        self.pack()
+        result = self.plan_result()
+        rows = [row for row in result['plan'] if row['domain'] == 'macos-windows']
+        self.assertEqual({row['item_id'] for row in rows}, {'com.apple.WindowManager/' + key for key in keys})
+        self.assertTrue(all(row['action'] == 'set_preference' and row['disposition'] == 'planned' for row in rows), rows)
+        self.assertTrue(result['readiness']['ready'])
+        self.assertFalse((self.root / 'mutations').exists())
+        defaults.write_text('#!/bin/bash\ncase "$1" in read-type) echo "Type is boolean" ;; read) echo false ;; *) exit 2 ;; esac\n')
+        matching = self.plan_result()
+        rows = [row for row in matching['plan'] if row['domain'] == 'macos-windows']
+        self.assertTrue(all(row['action'] == 'none' and row['disposition'] == 'satisfied' for row in rows), rows)
+        self.assertFalse((self.root / 'mutations').exists())
+
+    def test_screenshot_booleans_preview_is_scalar_and_read_only(self):
+        blueprint = self.stage / 'blueprint.conf'
+        blueprint.write_text(blueprint.read_text().replace('macos-screenshots="false"', 'macos-screenshots="true"'))
+        bundle.write_file(self.stage / 'generated/macos/screenshots.conf',
+            b'com.apple.screencapture|disable-shadow|bool|true\ncom.apple.screencapture|show-thumbnail|bool|false\n')
+        defaults = self.root / 'bin/defaults'
+        defaults.write_text('#!/bin/bash\nif [[ "$1" == write ]]; then echo write >> "$TEST_MUTATIONS"; exit 2; fi\necho "does not exist" >&2\nexit 1\n')
+        defaults.chmod(0o700)
+        self.pack()
+        prepared = self.plan_result()
+        rows = [r for r in prepared['plan'] if r['domain'] == 'macos-screenshots']
+        self.assertEqual({r['item_id'] for r in rows}, {'com.apple.screencapture/disable-shadow', 'com.apple.screencapture/show-thumbnail'})
+        self.assertTrue(all(r['action'] == 'set_preference' and r['disposition'] == 'planned' for r in rows), rows)
+        self.assertTrue(prepared['readiness']['ready'])
+        self.assertFalse((self.root / 'mutations').exists())
+        self.assertFalse((self.home / 'Screenshots').exists())
+
     def test_macos_scalar_projection_without_values_or_global_dependencies(self):
         blueprint = self.stage / "blueprint.conf"
         blueprint.write_text(blueprint.read_text().replace('macos-windows="false"', 'macos-windows="true"'))

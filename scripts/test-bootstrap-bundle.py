@@ -137,6 +137,43 @@ class BundleTests(unittest.TestCase):
                       (target / "generated/macos/screenshots.conf").read_bytes())
         self.assertEqual(self.bundle.stat().st_mode & 0o777, 0o600)
 
+    def test_windows_expansion_preserves_legacy_bundles(self):
+        blueprint = self.stage / 'blueprint.conf'
+        blueprint.write_bytes(blueprint.read_bytes().replace(b'macos-windows="false"', b'macos-windows="true"'))
+        source = self.stage / 'generated/macos/windows.conf'
+        legacy = b'NSGlobalDomain|AppleWindowTabbingMode|string|manual\n'
+        booleans = ''.join('com.apple.WindowManager|' + key + '|bool|' + value + '\n'
+                           for key, value in zip(['EnableStandardClickToShowDesktop', 'EnableTilingByEdgeDrag', 'EnableTopTilingByEdgeDrag', 'EnableTiledWindowMargins'], ['true', 'false', 'true', 'false'])).encode()
+        for index, content in enumerate((legacy, legacy + booleans, booleans, b'')):
+            with self.subTest(index=index):
+                source.parent.mkdir(parents=True, exist_ok=True)
+                source.write_bytes(content)
+                source.chmod(0o600)
+                archive = self.root / f'windows-{index}.mbt'
+                bundle.pack(self.stage, archive, '/Users/source')
+                self.assertEqual(bundle.validate_archive(archive)['generated/macos/windows.conf'], content)
+                target = self.root / f'windows-{index}'
+                target.mkdir()
+                bundle.unpack(archive, target, '/Users/target')
+                self.assertEqual((target / 'generated/macos/windows.conf').read_bytes(), content)
+
+    def test_screenshot_booleans_preserve_location_and_legacy_bundles(self):
+        source = self.stage / 'generated/macos/screenshots.conf'
+        legacy = source.read_bytes()
+        booleans = b'com.apple.screencapture|disable-shadow|bool|true\ncom.apple.screencapture|show-thumbnail|bool|false\n'
+        for index, content in enumerate((legacy, legacy + booleans, booleans, b'')):
+            with self.subTest(index=index):
+                source.write_bytes(content)
+                archive = self.root / f'screenshots-{index}.mbt'
+                bundle.pack(self.stage, archive, '/Users/source')
+                files = bundle.validate_archive(archive)
+                expected = content.replace(b'/Users/source/', b'~/')
+                self.assertEqual(files['generated/macos/screenshots.conf'], expected)
+                target = self.root / f'unpacked-{index}'
+                target.mkdir()
+                bundle.unpack(archive, target, '/Users/target')
+                self.assertEqual((target / 'generated/macos/screenshots.conf').read_bytes(), expected)
+
     def test_unselected_inventory_is_not_carried(self):
         path = self.stage / "blueprint.conf"
         path.write_bytes(path.read_bytes().replace(

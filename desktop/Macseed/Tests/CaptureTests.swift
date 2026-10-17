@@ -267,6 +267,18 @@ import SwiftUI
         precondition(execution["expected_prepared_capture_id"] as? String == String(repeating: "a", count: 64))
         precondition((execution["selection"] as! Object)["categories"] as? [String] == ["homebrew-packages", "macos-finder"])
         print("PASS: Destination → fresh selected preparation → inline confirmation → bound execution and published result/warnings")
+        if CommandLine.arguments.contains("--result-actions-only") {
+            let before = try Data(contentsOf: core.appendingPathComponent("requests.jsonl"))
+            model.done()
+            precondition(model.state == .idle && model.publication == nil && model.preparation == nil && model.destination == nil)
+            precondition(model.inventory.isEmpty && model.selectedCategories.isEmpty && model.selectedItems.isEmpty && model.operationID == nil)
+            precondition(!runtime.isActive && (try! Data(contentsOf: core.appendingPathComponent("requests.jsonl"))) == before)
+            model.scan(); await model.waitForCompletion()
+            precondition(model.state == .review && !model.inventory.isEmpty)
+            print("PASS: Done returns Capture to pre-scan idle without Core requests; Capture Again retains scan")
+            return
+        }
+
 
         for mode in ["prepare_failure", "empty_inventory", "protocol"] {
             try write(mode, core.appendingPathComponent("mode"))

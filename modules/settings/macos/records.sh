@@ -38,6 +38,10 @@ windows|NSGlobalDomain|AppleWindowTabbingMode|string|Window tabbing
 windows|NSGlobalDomain|NSCloseAlwaysConfirmsChanges|bool|Confirm unsaved changes
 windows|NSGlobalDomain|NSQuitAlwaysKeepsWindows|bool|Restore windows on launch
 windows|com.apple.WindowManager|HideDesktop|bool|Hide Desktop items
+windows|com.apple.WindowManager|EnableStandardClickToShowDesktop|bool|Click wallpaper to reveal Desktop
+windows|com.apple.WindowManager|EnableTilingByEdgeDrag|bool|Tile windows by dragging to edges
+windows|com.apple.WindowManager|EnableTopTilingByEdgeDrag|bool|Fill window by dragging to top
+windows|com.apple.WindowManager|EnableTiledWindowMargins|bool|Tiled window margins
 keyboard|NSGlobalDomain|KeyRepeat|int|Key repeat
 keyboard|NSGlobalDomain|InitialKeyRepeat|int|Repeat delay
 keyboard|NSGlobalDomain|ApplePressAndHoldEnabled|bool|Press and hold
@@ -50,6 +54,8 @@ keyboard|NSGlobalDomain|NSAutomaticDashSubstitutionEnabled|bool|Smart dashes
 trackpad|com.apple.AppleMultitouchTrackpad|Clicking|bool|Tap to click
 trackpad|com.apple.AppleMultitouchTrackpad|TrackpadRightClick|bool|Secondary click
 screenshots|com.apple.screencapture|location|string|Save location
+screenshots|com.apple.screencapture|disable-shadow|bool|Window shadow
+screenshots|com.apple.screencapture|show-thumbnail|bool|Floating thumbnail
 MACOS_SETTINGS
 }
 
@@ -96,7 +102,7 @@ validate_defaults_config() {
         category == "dock" && $2 == "mineffect" && $4 !~ dock_mineffect_pattern { exit 2 }
         category == "windows" && $2 == "AppleActionOnDoubleClick" && $4 !~ window_double_click_pattern { exit 2 }
         category == "windows" && $2 == "AppleWindowTabbingMode" && $4 !~ window_tabbing_pattern { exit 2 }
-        category == "screenshots" {
+        category == "screenshots" && $2 == "location" {
             # Only absolute paths or leading ~/; no shell syntax or traversal.
             if ($4 !~ /^(\/|~\/)/ || $4 ~ /[$`\\]/ || $4 ~ /\/\// ||
                 $4 ~ /(^|\/)\.\.?($|\/)/) exit 2

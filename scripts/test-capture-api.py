@@ -266,15 +266,35 @@ esac
         legacy_row = {key: value for key, value in first['inventory'][0].items() if key != 'included_settings'}
         self.assertEqual(legacy_row, rows[0])
 
+    def test_window_manager_included_settings_only_observed(self):
+        self.fixture(real=True)
+        settings = [('EnableStandardClickToShowDesktop', 'Click wallpaper to reveal Desktop'), ('EnableTilingByEdgeDrag', 'Tile windows by dragging to edges'), ('EnableTopTilingByEdgeDrag', 'Fill window by dragging to top'), ('EnableTiledWindowMargins', 'Tiled window margins')]
+        defaults = self.root / 'bin/defaults'
+        cases = '|'.join('"' + key + '"' for key, _ in settings)
+        present = ('#!/bin/bash\nif [[ "$2" == com.apple.WindowManager ]]; then\n'
+                   ' case "$3" in ' + cases + ')\n'
+                   ' case "$1" in read-type) echo "Type is boolean"; exit 0 ;;'
+                   ' read) echo false; exit 0 ;; esac ;; esac\nfi\n'
+                   'echo "does not exist" >&2; exit 1\n')
+        defaults.write_text(present)
+        defaults.chmod(0o700)
+        row = next(row for row in self.prepare()['inventory'] if row['domain'] == 'macos-windows')
+        self.assertEqual(row['status'], 'present')
+        self.assertEqual(row['included_settings'], [{'id': key, 'label': label} for key, label in settings])
+        defaults.write_text('#!/bin/bash\necho "does not exist" >&2; exit 1\n')
+        row = next(row for row in self.prepare()['inventory'] if row['domain'] == 'macos-windows')
+        self.assertEqual((row['status'], row['included_settings']), ('unavailable', []))
+
     def test_macos_included_settings_are_effective_value_free_metadata(self):
         self.fixture(real=True)
         defaults = self.root / 'bin/defaults'
         defaults.write_text('''#!/bin/bash
 case "$*" in
- "read-type NSGlobalDomain AppleShowAllExtensions"|"read-type com.apple.dock autohide"|"read-type com.apple.AppleMultitouchTrackpad Clicking") echo 'Type is boolean' ;;
+ "read-type NSGlobalDomain AppleShowAllExtensions"|"read-type com.apple.dock autohide"|"read-type com.apple.AppleMultitouchTrackpad Clicking"|"read-type com.apple.screencapture disable-shadow"|"read-type com.apple.screencapture show-thumbnail") echo 'Type is boolean' ;;
  "read-type com.apple.finder NewWindowTarget"|"read-type com.apple.dock orientation"|"read-type NSGlobalDomain AppleWindowTabbingMode"|"read-type com.apple.screencapture location") echo 'Type is string' ;;
  "read-type NSGlobalDomain KeyRepeat") echo 'Type is integer' ;;
- "read NSGlobalDomain AppleShowAllExtensions"|"read com.apple.dock autohide"|"read com.apple.AppleMultitouchTrackpad Clicking") echo true ;;
+ "read NSGlobalDomain AppleShowAllExtensions"|"read com.apple.dock autohide"|"read com.apple.AppleMultitouchTrackpad Clicking"|"read com.apple.screencapture disable-shadow") echo true ;;
+ "read com.apple.screencapture show-thumbnail") echo false ;;
  "read com.apple.finder NewWindowTarget") echo PfLo ;;
  "read com.apple.dock orientation") echo unsupported-position ;;
  "read NSGlobalDomain AppleWindowTabbingMode") echo manual ;;
@@ -296,7 +316,10 @@ esac
                 self.assertNotIn('included_settings', row)
                 continue
             identity, label = expected[row['domain']]
-            self.assertEqual(row['included_settings'], [{'id': identity, 'label': label}])
+            settings = [{'id': identity, 'label': label}]
+            if row['domain'] == 'macos-screenshots':
+                settings += [{'id': 'disable-shadow', 'label': 'Window shadow'}, {'id': 'show-thumbnail', 'label': 'Floating thumbnail'}]
+            self.assertEqual(row['included_settings'], settings)
             self.assertEqual(row['selection_mode'], 'category')
             self.assertEqual(row['items'], [])
             self.assertEqual(row['status'], 'present')
@@ -312,6 +335,19 @@ esac
         self.assertEqual(status.returncode, 0, events)
         self.assertTrue(events[-2]['data']['publication_occurred'])
         self.assertEqual(set(events[-2]['data']['bundle']['selected_categories']), set(expected))
+        # A supported but absent preference must not enter Included Settings.
+        present_defaults = defaults.read_text()
+        for absent_keys in [('disable-shadow',), ('show-thumbnail',), ('disable-shadow', 'show-thumbnail')]:
+            cases = '|'.join('"read-type com.apple.screencapture ' + key + '"' for key in absent_keys)
+            defaults.write_text(present_defaults.replace('case "$*" in',
+                'case "$*" in\n ' + cases + ') echo "does not exist" >&2; exit 1 ;;', 1))
+            row = next(row for row in self.prepare()['inventory'] if row['domain'] == 'macos-screenshots')
+            self.assertEqual(row['status'], 'present')
+            self.assertEqual(row['included_settings'], [setting for setting in [
+                {'id': 'location', 'label': 'Save location'},
+                {'id': 'disable-shadow', 'label': 'Window shadow'},
+                {'id': 'show-thumbnail', 'label': 'Floating thumbnail'}]
+                if setting['id'] not in absent_keys])
         # No observed records means no invented metadata or selectable settings.
         defaults.write_text('#!/bin/bash\necho "does not exist" >&2\nexit 1\n')
         for row in self.prepare()['inventory']:

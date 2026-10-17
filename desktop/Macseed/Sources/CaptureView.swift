@@ -219,13 +219,14 @@ struct CaptureView: View {
                     Text(model.resultNotices.isEmpty ? "Your environment was saved." : "Your environment was saved. Review the captured categories with limitations.")
                         .font(.callout).foregroundStyle(.secondary)
                     CaptureSavedMetrics(publication: saved, notices: model.resultNotices)
-                    CaptureBundleLocationView(destination: URL(fileURLWithPath: saved.destination))
+                    CaptureBundleLocationView(destination: URL(fileURLWithPath: saved.destination), showsReveal: true)
                         .padding(14).frame(maxWidth: .infinity, alignment: .leading)
                         .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 8))
                     if let prepared = model.preparation, let selection = prepared.selection {
                         let tasks = CaptureTaskPresentation(categories: prepared.inventory.map { CaptureCategory(row: $0) },
                             selection: selection, phase: .result, publication: saved, notices: model.resultNotices)
                         TaskDomainList(domains: tasks.domains, compactReadyItems: true, title: "Captured Environment",
+                            captureResultLayout: true,
                             settingsCategories: CaptureSettingsPresentation.children(tasks.domains),
                             settingLabels: CaptureSettingsPresentation.labels(prepared.inventory),
                             expansion: categoryExpansion.map { binding in Binding(get: { binding.wrappedValue ? Set(tasks.domains.map(\.id)) : [] }, set: { binding.wrappedValue = !$0.isEmpty }) },
@@ -270,10 +271,17 @@ struct CaptureView: View {
 
 struct CaptureBundleLocationView: View {
     let destination: URL
+    var showsReveal = false
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Label(destination.lastPathComponent, systemImage: "shippingbox").font(.headline)
-            Text(destination.path).font(.callout).foregroundStyle(.secondary).textSelection(.enabled)
+        HStack {
+            VStack(alignment: .leading, spacing: 4) {
+                Label(destination.lastPathComponent, systemImage: "shippingbox").font(.headline)
+                Text(destination.path).font(.callout).foregroundStyle(.secondary).textSelection(.enabled)
+            }
+            if showsReveal {
+                Spacer()
+                Button("Reveal in Finder") { NSWorkspace.shared.activateFileViewerSelecting([destination]) }
+            }
         }
     }
 }
@@ -303,11 +311,9 @@ struct CaptureActionsView: View {
                 Button("Cancel", role: .cancel) { model.cancel() }.disabled(runtime.stopping)
                 Spacer()
             case .result:
-                if let saved = model.publication {
-                    Button("Reveal in Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: saved.destination)]) }
-                }
                 Spacer()
                 Button("Capture Again") { model.scan() }.disabled(runtime.isActive)
+                Button("Done") { model.done() }.disabled(runtime.isActive)
             case .failed, .cancelled:
                 Button("Scan Again") { model.scan() }.disabled(runtime.isActive)
             case .idle: EmptyView()

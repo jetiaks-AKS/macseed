@@ -325,6 +325,13 @@ struct CaptureMacOSSettingsGroup {
     }
     private func fail(_ error: CaptureFailure) { preparation = nil; publication = nil; failure = error; state = .failed }
     func cancel() { if busy { runtime.cancel() } }
+    func done() {
+        guard state == .result, !runtime.isActive else { return }
+        inventory = []; selectedCategories = []; selectedItems = [:]; preparation = nil; destination = nil
+        replacementSHA256 = nil; publication = nil; resultNotices = []; publicationEvidence = .notOccurred
+        publicationMayHaveStarted = false; failure = nil; operationID = nil
+        state = .idle
+    }
     func cancelReview() { guard state == .review, !runtime.isActive else { return }; state = .idle; preparation = nil; destination = nil }
     func waitForCompletion() async { await work?.value }
 }

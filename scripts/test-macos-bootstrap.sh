@@ -220,6 +220,79 @@ assert_observation_count() {
     [[ "$actual" == "$2" ]] && pass "$3" || fail "$3 ($actual)"
 }
 
+windows_expansion_checks() {
+    local key value mode
+    for key in EnableStandardClickToShowDesktop EnableTilingByEdgeDrag EnableTopTilingByEdgeDrag EnableTiledWindowMargins; do
+        for value in true false; do
+            reset_case
+            record "$WINDOWS_CONFIG" "com.apple.WindowManager|$key|bool|$value"
+            run preview_defaults_config "$WINDOWS_CONFIG" windows
+            expect_status 0 "$status" "$key $value read-only Preview"
+            assert_count '^write:\|^killall:' 0 'Preview does not mutate'
+            run apply_windows_settings
+            expect_status 0 "$status" "$key $value Apply and reread"
+            assert_count '^write:' 1 'one checked write'
+            assert_count '^killall:' 0 'no process refresh'
+            run check_windows
+            expect_status 0 "$status" 'stored preference verified'
+            run apply_windows_settings
+            expect_status 0 "$status" 'matching no-op'
+            assert_count '^write:' 1 'matching does not write again'
+        done
+        for mode in native-type observation read-failure post-mismatch post-error malformed; do
+            reset_case
+            record "$WINDOWS_CONFIG" "com.apple.WindowManager|$key|bool|true"
+            case "$mode" in
+                native-type) state_set com.apple.WindowManager "$key" string true ;;
+                observation) READ_TYPE_FAILURE="com.apple.WindowManager|$key" ;;
+                read-failure) state_set com.apple.WindowManager "$key" bool false; READ_FAILURE="com.apple.WindowManager|$key" ;;
+                post-mismatch) POST_WRITE_MODE=mismatch ;;
+                post-error) POST_WRITE_MODE=observation-error ;;
+                malformed) printf '%s\n' "com.apple.WindowManager|EnableTiledWindowMargins|bool|invalid" >> "$WINDOWS_CONFIG" ;;
+            esac
+            run apply_windows_settings
+            expect_status 2 "$status" "$key rejects $mode"
+            case "$mode" in post-*) assert_count '^write:' 1 'failed post-write verification retains write evidence' ;;
+                *) assert_count '^write:' 0 'invalid input/observation does not write' ;; esac
+        done
+    done
+    # Exercise the production Global Verification projection, with fixture sinks.
+    (
+        verification_category_selected() { return 0; }
+        verification_coverage() { :; }
+        verification_input_error() { echo invalid >> "$TEST_ROOT/windows-verification"; }
+        verification_result() { printf '%s:%s:%s\n' "$2" "$3" "$4" >> "$TEST_ROOT/windows-verification"; }
+        reset_case
+        : > "$TEST_ROOT/windows-verification"
+        for key in EnableStandardClickToShowDesktop EnableTilingByEdgeDrag EnableTopTilingByEdgeDrag EnableTiledWindowMargins; do
+            printf '%s\n' "com.apple.WindowManager|$key|bool|true" >> "$WINDOWS_CONFIG"
+            state_set com.apple.WindowManager "$key" bool true
+        done
+        verify_macos_scalar_category windows "$WINDOWS_CONFIG"
+        for key in EnableStandardClickToShowDesktop EnableTilingByEdgeDrag EnableTopTilingByEdgeDrag EnableTiledWindowMargins; do
+            grep -Fxq "com.apple.WindowManager/$key:stored_preference:0" "$TEST_ROOT/windows-verification" || exit 1
+        done
+        READ_FAILURE='com.apple.WindowManager|EnableTilingByEdgeDrag'
+        : > "$TEST_ROOT/windows-verification"
+        verify_macos_scalar_category windows "$WINDOWS_CONFIG"
+        grep -Fxq 'com.apple.WindowManager/EnableTilingByEdgeDrag:stored_preference:2' "$TEST_ROOT/windows-verification"
+    ) || fail 'Windows Global Verification projection'
+    reset_case
+    record "$WINDOWS_CONFIG" 'NSGlobalDomain|AppleWindowTabbingMode|string|manual'
+    run apply_windows_settings
+    expect_status 0 "$status" 'legacy Windows file'
+    reset_case
+    run apply_windows_settings
+    expect_status 0 "$status" 'empty Windows file'
+    assert_count '^write:' 0 'empty Windows has no writes'
+}
+if [[ "${1:-}" != --screenshots-only ]]; then windows_expansion_checks; fi
+if [[ "${1:-}" == --windows-expansion-only ]]; then
+    [[ "$TEST_FAILURES" -eq 0 ]]
+    exit $?
+fi
+
+if [[ "${1:-}" != --screenshots-only ]]; then
 # Production schema rejects unsafe records before writes, including late errors.
 invalid_records=(
     'com.apple.finder|ShowPathbar|bool|true|extra'
@@ -1157,6 +1230,102 @@ expect_status 0 "$status" 'matching Trackpad with earlier module mutation succee
 assert_changed true 'earlier mutation survives matching Trackpad'
 assert_no_mutation 'matching Trackpad does not restart or write'
 
+fi
+
+# Screenshots booleans use the scalar executor without directory/process effects.
+for shadow in true false; do
+    for thumbnail in true false; do
+        reset_case
+        printf 'com.apple.screencapture|disable-shadow|bool|%s\ncom.apple.screencapture|show-thumbnail|bool|%s\n' "$shadow" "$thumbnail" > "$SCREENSHOTS_CONFIG"
+        run check_screenshots
+        expect_status 1 "$status" 'absent target booleans are planned'
+        run preview_screenshots_settings
+        expect_status 0 "$status" 'boolean-only Preview'
+        assert_no_mutation 'boolean-only Preview is read-only'
+        [[ "$output" != *directory* && "$output" != *restart* ]] || fail 'boolean Preview leaked path/process handling'
+        if [[ "$shadow" == true ]]; then expected_shadow='Would hide window screenshot shadow'; else expected_shadow='Would show window screenshot shadow'; fi
+        [[ "$output" == *"$expected_shadow"* ]] || fail 'shadow inversion'
+        run apply_screenshots_settings
+        expect_status 0 "$status" 'boolean-only Apply'
+        assert_count '^write:' 2 'two typed writes'
+        assert_count '^killall:' 0 'no boolean restart'
+        [[ ! -e "$HOME/Captures" && ! -e "$HOME/Screenshots" ]] || fail 'boolean-only created directory'
+        [[ "$(state_get com.apple.screencapture disable-shadow 4)" == "$shadow" ]] || fail 'stored shadow'
+        [[ "$(state_get com.apple.screencapture show-thumbnail 4)" == "$thumbnail" ]] || fail 'stored thumbnail'
+        : > "$MUTATION_LOG"; MODULE_CHANGED=false
+        run apply_screenshots_settings
+        expect_status 0 "$status" 'matching boolean Apply'
+        assert_no_mutation 'matching booleans no-op'
+        assert_changed false 'matching boolean flags unchanged'
+    done
+done
+
+for invalid_boolean in 'bool|invalid' 'int|1' 'string|true' 'bool|true|extra'; do
+    reset_case
+    shots "$HOME/Captures"
+    printf 'com.apple.screencapture|show-thumbnail|%s\n' "$invalid_boolean" >> "$SCREENSHOTS_CONFIG"
+    run apply_screenshots_settings
+    expect_status 2 "$status" "malformed boolean $invalid_boolean"
+    assert_no_mutation 'malformed boolean blocks location changes too'
+done
+
+for mode in malformed observation type-mismatch read-failure post-mismatch post-error; do
+    reset_case
+    shots "$HOME/Captures"
+    printf 'com.apple.screencapture|disable-shadow|bool|true\ncom.apple.screencapture|show-thumbnail|bool|false\n' >> "$SCREENSHOTS_CONFIG"
+    state_set com.apple.screencapture show-thumbnail bool true
+    case "$mode" in
+        malformed) printf 'com.apple.screencapture|unknown|bool|true\n' >> "$SCREENSHOTS_CONFIG" ;;
+        observation) READ_TYPE_FAILURE='com.apple.screencapture|show-thumbnail' ;;
+        type-mismatch) state_set com.apple.screencapture show-thumbnail string false ;;
+        read-failure) READ_FAILURE='com.apple.screencapture|show-thumbnail' ;;
+        post-mismatch) POST_WRITE_MODE=mismatch ;;
+        post-error) POST_WRITE_MODE=observation-error ;;
+    esac
+    run apply_screenshots_settings
+    expect_status 2 "$status" "mixed $mode fails closed"
+    assert_no_success "$output" "$mode never reports success"
+    case "$mode" in malformed|observation|type-mismatch|read-failure)
+        assert_no_mutation "$mode blocks all writes and mkdir"
+        [[ ! -e "$HOME/Captures" ]] || fail 'late error reached directory creation' ;;
+    esac
+done
+
+for mode in mismatch observation-error; do
+    reset_case
+    printf 'com.apple.screencapture|disable-shadow|bool|true\n' > "$SCREENSHOTS_CONFIG"
+    POST_WRITE_MODE="$mode"
+    run apply_screenshots_settings
+    expect_status 2 "$status" "boolean post-write $mode"
+    assert_no_success "$output" 'failed boolean postcheck never succeeds'
+    assert_changed true 'failed boolean postcheck retains mutation fact'
+done
+
+reset_case
+shots "$HOME/Captures/Nested"
+printf 'com.apple.screencapture|disable-shadow|bool|1\ncom.apple.screencapture|show-thumbnail|bool|0\n' >> "$SCREENSHOTS_CONFIG"
+run apply_screenshots_settings
+expect_status 0 "$status" 'mixed location and booleans Apply'
+assert_count '^write:' 3 'mixed typed writes'
+assert_count '^killall:SystemUIServer' 1 'only location causes one restart'
+[[ -d "$HOME/Captures/Nested" ]] || fail 'mixed location missing'
+
+# Verification reuses production scalar observation; every selected key is emitted.
+verification_category_selected() { return 0; }
+verification_coverage() { printf 'coverage:%s:%s\n' "$2" "$3" >> "$TEST_ROOT/verification"; }
+verification_result() { printf 'result:%s:%s:%s\n' "$2" "$3" "$4" >> "$TEST_ROOT/verification"; }
+verification_input_error() { printf 'invalid\n' >> "$TEST_ROOT/verification"; }
+: > "$TEST_ROOT/verification"
+run verify_screenshots
+expect_status 0 "$status" 'mixed Verification'
+for key in location disable-shadow show-thumbnail; do
+    grep -Fq "result:com.apple.screencapture/$key:stored_preference:0" "$TEST_ROOT/verification" || fail "missing verified $key"
+done
+READ_FAILURE='com.apple.screencapture|show-thumbnail'
+: > "$TEST_ROOT/verification"
+run verify_screenshots
+grep -Fq 'result:com.apple.screencapture/show-thumbnail:stored_preference:2' "$TEST_ROOT/verification" || fail 'observation failure not emitted'
+
 # Screenshot path validation: fixtures only, never real user directories.
 for bad in '' relative '~otheruser/Shot' '$VAR/Shot' '$HOME/Shot' '${HOME}/Shot' '$(touch sentinel)' '`touch sentinel`' "$HOME/../escape" "$HOME/./bad" "$HOME//bad" $'/tmp/a\nb' $'/tmp/a\tb'; do
     reset_case
@@ -1301,6 +1470,7 @@ reset_case
 run apply_screenshots_settings
 expect_status 0 "$status" 'absent location is unmanaged'
 assert_no_mutation 'absent location creates no fallback'
+if [[ "${1:-}" != --screenshots-only ]]; then
 ENABLED_CATEGORIES=macos-keyboard
 record "$KEYBOARD_CONFIG" 'NSGlobalDomain|KeyRepeat|int|2'
 run apply_macos_settings
@@ -1320,6 +1490,8 @@ ENABLED_CATEGORIES=$'macos-finder\nmacos-dock'
 run apply_macos_components
 expect_status 2 "$status" 'later category success preserves earlier error'
 [[ "$(cat "$MUTATION_LOG")" == apply:dock ]] || fail 'category Check dispatch changed'
+
+fi
 
 [[ $TEST_FAILURES -eq 0 ]] || { echo "$TEST_FAILURES macOS Bootstrap test(s) failed"; exit 1; }
 echo 'All macOS Bootstrap consumer safety tests passed'

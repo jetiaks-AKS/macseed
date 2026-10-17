@@ -13,6 +13,7 @@ trap 'rm -rf "$TEST_ROOT"' EXIT INT TERM
 TEST_FAILURES=0
 VERBOSE=false
 MOCK_MODE=normal
+WINDOW_EXPANSION=false
 MOCK_TARGET=""
 MOCK_VALUE=""
 SUCCESS_MESSAGES=""
@@ -40,7 +41,7 @@ error() {
 
 mock_native_type() {
     case "$1" in
-        ApplePressAndHoldEnabled|NSAutomaticCapitalizationEnabled|NSAutomaticSpellingCorrectionEnabled|NSAutomaticPeriodSubstitutionEnabled|NSAutomaticQuoteSubstitutionEnabled|NSAutomaticDashSubstitutionEnabled|AppleShowAllExtensions|ShowPathbar|ShowStatusBar|_FXSortFoldersFirst|FXRemoveOldTrashItems|AppleShowAllFiles|ShowHardDrivesOnDesktop|ShowExternalHardDrivesOnDesktop|ShowMountedServersOnDesktop|FXEnableExtensionChangeWarning|autohide|show-recents|magnification|minimize-to-application|show-process-indicators|launchanim|mru-spaces|NSCloseAlwaysConfirmsChanges|NSQuitAlwaysKeepsWindows|HideDesktop|Clicking|TrackpadRightClick)
+        EnableStandardClickToShowDesktop|EnableTilingByEdgeDrag|EnableTopTilingByEdgeDrag|EnableTiledWindowMargins|ApplePressAndHoldEnabled|NSAutomaticCapitalizationEnabled|NSAutomaticSpellingCorrectionEnabled|NSAutomaticPeriodSubstitutionEnabled|NSAutomaticQuoteSubstitutionEnabled|NSAutomaticDashSubstitutionEnabled|AppleShowAllExtensions|ShowPathbar|ShowStatusBar|_FXSortFoldersFirst|FXRemoveOldTrashItems|AppleShowAllFiles|ShowHardDrivesOnDesktop|ShowExternalHardDrivesOnDesktop|ShowMountedServersOnDesktop|FXEnableExtensionChangeWarning|autohide|show-recents|magnification|minimize-to-application|show-process-indicators|launchanim|mru-spaces|NSCloseAlwaysConfirmsChanges|NSQuitAlwaysKeepsWindows|HideDesktop|Clicking|TrackpadRightClick|disable-shadow|show-thumbnail)
             echo "Type is boolean"
             ;;
         tilesize|largesize|KeyRepeat|InitialKeyRepeat|AppleKeyboardUIMode)
@@ -57,10 +58,10 @@ mock_native_type() {
 
 mock_value() {
     case "$1" in
-        ApplePressAndHoldEnabled|NSAutomaticCapitalizationEnabled|NSAutomaticQuoteSubstitutionEnabled|AppleShowAllExtensions|ShowStatusBar|_FXSortFoldersFirst|AppleShowAllFiles|ShowExternalHardDrivesOnDesktop|FXEnableExtensionChangeWarning|autohide|magnification|minimize-to-application|launchanim|NSCloseAlwaysConfirmsChanges|NSQuitAlwaysKeepsWindows|HideDesktop|Clicking)
+        EnableStandardClickToShowDesktop|EnableTilingByEdgeDrag|EnableTopTilingByEdgeDrag|EnableTiledWindowMargins|ApplePressAndHoldEnabled|NSAutomaticCapitalizationEnabled|NSAutomaticQuoteSubstitutionEnabled|AppleShowAllExtensions|ShowStatusBar|_FXSortFoldersFirst|AppleShowAllFiles|ShowExternalHardDrivesOnDesktop|FXEnableExtensionChangeWarning|autohide|magnification|minimize-to-application|launchanim|NSCloseAlwaysConfirmsChanges|NSQuitAlwaysKeepsWindows|HideDesktop|Clicking|show-thumbnail)
             echo 1
             ;;
-        NSAutomaticSpellingCorrectionEnabled|NSAutomaticPeriodSubstitutionEnabled|NSAutomaticDashSubstitutionEnabled|ShowPathbar|FXRemoveOldTrashItems|ShowHardDrivesOnDesktop|ShowMountedServersOnDesktop|show-recents|show-process-indicators|mru-spaces|TrackpadRightClick)
+        NSAutomaticSpellingCorrectionEnabled|NSAutomaticPeriodSubstitutionEnabled|NSAutomaticDashSubstitutionEnabled|ShowPathbar|FXRemoveOldTrashItems|ShowHardDrivesOnDesktop|ShowMountedServersOnDesktop|show-recents|show-process-indicators|mru-spaces|TrackpadRightClick|disable-shadow)
             echo 0
             ;;
         tilesize) echo 48 ;;
@@ -86,6 +87,10 @@ defaults() {
     local key="$3"
     local identity="$domain|$key"
 
+    case "$key" in
+        EnableStandardClickToShowDesktop|EnableTilingByEdgeDrag|EnableTopTilingByEdgeDrag|EnableTiledWindowMargins)
+            if [[ "$WINDOW_EXPANSION" != true ]]; then echo 'does not exist' >&2; return 1; fi ;;
+    esac
     if [[ "$MOCK_MODE" == all_absent ||
           ( "$MOCK_MODE" == absent && "$identity" == "$MOCK_TARGET" ) ]]; then
         echo "The domain/default pair of ($domain, $key) does not exist" >&2
@@ -198,6 +203,71 @@ temporary_files() {
 
 cd "$TEST_ROOT" || exit 1
 
+windows_expansion_discovery_checks() {
+    local key value mode before_checksum
+    WINDOW_EXPANSION=true
+    for key in EnableStandardClickToShowDesktop EnableTilingByEdgeDrag EnableTopTilingByEdgeDrag EnableTiledWindowMargins; do
+        for value in true false; do
+            reset_fixture; MOCK_MODE=raw_value; MOCK_TARGET="com.apple.WindowManager|$key"; MOCK_VALUE="$value\n"
+            export_windows_settings >/dev/null
+            [[ $? -eq 0 ]] && grep -Fxq "com.apple.WindowManager|$key|bool|$value" config/generated/macos/windows.conf || fail "$key populated"
+        done
+        reset_fixture; MOCK_MODE=absent; MOCK_TARGET="com.apple.WindowManager|$key"
+        export_windows_settings >/dev/null
+        [[ $? -eq 0 ]] && ! grep -q "|$key|" config/generated/macos/windows.conf || fail "$key absence"
+        for mode in type_failure type_mismatch value_failure raw_value; do
+            reset_fixture; export_windows_settings >/dev/null
+            before_checksum="$(cksum config/generated/macos/windows.conf)"
+            MOCK_MODE="$mode"; MOCK_TARGET="com.apple.WindowManager|$key"; MOCK_VALUE='invalid\n'
+            export_windows_settings >/dev/null
+            [[ $? -eq 2 && "$before_checksum" == "$(cksum config/generated/macos/windows.conf)" ]] || fail "$key $mode preserves snapshot"
+        done
+    done
+    WINDOW_EXPANSION=false
+    reset_fixture; export_windows_settings >/dev/null
+    [[ $? -eq 0 && "$(wc -l < config/generated/macos/windows.conf | tr -d ' ')" == 5 ]] || fail 'legacy Windows remains five records'
+    reset_fixture
+}
+if [[ "${1:-}" != --screenshots-only ]]; then windows_expansion_discovery_checks; fi
+if [[ "${1:-}" == --windows-expansion-only ]]; then
+    [[ "$TEST_FAILURES" -eq 0 ]] && echo 'PASS: focused Windows Discovery fixtures'
+    exit "$TEST_FAILURES"
+fi
+
+screenshots_discovery_checks() {
+    local key mode before_checksum expected
+    expected=$'com.apple.screencapture|location|string|/Users/test/Screen Shots\ncom.apple.screencapture|disable-shadow|bool|0\ncom.apple.screencapture|show-thumbnail|bool|1'
+    reset_fixture
+    export_screenshots_settings >/dev/null
+    [[ $? -eq 0 && "$(cat config/generated/macos/screenshots.conf)" == "$expected" ]] || fail 'Screenshots populated records'
+    for key in disable-shadow show-thumbnail; do
+        for value in true false; do
+            reset_fixture; MOCK_MODE=raw_value; MOCK_TARGET="com.apple.screencapture|$key"; MOCK_VALUE="$value\n"
+            export_screenshots_settings >/dev/null
+            [[ $? -eq 0 ]] && grep -Fxq "com.apple.screencapture|$key|bool|$value" config/generated/macos/screenshots.conf || fail "$key $value"
+        done
+        reset_fixture; MOCK_MODE=absent; MOCK_TARGET="com.apple.screencapture|$key"
+        export_screenshots_settings >/dev/null
+        [[ $? -eq 0 ]] && ! grep -q "|$key|" config/generated/macos/screenshots.conf || fail "$key absence"
+        for mode in type_failure type_mismatch value_failure raw_value; do
+            reset_fixture
+            printf '%s\n' "$expected" > config/generated/macos/screenshots.conf
+            before_checksum="$(cksum config/generated/macos/screenshots.conf)"
+            MOCK_MODE="$mode"; MOCK_TARGET="com.apple.screencapture|$key"; MOCK_VALUE='malformed\n'
+            export_screenshots_settings >/dev/null
+            [[ $? -eq 2 && "$before_checksum" == "$(cksum config/generated/macos/screenshots.conf)" && -z "$(temporary_files)" ]] || fail "$key $mode preserves snapshot"
+        done
+    done
+    reset_fixture; MOCK_MODE=all_absent
+    export_screenshots_settings >/dev/null
+    [[ $? -eq 0 && ! -s config/generated/macos/screenshots.conf ]] || fail 'absent Screenshot keys remain unmanaged'
+}
+screenshots_discovery_checks
+if [[ "${1:-}" == --screenshots-only ]]; then
+    [[ $TEST_FAILURES -eq 0 ]] || exit 1
+    echo 'PASS: focused Screenshots Discovery fixtures'; exit 0
+fi
+
 # ==========================================
 # Normal populated formats for all categories
 # ==========================================
@@ -264,7 +334,7 @@ if [[ $windows_status -eq 0 && "$(cat config/generated/macos/windows.conf)" == "
 else
     fail "Window Management populated format changed"
 fi
-if grep -Eq 'EnableTiling|StageManager|StandardHideWidgets|EnableStandardClickToShowDesktop' config/generated/macos/windows.conf; then
+if grep -Eq 'StageManager|StandardHideWidgets' config/generated/macos/windows.conf; then
     fail "unsupported WindowManager setting entered the generated inventory"
 else
     pass "Window Management inventory excludes unsupported settings"
@@ -319,7 +389,7 @@ done
 
 reset_fixture
 export_screenshots_settings >/dev/null
-if [[ $? -eq 0 && "$(cat config/generated/macos/screenshots.conf)" == 'com.apple.screencapture|location|string|/Users/test/Screen Shots' ]]; then
+if [[ $? -eq 0 && "$(cat config/generated/macos/screenshots.conf)" == $'com.apple.screencapture|location|string|/Users/test/Screen Shots\ncom.apple.screencapture|disable-shadow|bool|0\ncom.apple.screencapture|show-thumbnail|bool|1' ]]; then
     pass "Screenshots present string with spaces preserves the existing format"
 else
     fail "Screenshots populated format changed"

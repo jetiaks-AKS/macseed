@@ -96,6 +96,11 @@ Real-Mac performance observations and their differing-run limitations are record
 in [Desktop qualification](docs/DESKTOP.md#recent-restore-qualification-and-performance),
 not a performance guarantee or closure of Homebrew capability qualification.
 
+The bounded macOS settings expansion and Capture Result refinements are
+implemented with focused automated coverage. Their remaining macOS 27 manual
+qualification is tracked in [TODO](TODO.md#macos-settings-manual-qualification);
+this does not close Stage 16 or change the next mandatory MAS Restore priority.
+
 ## Stage 17 — Distribution & Clean-Mac E2E
 
 **Planned.** Deliver a private writable Core workspace while signed resources stay

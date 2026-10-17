@@ -212,6 +212,23 @@ These are content states, not mandatory wizard pages.
    publication, retain the reported publication and chosen location alongside the
    interruption; do not label the operation successful or imply removal/rollback.
 
+On successful Capture, Reveal in Finder sits beside the saved `.mbt` name/path.
+The footer keeps View Log on the left and Capture Again, then Done on the right.
+Capture Again starts a fresh scan; Done returns to the initial **Capture this Mac**
+state without scanning or navigating to another task. Capture Result shares one
+status column across macOS Settings, its six child domains and VS Code Settings;
+disclosure arrows retain a separate rightmost column, including narrow layouts.
+
+The current settings checkpoint adds Window shadow / Floating thumbnail and four
+Windows controls through the existing Core. Included Settings lists only observed
+records, never synthesized defaults; older Bundles remain compatible. Exact keys
+and semantics belong to [Configuration](toolkit/CONFIGURATION.md#window-management)
+and [Screenshots](toolkit/CONFIGURATION.md#screenshots).
+Focused Discovery/Capture/Preview/Apply/Verification/Bundle fixtures and related
+Swift PresentationTests passed; the Debug build passed. These are automated
+fixture/build results, not real macOS 27 Apply or visual-effect qualification.
+The [remaining manual gates](../TODO.md#macos-settings-manual-qualification) stay open.
+
 Stage 16E uses real V1 Capture in normal Debug/Release. Category-only rows have one
 category checkbox and read-only details; item-mode rows have native all/none/mixed
 selection and bulk actions. Review follows Environment Status's visual groups:

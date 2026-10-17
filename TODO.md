@@ -19,6 +19,17 @@ Unsupported (`ownership_unproven`); in-place Repair is not implemented.
   as compatibility maintenance. Keep ambiguous/damaged privileged Repair states
   fail-closed and retain action-specific requirements/ownership evidence.
 
+## macOS settings manual qualification
+
+Focused fixtures and the Desktop Debug build cover the settings/Capture UX
+checkpoint; they do not close these real-Mac gates or change MAS Restore priority.
+
+- [ ] Qualify the real visual effect of Screenshots Window shadow and Floating
+  thumbnail on macOS 27, including repeat/no-op behavior.
+- [ ] Qualify real Apply and behavior of the four new WindowManager preferences
+  on macOS 27, including mode dependencies, any necessary session refresh and
+  repeat/no-op. Stored-preference Verification alone does not establish live effect.
+
 <a id="broad-restore-manual-gate--2026-10-05"></a>
 
 ## Mandatory Restore capability gaps

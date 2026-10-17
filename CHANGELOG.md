@@ -11,6 +11,11 @@ The format is based on the principles of **Keep a Changelog**.
 
 ### Added
 
+* Expanded the existing macOS settings categories with Screenshots window shadow
+  and floating thumbnail, plus wallpaper-click, edge/top tiling and tiled-window
+  margins. Only observed source preferences are captured; absent keys remain
+  unmanaged. Existing Bundle v1 configurations remain compatible.
+
 * Homebrew Casks requiring Rosetta use a read-only availability probe and an
   item-scoped manual prerequisite instead of unconditional Unsupported. Desktop
   explains manual preparation and Refresh Preview; Macseed never installs Rosetta.
@@ -171,6 +176,11 @@ The format is based on the principles of **Keep a Changelog**.
   informational labels for the settings included in the current preparation.
 
 ### Fixed
+
+* Capture Result places Reveal in Finder beside the saved file and keeps View Log
+  left, Capture Again / Done right. Done returns to the initial Capture state
+  without scanning. Parent and nested macOS settings statuses share a column with
+  other Capture Result categories, with disclosure arrows kept separate.
 
 * Environment Status Cancel retains the selected reference and returns to selection;
   internal comparison I/O failures no longer masquerade as an unavailable source Bundle.

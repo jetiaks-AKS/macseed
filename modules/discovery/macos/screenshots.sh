@@ -11,6 +11,8 @@ serialize_screenshots_settings() {
     : > "$output_file" || return 2
 
     macos_collect_preference "$output_file" com.apple.screencapture location string || return 2
+    macos_collect_preference "$output_file" com.apple.screencapture disable-shadow bool || return 2
+    macos_collect_preference "$output_file" com.apple.screencapture show-thumbnail bool || return 2
 
     return 0
 

@@ -203,6 +203,7 @@ struct TaskDomainList: View {
     var compactReadyItems = false
     var title = "Tasks"
     var restoreSettingsPreview = false
+    var captureResultLayout = false
     var settingsCategories: [TaskDomainPresentation] = []
     var settingLabels: [String: [String]] = [:]
     var itemTitles: [String: String] = [:]
@@ -252,7 +253,7 @@ struct TaskDomainList: View {
                     ForEach(settingsCategories) { child in
                         TaskSettingsCategoryDetails(domain: child, stateTitles: stateTitles, compactReadyItems: compactReadyItems,
                             settingLabels: settingLabels[child.id] ?? [], itemTitles: itemTitles, expansion: settingsExpansion,
-                            restorePreview: restoreSettingsPreview)
+                            restorePreview: restoreSettingsPreview, captureResultLayout: captureResultLayout)
                     }
                     let known = Set(settingsCategories.flatMap(\.items).map(\.id))
                     let remaining = domain.items.filter { !known.contains($0.id) }
@@ -260,14 +261,14 @@ struct TaskDomainList: View {
                         TaskDomainItems(domain: TaskDomainPresentation(id: domain.id, title: domain.title, symbol: domain.symbol, items: remaining),
                             stateTitles: stateTitles, compactReadyItems: compactReadyItems, itemTitles: itemTitles)
                     }
-                }.padding(.leading, 36).padding(.trailing, restoreSettingsPreview ? -26 : 0).padding(.vertical, 4)
+                }.padding(.leading, 36).padding(.trailing, restoreSettingsPreview || captureResultLayout ? -26 : 0).padding(.vertical, 4)
             } else {
                 TaskDomainItems(domain: domain, stateTitles: stateTitles, compactReadyItems: compactReadyItems, itemTitles: itemTitles)
             }
         } label: {
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 12) { domainTitle(domain); Spacer(); domainStatus(domain) }
-                VStack(alignment: .leading, spacing: 8) { domainTitle(domain); domainStatus(domain).frame(maxWidth: .infinity, alignment: restoreSettingsPreview ? .trailing : .leading) }
+                VStack(alignment: .leading, spacing: 8) { domainTitle(domain); domainStatus(domain).frame(maxWidth: .infinity, alignment: restoreSettingsPreview || captureResultLayout ? .trailing : .leading) }
             }.padding(.vertical, 6)
         }.disclosureGroupStyle(TaskDisclosureStyle()).padding(.horizontal, 16)
     }
@@ -353,6 +354,7 @@ struct TaskSettingsCategoryDetails: View {
     var itemTitles: [String: String] = [:]
     var expansion: Binding<Bool>? = nil
     var restorePreview = false
+    var captureResultLayout = false
     @TaskViewState<Bool> private var expanded = false
     var body: some View {
         DisclosureGroup(isExpanded: expansion ?? $expanded) {
@@ -381,8 +383,8 @@ struct TaskSettingsCategoryDetails: View {
             }
         } label: {
             ViewThatFits(in: .horizontal) {
-                HStack(spacing: 12) { title; Spacer(); TaskStatusLabel(state: domain.state, title: stateTitles[domain.state]).frame(width: restorePreview ? TaskRowLayout.statusWidth : nil, alignment: .leading) }
-                VStack(alignment: .leading, spacing: 8) { title; TaskStatusLabel(state: domain.state, title: stateTitles[domain.state]).frame(width: restorePreview ? TaskRowLayout.statusWidth : nil, alignment: .leading).frame(maxWidth: .infinity, alignment: restorePreview ? .trailing : .leading) }
+                HStack(spacing: 12) { title; Spacer(); TaskStatusLabel(state: domain.state, title: stateTitles[domain.state]).frame(width: restorePreview || captureResultLayout ? TaskRowLayout.statusWidth : nil, alignment: .leading) }
+                VStack(alignment: .leading, spacing: 8) { title; TaskStatusLabel(state: domain.state, title: stateTitles[domain.state]).frame(width: restorePreview || captureResultLayout ? TaskRowLayout.statusWidth : nil, alignment: .leading).frame(maxWidth: .infinity, alignment: restorePreview || captureResultLayout ? .trailing : .leading) }
             }.padding(.vertical, 6)
         }.disclosureGroupStyle(TaskDisclosureStyle())
     }

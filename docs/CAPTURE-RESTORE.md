@@ -50,6 +50,16 @@ Capture stages and validates data privately without replacing the source Mac's
 ordinary Generated Configuration or Blueprint. It creates one private `.mbt`
 using Bootstrap Bundle v1. Normal configuration is **not encrypted**; only
 explicitly selected SSH key pairs are encrypted in `secure.age`.
+
+The existing Windows and Screenshots categories include the additional scalar
+preferences documented in [Configuration](toolkit/CONFIGURATION.md#window-management)
+and [Screenshots](toolkit/CONFIGURATION.md#screenshots). Only observed source keys
+are included; absence is unmanaged and is never replaced with a system default.
+Bundle v1 remains unchanged, including older Windows, location-only Screenshots
+and empty configurations. Successful Desktop Capture offers file-local Reveal in
+Finder and a Done action that returns to the initial Capture state without scanning;
+[Desktop](DESKTOP.md#capture-this-mac) owns the result UI and validation evidence.
+
 Review the Bundle and transfer it privately. Macseed does not provide transport
 or synchronization. Checksums detect damage, not source authenticity.
 

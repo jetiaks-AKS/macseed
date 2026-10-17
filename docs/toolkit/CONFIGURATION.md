@@ -158,11 +158,11 @@ not determine allowed keys.
 | Dock | `com.apple.dock` | `autohide`, `show-recents`, `magnification` / bool; `tilesize`, `largesize` / int or float according to plist |
 | Dock | `com.apple.dock` | `orientation`, `mineffect` / string enum; `minimize-to-application`, `show-process-indicators`, `launchanim`, `mru-spaces` / bool |
 | Window Management | `NSGlobalDomain` | `AppleActionOnDoubleClick`, `AppleWindowTabbingMode` / string enum; `NSCloseAlwaysConfirmsChanges`, `NSQuitAlwaysKeepsWindows` / bool |
-| Window Management | `com.apple.WindowManager` | `HideDesktop` / bool |
+| Window Management | `com.apple.WindowManager` | `HideDesktop`, `EnableStandardClickToShowDesktop`, `EnableTilingByEdgeDrag`, `EnableTopTilingByEdgeDrag`, `EnableTiledWindowMargins` / bool |
 | Keyboard | `NSGlobalDomain` | `KeyRepeat`, `InitialKeyRepeat`, `AppleKeyboardUIMode` / int |
 | Keyboard | `NSGlobalDomain` | `ApplePressAndHoldEnabled`, `NSAutomaticCapitalizationEnabled`, `NSAutomaticSpellingCorrectionEnabled`, `NSAutomaticPeriodSubstitutionEnabled`, `NSAutomaticQuoteSubstitutionEnabled`, `NSAutomaticDashSubstitutionEnabled` / bool |
 | Trackpad | `com.apple.AppleMultitouchTrackpad` | `Clicking`, `TrackpadRightClick` / bool |
-| Screenshots | `com.apple.screencapture` | `location` / string with path policy below |
+| Screenshots | `com.apple.screencapture` | `location` / string with path policy below; `disable-shadow`, `show-thumbnail` / bool |
 
 Unknown/cross-category keys, wrong types, duplicate domain/key pairs, wrong field
 counts, ASCII control bytes including NUL, delimiters inside values and multiline
@@ -201,7 +201,7 @@ settings are unsupported.
 
 ### Window Management
 
-`macos-windows` uses `macos/windows.conf` for the five allowed preferences.
+`macos-windows` uses `macos/windows.conf` for nine allowed preferences.
 `AppleActionOnDoubleClick` accepts `Minimize/Maximize/Fill/None`;
 `AppleWindowTabbingMode` accepts `manual/always/fullscreen`. Other/empty values
 are rejected by consumers; safe unsupported source enums warn and are skipped.
@@ -209,8 +209,34 @@ are rejected by consumers; safe unsupported source enums warn and are skipped.
 semantic hide/show messages. Absent preferences remain unmanaged.
 `NSQuitAlwaysKeepsWindows` transfers without inversion; System Settings' “Close
 windows when quitting an application” switch has the inverse meaning.
-No process restart or visible-effect guarantee applies. Tiling, wallpaper-click
-Desktop behavior, Dock items and Menu Bar/Control Center configuration are unsupported.
+The four additional `com.apple.WindowManager` preferences use native bool values
+(`true/false`, with `1/0` accepted in configuration):
+
+| Key | Included Settings label | Meaning |
+| --- | --- | --- |
+| `EnableStandardClickToShowDesktop` | Click wallpaper to reveal Desktop | true: always; false: only in Stage Manager (not disabled) |
+| `EnableTilingByEdgeDrag` | Tile windows by dragging to edges | Enable edge-drag tiling |
+| `EnableTopTilingByEdgeDrag` | Fill window by dragging to top | Enable filling by dragging to the menu bar; distinct from Mission Control |
+| `EnableTiledWindowMargins` | Tiled window margins | Enable gaps around tiled windows |
+
+Wallpaper-click is a macOS 14+ feature; native tiling is a macOS 15+ feature.
+Apple documents these controls in macOS 27 as well. Tiling does not require
+Stage Manager; margins apply to tiled windows, and wallpaper-click's false mode
+only acts while Stage Manager is enabled. Macseed does not change these modes
+or synthesize absent source preferences. Old five-record and empty files remain
+valid. Discovery errors preserve the previous snapshot; Capture includes only
+observed records. Preview is read-only; Apply validates the entire configuration,
+skips matches and rereads each write. Verification confirms stored preferences,
+not app support for tiling or visible behavior in the current session.
+No process restart or logout is performed: a required refresh has not been
+established by this read-only qualification. Runtime visual effects and macOS 27
+native-key behavior have not been tested through real Apply.
+
+Qualification evidence: native boolean reads on macOS 26.7.1;
+[nix-darwin WindowManager definitions](https://github.com/nix-darwin/nix-darwin/blob/master/modules/system/defaults/WindowManager.nix);
+Apple's [macOS 27 tiling controls](https://support.apple.com/guide/mac-help/mchl118087b0/27/mac/27)
+and [wallpaper-click modes](https://support.apple.com/guide/mac-help/mchl534ba392/27/mac/27).
+Dock items and Menu Bar/Control Center configuration remain unsupported.
 
 ### Keyboard
 
@@ -235,6 +261,23 @@ a proven effective-restoration contract and are unsupported.
 
 ### Screenshots
 
+`macos/screenshots.conf` supports `location` plus two independent boolean records:
+`disable-shadow=true` removes the shadow from window screenshots (false retains
+it); `show-thumbnail=true` shows the floating thumbnail (false hides it). Desktop
+labels them **Window shadow** and **Floating thumbnail**. Records store the native
+boolean value; Preview explains the inverted shadow meaning.
+
+Only `location` enters path validation and directory creation. Boolean-only files
+create no destination and request no process restart. Missing source keys remain
+unmanaged; observation/type errors preserve the previous Discovery snapshot.
+The whole selected file and all observations are checked before Apply changes
+anything. Matching values are skipped; writes use the shared typed scalar executor
+and require post-write reads. Global Verification observes each selected preference
+separately. This proves stored values, not a rendered screenshot or live UI effect.
+Location-only files, empty files and existing Bundles retain their behavior.
+The real visual effect of both boolean preferences on macOS 27 remains an open
+[manual qualification gate](../../TODO.md#macos-settings-manual-qualification).
+
 The sole destination source is `location` in `macos/screenshots.conf`; there is
 no static `SCREENSHOTS_DIR` fallback. An absent record creates no directory.
 
@@ -257,7 +300,8 @@ no static `SCREENSHOTS_DIR` fallback. An absent record creates no directory.
 Preview distinguishes directory creation, preference write and restart, in that
 order. Directory-only change needs no SystemUIServer restart. Prepare/verify the
 directory before writing the preference; failure blocks the write. Restart only
-after preference change. Verification does not take a real screenshot.
+after a changed `location` write; boolean changes alone never trigger a restart.
+Verification does not take a real screenshot.
 
 ## Homebrew formula generated state
 

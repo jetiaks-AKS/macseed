@@ -818,6 +818,10 @@ enum WorkspaceSettingLabels {
         "macos-windows:NSGlobalDomain/NSCloseAlwaysConfirmsChanges": "Confirm unsaved changes",
         "macos-windows:NSGlobalDomain/NSQuitAlwaysKeepsWindows": "Restore windows on launch",
         "macos-windows:com.apple.WindowManager/HideDesktop": "Hide Desktop items",
+        "macos-windows:com.apple.WindowManager/EnableStandardClickToShowDesktop": "Click wallpaper to reveal Desktop",
+        "macos-windows:com.apple.WindowManager/EnableTilingByEdgeDrag": "Tile windows by dragging to edges",
+        "macos-windows:com.apple.WindowManager/EnableTopTilingByEdgeDrag": "Fill window by dragging to top",
+        "macos-windows:com.apple.WindowManager/EnableTiledWindowMargins": "Tiled window margins",
         "macos-keyboard:NSGlobalDomain/KeyRepeat": "Key repeat",
         "macos-keyboard:NSGlobalDomain/InitialKeyRepeat": "Repeat delay",
         "macos-keyboard:NSGlobalDomain/ApplePressAndHoldEnabled": "Press and hold",
@@ -829,7 +833,9 @@ enum WorkspaceSettingLabels {
         "macos-keyboard:NSGlobalDomain/NSAutomaticDashSubstitutionEnabled": "Smart dashes",
         "macos-trackpad:com.apple.AppleMultitouchTrackpad/Clicking": "Tap to click",
         "macos-trackpad:com.apple.AppleMultitouchTrackpad/TrackpadRightClick": "Secondary click",
-        "macos-screenshots:com.apple.screencapture/location": "Save location"
+        "macos-screenshots:com.apple.screencapture/location": "Save location",
+        "macos-screenshots:com.apple.screencapture/disable-shadow": "Window shadow",
+        "macos-screenshots:com.apple.screencapture/show-thumbnail": "Floating thumbnail"
     ]
     static func title(domain: String, identity: String) -> String? { names[domain + ":" + identity] }
 }

@@ -3,6 +3,34 @@ import AppKit
 import SwiftUI
 
 @main struct PresentationTests {
+    @MainActor static func captureResultActionsChecks() {
+        let source = try! String(contentsOfFile: "Sources/CaptureView.swift")
+        let result = source.components(separatedBy: "            case .result:")[1]
+            .components(separatedBy: "            case .failed, .cancelled:")[0]
+        precondition(result.contains("saved.destination), showsReveal: true"))
+        let location = source.components(separatedBy: "struct CaptureBundleLocationView: View {")[1]
+            .components(separatedBy: "struct CaptureActionsView: View {")[0]
+        precondition(location.contains("HStack {") && location.contains("if showsReveal {"))
+        precondition(location.range(of: "Text(destination.path)")!.lowerBound < location.range(of: "Button(\"Reveal in Finder\")")!.lowerBound)
+        precondition(location.contains("activateFileViewerSelecting([destination])"))
+        let actions = source.components(separatedBy: "struct CaptureActionsView: View {")[1]
+        let footer = actions.components(separatedBy: "            case .result:")[1]
+            .components(separatedBy: "            case .failed, .cancelled:")[0]
+        precondition(!footer.contains("Reveal in Finder"))
+        precondition(footer.range(of: "Spacer()")!.lowerBound < footer.range(of: "Button(\"Capture Again\")")!.lowerBound)
+        precondition(footer.range(of: "Button(\"Capture Again\")")!.lowerBound < footer.range(of: "Button(\"Done\")")!.lowerBound)
+        precondition(footer.contains("model.scan()") && footer.contains("model.done()"))
+        precondition(actions.range(of: "OperationLogButton(")!.lowerBound < actions.range(of: "switch model.state")!.lowerBound)
+        for width in [600.0, 850.0] {
+            let view = CaptureBundleLocationView(destination: URL(fileURLWithPath: "/Users/fixture/Saved Environments/My Mac.mbt"), showsReveal: true)
+            let renderer = ImageRenderer(content: view.padding(14).frame(width: width))
+            precondition(renderer.nsImage != nil)
+        }
+        precondition(WorkspaceSettingLabels.title(domain: "macos-screenshots", identity: "com.apple.screencapture/disable-shadow") == "Window shadow")
+        precondition(WorkspaceSettingLabels.title(domain: "macos-screenshots", identity: "com.apple.screencapture/show-thumbnail") == "Floating thumbnail")
+        print("PASS: Capture Result file-local Reveal; footer View Log, Capture Again, Done; Screenshots labels")
+    }
+
     @MainActor static func restoreSummaryChecks() {
         let rosetta = CoreRestorePreparation.Diagnostic(primitive: "rosetta", condition: "installation_required")
         precondition(rosetta.explanation.contains("softwareupdate --install-rosetta"))
@@ -970,7 +998,106 @@ import SwiftUI
         print("PASS: unsupported Repair explanation, Core diagnostic fields, neutral fallback and existing consent presentation")
     }
 
+    @MainActor static func screenshotsIncludedSettingsChecks() {
+        let settings: [[String: String]] = [
+            ["id": "location", "label": "Save location"],
+            ["id": "disable-shadow", "label": "Window shadow"],
+            ["id": "show-thumbnail", "label": "Floating thumbnail"]]
+        for included in [settings, [settings[0]], [settings[0], settings[1]], [settings[0], settings[2]], []] {
+            let data = try! JSONSerialization.data(withJSONObject: [
+                "domain": "macos-screenshots", "status": included.isEmpty ? "unavailable" : "present",
+                "selection_mode": "category", "items": [], "included_settings": included])
+            let row = try! JSONDecoder().decode(CoreCaptureInventoryRow.self, from: data)
+            precondition(CaptureSettingsPresentation.labels([row])["macos-screenshots"] == included.map { $0["label"]! },
+                "Only observed settings appear; absent supported keys must not be synthesized")
+            for width in included.isEmpty ? [] : [180.0, 600.0] {
+                precondition(ImageRenderer(content: IncludedSettingsText(settings: row.includedSettings!).frame(width: width)).nsImage != nil)
+            }
+        }
+        let legacy = try! JSONDecoder().decode(CoreCaptureInventoryRow.self, from: Data(
+            #"{"domain":"macos-screenshots","status":"present","selection_mode":"category","items":[]}"#.utf8))
+        precondition(CaptureSettingsPresentation.labels([legacy])["macos-screenshots"] == [])
+        print("PASS: Screenshots Included Settings preserves observed labels, Save location and absent/legacy metadata without defaults")
+    }
+
+    @MainActor static func windowsIncludedSettingsChecks() {
+        let settings: [[String: String]] = [
+            ["id": "EnableStandardClickToShowDesktop", "label": "Click wallpaper to reveal Desktop"],
+            ["id": "EnableTilingByEdgeDrag", "label": "Tile windows by dragging to edges"],
+            ["id": "EnableTopTilingByEdgeDrag", "label": "Fill window by dragging to top"],
+            ["id": "EnableTiledWindowMargins", "label": "Tiled window margins"]]
+        for included in [settings, [settings[0]], []] {
+            let data = try! JSONSerialization.data(withJSONObject: [
+                "domain": "macos-windows", "status": included.isEmpty ? "unavailable" : "present",
+                "selection_mode": "category", "items": [], "included_settings": included])
+            let row = try! JSONDecoder().decode(CoreCaptureInventoryRow.self, from: data)
+            precondition(CaptureSettingsPresentation.labels([row])["macos-windows"] == included.map { $0["label"]! })
+            for setting in included {
+                precondition(WorkspaceSettingLabels.names["macos-windows:com.apple.WindowManager/" + setting["id"]!] == setting["label"]!)
+            }
+            for width in included.isEmpty ? [] : [180.0, 600.0] {
+                precondition(ImageRenderer(content: IncludedSettingsText(settings: row.includedSettings!).frame(width: width)).nsImage != nil)
+            }
+        }
+        print("PASS: Windows Included Settings uses observed Core labels and matching Restore labels without defaults")
+    }
+
+    @MainActor static func captureResultAlignmentChecks() {
+        let ids = ["macos-finder", "macos-dock", "macos-windows", "macos-keyboard", "macos-trackpad", "macos-screenshots"]
+        let children = ids.map { id in
+            TaskDomainPresentation(id: id, title: CaptureCategory.title(for: id), symbol: WorkspaceCategoryStyle.symbol(id),
+                items: [TaskItemPresentation(id: id + ":saved", item: DisplayItem(id: id + ":saved", title: id, status: .ready,
+                    action: ""), state: .completed, captureRole: .selectedSubdomain)])
+        }
+        let parent = TaskDomainPresentation(id: "macos-settings", title: "macOS Settings", symbol: "gearshape", items: children.flatMap(\.items))
+        let vscode = TaskDomainPresentation(id: "vscode-settings", title: "VS Code Settings", symbol: "curlybraces",
+            items: [TaskItemPresentation(id: "vscode-settings:saved", item: DisplayItem(id: "vscode-settings:saved", title: "JSON", status: .ready,
+                action: ""), state: .completed, captureRole: .configuration)])
+        let source = try! String(contentsOfFile: "Sources/CaptureView.swift")
+        let result = source.components(separatedBy: "            case .result:")[1].components(separatedBy: "            case .failed, .cancelled:")[0]
+        precondition(result.contains("captureResultLayout: true"))
+        let restore = try! String(contentsOfFile: "Sources/RestoreView.swift")
+        precondition(!restore.contains("captureResultLayout: true"))
+        for width in [420.0, 785.0, 985.0] {
+            for typeSize in [DynamicTypeSize.large, .accessibility3] {
+                let view = TaskDomainList(domains: [parent, vscode], compactReadyItems: true, captureResultLayout: true,
+                    settingsCategories: children, settingLabels: ["macos-screenshots": ["Save location", "Window shadow", "Floating thumbnail"]],
+                    expansion: .constant([parent.id]), settingsExpansion: .constant(false))
+                    .padding(20).frame(width: width).environment(\.dynamicTypeSize, typeSize).environment(\.colorScheme, .light)
+                let image = ImageRenderer(content: view).cgImage!
+                var pixels = [UInt8](repeating: 0, count: image.width * image.height * 4)
+                pixels.withUnsafeMutableBytes { bytes in
+                    let context = CGContext(data: bytes.baseAddress, width: image.width, height: image.height, bitsPerComponent: 8,
+                        bytesPerRow: image.width * 4, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+                    context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+                }
+                var bands: [(y: Int, x: Int)] = []
+                for y in 0..<image.height {
+                    var left: Int? = nil
+                    for x in 0..<image.width {
+                        let offset = (y * image.width + x) * 4
+                        let r = Int(pixels[offset]), g = Int(pixels[offset + 1]), b = Int(pixels[offset + 2])
+                        if g > 60 && g > r * 13 / 10 && g > b * 12 / 10 && pixels[offset + 3] > 150 { left = x; break }
+                    }
+                    if let left {
+                        if let last = bands.last, y - last.y <= 10 {
+                            bands[bands.count - 1] = (y, min(left, last.x))
+                        } else { bands.append((y, left)) }
+                    }
+                }
+                precondition(bands.count == 8, "All eight Completed statuses must render: \(bands)")
+                precondition(bands.map(\.x).max()! - bands.map(\.x).min()! <= 1,
+                    "Parent, six settings children and VS Code statuses share a column: \(bands)")
+            }
+        }
+        print("PASS: Capture Result's eight Completed statuses align at narrow/wide widths and increased Dynamic Type")
+    }
+
     @MainActor static func main() {
+        if CommandLine.arguments.contains("--capture-checkpoint-only") { captureResultActionsChecks(); screenshotsIncludedSettingsChecks(); windowsIncludedSettingsChecks(); captureResultAlignmentChecks(); return }
+        if CommandLine.arguments.contains("--windows-included-only") { windowsIncludedSettingsChecks(); return }
+        if CommandLine.arguments.contains("--screenshots-included-only") { screenshotsIncludedSettingsChecks(); return }
+        if CommandLine.arguments.contains("--capture-result-actions-only") { captureResultActionsChecks(); return }
         if CommandLine.arguments.contains("--rosetta-only") { restoreSummaryChecks(); return }
         if CommandLine.arguments.contains("--unsupported-repair-explanation-only") { unsupportedRepairExplanationChecks(); return }
         if CommandLine.arguments.contains("--text-status-layout-only") { textStatusLayoutChecks(); return }
@@ -1095,6 +1222,10 @@ import SwiftUI
         precondition(RestoreDebugScenario.rebuilding.domains.flatMap(\.items).filter { $0.state == .working }.allSatisfy { $0.item.reason == nil })
         precondition(fixtureSource.contains("RestorePreviewContent(title:"))
         #endif
+        captureResultActionsChecks()
+        screenshotsIncludedSettingsChecks()
+        windowsIncludedSettingsChecks()
+        captureResultAlignmentChecks()
         restoreSummaryChecks()
         precondition(CaptureMetricCard.tone(attention: false, count: 0) == .blue)
         precondition(CaptureMetricCard.tone(attention: false, count: 5) == .blue)
