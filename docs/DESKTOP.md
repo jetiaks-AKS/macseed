@@ -18,8 +18,8 @@ through Codex remain valid. Clean Install does not qualify universal Tailscale
 Repair: ambiguous/damaged privileged Repair states remain fail-closed. Continuing
 compatibility qualification, MAS, Desktop Zsh and Secure SSH remain open. The
 [latest qualification snapshot](#recent-restore-qualification-and-performance)
-retains a current unsupported Tailscale result; historical success is not a
-qualification of every metadata/state combination.
+records the qualified Tailscale 1.104.1 Clean Install and the remaining unsafe
+Repair boundary; neither qualifies every metadata/state combination.
 Private SSH identity transfer remains unavailable until 16H. Bundle-backed
 Environment Status (Stage 16K) is complete; the subsequent Status → Restore handoff is implemented and manually
 approved. Desktop Visual Unification is complete.
@@ -308,8 +308,10 @@ that target state is unchanged; no intermediate phases or percentages are inferr
    retain its evidence as stale until explicit Refresh Preview.
    Cancelled, failed or interrupted refreshes clear the old Preview. Back retains
    selection and requires a fresh Prepare.
-4. Inline **Needs Preparation** and one **Fix Issues…** action appear before Tasks
-   only when structured state offers supported PKG preparation or Automation access.
+4. **Fix Issues…** appears when structured state offers supported PKG preparation
+   or Automation access. The duplicate **Needs Preparation** block is removed;
+   **Refresh Preview** performs reinspection. Unsupported rows explain the limitation,
+   and text wraps without overlapping status labels.
    Ready prerequisites without preparation actions are hidden. Manual blockers retain
    their instructions without promising an automatic fix. Specific structured causes
    replace duplicate aggregate inspection consequences; Core evidence remains intact.
@@ -673,12 +675,26 @@ Preview; if Automation was already checked, refusal rechecks without PKG consent
 Consent applies only to the displayed identities and current selection; after
 inspection a new Preview requires a separate Rebuild confirmation. A changed or
 expired identity requires new consent. No archive download occurs on ordinary
-Refresh Preview. Real Tailscale qualification of this flow remains open; see the
+Refresh Preview. Tailscale 1.104.1 passed preparation, Clean Install, Verification
+and a fresh matching Preview; this does not qualify unsafe Repair. See the
 [Core contract](core/APPLICATION-INTERFACE.md#explicit-pkg-installer-preparation).
 
 ## Recent Restore qualification and performance
 
-Status reviewed against `develop` at `c06e530` (2026-10-16). User-reported controlled
+Current checkpoint: `778b816`, with subsequent user-confirmed real-Mac evidence
+(2026-10-17). Tailscale 1.104.1 passed **PKG Preparation → Clean Install →
+Verification → fresh matching Preview**. Receipt-backed PKG Repair provenance is
+implemented, but unsafe Tailscale Repair remains **Unsupported**
+(`ownership_unproven`); in-place Repair is not implemented. Homebrew removal of
+Tailscale was performed separately from Macseed and is not a Restore capability.
+
+A real Partial Restore completed with **105 Verified and one Tailscale Mismatch**,
+correctly showing **Rebuild Needs Attention**. Item-local `cask_target_conflict`
+and `cask_execution_requirements_unsupported` preserve independent executable work
+unless a global prerequisite blocks it. MAS Restore is the next mandatory
+functional priority; Secure SSH and the remaining release gates stay open.
+
+Historical performance evidence at `c06e530` (2026-10-16): user-reported controlled
 real-Mac checks accepted the final category/item Result UI, nested macOS settings,
 compact confirmed counters, Early Cancelled and Partial Stopped presentation.
 This closes the functional Result UI checkpoint, not all Stage 16I completion,
@@ -703,10 +719,11 @@ performance on another Mac. Existing focused tests cover local PKG evidence,
 no-download classification, Verification, trace behavior and Desktop's environment
 allowlist; this documentation audit did not rerun tests or workflows.
 
-The latest reported Restore still has **127/128 Verified, 1 unsupported/unverified,
+At that historical performance checkpoint, Restore reported **127/128 Verified, 1 unsupported/unverified,
 0 Mismatch**, with `tailscale-app` unresolved. **Process Result: Failed**,
 **Reason: `bootstrap_failed`**, **Verification verdict: `incomplete`** remain the
-reported facts. Verification collection completeness and conformity verdict are
+historical facts, superseded for current qualification by the bounded results above.
+Verification collection completeness and conformity verdict are
 separate; global predicate counts are not Successful plan-row counts. Removing
 network delays does not qualify Tailscale installation/repair, VPN activation or
 application health, and does not convert this partial result into success.

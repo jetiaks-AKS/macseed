@@ -1339,6 +1339,9 @@ for artifact in row['artifacts']:
 
     def test_cask_repair_fresh_install_and_cli_only_damage(self):
         metadata, prefix, caskroot = self.repair_cask_fixture(cli=True)
+        # Isolate the Cask so unrelated folder creation cannot count as executable work.
+        blueprint = self.stage / 'blueprint.conf'
+        blueprint.write_text(blueprint.read_text().replace('[workspace-folders]\nProjects\n', '[workspace-folders]\n'))
         self.pack()
         prepared = self.plan_result()
         self.assertEqual(next(r for r in prepared['plan'] if r['domain'] == 'homebrew-casks')['action'], 'reinstall')
@@ -1350,8 +1353,14 @@ for artifact in row['artifacts']:
         link = prefix / 'bin/binary-cli'
         link.unlink()
         attention = self.plan_result()
-        self.assertFalse(attention['readiness']['ready'])
-        self.assertTrue(any(c['code'] == 'cask_target_conflict' for c in attention['readiness']['conditions']))
+        self.assertTrue(attention['readiness']['ready'])
+        self.assertFalse(attention['has_executable_changes'])
+        self.assertTrue(any(c['code'] == 'cask_target_conflict' and c['scope'] == 'item'
+                            and c['status'] == 'unsupported' for c in attention['readiness']['conditions']))
+        row = next(r for r in attention['plan'] if r['domain'] == 'homebrew-casks')
+        self.assertEqual((row['action'], row['disposition'], row['reason']),
+                         ('reinstall', 'blocked', 'cask_target_conflict'))
+        self.assertNotIn('qualification_id', row)
         shutil.rmtree(app)
         # Fresh installation is allowed only after registration and all CLI targets are absent.
         Path(self.environment['TEST_CASK_STATE']).unlink()
@@ -1359,6 +1368,7 @@ for artifact in row['artifacts']:
         fresh = self.plan_result()
         row = next(r for r in fresh['plan'] if r['domain'] == 'homebrew-casks')
         self.assertTrue(fresh['readiness']['ready'])
+        self.assertTrue(fresh['has_executable_changes'])
         self.assertEqual((row['action'], row['disposition']), ('install', 'planned'))
         self.assertFalse(Path(self.environment['TEST_CASK_LOG']).exists())
 

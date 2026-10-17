@@ -5,7 +5,14 @@ Macseed reconstructs selected supported environment state:
 Capture uses the same production Core; its Stage 16E end-to-end manual gate is approved.
 Desktop Restore preparation/execution uses the same Core. Its historical broad
 manual gate advanced through Restore/Homebrew checkpoint `08e2b469`, with real convergence
-to a fresh Everything Already Matches Preview. Current results and qualification
+to a fresh Everything Already Matches Preview. Checkpoint `778b816` adds
+receipt-backed PKG Repair provenance and restores Independent Restore for local
+Cask conflicts. Subsequent Tailscale 1.104.1 PKG Preparation → Clean Install →
+Verification → fresh matching Preview passed; unsafe Repair remains Unsupported
+(`ownership_unproven`), and in-place Repair is not implemented. A real Partial
+Restore reported 105 Verified and one Tailscale Mismatch with Rebuild Needs Attention.
+Tailscale removal through Homebrew was separate from Macseed. Current results and
+qualification
 limits are recorded in [Desktop](DESKTOP.md#recent-restore-qualification-and-performance);
 continuing compatibility and remaining Desktop qualification are tracked in
 [TODO](../TODO.md#restorehomebrew-checkpoint--08e2b469).
@@ -70,7 +77,10 @@ Unselected settings remain untouched; observation errors never mean absence.
 
 Application Prepare returns a plan and prerequisites. Execute rebuilds them and
 rejects a stale ID before publication. External prerequisite resolution requires
-Check Again and confirmation of the new plan. CLI confirmation uses the terminal.
+Refresh Preview and confirmation of the new plan. Desktop offers Fix Issues… for
+available consent-bound preparation. Local unsupported Casks remain selected and
+skipped while independent executable work proceeds; global prerequisites still
+block execution. CLI confirmation uses the terminal.
 See [Core interface](core/APPLICATION-INTERFACE.md) and [CLI](toolkit/CLI.md).
 
 ## Secure identities

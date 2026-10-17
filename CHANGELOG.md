@@ -15,10 +15,12 @@ The format is based on the principles of **Keep a Changelog**.
   and stale-component checks. Unproven legacy cleanup remains blocked.
 
 * Explicit, consent-bound preparation of supported native PKG casks from older
-  Bundles missing payload requirements. Check Again lists installers before inert
+  Bundles missing payload requirements. Fix Issues… lists installers before inert
   inspection; short-lived identity-bound evidence enables a fresh Preview without
   automatic downloads. Installation still requires separate Rebuild confirmation.
-  Real Tailscale qualification remains open.
+  Tailscale 1.104.1 passed PKG Preparation → Clean Install → Verification → fresh
+  matching Preview. Unsafe Repair remains Unsupported (`ownership_unproven`);
+  in-place Repair is not implemented.
 
 * Restore Graceful Stop now latches operation-wide and applies at safe checkpoints,
   preserving active operations/post-checks and Homebrew launch atomicity. Desktop
@@ -60,7 +62,12 @@ The format is based on the principles of **Keep a Changelog**.
   actions and authoritative item progress through final Verification.
 
 * Restore keeps unsupported independent Homebrew casks visible and skips them while
-  supported work continues, retaining operation-wide safety gates and final Verification.
+  supported work continues, including item-local `cask_target_conflict` and
+  `cask_execution_requirements_unsupported`, retaining operation-wide safety gates
+  and final Verification.
+* Desktop uses Fix Issues… for available preparation and Refresh Preview for
+  reinspection, removes the duplicate Needs Preparation block, prevents text/status
+  overlap and explains Unsupported outcomes.
 
 * Application Restore detects stalled Homebrew items after three minutes without
   observable progress, terminates their owned processes, continues independent

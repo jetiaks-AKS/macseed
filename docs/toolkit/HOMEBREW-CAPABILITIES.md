@@ -91,8 +91,11 @@ state is safe for Macseed. Registration and empty predicates never prove payload
 Final Core Verification and a fresh Preview establish convergence.
 
 Preview and readiness report every selected cask independently. A primitive
-failure blocks only casks requiring that primitive; the execution gate still
-stops before mutation. Login-item Automation is inspected only when the selected
+failure blocks only casks requiring that primitive. Item-local
+`cask_target_conflict` and `cask_execution_requirements_unsupported` skip those
+casks while independent executable work continues; global prerequisites still
+stop execution before mutation. An all-unsupported plan has no executable changes.
+Login-item Automation is inspected only when the selected
 repair lifecycle requires it.
 
 ### Clean native package installation
@@ -123,7 +126,8 @@ registration or a receipt alone. Captured source payload predicates add stronger
 pre-install postconditions where available, not target installation evidence.
 Post-install checks and final Global Verification observe state again; a successful
 native command or prior observation is not substituted for that evidence.
-Repair with unresolved caveats remains
+PKG caveats alone do not block Repair when the complete native lifecycle qualifies
+as described below. Unresolved ownership or executable requirements remain
 unsupported; extension/VPN activation and license conditions remain vendor/user work.
 
 ### Receipt-backed PKG Repair provenance
@@ -148,6 +152,14 @@ was created by that installer. Such cleanup remains unsupported with
 `lifecycle / ownership_unproven`; Macseed does not delete it or bypass Homebrew.
 Installer inspection and consent-bound preparation retain their existing lifetime
 and identity rules; this provenance adds no Preview download or automatic Repair.
+In-place Repair is not implemented.
+
+At checkpoint `778b816` and subsequent real-Mac qualification, Tailscale 1.104.1
+passed PKG Preparation → Clean Install → Verification → fresh matching Preview.
+Unsafe Tailscale Repair remains Unsupported (`ownership_unproven`); the successful
+Install does not prove cleanup ownership. A separate real Partial Restore retained
+105 Verified and one Tailscale Mismatch with Rebuild Needs Attention. Native
+Homebrew removal was performed separately from Macseed, not as Restore cleanup.
 
 ### Explicit inert archive inspection
 

@@ -206,9 +206,9 @@ and optionally a cask `selected_item_index` in selected Blueprint order.
 Statuses are `satisfied`, `safely_satisfiable`, `external_action_required`,
 `unsupported`. Domains report all encountered item-local skips before their first
 operation-wide blocker. `scope=operation` retains whole-operation blocking.
-Only `homebrew-casks` / `cask_execution_requirements_unsupported` with an item index
-uses `scope=item`: the item stays selected and blocked, while independent planned
-work may proceed. Other prerequisite failures retain operation-wide blocking.
+For `homebrew-casks`, `cask_execution_requirements_unsupported` and
+`cask_target_conflict` with an item index use `scope=item`: the item stays selected
+and blocked, while independent planned work may proceed. Other prerequisite failures retain operation-wide blocking.
 `ready` expresses environmental safety; `has_executable_changes` requires a
 remaining planned action (or selected secure work). An all-unsupported plan offers
 no Rebuild; Execute returns `no_executable_work` before publication.
@@ -347,7 +347,15 @@ The contract is requalified after authorization and before native mutation.
 Checksummed HTTPS downloads retain Homebrew's checksum verification. Standard
 `no_check` declarative payloads explicitly use HTTPS/source trust, not a claimed
 checksum or publisher signature; unchecked native packages remain unsupported.
-Free-form activation/license caveats, Rosetta setup, manual/script installers,
+For native PKG Repair, caveats are informational only after the complete installed
+and current lifecycle, exact receipts and cleanup ownership qualify. Private
+receipt-backed `pkg_ownership` provenance detects stale source/receipt identities
+and changed receipt-owned cleanup files; fingerprints do not establish ownership.
+Unreceipted legacy wrappers cannot be adopted from path or content and remain
+Unsupported (`ownership_unproven`). No in-place Repair is implemented; see the
+[PKG Repair contract](../toolkit/HOMEBREW-CAPABILITIES.md#receipt-backed-pkg-repair-provenance).
+
+Unqualified activation/license requirements, Rosetta setup, manual/script installers,
 flight blocks, unqualified generated executable behavior and kernel-extension cleanup still
 need external action or additional capability support.
 
@@ -473,7 +481,10 @@ logs, locks and terminal output), and compiler/linker CPU time reset the timer. 
 process liveness and diagnostic output do not count. Progress observations remain
 private; they are not percentages, network speed or proof of installation.
 
-Accepted unsupported casks remain visible in Prepare and final results. Core carries
+Accepted item-local `cask_target_conflict` and
+`cask_execution_requirements_unsupported` casks remain visible in Prepare and final
+results without becoming executable actions. Global prerequisites remain blocking.
+Core carries
 their identities in private per-operation state; the production consumer records
 `skipped` / `cask_execution_requirements_unsupported` without invoking their
 installer, even if metadata later becomes eligible. It also repeats the existing

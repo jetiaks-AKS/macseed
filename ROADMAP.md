@@ -35,7 +35,8 @@ owns the implemented application contract.
 **In progress.** Completed slices do not establish full Restore qualification,
 secure integration or packaged clean-Mac readiness. Slice IDs are historical
 identifiers, not execution order. Status is reviewed against `develop` at
-`c06e530` (2026-10-16). Implemented means code exists; automated-tested and
+`778b816`, with subsequent real-Mac qualification (2026-10-17). Implemented means
+code exists; automated-tested and
 real-Mac qualified describe separate evidence. Partial qualification does not close
 open/deferred gates, and no completed slice alone establishes release readiness.
 
@@ -71,23 +72,25 @@ Complete one bounded checkpoint at a time. Functional Restore Result/Visual
 Unification, operation-wide Graceful Stop implementation and Stage 16J are already
 implemented; remaining qualifications do not reopen those UI implementations.
 
-1. **Next — Homebrew Cask / Tailscale:** identify the missing local evidence or
-   unsupported capability behind `tailscale-app`, implement only a justified generic
-   fix, then qualify clean Install → Verify → fresh no-op. The performance fix is
-   complete; current real Restore remains Failed / `bootstrap_failed`, with
-   127/128 Verified, one unsupported/unverified and verdict `incomplete`.
-2. **MAS automatic restoration:** close native authorization/install/post-Verify
+Tailscale 1.104.1 passed PKG Preparation → Clean Install → Verification → fresh
+matching Preview. Receipt-backed PKG Repair provenance is implemented; unsafe
+Tailscale Repair remains Unsupported (`ownership_unproven`), with no in-place
+Repair. Independent Restore continues safe work around item-local Cask conflicts;
+a real Partial Restore reported 105 Verified and one Tailscale Mismatch with
+**Rebuild Needs Attention**. These bounded gates do not close Stage 16.
+
+1. **Next — MAS automatic restoration:** close native authorization/install/post-Verify
    and repeat/no-op qualification through the existing Core; mandatory before 1.0.
    Complete the remaining supported-domain Restore gates tracked in TODO.
-3. **Secure SSH Desktop (16H):** implement and qualify the inherited secret-channel
+2. **Secure SSH Desktop (16H):** implement and qualify the inherited secret-channel
    interaction, encryption/unlock/import confirmation and secure privacy coverage.
-4. **Reliability / security and remaining 16I/16K qualification:** Stage 3C durable
+3. **Reliability / security and remaining 16I/16K qualification:** Stage 3C durable
    Cask reconciliation, installer/privileged-process quiescence, watchdog, partial
    and interrupted Verification, stale inputs, transport, accessibility and lifecycle
    ownership. Diagnostic logs do not provide recovery authority.
-5. **Stage 17 — Distribution & Clean-Mac Qualification.**
-6. **Early Access / Alpha.**
-7. **Macseed 1.0.** Release Readiness is not the current checkpoint.
+4. **Stage 17 — Distribution & Clean-Mac Qualification.**
+5. **Early Access / Alpha.**
+6. **Macseed 1.0.** Release Readiness is not the current checkpoint.
 
 Real-Mac performance observations and their differing-run limitations are recorded
 in [Desktop qualification](docs/DESKTOP.md#recent-restore-qualification-and-performance),

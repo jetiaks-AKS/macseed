@@ -8,15 +8,13 @@ do not reopen completed UI work. Stage 16 as a whole remains open; follow the si
 
 <a id="restorehomebrew-checkpoint--08e2b469"></a>
 
-## Next — Homebrew Cask / Tailscale
+## Continuing Homebrew qualification
 
-- [ ] Determine the exact local evidence/capability gap for `tailscale-app` and
-  resolve it through the generic provider where safe. Qualify clean Install →
-  Verify → fresh no-op on a real Mac. The latest run still reports one
-  unsupported/unverified requirement and Failed / `bootstrap_failed`; eliminated
-  PKG download delays do not close this capability gate. Historical successful
-  Install does not prove current-metadata compatibility, universal Repair,
-  VPN activation or application runtime health.
+Clean Install qualification is recorded in
+[Desktop](docs/DESKTOP.md#recent-restore-qualification-and-performance). MAS Restore
+is the next mandatory functional priority. Unsafe Tailscale Repair remains
+Unsupported (`ownership_unproven`); in-place Repair is not implemented.
+
 - [ ] Broaden representative Homebrew Install/Repair → Verify → fresh no-op gates
   as compatibility maintenance. Keep ambiguous/damaged privileged Repair states
   fail-closed and retain action-specific requirements/ownership evidence.
