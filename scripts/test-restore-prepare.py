@@ -1470,6 +1470,51 @@ time.sleep(60)
         self.assertFalse(Path(self.environment["TEST_CASK_LOG"]).exists())
         self.assertFalse((self.project / "config/.bundle-publication").exists())
 
+    def test_rosetta_prerequisite_is_item_local_and_refreshable(self):
+        metadata = self.cask_fixture(mixed=True)
+        metadata['casks'][0]['caveats_rosetta'] = True
+        Path(self.environment['TEST_CASK_METADATA']).write_text(json.dumps(metadata))
+        provider = self.project / 'modules/apps/adapters/homebrew_cask.py'
+        fixture = """
+class RosettaFixtureObserver(PublicObserver):
+    @contract('rosetta')
+    def rosetta_available(self):
+        state = os.environ['TEST_ROSETTA_STATE']
+        if state == 'error': raise OSError('fixture observation failure')
+        return state != 'missing'
+PublicObserver = RosettaFixtureObserver
+"""
+        provider.write_text(provider.read_text().replace("if __name__ == '__main__':", fixture + "\nif __name__ == '__main__':"))
+        self.pack()
+        for state in ('intel', 'available', 'missing', 'error', 'available'):
+            with self.subTest(state=state):
+                self.environment['TEST_ROSETTA_STATE'] = state
+                prepared = self.plan_result()
+                row = next(r for r in prepared['plan'] if r['domain'] == 'homebrew-casks')
+                if state == 'missing':
+                    self.assertEqual((row['disposition'], row['reason']), ('blocked', 'cask_rosetta_required'))
+                    self.assertEqual(row['diagnostic'], {'primitive': 'rosetta', 'condition': 'installation_required'})
+                    condition = next(c for c in prepared['readiness']['conditions'] if c['code'] == 'cask_rosetta_required')
+                    self.assertEqual((condition['scope'], condition['status']), ('item', 'external_action_required'))
+                    self.assertTrue(prepared['readiness']['ready'])
+                    self.assertTrue(prepared['has_executable_changes'])
+                    self.assertTrue(any(r['domain'] == 'homebrew-packages' and r['disposition'] == 'planned' for r in prepared['plan']))
+                    only = self.plan_result(selection={'categories': [], 'items': {'homebrew-casks': [row['selection_item_id']]}})
+                    self.assertTrue(only['readiness']['ready'])
+                    self.assertFalse(only['has_executable_changes'])
+                    result, events = self.execute(prepared['prepared_plan_id'])
+                    self.assertEqual(result.returncode, 2, events)
+                    self.assertTrue(events[-1]['data']['independent_work_completed'], events[-1])
+                    self.assertTrue(Path(self.environment['TEST_CASK_STATE'] + '.formula').exists())
+                    self.assertFalse(Path(self.environment['TEST_CASK_LOG']).exists())
+                elif state == 'error':
+                    self.assertEqual(row['reason'], 'cask_metadata_unavailable')
+                    self.assertFalse(prepared['readiness']['ready'])
+                else:
+                    self.assertEqual((row['action'], row['disposition']), ('install', 'planned'))
+                    self.assertTrue(prepared['readiness']['ready'])
+        self.assertFalse(Path(self.environment['TEST_CASK_LOG']).exists())
+
     def test_ownership_conflict_skips_item_and_preserves_independent_work(self):
         metadata, prefix, caskroot = self.repair_cask_fixture()
         target = self.root / 'unowned-wrapper'
@@ -1853,7 +1898,7 @@ target.symlink_to(source)
             value = json.loads(json.dumps(metadata))
             value["casks"][0]["artifacts"].append({artifact: [{}]})
             self.assertEqual(check(value), "ready")
-        for key, value in (("caveats", "EULA"), ("caveats_rosetta", True),
+        for key, value in (("caveats", "EULA"),
                            ("depends_on", {"unknown": ["helper"]}), ("container", {"type": "pkg"}),
                            ("disabled", True), ("tap", "third-party/tap"), ("rename", ["something"])):
             candidate = json.loads(json.dumps(metadata))

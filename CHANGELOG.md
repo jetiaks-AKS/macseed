@@ -11,6 +11,10 @@ The format is based on the principles of **Keep a Changelog**.
 
 ### Added
 
+* Homebrew Casks requiring Rosetta use a read-only availability probe and an
+  item-scoped manual prerequisite instead of unconditional Unsupported. Desktop
+  explains manual preparation and Refresh Preview; Macseed never installs Rosetta.
+
 * Receipt-backed PKG Cask Repair qualification with private ownership provenance
   and stale-component checks. Unproven legacy cleanup remains blocked.
 

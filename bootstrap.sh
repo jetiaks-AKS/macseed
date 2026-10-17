@@ -616,7 +616,8 @@ bootstrap_application_readiness_timed() (
                 if [[ "${MACSEED_APPLICATION_ALLOW_ITEM_SKIPS:-false}" == true &&
                       "$HOMEBREW_ADAPTER_STATE" == unsupported &&
                       ( "$CASK_APPLICATION_CONDITION" == cask_execution_requirements_unsupported ||
-                        "$CASK_APPLICATION_CONDITION" == cask_target_conflict ) ]]; then
+                        "$CASK_APPLICATION_CONDITION" == cask_target_conflict ||
+                        "$CASK_APPLICATION_CONDITION" == cask_rosetta_required ) ]]; then
                     if [[ "${MACSEED_APPLICATION_READINESS_REPORT:-false}" == true ]]; then
                         printf '%s\t%s\n' "$CASK_APPLICATION_CONDITION" "$index"
                     fi

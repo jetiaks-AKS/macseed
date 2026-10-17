@@ -33,6 +33,7 @@ NAME = re.compile(r'[A-Za-z0-9][A-Za-z0-9+_.@-]*')
 UNSUPPORTED = 'cask_execution_requirements_unsupported'
 CONFLICT = 'cask_target_conflict'
 OBSERVATION = 'cask_metadata_unavailable'
+ROSETTA_REQUIRED = 'cask_rosetta_required'
 
 # Explicit public types and their bounded standard destinations, not a wildcard
 # allowing every artifact with a target. Generic artifact is checked separately.
@@ -205,6 +206,31 @@ def read_json(value):
 
 
 class PublicObserver:
+    @contract('rosetta')
+    def rosetta_available(self):
+        # A translated Python still reports x86_64. The documented per-process
+        # sysctl distinguishes it from Intel; -i ignores an absent key on Intel.
+        machine = platform.machine()
+        require(machine in ('arm64', 'x86_64'), OBSERVATION)
+        if machine == 'x86_64':
+            translated = self.read(['/usr/sbin/sysctl', '-in', 'sysctl.proc_translated']).strip()
+            require(translated in (b'', b'0', b'1'), OBSERVATION)
+            if translated != b'1':
+                return True  # Intel needs no translation.
+        # Direct POSIX spawn, not LaunchServices: no app launch / install prompt.
+        # Apple system_cmds/arch/arch.c calls posix_spawn with an x86_64 preference.
+        # A fixed system no-op proves execution availability, never file presence.
+        probe = subprocess.run(['/usr/bin/arch', '-x86_64', '/usr/bin/true'],
+                               env={'PATH': '/usr/bin:/bin:/usr/sbin:/sbin', 'LC_ALL': 'C'},
+                               stdin=subprocess.DEVNULL, capture_output=True, timeout=5)
+        if probe.returncode == 0 and not probe.stdout and not probe.stderr:
+            return True
+        if (probe.returncode == 1 and not probe.stdout and
+                probe.stderr in (b'arch: posix_spawnp: /usr/bin/true: Bad CPU type in executable\n',
+                                 b'arch: posix_spawn: /usr/bin/true: Bad CPU type in executable\n')):
+            return False
+        raise Unsafe(OBSERVATION)
+
     @timed("cask.external")
     def read(self, arguments):
         command = arguments[:2]
@@ -976,7 +1002,10 @@ def requirements(row, observer, operation=None):
     caveats = row.get('caveats')
     native_package = operation in ('install', 'reinstall') and any(kind == 'pkg' for kind, _ in artifact_rows(row['artifacts']))
     require(not caveats or (native_package and isinstance(caveats, str) and len(caveats) <= 16384))
-    require(not row.get('caveats_rosetta'))
+    rosetta = row.get('caveats_rosetta')
+    require(rosetta is None or isinstance(rosetta, bool), 'homebrew_metadata_incompatible')
+    if rosetta and not observer.rosetta_available():
+        raise Unsafe(ROSETTA_REQUIRED, {'primitive': 'rosetta', 'condition': 'installation_required'})
     checksum = row.get('sha256')
     require(isinstance(checksum, str) and (re.fullmatch(r'[0-9a-f]{64}', checksum) or checksum == 'no_check'))
     url = urlsplit(row.get('url', ''))

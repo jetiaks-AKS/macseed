@@ -328,6 +328,10 @@ that target state is unchanged; no intermediate phases or percentages are inferr
    for remaining executable work. Existing no-action conflicts also remain
    visible without requesting their mutation; their consumer semantics are
    unchanged. An all-unsupported plan offers no Rebuild.
+   A Rosetta prerequisite stays on the affected Cask with a manual Terminal
+   installation instruction and **Refresh Preview**; Fix Issues never installs
+   Rosetta. Technical Details distinguish unavailable Rosetta from observation
+   failure. Independent executable work remains available.
    Do not imply exhaustive readiness.
 5. Preview groups actions by category, showing changes, already matching items,
    conflicts, warnings and unknown observations. Call out installs, settings writes,

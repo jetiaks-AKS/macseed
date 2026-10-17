@@ -290,9 +290,11 @@ def prepared_restore(path, disabled_groups, include_secure, selection=None, inst
             identity = sections['homebrew-casks'][index - 1]
             primary = next((row for row in records if row['domain'] == 'homebrew-casks'
                             and row['item_id'] == identity and row['disposition'] == 'blocked'
-                            and row['reason'] in {'cask_execution_requirements_unsupported', 'cask_target_conflict'}), None)
+                            and row['reason'] in {'cask_execution_requirements_unsupported', 'cask_target_conflict', 'cask_rosetta_required'}), None)
             if primary is not None:
-                condition.update(code=primary['reason'], status='unsupported', scope='item', compatibility='item_unsupported')
+                condition.update(code=primary['reason'],
+                                 status='external_action_required' if primary['reason'] == 'cask_rosetta_required' else 'unsupported',
+                                 scope='item', compatibility='item_unsupported')
                 if primary.get('diagnostic'):
                     condition['diagnostic'] = primary['diagnostic']
         requirements['ready'] = all(condition['status'] in ('satisfied', 'safely_satisfiable')
@@ -394,7 +396,7 @@ READINESS_CODES = {
     "privileged_lifecycle_unknown", "homebrew_platform_incompatible",
     "missing_required_dependency", "secure_bridge_required", "invalid_selected_input",
     "cask_metadata_unavailable", "cask_execution_requirements_unsupported",
-    "cask_target_conflict", "cask_authorization_required", "cask_repair_not_supported",
+    "cask_target_conflict", "cask_rosetta_required", "cask_authorization_required", "cask_repair_not_supported",
     "internet_required", "command_line_tools_required",
 }
 
@@ -446,7 +448,7 @@ def prepared_requirements(stage, include_secure, preparation_context=""):
                     not 1 <= int(fields[2]) <= len(sections[domain])):
                 raise PreviewFailed()
             condition["selected_item_index"] = int(fields[2])
-            if domain == "homebrew-casks" and code in {"cask_execution_requirements_unsupported", "cask_target_conflict"}:
+            if domain == "homebrew-casks" and code in {"cask_execution_requirements_unsupported", "cask_target_conflict", "cask_rosetta_required"}:
                 condition["scope"] = "item"
         conditions.append(condition)
     if include_secure:
@@ -475,6 +477,7 @@ def prepared_requirements(stage, include_secure, preparation_context=""):
         'cask_launchctl_observation_failed': 'observation_failure',
         'cask_execution_requirements_unsupported': 'item_unsupported',
         'cask_target_conflict': 'item_unsupported',
+        'cask_rosetta_required': 'item_unsupported',
     }
     for condition in conditions:
         if condition['code'] in compatibility_codes:
@@ -514,7 +517,7 @@ def readiness(stage, include_secure, secure_ready=False, secure_only=False, prep
     fields = output.decode("ascii", errors="replace").strip().split("\t")
     status = fields[0]
     cask_conditions = {"cask_metadata_unavailable", "cask_execution_requirements_unsupported",
-                       "cask_target_conflict", "cask_authorization_required", "cask_repair_not_supported",
+                       "cask_target_conflict", "cask_rosetta_required", "cask_authorization_required", "cask_repair_not_supported",
                        "cask_launchctl_observation_failed"}
     item_index = None
     if len(fields) == 2 and status in cask_conditions and fields[1].isascii() and fields[1].isdigit():
@@ -690,7 +693,7 @@ def restore_execute(operation_id, path, disabled_groups, include_secure, expecte
                         skipped_casks = [row["item_id"] for row in plan["plan"]
                                          if row["domain"] == "homebrew-casks" and
                                          row["disposition"] == "blocked" and
-                                         row["reason"] in {"cask_execution_requirements_unsupported", "cask_target_conflict"}]
+                                         row["reason"] in {"cask_execution_requirements_unsupported", "cask_target_conflict", "cask_rosetta_required"}]
                         owned = OwnedBootstrap(ROOT, dict(environment, MACSEED_PERFORMANCE_SCOPE="bootstrap"), secure_evidence, record_event,
                                                identities, skipped_casks=skipped_casks,
                                                cask_plans={row['item_id']: row['qualification_id'] for row in plan['plan']

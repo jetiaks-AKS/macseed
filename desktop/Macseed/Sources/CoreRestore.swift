@@ -107,6 +107,9 @@ struct CoreRestorePreparation: Decodable {
             automationRequirement && condition != "authorization_denied"
         }
         var explanation: String {
+            if primitive == "rosetta" && condition == "installation_required" {
+                return "Rosetta is required for this application. Install it manually in Terminal with softwareupdate --install-rosetta, follow Apple's prompts, then Refresh Preview. Macseed does not install Rosetta."
+            }
             if automationRequirement {
                 return condition == "application_unavailable"
                     ? "Macseed cannot inspect login items without System Events permission. Choose Fix Issues… to allow access and check the current state again."
@@ -129,6 +132,7 @@ struct CoreRestorePreparation: Decodable {
             switch primitive {
             case "login_item": "login item"
             case "launchctl": "launch service"
+            case "rosetta": "Rosetta availability"
             case "payload": "application payload"
             case "historical_metadata": "installed lifecycle contract"
             default: primitive.replacingOccurrences(of: "_", with: " ")
@@ -157,6 +161,7 @@ struct CoreRestorePreparation: Decodable {
             guard domain == "homebrew-casks", action == "reinstall",
                   !["planned", "satisfied"].contains(disposition),
                   diagnostic?.automationRequirement != true,
+                  diagnostic?.primitive != "rosetta",
                   diagnostic?.condition != "preparation_required" else { return nil }
             return diagnostic?.repairExplanation
                 ?? "Automatic repair is unavailable. Macseed could not verify that the operation is safe."
@@ -178,8 +183,8 @@ struct CoreRestorePreparation: Decodable {
         let scope: String?
         var diagnostic: Diagnostic? = nil
         var isItemLocal: Bool {
-            scope == "item" && domain == "homebrew-casks" && ["cask_execution_requirements_unsupported", "cask_target_conflict"].contains(code)
-                && status == "unsupported" && (selectedItemIndex ?? 0) > 0
+            scope == "item" && domain == "homebrew-casks" && ["cask_execution_requirements_unsupported", "cask_target_conflict", "cask_rosetta_required"].contains(code)
+                && (status == "unsupported" || (code == "cask_rosetta_required" && status == "external_action_required")) && (selectedItemIndex ?? 0) > 0
         }
         var id: String { domain + ":" + code + ":" + String(selectedItemIndex ?? 0) }
         enum CodingKeys: String, CodingKey { case diagnostic, domain, code, status, scope, selectedItemIndex = "selected_item_index" }
@@ -192,7 +197,7 @@ struct CoreRestorePreparation: Decodable {
     }
     func isItemLocalSkip(_ row: Row) -> Bool {
         row.disposition == "blocked" && row.domain == "homebrew-casks"
-            && ["cask_execution_requirements_unsupported", "cask_target_conflict"].contains(row.reason ?? "")
+            && ["cask_execution_requirements_unsupported", "cask_target_conflict", "cask_rosetta_required"].contains(row.reason ?? "")
             && readiness.conditions.contains { $0.isItemLocal && $0.domain == row.domain && $0.code == row.reason }
     }
     func validate(expected: CoreRestoreSelection, catalog: CoreRestoreInspection.Inventory) throws {

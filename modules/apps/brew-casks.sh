@@ -165,7 +165,8 @@ install_brew_cask() {
         cask_application_readiness "$cask" "$install_command" || {
             if [[ "${MACSEED_APPLICATION_ALLOW_ITEM_SKIPS:-false}" == true &&
                   ( "$CASK_APPLICATION_CONDITION" == cask_execution_requirements_unsupported ||
-                    "$CASK_APPLICATION_CONDITION" == cask_target_conflict ) ]]; then
+                    "$CASK_APPLICATION_CONDITION" == cask_target_conflict ||
+                    "$CASK_APPLICATION_CONDITION" == cask_rosetta_required ) ]]; then
                 declare -F verification_application_operation_hook >/dev/null && verification_application_operation_hook homebrew-casks "$cask" "$install_command" skipped cask_execution_requirements_unsupported
                 warning "Homebrew cask requires unsupported execution: $cask"
             else
@@ -310,7 +311,8 @@ install_brew_casks() {
                   "${MACSEED_APPLICATION_ALLOW_ITEM_SKIPS:-false}" == true &&
                   "${HOMEBREW_ADAPTER_STATE:-}" == unsupported &&
                   ( "${HOMEBREW_ADAPTER_CONDITION:-}" == cask_execution_requirements_unsupported ||
-                    "${HOMEBREW_ADAPTER_CONDITION:-}" == cask_target_conflict ) ]]; then
+                    "${HOMEBREW_ADAPTER_CONDITION:-}" == cask_target_conflict ||
+                    "${HOMEBREW_ADAPTER_CONDITION:-}" == cask_rosetta_required ) ]]; then
                 install_brew_cask "$cask" install
                 item_errors=$((item_errors + 1))
                 continue
@@ -372,7 +374,8 @@ verify_brew_casks() {
         result=$?
         if [[ $result -eq 2 && "${HOMEBREW_ADAPTER_STATE:-}" == unsupported &&
               ( "${HOMEBREW_ADAPTER_CONDITION:-}" == cask_execution_requirements_unsupported ||
-                    "${HOMEBREW_ADAPTER_CONDITION:-}" == cask_target_conflict ) ]]; then
+                    "${HOMEBREW_ADAPTER_CONDITION:-}" == cask_target_conflict ||
+                    "${HOMEBREW_ADAPTER_CONDITION:-}" == cask_rosetta_required ) ]]; then
             verification_unsupported homebrew-casks "$item" installed || return 2
             declare -F comparison_note >/dev/null && comparison_note unverified "$GV_LAST_REF"
             continue

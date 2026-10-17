@@ -354,13 +354,34 @@ import SwiftUI
         precondition(diagnosticItem.item.reason == "cask_target_conflict")
         precondition(diagnosticItem.item.action.contains("launch service"))
         precondition(diagnosticItem.diagnostic?.technicalDescription == "primitive: launchctl\ncondition: foreign_target")
+        var rosettaRaw = semanticRaw
+        var rosettaRows = semanticRows
+        rosettaRows[3]["action"] = "reinstall"
+        rosettaRows[3]["reason"] = "cask_rosetta_required"
+        rosettaRows[3]["diagnostic"] = ["primitive": "rosetta", "condition": "installation_required"]
+        rosettaRaw["plan"] = rosettaRows
+        let rosettaPlan = try JSONDecoder().decode(CoreRestorePreparation.self, from: JSONSerialization.data(withJSONObject: rosettaRaw))
+        let rosettaTasks = RestoreTaskPresentation(preview: RestorePreviewPresentation(rosettaPlan, catalog: catalog), plan: rosettaPlan)
+        let rosettaItem = rosettaTasks.domains.flatMap(\.items).first { $0.id == "restore-3" }!
+        precondition(rosettaItem.item.action.contains("softwareupdate --install-rosetta"))
+        precondition(rosettaItem.item.action.contains("Refresh Preview"))
+        precondition(rosettaItem.diagnostic?.technicalDescription == "primitive: rosetta\ncondition: installation_required")
+        rosettaRows[3]["reason"] = "cask_metadata_unavailable"
+        rosettaRows[3]["diagnostic"] = ["primitive": "rosetta", "condition": "observation_failed"]
+        rosettaRaw["plan"] = rosettaRows
+        let unknownRosetta = try JSONDecoder().decode(CoreRestorePreparation.self, from: JSONSerialization.data(withJSONObject: rosettaRaw))
+        let unknownTasks = RestoreTaskPresentation(preview: RestorePreviewPresentation(unknownRosetta, catalog: catalog), plan: unknownRosetta)
+        let unknownItem = unknownTasks.domains.flatMap(\.items).first { $0.id == "restore-3" }!
+        precondition(unknownItem.item.action.contains("could not reliably inspect"))
+        precondition(!unknownItem.item.action.contains("install-rosetta"))
+        if CommandLine.arguments.contains("--rosetta-only") { return }
         let automationRaw: [String: Any] = ["domain": "homebrew-casks", "code": "cask_authorization_required",
             "status": "external_action_required", "scope": "operation", "selected_item_index": 1,
             "diagnostic": ["primitive": "login_item", "condition": "authorization_denied"]]
         let automation = try JSONDecoder().decode(CoreRestorePreparation.Condition.self, from: JSONSerialization.data(withJSONObject: automationRaw))
         precondition(automation.diagnostic?.automationRequirement == true && !automation.isItemLocal)
         precondition(RestorePrerequisiteSummaryPresentation.status([automation]) == "Authorization Required")
-        precondition(automation.diagnostic!.explanation.contains("Check Again"))
+        precondition(automation.diagnostic!.explanation.contains("Refresh Preview"))
         precondition(RestorePrerequisiteSummaryPresentation(conditions: [automation], ready: false).blockers.count == 1)
         var launchRaw = automationRaw
         launchRaw["code"] = "cask_launchctl_observation_failed"
@@ -396,9 +417,11 @@ import SwiftUI
         precondition(!scopedPrerequisites.isTerminalReady && !deduplicated.isTerminalReady)
         precondition(!RestorePrerequisiteSummaryPresentation(conditions: [successful], ready: false).isTerminalReady)
         let summarySource = try String(contentsOf: sourceRoot.appendingPathComponent("RestoreSummary.swift"), encoding: .utf8)
-        let readyBranch = summarySource.components(separatedBy: "if summary.isTerminalReady {")[1].components(separatedBy: "} else {")[0]
-        precondition(readyBranch.contains("Label(\"Ready\", systemImage: \"checkmark\")"))
-        precondition(!readyBranch.contains("DisclosureGroup") && !readyBranch.contains("ForEach") && !readyBranch.contains("Button"))
+        let prerequisiteView = summarySource.components(separatedBy: "struct RestorePrerequisiteSummaryView: View {")[1]
+            .components(separatedBy: "private struct RestoreBlockingPrerequisiteAreaView: View {")[0]
+        precondition(prerequisiteView.contains("if !summary.manualConditions.isEmpty {"))
+        precondition(prerequisiteView.contains("ForEach(summary.manualDomains") && prerequisiteView.contains("summary.manualConditions.filter"))
+        precondition(!prerequisiteView.contains("Label(\"Ready\"") && !prerequisiteView.contains("Button("))
         precondition(summarySource.contains("RestoreBlockingPrerequisiteAreaView(") && summarySource.contains("private var expanded = true"))
         let forged = CoreRestorePreparation.Diagnostic(primitive: "/private/path", condition: "foreign_target")
         precondition(!forged.valid)
@@ -570,6 +593,11 @@ import SwiftUI
         print("PASS: Working retains Preview warnings; execution awaits Verification; Partial requires typed independent success; item diagnostics preserve independent problems")
     }
     @MainActor static func main() async throws {
+        if CommandLine.arguments.contains("--rosetta-only") {
+            try taskPresentationChecks()
+            print("PASS: Rosetta prerequisite and observation failure in Restore Preview and Technical Details")
+            return
+        }
         if !CommandLine.arguments.contains("--independent-ownership-only") && !CommandLine.arguments.contains("--review-cancel-only") && !CommandLine.arguments.contains("--restore-macos-only") && !CommandLine.arguments.contains("--pkg-preparation-only") && !CommandLine.arguments.contains("--fix-issues-only") {
             for id in WorkspaceCategoryStyle.groups.flatMap({ $0.1 }) {
                 let problem = TaskItemPresentation(id: "problem", item: DisplayItem(id: "problem", title: "Problem", status: .attention, action: "Needs inspection"), state: .failed, resultLabels: ["Failed", "Mismatch"])

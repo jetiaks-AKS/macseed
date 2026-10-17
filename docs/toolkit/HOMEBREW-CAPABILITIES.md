@@ -98,13 +98,35 @@ stop execution before mutation. An all-unsupported plan has no executable change
 Login-item Automation is inspected only when the selected
 repair lifecycle requires it.
 
+### Rosetta prerequisite
+
+For `caveats_rosetta=true`, Intel needs no prerequisite. On Apple Silicon the
+adapter directly probes `/usr/bin/arch -x86_64 /usr/bin/true` with a fixed environment,
+no stdin and a five-second timeout. This is a POSIX spawn of a system no-op, not a
+LaunchServices app launch or installer; it does not request installation or a dialog.
+A translated caller is recognized using `sysctl.proc_translated`. No file or
+receipt presence alone establishes availability.
+
+Success removes only this prerequisite; all ordinary capability, PKG, ownership,
+cleanup and lifecycle checks remain. Only the exact native bad-CPU spawn failure
+means unavailable; other failures remain `cask_metadata_unavailable` with
+`rosetta / observation_failed`. Unavailable Rosetta returns item-scoped
+`cask_rosetta_required` / `external_action_required`, preserving independent work.
+An all-blocked plan has no executable changes. Desktop explains manual installation
+in Terminal with `softwareupdate --install-rosetta`, Apple's prompts and then
+**Refresh Preview**. Macseed never runs this installation command in Preview,
+Fix Issues or Rebuild. Every fresh Preview observes availability again.
+
+The probe follows [Apple's arch implementation](https://github.com/apple-oss-distributions/system_cmds/blob/main/arch/arch.c);
+manual installation follows [Apple Support](https://support.apple.com/en-us/102527).
+
 ### Clean native package installation
 
 Supported `pkg` Install treats public Homebrew caveats as installation information,
 retained in the bound execution requirements, rather than requiring Repair cleanup
 capabilities. Uninstall-only directives are not executed or qualified for Install;
 Repair still qualifies both historical and current cleanup. This does not qualify
-Rosetta requirements, executable Cask installers,
+executable Cask installers,
 unknown artifacts or system-extension activation. Exact package selectors must have
 no receipts, and expected payload plus declared delete targets must be absent; existing state is never
 adopted or cleaned by Install. Native installer authorization remains separate from

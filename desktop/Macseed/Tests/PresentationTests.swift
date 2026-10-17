@@ -4,6 +4,16 @@ import SwiftUI
 
 @main struct PresentationTests {
     @MainActor static func restoreSummaryChecks() {
+        let rosetta = CoreRestorePreparation.Diagnostic(primitive: "rosetta", condition: "installation_required")
+        precondition(rosetta.explanation.contains("softwareupdate --install-rosetta"))
+        precondition(rosetta.explanation.contains("Refresh Preview") && rosetta.explanation.contains("manually"))
+        precondition(rosetta.technicalDescription == "primitive: rosetta\ncondition: installation_required")
+        let requirement = CoreRestorePreparation.Condition(domain: "homebrew-casks", code: "cask_rosetta_required",
+            status: "external_action_required", selectedItemIndex: 1, scope: "item", diagnostic: rosetta)
+        precondition(requirement.isItemLocal && !rosetta.automationPreparationAvailable)
+        let rosettaSummary = RestorePrerequisiteSummaryPresentation(conditions: [requirement], ready: true)
+        precondition(!rosettaSummary.canFixIssues)
+
         let casks = ["firefox", "iina", "keka"].map {
             DisplayItem(id: "homebrew-casks:" + $0, title: $0, status: .attention,
                         action: "Repeated generic message", reason: "cask_execution_requirements_unsupported")
@@ -961,6 +971,7 @@ import SwiftUI
     }
 
     @MainActor static func main() {
+        if CommandLine.arguments.contains("--rosetta-only") { restoreSummaryChecks(); return }
         if CommandLine.arguments.contains("--unsupported-repair-explanation-only") { unsupportedRepairExplanationChecks(); return }
         if CommandLine.arguments.contains("--text-status-layout-only") { textStatusLayoutChecks(); return }
         if CommandLine.arguments.contains("--pkg-preparation-only") || CommandLine.arguments.contains("--fix-issues-only") {
@@ -1304,7 +1315,9 @@ import SwiftUI
         precondition(restoreView.contains("RestoreSelectionActions(status: model.selectionSummary, canPreview: model.canPreview"))
         precondition(restoreView.contains(".disabled(!canPreview)"))
         precondition(restoreView.contains("TaskDomainList(domains: domains.map"))
-        precondition(restoreView.contains("RestorePrerequisiteSummaryView") && restoreView.contains("prerequisites.blockers"))
+        precondition(restoreView.contains("RestorePrerequisiteSummaryView(summary: prerequisites, areas: areas)"))
+        precondition(restoreView.contains("var showsFixIssues: Bool { prerequisites.canFixIssues }"))
+        precondition(restoreView.contains("if showsFixIssues {") && !restoreView.contains("prerequisites.blockers"))
         let taskSource = try! String(contentsOf: sources.appendingPathComponent("TaskComponents.swift"), encoding: .utf8)
         precondition(taskSource.contains("private var expanded = []") && taskSource.contains("ForEach(domain.items)"))
         let previewContent = restoreView.components(separatedBy: "struct RestorePreviewContent: View")[1]

@@ -108,6 +108,57 @@ class CapabilityTests(unittest.TestCase):
         self.row['installed'] = '1.0'
         return directory
 
+    def test_rosetta_prerequisite_states_and_refresh(self):
+        self.row['caveats_rosetta'] = True
+        states = [('x86_64', b'', 0, b'', 'installable', None),
+                  ('arm64', b'', 0, b'', 'installable', None),
+                  ('arm64', b'', 1, b'arch: posix_spawnp: /usr/bin/true: Bad CPU type in executable\n',
+                   'unsupported', cask.ROSETTA_REQUIRED),
+                  ('arm64', b'', 1, b'permission denied\n', 'observation_error', cask.OBSERVATION),
+                  ('x86_64', b'1', 0, b'', 'installable', None)]
+        for machine, translated, code, stderr, state, reason in states:
+            with self.subTest(machine=machine, code=code, stderr=stderr), \
+                 patch('homebrew_cask.platform.machine', return_value=machine), \
+                 patch.object(self.observer, 'read', return_value=translated), \
+                 patch('homebrew_cask.subprocess.run', return_value=subprocess.CompletedProcess([], code, b'', stderr)) as run:
+                value = self.classify()
+                self.assertEqual((value['state'], value['reason']), (state, reason), value)
+                if reason == cask.ROSETTA_REQUIRED:
+                    self.assertEqual(value['diagnostic'], {'primitive': 'rosetta', 'condition': 'installation_required'})
+                    self.assertNotIn('qualification_id', value)
+                if machine == 'x86_64' and translated == b'':
+                    run.assert_not_called()
+                else:
+                    self.assertEqual(run.call_args.args[0], ['/usr/bin/arch', '-x86_64', '/usr/bin/true'])
+                    self.assertEqual(run.call_args.kwargs['env'], {'PATH': '/usr/bin:/bin:/usr/sbin:/sbin', 'LC_ALL': 'C'})
+                    self.assertEqual(run.call_args.kwargs['stdin'], subprocess.DEVNULL)
+                    self.assertEqual(run.call_args.kwargs['timeout'], 5)
+        # Every classification observes afresh; installation is never cached.
+        with patch.object(self.observer, 'rosetta_available', side_effect=[False, True]):
+            self.assertEqual(self.classify()['reason'], cask.ROSETTA_REQUIRED)
+            self.assertEqual(self.classify()['state'], 'installable')
+        with patch.object(self.observer, 'rosetta_available', return_value=True):
+            self.observer.conflicting = True
+            self.assertEqual(self.classify()['reason'], cask.CONFLICT)
+
+    def test_rosetta_observation_failures_and_unrequired_cask(self):
+        with patch.object(self.observer, 'rosetta_available', side_effect=AssertionError('unneeded observation')):
+            self.assertEqual(self.classify()['state'], 'installable')
+        self.row['caveats_rosetta'] = True
+        for failure in (OSError('unavailable'), subprocess.TimeoutExpired('probe', 5)):
+            with self.subTest(failure=type(failure).__name__), \
+                 patch('homebrew_cask.platform.machine', return_value='arm64'), \
+                 patch('homebrew_cask.subprocess.run', side_effect=failure):
+                value = self.classify()
+                self.assertEqual((value['state'], value['reason']), ('observation_error', cask.OBSERVATION))
+                self.assertEqual(value['diagnostic'], {'primitive': 'rosetta', 'condition': 'observation_failed'})
+        with patch('homebrew_cask.platform.machine', return_value='x86_64'), \
+             patch.object(self.observer, 'read', side_effect=OSError('sysctl failed')):
+            self.assertEqual(self.classify()['state'], 'observation_error')
+        with patch('homebrew_cask.platform.machine', return_value='x86_64'), \
+             patch.object(self.observer, 'read', return_value=b'unknown'):
+            self.assertEqual(self.classify()['state'], 'observation_error')
+
     def generated(self):
         self.row['artifacts'] = [{'binary': ['bin/example'], 'target': str(self.prefix / 'bin/example')},
             {cask.GENERATED_COMPLETIONS: ['bin/example', 'completion',
@@ -444,6 +495,8 @@ class CapabilityTests(unittest.TestCase):
 
     def test_pkg_preparation_does_not_expand_repair_or_opaque_profiles(self):
         self.pkg_preparation_fixture()
+        rosetta = patch.object(self.observer, 'rosetta_available', return_value=False)
+        rosetta.start(); self.addCleanup(rosetta.stop)
         for field, value in [('installed', '1.0'), ('sha256', 'no_check'), ('caveats_rosetta', True)]:
             original = self.row.get(field)
             self.row[field] = value

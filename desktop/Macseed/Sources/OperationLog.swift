@@ -125,7 +125,7 @@ struct OperationLogSanitizer {
         "reference_changed", "reference_unavailable", "comparison_unavailable", "capture_failed", "capture_discovery_failed", "capture_inventory_invalid", "capture_validation_failed",
         "invalid_destination", "destination_exists", "destination_changed", "secure_bridge_required", "age_unavailable", "secure_bridge_unavailable", "secure_timeout",
         "secure_import_failed", "secure_export_failed", "secure_input_invalid", "invalid_secure_selection", "readiness_failed", "cask_authorization_required",
-        "cask_execution_requirements_unsupported", "cask_target_conflict", "cask_observation_failed", "cask_not_ready", "homebrew_unavailable", "homebrew_broken",
+        "cask_execution_requirements_unsupported", "cask_target_conflict", "cask_rosetta_required", "rosetta", "installation_required", "cask_observation_failed", "cask_not_ready", "homebrew_unavailable", "homebrew_broken",
         "homebrew_platform_incompatible", "formula_dependency_unavailable", "dependency_unavailable", "unsupported_capability", "authorization_denied", "authorization_unavailable",
         "foreign_target", "conflicting_plist", "identity_ambiguous", "ownership_ambiguous", "live_ownership_unproven", "malformed_observation", "observation_limit",
         "ssh_configuration_not_ready", "ssh_configuration_observation_failed", "prerequisite_failed", "input_missing", "input_invalid", "unsupported", "not_selected", "redacted",

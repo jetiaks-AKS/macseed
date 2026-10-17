@@ -73,7 +73,7 @@ homebrew_adapter_result() {
 
 homebrew_adapter_failure() {
     case "$1" in
-        cask_execution_requirements_unsupported|cask_target_conflict|cask_authorization_required)
+        cask_execution_requirements_unsupported|cask_target_conflict|cask_rosetta_required|cask_authorization_required)
             homebrew_adapter_result unsupported item_unsupported "$1" "$2" ;;
         homebrew_capability_unavailable)
             homebrew_adapter_result incompatible capability_unavailable "$1" "$2" ;;

@@ -208,10 +208,13 @@ struct RestoreTaskPresentation {
                 }
                 let reason = operation?["reason"]?.string ?? activity?.data?["reason"]?.string ?? observed?["reason"]?.string ?? item.reason
                 let message: String
-                if result == nil && !executing && !operationProgress, let explanation = entry?.unsupportedRepairExplanation {
+                if result == nil && !executing && !operationProgress, entry?.diagnostic?.primitive == "rosetta" {
+                    message = entry!.diagnostic!.explanation
+                } else if result == nil && !executing && !operationProgress, let explanation = entry?.unsupportedRepairExplanation {
                     message = explanation
                 } else {
                     switch reason {
+                    case "cask_rosetta_required": message = entry?.diagnostic?.explanation ?? "Install Rosetta manually, then Refresh Preview."
                     case "cask_execution_requirements_unsupported":
                         message = result == nil && !executing && !operationProgress
                             && entry?.diagnostic?.primitive == "pkgutil" && entry?.diagnostic?.condition == "preparation_required"
