@@ -22,13 +22,16 @@ Unsupported (`ownership_unproven`); in-place Repair is not implemented.
 ## macOS settings manual qualification
 
 Focused fixtures and the Desktop Debug build cover the settings/Capture UX
-checkpoint; they do not close these real-Mac gates or change MAS Restore priority.
+checkpoint. The [2026-10-17 real Restore](docs/toolkit/CONFIGURATION.md#controlled-macos-27-restore-qualification)
+confirmed 37/37 saved values, not all visual effects; MAS Restore priority is unchanged.
 
 - [ ] Qualify the real visual effect of Screenshots Window shadow and Floating
   thumbnail on macOS 27, including repeat/no-op behavior.
-- [ ] Qualify real Apply and behavior of the four new WindowManager preferences
-  on macOS 27, including mode dependencies, any necessary session refresh and
-  repeat/no-op. Stored-preference Verification alone does not establish live effect.
+- [ ] Complete real Apply and visual-behavior qualification of the four new
+  WindowManager preferences on macOS 27, including mode dependencies, session
+  refresh and repeat/no-op. `EnableTilingByEdgeDrag` and `EnableTopTilingByEdgeDrag`
+  already matched in the controlled test, so their write paths remain untested.
+  Stored-preference Verification alone does not establish live effect.
 
 <a id="broad-restore-manual-gate--2026-10-05"></a>
 
@@ -123,5 +126,6 @@ Diagnostic records do not establish durable recovery or installer quiescence.
   Needs Attention, Error, Cancelled and Interrupted states using production/shared
   views. Preserve existing fixtures/DemoSession; no parallel components or large
   tooling framework. See the [catalog contract](docs/DESKTOP.md#unified-ui-scenario-catalog--deferred-uidev-tooling).
-- [ ] Revalidate `Clicking`, `TrackpadRightClick` and other version-dependent
-  settings when migration to macOS 27 actually occurs.
+- [ ] Complete visual/device-behavior qualification of `Clicking`,
+  `TrackpadRightClick` and other version-dependent settings on macOS 27; the
+  controlled Restore confirmed saved values only.

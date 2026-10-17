@@ -229,8 +229,8 @@ observed records. Preview is read-only; Apply validates the entire configuration
 skips matches and rereads each write. Verification confirms stored preferences,
 not app support for tiling or visible behavior in the current session.
 No process restart or logout is performed: a required refresh has not been
-established by this read-only qualification. Runtime visual effects and macOS 27
-native-key behavior have not been tested through real Apply.
+established by this read-only qualification. The controlled macOS 27 test below
+confirms stored values for its included records; visible effects and writes to already-matching keys remain separate gates.
 
 Qualification evidence: native boolean reads on macOS 26.7.1;
 [nix-darwin WindowManager definitions](https://github.com/nix-darwin/nix-darwin/blob/master/modules/system/defaults/WindowManager.nix);
@@ -302,6 +302,36 @@ order. Directory-only change needs no SystemUIServer restart. Prepare/verify the
 directory before writing the preference; failure blocks the write. Restart only
 after a changed `location` write; boolean changes alone never trigger a restart.
 Verification does not take a real screenshot.
+
+### Controlled macOS 27 Restore qualification
+
+On 2026-10-17, a controlled real Restore from a Bundle without SSH exercised
+37 saved preferences after artificial drift created with `defaults write`:
+
+| Category | Records |
+| --- | ---: |
+| Finder | 12 |
+| Dock | 10 |
+| Windows | 8 |
+| Keyboard | 4 |
+| Trackpad | 2 |
+| Screenshots | 1 |
+| **Total** | **37** |
+
+Preview reported **92 Already Match, 38 Changes Planned, 0 Need Attention**.
+The 38 actions were **35 preference changes plus 3 refresh/restart actions**;
+`EnableTilingByEdgeDrag` and `EnableTopTilingByEdgeDrag` already matched and were
+not written. Rebuild reported **127/127 Successful** in Macseed Verification.
+An independent read-only comparison with the source Bundle reported **37/37 MATCH**,
+`Differences from Bundle: 0/37` (zero differences).
+
+This qualifies restoration of the **saved preference values in that Bundle**.
+It does not qualify every supported key, visual effect, mode dependency or
+cross-version combination. In particular, the already-matching Windows keys did
+not exercise Apply, and the single Screenshots record does not qualify both new
+boolean controls. Full visual-effect checks, including the new Windows switches,
+were not performed. Remaining gates stay in [TODO](../../TODO.md#macos-settings-manual-qualification).
+The reported real run was not repeated during this UI/documentation checkpoint.
 
 ## Homebrew formula generated state
 

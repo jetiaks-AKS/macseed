@@ -700,9 +700,24 @@ Refresh Preview. Tailscale 1.104.1 passed preparation, Clean Install, Verificati
 and a fresh matching Preview; this does not qualify unsafe Repair. See the
 [Core contract](core/APPLICATION-INTERFACE.md#explicit-pkg-installer-preparation).
 
+## Restore Result columns
+
+Restore Result's **Details by Category** uses one result-only row layout with
+reserved **Status | Count | Chevron** columns across categories, nested settings
+and individual items. Missing counts or chevrons retain their cells; left title
+indentation still indicates hierarchy. Text wraps within its column as width or
+text size changes. Status classification and Preview/Capture layouts are unchanged.
+
 ## Recent Restore qualification and performance
 
-Current checkpoint: `778b816`, with subsequent user-confirmed real-Mac evidence
+The controlled macOS 27 Restore on 2026-10-17 restored the saved values in its
+37-record settings Bundle: Macseed reported 127/127 Successful, and independent
+read-only comparison found 37/37 matches and zero differences. The
+[qualification record](toolkit/CONFIGURATION.md#controlled-macos-27-restore-qualification)
+separates changed preferences, already-matching Windows keys and refresh actions.
+This is stored-value evidence; complete visual-effect qualification remains open.
+
+Homebrew qualification baseline: `778b816`, with subsequent user-confirmed real-Mac evidence
 (2026-10-17). Tailscale 1.104.1 passed **PKG Preparation → Clean Install →
 Verification → fresh matching Preview**. Receipt-backed PKG Repair provenance is
 implemented, but unsafe Tailscale Repair remains **Unsupported**

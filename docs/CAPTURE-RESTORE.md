@@ -17,6 +17,11 @@ limits are recorded in [Desktop](DESKTOP.md#recent-restore-qualification-and-per
 continuing compatibility and remaining Desktop qualification are tracked in
 [TODO](../TODO.md#restorehomebrew-checkpoint--08e2b469).
 
+A controlled macOS 27 Restore on 2026-10-17 passed independent stored-preference
+comparison for all 37 records in its source Bundle, with zero differences.
+[Configuration](toolkit/CONFIGURATION.md#controlled-macos-27-restore-qualification)
+records the exact scope and counts; full visual-effect qualification remains open.
+
 ## What travels
 
 Capture observes Homebrew/App Store applications, VS Code extensions/settings,

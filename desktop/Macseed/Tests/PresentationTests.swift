@@ -1093,7 +1093,58 @@ import SwiftUI
         print("PASS: Capture Result's eight Completed statuses align at narrow/wide widths and increased Dynamic Type")
     }
 
+    @MainActor static func restoreResultColumnsChecks() {
+        let labels = ["Verified", "Completed", "Already Matches", "Needs Attention", "Skipped"]
+        for width in [420.0, 785.0, 985.0] {
+            for size in [DynamicTypeSize.large, .accessibility3] {
+                let probe = VStack(spacing: 10) {
+                    ForEach(0..<6) { row in
+                        RestoreResultColumns {
+                            Text(row % 2 == 0 ? "Short" : String(repeating: "Long category title ", count: 4))
+                                .padding(.leading, RestoreResultColumns.titleInset(depth: row % 2, item: row > 3))
+                            Color(red: 1, green: 0, blue: 0).frame(height: 8)
+                            if row % 2 == 0 { Color(red: 0, green: 0, blue: 1).frame(height: 8) } else { Color.clear.frame(height: 0) }
+                            if row % 3 == 0 { Color(red: 0, green: 1, blue: 0).frame(height: 8) } else { Color.clear.frame(height: 0) }
+                        }
+                    }
+                }.frame(width: width).environment(\.dynamicTypeSize, size)
+                let image = ImageRenderer(content: probe).cgImage!
+                let bitmap = NSBitmapImageRep(cgImage: image)
+                var starts = Set<Int>(), countStarts = Set<Int>(), chevronStarts = Set<Int>()
+                var rows = 0
+                for y in 0..<bitmap.pixelsHigh {
+                    var found = false, count = false, chevron = false
+                    for x in 0..<bitmap.pixelsWide {
+                        guard let c = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.sRGB), c.alphaComponent > 0.9 else { continue }
+                        if !found && c.redComponent > 0.5 && c.redComponent > c.greenComponent * 2 && c.redComponent > c.blueComponent * 2 { starts.insert(x); found = true }
+                        if !count && c.blueComponent > 0.9 && c.redComponent < 0.1 { countStarts.insert(x); count = true }
+                        if !chevron && c.greenComponent > 0.4 && c.redComponent < 0.1 && c.blueComponent < 0.4 { chevronStarts.insert(x); chevron = true }
+                    }
+                    if found { rows += 1 }
+                }
+                precondition(starts.count == 1 && countStarts.count == 1 && chevronStarts.count == 1 && rows >= 48,
+                    "Column origins: status=\(starts), count=\(countStarts), chevron=\(chevronStarts), rows=\(rows)")
+                precondition(starts.first! < countStarts.first! && countStarts.first! < chevronStarts.first!)
+                for (index, label) in labels.enumerated() {
+                    let item = TaskItemPresentation(id: "item", item: DisplayItem(id: "item", title: String(repeating: "Long item name ", count: 5), status: .ready,
+                        action: ""), state: .completed, resultLabels: [label])
+                    let domain = TaskDomainPresentation(id: "fixture", title: String(repeating: "Category ", count: 4), symbol: "folder", items: [item])
+                    let view = RestoreFinalDomain(domain: domain, expansion: .constant(true), depth: index % 2)
+                        .frame(width: width).environment(\.dynamicTypeSize, size)
+                    precondition(ImageRenderer(content: view).nsImage != nil)
+                }
+            }
+        }
+        let source = try! String(contentsOfFile: "Sources/RestoreView.swift")
+        let final = source.components(separatedBy: "struct RestoreFinalDomain: View {")[1].components(separatedBy: "struct RestoreResultStatusLabel:")[0]
+        precondition(final.components(separatedBy: "RestoreResultColumns {").count == 3)
+        precondition(!final.contains("TaskTextStatusLayout") && !final.contains("ViewThatFits") && !final.contains(".offset("))
+        precondition(RestoreResultColumns.titleInset(depth: 1) == 52 && RestoreResultColumns.titleInset(depth: 1, item: true) == 88)
+        print("PASS: Restore Result Status/Count/Chevron columns share origins across depth, missing cells, long names and larger text")
+    }
+
     @MainActor static func main() {
+        if CommandLine.arguments.contains("--restore-result-columns-only") { restoreResultColumnsChecks(); resultCleanupChecks(); minimalResultSummaryChecks(); return }
         if CommandLine.arguments.contains("--capture-checkpoint-only") { captureResultActionsChecks(); screenshotsIncludedSettingsChecks(); windowsIncludedSettingsChecks(); captureResultAlignmentChecks(); return }
         if CommandLine.arguments.contains("--windows-included-only") { windowsIncludedSettingsChecks(); return }
         if CommandLine.arguments.contains("--screenshots-included-only") { screenshotsIncludedSettingsChecks(); return }
@@ -1226,6 +1277,7 @@ import SwiftUI
         screenshotsIncludedSettingsChecks()
         windowsIncludedSettingsChecks()
         captureResultAlignmentChecks()
+        restoreResultColumnsChecks()
         restoreSummaryChecks()
         precondition(CaptureMetricCard.tone(attention: false, count: 0) == .blue)
         precondition(CaptureMetricCard.tone(attention: false, count: 5) == .blue)

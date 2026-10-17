@@ -96,6 +96,10 @@ Real-Mac performance observations and their differing-run limitations are record
 in [Desktop qualification](docs/DESKTOP.md#recent-restore-qualification-and-performance),
 not a performance guarantee or closure of Homebrew capability qualification.
 
+A [controlled macOS 27 Restore](docs/toolkit/CONFIGURATION.md#controlled-macos-27-restore-qualification)
+confirmed 37/37 saved preference values with zero differences. This bounded result
+does not close visual-effect or remaining settings qualification gates.
+
 The bounded macOS settings expansion and Capture Result refinements are
 implemented with focused automated coverage. Their remaining macOS 27 manual
 qualification is tracked in [TODO](TODO.md#macos-settings-manual-qualification);

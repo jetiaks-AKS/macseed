@@ -779,10 +779,39 @@ struct RestoreExecutionCategories: View {
     }
 }
 
-// Uses the same category surfaces, disclosure style and density as Environment Status.
+// Result-only columns reserve space even when count or disclosure is absent.
+struct RestoreResultColumns: Layout {
+    // Preserve the previous 36pt disclosure indentation plus 16pt child inset.
+    static func titleInset(depth: Int, item: Bool = false) -> CGFloat {
+        CGFloat(depth) * (36 + 16) + (item ? 36 : 0)
+    }
+    static func widths(_ width: CGFloat) -> [CGFloat] {
+        let available = max(0, width - 36 - 46 - 12)
+        let status = min(TaskRowLayout.statusWidth, available * 0.55)
+        return [available - status, status, 46, 12]
+    }
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let width = proposal.width ?? 600
+        let columns = Self.widths(width)
+        return CGSize(width: width, height: zip(subviews, columns).map {
+            $0.sizeThatFits(.init(width: $1, height: nil)).height
+        }.max() ?? 0)
+    }
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var x = bounds.minX
+        for (view, width) in zip(subviews, Self.widths(bounds.width)) {
+            view.place(at: CGPoint(x: x, y: bounds.minY), anchor: .topLeading,
+                proposal: .init(width: width, height: nil))
+            x += width + 12
+        }
+    }
+}
+
+// Existing category surfaces and density, with Result-only shared columns.
 struct RestoreFinalDomain: View {
     let domain: TaskDomainPresentation
     var expansion: Binding<Bool>? = nil
+    var depth = 0
     @RestoreViewState private var expanded = false
     static let outcomes = ["Success", "Needs Attention", "Skipped"]
     // One terminal item, one group. Operation and Verification evidence stay independent.
@@ -820,52 +849,42 @@ struct RestoreFinalDomain: View {
         }
     }
     var body: some View {
-        DisclosureGroup(isExpanded: expansion ?? $expanded) {
-            VStack(alignment: .leading, spacing: 0) {
-                if !domain.resultChildren.isEmpty {
-                    ForEach(domain.resultChildren) { child in RestoreFinalDomain(domain: child) }
-                } else {
-                ForEach(domain.resultVisibleItems) { item in
-                    TaskTextStatusLayout {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(item.item.title)
-                            if Self.showsItemDetails(item), let explanation = item.resultExplanation {
-                                Text(explanation).font(.caption).foregroundStyle(.secondary)
-                            }
-                            if Self.showsItemDetails(item) && (item.resultTechnicalDetails != nil || item.item.reason != nil) {
-                                DisclosureGroup("Technical Details") {
-                                    Text([item.item.reason, item.resultTechnicalDetails].compactMap { $0 }.joined(separator: "\n"))
-                                        .font(.caption.monospaced()).textSelection(.enabled)
-                                }.disclosureGroupStyle(TaskDisclosureStyle(minimumHeight: 22)).font(.caption)
-                            }
-                        }.frame(maxWidth: .infinity, alignment: .leading).fixedSize(horizontal: false, vertical: true)
-                        VStack(alignment: .trailing, spacing: 4) {
-                            ForEach(Self.visibleLabels(item, notRun: domain.executionStatus == .notRun), id: \.self) { label in
-                                Label(label, systemImage: label == "Verified" ? "checkmark.shield" : label == "Failed" || label == "Mismatch" ? "xmark.circle" : ["Unverified", "Outcome Unknown"].contains(label) ? "questionmark.circle" : "circle.fill")
-                                    .font(.callout).foregroundStyle((item.resultGroup == "Success" ? RestoreStatusTone.success.color : item.resultGroup == "Needs Attention" ? .orange : .secondary))
-                            }
+        VStack(alignment: .leading, spacing: 0) {
+            Button {
+                if let expansion { expansion.wrappedValue.toggle() } else { expanded.toggle() }
+            } label: {
+                RestoreResultColumns {
+                    title.padding(.leading, RestoreResultColumns.titleInset(depth: depth))
+                    RestoreResultStatusLabel(state: Self.finalStatus(domain), title: domain.resultTitle)
+                    counts
+                    Image(systemName: "chevron.right")
+                        .rotationEffect(.degrees((expansion?.wrappedValue ?? expanded) ? 90 : 0))
+                        .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                        .frame(width: 12).accessibilityHidden(true)
+                }.padding(.vertical, 6).frame(minHeight: 48).contentShape(Rectangle())
+            }.buttonStyle(.plain).accessibilityValue((expansion?.wrappedValue ?? expanded) ? "Expanded" : "Collapsed")
+            if expansion?.wrappedValue ?? expanded {
+                VStack(alignment: .leading, spacing: 0) {
+                    if !domain.resultChildren.isEmpty {
+                        ForEach(domain.resultChildren) { child in RestoreFinalDomain(domain: child, depth: depth + 1) }
+                    } else {
+                        ForEach(domain.resultVisibleItems) { item in
+                            RestoreResultItemRow(item: item, notRun: domain.executionStatus == .notRun, depth: depth)
                         }
-                    }.padding(.vertical, 7).frame(minHeight: 28)
-                }
-                }
-                if domain.resultCategoryIssue {
-                    Text(domain.resultCategoryExplanation)
-                        .font(.caption).foregroundStyle(.orange).padding(.vertical, 4)
-                }
-            }.padding(.leading, 36).padding(.vertical, 4)
-        } label: {
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: 12) { title; Spacer(); status }
-                VStack(alignment: .leading, spacing: 8) { title; status }
-            }.padding(.vertical, 6)
-        }.disclosureGroupStyle(TaskDisclosureStyle()).padding(.horizontal, 16)
+                    }
+                    if domain.resultCategoryIssue {
+                        Text(domain.resultCategoryExplanation)
+                            .font(.caption).foregroundStyle(.orange).padding(.vertical, 4)
+                    }
+                }.padding(.vertical, 4)
+            }
+        }.padding(.horizontal, depth == 0 ? 16 : 0)
     }
     private var title: some View {
         WorkspaceCategoryTitle(id: domain.id, title: domain.title, fallbackSymbol: domain.symbol)
     }
-    private var status: some View {
-        HStack(spacing: 6) {
-            RestoreResultStatusLabel(state: Self.finalStatus(domain), title: domain.resultTitle)
+    private var counts: some View {
+        VStack(alignment: .leading, spacing: 6) {
             ForEach(Self.counts(domain), id: \.0) { label, count in
                 Text(String(count)).font(.caption2.weight(.semibold)).monospacedDigit()
                     .padding(.horizontal, 8).frame(minWidth: 46, minHeight: 23)
@@ -873,6 +892,54 @@ struct RestoreFinalDomain: View {
                     .help(label).accessibilityLabel(label).accessibilityValue(String(count))
             }
         }
+    }
+}
+
+struct RestoreResultItemRow: View {
+    let item: TaskItemPresentation
+    let notRun: Bool
+    let depth: Int
+    @RestoreViewState private var expanded = false
+    private var hasTechnicalDetails: Bool {
+        RestoreFinalDomain.showsItemDetails(item) && (item.resultTechnicalDetails != nil || item.item.reason != nil)
+    }
+    var body: some View {
+        RestoreResultColumns {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(item.item.title)
+                if RestoreFinalDomain.showsItemDetails(item), let explanation = item.resultExplanation {
+                    Text(explanation).font(.caption).foregroundStyle(.secondary)
+                }
+                if hasTechnicalDetails {
+                    Button("Technical Details") { expanded.toggle() }
+                        .buttonStyle(.plain).font(.caption)
+                        .accessibilityValue(expanded ? "Expanded" : "Collapsed")
+                    if expanded {
+                        Text([item.item.reason, item.resultTechnicalDetails].compactMap { $0 }.joined(separator: "\n"))
+                            .font(.caption.monospaced()).textSelection(.enabled)
+                    }
+                }
+            }.padding(.leading, RestoreResultColumns.titleInset(depth: depth, item: true))
+                .frame(maxWidth: .infinity, alignment: .leading).fixedSize(horizontal: false, vertical: true)
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(RestoreFinalDomain.visibleLabels(item, notRun: notRun), id: \.self) { label in
+                    HStack(spacing: 7) {
+                        Image(systemName: label == "Verified" ? "checkmark.shield" : label == "Failed" || label == "Mismatch" ? "xmark.circle" : ["Unverified", "Outcome Unknown"].contains(label) ? "questionmark.circle" : "circle.fill")
+                            .frame(width: TaskRowLayout.iconWidth).accessibilityHidden(true)
+                        Text(label)
+                    }.font(.callout).foregroundStyle(item.resultGroup == "Success" ? RestoreStatusTone.success.color : item.resultGroup == "Needs Attention" ? .orange : .secondary)
+                        .accessibilityElement(children: .combine)
+                }
+            }
+            Color.clear.frame(height: 0)
+            if hasTechnicalDetails {
+                Button { expanded.toggle() } label: {
+                    Image(systemName: "chevron.right").rotationEffect(.degrees(expanded ? 90 : 0))
+                        .font(.caption.weight(.semibold)).foregroundStyle(.secondary).frame(width: 12)
+                }.buttonStyle(.plain).accessibilityLabel("Technical Details")
+                    .accessibilityValue(expanded ? "Expanded" : "Collapsed")
+            } else { Color.clear.frame(height: 0) }
+        }.padding(.vertical, 7).frame(minHeight: 28)
     }
 }
 

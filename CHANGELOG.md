@@ -11,6 +11,11 @@ The format is based on the principles of **Keep a Changelog**.
 
 ### Added
 
+* Recorded the controlled macOS 27 settings Restore on 2026-10-17: 127/127
+  Successful in Macseed and 37/37 saved preferences matched independently with
+  zero differences. This qualifies the tested stored values; full visual effects
+  and writes to already-matching Windows keys remain unqualified.
+
 * Expanded the existing macOS settings categories with Screenshots window shadow
   and floating thumbnail, plus wallpaper-click, edge/top tiling and tiled-window
   margins. Only observed source preferences are captured; absent keys remain
@@ -176,6 +181,10 @@ The format is based on the principles of **Keep a Changelog**.
   informational labels for the settings included in the current preparation.
 
 ### Fixed
+
+* Restore Result aligns categories, nested domains and individual items with
+  reserved Status, Count and Chevron columns while retaining title indentation
+  and wrapping long text.
 
 * Capture Result places Reveal in Finder beside the saved file and keeps View Log
   left, Capture Again / Done right. Done returns to the initial Capture state
