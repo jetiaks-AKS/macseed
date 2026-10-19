@@ -251,9 +251,9 @@ def prepared_restore(path, disabled_groups, include_secure, selection=None, inst
                 if item not in sections[domain]:
                     raise PreviewFailed()
                 item = str(sections[domain].index(item) + 1)
-            if action not in {"none", "install", "reinstall", "create_directory", "replace_with_backup",
+            if action not in {"none", "inspect", "install", "reinstall", "create_directory", "replace_with_backup",
                               "set_preference", "restart_process", "set_setting", "create", "clone", "switch_branch"} or disposition not in {
-                              "satisfied", "planned", "blocked", "conflict", "warning"}:
+                              "satisfied", "planned", "blocked", "conflict", "warning", "unknown"}:
                 raise PreviewFailed()
             records.append({"domain": domain, "item_id": item, "action": action,
                             "disposition": disposition, "reason": None if reason == "none" else reason,

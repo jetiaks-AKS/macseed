@@ -11,6 +11,12 @@ The format is based on the principles of **Keep a Changelog**.
 
 ### Added
 
+* Assisted App Store Restore: open missing applications in App Store, install
+  manually and refresh Core inspection. Missing or uncertain App Store items no
+  longer block other Restore categories. Automatic MAS installation and its
+  privileged fallback are disabled; existing Bundle application records remain
+  compatible.
+
 * Recorded the controlled macOS 27 settings Restore on 2026-10-17: 127/127
   Successful in Macseed and 37/37 saved preferences matched independently with
   zero differences. This qualifies the tested stored values; full visual effects

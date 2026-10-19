@@ -900,8 +900,8 @@ struct RestoreResultItemRow: View {
     let notRun: Bool
     let depth: Int
     @RestoreViewState private var expanded = false
-    private var hasTechnicalDetails: Bool {
-        RestoreFinalDomain.showsItemDetails(item) && (item.resultTechnicalDetails != nil || item.item.reason != nil)
+    var hasTechnicalDetails: Bool {
+        item.assistedAppStore == nil && RestoreFinalDomain.showsItemDetails(item) && (item.resultTechnicalDetails != nil || item.item.reason != nil)
     }
     var body: some View {
         RestoreResultColumns {
@@ -910,6 +910,7 @@ struct RestoreResultItemRow: View {
                 if RestoreFinalDomain.showsItemDetails(item), let explanation = item.resultExplanation {
                     Text(explanation).font(.caption).foregroundStyle(.secondary)
                 }
+                if let url = item.assistedAppStore?.productURL { AppStoreProductButton(url: url) }
                 if hasTechnicalDetails {
                     Button("Technical Details") { expanded.toggle() }
                         .buttonStyle(.plain).font(.caption)

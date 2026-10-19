@@ -415,6 +415,17 @@ does not replace all real-process or packaged-runtime qualification.
    completed when it did not. Confirm Rebuild in the Review area; add a sheet/alert
    only when a specific risk justifies it, not another confirmation page.
 
+App Store Restore is assisted. Selected Bundle applications show Installed,
+Missing or Unverified from Core evidence. Missing rows offer **Open in App Store**
+using `NSWorkspace` and a fixed Apple product URL constructed from a validated
+numeric ID. Opening a page leaves the accepted Preview and selection unchanged.
+The user installs through App Store, then **Refresh Preview** requests a fresh
+Core preparation. Result uses fresh Core Verification; **Refresh Preview** checks current state
+again in a new Preview.
+App Store-only plans have no Rebuild; missing/unverified App Store rows do not
+block executable work in other categories. No MAS helper, approval, recovery UI,
+privileged process or automatic installation participates in this flow.
+
 Missing Homebrew needs external installation; Desktop does not automatically
 install it. Explain selected dependencies such as Command Line Tools, `mas`, VS
 Code CLI, network or `age` only when relevant. Do not invent a “Fix All” action or

@@ -51,6 +51,7 @@ struct TaskItemPresentation: Identifiable {
     var resultNotRun = false
     var previewProblem: String? = nil
     var sourceDomain: String? = nil
+    var assistedAppStore: AssistedAppStoreItem? = nil
 }
 struct TaskDomainPresentation: Identifiable {
     let id: String
@@ -254,6 +255,16 @@ struct RestoreTaskPresentation {
                 let technical = ([operation, activity?.data].compactMap { $0 } + Array(predicates.values))
                     .map { row in ["domain", "item_id", "action", "state", "outcome", "predicate", "conformity", "reason", "record_id"].compactMap { key in row[key]?.string.map { key + ": " + $0 } }.joined(separator: " · ") }
                     .sorted().joined(separator: "\n")
+                let assisted = entry?.assistedAppStoreItem.map { app in
+                    guard executing || result != nil else { return app }
+                    let status: AssistedAppStoreItem.Status
+                    switch observed?["conformity"]?.string {
+                    case "verified": status = .installed
+                    case "mismatch": status = .missing
+                    default: status = .unverified
+                    }
+                    return AssistedAppStoreItem(appID: app.appID, status: status)
+                }
                 return TaskItemPresentation(id: item.id,
                     item: DisplayItem(id: item.id, title: operationProgress ? (entry.flatMap { WorkspaceSettingLabels.title(domain: $0.domain, identity: $0.itemID) } ?? Self.operationTitle(item.title, entry: entry)) : item.title, status: item.status, action: message, reason: reason), state: state, diagnostic: entry?.diagnostic,
                     technicalName: operationProgress ? entry.flatMap { $0.itemID.hasPrefix("opaque:") ? nil : "\($0.domain) / \($0.itemID)" } : nil,
@@ -268,7 +279,7 @@ struct RestoreTaskPresentation {
                         && result?.structuredEvidence?["unknown_consequences"]?.boolean != true
                         && operation == nil && activity == nil && observed == nil,
                     previewProblem: entry.flatMap { ["blocked", "conflict", "warning"].contains($0.disposition) ? ($0.reason ?? $0.disposition) : nil },
-                    sourceDomain: entry?.domain)
+                    sourceDomain: entry?.domain, assistedAppStore: assisted)
             }
             if items.isEmpty { continue }
             var domain = TaskDomainPresentation(id: domainID, title: category.title,
@@ -506,6 +517,10 @@ extension TaskItemPresentation {
     var resultGroup: String? {
         let labels = Set(resultLabels)
         if state == .failed || !labels.isDisjoint(with: ["Failed", "Needs Attention", "Mismatch", "Unsupported"]) { return "Needs Attention" }
+        if let assistedAppStore, !resultNotRun {
+            if assistedAppStore.status == .installed { return "Success" }
+            if resultEvidenceAvailable == true { return "Needs Attention" }
+        }
         if previewProblem != nil && labels.isDisjoint(with: ["Applied", "Already Matches", "Verified"]) { return "Needs Attention" }
         if resultNotRun || auxiliaryCompletionUnreported { return nil }
         if labels.contains("Skipped") {
@@ -517,6 +532,7 @@ extension TaskItemPresentation {
         return "Needs Attention"
     }
     var resultTitle: String {
+        if let assistedAppStore, !resultNotRun { return assistedAppStore.status.rawValue }
         if resultGroup == "Needs Attention" {
             if resultLabels.contains("Failed") || state == .failed { return "Failed" }
             if resultLabels.contains("Mismatch") { return "Mismatch" }
@@ -538,6 +554,7 @@ extension TaskItemPresentation {
         resultGroup == "Needs Attention" || !Set(resultLabels).isDisjoint(with: ["Mismatch", "Unverified", "Unresolved", "Unsupported"]) && resultEvidenceAvailable != false
     }
     var resultExplanation: String? {
+        if let assistedAppStore { return assistedAppStore.message }
         let reason = previewProblem ?? item.reason
         if reason == "cask_execution_requirements_unsupported" || resultLabels.contains("Unsupported") { return "This requirement's installation conditions are not supported." }
         if reason == "target_conflict" || reason == "conflict" { return "Existing state conflicts with the selected requirement and is preserved." }

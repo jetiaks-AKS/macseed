@@ -592,7 +592,84 @@ import SwiftUI
             expectedDiagnostics: ["plan": "DO_NOT_COPY"]).diagnosticReport.contains("DO_NOT_COPY"))
         print("PASS: Working retains Preview warnings; execution awaits Verification; Partial requires typed independent success; item diagnostics preserve independent problems")
     }
+    @MainActor static func assistedAppStoreChecks() throws {
+        let id = "425264550"
+        let url = AssistedAppStoreItem.productURL(id)!
+        precondition(url.absoluteString == "macappstore://apps.apple.com/app/id425264550")
+        for invalid in ["", "0", "000", "-1", "425264550?x=1", "425264550/other", "App Name", " 425264550", "４２５", "1\n", String(repeating: "1", count: 21)] {
+            precondition(AssistedAppStoreItem.productURL(invalid) == nil, invalid)
+            for status in [AssistedAppStoreItem.Status.missing, .unverified] {
+                precondition(AssistedAppStoreItem(appID: invalid, status: status).productURL == nil)
+            }
+        }
+        var opened: [URL] = []
+        precondition(AppStoreProductButton.open(url, using: { opened.append($0); return true }))
+        precondition(opened == [url])
+        precondition(!AppStoreProductButton.open(URL(string: "https://example.test/app/id425264550")!, using: { opened.append($0); return true }))
+        precondition(opened == [url])
+        precondition(!AppStoreProductButton.open(url, using: { _ in false }))
+        let catalog = CoreRestoreInspection.Inventory(groups: [.init(id: "Applications", domains: ["app-store"])],
+            inventory: [.init(domain: "app-store", label: "App Store Applications", selectionMode: "items", availability: "available", reason: nil,
+                items: [.init(itemID: "selected-app", label: "Blackmagic Disk Speed Test")])])
+        for (disposition, reason, expected) in [("satisfied", "", AssistedAppStoreItem.Status.installed),
+                                                ("warning", "manual_installation_required", .missing),
+                                                ("unknown", "observation_failed", .unverified)] {
+            var row: [String: Any] = ["domain": "app-store", "item_id": id, "selection_item_id": "selected-app", "action": "inspect", "disposition": disposition]
+            if !reason.isEmpty {
+                row["reason"] = reason
+                row["diagnostic"] = ["primitive": "inventory", "condition": "observation_failed"]
+            }
+            let raw: [String: Any] = ["prepared_plan_id": String(repeating: "a", count: 64),
+                "selection": ["categories": [], "items": ["app-store": ["selected-app"]]],
+                "selected_groups": ["Applications"], "selected_categories": [], "selected_item_counts": ["app-store": 1],
+                "include_secure": false, "secure_restore_status": "not_selected", "plan": [row],
+                "readiness": ["ready": true, "ready_scope": "environment", "conditions": [], "reentry": "restore_prepare"],
+                "has_planned_changes": false, "has_executable_changes": false, "warning_count": 0, "error_count": 0]
+            let plan = try JSONDecoder().decode(CoreRestorePreparation.self, from: JSONSerialization.data(withJSONObject: raw))
+            try plan.validate(expected: plan.selection, catalog: catalog)
+            let preview = RestorePreviewPresentation(plan, catalog: catalog)
+            let before = RestoreTaskPresentation(preview: preview, plan: plan).domains.flatMap(\.items)[0]
+            precondition(before.item.title == "Blackmagic Disk Speed Test" && before.assistedAppStore?.status == expected)
+            precondition((before.assistedAppStore?.productURL != nil) == (expected != .installed))
+            precondition(!TaskDomainItems.showsTechnicalDetails(before))
+            precondition(before.item.reason == (reason.isEmpty ? nil : reason))
+            precondition(before.diagnostic?.condition == (reason.isEmpty ? nil : "observation_failed"))
+            // No final Verification means Unverified, even with a matching Preview.
+            let unknown = RestoreTaskPresentation(preview: preview, plan: plan, executing: true, operationProgress: true).domains.flatMap(\.items)[0]
+            precondition(unknown.assistedAppStore?.status == .unverified)
+            for (conformity, status) in [("verified", AssistedAppStoreItem.Status.installed), ("mismatch", .missing), ("unverified", .unverified)] {
+                let event = try CoreEvent(line: JSONSerialization.data(withJSONObject: ["protocol_version": 1,
+                    "operation_id": "assisted", "sequence": 1, "type": "verification_record",
+                    "data": ["domain": "app-store", "item_id": id, "predicate": "installed", "conformity": conformity]]))
+                let item = RestoreTaskPresentation(preview: preview, plan: plan, events: [event], executing: true, operationProgress: true).domains.flatMap(\.items)[0]
+                precondition(item.assistedAppStore?.status == status)
+                precondition(item.resultTitle == status.rawValue)
+                precondition(item.resultGroup == (status == .installed ? "Success" : "Needs Attention"))
+                precondition(!RestoreResultItemRow(item: item, notRun: false, depth: 0).hasTechnicalDetails)
+                precondition(item.resultTechnicalDetails != nil)
+                precondition((item.assistedAppStore?.productURL != nil) == (status != .installed))
+                if let productURL = item.assistedAppStore?.productURL {
+                    let evidence = event.data, labels = item.resultLabels
+                    for opened in [true, false] {
+                        precondition(AppStoreProductButton.open(productURL, using: { _ in opened }) == opened)
+                        precondition(item.assistedAppStore?.status == status && item.resultLabels == labels && event.data == evidence)
+                    }
+                }
+            }
+        }
+        for domain in ["homebrew-casks", "homebrew-packages", "workspace-folders", "macos-finder", "vscode-extensions"] {
+            let item = TaskItemPresentation(id: domain, item: DisplayItem(id: domain, title: domain, status: .attention,
+                action: "Needs inspection", reason: "observation_failed"), state: .attention,
+                resultLabels: ["Unverified"], resultTechnicalDetails: "Retained diagnostics", resultEvidenceAvailable: true)
+            precondition(TaskDomainItems.showsTechnicalDetails(item))
+            precondition(RestoreResultItemRow(item: item, notRun: false, depth: 0).hasTechnicalDetails)
+            let working = TaskItemPresentation(id: item.id, item: item.item, state: .working)
+            precondition(!TaskDomainItems.showsTechnicalDetails(working))
+        }
+        print("PASS: Assisted Missing/Unverified actions preserve evidence, Installed has no action, and only Assisted rows hide Technical Details")
+    }
     @MainActor static func main() async throws {
+        try assistedAppStoreChecks()
         if CommandLine.arguments.contains("--rosetta-only") {
             try taskPresentationChecks()
             print("PASS: Rosetta prerequisite and observation failure in Restore Preview and Technical Details")
@@ -725,6 +802,15 @@ import SwiftUI
                 selected_groups=groups, selected_categories=selected_categories,selected_item_counts={k:len(v) for k,v in selected_items.items()},
                 include_secure=False,secure_restore_status='not_selected',plan=plan,readiness=dict(ready=not conditions or mode in ('safe','satisfied'),ready_scope='environment',conditions=conditions,reentry='restore_prepare'),
                 has_planned_changes=mode not in ('no_changes','no_changes_attention'),warning_count=1 if mode=='attention' else 0,error_count=0)
+            if mode.startswith('assisted_'):
+                for index,row in enumerate(result['plan']):
+                    if row['domain']=='app-store':
+                        row['item_id']=str(425264550+index)
+                        row['action']='inspect'
+                        row['disposition']={'assisted_missing':'warning','assisted_installed':'satisfied','assisted_unverified':'unknown'}[mode]
+                        row['reason']={'assisted_missing':'manual_installation_required','assisted_installed':None,'assisted_unverified':'observation_failed'}[mode]
+                result['has_executable_changes']=any(row['disposition']=='planned' for row in result['plan'])
+                result['has_planned_changes']=result['has_executable_changes']
             if mode=='mixed_progress':
                 for row in result['plan']:
                     if row['domain'] in ('app-store','ssh-configuration'): row['disposition']='satisfied'
@@ -861,6 +947,43 @@ import SwiftUI
         precondition(model.state == .review && model.areas.count == inventory.count && model.groups.count == 5 && model.bulkState == .all)
         precondition(model.selectionSummary == "Everything selected" && model.canPreview)
         precondition(model.inspection?.secureComponent == true && model.selectedAreaCount == 13)
+        if CommandLine.arguments.contains("--assisted-appstore-only") {
+            model.toggleAll()
+            model.selectArea("app-store", included: true)
+            for (mode, expected) in [("assisted_missing", AssistedAppStoreItem.Status.missing),
+                                     ("assisted_installed", .installed), ("assisted_unverified", .unverified)] {
+                try write(mode, core.appendingPathComponent("mode"))
+                model.refreshPreview(); await model.waitForCompletion()
+                precondition(model.state == .preview && model.ready && !model.canRebuild)
+                let plan = model.preparation!, selection = model.selection
+                let items = RestoreTaskPresentation(preview: model.preview!, plan: plan).domains.flatMap(\.items)
+                precondition(items.allSatisfy { $0.assistedAppStore?.status == expected })
+                precondition(items.allSatisfy { ($0.assistedAppStore?.productURL != nil) == (expected != .installed) })
+                if let url = items.first?.assistedAppStore?.productURL {
+                    let requests = try Data(contentsOf: core.appendingPathComponent("requests.jsonl"))
+                    let evidence = runtime.events.map(\.data)
+                    let rows = plan.plan.map { [$0.itemID, $0.action, $0.disposition, $0.reason ?? ""] }
+                    for opened in [true, false] {
+                        precondition(AppStoreProductButton.open(url, using: { _ in opened }) == opened)
+                        precondition(model.preparation?.preparedPlanID == plan.preparedPlanID && model.selection == selection)
+                        precondition(model.preparation?.plan.map { [$0.itemID, $0.action, $0.disposition, $0.reason ?? ""] } == rows)
+                        precondition(runtime.events.map(\.data) == evidence)
+                        precondition(try! Data(contentsOf: core.appendingPathComponent("requests.jsonl")) == requests)
+                        let after = RestoreTaskPresentation(preview: model.preview!, plan: model.preparation!).domains.flatMap(\.items)
+                        precondition(after.allSatisfy { $0.assistedAppStore?.status == expected })
+                    }
+                }
+                try render(model, runtime, state: mode, expanded: true)
+                model.selectArea("workspace-folders", included: true)
+                model.refreshPreview(); await model.waitForCompletion()
+                precondition(model.ready && model.canRebuild)
+                model.selectArea("workspace-folders", included: false)
+            }
+            let requests = try String(contentsOf: core.appendingPathComponent("requests.jsonl"))
+            precondition(!requests.contains("restore_execute"))
+            print("PASS: Assisted Refresh preserves selection, reinspects all statuses and permits independent Rebuild without application-only mutation")
+            return
+        }
         if CommandLine.arguments.contains("--independent-ownership-only") {
             try write("ownership_conflict", core.appendingPathComponent("mode"))
             model.refreshPreview(); await model.waitForCompletion()

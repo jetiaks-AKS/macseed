@@ -280,7 +280,7 @@ assert_contains() {
 }
 
 reset_fixture
-run_case planned 0
+run_case mixed-assisted 1
 # Startup validators must not print generated records before Preview output.
 for raw_record in '^present$' '^absent$' '^example-cask$' '^111|Present$' '^publisher.present$'; do
     if grep -Eq "$raw_record" "$TEST_ROOT/output"; then
@@ -289,11 +289,12 @@ for raw_record in '^present$' '^absent$' '^example-cask$' '^111|Present$' '^publ
     fi
 done
 # Full mixed inventory traverses all production domains in stable order.
+assert_contains "$TEST_ROOT/output" "Install in App Store, then refresh: Absent (222)"
+# Assisted App Store is attention, never an executable planned change.
 sed -n 's/.*\(Would .*\)/\1/p' "$TEST_ROOT/output" > "$TEST_ROOT/first-plan"
 cat > "$TEST_ROOT/expected-plan" <<PLAN
 Would install Homebrew formula: absent
 Would install Homebrew cask: example-cask
-Would install App Store app: Absent (222)
 Would install VS Code extension: publisher.absent
 Would set Git setting: user.name
 Would update VS Code settings
@@ -340,7 +341,7 @@ if ! cmp -s "$TEST_ROOT/first-plan" "$TEST_ROOT/expected-plan"; then
     diff -u "$TEST_ROOT/expected-plan" "$TEST_ROOT/first-plan"
     ((TEST_FAILURES++))
 fi
-for line in 'Modules Inspected : 14' 'Warnings          : 0' 'Errors            : 0'; do
+for line in 'Modules Inspected : 14' 'Warnings          : 1' 'Errors            : 0'; do
     assert_contains "$TEST_ROOT/output" "$line"
     assert_contains "$FIXTURE/logs/latest.log" "$line"
 done
@@ -353,7 +354,7 @@ while IFS= read -r line; do assert_contains "$FIXTURE/logs/latest.log" "$line"; 
 if grep -Eq 'Installed *:|Skipped *:' "$TEST_ROOT/output" "$FIXTURE/logs/latest.log"; then
     echo 'FAIL: Bootstrap counters in Preview' >&2; ((TEST_FAILURES++))
 fi
-run_case planned 0
+run_case mixed-assisted 1
 sed -n 's/.*\(Would .*\)/\1/p' "$TEST_ROOT/output" > "$TEST_ROOT/repeat-plan"
 cmp -s "$TEST_ROOT/first-plan" "$TEST_ROOT/repeat-plan" || { echo 'FAIL: unstable plan'; ((TEST_FAILURES++)); }
 
@@ -367,9 +368,9 @@ if ! cmp -s "$TEST_ROOT/expected-mixed-plan" "$TEST_ROOT/mixed-plan"; then
     diff -u "$TEST_ROOT/expected-mixed-plan" "$TEST_ROOT/mixed-plan"
     ((TEST_FAILURES++))
 fi
-assert_contains "$TEST_ROOT/output" 'Warnings          : 1'
+assert_contains "$TEST_ROOT/output" 'Warnings          : 2'
 assert_contains "$TEST_ROOT/output" 'Errors            : 0'
-assert_contains "$FIXTURE/logs/latest.log" 'Warnings          : 1'
+assert_contains "$FIXTURE/logs/latest.log" 'Warnings          : 2'
 assert_contains "$FIXTURE/logs/latest.log" 'Errors            : 0'
 
 for scenario in preflight-error application-error git-error vscode-error workspace-error macos-error dirty-warning remote-warning; do
@@ -384,7 +385,7 @@ done
 reset_fixture
 rm -f "$FIXTURE/config/generated/vscode/settings.json"
 run_case macos-error 2
-assert_contains "$TEST_ROOT/output" 'Warnings          : 1'
+assert_contains "$TEST_ROOT/output" 'Warnings          : 2'
 assert_contains "$TEST_ROOT/output" 'Errors            : 1'
 reset_fixture
 rm -rf "$TEST_ROOT/home/.ssh"
@@ -403,7 +404,7 @@ rmdir "$TEST_ROOT/home/Projects/existing/.git"
 run_case non-git-warning 1
 reset_fixture
 write_blueprint
-run_case valid-blueprint 0
+run_case valid-blueprint 1
 printf '\nmissing-repository\n' >> "$FIXTURE/config/blueprint.conf"
 run_case stale-blueprint 1
 reset_fixture
@@ -414,7 +415,7 @@ if grep -q '^preflight\|^brew\|^defaults' "$TEST_ROOT/observations"; then
 fi
 write_blueprint
 sed -i '' 's/macos-finder="true"/macos-finder="false"/' "$FIXTURE/config/blueprint.conf"
-run_case disabled-finder-enum 0
+run_case disabled-finder-enum 1
 if grep -q '^defaults .*com.apple.finder' "$TEST_ROOT/observations"; then
     echo 'FAIL: disabled Finder was inspected'; ((TEST_FAILURES++))
 fi
@@ -427,7 +428,7 @@ for key in orientation mineffect; do
     fi
     write_blueprint
     sed -i '' 's/macos-dock="true"/macos-dock="false"/' "$FIXTURE/config/blueprint.conf"
-    run_case "disabled-dock-$key" 0
+    run_case "disabled-dock-$key" 1
     if grep -q '^defaults .*com.apple.dock' "$TEST_ROOT/observations"; then
         echo 'FAIL: disabled Dock was inspected'; ((TEST_FAILURES++))
     fi
@@ -441,7 +442,7 @@ for entry in AppleKeyboardUIMode:int ApplePressAndHoldEnabled:bool; do
     fi
     write_blueprint
     sed -i '' 's/macos-keyboard="true"/macos-keyboard="false"/' "$FIXTURE/config/blueprint.conf"
-    run_case "disabled-keyboard-$entry" 0
+    run_case "disabled-keyboard-$entry" 1
     if grep -q '^defaults .*NSGlobalDomain.*AppleKeyboardUIMode\|^defaults .*NSGlobalDomain.*ApplePressAndHoldEnabled' "$TEST_ROOT/observations"; then
         echo 'FAIL: disabled Keyboard was inspected'; ((TEST_FAILURES++))
     fi
@@ -457,7 +458,7 @@ for entry in AppleActionOnDoubleClick:string AppleWindowTabbingMode:string HideD
     fi
     write_blueprint
     sed -i '' 's/macos-windows="true"/macos-windows="false"/' "$FIXTURE/config/blueprint.conf"
-    run_case "disabled-windows-$entry" 0
+    run_case "disabled-windows-$entry" 1
     if grep -q '^defaults .*NSGlobalDomain.*AppleActionOnDoubleClick\|^defaults .*NSGlobalDomain.*AppleWindowTabbingMode\|^defaults .*com.apple.WindowManager.*HideDesktop' "$TEST_ROOT/observations"; then
         echo 'FAIL: disabled Window Management was inspected'; ((TEST_FAILURES++))
     fi
@@ -470,7 +471,7 @@ if grep -q '^preflight\|^brew\|^defaults' "$TEST_ROOT/observations"; then
 fi
 write_blueprint
 sed -i '' 's/macos-trackpad="true"/macos-trackpad="false"/' "$FIXTURE/config/blueprint.conf"
-run_case disabled-stale-trackpad-scaling 0
+run_case disabled-stale-trackpad-scaling 1
 if grep -q '^defaults .*trackpad' "$TEST_ROOT/observations"; then
     echo 'FAIL: disabled stale Trackpad input was inspected'; ((TEST_FAILURES++))
 fi
@@ -486,7 +487,7 @@ if grep -q '^preflight\|^brew\|^defaults' "$TEST_ROOT/observations"; then
 fi
 reset_fixture
 workflow_input=$'n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\ny\nn'
-TEST_MODE=--workflow run_case workflow-save-preview 0 <<< "$workflow_input"
+TEST_MODE=--workflow run_case workflow-save-preview 1 <<< "$workflow_input"
 assert_contains "$TEST_ROOT/output" 'Blueprint saved'
 assert_contains "$TEST_ROOT/output" 'Modules Inspected'
 assert_contains "$TEST_ROOT/output" 'Apply these changes'

@@ -306,6 +306,9 @@ struct TaskDomainItems: View {
     var stateTitles: [TaskRowState: String] = [:]
     var compactReadyItems = false
     var itemTitles: [String: String] = [:]
+    static func showsTechnicalDetails(_ item: TaskItemPresentation) -> Bool {
+        item.assistedAppStore == nil && item.state != .working && item.item.reason != nil
+    }
     var body: some View {
         if compactReadyItems {
             CaptureConfirmationItems(domain: domain)
@@ -314,7 +317,7 @@ struct TaskDomainItems: View {
                 ForEach(domain.items) { item in
                     TaskTextStatusLayout {
                         details(item).fixedSize(horizontal: false, vertical: true)
-                        TaskStatusLabel(state: item.state, title: stateTitles[item.state])
+                        TaskStatusLabel(state: item.state, title: item.assistedAppStore?.status.rawValue ?? stateTitles[item.state])
                             .fixedSize(horizontal: false, vertical: true)
                     }.padding(.vertical, 7)
                 }
@@ -324,8 +327,9 @@ struct TaskDomainItems: View {
     private func details(_ item: TaskItemPresentation) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(itemTitles[item.id] ?? item.item.title)
-            Text(item.item.action).font(.caption).foregroundStyle(.secondary)
-            if item.state != .working, let reason = item.item.reason {
+            Text(item.assistedAppStore?.message ?? item.item.action).font(.caption).foregroundStyle(.secondary)
+            if let url = item.assistedAppStore?.productURL { AppStoreProductButton(url: url) }
+            if Self.showsTechnicalDetails(item), let reason = item.item.reason {
                 DisclosureGroup("Technical Details") {
                     Text(reason).font(.caption.monospaced()).textSelection(.enabled)
                     if let diagnostic = item.diagnostic {
@@ -432,5 +436,23 @@ struct RestoreSettingPreviewLeaf: View {
                     .frame(width: TaskRowLayout.iconWidth).accessibilityLabel("Already Matches")
             } else { TaskStatusLabel(state: item.state, title: stateTitles[item.state]) }
         }
+    }
+}
+
+// Fixed Apple product URLs come only from validated numeric Core identities.
+// NSWorkspace opens the page; it cannot confirm installation or modify the plan.
+struct AppStoreProductButton: View {
+    let url: URL
+    @TaskViewState<Bool> private var failed = false
+    static func open(_ url: URL, using opener: (URL) -> Bool = NSWorkspace.shared.open) -> Bool {
+        guard url.scheme == "macappstore", url.host == "apps.apple.com",
+              url.query == nil, url.fragment == nil,
+              url.path.hasPrefix("/app/id"),
+              AssistedAppStoreItem.productURL(String(url.path.dropFirst(7))) == url else { return false }
+        return opener(url)
+    }
+    var body: some View {
+        Button("Open in App Store") { failed = !Self.open(url) }.buttonStyle(.bordered).controlSize(.small)
+        if failed { Text("Could not open App Store. Try again.").font(.caption).foregroundStyle(.secondary) }
     }
 }

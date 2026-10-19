@@ -238,3 +238,38 @@ struct CoreRestorePreparation: Decodable {
         }
     }
 }
+
+// Presentation of Core-owned observation. Opening a page never changes evidence.
+struct AssistedAppStoreItem {
+    enum Status: String { case installed = "Installed", missing = "Missing", unverified = "Unverified" }
+    let appID: String
+    let status: Status
+    static func productURL(_ appID: String) -> URL? {
+        guard !appID.isEmpty, appID.utf8.count <= 20,
+              appID.utf8.allSatisfy({ (48...57).contains($0) }),
+              appID.contains(where: { $0 != "0" }) else { return nil }
+        return URL(string: "macappstore://apps.apple.com/app/id" + appID)
+    }
+    var productURL: URL? { status == .installed ? nil : Self.productURL(appID) }
+    var message: String {
+        switch status {
+        case .installed: "Installation confirmed by the current App Store inventory."
+        case .missing: "Install this application in App Store, then Refresh Preview to check again."
+        case .unverified: "Macseed could not confirm installation. Refresh Preview to check again."
+        }
+    }
+}
+
+extension CoreRestorePreparation.Row {
+    var assistedAppStoreItem: AssistedAppStoreItem? {
+        guard domain == "app-store", action == "inspect", AssistedAppStoreItem.productURL(itemID) != nil else { return nil }
+        let status: AssistedAppStoreItem.Status
+        switch (disposition, reason) {
+        case ("satisfied", nil): status = .installed
+        case ("warning", "manual_installation_required"): status = .missing
+        case ("unknown", "observation_failed"), ("unknown", "inspection_unavailable"): status = .unverified
+        default: return nil
+        }
+        return AssistedAppStoreItem(appID: itemID, status: status)
+    }
+}

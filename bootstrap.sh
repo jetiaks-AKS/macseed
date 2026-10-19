@@ -453,7 +453,7 @@ BOOTSTRAP_READINESS_VALIDATED=false
 bootstrap_application_readiness() { performance_measure readiness.live bootstrap_application_readiness_timed "$@"; }
 
 bootstrap_application_readiness_timed() (
-    local focus="${1:-all}" needs_network=false needs_clt=false needs_authorization=false
+    local focus="${1:-all}" needs_network=false needs_clt=false
     python3 -B modules/apps/adapters/homebrew_lifecycle.py --pending
     local lifecycle_state=$?
     if [[ "$lifecycle_state" -ne 1 ]]; then
@@ -528,29 +528,9 @@ bootstrap_application_readiness_timed() (
         echo invalid_selected_input
         return 2
     fi
-    if application_scope_selected app-store; then
-        local OBSERVED_MAS_STATUS=pending OBSERVED_MAS_INVENTORY
-        if ! mas_application_readiness >/dev/null 2>&1; then
-            echo "$MAS_APPLICATION_CONDITION"
-            return 2
-        fi
-        local applications app_id app_name
-        applications="$(read_appstore_configuration "$(blueprint_generated_file app-store)")" || return 2
-        while IFS='|' read -r app_id app_name; do
-            [[ -n "$app_id" && "$app_id" != \#* ]] || continue
-            blueprint_item_selected app-store "$app_id" || continue
-            is_appstore_app_installed "$app_id"
-            result=$?
-            if [[ $result -eq 2 ]]; then
-                echo mas_unavailable
-                return 2
-            fi
-            if [[ $result -eq 1 ]]; then
-                needs_network=true
-                needs_authorization=true
-            fi
-        done <<< "$applications"
-    fi
+    # Assisted App Store Restore has no installation prerequisites. Selected
+    # configuration was validated above; uncertain inventory stays item-local in
+    # Preview/Verification and must not block unrelated executable work.
     if application_scope_selected homebrew-packages || application_scope_selected homebrew-casks; then
         if ! command -v brew >/dev/null 2>&1; then
             homebrew_activate_installed >/dev/null 2>&1 || {
@@ -670,10 +650,6 @@ bootstrap_application_readiness_timed() (
     fi
     if [[ "$needs_network" == true ]] && ! performance_measure readiness.network check_internet >/dev/null 2>&1; then
         echo internet_required
-        return 2
-    fi
-    if [[ "$needs_authorization" == true ]] && ! sudo -n true >/dev/null 2>&1; then
-        echo authorization_required
         return 2
     fi
     echo ready

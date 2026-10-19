@@ -3,55 +3,17 @@
 OBSERVED_MAS_STATUS=
 observe_appstore_inventory() {
     local inventory
+    command -v mas >/dev/null 2>&1 || return 2
     if [[ "${MACSEED_APPLICATION_EXECUTION:-false}" == true ]]; then
         inventory="$(MAS_NO_AUTO_INDEX=1 mas list 2>/dev/null)" || return 2
     else
         inventory="$(MAS_NO_AUTO_INDEX=1 mas list)" || return 2
     fi
-    LC_ALL=C awk '/^$/ { next } { line=$0; gsub(/\t/, "", line); if ($1 !~ /^[0-9]+$/ || NF < 2 || line ~ /[[:cntrl:]]/) exit 2; print }' <<< "$inventory"
+    LC_ALL=C awk '/^$/ { next } { line=$0; gsub(/\t/, "", line); if ($1 !~ /^[0-9]+$/ || $1 ~ /^0+$/ || length($1) > 20 || NF < 2 || line ~ /[[:cntrl:]]/) exit 2; print }' <<< "$inventory"
 }
 
-# Application prerequisites are local only: no account or network probing.
-# shellcheck disable=SC2034
-mas_application_cli_readiness() {
-    MAS_APPLICATION_CONDITION=mas_required
-    MAS_APPLICATION_COMMAND="$(type -P mas)" || {
-        local directory directories
-        IFS=: read -r -a directories <<< "$PATH"
-        for directory in "${directories[@]}"; do
-            [[ ! -e "${directory:-.}/mas" && ! -L "${directory:-.}/mas" ]] ||
-                MAS_APPLICATION_CONDITION=mas_unavailable
-        done
-        return 2
-    }
-    MAS_APPLICATION_CONDITION=mas_unavailable
-    MAS_NO_AUTO_INDEX=1 "$MAS_APPLICATION_COMMAND" version >/dev/null 2>&1 || return 2
-    return 0
-}
-
-# The production observer needs mas even to prove that selected apps exist.
-# shellcheck disable=SC2034
-mas_application_readiness() {
-    local applications app_id app_name result
-    mas_application_cli_readiness || return 2
-    applications="$(read_appstore_configuration "$(blueprint_generated_file app-store)")" || {
-        MAS_APPLICATION_CONDITION=invalid_selected_input
-        return 2
-    }
-    while IFS='|' read -r app_id app_name; do
-        [[ -n "$app_id" && "$app_id" != \#* ]] || continue
-        blueprint_item_selected app-store "$app_id" || continue
-        is_appstore_app_installed "$app_id"
-        result=$?
-        [[ $result -eq 0 || $result -eq 1 ]] || return 2
-    done <<< "$applications"
-    return 0
-}
-
-# ==========================================
-# Install App Store Application
-# ==========================================
-
+# App Store Restore is assisted: observation only, never installation or sudo.
+# Keep the configuration reader and observer shared by Preview and Verification.
 read_appstore_configuration() {
 
     local config_file="$1"
@@ -61,7 +23,7 @@ read_appstore_configuration() {
     LC_ALL=C awk -F "|" '
         /^$/ || /^#/ { next }
         {
-            if (NF != 2 || $1 !~ /^[0-9]+$/ || $2 == "" || $2 ~ /^-/ ||
+            if (NF != 2 || $1 !~ /^[0-9]+$/ || $1 ~ /^0+$/ || length($1) > 20 || $2 == "" || $2 ~ /^-/ ||
                 $2 ~ /^[[:space:]]/ || $2 ~ /[[:space:]]$/ ||
                 $2 ~ /[[:cntrl:]]/) exit 2
             print
@@ -83,10 +45,8 @@ is_appstore_app_installed() {
     if [[ -n "${OBSERVED_MAS_STATUS:-}" ]]; then
         [[ "$OBSERVED_MAS_STATUS" == 0 ]] || return 2
         inventory="$OBSERVED_MAS_INVENTORY"
-    elif [[ "${MACSEED_APPLICATION_EXECUTION:-false}" == true ]]; then
-        inventory="$(MAS_NO_AUTO_INDEX=1 mas list 2>/dev/null)" || return 2
     else
-        inventory="$(MAS_NO_AUTO_INDEX=1 mas list)" || return 2
+        inventory="$(observe_appstore_inventory)" || return 2
     fi
     # Prefix both operands to prevent awk from comparing IDs numerically.
     LC_ALL=C awk -v app_id="$1" '
@@ -96,203 +56,89 @@ is_appstore_app_installed() {
 
 }
 
-# ==========================================
-# Preview App Store Applications
-# ==========================================
-
+# Preview every selected ID, including uncertain observations. Missing apps require
+# a user action outside Macseed; neither missing nor unverified blocks other domains.
 preview_appstore_apps() {
-
-    if blueprint_exists &&
-       [[ -z "$(blueprint_selected_items app-store)" ]]; then
+    if blueprint_exists && [[ -z "$(blueprint_selected_items app-store)" ]]; then
         return 0
     fi
-
-    local config_file
-    config_file="$(blueprint_generated_file app-store)"
-
-    local applications
-    if ! applications="$(read_appstore_configuration "$config_file")"; then
-        error "App Store configuration missing, unreadable, or malformed: $config_file"
+    local applications app_id app_name result status=0
+    applications="$(read_appstore_configuration "$(blueprint_generated_file app-store)")" || {
+        error "App Store configuration missing, unreadable, or malformed"
         return 2
-    fi
-
-    if ! command -v mas >/dev/null 2>&1; then
-        warning "mas is not installed"
-        return 1
-    fi
-
-    local app_id
-    local app_name
-    local inspection_result
-    local OBSERVED_MAS_STATUS='' OBSERVED_MAS_INVENTORY
-    if [[ "${BUNDLE_RESTORE_PREVIEW:-false}" == true && "${MACSEED_APPLICATION_EXECUTION:-false}" == true ]]; then
-        OBSERVED_MAS_STATUS=pending
-    fi
-
+    }
+    local OBSERVED_MAS_STATUS=pending OBSERVED_MAS_INVENTORY
     while IFS='|' read -r app_id app_name || [[ -n "$app_id" ]]; do
-        [[ -z "$app_id" ]] && continue
-        [[ "$app_id" =~ ^# ]] && continue
+        [[ -n "$app_id" && "$app_id" != \#* ]] || continue
         blueprint_item_selected app-store "$app_id" || continue
-
         is_appstore_app_installed "$app_id"
-        inspection_result=$?
-        case $inspection_result in
-            0) preview_record app-store "$app_id" none satisfied ;;
-            1) preview_record app-store "$app_id" install planned ;;
-            *) preview_record app-store "$app_id" install blocked observation_failed ;;
-        esac
-
-        case $inspection_result in
-            0) detail "$app_name is already installed" ;;
-            1) preview_action "Would install App Store app: $app_name ($app_id)" ;;
+        result=$?
+        case "$result" in
+            0)
+                preview_record app-store "$app_id" inspect satisfied
+                detail "$app_name is installed"
+                ;;
+            1)
+                preview_record app-store "$app_id" inspect warning manual_installation_required
+                warning "Install in App Store, then refresh: $app_name ($app_id)"
+                status=1
+                ;;
             *)
-                if [[ "${MACSEED_APPLICATION_EXECUTION:-false}" == true ]]; then
-                    warning "App Store inspection requires attention"
-                    return 1
-                fi
-                error "Failed to inspect App Store application: $app_name"
-                return 2
+                preview_record app-store "$app_id" inspect unknown observation_failed
+                warning "App Store installation status could not be verified: $app_name ($app_id)"
+                status=1
                 ;;
         esac
     done <<< "$applications"
-
-    return 0
-
+    return "$status"
 }
 
+# Retained as a fail-closed compatibility entrypoint for old callers. All active
+# orchestration uses install_appstore_apps, which only observes selected IDs.
 install_appstore_app() {
-
-    local app_id="$1"
-    local app_name="$2"
-
-    action "Installing $app_name..."
-
-    if [[ "${MACSEED_APPLICATION_EXECUTION:-false}" == true ]]; then
-        mas_application_cli_readiness || return 2
-        # Current mas supports sudo invocation and retains the invoking user's
-        # App Store context. -n prevents password fallback even if authorization
-        # expires after readiness. Never emit vendor account/error output.
-        sudo -n /usr/bin/env MAS_NO_AUTO_INDEX=1 "$MAS_APPLICATION_COMMAND" install "$app_id" </dev/null >/dev/null 2>&1
-    elif [[ "$VERBOSE" == true ]]; then
-
-    MAS_NO_AUTO_INDEX=1 mas install "$app_id"
-
-else
-
-    MAS_NO_AUTO_INDEX=1 mas install "$app_id" >/dev/null 2>&1
-
-fi
-
-if [[ $? -eq 0 ]]; then
-
-    return 0
-
-fi
-
-error "Failed to install $app_name"
-return 2
-
+    warning "Automatic App Store installation is unavailable. Install in App Store, then refresh."
+    return 1
 }
-
-# ==========================================
-# Install App Store Applications
-# ==========================================
 
 install_appstore_apps() {
-
-    if blueprint_exists &&
-       [[ -z "$(blueprint_selected_items app-store)" ]]; then
+    if blueprint_exists && [[ -z "$(blueprint_selected_items app-store)" ]]; then
         success "No App Store applications selected by Blueprint"
         return 0
     fi
-
-    local config_file
-    config_file="$(blueprint_generated_file app-store)"
-
-    local applications
-    if ! applications="$(read_appstore_configuration "$config_file")"; then
-
-        error "App Store configuration missing, unreadable, or malformed: $config_file"
+    local applications app_id app_name result status=0
+    applications="$(read_appstore_configuration "$(blueprint_generated_file app-store)")" || {
+        error "App Store configuration missing, unreadable, or malformed"
         return 2
-
-    fi
-
-    if ! command -v mas >/dev/null 2>&1; then
-        warning "mas is not installed"
-        [[ "${MACSEED_APPLICATION_EXECUTION:-false}" != true ]] || return 2
-        return 1
-    fi
-
-    local missing_apps=0
-    local inspection_result
-
+    }
+    local OBSERVED_MAS_STATUS=pending OBSERVED_MAS_INVENTORY
     while IFS='|' read -r app_id app_name || [[ -n "$app_id" ]]; do
-
-        [[ -z "$app_id" ]] && continue
-        [[ "$app_id" =~ ^# ]] && continue
+        [[ -n "$app_id" && "$app_id" != \#* ]] || continue
         blueprint_item_selected app-store "$app_id" || continue
         if declare -F application_stop_checkpoint >/dev/null; then application_stop_checkpoint; fi
-
         is_appstore_app_installed "$app_id"
-        inspection_result=$?
-
-        if [[ $inspection_result -eq 0 ]]; then
-
-            declare -F verification_application_operation_hook >/dev/null && verification_application_operation_hook app-store "$app_id" install noop
-            detail "$app_name is already installed"
-            continue
-
-        fi
-
-        if [[ $inspection_result -ne 1 ]]; then
-            error "Failed to inspect App Store application: $app_name"
-            return 2
-        fi
-
-        ((missing_apps++))
-
-        if [[ $missing_apps -eq 1 ]]; then
-
-            action "Installing App Store Applications..."
-            echo
-
-        fi
-
-        declare -F verification_applying_hook >/dev/null && verification_applying_hook app-store "$app_id" install
-        install_appstore_app "$app_id" "$app_name"
-
-        if [[ $? -ne 0 ]]; then
-            declare -F verification_application_operation_hook >/dev/null && verification_application_operation_hook app-store "$app_id" install failure
-            return 2
-        fi
-        declare -F verification_application_operation_hook >/dev/null && verification_application_operation_hook app-store "$app_id" install success
-
-        # Shared lifecycle flag is read by the calling module wrapper.
-        # shellcheck disable=SC2034
-        MODULE_CHANGED=true
-
-        is_appstore_app_installed "$app_id"
-        inspection_result=$?
-        declare -F verification_application_post_hook >/dev/null && verification_application_post_hook "$inspection_result"
-        if [[ $inspection_result -ne 0 ]]; then
-            error "Failed to verify App Store application: $app_name"
-            return 2
-        fi
-
-        success "$app_name installed successfully"
-
+        result=$?
+        case "$result" in
+            0)
+                declare -F verification_application_operation_hook >/dev/null &&
+                    verification_application_operation_hook app-store "$app_id" inspect noop
+                detail "$app_name is installed"
+                ;;
+            1)
+                declare -F verification_application_operation_hook >/dev/null &&
+                    verification_application_operation_hook app-store "$app_id" inspect skipped manual_installation_required
+                warning "Install in App Store, then refresh: $app_name ($app_id)"
+                status=1
+                ;;
+            *)
+                declare -F verification_application_operation_hook >/dev/null &&
+                    verification_application_operation_hook app-store "$app_id" inspect skipped observation_failed
+                warning "App Store installation status could not be verified: $app_name ($app_id)"
+                status=1
+                ;;
+        esac
     done <<< "$applications"
-
-    if [[ $missing_apps -eq 0 ]]; then
-
-        success "All App Store applications are installed."
-        return 0
-
-    fi
-
-    echo
-    success "App Store applications are ready"
-
+    if [[ "$status" -eq 0 ]]; then success "All selected App Store applications are installed"; fi
+    return "$status"
 }
 
 # Inventory presence only; unavailable mas does not imply an absent app.

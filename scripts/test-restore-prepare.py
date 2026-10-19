@@ -452,21 +452,21 @@ class RestorePrepareTests(unittest.TestCase):
         code.unlink()
         self.assertEqual(self.plan_result()['readiness']['conditions'][0]['code'], 'vscode_cli_required')
 
-    def test_mas_prepare_prerequisites_and_authorization(self):
+    def test_assisted_appstore_prepare_never_requires_authorization(self):
         mas = self.mas_fixture()
         self.pack()
-        (self.root / 'bin/sudo').write_text('#!/bin/bash\nexit 1\n')
-        denied = self.plan_result()
-        self.assertEqual(denied['readiness']['conditions'][0]['code'], 'authorization_required')
-        (self.root / 'mas-state').touch()
-        satisfied = self.plan_result()
-        self.assertTrue(satisfied['readiness']['ready'], satisfied)
-        self.environment['TEST_MAS_BROKEN'] = 'true'
-        broken = self.plan_result()
-        self.assertEqual(broken['readiness']['conditions'][0]['code'], 'mas_unavailable')
+        (self.root / 'bin/sudo').write_text('#!/bin/bash\necho sudo >> "$TEST_MUTATIONS"; exit 99\n')
+        plan = self.plan_result()
+        self.assertTrue(plan['readiness']['ready'], plan)
+        apps = [row for row in plan['plan'] if row['domain'] == 'app-store']
+        self.assertEqual([(r['action'], r['disposition'], r['reason']) for r in apps],
+                         [('inspect', 'satisfied', None), ('inspect', 'warning', 'manual_installation_required')])
+        self.assertFalse((self.root / 'mutations').exists())
         mas.unlink()
         absent = self.plan_result()
-        self.assertEqual(absent['readiness']['conditions'][0]['code'], 'mas_required')
+        self.assertTrue(absent['readiness']['ready'], absent)
+        self.assertTrue(all(row['disposition'] == 'unknown' for row in absent['plan'] if row['domain'] == 'app-store'))
+        self.assertFalse((self.root / 'mutations').exists())
 
     def test_secure_prepare_launch_requirement_and_no_unrelated_preflight(self):
         self.pack(secure=True)
@@ -486,12 +486,13 @@ class RestorePrepareTests(unittest.TestCase):
 
     def test_mixed_prepare_reports_independent_blockers(self):
         self.mas_fixture(mixed=True)
-        self.environment['TEST_MAS_BROKEN'] = 'true'
+        self.environment['TEST_MAS_OBSERVATION_FAIL'] = 'true'
         self.environment['TEST_GIT_BROKEN'] = 'true'
         self.pack()
         result = self.plan_result()
         codes = {row['code'] for row in result['readiness']['conditions']}
-        self.assertTrue({'mas_unavailable', 'git_unavailable'} <= codes, result)
+        self.assertIn('git_unavailable', codes, result)
+        self.assertTrue(all(row['disposition'] == 'unknown' for row in result['plan'] if row['domain'] == 'app-store'))
         self.assertNotIn('private-account@example.test', json.dumps(result))
 
     def test_cask_unsupported_classification_in_prepare(self):
@@ -2414,68 +2415,78 @@ exit 0
         # Preview validates once; the separate read-only requirements report once,
         # regardless of how many domains it then inspects.
         self.assertEqual(calls.read_text().splitlines(), ['validation', 'validation'])
-        # Independent fresh snapshots: one in Preview and one in readiness,
-        # including its nested MAS preflight and repeated per-item consumers.
-        self.assertEqual(inventories.read_text().splitlines(), ['true', 'false'])
+        # App Store readiness is nonblocking and never probes installation tools.
+        self.assertEqual(inventories.read_text().splitlines(), ['true'])
 
-    def test_mas_production_install_and_convergence(self):
+    def test_assisted_appstore_mixed_restore_and_manual_convergence(self):
         self.mas_fixture(mixed=True)
         self.pack()
-        plan = self.invoke()[1][1]["data"]["prepared_plan_id"]
-        result, events = self.execute(plan)
+        plan = self.plan_result()
+        result, events = self.execute(plan['prepared_plan_id'])
         self.assertEqual(result.returncode, 0, events)
-        self.assertEqual(events[-2]["data"]["verification"]["verdict"],
-                         "selected_requirements_verified")
-        self.assertTrue(events[-2]["data"]["target_mutation_may_have_started"])
-        plan = self.invoke()[1][1]["data"]["prepared_plan_id"]
-        self.assertEqual(self.execute(plan)[0].returncode, 0)
-        self.assertEqual((self.root / "mas-log").read_text(), "install:222\n")
-        for state in ("TEST_CASK_STATE", "TEST_EXTENSION_STATE"):
+        evidence = events[-2]['data']
+        self.assertEqual(evidence['verification']['verdict'], 'differences_detected')
+        self.assertTrue(evidence['target_mutation_may_have_started'])
+        self.assertFalse((self.root / 'mas-log').exists())
+        for state in ('TEST_CASK_STATE', 'TEST_EXTENSION_STATE'):
             self.assertTrue(Path(self.environment[state]).exists())
-        self.assertTrue(Path(self.environment["TEST_CASK_STATE"] + ".formula").exists())
-        self.assertTrue((self.home / "Projects/repo/.git").is_dir())
-        self.assertNotIn(b"private-account", result.stdout + result.stderr)
-        logs = b"".join(p.read_bytes() for p in (self.project / "logs").rglob("*.log"))
-        self.assertNotIn(b"private-account", logs)
+        self.assertTrue(Path(self.environment['TEST_CASK_STATE'] + '.formula').exists())
+        self.assertTrue((self.home / 'Projects/repo/.git').is_dir())
+        # Simulate manual installation only by changing this fixture's inventory.
+        Path(self.environment['TEST_MAS_STATE']).touch()
+        refreshed = self.plan_result()
+        self.assertNotEqual(refreshed['prepared_plan_id'], plan['prepared_plan_id'])
+        self.assertTrue(all(row['disposition'] == 'satisfied' for row in refreshed['plan'] if row['domain'] == 'app-store'))
+        stale, stale_events = self.execute(plan['prepared_plan_id'])
+        self.assertEqual(stale_events[-1]['data']['code'], 'stale_plan')
+        repeated, repeated_events = self.execute(refreshed['prepared_plan_id'])
+        self.assertEqual(repeated.returncode, 0, repeated_events)
+        self.assertEqual(repeated_events[-2]['data']['verification']['verdict'], 'selected_requirements_verified')
+        self.assertFalse((self.root / 'mas-log').exists())
+        self.assertNotIn(b'private-account', result.stdout + result.stderr)
 
-    def test_mas_local_prerequisites_before_publication(self):
+    def test_assisted_appstore_unverified_does_not_block_workspace(self):
         mas = self.mas_fixture()
         self.pack()
-        for condition, expected in (("missing", "mas_required"), ("broken", "mas_unavailable"),
-                                    ("inventory", "mas_unavailable")):
-            if condition == "missing":
+        for tool in ('sudo', 'curl', 'xcode-select'):
+            (self.root / 'bin' / tool).write_text('#!/bin/bash\necho ' + tool + ' >> "$TEST_MUTATIONS"; exit 99\n')
+        for condition in ('missing', 'inventory', 'malformed', 'partial'):
+            if condition == 'missing':
                 contents = mas.read_text()
                 mas.unlink()
-            elif condition == "broken":
+            else:
                 mas.write_text(contents)
                 mas.chmod(0o700)
-                self.environment["TEST_MAS_BROKEN"] = "true"
-            else:
-                self.environment.pop("TEST_MAS_BROKEN")
-                self.environment["TEST_MAS_OBSERVATION_FAIL"] = "true"
-            result, prepared = self.invoke()
-            self.assertEqual(result.returncode, 0, prepared)
-            result, events = self.execute(prepared[1]["data"]["prepared_plan_id"])
-            self.assertEqual(events[-1]["data"]["code"], expected)
-            self.assertFalse(events[-1]["data"]["publication_started"])
-            self.assertFalse((self.root / "mas-log").exists())
-            self.assertIn('[app-store]\n111\n222\n', (self.stage / "blueprint.conf").read_text())
-            self.assertNotIn(b"private-account", result.stdout + result.stderr)
+                self.environment.pop('TEST_MAS_OBSERVATION_FAIL', None)
+                if condition == 'inventory':
+                    self.environment['TEST_MAS_OBSERVATION_FAIL'] = 'true'
+                elif condition == 'malformed':
+                    mas.write_text('#!/bin/bash\necho invalid-inventory\n')
+                else:
+                    mas.write_text('#!/bin/bash\necho "111 Installed Fixture (1.0)"; exit 2\n')
+            plan = self.plan_result()
+            self.assertTrue(plan['readiness']['ready'])
+            apps = [row for row in plan['plan'] if row['domain'] == 'app-store']
+            self.assertTrue(all(row['disposition'] == 'unknown' for row in apps), apps)
+            result, events = self.execute(plan['prepared_plan_id'])
+            self.assertEqual(result.returncode, 0, events)
+            self.assertTrue((self.home / 'Projects').is_dir())
+            self.assertGreater(events[-2]['data']['verification']['unverified_count'], 0)
+            self.assertFalse((self.root / 'mas-log').exists())
+            self.assertFalse((self.root / 'mutations').exists())
+            self.assertNotIn(b'private-account', result.stdout + result.stderr)
 
-    def test_mas_authorization_failure_is_runtime_failure(self):
+    def test_assisted_appstore_existing_bundle_blackmagic_record(self):
         self.mas_fixture()
-        self.environment["TEST_MAS_AUTH_FAIL"] = "true"
+        blueprint = self.stage / 'blueprint.conf'
+        blueprint.write_text(blueprint.read_text().replace('[app-store]\n111\n222\n', '[app-store]\n425264550\n'))
+        (self.stage / 'generated/appstore.conf').write_bytes(b'425264550|Blackmagic Disk Speed Test\n')
         self.pack()
-        result, prepared = self.invoke()
-        self.assertEqual(result.returncode, 0, prepared)
-        result, events = self.execute(prepared[1]["data"]["prepared_plan_id"])
-        self.assertEqual(result.returncode, 2, events)
-        self.assertEqual(events[-1]["data"]["code"], "bootstrap_failed")
-        self.assertTrue(events[-1]["data"]["publication_occurred"])
-        self.assertTrue(events[-1]["data"]["target_mutation_may_have_started"])
-        self.assertEqual((self.root / "mas-log").read_text(), "install:222\n")
-        self.assertFalse(Path(self.environment["TEST_MAS_STATE"]).exists())
-        self.assertNotIn(b"private-account", result.stdout + result.stderr)
+        plan = self.plan_result()
+        row = next(r for r in plan['plan'] if r['domain'] == 'app-store')
+        self.assertEqual((row['item_id'], row['reason']), ('425264550', 'manual_installation_required'))
+        self.assertTrue(row['selection_item_id'].startswith('restore:'))
+        self.assertFalse((self.root / 'mas-log').exists())
 
     def test_mas_installed_and_unselected(self):
         mas = self.mas_fixture()

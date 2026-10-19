@@ -289,8 +289,21 @@ or mutate it; the existing CLI Restore owns recovery.
 | Casks | The Homebrew provider uses nonempty typed payload predicates, independently of registration. Qualified apps/suites, typed relocated payloads, binary/static ancillary links, declarative wrappers, bounded generic artifacts and observable native packages can install or repair through Homebrew. Requirements, ownership, historical cleanup and privilege are qualified separately. Unknown executable behavior fails closed |
 | VS Code extensions | Usable `code` in PATH or the official stable CLI in `/Applications` or `$HOME/Applications`. Two copies without an explicit choice are ambiguous. CLI is required before publication even if VS Code's cask is selected |
 | Git repositories | Usable Git and safe destinations. Clones use recorded remotes without credential/askpass prompts; SSH uses existing config/agent and strict known-host checking. HTTP(S) credentials and URL query/fragment are prohibited |
-| App Store | Usable `mas` before publication and existing account/entitlement state; missing IDs need non-interactive `sudo -n` authorization. Core does not manage Apple ID or promise account/entitlement validation before install |
+| App Store | Assisted Restore only: fresh read-only `mas list` inventory by numeric ID; missing/unverified items never block independent Restore work. No automatic installation, privileged fallback, or account probing |
 | Secure SSH | Usable `age` and the separate secret bridge; importing user keys does not require administrator authorization |
+
+App Store Preview rows use `action: inspect`: `satisfied` means installed in the
+current validated inventory; `warning` / `manual_installation_required` means
+missing; `unknown` / `observation_failed` means unverified. These rows are never
+executable changes. Bootstrap retains its existing App Store module entrypoint but
+only observes; a missing/uncertain item yields warning `1`, preserves
+`MODULE_CHANGED`, and does not prevent later modules or Global Verification.
+Verification performs a separate fresh inventory and reports verified, mismatch
+or unverified. A successful page-open action is never evidence. Numeric `ID|label`
+Bundle records and selection correlation are unchanged. Observation uses exact IDs,
+not names; unavailable, failed or malformed inventory cannot establish presence or
+absence. As before, this is inventory presence, not receipt signature or entitlement
+validation. Spotlight indexing limitations of `mas list` still apply.
 
 
 Cask repair is `reinstall` in Protocol V1 and delegates to native

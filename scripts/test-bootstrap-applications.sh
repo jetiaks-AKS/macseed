@@ -440,8 +440,8 @@ for input_domain in casks appstore extensions; do
             valid_first='111|Installed App'
             valid_last='222|Приложение (Test) & Tools'
             selected_item=222
-            expected_install='mas install 222'
-            invalid_records=('abc|Name' '-1|Name' '|Name' '123' '123|' '123|Name|Extra' '12 3|Name' '123|   ' '123| Name' '123|Name ' '123|--help' $'123|Bad\tName' 'https://example.org|Name' '$(command)|Name' $'123|Name\r')
+            expected_install=''
+            invalid_records=('0|Name' '000|Name' '123456789012345678901|Name' 'abc|Name' '-1|Name' '|Name' '123' '123|' '123|Name|Extra' '12 3|Name' '123|   ' '123| Name' '123|Name ' '123|--help' $'123|Bad\tName' 'https://example.org|Name' '$(command)|Name' $'123|Name\r')
             ;;
         extensions)
             validation_consumer=install_vscode_extensions
@@ -458,8 +458,14 @@ for input_domain in casks appstore extensions; do
     BREW_INSTALL_MAKES_PRESENT=true
     printf '# comment\n\n%s\n%s' "$valid_first" "$valid_last" > "$input_file"
     run_application_input_case
-    assert_status 0 "$status" "$input_domain valid input and final line without newline"
-    [[ "$(wc -l < "$COMMAND_LOG" | tr -d ' ')" -eq 2 && "$MODULE_CHANGED" == true ]] || fail "$input_domain lost a valid record"
+    expected_status=0
+    [[ "$input_domain" != appstore ]] || expected_status=1
+    assert_status "$expected_status" "$status" "$input_domain valid input and final line without newline"
+    if [[ "$input_domain" == appstore ]]; then
+        assert_no_mutation "App Store valid records remain assisted"
+    else
+        [[ "$(wc -l < "$COMMAND_LOG" | tr -d ' ')" -eq 2 && "$MODULE_CHANGED" == true ]] || fail "$input_domain lost a valid record"
+    fi
     pass "$input_domain preserves names, comments, blank lines, and last record"
 
     for invalid_record in "${invalid_records[@]}"; do
@@ -506,7 +512,7 @@ for input_domain in casks appstore extensions; do
     SELECTED_ITEMS="$selected_item"
     printf '%s\n%s' "$valid_first" "$valid_last" > "$input_file"
     run_application_input_case
-    assert_status 0 "$status" "$input_domain Blueprint subset remains supported"
+    assert_status "$expected_status" "$status" "$input_domain Blueprint subset remains supported"
     [[ "$(cat "$COMMAND_LOG")" == "$expected_install" ]] || fail "$input_domain Blueprint selection changed"
     pass "$input_domain installs exactly the selected item"
 
@@ -561,37 +567,38 @@ printf '111|Installed App\n222|Missing App\n' > "$TEST_DIR/appstore.conf"
 printf 'installed.extension\nmissing.extension\n' > "$TEST_DIR/vscode-extensions.conf"
 printf 'example-cask\n' > "$TEST_DIR/brew-casks.conf"
 
-# App Store observation, apply, and failure semantics.
+# Assisted App Store observes once per pass, never installs, and preserves Changed.
 reset_state
 MAS_LIST_OUTPUT=$'111 Installed App (1.0)\n'
 output="$(install_appstore_apps)"; status=$?
-assert_status 0 "$status" "App Store populated inventory preserves normal installation"
-[[ "$(grep -c '^mas list$' "$OBSERVATION_LOG")" == 3 ]] || fail "App Store must check both items and verify the install"
-pass "App Store checks both items and verifies the install"
-[[ "$(cat "$COMMAND_LOG")" == "mas install 222" ]] || fail "App Store installs only the missing application"
-pass "App Store installs only the missing application"
+assert_status 1 "$status" "App Store missing application requires manual installation"
+[[ "$(grep -c '^mas list$' "$OBSERVATION_LOG")" == 1 ]] || fail "App Store snapshot must be fresh and pass-local"
+assert_no_mutation "App Store mixed inventory never installs"
+[[ "$output" == *'Missing App (222)'* ]] || fail "missing application omitted"
 
 reset_state
 output="$(install_appstore_apps)"; status=$?
-assert_status 0 "$status" "App Store legitimate empty inventory remains valid"
-[[ "$(wc -l < "$COMMAND_LOG" | tr -d ' ')" == 2 ]] || fail "App Store empty inventory installs both missing applications"
-pass "App Store empty inventory installs both missing applications"
+assert_status 1 "$status" "App Store empty inventory requires manual installation"
+assert_no_mutation "App Store empty inventory never installs"
 
 reset_state
 MAS_LIST_STATUS=2
 output="$(install_appstore_apps 2>&1)"; status=$?
-assert_status 2 "$status" "App Store enumeration failure returns 2"
-assert_no_mutation "App Store enumeration failure performs zero installs"
-assert_no_false_success "$output" "App Store enumeration failure emits no false success"
+assert_status 1 "$status" "App Store failed inspection remains a nonblocking warning"
+assert_no_mutation "App Store failed inspection never installs"
+assert_no_false_success "$output" "App Store failed inspection emits no false success"
 
-reset_state
-MAS_INSTALL_STATUS=2
-install_appstore_apps > "$TEST_DIR/mutation.out" 2>&1; status=$?
-output="$(cat "$TEST_DIR/mutation.out")"
-assert_status 2 "$status" "App Store installation failure returns 2"
-assert_no_false_success "$output" "App Store installation failure emits no false success"
-[[ "$MODULE_CHANGED" == false ]] || fail "App Store failed installation does not report a change"
-pass "App Store failed installation does not report a change"
+for MACSEED_APPLICATION_EXECUTION in false true; do
+    for VERBOSE in false true; do
+        reset_state
+        install_appstore_app 425264550 'Blackmagic Disk Speed Test' > "$TEST_DIR/mutation.out" 2>&1; status=$?
+        assert_status 1 "$status" "legacy single-app entrypoint fails closed (application=$MACSEED_APPLICATION_EXECUTION verbose=$VERBOSE)"
+        assert_no_mutation "legacy single-app entrypoint never installs"
+        [[ "$MODULE_CHANGED" == false ]] || fail "assisted inspection set Changed"
+    done
+done
+unset MACSEED_APPLICATION_EXECUTION
+VERBOSE=false
 
 # VS Code observation, apply, and failure semantics.
 reset_state
@@ -626,71 +633,59 @@ assert_no_false_success "$output" "VS Code installation failure emits no false s
 pass "VS Code failed installation does not report a change"
 
 # Exercise the real lifecycle directly so Changed survives in the test shell.
-for lifecycle_domain in appstore extensions; do
-    if [[ "$lifecycle_domain" == appstore ]]; then
-        validation_consumer=install_appstore_apps
-        input_file="$TEST_DIR/appstore.conf"
-        first_record='497799835|Xcode'
-        second_record='222|Another App'
-        first_id=497799835
-        second_id=222
-        second_label='Another App'
-        prefix=MAS
+lifecycle_domain=extensions
+validation_consumer=install_vscode_extensions
+input_file="$TEST_DIR/vscode-extensions.conf"
+first_record=publisher.extension
+second_record=other.extension
+first_id=publisher.extension
+second_id=other.extension
+second_label=other.extension
+prefix=CODE
+printf '%s\n' "$first_record" > "$input_file"
+
+reset_state
+printf '%s\n' "$first_id" > "$TEST_DIR/$prefix-installed"
+run_application_input_case
+assert_status 0 "$status" "$lifecycle_domain exact ID already present"
+assert_no_mutation "$lifecycle_domain exact ID skips installation"
+[[ "$MODULE_CHANGED" == false ]] || fail "already present item set Changed"
+
+reset_state
+run_application_input_case
+assert_status 0 "$status" "$lifecycle_domain successful install is verified"
+[[ "$MODULE_CHANGED" == true ]] || fail "successful install lost Changed"
+[[ "$(wc -l < "$OBSERVATION_LOG" | tr -d ' ')" == 2 ]] || fail "missing Check or Verify"
+: > "$COMMAND_LOG"
+MODULE_CHANGED=false
+run_application_input_case
+assert_status 0 "$status" "$lifecycle_domain repeated run succeeds"
+assert_no_mutation "$lifecycle_domain repeated run is idempotent"
+[[ "$MODULE_CHANGED" == false ]] || fail "idempotent run set Changed"
+
+for verify_failure in absent error; do
+    reset_state
+    if [[ "$verify_failure" == absent ]]; then
+        export "${prefix}_INSTALL_MAKES_PRESENT=false"
     else
-        validation_consumer=install_vscode_extensions
-        input_file="$TEST_DIR/vscode-extensions.conf"
-        first_record=publisher.extension
-        second_record=other.extension
-        first_id=publisher.extension
-        second_id=other.extension
-        second_label=other.extension
-        prefix=CODE
+        export "${prefix}_VERIFY_STATUS=2"
     fi
-    printf '%s\n' "$first_record" > "$input_file"
-
-    reset_state
-    printf '%s\n' "$first_id" > "$TEST_DIR/$prefix-installed"
     run_application_input_case
-    assert_status 0 "$status" "$lifecycle_domain exact ID already present"
-    assert_no_mutation "$lifecycle_domain exact ID skips installation"
-    [[ "$MODULE_CHANGED" == false ]] || fail "already present item set Changed"
-
-    reset_state
-    run_application_input_case
-    assert_status 0 "$status" "$lifecycle_domain successful install is verified"
-    [[ "$MODULE_CHANGED" == true ]] || fail "successful install lost Changed"
-    [[ "$(wc -l < "$OBSERVATION_LOG" | tr -d ' ')" == 2 ]] || fail "missing Check or Verify"
-    : > "$COMMAND_LOG"
-    MODULE_CHANGED=false
-    run_application_input_case
-    assert_status 0 "$status" "$lifecycle_domain repeated run succeeds"
-    assert_no_mutation "$lifecycle_domain repeated run is idempotent"
-    [[ "$MODULE_CHANGED" == false ]] || fail "idempotent run set Changed"
-
-    for verify_failure in absent error; do
-        reset_state
-        if [[ "$verify_failure" == absent ]]; then
-            export "${prefix}_INSTALL_MAKES_PRESENT=false"
-        else
-            export "${prefix}_VERIFY_STATUS=2"
-        fi
-        run_application_input_case
-        assert_status 2 "$status" "$lifecycle_domain Verify $verify_failure returns 2"
-        [[ "$MODULE_CHANGED" == true ]] || fail "successful mutation must retain Changed after Verify failure"
-        [[ "$(wc -l < "$COMMAND_LOG" | tr -d ' ')" == 1 ]] || fail "Verify failure must follow one install"
-        [[ "$(wc -l < "$OBSERVATION_LOG" | tr -d ' ')" == 2 ]] || fail "Verify failure must follow re-observation"
-        assert_no_false_success "$output" "$lifecycle_domain Verify $verify_failure has no success"
-    done
-
-    reset_state
-    printf '%s\n%s\n' "$first_record" "$second_record" > "$input_file"
-    export "${prefix}_FAIL_ITEM=$second_id"
-    run_application_input_case
-    assert_status 2 "$status" "$lifecycle_domain later install failure returns 2"
-    [[ "$MODULE_CHANGED" == true ]] || fail "later failure cleared earlier Changed"
-    [[ "$output" != *'are ready'* && "$output" != *"$second_label installed successfully"* ]] || fail "later failure reports success"
-    pass "$lifecycle_domain retains earlier successful mutation without module success"
+    assert_status 2 "$status" "$lifecycle_domain Verify $verify_failure returns 2"
+    [[ "$MODULE_CHANGED" == true ]] || fail "successful mutation must retain Changed after Verify failure"
+    [[ "$(wc -l < "$COMMAND_LOG" | tr -d ' ')" == 1 ]] || fail "Verify failure must follow one install"
+    [[ "$(wc -l < "$OBSERVATION_LOG" | tr -d ' ')" == 2 ]] || fail "Verify failure must follow re-observation"
+    assert_no_false_success "$output" "$lifecycle_domain Verify $verify_failure has no success"
 done
+
+reset_state
+printf '%s\n%s\n' "$first_record" "$second_record" > "$input_file"
+export "${prefix}_FAIL_ITEM=$second_id"
+run_application_input_case
+assert_status 2 "$status" "$lifecycle_domain later install failure returns 2"
+[[ "$MODULE_CHANGED" == true ]] || fail "later failure cleared earlier Changed"
+[[ "$output" != *'are ready'* && "$output" != *"$second_label installed successfully"* ]] || fail "later failure reports success"
+pass "$lifecycle_domain retains earlier successful mutation without module success"
 
 # Names and numeric substrings must never establish App Store presence.
 validation_consumer=install_appstore_apps
@@ -699,8 +694,8 @@ for inventory in '999 Xcode Helper (1.0)' '4977998350 Xcode (1.0)' '1497799835 X
     reset_state
     MAS_LIST_OUTPUT="$inventory"
     run_application_input_case
-    assert_status 0 "$status" "App Store ignores nonmatching inventory: $inventory"
-    [[ "$(cat "$COMMAND_LOG")" == 'mas install 497799835' ]] || fail "App Store matched name or partial ID"
+    assert_status 1 "$status" "App Store ignores nonmatching inventory: $inventory"
+    assert_no_mutation "App Store nonmatching inventory stays assisted"
 done
 reset_state
 MAS_LIST_OUTPUT='497799835 Renamed Application (1.0)'
@@ -892,29 +887,29 @@ BLUEPRINT_PRESENT=false
 reset_state
 MAS_LIST_STATUS=2
 run_module "App Store" install_appstore_apps > "$TEST_DIR/run-module.out" 2>&1; status=$?
-assert_status 2 "$status" "App Store observation failure reaches run_module as error 2"
-[[ "$ERROR_COUNT" -eq 1 ]] || fail "App Store run_module records the error"
-pass "App Store run_module records the error"
+assert_status 1 "$status" "App Store observation failure reaches run_module as warning"
+[[ "$ERROR_COUNT" -eq 0 && "$WARNING_COUNT" -eq 1 ]] || fail "App Store run_module records the warning"
+pass "App Store run_module records the warning"
 
 reset_state
 CODE_LIST_STATUS=2
 run_module "VS Code Extensions" install_vscode_extensions > "$TEST_DIR/run-module.out" 2>&1; status=$?
 assert_status 2 "$status" "VS Code observation failure reaches run_module as error 2"
-[[ "$ERROR_COUNT" -eq 2 ]] || fail "VS Code run_module records the error"
+[[ "$ERROR_COUNT" -eq 1 ]] || fail "VS Code run_module records the error"
 pass "VS Code run_module records the error"
 
 reset_state
 BREW_LIST_STATUS=2
 run_module "Homebrew Casks" install_brew_casks > "$TEST_DIR/run-module.out" 2>&1; status=$?
 assert_status 2 "$status" "Homebrew cask observation failure reaches run_module as error 2"
-[[ "$ERROR_COUNT" -eq 3 ]] || fail "Homebrew cask run_module records the error"
+[[ "$ERROR_COUNT" -eq 2 ]] || fail "Homebrew cask run_module records the error"
 pass "Homebrew cask run_module records the error"
 
 reset_formula_case
 FORMULA_READ_STATUS=2
 run_module "Homebrew Packages" install_brew_packages > "$TEST_DIR/run-module.out" 2>&1; status=$?
 assert_status 2 "$status" "formula observation failure reaches run_module as error 2"
-[[ "$ERROR_COUNT" -eq 4 && "$MODULE_CHANGED" == false ]] || fail "formula error accounting changed"
+[[ "$ERROR_COUNT" -eq 3 && "$MODULE_CHANGED" == false ]] || fail "formula error accounting changed"
 assert_no_mutation "formula lifecycle observation failure performs zero installs"
 
 later_success() { return 0; }

@@ -237,8 +237,8 @@ reset_state
 printf '111|Installed App\n222|Missing App\n' > "$TEST_ROOT/appstore.conf"
 printf '111 Installed App (1.0)\n' > "$TEST_ROOT/mas-installed"
 run_case preview_appstore_apps
-expect_status 0 "App Store Preview succeeds for mixed state"
-expect_message "Would install App Store app: Missing App (222)" "App Store Preview plans the absent ID"
+expect_status 1 "App Store Preview reports assisted installation for mixed state"
+expect_message "Install in App Store, then refresh: Missing App (222)" "App Store Preview plans the absent ID"
 [[ "$OUTPUT" != *'Installed App (111)'* ]] || fail "installed App Store ID was planned"
 FIRST_OUTPUT="$OUTPUT"
 run_case preview_appstore_apps
@@ -249,7 +249,7 @@ reset_state
 printf '111|App\n' > "$TEST_ROOT/appstore.conf"
 MAS_STATUS=2
 run_case preview_appstore_apps
-expect_status 2 "App Store observation error returns 2"
+expect_status 1 "App Store observation error is a nonblocking warning"
 expect_no_mutation "App Store observation error performs no mutation"
 
 reset_state
