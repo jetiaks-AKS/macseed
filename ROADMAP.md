@@ -81,6 +81,11 @@ a real Partial Restore reported 105 Verified and one Tailscale Mismatch with
 
 1. **Next — MAS automatic restoration:** close native authorization/install/post-Verify
    and repeat/no-op qualification through the existing Core; mandatory before 1.0.
+   Native authorization and protected bundled-MAS diagnostics passed in development.
+   Controlled Install v3 is blocked by legacy reconciliation process observation;
+   live install is disabled. Next: identify the actual PID/API error fail-closed,
+   then controlled reconciliation → dry-run → separately approved GUI install.
+   See [checkpoint evidence](desktop/AuthorizationPoC/TrustedMAS/CONTROLLED-INSTALL-STAGE1.md).
    Complete the remaining supported-domain Restore gates tracked in TODO.
 2. **Secure SSH Desktop (16H):** implement and qualify the inherited secret-channel
    interaction, encryption/unlock/import confirmation and secure privacy coverage.

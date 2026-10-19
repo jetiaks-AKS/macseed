@@ -40,9 +40,15 @@ struct CoreLocation: Sendable {
     }
     func environment(temporary: URL) -> [String: String] {
         // Never inherit arbitrary BLUEPRINT_*, credentials, PYTHONPATH or loader vars.
-        let path = ([python.deletingLastPathComponent().path] + toolDirectories.map(\.path) + ["/usr/bin", "/bin", "/usr/sbin", "/sbin"]).joined(separator: ":")
+        let helpers = Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers")
+        let bundledMAS = FileManager.default.isExecutableFile(atPath: helpers.appendingPathComponent("mas").path)
+        let path = ((bundledMAS ? [helpers.path] : []) + [python.deletingLastPathComponent().path] + toolDirectories.map(\.path) + ["/usr/bin", "/bin", "/usr/sbin", "/sbin"]).joined(separator: ":")
         var environment = ["HOME": home.path, "PATH": path,
          "TMPDIR": temporary.path, "LC_ALL": "en_US.UTF-8", "PYTHONDONTWRITEBYTECODE": "1"]
+        if bundledMAS && FileManager.default.isExecutableFile(atPath: helpers.appendingPathComponent("MASClient").path) {
+            environment["MACSEED_MAS_INVENTORY_COMMAND"] = helpers.appendingPathComponent("mas").path
+            environment["MACSEED_MAS_ADAPTER"] = helpers.appendingPathComponent("MASClient").path
+        }
         let parent = ProcessInfo.processInfo.environment
         if parent["MACSEED_PERFORMANCE_TRACE"] == "1" {
             environment["MACSEED_PERFORMANCE_TRACE"] = "1"

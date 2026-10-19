@@ -481,6 +481,9 @@ struct RestoreView: View {
                     if model.inspection != nil { Button("Back") { model.back() } }
                 }
             }
+            if !runtime.isActive && !model.authorizingMAS {
+                MASRecoveryView(remainingIDs: model.masRecoveryRemainingIDs, appNames: model.masRecoveryNames)
+            }
             if model.state != .rebuilding && model.state != .result && model.state != .inspecting && model.state != .preparing {
                 Text("Restore Preview is read-only. No packages, settings, repositories or SSH identities are changed.")
                     .font(.callout).foregroundStyle(.secondary)
@@ -506,12 +509,21 @@ struct RestoreView: View {
                     Text("Some changes may require administrator authorization.")
                         .foregroundStyle(.secondary)
                 }
+                if model.preparation?.plan.contains(where: { $0.domain == "app-store" && $0.disposition == "planned" }) == true {
+                    Text("This build stops App Store work after the first new installation for a safety review. Remaining App Store apps will not be installed automatically.")
+                        .foregroundStyle(.orange)
+                }
                 if model.preparation?.warningCount ?? 0 > 0 {
                     Text("This Preview includes attention conditions. Review them before continuing.").foregroundStyle(.orange)
                 }
+                if model.authorizingMAS {
+                    ProgressView("Waiting for macOS App Store helper approval…")
+                    Text("Complete the macOS confirmation or allow Macseed in System Settings → General → Login Items & Extensions. Rebuild continues automatically after approval. Cancel stops this request before installation.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
                 HStack {
                     Button("Cancel", role: .cancel) { model.cancelRebuildConfirmation() }
-                    Button("Rebuild") { model.confirmRebuild() }.buttonStyle(.borderedProminent)
+                    Button("Rebuild") { model.confirmRebuild() }.buttonStyle(.borderedProminent).disabled(model.authorizingMAS)
                 }
             }.padding(24).frame(width: 420).interactiveDismissDisabled()
         }
@@ -1159,5 +1171,91 @@ enum RestoreSettingsPresentation {
             guard row.action != "restart_process", let title = WorkspaceSettingLabels.title(domain: row.domain, identity: row.itemID) else { return nil }
             return ("restore-\(index)", title)
         })
+    }
+}
+
+// Recovery lives in Restore, including after app restart without a selected Bundle.
+struct MASRecoveryView: View {
+    var remainingIDs: [String] = []
+    var appNames: [String: String] = [:]
+    @RestoreViewState private var downloadsClear = false
+    @RestoreViewState private var consentIDs: [String] = []
+    @RestoreViewState private var report: MASRecoveryReport?
+    @RestoreViewState private var busy = false
+    @RestoreViewState private var pending: String?
+    var body: some View {
+        DisclosureGroup("App Store Recovery") {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Inspect an interrupted App Store operation. Recovery never restarts an installation automatically.")
+                if let report {
+                    Text(appNames[report.appStoreID] ?? ("App Store application " + report.appStoreID)).font(.headline)
+                    Text(MASRecoveryPresentation.child(report.childState))
+                    Text(MASRecoveryPresentation.installation(report.installation))
+                    Text(MASRecoveryPresentation.guidance(report)).foregroundStyle(report.retryAllowed ? Color.secondary : .orange)
+                    DisclosureGroup("Technical details") {
+                        Text("Operation: " + report.operationID).textSelection(.enabled)
+                        Text("Journal: " + report.journalState)
+                        Text(report.reason).textSelection(.enabled)
+                        Text("Receipt: " + report.receipt)
+                        Text("Observation: " + report.completeness)
+                        Text("Protected evidence: " + report.evidence)
+                    }.font(.caption)
+                    if report.canAcceptRisk && !report.retryAllowed {
+                        Toggle("I checked App Store downloads; no related download or installation is active", isOn: $downloadsClear)
+                        Button("Allow One Retry…") { consentIDs = [report.appStoreID]; pending = "acceptRetry" }.disabled(!downloadsClear)
+                        let remaining = remainingIDs.filter { $0 != report.appStoreID }
+                        if !remaining.isEmpty {
+                            Text("Selected remaining apps: " + remaining.map { appNames[$0] ?? $0 }.joined(separator: ", "))
+                            Button("Allow Selected Remaining Apps…") { consentIDs = remaining; pending = "acceptRemaining" }.disabled(!downloadsClear)
+                        }
+                    }
+                    if report.retryAllowed {
+                        Text("Approved App Store IDs: " + report.allowedAppStoreIDs.joined(separator: ", "))
+                        Text("Refresh Preview and select only these approved apps before Rebuild.")
+                    }
+                    if report.reason == "helper_not_enabled_recovery_does_not_register" {
+                        Button("Enable Helper for Recovery…") { pending = "enableRecovery" }
+                    }
+                    HStack {
+                        Button("Check Installation") { pending = "verify" }
+                        if report.canReconcileObservation { Button("Resolve Interrupted Read-only Check") { pending = "reconcileObservation" } }
+                        if report.canReconcile { Button("Resolve Attempt Without Installation") { pending = "reconcile" } }
+                        if report.canTerminate { Button("Cancel Owned Child…", role: .destructive) { pending = "terminate" } }
+                        if report.canForceTerminate { Button("Force End Owned Child…", role: .destructive) { pending = "forceTerminate" } }
+                    }.disabled(report.operationID.isEmpty || report.retryAllowed)
+                }
+                HStack {
+                    Button("Refresh Recovery Status") { perform("status") }
+                    if busy { ProgressView().controlSize(.small) }
+                }
+            }.disabled(busy).padding(.vertical, 8)
+        }
+        .confirmationDialog("Confirm App Store recovery action", isPresented: Binding(get: { pending != nil }, set: { if !$0 { pending = nil } }), titleVisibility: .visible) {
+            if let action = pending {
+                Button(action == "acceptRetry" ? "Accept Risk for One Retry" : action == "acceptRemaining" ? "Accept Risk for Listed Apps" : action == "terminate" ? "Request Cancellation" : action == "forceTerminate" ? "Force End Installation Process" : action == "verify" ? "Check and Save Evidence" : action == "enableRecovery" ? "Request Native Approval" : "Record Review",
+                       role: ["terminate", "forceTerminate"].contains(action) ? .destructive : nil) { pending = nil; perform(action) }
+                Button("Cancel", role: .cancel) { pending = nil }
+            }
+        } message: {
+            Text(pending == "acceptRetry" || pending == "acceptRemaining"
+                ? "Apple may still complete background work from the interrupted attempt. Approve one attempt per listed app only: " + consentIDs.joined(separator: ", ") + ". No install starts now. Permission expires in ten minutes. A new uncertain result stops the sequence. The original history is preserved."
+                : "Recovery does not restart installation. Cancellation targets only this attempt's verified process, never Apple services. Check Installation reads current state and saves evidence.")
+        }
+    }
+    private func perform(_ action: String) {
+        guard !busy else { return }; busy = true
+        let id = action == "status" ? "" : (report?.operationID ?? "")
+        Task {
+            if action == "enableRecovery" {
+                if let problem = await MASAuthorization.enableRecovery() {
+                    var refused = MASRecoveryReport(); refused.reason = problem; report = refused
+                } else { report = await MASAuthorization.recovery() }
+            } else {
+                report = await MASAuthorization.recovery(operationID: id, action: action, confirmed: action != "status",
+                    reviewID: report?.reviewID ?? "", appStoreIDs: consentIDs, downloadsClear: downloadsClear)
+                if action == "verify" || action == "status" { downloadsClear = false }
+            }
+            busy = false
+        }
     }
 }

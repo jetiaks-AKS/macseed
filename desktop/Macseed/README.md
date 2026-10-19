@@ -422,3 +422,18 @@ Debug design-preview, sample fixtures and DemoSession; a small Lite catalog over
 production models/views may follow functional priorities. Focused fixtures/tests
 need not wait for it. Follow [Roadmap](../../ROADMAP.md#current-practical-execution-order)
 for the remaining functional, Secure SSH, reliability and distribution priorities.
+
+## Native MAS adapter integration
+
+The Debug build can package the restricted native MAS adapter. See the
+[implementation, protected installation and live-test boundary](../PrivilegedMAS/README.md).
+Build does not register a helper or run an installation. Successful MAS inventory
+verification currently retains unknown/no-retry for an unqualified mutation lifetime;
+complete sequential automatic MAS Restore remains unqualified.
+
+Debug developer commands: `python3 desktop/Macseed/develop.py status|open|deploy`.
+Deployment requires explicit system approval, creates no new package receipts,
+and does not register a helper or start Restore. Debug Settings includes native
+helper status/unregister. See the [adapter workflow](../PrivilegedMAS/README.md#developer-build--run--deploy)
+and [experimental cleanup manifest](../PrivilegedMAS/CLEANUP.md). The old v1
+Installer package predates this build and must not be used as its replacement.

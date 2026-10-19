@@ -2418,6 +2418,191 @@ exit 0
         # including its nested MAS preflight and repeated per-item consumers.
         self.assertEqual(inventories.read_text().splitlines(), ['true', 'false'])
 
+    def desktop_mas_bridge(self, outcome="unknown"):
+        self.mas_fixture()
+        bridge = self.root / "bin/MASClient"
+        bridge.write_text("""#!/bin/bash
+case "$1" in
+ status|admission)
+   [[ ! -f "$TEST_BRIDGE_UNKNOWN" ]] || exit 129
+   if [[ "$1" == admission && -n "${TEST_BRIDGE_ALLOWED_ID:-}" && "$2" != "$TEST_BRIDGE_ALLOWED_ID" ]]; then exit 129; fi
+   exit 0 ;;
+ install)
+   [[ "$#" == 2 && "$2" =~ ^[0-9]+$ ]] || exit 2
+   echo "$2" >> "$TEST_BRIDGE_LOG"
+   echo 'private-account@example.test' >&2
+   if [[ "$TEST_BRIDGE_OUTCOME" == success ]]; then touch "$TEST_MAS_STATE"; exit 0; fi
+   if [[ "$TEST_BRIDGE_OUTCOME" == preflight ]]; then exit 11; fi
+   if [[ "$TEST_BRIDGE_OUTCOME" == already ]]; then touch "$TEST_MAS_STATE"; exit 10; fi
+   if [[ "$TEST_BRIDGE_OUTCOME" == verified ]]; then touch "$TEST_MAS_STATE"; touch "$TEST_BRIDGE_UNKNOWN"; exit 133; fi
+   touch "$TEST_BRIDGE_UNKNOWN"
+   [[ "$TEST_BRIDGE_OUTCOME" != refused ]] || exit 2
+   exit 129 ;;
+ *) exit 2 ;;
+esac
+""")
+        bridge.chmod(0o700)
+        self.environment.update(MACSEED_MAS_ADAPTER=str(bridge), TEST_BRIDGE_OUTCOME=outcome,
+                                TEST_BRIDGE_UNKNOWN=str(self.root / "bridge-unknown"),
+                                TEST_BRIDGE_LOG=str(self.root / "bridge-log"))
+        # A Desktop MAS restore must not depend on a sudo ticket.
+        (self.root / "bin/sudo").write_text('#!/bin/bash\necho sudo >> "$TEST_MUTATIONS"\nexit 99\n')
+        return bridge
+
+    def test_desktop_bundled_mas_json_preview_without_external_mas(self):
+        self.desktop_mas_bridge()
+        (self.root / 'bin/mas').unlink()
+        helpers = self.root / 'Bundled Helpers'
+        helpers.mkdir()
+        mas = helpers / 'mas'
+        mas.write_text("""#!/bin/bash
+[[ "$MAS_NO_AUTO_INDEX" == 1 ]] || exit 2
+case "$1" in
+ version) echo 7.0.0+ ;;
+ list)
+  [[ "$2" == --json ]] || exit 2
+  [[ "$TEST_BUNDLED_INVENTORY" != error ]] || exit 2
+  if [[ "$TEST_BUNDLED_INVENTORY" == malformed ]]; then echo '{"adamID":true}'; exit 0; fi
+  echo '{"adamID":111}'
+  [[ "$TEST_BUNDLED_INVENTORY" != present ]] || echo '{"adamID":425264550}' ;;
+ *) exit 99 ;;
+esac
+exit 0
+""")
+        mas.chmod(0o700)
+        self.environment['MACSEED_MAS_INVENTORY_COMMAND'] = str(mas)
+        blueprint = self.stage / 'blueprint.conf'
+        blueprint.write_text(blueprint.read_text().replace('222', '425264550'))
+        (self.stage / 'generated/appstore.conf').write_bytes(
+            b'111|Installed Fixture\n425264550|Blackmagic Disk Speed Test\n')
+        self.pack()
+        for state in ['missing', 'present', 'malformed', 'error']:
+            with self.subTest(state=state):
+                self.environment['TEST_BUNDLED_INVENTORY'] = state
+                plan = self.plan_result()
+                rows = [r for r in plan['plan'] if r['domain'] == 'app-store' and r['item_id'] == '425264550']
+                if state in ['missing', 'present']:
+                    self.assertTrue(plan['readiness']['ready'], plan)
+                    self.assertTrue(rows, plan)
+                    self.assertEqual(rows[0]['disposition'], 'planned' if state == 'missing' else 'satisfied')
+                else:
+                    self.assertFalse(plan['readiness']['ready'], plan)
+                    self.assertFalse(any(r['disposition'] == 'planned' for r in rows))
+                self.assertFalse((self.root / 'bridge-log').exists())
+                self.assertFalse((self.root / 'mutations').exists())
+
+    def test_desktop_mas_bridge_verified_inventory_retains_unknown(self):
+        self.desktop_mas_bridge("verified")
+        self.pack()
+        plan = self.plan_result()
+        self.assertTrue(plan['readiness']['ready'], plan)
+        result, events = self.execute(plan['prepared_plan_id'])
+        self.assertEqual(result.returncode, 2, events)
+        self.assertTrue(events[-1]['data']['unknown_consequences'])
+        self.assertEqual(events[-1]['data']['code'], 'privileged_lifecycle_unknown')
+        self.assertEqual((self.root / 'bridge-log').read_text(), '222\n')
+        self.assertFalse((self.root / 'mas-log').exists())
+        self.assertFalse((self.root / 'mutations').exists())
+        self.assertNotIn(b'private-account', result.stdout + result.stderr)
+        again = self.plan_result()
+        self.assertFalse(again['readiness']['ready'], again)
+        self.assertTrue(any(c['code'] == 'privileged_lifecycle_unknown' for c in again['readiness']['conditions']))
+
+    def test_desktop_mas_bridge_refused_or_disconnected_never_success(self):
+        self.desktop_mas_bridge("refused")
+        self.pack()
+        plan = self.plan_result()
+        result, events = self.execute(plan['prepared_plan_id'])
+        self.assertEqual(result.returncode, 2, events)
+        self.assertTrue(events[-1]['data']['unknown_consequences'])
+        self.assertFalse(Path(self.environment['TEST_MAS_STATE']).exists())
+
+    def test_desktop_mas_already_installed_avoids_privileged_mutation(self):
+        self.desktop_mas_bridge()
+        Path(self.environment['TEST_MAS_STATE']).touch()
+        self.pack()
+        plan = self.plan_result()
+        self.assertTrue(plan['readiness']['ready'], plan)
+        result, events = self.execute(plan['prepared_plan_id'])
+        self.assertEqual(result.returncode, 0, events)
+        self.assertFalse((self.root / 'bridge-log').exists())
+
+    def test_desktop_mas_helper_race_already_present_is_noop(self):
+        self.desktop_mas_bridge("already")
+        self.pack()
+        plan = self.plan_result()
+        self.assertTrue(plan['readiness']['ready'], plan)
+        result, events = self.execute(plan['prepared_plan_id'])
+        self.assertEqual(result.returncode, 0, events)
+        self.assertFalse(events[-2]['data']['unknown_consequences'])
+        records = events[-2]['data']['verification']['details']['operation_records']
+        self.assertTrue(any(r['domain'] == 'app-store' and r['item_id'] == '222' and r['outcome'] == 'noop' for r in records))
+        self.assertFalse((self.root / 'bridge-unknown').exists())
+
+    def test_desktop_mas_verified_success_then_noop(self):
+        self.desktop_mas_bridge("success")
+        self.pack()
+        plan = self.plan_result()
+        result, events = self.execute(plan['prepared_plan_id'])
+        self.assertEqual(result.returncode, 0, events)
+        self.assertFalse(events[-2]['data']['unknown_consequences'])
+        self.assertFalse((self.root / 'bridge-unknown').exists())
+        plan = self.plan_result()
+        result, events = self.execute(plan['prepared_plan_id'])
+        self.assertEqual(result.returncode, 0, events)
+        self.assertEqual((self.root / 'bridge-log').read_text(), '222\n')
+
+    def test_desktop_mas_recovery_permission_does_not_cover_other_id(self):
+        self.desktop_mas_bridge("success")
+        self.environment['TEST_BRIDGE_ALLOWED_ID'] = '333'
+        self.pack()
+        plan = self.plan_result()
+        self.assertFalse(plan['readiness']['ready'], plan)
+        self.assertTrue(any(c['code'] == 'privileged_lifecycle_unknown' for c in plan['readiness']['conditions']))
+        self.assertFalse((self.root / 'bridge-log').exists())
+
+    def test_desktop_mas_two_verified_installs_are_serial(self):
+        bridge = self.desktop_mas_bridge("success")
+        bridge.write_text(bridge.read_text().replace('touch "$TEST_MAS_STATE"; exit 0', 'touch "$TEST_MAS_STATE.$2"; exit 0'))
+        mas = self.root / 'bin/mas'
+        mas.write_text(mas.read_text().replace('[[ ! -f "$TEST_MAS_STATE" ]]', '[[ ! -f "$TEST_MAS_STATE.222" ]]').replace("echo '222 Missing Fixture (1.0)' ;;", "echo '222 Missing Fixture (1.0)'\n   [[ ! -f \"$TEST_MAS_STATE.333\" ]] || echo '333 Second Fixture (1.0)' ;;"))
+        blueprint = self.stage / 'blueprint.conf'
+        blueprint.write_text(blueprint.read_text().replace('[app-store]\n111\n222\n', '[app-store]\n111\n222\n333\n'))
+        (self.stage / 'generated/appstore.conf').write_bytes(b'111|Present\n222|Missing one\n333|Missing two\n')
+        self.pack()
+        plan = self.plan_result()
+        result, events = self.execute(plan['prepared_plan_id'])
+        self.assertEqual(result.returncode, 0, events)
+        self.assertEqual((self.root / 'bridge-log').read_text(), '222\n333\n')
+        self.assertFalse(events[-2]['data']['unknown_consequences'])
+        plan = self.plan_result()
+        result, events = self.execute(plan['prepared_plan_id'])
+        self.assertEqual(result.returncode, 0, events)
+        self.assertEqual((self.root / 'bridge-log').read_text(), '222\n333\n')
+
+    def test_desktop_mas_preflight_failure_is_not_unknown(self):
+        self.desktop_mas_bridge("preflight")
+        self.pack()
+        plan = self.plan_result()
+        result, events = self.execute(plan['prepared_plan_id'])
+        self.assertEqual(result.returncode, 2, events)
+        self.assertFalse(events[-1]['data']['unknown_consequences'])
+        self.assertFalse((self.root / 'bridge-unknown').exists())
+        self.assertFalse(Path(self.environment['TEST_MAS_STATE']).exists())
+
+    def test_desktop_mas_multiple_selected_ids_stop_after_unknown(self):
+        self.desktop_mas_bridge()
+        blueprint = self.stage / 'blueprint.conf'
+        blueprint.write_text(blueprint.read_text().replace('[app-store]\n111\n222\n', '[app-store]\n111\n222\n333\n'))
+        (self.stage / 'generated/appstore.conf').write_bytes(b'111|Present\n222|Missing one\n333|Missing two\n')
+        self.pack()
+        plan = self.plan_result()
+        self.assertEqual({r['item_id'] for r in plan['plan'] if r['domain'] == 'app-store'}, {'111', '222', '333'})
+        result, events = self.execute(plan['prepared_plan_id'])
+        self.assertEqual(result.returncode, 2, events)
+        self.assertEqual((self.root / 'bridge-log').read_text(), '222\n')
+        self.assertTrue(events[-1]['data']['unknown_consequences'])
+
     def test_mas_production_install_and_convergence(self):
         self.mas_fixture(mixed=True)
         self.pack()

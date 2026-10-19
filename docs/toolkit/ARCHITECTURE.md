@@ -71,6 +71,11 @@ consumes normalized capabilities and state (`satisfied`, `installable`,
 external artifact or lifecycle rules. The shared value contract lives in
 `modules/core/external_tool.py`; the Homebrew provider lives in
 `modules/apps/adapters/`. MAS, Git and VS Code have not been migrated.
+The isolated [TrustedMAS development helper](../../desktop/AuthorizationPoC/TrustedMAS/README.md)
+is not a production adapter migration. Its native authorization/protected diagnostic
+path is qualified; Controlled Install remains blocked and disabled. Production MAS
+continues through existing Core consumers; see [Desktop checkpoint](../DESKTOP.md#mas-development-checkpoint--2026-10-18).
+
 
 Compatibility is determined by observed public CLI capabilities, understood
 metadata and qualified item semantics. Unknown schema, artifact or operation

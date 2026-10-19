@@ -61,7 +61,7 @@ struct RestorePreviewPresentation {
             case "source_excluded": reasonMessage = "The captured SSH configuration is not eligible for restoration."
             case "observation_failed": reasonMessage = "Current state could not be inspected reliably."
             case "target_conflict": reasonMessage = "Conflict: existing state differs from the saved environment and will be preserved."
-            case "privileged_lifecycle_unknown": reasonMessage = "Privileged Homebrew work may still be running. Inspect it before another Rebuild."
+            case "privileged_lifecycle_unknown": reasonMessage = row.domain == "app-store" ? "App Store activity may continue. No automatic retry is allowed until the protected operation state is reviewed." : "Privileged Homebrew work may still be running. Inspect it before another Rebuild."
             default: reasonMessage = nil
             }
             let inventoryLabel = row.selectionItemID.flatMap { id in catalog.inventory.first { $0.id == row.domain }?.items.first { $0.id == id }?.label }
@@ -245,6 +245,10 @@ struct RestoreProgressRow {
     @Published private(set) var prerequisiteRetryMessage: String?
     let runtime: CoreRuntime
     private let location: CoreLocation?
+    private let authorizeMAS: (@MainActor () -> String?)?
+    private let authorizeMASAsync: @MainActor () async -> String?
+    @Published private(set) var authorizingMAS = false
+    private var authorizationID: UUID?
     private var work: Task<Void, Never>?
     private var cancelRequested = false
     @Published private(set) var categoryEvidenceEvents: [CoreEvent] = []
@@ -309,8 +313,11 @@ struct RestoreProgressRow {
             return ["conflict", "blocked", "unknown", "pending_unlock"].contains(row.disposition) && !plan.isItemLocalSkip(row)
         }
     }
-    init(runtime: CoreRuntime, location: CoreLocation? = nil) {
+    init(runtime: CoreRuntime, location: CoreLocation? = nil, authorizeMAS: (@MainActor () -> String?)? = nil,
+         authorizeMASAsync: (@MainActor () async -> String?)? = nil) {
         self.runtime = runtime; self.location = location
+        self.authorizeMAS = authorizeMAS
+        self.authorizeMASAsync = authorizeMASAsync ?? { await MASAuthorization.ensureAvailable() }
         evidenceSubscription = runtime.$events.sink { [weak self] events in
             guard let self, self.state == .rebuilding else { return }
             var changed = false
@@ -346,9 +353,49 @@ struct RestoreProgressRow {
         guard canRebuild else { return }
         state = .confirming
     }
-    func cancelRebuildConfirmation() { if state == .confirming { state = .preview } }
+    func cancelRebuildConfirmation() {
+        if state == .confirming {
+            if authorizingMAS { work?.cancel() }
+            authorizationID = nil; authorizingMAS = false; state = .preview
+        }
+    }
+    // This list comes from the existing Core plan, never an independent MAS plan.
+    var masRecoveryNames: [String: String] {
+        let rows = preparation?.plan ?? executionPlan?.plan ?? []
+        return Dictionary(rows.filter { $0.domain == "app-store" }.map { ($0.itemID, $0.displayName ?? $0.itemID) }, uniquingKeysWith: { first, _ in first })
+    }
+    var masRecoveryRemainingIDs: [String] {
+        let rows = preparation?.plan ?? executionPlan?.plan ?? []
+        return Array(Set(rows.filter { $0.domain == "app-store" && $0.disposition == "planned" }.map(\.itemID))).sorted()
+    }
+
     func confirmRebuild() {
-        guard state == .confirming, !runtime.isActive, let source, let plan = preparation, let preview,
+        guard state == .confirming, !authorizingMAS, !runtime.isActive, let source, let plan = preparation, preview != nil,
+              plan.readiness.ready, plan.errorCount == 0, plan.hasExecutableChanges, plan.selection == canonicalSelection else { return }
+        if plan.plan.contains(where: { $0.domain == "app-store" && $0.disposition == "planned" }) {
+            if let authorizeMAS {
+                if let message = authorizeMAS() { fail(message, code: "authorization_required"); return }
+            } else {
+                let token = UUID(); authorizationID = token; authorizingMAS = true
+                work = Task {
+                    let problem = await authorizeMASAsync()
+                    guard !Task.isCancelled, authorizationID == token, state == .confirming else { return }
+                    authorizationID = nil; authorizingMAS = false
+                    guard self.source == source, preparation?.preparedPlanID == plan.preparedPlanID,
+                          canonicalSelection == plan.selection, !runtime.isActive else {
+                        fail("Restore Preview changed while awaiting authorization. Refresh Preview; no installation started.", code: "stale_plan"); return
+                    }
+                    if let problem { fail(problem, code: "authorization_required"); return }
+                    startConfirmedRebuild()
+                    if state == .rebuilding { await work?.value }
+                }
+                return
+            }
+        }
+        startConfirmedRebuild()
+    }
+    private func startConfirmedRebuild() {
+        guard state == .confirming, !authorizingMAS, !runtime.isActive, let source, let plan = preparation, let preview,
               plan.readiness.ready, plan.errorCount == 0, plan.hasExecutableChanges, plan.selection == canonicalSelection else { return }
         let request = CoreRequest(.restoreExecute(path: source.path, disabledGroups: [], includeSecure: false,
                                                 preparedID: plan.preparedPlanID, selection: selection))
@@ -710,7 +757,10 @@ struct RestoreExecutionPresentation {
         case .attention: title = "Rebuild Completed with Issues"; message = "Review the observed results, then Refresh Preview to check current state."
         case .stoppedBeforeMutation: title = "Rebuild Cancelled"; message = "Rebuild cancelled before target changes began. Refresh Preview before rebuilding again."
         case .stoppedAfterMutation: title = "Rebuild Stopped"; message = "Rebuild stopped safely. Completed changes remain. Refresh Preview before rebuilding again."
-        case .interrupted: title = "Rebuild Interrupted"; message = "Final consequences are unknown. Changes may remain. Refresh Preview to inspect current state."
+        case .interrupted:
+            title = "Rebuild Interrupted"
+            let masWork = runtime.events.contains { $0.data?["domain"]?.string == "app-store" && [$0.data?["state"]?.string, $0.data?["reason"]?.string].contains { ["applying", "privileged_lifecycle_unknown"].contains($0 ?? "") } }
+            message = masWork ? "App Store installation may continue. Inspect current state; further App Store installs remain blocked until the protected operation is separately reconciled." : "Final consequences are unknown. Changes may remain. Refresh Preview to inspect current state."
         case .failedBeforeMutation:
             if payload?["code"]?.string == "stale_plan" || terminal?.code == "stale_plan" {
                 title = "Restore Plan Is Outdated"
@@ -1047,7 +1097,7 @@ struct RestoreResultFindings {
             case "cask_execution_requirements_unsupported": message = "This application's installation requirements are not supported."
             case "item_stalled_timeout": message = "Download stalled. Check your network or VPN and try again."
             case "dependency_failed", "dependency_observation_failed": message = "A required dependency could not be completed or inspected."
-            case "privileged_lifecycle_unknown": message = "Privileged work may continue. Inspect Homebrew before another Rebuild."
+            case "privileged_lifecycle_unknown": message = "Privileged installation may continue. Inspect the installer and its persistent state before another Rebuild."
             default: message = outcome == "failure" ? "This selected work could not be completed." : "This selected work needs attention."
             }
             issue(domain, item, reason, message, action: row["action"]?.string ?? "")

@@ -139,3 +139,24 @@ unknown metadata or lifecycle semantics fail closed. Homebrew owns native instal
 and reinstall. Repair checks run again immediately before native execution, with
 the existing item watchdog, Safe Stop and authoritative final Verification.
 See [Core execution policy](core/APPLICATION-INTERFACE.md#external-tool-adapter-results).
+
+## MAS boundary at the development checkpoint
+
+Production Discovery in [modules/discovery/appstore.sh](../modules/discovery/appstore.sh)
+exports numeric IDs/names for Bundle and Blueprint selection. The authoritative
+[MAS consumer](../modules/apps/appstore.sh) validates selected input,
+`preview_appstore_apps` observes inventory without mutation,
+`mas_application_readiness` checks local tool/inventory readiness and
+`install_appstore_app` provides the existing non-interactive `sudo -n` install
+path for application execution. Core Prepare/Execute still owns plan validation;
+Desktop consumes Protocol V1 rather than duplicating these domains.
+Production [Verification](../modules/verification/verification.sh) invokes the
+consumer’s `verify_appstore_apps` to compare selected IDs against observed inventory.
+Inventory presence does not establish account entitlement or Apple-service quiescence.
+
+A real Terminal sudo MAS installation was confirmed in the preceding operator
+qualification; this is historical user-confirmed evidence, not a new run or proof
+of GUI installation. Isolated native authorization/protected MAS diagnostics passed,
+but are not connected to production Restore. Controlled Install v3 remains blocked
+at legacy reconciliation and live install is disabled. The [current PoC record](../desktop/AuthorizationPoC/TrustedMAS/CONTROLLED-INSTALL-STAGE1.md)
+owns detailed evidence and limits. Automatic Desktop MAS Restore is still open.

@@ -1,12 +1,27 @@
 #!/bin/bash
 
 OBSERVED_MAS_STATUS=
-observe_appstore_inventory() {
-    local inventory
-    if [[ "${MACSEED_APPLICATION_EXECUTION:-false}" == true ]]; then
-        inventory="$(MAS_NO_AUTO_INDEX=1 mas list 2>/dev/null)" || return 2
+# Desktop supplies a fixed bundled read-only executable independently of PATH.
+appstore_mas_command() {
+    if [[ -n "${MACSEED_MAS_INVENTORY_COMMAND:-}" ]]; then
+        [[ "$MACSEED_MAS_INVENTORY_COMMAND" == /* && -x "$MACSEED_MAS_INVENTORY_COMMAND" ]] || return 2
+        printf '%s\n' "$MACSEED_MAS_INVENTORY_COMMAND"
     else
-        inventory="$(MAS_NO_AUTO_INDEX=1 mas list)" || return 2
+        type -P mas
+    fi
+}
+observe_appstore_inventory() {
+    local inventory command
+    command="$(appstore_mas_command)" || return 2
+    if [[ -n "${MACSEED_MAS_INVENTORY_COMMAND:-}" ]]; then
+        inventory="$(MAS_NO_AUTO_INDEX=1 "$command" list --json 2>/dev/null)" || return 2
+        printf '%s' "$inventory" | python3 "${BASH_SOURCE[0]%/*}/appstore_inventory.py"
+        return $?
+    fi
+    if [[ "${MACSEED_APPLICATION_EXECUTION:-false}" == true ]]; then
+        inventory="$(MAS_NO_AUTO_INDEX=1 "$command" list 2>/dev/null)" || return 2
+    else
+        inventory="$(MAS_NO_AUTO_INDEX=1 "$command" list)" || return 2
     fi
     LC_ALL=C awk '/^$/ { next } { line=$0; gsub(/\t/, "", line); if ($1 !~ /^[0-9]+$/ || NF < 2 || line ~ /[[:cntrl:]]/) exit 2; print }' <<< "$inventory"
 }
@@ -15,7 +30,8 @@ observe_appstore_inventory() {
 # shellcheck disable=SC2034
 mas_application_cli_readiness() {
     MAS_APPLICATION_CONDITION=mas_required
-    MAS_APPLICATION_COMMAND="$(type -P mas)" || {
+    MAS_APPLICATION_COMMAND="$(appstore_mas_command)" || {
+        if [[ -n "${MACSEED_MAS_INVENTORY_COMMAND:-}" ]]; then MAS_APPLICATION_CONDITION=mas_unavailable; return 2; fi
         local directory directories
         IFS=: read -r -a directories <<< "$PATH"
         for directory in "${directories[@]}"; do
@@ -34,6 +50,15 @@ mas_application_cli_readiness() {
 mas_application_readiness() {
     local applications app_id app_name result
     mas_application_cli_readiness || return 2
+    if [[ -n "${MACSEED_MAS_ADAPTER:-}" ]]; then
+        "$MACSEED_MAS_ADAPTER" status >/dev/null 2>&1
+        local adapter_status=$?
+        if [[ $adapter_status -eq 129 ]]; then
+            MAS_APPLICATION_CONDITION=privileged_lifecycle_unknown
+            return 2
+        fi
+        [[ $adapter_status -eq 0 ]] || { MAS_APPLICATION_CONDITION=mas_unavailable; return 2; }
+    fi
     applications="$(read_appstore_configuration "$(blueprint_generated_file app-store)")" || {
         MAS_APPLICATION_CONDITION=invalid_selected_input
         return 2
@@ -44,6 +69,16 @@ mas_application_readiness() {
         is_appstore_app_installed "$app_id"
         result=$?
         [[ $result -eq 0 || $result -eq 1 ]] || return 2
+        if [[ $result -eq 1 && -n "${MACSEED_MAS_ADAPTER:-}" ]]; then
+            # A recovery grant covers exact IDs, not every selected MAS item.
+            "$MACSEED_MAS_ADAPTER" admission "$app_id" >/dev/null 2>&1
+            local admission_status=$?
+            if [[ $admission_status -eq 129 ]]; then
+                MAS_APPLICATION_CONDITION=privileged_lifecycle_unknown
+                return 2
+            fi
+            [[ $admission_status -eq 0 ]] || { MAS_APPLICATION_CONDITION=mas_unavailable; return 2; }
+        fi
     done <<< "$applications"
     return 0
 }
@@ -83,10 +118,8 @@ is_appstore_app_installed() {
     if [[ -n "${OBSERVED_MAS_STATUS:-}" ]]; then
         [[ "$OBSERVED_MAS_STATUS" == 0 ]] || return 2
         inventory="$OBSERVED_MAS_INVENTORY"
-    elif [[ "${MACSEED_APPLICATION_EXECUTION:-false}" == true ]]; then
-        inventory="$(MAS_NO_AUTO_INDEX=1 mas list 2>/dev/null)" || return 2
     else
-        inventory="$(MAS_NO_AUTO_INDEX=1 mas list)" || return 2
+        inventory="$(observe_appstore_inventory)" || return 2
     fi
     # Prefix both operands to prevent awk from comparing IDs numerically.
     LC_ALL=C awk -v app_id="$1" '
@@ -116,7 +149,7 @@ preview_appstore_apps() {
         return 2
     fi
 
-    if ! command -v mas >/dev/null 2>&1; then
+    if ! appstore_mas_command >/dev/null 2>&1; then
         warning "mas is not installed"
         return 1
     fi
@@ -169,6 +202,21 @@ install_appstore_app() {
 
     if [[ "${MACSEED_APPLICATION_EXECUTION:-false}" == true ]]; then
         mas_application_cli_readiness || return 2
+        if [[ -n "${MACSEED_MAS_ADAPTER:-}" ]]; then
+            local adapter_result
+            [[ "$MACSEED_MAS_ADAPTER" == /* && -x "$MACSEED_MAS_ADAPTER" && "$app_id" =~ ^[0-9]+$ ]] || return 2
+            # Mark uncertain BEFORE crossing XPC so Force Stop cannot erase evidence.
+            [[ -n "${MACSEED_ITEM_STATE_DIR:-}" ]] || return 2
+            printf '%s\n' '{"tool":"mas","state":"unknown_consequences"}' > "$MACSEED_ITEM_STATE_DIR/external-tool-active.json" || return 2
+            "$MACSEED_MAS_ADAPTER" install "$app_id" </dev/null >/dev/null 2>&1
+            adapter_result=$?
+            if [[ $adapter_result -eq 0 || $adapter_result -eq 10 || $adapter_result -eq 11 ]]; then
+                rm -f "$MACSEED_ITEM_STATE_DIR/external-tool-active.json"
+                return "$adapter_result"
+            fi
+            [[ $adapter_result -ne 133 ]] || return 133 # Verified install; lifetime still unknown.
+            return 129
+        fi
         # Current mas supports sudo invocation and retains the invoking user's
         # App Store context. -n prevents password fallback even if authorization
         # expires after readiness. Never emit vendor account/error output.
@@ -217,13 +265,13 @@ install_appstore_apps() {
 
     fi
 
-    if ! command -v mas >/dev/null 2>&1; then
+    if ! appstore_mas_command >/dev/null 2>&1; then
         warning "mas is not installed"
         [[ "${MACSEED_APPLICATION_EXECUTION:-false}" != true ]] || return 2
         return 1
     fi
 
-    local missing_apps=0
+    local missing_apps=0 failed_before_mutation=0
     local inspection_result
 
     while IFS='|' read -r app_id app_name || [[ -n "$app_id" ]]; do
@@ -261,8 +309,35 @@ install_appstore_apps() {
         declare -F verification_applying_hook >/dev/null && verification_applying_hook app-store "$app_id" install
         install_appstore_app "$app_id" "$app_name"
 
-        if [[ $? -ne 0 ]]; then
+        local install_result=$?
+        if [[ $install_result -eq 10 ]]; then
+            # Another actor may install it between Core inspection and helper admission.
+            declare -F verification_application_operation_hook >/dev/null && verification_application_operation_hook app-store "$app_id" install noop
+            detail "$app_name is already installed"
+            continue
+        fi
+        if [[ $install_result -eq 11 ]]; then
+            # Authenticated helper proved that this attempt never began mutation.
+            # Other independent selected IDs may proceed; preserve the item failure.
+            failed_before_mutation=$((failed_before_mutation + 1))
             declare -F verification_application_operation_hook >/dev/null && verification_application_operation_hook app-store "$app_id" install failure
+            warning "$app_name was not installed: preflight failed before mutation."
+            continue
+        fi
+        if [[ $install_result -eq 133 ]]; then
+            # Target installation and service-lifetime completion are separate facts.
+            MODULE_CHANGED=true
+            declare -F verification_application_operation_hook >/dev/null && verification_application_operation_hook app-store "$app_id" install success
+            is_appstore_app_installed "$app_id"
+            inspection_result=$?
+            declare -F verification_application_post_hook >/dev/null && verification_application_post_hook "$inspection_result"
+            warning "$app_name was installed; App Store operation lifetime remains unknown. Further installs are blocked."
+            return 129
+        fi
+        if [[ $install_result -ne 0 ]]; then
+            local install_reason=''
+            [[ $install_result -ne 129 ]] || install_reason=privileged_lifecycle_unknown
+            declare -F verification_application_operation_hook >/dev/null && verification_application_operation_hook app-store "$app_id" install failure "$install_reason"
             return 2
         fi
         declare -F verification_application_operation_hook >/dev/null && verification_application_operation_hook app-store "$app_id" install success
@@ -282,6 +357,11 @@ install_appstore_apps() {
         success "$app_name installed successfully"
 
     done <<< "$applications"
+
+    if [[ $failed_before_mutation -gt 0 ]]; then
+        error "Some App Store applications failed before installation."
+        return 2
+    fi
 
     if [[ $missing_apps -eq 0 ]]; then
 
@@ -306,13 +386,13 @@ verify_appstore_apps() {
     verification_select_subjects app-store "$records" || return 2
     [[ ${#GV_SUBJECTS[@]} -gt 0 ]] || return 0
     local OBSERVED_MAS_STATUS=2 OBSERVED_MAS_INVENTORY
-    if command -v mas >/dev/null 2>&1; then
+    if appstore_mas_command >/dev/null 2>&1; then
         OBSERVED_MAS_INVENTORY="$(observe_appstore_inventory)" && OBSERVED_MAS_STATUS=0
     fi
     local observed_at
     observed_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     for item in "${GV_SUBJECTS[@]}"; do
-        if ! command -v mas >/dev/null 2>&1; then
+        if ! appstore_mas_command >/dev/null 2>&1; then
             verification_record app-store "$item" installed unverified supported "" || return 2
             verification_diagnostic "$GV_LAST_REF" dependency_unavailable warning observation
             continue

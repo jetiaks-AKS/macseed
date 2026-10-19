@@ -32,11 +32,32 @@ CLI installation or manual Python installation on a clean Mac. Standalone `bs`
 remains independently supported for CLI/source users; Desktop does not fork Core.
 Installing a Terminal command from Desktop is not a Stage 16 commitment.
 
-Homebrew, `mas`, VS Code CLI, Git and `age` are prerequisites for selected work
-according to
-Core, not universal application launch requirements. Exact package composition
-and supported architectures remain undecided; signing credentials/infrastructure
-are not assumed available.
+## MAS and prerequisite delivery direction
+
+**PLANNED for 1.0:** bundle reviewed, signed MAS with Macseed and update it only
+with the app; no separate MAS auto-updater. End users must not need Xcode,
+development certificates, Homebrew or manual installation of internal CLI tools
+to launch Desktop. Developer certificates and Xcode are development/build inputs.
+Homebrew remains a selected-Restore dependency: detect it and offer a managed
+installation with explicit confirmation. Today missing Homebrew still requires
+external installation; that managed flow is not implemented. If automatic MAS
+installation is unavailable, explain the blocked item and offer manual App Store
+installation followed by fresh inspection/verification, without promising
+entitlement detection or silently retrying privileged work.
+
+**PARTIAL development evidence:** signed bundled MAS arm64 and root-controlled
+helper diagnostics passed; see [TrustedMAS](../desktop/AuthorizationPoC/TrustedMAS/README.md).
+This does not qualify production delivery, Developer ID/notarization, clean-Mac
+runtime, secure helper/MAS updates or rollback. The development certificate pin,
+unsigned local packages and manually corrected parent permissions are not release
+configuration. Qualify protected placement, full dependency/license notices,
+atomic updates with retained validated generations and unknown-operation blocking.
+The [Installer layout issue](../desktop/AuthorizationPoC/TrustedMAS/PACKAGING-ISSUE.md)
+requires fresh-install and upgrade qualification. Never execute a user-writable
+Homebrew chain or assume codesign verification alone protects a mutable source.
+
+Other dependencies (VS Code CLI, Git, `age`) remain scoped to selected work under
+Core. Exact package composition and supported architectures need qualification.
 
 ## Acceptance flow
 

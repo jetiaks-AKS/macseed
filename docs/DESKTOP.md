@@ -429,8 +429,33 @@ administrator authorization; the Rebuild confirmation explains the separate mask
 Homebrew prompt. Privileged uncertainty blocks Homebrew re-entry and is not cleared
 by a successful payload check. See the
 [Core execution policy](core/APPLICATION-INTERFACE.md). Automatic MAS Restore
-remains mandatory before 1.0; the authorization/
-install gate is unresolved. Deselecting MAS for the passed gate does not resolve it.
+remains mandatory before 1.0. Development native authorization and protected
+bundled-MAS read-only diagnostics passed, but are separate from production Restore.
+Controlled Install v3 is blocked at legacy reconciliation, with live install
+explicitly disabled. Deselecting MAS for a passed gate does not resolve it.
+
+### MAS development checkpoint — 2026-10-18
+
+VERIFIED in isolated [AuthorizationPoC](../desktop/AuthorizationPoC/README.md):
+Apple Development app/helper signing, native SMAppService approval, authenticated
+XPC, effective UID 0, foreign/ad-hoc rejection and unregister. The
+[TrustedMAS diagnostic gate](../desktop/AuthorizationPoC/TrustedMAS/LIVE-RESULTS-2026-10-18.md)
+then qualified protected MAS deployment, caller UID/audit/console admission,
+version/list, 16 matching inventory IDs, serialization and persistent unknown/no-retry.
+These diagnostic facts do not prove GUI/bootstrap App Store context or installation.
+
+IMPLEMENTED but PARTIAL: schema v2 journal, explicit legacy reconciliation, fixed
+install admission, durable ownership, bounded timeout/interruption and independent
+inventory verification. Local tests/signing/build checks passed; live Install is
+disabled in both peers. Stage 1 v3 installed and registered, but reconciliation
+returned `active_mas_or_incomplete_observation_legacy_preserved`. Its exact PID/API
+cause is unknown; legacy history was preserved, Preflight/Verification did not run,
+and unregister/service/process cleanup passed. See the owning
+[Stage 1 checkpoint](../desktop/AuthorizationPoC/TrustedMAS/CONTROLLED-INSTALL-STAGE1.md)
+for gates, journal and cleanup inventory. Production Core/Restore/Homebrew remain
+unchanged. Next is targeted fail-closed observation diagnosis, not live install.
+[Distribution](DISTRIBUTION.md#mas-and-prerequisite-delivery-direction) owns future
+bundling, prerequisites and clean-Mac delivery.
 
 Restore preserves Homebrew Applications and Homebrew Packages as separate task
 domains through Preview, Rebuild and Result. Qualified missing-app repairs show
@@ -1181,3 +1206,19 @@ technical external users will validate real Capture/Restore flows using voluntar
 shared privacy-safe reports/issues; resolve real compatibility and UX problems
 before public launch. This is product validation, not another framework.
 The mature toolkit/CLI history and current 3.4.0 Core/CLI version remain intact.
+
+### MAS development deployment checkpoint
+
+The main Debug target owns MAS Restore; archived authorization experiments are not
+an alternative Restore path. [Developer build/open/deploy](../desktop/PrivilegedMAS/README.md#developer-build--run--deploy)
+uses protected signed snapshots without per-edit Installer packages. The updater
+still needs its first real system qualification. Debug Settings provides native
+helper status/unregister while preserving journals. Verified normal installs now
+permit sequential execution. Interrupted attempts retain unknown; recovery review
+can issue explicit expiring permissions for one retry or exact remaining IDs.
+Same-boot ownership gaps require restart and a new review; Apple-service quiescence
+is never inferred from reboot or missing PID. See the
+[production recovery contract](../desktop/PrivilegedMAS/README.md#production-recovery)
+for admission, signed-receipt verification and immutable v3/v4 history.
+The new sequential-install and recovery paths still require live qualification.
+See the [old experiment cleanup manifest](../desktop/PrivilegedMAS/CLEANUP.md).

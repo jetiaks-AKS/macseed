@@ -593,6 +593,7 @@ import SwiftUI
         print("PASS: Working retains Preview warnings; execution awaits Verification; Partial requires typed independent success; item diagnostics preserve independent problems")
     }
     @MainActor static func main() async throws {
+        setbuf(stdout, nil)
         if CommandLine.arguments.contains("--rosetta-only") {
             try taskPresentationChecks()
             print("PASS: Rosetta prerequisite and observation failure in Restore Preview and Technical Details")
@@ -683,7 +684,7 @@ import SwiftUI
         emit('started')
         operation=request['operation']
         if operation=='capabilities':
-            features={} if mode=='old_core' else {'restore_selection':{'version':1},'bundle_comparison':{'version':1}}
+            features={} if mode=='old_core' else {'restore_selection':{'version':1},'bundle_comparison':{'version':1},'homebrew_graceful_stop':{'version':1}}
             result=dict(protocol_version=1, product_version='3.4.0',operations=['bundle_inspect','restore_prepare','environment_compare'],features=features)
         elif operation=='environment_compare':
             result=json.loads(Path('comparison.json').read_text())
@@ -813,7 +814,12 @@ import SwiftUI
                     emit('failed',dict(code='cancelled',target_mutation_may_have_started=mutation)); sys.exit(130)
                 signal.signal(signal.SIGTERM,stop)
                 emit('phase_started',dict(phase='bootstrap' if mutation else 'preparation'))
-                time.sleep(10)
+                import select
+                control=int(os.environ['MACSEED_GRACEFUL_FD'])
+                ready,_,_=select.select([control],[],[],10)
+                assert ready and os.read(control,1)==b'S'
+                emit('execution_event',dict(domain='orchestration',item_id='scope',state='graceful_stop_accepted'))
+                stop(None,None)
             if mode in ('execute_fail_before','execute_fail_after','execute_stale'):
                 failed=dict(code='stale_plan' if mode=='execute_stale' else 'bootstrap_failed',target_mutation_may_have_started=mode=='execute_fail_after')
                 if mode=='execute_stale': failed['plan_validation']=dict(check='prepared_plan_id',expected_id=request['parameters']['expected_prepared_plan_id'],recomputed_id='d'*64,components={'plan':'d'*64})
@@ -855,7 +861,7 @@ import SwiftUI
                                         "restore_selection": ["groups": groups, "inventory": inventory]]
         try JSONSerialization.data(withJSONObject: inspection).write(to: core.appendingPathComponent("inspection.json"))
         let runtime = CoreRuntime()
-        let model = RestoreModel(runtime: runtime, location: CoreLocation(root: core, python: python, home: root, temporaryBase: root, toolDirectories: []))
+        let model = RestoreModel(runtime: runtime, location: CoreLocation(root: core, python: python, home: root, temporaryBase: root, toolDirectories: []), authorizeMAS: { nil })
         let source = root.appendingPathComponent("sample.mbt")
         model.choose(source); await model.waitForCompletion()
         precondition(model.state == .review && model.areas.count == inventory.count && model.groups.count == 5 && model.bulkState == .all)
@@ -1159,7 +1165,7 @@ import SwiftUI
             navigation.reviewInRestore(source, restore: model)
             precondition(navigation.task == .status && navigation.pendingRestoreBundle == nil && model.preparation?.preparedPlanID == planID)
             model.cancelRebuildConfirmation()
-            let fresh = RestoreModel(runtime: runtime, location: CoreLocation(root: core, python: python, home: root, temporaryBase: root, toolDirectories: []))
+            let fresh = RestoreModel(runtime: runtime, location: CoreLocation(root: core, python: python, home: root, temporaryBase: root, toolDirectories: []), authorizeMAS: { nil })
             navigation.reviewInRestore(source, restore: fresh)
             await fresh.waitForCompletion()
             precondition(fresh.source == source && fresh.state == .review && fresh.preparation == nil)
@@ -1634,6 +1640,54 @@ import SwiftUI
         let matchingEvents = [try event("app-store", "started"), try event("app-store", "already_satisfied")]
         precondition(mixedScope.map { $0.project(events: matchingEvents).id } == mixedScope.map(\.id))
         precondition(mixedScope.allSatisfy { $0.project(events: matchingEvents).status == .waiting })
+        // Native authorization is injected in fixtures; denial must not launch Execute.
+        let denied = RestoreModel(runtime: runtime,
+            location: CoreLocation(root: core, python: python, home: root, temporaryBase: root, toolDirectories: []),
+            authorizeMAS: { "fixture authorization refused" })
+        try write("clean", core.appendingPathComponent("mode"))
+        denied.choose(source); await denied.waitForCompletion()
+        denied.refreshPreview(); await denied.waitForCompletion()
+        precondition(denied.canRebuild)
+        let beforeDenied = runtime.operationID
+        denied.requestRebuild(); denied.confirmRebuild()
+        precondition(denied.state == .failed && denied.technicalReason == "authorization_required")
+        precondition(runtime.operationID == beforeDenied && !runtime.isActive)
+        print("PASS: MAS authorization refusal before Execute; native authorization not invoked by fixtures")
+        // Pending native approval owns this confirmation; duplicate clicks/cancel
+        // cannot issue Execute, and readiness resumes precisely one mock Execute.
+        var authorizationCalls = 0
+        var approval: CheckedContinuation<String?, Never>?
+        let automatic = RestoreModel(runtime: runtime,
+            location: CoreLocation(root: core, python: python, home: root, temporaryBase: root, toolDirectories: []),
+            authorizeMASAsync: {
+                authorizationCalls += 1
+                return await withCheckedContinuation { approval = $0 }
+            })
+        automatic.choose(source); await automatic.waitForCompletion()
+        automatic.refreshPreview(); await automatic.waitForCompletion()
+        automatic.requestRebuild(); automatic.confirmRebuild()
+        while approval == nil { await Task.yield() }
+        precondition(automatic.authorizingMAS && !runtime.isActive)
+        automatic.confirmRebuild(); precondition(authorizationCalls == 1)
+        automatic.cancelRebuildConfirmation()
+        approval?.resume(returning: nil); approval = nil
+        await automatic.waitForCompletion()
+        precondition(automatic.state == .preview && !runtime.isActive)
+        automatic.requestRebuild(); automatic.confirmRebuild()
+        while approval == nil { await Task.yield() }
+        try write("execute_clean", core.appendingPathComponent("mode"))
+        approval?.resume(returning: nil); approval = nil
+        await automatic.waitForCompletion()
+        precondition(authorizationCalls == 2 && automatic.state == .result)
+        precondition(automatic.executionResult?.outcome == .clean)
+        try write("mixed_progress", core.appendingPathComponent("mode"))
+        automatic.choose(source); await automatic.waitForCompletion()
+        automatic.refreshPreview(); await automatic.waitForCompletion()
+        automatic.requestRebuild(); automatic.confirmRebuild()
+        await automatic.waitForCompletion()
+        precondition(authorizationCalls == 2)
+        print("PASS: asynchronous MAS readiness continues one confirmed Execute; duplicate/cancel never mutates")
+
         let outcomes: [(String, RestoreExecutionPresentation.Outcome)] = [
             ("execute_clean", .clean), ("execute_partial", .failedAfterMutation), ("execute_item_skip", .partial), ("execute_attention", .attention),
             ("execute_fail_before", .failedBeforeMutation), ("execute_fail_after", .failedAfterMutation),
@@ -1670,6 +1724,9 @@ import SwiftUI
             precondition(!model.stopConfirmation)
             model.confirmStop(); model.requestStop()
             precondition(!runtime.stopping && !model.stopConfirmation)
+            if model.state != .result || model.executionResult?.outcome != outcome {
+                FileHandle.standardError.write(Data("Restore fixture mode=\(mode) expected=\(outcome) state=\(model.state) actual=\(String(describing: model.executionResult?.outcome)) error=\(String(describing: runtime.error))\n".utf8))
+            }
             precondition(model.state == .result && model.executionResult?.outcome == outcome)
             precondition(model.executionStartedAt != nil && model.executionFinishedAt != nil)
             precondition(model.executionFinishedAt! >= model.executionStartedAt!)
@@ -1697,7 +1754,7 @@ import SwiftUI
                 var evidence = verification["details"]!.object!
                 let casks = model.executionPlan!.plan.filter { $0.domain == "homebrew-casks" }
                 evidence["operation_records"] = .array(casks.map { row in
-                    .object(["domain": .string(row.domain), "item_id": .string(row.itemID),
+                    .object(["domain": .string(row.domain), "item_id": .string(row.itemID), "action": .string(row.action),
                         "outcome": .string(row.itemID == "1" ? "skipped" : "success"),
                         "reason": row.itemID == "1" ? .string("cask_execution_requirements_unsupported") : .null])
                 })
@@ -1771,7 +1828,7 @@ import SwiftUI
         let core = root.appendingPathComponent("real-core")
         let original = try Data(contentsOf: root.appendingPathComponent("real.mbt"))
         let runtime = CoreRuntime()
-        let model = RestoreModel(runtime: runtime, location: CoreLocation(root: core, python: python, home: home, temporaryBase: root, toolDirectories: [root.appendingPathComponent("tools")]))
+        let model = RestoreModel(runtime: runtime, location: CoreLocation(root: core, python: python, home: home, temporaryBase: root, toolDirectories: [root.appendingPathComponent("tools")]), authorizeMAS: { nil })
         model.choose(root.appendingPathComponent("real.mbt")); await model.waitForCompletion()
         precondition(model.state == .review, "Real inspection failed: \(model.failure ?? "")")
         model.toggleAll()

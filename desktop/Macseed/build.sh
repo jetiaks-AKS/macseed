@@ -20,6 +20,7 @@ cp Info.plist "$output_dir/Macseed.app/Contents/Info.plist"
 ./prepare-runtime.sh "$output_dir/Macseed.app/Contents/Resources"
 cp Resources/Macseed.icns "$output_dir/Macseed.app/Contents/Resources/Macseed.icns"
 /usr/bin/plutil -lint "$output_dir/Macseed.app/Contents/Info.plist"
+./prepare-mas.sh "$output_dir/Macseed.app" "$configuration"
 if [[ "${2:-}" == --test ]]; then
     presentation_sources=()
     for source_file in Sources/*.swift; do

@@ -1,0 +1,1 @@
+../../PrivilegedMAS/Shared/MASServiceProtocol.swift

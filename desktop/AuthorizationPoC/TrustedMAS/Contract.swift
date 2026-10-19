@@ -1,0 +1,1 @@
+../../PrivilegedMAS/Tests/LegacyFixtures/Contract.swift

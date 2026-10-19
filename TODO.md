@@ -39,10 +39,14 @@ confirmed 37/37 saved values, not all visual effects; MAS Restore priority is un
 
 - [ ] **MAS automatic restoration — mandatory before 1.0:** close real Desktop
   authorization → install → post-Verify → repeat/no-op qualification. Core already
-  has the non-interactive `sudo -n` install path and mock coverage; complete any
-  missing safe authorization interaction through that boundary. Deselecting MAS
-  or showing `authorization_required` does not close the task. Preserve account,
-  entitlement and privileged-child interruption safeguards.
+  has the non-interactive `sudo -n` path; development native authorization and
+  trusted bundled diagnostics passed. Next diagnose the actual PID/API error behind
+  `active_mas_or_incomplete_observation_legacy_preserved`, preserving fail-closed.
+  Then qualify explicit legacy reconciliation → dry-run admission → separately
+  approved GUI Install → independent Verify → repeat/no-op. Stage 1 v3 is installed,
+  helper unregistered, legacy journal preserved and live install disabled; see
+  [current checkpoint](desktop/AuthorizationPoC/TrustedMAS/CONTROLLED-INSTALL-STAGE1.md).
+  Preserve account, entitlement and privileged-child interruption safeguards.
 - [ ] **Secure SSH Desktop (16H):** implement/qualify the inherited FD/challenge
   bridge, opt-in Capture encryption and Restore unlock/import confirmation over
   the existing engine; qualify age/OpenSSH PTY behavior. Extend privacy/report

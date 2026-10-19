@@ -1,0 +1,26 @@
+diff --git a/Sources/mas/Commands/MAS.Config.swift b/Sources/mas/Commands/MAS.Config.swift
+index 3f07c60..1c0327f 100644
+--- a/Sources/mas/Commands/MAS.Config.swift
++++ b/Sources/mas/Commands/MAS.Config.swift
+@@ -47,7 +47,7 @@ extension MAS {
+ private var runningSliceArchitecture: String {
+ 	var info = utsname()
+ 	return unsafe uname(&info) == 0
+-	? unsafe withUnsafePointer(to: &info.machine) { pointer in // swiftformat:disable indent
++	? withUnsafePointer(to: &info.machine) { pointer in // swiftformat:disable indent
+ 		unsafe pointer.withMemoryRebound(
+ 			to: CChar.self,
+ 			capacity: unsafe MemoryLayout.size(ofValue: unsafe pointer),
+diff --git a/Sources/mas/Utilities/Output/Printer.swift b/Sources/mas/Utilities/Output/Printer.swift
+index ebd6b0d..7584fd9 100644
+--- a/Sources/mas/Utilities/Output/Printer.swift
++++ b/Sources/mas/Utilities/Output/Printer.swift
+@@ -116,7 +116,7 @@ struct Printer {
+ 	}
+ 
+ 	private func print(_ items: [String], separator: String, terminator: String, to fileHandle: FileHandle) {
+-		unsafe items.joined(separator: separator)
++		items.joined(separator: separator)
+ 			.appending(terminator)
+ 			.utf8
+ 			.withContiguousStorageIfAvailable { try? unsafe fileHandle.write(contentsOf: unsafe $0) }

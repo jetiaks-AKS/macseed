@@ -547,7 +547,9 @@ bootstrap_application_readiness_timed() (
             fi
             if [[ $result -eq 1 ]]; then
                 needs_network=true
-                needs_authorization=true
+                # Desktop's typed helper bridge authorizes after plan confirmation.
+                # Existing CLI sudo contract is unchanged when no bridge is present.
+                if [[ -z "${MACSEED_MAS_ADAPTER:-}" ]]; then needs_authorization=true; fi
             fi
         done <<< "$applications"
     fi

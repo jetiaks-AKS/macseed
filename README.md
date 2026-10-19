@@ -54,9 +54,10 @@ Performance optimization and an opt-in private trace are implemented through
 `c06e530`; individual real-Mac measurements and limits are recorded in
 [Desktop qualification](docs/DESKTOP.md#recent-restore-qualification-and-performance).
 
-**Stage 16 remains open.** The next checkpoint is current Homebrew Cask / Tailscale
-capability qualification; the latest reported Restore still has one unsupported/
-unverified requirement and a failed process result. MAS automatic Restore,
+**Stage 16 remains open.** MAS automatic Restore is the next mandatory priority.
+Development native authorization and trusted bundled MAS diagnostics passed;
+Controlled Install v3 is blocked at legacy reconciliation, with live install disabled.
+These PoCs are not production integration; see the [current MAS checkpoint](desktop/AuthorizationPoC/TrustedMAS/CONTROLLED-INSTALL-STAGE1.md).
 Secure SSH Desktop, remaining completion/runtime qualification and Stage 3C durable
 recovery remain open. Stage 17 packaged clean-Mac qualification and Early Access
 precede **Macseed 1.0**, the first complete Desktop product release. See the

@@ -11,6 +11,14 @@ The format is based on the principles of **Keep a Changelog**.
 
 ### Added
 
+* Added production App Store recovery in Desktop Restore: journal-bound child
+  cancellation, protected exit/verification evidence and explicit operator review.
+  Verified normal installs can proceed sequentially. Interrupted attempts retain
+  immutable history; reviewed, expiring permissions authorize one explicit retry
+  or exact remaining apps without resetting unknown or asserting Apple-service
+  quiescence. Added v3 history preservation and signed-receipt verification;
+  real multi-app and recovery qualification remain pending.
+
 * Recorded the controlled macOS 27 settings Restore on 2026-10-17: 127/127
   Successful in Macseed and 37/37 saved preferences matched independently with
   zero differences. This qualifies the tested stored values; full visual effects

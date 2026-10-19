@@ -222,7 +222,7 @@ struct RestoreTaskPresentation {
                             : "This application's installation requirements are not supported."
                     case "item_stalled_timeout": message = "No observable progress. Check the network or VPN, then Refresh Preview."
                     case "dependency_failed": message = "A required dependency did not complete."
-                    case "privileged_lifecycle_unknown": message = "Privileged work may continue. Inspect Homebrew before another Rebuild."
+                    case "privileged_lifecycle_unknown": message = "Privileged installation may continue. Inspect its persistent state before another Rebuild."
                     case "cask_authorization_required": message = "Administrator authorization was not completed."
                     default: message = state == .completed ? (operationProgress ? "Core confirmed operation completion." : "Verified against the saved environment.")
                         : operationProgress && state == .unverified ? "Core has not confirmed completion of this operation."

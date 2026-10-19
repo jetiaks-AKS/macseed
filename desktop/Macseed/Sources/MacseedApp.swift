@@ -1,7 +1,16 @@
 import SwiftUI
+import Darwin
 
 @main struct MacseedApp: App {
     @NSApplicationDelegateAdaptor(CoreAppLifecycle.self) private var lifecycle
+    init() {
+        #if DEBUG
+        if CommandLine.arguments.contains("--mas-helper-status") {
+            print(MASAuthorization.developmentStatus)
+            exit(0)
+        }
+        #endif
+    }
     var body: some Scene {
         WindowGroup("Macseed") {
             ContentView()
@@ -26,6 +35,9 @@ private typealias SettingsViewState<Value> = SwiftUI.State<Value>
 struct FoundationSettingsView: View {
     @AppStorage(DesktopAppearance.preferenceKey) private var appearanceValue = DesktopAppearance.system.rawValue
     @SettingsViewState private var selectedTab = "general"
+    #if DEBUG
+    @SettingsViewState private var helperStatus = "Not inspected"
+    #endif
     var body: some View {
         TabView(selection: $selectedTab) {
             VStack(alignment: .leading, spacing: 16) {
@@ -51,6 +63,19 @@ struct FoundationSettingsView: View {
             }
             .padding(24)
             .tabItem { Label("General", systemImage: "gearshape") }.tag("general")
+            #if DEBUG
+            VStack(alignment: .leading, spacing: 12) {
+                Text(helperStatus).textSelection(.enabled)
+                Button("Refresh helper status") { helperStatus = MASAuthorization.developmentStatus }
+                Button("Unregister App Store helper") {
+                    Task { helperStatus = await MASAuthorization.developmentUnregister() }
+                }
+                Text("Unregister preserves operation journals and does not stop Apple services. An unknown operation still blocks retry.")
+                    .font(.caption)
+            }
+            .padding(24)
+            .tabItem { Label("App Store Helper", systemImage: "lock.shield") }.tag("helper")
+            #endif
             Color.clear
                 .tabItem { Label("Operation Logs", systemImage: "clock") }.tag("logs")
         }
