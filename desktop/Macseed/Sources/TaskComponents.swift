@@ -44,20 +44,22 @@ struct TaskTextStatusLayout: Layout {
 // A native Button owns the whole disclosure header, including its empty space.
 struct TaskDisclosureStyle: DisclosureGroupStyle {
     var minimumHeight: CGFloat = 48
+    var includesIndicator = true
+    var contentTrailingInset: CGFloat = 26
     func makeBody(configuration: Configuration) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             Button { configuration.isExpanded.toggle() } label: {
                 HStack(spacing: 14) {
                     configuration.label.frame(maxWidth: .infinity, alignment: .leading)
-                    Image(systemName: "chevron.right")
+                    if includesIndicator { Image(systemName: "chevron.right")
                         .rotationEffect(.degrees(configuration.isExpanded ? 90 : 0))
                         .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-                        .frame(width: 12).accessibilityHidden(true)
+                        .frame(width: 12).accessibilityHidden(true) }
                 }.frame(maxWidth: .infinity, minHeight: minimumHeight, alignment: .leading)
                     .contentShape(Rectangle())
             }.buttonStyle(.plain)
                 .accessibilityValue(configuration.isExpanded ? "Expanded" : "Collapsed")
-            if configuration.isExpanded { configuration.content.padding(.trailing, 26) }
+            if configuration.isExpanded { configuration.content.padding(.trailing, contentTrailingInset) }
         }
     }
 }
@@ -202,6 +204,7 @@ struct TaskDomainList: View {
     var selectDomain: ((String, Bool) -> Void)? = nil
     var compactReadyItems = false
     var title = "Tasks"
+    var leadingContent: AnyView? = nil
     var restoreSettingsPreview = false
     var captureResultLayout = false
     var settingsCategories: [TaskDomainPresentation] = []
@@ -219,9 +222,14 @@ struct TaskDomainList: View {
             HStack {
                 Text(title).font(.headline).accessibilityAddTraits(.isHeader)
                 Spacer()
-                Button(expandedIDs.count == domains.count ? "Collapse All" : "Expand All") {
-                    setExpanded(expandedIDs.count == domains.count ? [] : Set(domains.map(\.id)))
-                }.buttonStyle(.plain).foregroundStyle(.secondary)
+                if !restoreSettingsPreview { expandAllButton }
+            }
+            if let leadingContent { leadingContent }
+            if restoreSettingsPreview && !domains.isEmpty {
+                HStack(alignment: .firstTextBaseline, spacing: 12) {
+                    WorkspaceSectionHeader(title: "Automatic Restore Tasks", prominent: true)
+                    expandAllButton.fixedSize()
+                }
             }
             ForEach(WorkspaceCategoryStyle.sections(domains), id: \.title) { section in
                 WorkspaceSectionHeader(title: section.title)
@@ -239,7 +247,26 @@ struct TaskDomainList: View {
                     }
                 }.modifier(WorkspaceCardSurface())
             }
+        }.transformEnvironment(\.restoreTrailingSamples) { samples in
+            if restoreSettingsPreview {
+                let rows = domains + settingsCategories
+                let headers = rows.map { RestoreTrailingSample(title: stateTitles[$0.state] ?? $0.state.rawValue) }
+                let items = rows.flatMap(\.items).map { RestoreTrailingSample(title: $0.assistedAppStore?.status.rawValue ?? stateTitles[$0.state] ?? $0.state.rawValue, disclosure: false) }
+                // Every visible row uses this hidden width reference. Retaining one
+                // copy per item made expansion build a quadratic number of views.
+                // Equal status text + disclosure measures identically; keep it once.
+                var seen = Set<String>()
+                samples += (headers + items).filter {
+                    seen.insert(($0.disclosure ? "header:" : "item:") + $0.title).inserted
+                }
+            }
         }
+    }
+
+    private var expandAllButton: some View {
+        Button(expandedIDs.count == domains.count ? "Collapse All" : "Expand All") {
+            setExpanded(expandedIDs.count == domains.count ? [] : Set(domains.map(\.id)))
+        }.buttonStyle(.plain).foregroundStyle(.secondary)
     }
 
     private func domainRow(_ domain: TaskDomainPresentation) -> some View {
@@ -259,18 +286,22 @@ struct TaskDomainList: View {
                     let remaining = domain.items.filter { !known.contains($0.id) }
                     if !remaining.isEmpty {
                         TaskDomainItems(domain: TaskDomainPresentation(id: domain.id, title: domain.title, symbol: domain.symbol, items: remaining),
-                            stateTitles: stateTitles, compactReadyItems: compactReadyItems, itemTitles: itemTitles)
+                            stateTitles: stateTitles, compactReadyItems: compactReadyItems, itemTitles: itemTitles, restorePreview: restoreSettingsPreview)
                     }
-                }.padding(.leading, 36).padding(.trailing, restoreSettingsPreview || captureResultLayout ? -26 : 0).padding(.vertical, 4)
+                }.padding(.leading, restoreSettingsPreview ? 0 : 36).padding(.trailing, captureResultLayout ? -26 : 0).padding(.vertical, 4)
             } else {
-                TaskDomainItems(domain: domain, stateTitles: stateTitles, compactReadyItems: compactReadyItems, itemTitles: itemTitles)
+                TaskDomainItems(domain: domain, stateTitles: stateTitles, compactReadyItems: compactReadyItems, itemTitles: itemTitles, restorePreview: restoreSettingsPreview)
             }
         } label: {
-            ViewThatFits(in: .horizontal) {
+            if restoreSettingsPreview {
+                RestorePreviewRow(title: domainTitle(domain),
+                    status: TaskStatusLabel(state: domain.state, title: stateTitles[domain.state]),
+                    expanded: expandedIDs.contains(domain.id)).padding(.vertical, 6)
+            } else { ViewThatFits(in: .horizontal) {
                 HStack(spacing: 12) { domainTitle(domain); Spacer(); domainStatus(domain) }
                 VStack(alignment: .leading, spacing: 8) { domainTitle(domain); domainStatus(domain).frame(maxWidth: .infinity, alignment: restoreSettingsPreview || captureResultLayout ? .trailing : .leading) }
-            }.padding(.vertical, 6)
-        }.disclosureGroupStyle(TaskDisclosureStyle()).padding(.horizontal, 16)
+            }.padding(.vertical, 6) }
+        }.disclosureGroupStyle(TaskDisclosureStyle(includesIndicator: !restoreSettingsPreview, contentTrailingInset: restoreSettingsPreview ? 0 : 26)).padding(.horizontal, 16)
     }
     private func domainSummary(_ domain: TaskDomainPresentation) -> String {
         if compactReadyItems {
@@ -296,8 +327,26 @@ struct TaskDomainList: View {
         VStack(alignment: .leading, spacing: 3) {
             TaskStatusLabel(state: domain.state, title: stateTitles[domain.state])
             Text(domainSummary(domain)).font(.caption).foregroundStyle(.secondary)
-                .padding(.leading, restoreSettingsPreview && domain.id != "ssh-configuration" ? TaskRowLayout.iconWidth + 7 : 0)
         }.frame(width: TaskRowLayout.statusWidth, alignment: .leading)
+    }
+}
+
+// Same parent-provided measurement reference for Preview categories and leaves.
+// Only title contents receive indentation; every row retains the full container width.
+struct RestorePreviewRow<Title: View, Status: View>: View {
+    let title: Title
+    let status: Status
+    var titleInset: CGFloat = 0
+    var expanded: Bool? = nil
+    var body: some View {
+        RestoreResultColumns {
+            title.padding(.leading, titleInset).fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 8) {
+                status.fixedSize(horizontal: false, vertical: true)
+                if let expanded { RestoreDisclosureIndicator(expanded: expanded) }
+            }.frame(maxWidth: .infinity, alignment: .leading)
+            RestoreTrailingReference()
+        }
     }
 }
 
@@ -306,6 +355,7 @@ struct TaskDomainItems: View {
     var stateTitles: [TaskRowState: String] = [:]
     var compactReadyItems = false
     var itemTitles: [String: String] = [:]
+    var restorePreview = false
     static func showsTechnicalDetails(_ item: TaskItemPresentation) -> Bool {
         item.assistedAppStore == nil && item.state != .working && item.item.reason != nil
     }
@@ -315,13 +365,17 @@ struct TaskDomainItems: View {
         } else {
             VStack(spacing: 0) {
                 ForEach(domain.items) { item in
-                    TaskTextStatusLayout {
+                    if restorePreview {
+                        RestorePreviewRow(title: details(item),
+                            status: TaskStatusLabel(state: item.state, title: item.assistedAppStore?.status.rawValue ?? stateTitles[item.state]),
+                            titleInset: 36).padding(.vertical, 7)
+                    } else { TaskTextStatusLayout {
                         details(item).fixedSize(horizontal: false, vertical: true)
                         TaskStatusLabel(state: item.state, title: item.assistedAppStore?.status.rawValue ?? stateTitles[item.state])
                             .fixedSize(horizontal: false, vertical: true)
-                    }.padding(.vertical, 7)
+                    }.padding(.vertical, 7) }
                 }
-            }.padding(.leading, 36).padding(.vertical, 4)
+            }.padding(.leading, restorePreview ? 0 : 36).padding(.vertical, 4)
         }
     }
     private func details(_ item: TaskItemPresentation) -> some View {
@@ -367,7 +421,7 @@ struct TaskSettingsCategoryDetails: View {
                     ForEach(domain.items) { item in
                         RestoreSettingPreviewLeaf(item: item, title: itemTitles[item.id] ?? item.item.title, stateTitles: stateTitles)
                     }
-                }.padding(.leading, 36).padding(.vertical, 4)
+                }.padding(.vertical, 4)
             } else if settingLabels.isEmpty || domain.items.contains(where: {
                 $0.captureRole != .selectedSubdomain || ![.planned, .completed].contains($0.state)
                     || $0.item.reason != nil || $0.diagnostic != nil
@@ -386,11 +440,14 @@ struct TaskSettingsCategoryDetails: View {
                 }
             }
         } label: {
-            ViewThatFits(in: .horizontal) {
+            if restorePreview {
+                RestorePreviewRow(title: title, status: TaskStatusLabel(state: domain.state, title: stateTitles[domain.state]),
+                    titleInset: 36, expanded: expansion?.wrappedValue ?? expanded).padding(.vertical, 6)
+            } else { ViewThatFits(in: .horizontal) {
                 HStack(spacing: 12) { title; Spacer(); TaskStatusLabel(state: domain.state, title: stateTitles[domain.state]).frame(width: restorePreview || captureResultLayout ? TaskRowLayout.statusWidth : nil, alignment: .leading) }
                 VStack(alignment: .leading, spacing: 8) { title; TaskStatusLabel(state: domain.state, title: stateTitles[domain.state]).frame(width: restorePreview || captureResultLayout ? TaskRowLayout.statusWidth : nil, alignment: .leading).frame(maxWidth: .infinity, alignment: restorePreview || captureResultLayout ? .trailing : .leading) }
-            }.padding(.vertical, 6)
-        }.disclosureGroupStyle(TaskDisclosureStyle())
+            }.padding(.vertical, 6) }
+        }.disclosureGroupStyle(TaskDisclosureStyle(includesIndicator: !restorePreview, contentTrailingInset: restorePreview ? 0 : 26))
     }
     private var title: some View { WorkspaceCategoryTitle(id: domain.id, title: domain.title, fallbackSymbol: domain.symbol) }
 }
@@ -404,10 +461,8 @@ struct RestoreSettingPreviewLeaf: View {
         item.state == .matching && item.item.status == .matching && item.item.reason == nil && item.diagnostic == nil
     }
     var body: some View {
-        TaskTextStatusLayout {
-            details.fixedSize(horizontal: false, vertical: true)
-            status.fixedSize(horizontal: false, vertical: true)
-        }.padding(.vertical, 7).frame(minHeight: 28)
+        RestorePreviewRow(title: details, status: status, titleInset: 72)
+            .padding(.vertical, 7).frame(minHeight: 28)
     }
     private var details: some View {
         VStack(alignment: .leading, spacing: 4) {

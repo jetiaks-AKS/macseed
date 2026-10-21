@@ -256,6 +256,36 @@ struct RestoreProgressRow {
             .sorted { $0.sequence < $1.sequence }
     }
 
+    @Published private(set) var showingAppStore = false
+    var appStoreSelected: Bool {
+        let plan = state == .result ? executionPlan : preparation
+        if let plan { return (plan.selectedItemCounts["app-store"] ?? 0) > 0 }
+        return previewSelectionState("app-store") != .none
+    }
+    var hasAutomaticSelection: Bool {
+        selectedCategories.contains { $0 != "app-store" } || selectedItems.contains { $0.key != "app-store" && !$0.value.isEmpty }
+    }
+    var appStorePresentation: AppStoreRestorePresentation {
+        if state == .result, let preview = executionPreview, let plan = executionPlan {
+            return RestoreTaskPresentation(preview: preview, plan: plan, events: categoryPresentationEvents,
+                result: executionResult, executing: true, operationProgress: true).appStore
+        }
+        if state == .preview, let preview, let preparation {
+            return RestoreTaskPresentation(preview: preview, plan: preparation).appStore
+        }
+        return AppStoreRestorePresentation(domains: [])
+    }
+    func reviewAppStore() {
+        guard appStoreSelected, [.preview, .result].contains(state), !busy, !runtime.isActive else { return }
+        showingAppStore = true
+    }
+    func closeAppStore() { showingAppStore = false }
+    func refreshAppStore() {
+        guard showingAppStore, canPreview else { return }
+        // Result recheck deliberately becomes a fresh Preview; never reuse pre-execution evidence.
+        if state == .result { checkCurrentState() } else { refreshPreview() }
+    }
+
     var busy: Bool { retryingPrerequisites || state == .inspecting || state == .preparing || state == .confirming || state == .rebuilding }
     var areas: [CoreRestoreInspection.Area] { inspection?.restoreSelection?.inventory ?? [] }
     var groups: [CoreRestoreInspection.Group] { inspection?.restoreSelection?.groups ?? [] }
@@ -331,6 +361,10 @@ struct RestoreProgressRow {
     var canRebuild: Bool {
         ready && !runtime.isActive && preparation?.hasExecutableChanges == true
             && preparation?.selection == canonicalSelection
+    }
+    var confirmationMessages: [String] {
+        guard let preview, let preparation else { return [] }
+        return RestoreTaskPresentation(preview: preview, plan: preparation).confirmationMessages(preparation)
     }
     var mutationPossible: Bool {
         runtime.mutationMayHaveStarted == true || runtime.events.contains { $0.phase == "bootstrap" || $0.type == "execution_event" }
@@ -455,6 +489,7 @@ struct RestoreProgressRow {
         guard !busy, !runtime.isActive else { return }
         keepReviewSelection()
         cancelRequested = false
+        showingAppStore = false
         source = url; inspection = nil; selectedCategories = []; selectedItems = [:]
         invalidate(); failure = nil; technicalReason = nil
         guard url.isFileURL, url.pathExtension.lowercased() == "mbt" else {
@@ -705,8 +740,8 @@ struct RestoreExecutionPresentation {
         } else { outcome = .interrupted }
         stopNotice = stopRequest?.notice(operationID: operationID, outcome: outcome, response: runtime.gracefulStopState)
         switch outcome {
-        case .clean: title = "All Done"; message = "Your selected environment has been restored and verified."
-        case .partial: title = "Rebuild Needs Attention"; message = "Some selected changes completed. Refresh Preview to inspect unresolved items before rebuilding again."
+        case .clean: title = "Rebuild Completed"; message = "Your selected environment has been restored and verified."
+        case .partial: title = "Partial Restore"; message = "Some selected changes completed. Refresh Preview to inspect unresolved items before rebuilding again."
         case .attention: title = "Rebuild Completed with Issues"; message = "Review the observed results, then Refresh Preview to check current state."
         case .stoppedBeforeMutation: title = "Rebuild Cancelled"; message = "Rebuild cancelled before target changes began. Refresh Preview before rebuilding again."
         case .stoppedAfterMutation: title = "Rebuild Stopped"; message = "Rebuild stopped safely. Completed changes remain. Refresh Preview before rebuilding again."
@@ -732,6 +767,11 @@ struct RestoreExecutionPresentation {
         findings = outcome == .clean ? [] : normalized.findings
     }
     static func hasPartialEvidence(payload: [String: CoreJSON]?, expectedID: String) -> Bool {
+        func manualInspection(_ row: [String: CoreJSON]) -> Bool {
+            row["domain"]?.string == "app-store" && row["action"]?.string == "inspect"
+                && row["outcome"]?.string == "skipped"
+                && ["manual_installation_required", "observation_failed"].contains(row["reason"]?.string ?? "")
+        }
         let verification = payload?["verification"]?.object
         let records = verification?["details"]?.object?["operation_records"]
         let changed: Bool
@@ -754,6 +794,7 @@ struct RestoreExecutionPresentation {
             concreteFailure = rows.contains { value in
                 guard let row = value.object else { return true }
                 if ["success", "noop"].contains(row["outcome"]?.string ?? "") { return false }
+                if manualInspection(row) { return false }
                 if row["outcome"]?.string == "skipped", row["reason"]?.string == "cask_execution_requirements_unsupported" { return false }
                 // Only the known Bootstrap aggregate can accompany an item-local skip.
                 return !(row["outcome"]?.string == "failure" && row["domain"]?.string == "orchestration"
@@ -775,7 +816,7 @@ struct RestoreExecutionPresentation {
         let observationRows: [[String: CoreJSON]]
         if case .array(let values) = records { operationRows = values.compactMap(\.object) } else { operationRows = [] }
         if case .array(let values) = details?["verification_records"] { observationRows = values.compactMap(\.object) } else { observationRows = [] }
-        let skipRows = operationRows.filter { $0["outcome"]?.string == "skipped" && $0["reason"]?.string == "cask_execution_requirements_unsupported" }
+        let skipRows = operationRows.filter { ($0["outcome"]?.string == "skipped" && $0["reason"]?.string == "cask_execution_requirements_unsupported") || manualInspection($0) }
         func isSkippedItem(_ row: [String: CoreJSON]) -> Bool {
             skipRows.contains { $0["domain"] == row["domain"] && $0["item_id"] == row["item_id"] }
         }

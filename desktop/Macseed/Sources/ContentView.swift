@@ -32,9 +32,11 @@ enum WorkspaceCategoryStyle {
 
 struct WorkspaceSectionHeader: View {
     let title: String
+    var prominent = false
     var body: some View {
         HStack(spacing: 12) {
-            Text(title).font(.system(size: 13, weight: .semibold)).foregroundStyle(Color(nsColor: .labelColor))
+            Text(title).font(.system(size: prominent ? 15 : 13, weight: .semibold)).foregroundStyle(Color(nsColor: .labelColor))
+                .layoutPriority(prominent ? 1 : 0)
             Rectangle().fill(Color.primary.opacity(0.22)).frame(height: 1.5)
         }.padding(.top, 12).padding(.bottom, 4).accessibilityAddTraits(.isHeader)
     }
@@ -62,7 +64,7 @@ struct WorkspaceCategoryTitle: View {
 
 struct WorkspaceMetricCard: View {
     let title: String
-    let value: String
+    let value: String?
     let symbol: String
     let tint: Color
     var explanation: String? = nil
@@ -70,7 +72,7 @@ struct WorkspaceMetricCard: View {
         HStack(spacing: 12) {
             WorkspaceCircleIcon(symbol: symbol, tint: tint, size: 44)
             VStack(alignment: .leading, spacing: 3) {
-                Text(value).font(.title2.weight(.semibold)).monospacedDigit()
+                if let value { Text(value).font(.title2.weight(.semibold)).monospacedDigit() }
                 Text(title).font(.callout.weight(.semibold))
                 if let explanation {
                     Text(explanation).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
@@ -78,7 +80,7 @@ struct WorkspaceMetricCard: View {
             }.frame(maxWidth: .infinity, alignment: .leading)
         }.padding(12).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
             .background(tint.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
-            .accessibilityElement(children: .ignore).accessibilityLabel(title).accessibilityValue(value)
+            .accessibilityElement(children: .ignore).accessibilityLabel(title).accessibilityValue(value ?? explanation ?? "")
     }
 }
 

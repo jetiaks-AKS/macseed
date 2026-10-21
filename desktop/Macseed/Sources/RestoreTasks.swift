@@ -51,6 +51,7 @@ struct TaskItemPresentation: Identifiable {
     var resultNotRun = false
     var previewProblem: String? = nil
     var sourceDomain: String? = nil
+    var sourceItemID: String? = nil
     var assistedAppStore: AssistedAppStoreItem? = nil
 }
 struct TaskDomainPresentation: Identifiable {
@@ -101,11 +102,31 @@ struct TaskDomainPresentation: Identifiable {
 
 struct RestoreTaskPresentation {
     let domains: [TaskDomainPresentation]
+    var automaticDomains: [TaskDomainPresentation] { domains.filter { $0.id != "app-store" } }
+    var appStore: AppStoreRestorePresentation { AppStoreRestorePresentation(domains: domains) }
     var counters: [(state: TaskRowState, count: Int)] {
         TaskRowState.allCases.compactMap { state in
-            let count = domains.filter { $0.state == state }.count
+            let count = automaticDomains.filter { $0.state == state }.count
             return count > 0 ? (state, count) : nil
         }
+    }
+    var automaticAttentionCount: Int {
+        automaticDomains.flatMap(\.items).filter { [.attention, .unverified].contains($0.state) }.count
+    }
+    static func scopeWarningMessages(_ plan: CoreRestorePreparation) -> [String] {
+        (plan.scopeWarnings ?? []).map {
+            "Preview reported a category-level warning for \(CaptureCategory.title(for: $0)). Review its details before rebuilding."
+        }
+    }
+    func confirmationMessages(_ plan: CoreRestorePreparation) -> [String] {
+        var messages = Self.scopeWarningMessages(plan)
+        if automaticAttentionCount > 0 {
+            messages.append("\(automaticAttentionCount) automatic requirements need attention. Review the category details; blocked items will remain unchanged.")
+        }
+        if !appStore.pending.isEmpty {
+            messages.append("\(appStore.attentionCount) App Store requirements need manual review. Rebuild does not install App Store applications.")
+        }
+        return messages
     }
     init(preview: RestorePreviewPresentation, plan: CoreRestorePreparation, events: [CoreEvent] = [],
          result: RestoreExecutionPresentation? = nil, executing: Bool = false, operationProgress: Bool = false) {
@@ -281,7 +302,7 @@ struct RestoreTaskPresentation {
                         && result?.structuredEvidence?["unknown_consequences"]?.boolean != true
                         && operation == nil && activity == nil && observed == nil,
                     previewProblem: entry.flatMap { ["blocked", "conflict", "warning"].contains($0.disposition) ? ($0.reason ?? $0.disposition) : nil },
-                    sourceDomain: entry?.domain, assistedAppStore: assisted)
+                    sourceDomain: entry?.domain, sourceItemID: entry?.itemID, assistedAppStore: assisted)
             }
             if items.isEmpty { continue }
             var domain = TaskDomainPresentation(id: domainID, title: category.title,
@@ -340,7 +361,7 @@ struct RestoreTaskPresentation {
                             case "input_invalid", "input_changed": message = "The selected input for this category could not be validated."
                             case "selected_input_unresolved": message = "Some selected input in this category could not be resolved."
                             case "unsupported_predicate": message = "Some requirements in this category cannot be verified."
-                            default: message = "Core reported an independent diagnostic issue for this category."
+                            default: message = "An additional problem needs review in this category."
                             }
                         }
                         else if unexplainedOperation { message = "Category-level work needs attention; the exact item was not reported." }
@@ -465,12 +486,19 @@ struct RestoreOperationSummary {
 
 struct RestoreVerificationSummary {
     let status: String
+    let verdict: String?
     let verified: Int?
     let mismatch: Int?
     let unverified: Int?
     let unresolved: Int?
     var complete: Bool {
         status == "complete" && [verified, mismatch, unverified, unresolved].allSatisfy { $0.map { $0 >= 0 } == true }
+    }
+    var requirementsTitle: String {
+        guard complete else { return "Not confirmed" }
+        if (mismatch ?? 0) > 0 { return "Differences found" }
+        guard verdict == "selected_requirements_verified", unverified == 0, unresolved == 0 else { return "Not fully verified" }
+        return "Verified"
     }
     func overallResult(outcome: RestoreExecutionPresentation.Outcome) -> String {
         switch outcome {
@@ -489,9 +517,15 @@ struct RestoreVerificationSummary {
         if status == "Not reported" { return "Verification Not Reported" }
         return "Verification Incomplete"
     }
+    var countsDescription: String {
+        [(verified, "verified"), (mismatch, "mismatched"), (unverified, "unverified"), (unresolved, "unresolved")]
+            .compactMap { count, label in count.flatMap { $0 > 0 ? "\($0) \(label)" : nil } }
+            .joined(separator: " · ")
+    }
     init(payload: [String: CoreJSON]?) {
         let evidence = payload?["verification"]?.object
         status = evidence?["status"]?.string ?? "Not reported"
+        verdict = evidence?["verdict"]?.string
         verified = evidence?["verified_count"]?.integer
         mismatch = evidence?["mismatch_count"]?.integer
         unverified = evidence?["unverified_count"]?.integer
@@ -558,6 +592,9 @@ extension TaskItemPresentation {
     var resultExplanation: String? {
         if let assistedAppStore { return assistedAppStore.message }
         let reason = previewProblem ?? item.reason
+        if diagnostic?.primitive == "pkgutil" && diagnostic?.condition == "preparation_required" {
+            return "Installer preparation is required. Refresh Preview → Fix Issues… → Review → Rebuild. Preparation requires approval and does not guarantee installation."
+        }
         if reason == "cask_execution_requirements_unsupported" || resultLabels.contains("Unsupported") { return "This requirement's installation conditions are not supported." }
         if reason == "target_conflict" || reason == "conflict" { return "Existing state conflicts with the selected requirement and is preserved." }
         if resultLabels.contains("Mismatch") { return "Verification found a difference from the selected requirement." }
@@ -592,6 +629,14 @@ extension TaskItemPresentation {
 }
 
 struct RestoreResultSummary {
+    struct Issue: Identifiable {
+        let id: String
+        let title: String
+        let message: String
+        let nextAction: String
+        var count: Int? = 1
+        var appStore = false
+    }
     struct Card: Identifiable {
         let id: String
         let count: Int
@@ -599,6 +644,22 @@ struct RestoreResultSummary {
     }
     let cards: [Card]
     let uncounted: Int
+    var successfulCount = 0
+    var independentIssueTitles: [String] = []
+    var issues: [Issue] = []
+    var automaticAttentionCount: Int? = 0
+    var manualAttentionCount = 0
+    var manualMissingCount = 0
+    var manualUnverifiedCount = 0
+    var attentionCount: Int? { automaticAttentionCount.map { $0 + manualAttentionCount } }
+    var attentionCaption: String {
+        var parts: [String] = []
+        if let count = automaticAttentionCount, count > 0 { parts.append("\(count) restore issue\(count == 1 ? "" : "s")") }
+        else if automaticAttentionCount == nil { parts.append("Restore work needs review") }
+        if manualMissingCount > 0 { parts.append("\(manualMissingCount) app\(manualMissingCount == 1 ? "" : "s") to install") }
+        if manualUnverifiedCount > 0 { parts.append("\(manualUnverifiedCount) app\(manualUnverifiedCount == 1 ? "" : "s") to check") }
+        return parts.joined(separator: " · ")
+    }
     init(domains: [TaskDomainPresentation]) {
         // Identity is the plan row ID, even when several actions share an item name.
         var rows: [String: TaskItemPresentation] = [:]
@@ -625,6 +686,92 @@ struct RestoreResultSummary {
         uncounted = rows.values.filter {
             !$0.auxiliaryCompletionUnreported && (notRun.contains($0.id) || $0.resultGroup == nil)
         }.count
+    }
+
+    // Consolidate existing row/category/findings projections; Core outcomes stay authoritative.
+    init(domains: [TaskDomainPresentation], result: RestoreExecutionPresentation, appStore: AppStoreRestorePresentation?) {
+        let automatic = domains.filter { $0.id != "app-store" }
+        self.init(domains: automatic)
+        var successful = Set<String>()
+        var represented = Set<String>()
+        var representedScopes = Set<String>()
+        func requirement(_ item: TaskItemPresentation, domain: String) -> String {
+            (item.sourceDomain ?? domain) + ":" + (item.sourceItemID ?? item.id)
+        }
+        for domain in automatic {
+            for item in domain.items {
+                let key = requirement(item, domain: domain.id)
+                if item.resultGroup == "Success" && item.resultLabels.contains("Verified") && !item.resultNotRun {
+                    successful.insert(key)
+                }
+                if item.hasResultProblemDetails && represented.insert(key).inserted {
+                    successful.remove(key)
+                    issues.append(Issue(id: key, title: item.item.title,
+                        message: item.resultExplanation ?? "This requirement could not be completed or confirmed.",
+                        nextAction: "Review its category details, then Refresh Preview.",
+                        count: ["dependency_failed", "dependency_observation_failed"].contains(item.item.reason ?? "") ? nil : 1))
+                }
+            }
+            if domain.resultCategoryIssue {
+                let scopes = domain.resultProblemDomains.isEmpty ? [domain.id] : domain.resultProblemDomains.sorted()
+                for scope in scopes where representedScopes.insert(scope).inserted {
+                    issues.append(Issue(id: scope + ":category", title: CaptureCategory.title(for: scope),
+                        message: domain.resultProblemMessages[scope] ?? domain.resultCategoryExplanation,
+                        nextAction: "Review its category details, then Refresh Preview.", count: nil))
+                }
+            }
+        }
+        successful.subtract(represented)
+        successfulCount = successful.count
+        if let reason = RestoreExecutionPresentation.launcherFailureReason(events: result.diagnosticEvents, payload: result.structuredEvidence) {
+            let message: String
+            switch reason {
+            case "launcher_destination_conflict": message = "An existing bs command prevents this launcher installation."
+            case "launcher_inspection_failed": message = "The bs command installation could not be checked."
+            case "launcher_verification_failed": message = "The bs command installation could not be confirmed."
+            default: message = "Macseed Launcher could not be configured. The exact cause is available in View Log."
+            }
+            issues.insert(Issue(id: "launcher:scope", title: "Macseed Launcher", message: message,
+                nextAction: "Review the launcher installation before retrying."), at: 0)
+            representedScopes.insert("launcher")
+        }
+        // Stable finding identities retain independent operation failures outside plan rows.
+        // Repeated module/terminal consequences do not manufacture extra issues.
+        for finding in result.findings {
+            let domain = String(finding.id.split(separator: ":").first ?? "")
+            if domain == "app-store" || finding.id == "result-incomplete" { continue }
+            if ["bootstrap_failed", "cancelled", "secure_cancelled"].contains(finding.reason ?? "") { continue }
+            if representedScopes.contains(domain) || represented.contains(where: { finding.id.hasPrefix($0 + ":") }) { continue }
+            if automatic.contains(where: { $0.id == domain || $0.items.contains(where: { $0.sourceDomain == domain }) }),
+               represented.contains(where: { $0.hasPrefix(domain + ":") }), ["module_failed", "module_warning"].contains(finding.reason ?? "") { continue }
+            guard represented.insert(finding.id).inserted else { continue }
+            if !automatic.contains(where: { $0.id == domain || $0.items.contains(where: { $0.sourceDomain == domain }) }) {
+                independentIssueTitles.append(finding.title)
+            }
+            issues.append(Issue(id: finding.id, title: finding.title, message: finding.action,
+                nextAction: "Refresh Preview to check the remaining work.", count: nil))
+        }
+        if let appStore, !appStore.pending.isEmpty {
+            let missing = Set(appStore.pending.filter { AppStoreRestorePresentation.status($0) == .missing }.map { $0.assistedAppStore?.appID ?? $0.id })
+            let unverified = Set(appStore.pending.filter { AppStoreRestorePresentation.status($0) == .unverified }.map { $0.assistedAppStore?.appID ?? $0.id }).subtracting(missing)
+            manualMissingCount = missing.count
+            manualUnverifiedCount = unverified.count
+            manualAttentionCount = missing.count + unverified.count
+            issues.append(Issue(id: "app-store", title: "App Store Applications", message: appStore.resultSummary,
+                nextAction: "", count: manualAttentionCount, appStore: true))
+        }
+        let complete = RestoreVerificationSummary(payload: result.structuredEvidence).complete
+        let evidenceComplete = result.structuredEvidence?["verification"]?.object?["details"]?.object?["status"]?.string == "complete"
+        let unknown = result.outcome == .interrupted || ((!complete || !evidenceComplete) && result.outcome != .clean)
+        let unexplainedOutcome = [.attention, .partial, .failedBeforeMutation, .failedAfterMutation, .interrupted].contains(result.outcome)
+        if issues.isEmpty && (unknown || unexplainedOutcome) {
+            issues.append(Issue(id: "result-incomplete", title: complete ? "Rebuild result" : "Verification",
+                message: complete ? "The remaining issue could not be identified precisely." : "Final requirement checks are unavailable.",
+                nextAction: "Refresh Preview to inspect current state.", count: nil))
+        }
+        let automaticIssues = issues.filter { !$0.appStore }
+        automaticAttentionCount = !unknown && automaticIssues.allSatisfy { $0.count != nil }
+            ? automaticIssues.reduce(0) { $0 + ($1.count ?? 0) } : nil
     }
 }
 
@@ -660,5 +807,49 @@ extension TaskDomainPresentation {
         return id.hasPrefix("macos-") || id == "macOS Settings"
             ? "Settings operation did not complete; the exact failed step was not reported."
             : "This category has an unresolved scope or an independent diagnostic issue. Review View Log for the reported cause."
+    }
+}
+
+// A presentation partition only. Core plans and Global Verification retain every selected row.
+struct AppStoreRestorePresentation {
+    let items: [TaskItemPresentation]
+    init(domains: [TaskDomainPresentation]) {
+        items = domains.filter { $0.id == "app-store" }.flatMap(\.items)
+    }
+    static func status(_ item: TaskItemPresentation) -> AssistedAppStoreItem.Status {
+        item.assistedAppStore?.status ?? .unverified
+    }
+    var installed: [TaskItemPresentation] { items.filter { Self.status($0) == .installed } }
+    var pending: [TaskItemPresentation] {
+        items.filter { Self.status($0) == .missing } + items.filter { Self.status($0) == .unverified }
+    }
+    var counts: [(String, Int)] {
+        [("Installed", installed.count), ("Missing", missingCount), ("Unverified", unverifiedCount)].filter { $0.1 > 0 }
+    }
+    var categoryStatus: String {
+        if allInstalled { return "All Installed" }
+        if missingCount > 0 { return "Needs Attention" }
+        return items.isEmpty ? "No applications selected" : "Unverified"
+    }
+    var categoryState: TaskRowState { allInstalled ? .matching : missingCount > 0 ? .attention : .unverified }
+    var missingCount: Int { items.filter { Self.status($0) == .missing }.count }
+    var unverifiedCount: Int { items.filter { Self.status($0) == .unverified }.count }
+    var allInstalled: Bool { !items.isEmpty && pending.isEmpty }
+    var attentionCount: Int { missingCount + unverifiedCount }
+    var attentionBreakdown: String {
+        [(missingCount, "missing"), (unverifiedCount, "unverified")].filter { $0.0 > 0 }
+            .map { "\($0.0) \($0.1)" }.joined(separator: " · ")
+    }
+    var summary: String {
+        var parts = ["\(installed.count) installed"]
+        if missingCount > 0 { parts.append("\(missingCount) manual action\(missingCount == 1 ? "" : "s") required") }
+        if unverifiedCount > 0 { parts.append("\(unverifiedCount) unverified") }
+        return parts.joined(separator: " · ")
+    }
+    var resultSummary: String {
+        var parts = ["\(installed.count) installed"]
+        if missingCount > 0 { parts.append("\(missingCount) manual installation\(missingCount == 1 ? "" : "s") remaining") }
+        if unverifiedCount > 0 { parts.append("\(unverifiedCount) unverified") }
+        return parts.joined(separator: " · ")
     }
 }

@@ -191,9 +191,13 @@ struct CaptureView: View {
                 CaptureSecureTransferView()
                 if !model.canCreate { Text("Choose supported state to capture.").foregroundStyle(.secondary) }
             case .confirmation:
-                if let prepared = model.preparation, let selection = prepared.selection {
+                if let prepared = model.preparation, let selection = prepared.publicationSelection {
                     Text("Save this environment?").font(.title2.weight(.semibold)).accessibilityAddTraits(.isHeader)
                     Text("Review the final capture before creating the saved environment.").font(.callout).foregroundStyle(.secondary)
+                    if let duplicates = prepared.applicationDuplicates, !duplicates.isEmpty {
+                        Text("Confirmed duplicate applications will be saved as Homebrew requirements. Your original selection is retained.")
+                            .font(.callout).foregroundStyle(.secondary)
+                    }
                     if let destination = model.destination {
                         CaptureBundleLocationView(destination: destination)
                             .padding(14).frame(maxWidth: .infinity, alignment: .leading)
@@ -222,7 +226,7 @@ struct CaptureView: View {
                     CaptureBundleLocationView(destination: URL(fileURLWithPath: saved.destination), showsReveal: true)
                         .padding(14).frame(maxWidth: .infinity, alignment: .leading)
                         .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 8))
-                    if let prepared = model.preparation, let selection = prepared.selection {
+                    if let prepared = model.preparation, let selection = prepared.publicationSelection {
                         let tasks = CaptureTaskPresentation(categories: prepared.inventory.map { CaptureCategory(row: $0) },
                             selection: selection, phase: .result, publication: saved, notices: model.resultNotices)
                         TaskDomainList(domains: tasks.domains, compactReadyItems: true, title: "Captured Environment",

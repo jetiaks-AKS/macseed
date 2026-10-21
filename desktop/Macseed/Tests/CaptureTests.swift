@@ -21,6 +21,7 @@ import SwiftUI
          "items": items.map { ["item_id": $0, "label": $0] }]
     }
     @MainActor static func render(_ model: CaptureModel, _ runtime: CoreRuntime, state: String, expanded: Bool = false, settingsOnly: Bool = false) throws {
+        guard !CommandLine.arguments.contains("--no-renders") else { return }
         _ = NSApplication.shared
         for (width, viewportHeight) in [(785, 660), (985, 760), (1385, 1010)] {
             let height = settingsOnly ? 1120 : viewportHeight
@@ -599,5 +600,111 @@ import SwiftUI
         precondition(beforeHome == afterHome && beforeConfig == afterConfig)
         precondition(!FileManager.default.fileExists(atPath: marker.path) && !FileManager.default.fileExists(atPath: core.appendingPathComponent("logs").path))
         print("PASS: Swift → production Capture → private .mbt → authoritative inspection, real stale rejection and category-only save without Homebrew; HOME/config unchanged")
+        try await overlapCore(root: root, core: core, home: home, bin: bin, python: python)
+    }
+
+    @MainActor static func overlapCore(root: URL, core: URL, home: URL, bin: URL, python: URL) async throws {
+        // A macOS HOME already has Library. Establish it before Discovery so the
+        // first catalog cache write does not change the observed top-level folders.
+        try FileManager.default.createDirectory(at: home.appendingPathComponent("Library"), withIntermediateDirectories: true)
+        let app = home.appendingPathComponent("Applications/Fixture.app/Contents")
+        try FileManager.default.createDirectory(at: app.appendingPathComponent("MacOS"), withIntermediateDirectories: true)
+        try PropertyListSerialization.data(fromPropertyList: [
+            "CFBundleIdentifier": "org.example.Fixture", "CFBundleExecutable": "Fixture"],
+            format: .xml, options: 0).write(to: app.appendingPathComponent("Info.plist"))
+        try write("#!/bin/sh\n", app.appendingPathComponent("MacOS/Fixture"), executable: true)
+        let metadata: Object = ["casks": [
+            ["token": "fixture-cask", "installed": "1.0", "tap": "homebrew/cask", "version": "1.0",
+             "disabled": false, "sha256": String(repeating: "a", count: 64),
+             "url": "https://example.org/fixture.dmg",
+             "artifacts": [["app": ["Fixture.app"], "target": app.deletingLastPathComponent().path]]] as Object]]
+        let metadataPath = bin.appendingPathComponent("cask.json")
+        try JSONSerialization.data(withJSONObject: metadata).write(to: metadataPath)
+        try write("""
+        #!/bin/bash
+        case "$*" in
+          'list --formula'|'list --formula --full-name'|'list --formula --installed-on-request') exit 0;;
+          --version) echo 'Homebrew 7.0.7';;
+          help\\ *) echo "$2 --formula --cask --full-name --json --appdir";;
+          'info --json=v2 --installed --cask'|'info --json=v2 --cask fixture-cask') cat \(quote(metadataPath.path));;
+          'list --cask') echo fixture-cask;;
+          --prefix) echo /opt/homebrew;;
+          *) exit 99;;
+        esac
+        """, bin.appendingPathComponent("brew"), executable: true)
+        try write("#!/bin/bash\necho '12345 Fixture (1.0)'\necho '67890 Other (1.0)'\n",
+                  bin.appendingPathComponent("mas"), executable: true)
+        let catalog = bin.appendingPathComponent("catalog.json")
+        let helper = core.appendingPathComponent("modules/apps/application_identity.py")
+        // Only external catalog transport is replaced in this disposable Core.
+        try write(try String(contentsOf: helper) + "\ndef fetch_catalog(ids):\n    values = json.loads(Path("
+                  + String(data: JSONSerialization.data(withJSONObject: catalog.path, options: [.fragmentsAllowed, .withoutEscapingSlashes]), encoding: .utf8)!
+                  + ").read_bytes())\n    return {key: value for key, value in values.items() if key in ids}\n", helper)
+        let location = CoreLocation(root: core, python: python, home: home, temporaryBase: root, toolDirectories: [bin])
+        let runtime = CoreRuntime(), model = CaptureModel(runtime: CoreRuntime(), location: location)
+        for (name, confirmed, onlyDuplicate) in [("unresolved", false, false), ("confirmed", true, false), ("only-duplicate", true, true)] {
+            try JSONSerialization.data(withJSONObject: confirmed ? ["12345": "org.example.Fixture"] : [:]).write(to: catalog)
+            model.scan(); await model.waitForCompletion()
+            precondition(model.state == .review)
+            model.toggleAll()
+            model.selectCategory("homebrew-casks", included: true)
+            model.selectItem("app-store", item: "12345", included: true)
+            if !onlyDuplicate { model.selectItem("app-store", item: "67890", included: true) }
+            let requested = model.selection, target = root.appendingPathComponent("overlap-\(name).mbt")
+            model.prepare(destination: target); await model.waitForCompletion()
+            precondition(model.state == .confirmation, "\(name): \(String(describing: model.failure))")
+            let prepared = model.preparation!
+            precondition(prepared.selection == requested && model.selection == requested)
+            precondition((prepared.effectiveSelection != nil) == confirmed)
+            precondition(prepared.summary.selectedItems == (confirmed ? (onlyDuplicate ? 1 : 2) : 3))
+            let tasks = CaptureTaskPresentation(categories: prepared.inventory.map { CaptureCategory(row: $0) },
+                selection: prepared.publicationSelection!, phase: .confirmation)
+            precondition(tasks.domains.flatMap(\.items).count == prepared.summary.selectedItems)
+            if confirmed { try overlapContractRejections(prepared) }
+            model.create(); await model.waitForCompletion()
+            precondition(model.state == .result, "\(name) publication: \(String(describing: model.failure))")
+            precondition(model.publication!.bundle.itemCount == prepared.summary.selectedItems)
+            let resultTasks = CaptureTaskPresentation(categories: prepared.inventory.map { CaptureCategory(row: $0) },
+                selection: prepared.publicationSelection!, phase: .result, publication: model.publication)
+            precondition(resultTasks.domains.flatMap(\.items).allSatisfy { $0.state == .completed })
+            runtime.start(CoreRequest(.bundleInspect(path: target.path)), location: location)
+            await runtime.waitForCompletion()
+            precondition(runtime.state == .completed)
+            precondition(runtime.latestResult?.data?["selected_item_counts"]?.object?["app-store"]?.integer == (confirmed ? (onlyDuplicate ? 0 : 1) : 2))
+            // A publication with the original requested counts must still be rejected.
+            if confirmed {
+                let invalid: Object = ["publication_occurred": true, "destination": target.path,
+                    "prepared_capture_id": prepared.preparedCaptureID,
+                    "bundle": ["format_version": 1, "secure_component": false, "selected_categories": [],
+                               "selected_item_counts": ["homebrew-casks": 1, "app-store": onlyDuplicate ? 1 : 2]]]
+                let publication = try JSONDecoder().decode(CoreCapturePublication.self, from: JSONSerialization.data(withJSONObject: invalid))
+                do { try publication.validate(preparation: prepared, destination: target); preconditionFailure("Original counts accepted") }
+                catch {}
+            }
+        }
+        model.scan(); await model.waitForCompletion()
+        model.toggleAll(); model.selectCategory("homebrew-casks", included: true); model.selectCategory("app-store", included: true)
+        let stale = root.appendingPathComponent("overlap-stale.mbt")
+        model.prepare(destination: stale); await model.waitForCompletion()
+        precondition(model.state == .confirmation && model.preparation?.effectiveSelection != nil)
+        try FileManager.default.removeItem(at: home.appendingPathComponent("Library/Application Support/Macseed/ApplicationIdentities/12345.json"))
+        try write("{}", catalog)
+        model.create(); await model.waitForCompletion()
+        precondition(model.state == .failed && model.failure?.technicalReason == "stale_prepared_capture")
+        precondition(!FileManager.default.fileExists(atPath: stale.path))
+        print("PASS: Swift → production Capture overlap: effective confirmation/publication, unresolved preservation, strict rejection and changed-decision stale protection")
+    }
+
+    static func overlapContractRejections(_ prepared: CoreCapturePreparation) throws {
+        var invalid = prepared
+        invalid.effectiveSelection = nil
+        do { try invalid.validate(expected: prepared.selection); preconditionFailure("Missing effective scope accepted") } catch {}
+        invalid = prepared; invalid.applicationDuplicates = nil
+        do { try invalid.validate(expected: prepared.selection); preconditionFailure("Missing duplicate evidence accepted") } catch {}
+        invalid = prepared; invalid.applicationDuplicates = []
+        do { try invalid.validate(expected: prepared.selection); preconditionFailure("Empty duplicate evidence accepted") } catch {}
+        invalid = prepared
+        invalid.effectiveSelection = CoreCaptureSelection(categories: [], items: [:], secureIdentities: [])
+        do { try invalid.validate(expected: prepared.selection); preconditionFailure("Unrelated reduction accepted") } catch {}
     }
 }

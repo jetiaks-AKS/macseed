@@ -1407,5 +1407,246 @@ class RestoreCapabilityTests(unittest.TestCase):
             bundle.cask_capabilities(value)
 
 
+class ApplicationIdentityTests(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.cache_home = Path(temporary.name)
+        environment = patch.dict(os.environ, HOME=str(self.cache_home))
+        environment.start()
+        self.addCleanup(environment.stop)
+        sys.path.insert(0, str(ROOT / 'modules/apps'))
+        sys.path.insert(0, str(ROOT / 'modules/bundle'))
+        import application_identity
+        import bundle
+        self.identity, self.bundle = application_identity, bundle
+        self.capabilities = {'contract': 1, 'casks': {'telegram': {
+            'state': 'satisfied', 'reason': None,
+            'required': [{'kind': 'app', 'identity': 'Telegram.app', 'bundle_id': 'ru.keepcoder.Telegram'}]}}}
+        self.catalog = {'747648890': 'ru.keepcoder.Telegram'}
+
+    def test_positive_catalog_binding_survives_offline_without_renewal(self):
+        with patch.object(self.identity, 'fetch_catalog', return_value=self.catalog) as fetch:
+            self.assertEqual(self.resolve()[0], {'747648890': 'telegram'})
+            fetch.assert_called_once_with(['747648890', '425264550'])
+        root = self.identity.catalog_directory()
+        record = root / '747648890.json'
+        before = record.read_bytes()
+        self.assertEqual(root.stat().st_mode & 0o777, 0o700)
+        self.assertEqual(record.stat().st_mode & 0o777, 0o600)
+        with patch.object(self.identity, 'fetch_catalog', return_value={}) as fetch:
+            for _ in range(3):
+                self.assertEqual(self.resolve()[0], {'747648890': 'telegram'})
+            self.assertEqual(fetch.call_args.args[0], ['425264550'])
+            self.assertEqual(self.resolve(casks=[]), ({}, {}))
+            value = copy.deepcopy(self.capabilities)
+            value['casks']['telegram']['required'][0]['bundle_id'] = 'org.example.Other'
+            self.assertEqual(self.resolve(capabilities=value), ({}, {}))
+        self.assertEqual(record.read_bytes(), before, 'Offline reads must not renew confirmation')
+        self.assertFalse((root / '425264550.json').exists(), 'Never persist negative evidence')
+
+    def test_expired_invalid_or_unsafe_cache_cannot_suppress(self):
+        self.identity.save_binding('747648890', self.catalog['747648890'])
+        root = self.identity.catalog_directory()
+        record = root / '747648890.json'
+        original = json.loads(record.read_bytes())
+        variants = [
+            dict(original, confirmed=original['confirmed'] - self.identity.CATALOG_TTL - 1),
+            dict(original, confirmed=original['confirmed'] + 60),
+            dict(original, app_id='123'), dict(original, bundle_id='../../invalid'),
+            dict(original, contract=True), {'partial': True}, []]
+        with patch.object(self.identity, 'fetch_catalog', return_value={}):
+            for value in variants:
+                record.write_text(json.dumps(value))
+                self.assertEqual(self.resolve(), ({}, {}))
+            record.write_text('invalid JSON')
+            self.assertEqual(self.resolve(), ({}, {}))
+            record.write_text('[' * 1500 + ']' * 1500)
+            self.assertEqual(self.resolve(), ({}, {}))
+            record.write_text(json.dumps(original))
+            record.chmod(0o644)
+            self.assertEqual(self.resolve(), ({}, {}))
+            record.chmod(0o600)
+            other = root / 'other'
+            os.link(record, other)
+            self.assertEqual(self.resolve(), ({}, {}))
+            other.unlink()
+            record.rename(other); record.symlink_to(other)
+            self.assertEqual(self.resolve(), ({}, {}))
+            record.unlink(); other.rename(record)
+            root.chmod(0o755)
+            self.assertEqual(self.resolve(), ({}, {}))
+            root.chmod(0o700)
+        record.write_text(json.dumps(variants[0]))
+        with patch.object(self.identity, 'fetch_catalog', return_value={'747648890': 'org.example.New'}):
+            self.assertEqual(self.resolve(), ({}, {}))
+        self.assertEqual(self.identity.cached_binding('747648890'), 'org.example.New')
+
+    def test_cache_write_failure_keeps_lookup_truthful_and_storage_bounded(self):
+        with patch.object(self.identity, 'catalog_directory', side_effect=PermissionError), \
+             patch.object(self.identity, 'fetch_catalog', return_value=self.catalog):
+            self.assertEqual(self.resolve()[0], {'747648890': 'telegram'})
+        with patch.object(self.identity, 'catalog_directory', side_effect=PermissionError), \
+             patch.object(self.identity, 'fetch_catalog', return_value={}):
+            self.assertEqual(self.resolve(), ({}, {}))
+        with patch.object(self.identity, 'CATALOG_LIMIT', 1):
+            self.identity.save_binding('747648890', 'ru.keepcoder.Telegram')
+            self.identity.save_binding('425264550', 'org.example.Other')
+            self.assertIsNone(self.identity.cached_binding('425264550'))
+            self.assertEqual(self.identity.cached_binding('747648890'), 'ru.keepcoder.Telegram')
+
+    def resolve(self, casks=None, apps=None, capabilities=None, legacy=False):
+        return self.identity.overlaps(casks if casks is not None else ['telegram'],
+            apps if apps is not None else ['747648890', '425264550'],
+            self.capabilities if capabilities is None else capabilities, legacy)
+
+    def test_provider_bound_identity_not_names_or_bare_bundle_id(self):
+        with patch.object(self.identity, 'lookup_catalog', return_value=self.catalog):
+            self.assertEqual(self.resolve()[0], {'747648890': 'telegram'})
+            for state in ('unsupported', 'repairable', 'observation_error'):
+                value = copy.deepcopy(self.capabilities)
+                value['casks']['telegram']['state'] = state
+                self.assertEqual(self.resolve(capabilities=value), ({}, {}))
+            self.assertEqual(self.resolve(capabilities={'contract': 1, 'casks': {}}), ({}, {}))
+        with patch.object(self.identity, 'lookup_catalog', return_value={}):
+            self.assertEqual(self.resolve(), ({}, {}))
+
+    def test_single_provider_and_explicit_mas_selection_never_lookup(self):
+        with patch.object(self.identity, 'lookup_catalog') as lookup:
+            self.assertEqual(self.resolve(casks=[]), ({}, {}))
+            self.assertEqual(self.resolve(apps=[]), ({}, {}))
+            lookup.assert_not_called()
+
+    def test_ambiguous_cask_or_catalog_identity_never_suppresses(self):
+        value = copy.deepcopy(self.capabilities)
+        value['casks']['second'] = value['casks']['telegram']
+        with patch.object(self.identity, 'lookup_catalog', return_value=self.catalog):
+            self.assertEqual(self.resolve(casks=['telegram', 'second'], capabilities=value), ({}, {}))
+        with patch.object(self.identity, 'lookup_catalog', return_value=self.catalog | {'425264550': 'ru.keepcoder.Telegram'}):
+            self.assertEqual(self.resolve(), ({}, {}))
+
+    def test_catalog_validates_numeric_id_platform_and_uniqueness(self):
+        raw = {'resultCount': 1, 'results': [{'trackId': 747648890, 'kind': 'mac-software',
+                                           'bundleId': 'ru.keepcoder.Telegram'}]}
+        self.assertEqual(self.identity.catalog_bindings(raw, ['747648890']), self.catalog)
+        for key, value in [('trackId', '747648890'), ('trackId', 123), ('trackId', True),
+                           ('kind', 'software'), ('bundleId', '../../Telegram'), ('bundleId', '')]:
+            bad = copy.deepcopy(raw); bad['results'][0][key] = value
+            self.assertEqual(self.identity.catalog_bindings(bad, ['747648890']), {})
+        self.assertEqual(self.identity.catalog_bindings(
+            {'resultCount': 2, 'results': raw['results'] * 2}, ['747648890', '425264550']), {})
+        mixed = {'resultCount': 2, 'results': raw['results'] + [
+            {'trackId': 425264550, 'kind': 'software', 'bundleId': 'org.example.Other'}]}
+        self.assertEqual(self.identity.catalog_bindings(mixed, ['747648890', '425264550']), self.catalog)
+
+    def test_lookup_is_bounded_optional_and_tls_verified(self):
+        with patch.object(self.identity.subprocess, 'run', side_effect=subprocess.TimeoutExpired('curl', 5)) as run:
+            self.assertEqual(self.identity.lookup_catalog(['747648890']), {})
+            args = run.call_args.args[0]
+            self.assertEqual(args[:2], ['/usr/bin/curl', '--disable'])
+            self.assertNotIn('--insecure', args)
+            self.assertNotIn('--location', args)
+            self.assertIn('--max-time', args)
+            self.assertIn('--max-filesize', args)
+        with patch.object(self.identity.subprocess, 'run') as run:
+            for ids in (['0'], ['１２３'], ['1&url=evil'], ['1'] * 51):
+                self.assertEqual(self.identity.lookup_catalog(ids), {})
+            run.assert_not_called()
+
+    def test_optional_metadata_invalid_types_and_excessive_nesting_are_unresolved(self):
+        values = [b'[]', b'null', b'42', b'true', b'"text"', b'{"casks": null}',
+                  b'{"casks": [null]}', b'invalid', b'[' * 2000 + b']' * 2000]
+        for raw in values:
+            def observed(arguments, **_):
+                output = b'/opt/homebrew\n' if arguments == ['brew', '--prefix'] else raw
+                return subprocess.CompletedProcess(arguments, 0, output, b'')
+            with self.subTest(raw=raw[:40]), patch.object(self.identity.subprocess, 'run',
+                    side_effect=observed):
+                self.assertEqual(self.identity.fetch_catalog(['747648890']), {})
+                self.assertEqual(self.identity.installed_capabilities({'telegram'}), {'contract': 1, 'casks': {}})
+                self.assertEqual(self.resolve(capabilities={'contract': 1, 'casks': {}}, legacy=True), ({}, {}))
+        # Optional transport failure must not mask unrelated defects in correlation.
+        raw = b'{"resultCount": 0, "results": []}'
+        with patch.object(self.identity.subprocess, 'run',
+                          return_value=subprocess.CompletedProcess([], 0, raw, b'')), \
+             patch.object(self.identity, 'catalog_bindings', side_effect=RuntimeError('programming error')):
+            with self.assertRaises(RuntimeError):
+                self.identity.fetch_catalog(['747648890'])
+
+    def test_legacy_qualified_evidence_is_retained_and_not_a_fallback(self):
+        with patch.object(self.identity, 'lookup_catalog', return_value=self.catalog), \
+             patch.object(self.identity, 'installed_capabilities', return_value=self.capabilities) as installed:
+            pairs, evidence = self.resolve(capabilities={'contract': 1, 'casks': {}}, legacy=True)
+            self.assertEqual(pairs, {'747648890': 'telegram'})
+            self.assertEqual(evidence, self.capabilities['casks'])
+            installed.assert_called_once_with({'telegram'})
+        failed = copy.deepcopy(self.capabilities)
+        failed['casks']['telegram']['state'] = 'unsupported'
+        with patch.object(self.identity, 'installed_capabilities') as installed:
+            self.assertEqual(self.resolve(capabilities=failed, legacy=True), ({}, {}))
+            installed.assert_not_called()
+
+    def test_capture_atomic_bundle_and_legacy_private_selection(self):
+        bundle = self.bundle
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary); stage = root / 'stage'
+            original = ('[categories]\n' + ''.join(f'{k}="false"\n' for k in sorted(bundle.CATEGORY_FLAGS)) +
+                ''.join('\n[' + k + ']\n' + {'homebrew-casks': 'telegram\n', 'app-store': '747648890\n425264550\n',
+                    'workspace-folders': 'Projects\n'}.get(k, '') for k in bundle.ITEMS)).encode()
+            bundle.write_file(stage / 'blueprint.conf', original)
+            bundle.write_file(stage / 'generated/brew-casks.conf', b'telegram\n')
+            bundle.write_file(stage / 'generated/appstore.conf', b'747648890|Telegram\n425264550|Disk Speed Test\n')
+            bundle.write_file(stage / 'generated/workspace/folders.conf', b'Projects|workspace\n')
+            bundle.write_file(stage / 'generated/homebrew-casks.json', json.dumps(self.capabilities).encode())
+            # Keep complete Discovery inventory and its integrity marker intact.
+            app_bytes = (stage / 'generated/appstore.conf').read_bytes()
+            bundle.write_file(stage / 'generated/provenance/app-store.sha256',
+                              ('complete ' + bundle.digest(app_bytes) + '\n').encode())
+            before = bundle.fingerprint(stage)
+            with patch.object(self.identity, 'lookup_catalog', return_value=self.catalog):
+                bundle.pack(stage, root / 'new.mbt', '/Users/source')
+            self.assertEqual(bundle.fingerprint(stage), before)
+            files = bundle.validate_archive(root / 'new.mbt')
+            sections, _ = bundle.parse_blueprint(files['blueprint.conf'])
+            self.assertEqual(sections['app-store'], ['425264550'])
+            self.assertEqual(sections['homebrew-casks'], ['telegram'])
+            self.assertEqual(sections['workspace-folders'], ['Projects'])
+            self.assertEqual(files['generated/appstore.conf'], app_bytes)
+            with patch.object(self.identity, 'lookup_catalog', return_value={}):
+                bundle.pack(stage, root / 'legacy.mbt', '/Users/source')
+            archive_hash = bundle.fingerprint(root / 'legacy.mbt')
+            private = root / 'private'; private.mkdir(mode=0o700)
+            bundle.unpack(root / 'legacy.mbt', private, str(root))
+            with patch.object(self.identity, 'lookup_catalog', return_value=self.catalog):
+                self.assertEqual(bundle.deduplicate_applications(private), {'747648890': 'telegram'})
+            self.assertEqual(bundle.parse_blueprint((private / 'blueprint.conf').read_bytes())[0]['app-store'], ['425264550'])
+            self.assertEqual(bundle.fingerprint(root / 'legacy.mbt'), archive_hash)
+            # A partially populated sidecar can gain legacy evidence atomically;
+            # its existing entries are retained, not replaced by the probe.
+            (private / 'blueprint.conf').write_bytes(original.replace(b'telegram\n', b'telegram\nother-cask\n'))
+            retained = {'state': 'unsupported', 'reason': 'cask_execution_requirements_unsupported', 'required': []}
+            (private / 'generated/homebrew-casks.json').write_text(json.dumps({
+                'contract': 1, 'casks': {'other-cask': retained}}))
+            with patch.object(self.identity, 'lookup_catalog', return_value=self.catalog), \
+                 patch.object(self.identity, 'installed_capabilities', return_value=self.capabilities):
+                self.assertEqual(bundle.deduplicate_applications(private), {'747648890': 'telegram'})
+            merged = json.loads((private / 'generated/homebrew-casks.json').read_bytes())
+            self.assertEqual(merged['casks']['other-cask'], retained)
+            self.assertEqual(merged['casks']['telegram'], self.capabilities['casks']['telegram'])
+            self.assertEqual(bundle.fingerprint(root / 'legacy.mbt'), archive_hash)
+            for complete in (True, False):
+                single = root / ('single-' + str(complete))
+                shutil.copytree(stage, single)
+                (single / 'blueprint.conf').write_bytes(original.replace(b'425264550\n', b''))
+                if not complete:
+                    (single / 'generated/provenance/app-store.sha256').unlink()
+                with patch.object(self.identity, 'lookup_catalog', return_value=self.catalog):
+                    output = root / ('single-' + str(complete) + '.mbt')
+                    bundle.pack(single, output, '/Users/source')
+                saved = bundle.validate_archive(output)
+                self.assertEqual(bundle.parse_blueprint(saved['blueprint.conf'])[0]['app-store'], [])
+                self.assertEqual('generated/appstore.conf' in saved, complete)
+
+
 if __name__ == '__main__':
     unittest.main()

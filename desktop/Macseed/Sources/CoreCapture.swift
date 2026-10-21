@@ -6,6 +6,9 @@ struct CoreCapturePreparation: Decodable {
     let inventory: [CoreCaptureInventoryRow]
     let secureIdentities: CoreJSON
     let selection: CoreCaptureSelection?
+    var effectiveSelection: CoreCaptureSelection? = nil
+    var applicationDuplicates: [CoreRestorePreparation.ApplicationDuplicate]? = nil
+    var publicationSelection: CoreCaptureSelection? { effectiveSelection ?? selection }
     let summary: Summary
     struct Summary: Decodable {
         let selectedDomains: Int
@@ -17,6 +20,7 @@ struct CoreCapturePreparation: Decodable {
     }
     enum CodingKeys: String, CodingKey {
         case preparedCaptureID = "prepared_capture_id", inventory, secureIdentities = "secure_identities", selection, summary
+        case effectiveSelection = "effective_selection", applicationDuplicates = "application_duplicates"
     }
     func validate(expected: CoreCaptureSelection?) throws {
         guard preparedCaptureID.range(of: "^[0-9a-f]{64}$", options: .regularExpression) != nil,
@@ -30,20 +34,41 @@ struct CoreCapturePreparation: Decodable {
               }), selection == expected, summary.secureIdentityCount == 0,
               (selection?.secureIdentities ?? []).isEmpty else { throw CoreRuntimeError.malformedEvent }
         guard let expected else {
-            guard summary.selectedDomains == 0, summary.selectedItems == 0 else { throw CoreRuntimeError.malformedEvent }
+            guard summary.selectedDomains == 0, summary.selectedItems == 0,
+                  effectiveSelection == nil, applicationDuplicates == nil else { throw CoreRuntimeError.malformedEvent }
             return
         }
         let domains = Set(expected.categories).union(expected.items.keys)
         guard domains.count == expected.categories.count + expected.items.count,
-              summary.selectedDomains == domains.count,
               expected.categories.allSatisfy({ domain in inventory.contains { $0.domain == domain && CaptureCategorySelectionMode.supportsWhole($0) } }),
               expected.items.allSatisfy({ domain, items in
                   inventory.contains { row in row.domain == domain && row.status == "present" && row.selectionMode == "items"
                       && !items.isEmpty && Set(items).count == items.count && Set(items).isSubset(of: Set(row.items.map(\.itemID))) }
               }) else { throw CoreRuntimeError.malformedEvent }
-        let itemCount = expected.items.values.reduce(0) { $0 + $1.count }
-            + inventory.filter { expected.categories.contains($0.domain) }.reduce(0) { $0 + $1.items.count }
-        guard summary.selectedItems == itemCount else { throw CoreRuntimeError.malformedEvent }
+        if effectiveSelection != nil || applicationDuplicates != nil {
+            guard let effectiveSelection, let duplicates = applicationDuplicates,
+                  !duplicates.isEmpty, duplicates.count <= 50 else { throw CoreRuntimeError.malformedEvent }
+            func selectedIDs(_ domain: String) -> [String] {
+                expected.items[domain] ?? (expected.categories.contains(domain)
+                    ? inventory.first { $0.domain == domain }?.items.map(\.itemID) ?? [] : [])
+            }
+            let removed = Set(duplicates.map(\.appStoreItemID))
+            let retained = Set(duplicates.map(\.caskItemID))
+            var items = expected.items
+            let remaining = selectedIDs("app-store").filter { !removed.contains($0) }.sorted()
+            items["app-store"] = remaining.isEmpty ? nil : remaining
+            let effective = CoreCaptureSelection(categories: expected.categories.filter { $0 != "app-store" },
+                items: items, secureIdentities: expected.secureIdentities)
+            guard removed.count == duplicates.count, retained.count == duplicates.count,
+                  removed.isSubset(of: Set(selectedIDs("app-store"))),
+                  retained.isSubset(of: Set(selectedIDs("homebrew-casks"))),
+                  effectiveSelection == effective else { throw CoreRuntimeError.malformedEvent }
+        }
+        let effective = effectiveSelection ?? expected
+        let itemCount = effective.items.values.reduce(0) { $0 + $1.count }
+            + inventory.filter { effective.categories.contains($0.domain) }.reduce(0) { $0 + $1.items.count }
+        guard summary.selectedDomains == Set(effective.categories).union(effective.items.keys).count,
+              summary.selectedItems == itemCount else { throw CoreRuntimeError.malformedEvent }
     }
 }
 
@@ -68,7 +93,8 @@ struct CoreCapturePublication: Decodable {
         case publicationOccurred = "publication_occurred", destination, preparedCaptureID = "prepared_capture_id", bundle
     }
     func validate(preparation: CoreCapturePreparation, destination: URL) throws {
-        guard let selection = preparation.selection, publicationOccurred, self.destination == destination.path,
+        try preparation.validate(expected: preparation.selection)
+        guard let selection = preparation.publicationSelection, publicationOccurred, self.destination == destination.path,
               preparedCaptureID == preparation.preparedCaptureID, bundle.formatVersion == 1, !bundle.secureComponent,
               bundle.selectedItemCounts.count <= preparation.inventory.count,
               bundle.selectedItemCounts.values.allSatisfy({ (0...2048).contains($0) }),

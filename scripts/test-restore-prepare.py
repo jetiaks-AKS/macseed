@@ -15,6 +15,7 @@ import tempfile
 import tarfile
 import time
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.dont_write_bytecode = True
@@ -2421,6 +2422,7 @@ exit 0
         self.mas_fixture(mixed=True)
         self.pack()
         plan = self.plan_result()
+        self.assertEqual(plan['scope_warnings'], [])
         result, events = self.execute(plan['prepared_plan_id'])
         self.assertEqual(result.returncode, 0, events)
         evidence = events[-2]['data']
@@ -2443,6 +2445,164 @@ exit 0
         self.assertEqual(repeated_events[-2]['data']['verification']['verdict'], 'selected_requirements_verified')
         self.assertFalse((self.root / 'mas-log').exists())
         self.assertNotIn(b'private-account', result.stdout + result.stderr)
+
+    def duplicate_application_fixture(self, legacy=False):
+        self.cask_fixture(mixed=True)
+        blueprint = self.stage / 'blueprint.conf'
+        blueprint.write_text(blueprint.read_text().replace('[app-store]\n', '[app-store]\n747648890\n425264550\n'))
+        bundle.write_file(self.stage / 'generated/appstore.conf', b'747648890|Telegram\n425264550|Other application\n')
+        mas = self.root / 'bin/mas'
+        mas.write_text('#!/bin/bash\n[[ "$*" == list ]] || exit 99\necho "425264550 Other application (1.0)"\n')
+        mas.chmod(0o700)
+        if legacy:
+            app = Path(self.environment['TEST_CASK_TARGET'])
+            (app / 'Contents/MacOS').mkdir(parents=True)
+            (app / 'Contents/Info.plist').write_bytes(plistlib.dumps({
+                'CFBundleIdentifier': 'org.example.Fixture', 'CFBundleExecutable': 'Fixture'}))
+            executable = app / 'Contents/MacOS/Fixture'
+            executable.write_text('#!/bin/sh\n'); executable.chmod(0o700)
+            Path(self.environment['TEST_CASK_STATE']).touch()
+            brew = self.root / 'bin/brew'
+            brew.write_text(brew.read_text().replace('"info --json=v2 --cask fixture-cask")',
+                '"info --json=v2 --cask fixture-cask"|"info --json=v2 --installed --cask")'))
+        else:
+            bundle.write_file(self.stage / 'generated/homebrew-casks.json', json.dumps({
+                'contract': 1, 'casks': {'fixture-cask': {'state': 'satisfied', 'reason': None,
+                'required': [{'kind': 'app', 'identity': 'Fixture.app', 'bundle_id': 'org.example.Fixture'}]}}}).encode())
+        # Fixture-only catalog seam: production's TLS client remains unchanged.
+        helper = self.project / 'modules/apps/application_identity.py'
+        helper.write_text(helper.read_text() + '\ndef fetch_catalog(ids):\n'
+            '    return {"747648890": "org.example.Fixture"} if "747648890" in ids else {}\n')
+        sys.path.insert(0, str(ROOT / 'modules/apps'))
+        import application_identity
+        with patch.object(application_identity, 'lookup_catalog', return_value={}):
+            self.pack()
+
+    def test_duplicate_effective_scope_execute_verify_and_noop(self):
+        self.duplicate_application_fixture()
+        archive_hash = bundle.fingerprint(self.archive)
+        selected = {'categories': ['homebrew-casks', 'homebrew-packages', 'app-store', 'workspace-folders'], 'items': {}}
+        plan = self.plan_result(selection=selected)
+        self.assertEqual(plan['selected_item_counts']['app-store'], 1)
+        self.assertEqual(len(plan['selection']['items']['app-store']), 2)
+        self.assertEqual(len(plan['effective_selection']['items']['app-store']), 1)
+        self.assertEqual(len(plan['application_duplicates']), 1)
+        self.assertFalse(any(r['domain'] == 'app-store' and r['item_id'] == '747648890' for r in plan['plan']))
+        result, events = self.execute(plan['prepared_plan_id'], selection=selected)
+        self.assertEqual(result.returncode, 0, events)
+        verification = events[-2]['data']['verification']
+        self.assertEqual(verification['verdict'], 'selected_requirements_verified')
+        self.assertNotIn('747648890', json.dumps(verification))
+        self.assertTrue((self.home / 'Projects').is_dir())
+        self.assertEqual(bundle.fingerprint(self.archive), archive_hash)
+        refreshed = self.plan_result(selection=selected)
+        self.assertFalse(refreshed['has_executable_changes'])
+        self.assertEqual(refreshed['application_duplicates'], plan['application_duplicates'])
+
+    def test_duplicate_legacy_and_explicit_appstore_only(self):
+        self.duplicate_application_fixture(legacy=True)
+        plan = self.plan_result()
+        self.assertEqual(plan['selected_item_counts']['app-store'], 1)
+        self.assertEqual(plan['selected_item_counts']['homebrew-casks'], 1)
+        self.assertEqual(len(plan['application_duplicates']), 1)
+        selected = {'categories': ['app-store', 'workspace-folders'], 'items': {}}
+        explicit = self.plan_result(selection=selected)
+        self.assertEqual(explicit['selected_item_counts']['app-store'], 2)
+        self.assertNotIn('application_duplicates', explicit)
+        self.assertTrue(any(r['item_id'] == '747648890' and r['reason'] == 'manual_installation_required'
+                            for r in explicit['plan']))
+        rejected, events = self.execute(plan['prepared_plan_id'], selection=selected)
+        self.assertNotEqual(rejected.returncode, 0)
+        self.assertEqual(events[-1]['data']['code'], 'stale_plan')
+        self.assertFalse(events[-1]['data']['target_mutation_may_have_started'])
+
+    def test_duplicate_cask_failure_never_falls_back_or_verifies(self):
+        self.duplicate_application_fixture()
+        self.environment['TEST_CASK_FAIL'] = 'true'
+        plan = self.plan_result()
+        result, events = self.execute(plan['prepared_plan_id'])
+        self.assertNotEqual(result.returncode, 0)
+        verification = events[-1]['data']['verification']
+        self.assertNotEqual(verification['verdict'], 'selected_requirements_verified')
+        self.assertIn('fixture-cask', json.dumps(verification))
+        self.assertNotIn('747648890', json.dumps(verification))
+        selected, _ = bundle.parse_blueprint((self.project / 'config/blueprint.conf').read_bytes())
+        self.assertEqual(selected['app-store'], ['425264550'])
+
+    def test_duplicate_receipt_protection_and_unrelated_work(self):
+        self.duplicate_application_fixture()
+        app = Path(self.environment['TEST_CASK_TARGET'])
+        (app / 'Contents/_MASReceipt').mkdir(parents=True)
+        (app / 'Contents/Info.plist').write_bytes(plistlib.dumps({'CFBundleIdentifier': 'org.example.Fixture'}))
+        before = bundle.fingerprint(app)
+        plan = self.plan_result()
+        cask = next(r for r in plan['plan'] if r['domain'] == 'homebrew-casks')
+        self.assertEqual(cask['diagnostic']['condition'], 'provider_conflict')
+        self.assertEqual(plan['selected_item_counts']['app-store'], 1)
+        self.assertTrue(plan['readiness']['ready'])
+        result, events = self.execute(plan['prepared_plan_id'])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(Path(self.environment['TEST_CASK_LOG']).exists())
+        self.assertEqual(bundle.fingerprint(app), before)
+        self.assertTrue((self.home / 'Projects').is_dir())
+        self.assertTrue(Path(self.environment['TEST_CASK_STATE'] + '.formula').exists())
+
+    def test_duplicate_offline_cache_stabilizes_legacy_prepare_execute_and_refresh(self):
+        self.duplicate_application_fixture(legacy=True)
+        selected = {'categories': ['homebrew-casks', 'homebrew-packages', 'app-store', 'workspace-folders'], 'items': {}}
+        plan = self.plan_result(selection=selected)
+        helper = self.project / 'modules/apps/application_identity.py'
+        helper.write_text(helper.read_text() + '\ndef fetch_catalog(ids):\n    return {}\n')
+        for _ in range(2):
+            repeated = self.plan_result(selection=selected)
+            self.assertEqual(repeated['prepared_plan_id'], plan['prepared_plan_id'])
+            self.assertEqual(repeated['selection'], plan['selection'])
+            self.assertEqual(repeated['effective_selection'], plan['effective_selection'])
+        only_store = self.plan_result(selection={'categories': ['app-store'], 'items': {}})
+        self.assertEqual(only_store['selected_item_counts']['app-store'], 2)
+        self.assertNotIn('application_duplicates', only_store)
+        result, events = self.execute(plan['prepared_plan_id'], selection=selected)
+        self.assertEqual(result.returncode, 0, events)
+        verification = events[-2]['data']['verification']
+        self.assertEqual(verification['verdict'], 'selected_requirements_verified')
+        self.assertNotIn('747648890', json.dumps(verification))
+        refreshed = self.plan_result(selection=selected)
+        self.assertEqual(refreshed['effective_selection'], plan['effective_selection'])
+        self.assertEqual(refreshed['application_duplicates'], plan['application_duplicates'])
+        self.assertFalse(refreshed['has_executable_changes'])
+
+    def test_duplicate_cache_loss_and_offline_reject_stale_plan_without_mutation(self):
+        self.duplicate_application_fixture()
+        plan = self.plan_result()
+        helper = self.project / 'modules/apps/application_identity.py'
+        helper.write_text(helper.read_text() + '\ndef fetch_catalog(ids):\n    return {}\n')
+        # Losing confirmation is different from losing network access.
+        cache = self.home / 'Library/Application Support/Macseed/ApplicationIdentities/747648890.json'
+        cache.unlink()
+        unresolved = self.plan_result()
+        self.assertEqual(unresolved['selected_item_counts']['app-store'], 2)
+        self.assertNotIn('application_duplicates', unresolved)
+        result, events = self.execute(plan['prepared_plan_id'])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(events[-1]['data']['code'], 'stale_plan')
+        self.assertFalse(events[-1]['data']['target_mutation_may_have_started'])
+        self.assertFalse(Path(self.environment['TEST_CASK_LOG']).exists())
+
+    def test_preview_scope_warning_is_separate_from_matching_items(self):
+        (self.home / 'Projects').mkdir()
+        module = self.project / 'modules/bootstrap/workspace/folders.sh'
+        original = module.read_text()
+        start = original.index('preview_workspace_folders()')
+        end = original.index('bootstrap_workspace_folders()', start)
+        preview = original[start:end]
+        offset = preview.rfind('return 0')
+        preview = preview[:offset] + preview[offset:].replace('return 0', 'return 1', 1)
+        module.write_text(original[:start] + preview + original[end:])
+        self.pack()
+        plan = self.plan_result()
+        self.assertTrue(all(row['disposition'] == 'satisfied' for row in plan['plan']))
+        self.assertEqual(plan['scope_warnings'], ['workspace-folders'])
+        self.assertTrue(plan['readiness']['ready'])
 
     def test_provider_marker_is_item_local_and_selection_preserves_other_work(self):
         self.cask_fixture(mixed=True)

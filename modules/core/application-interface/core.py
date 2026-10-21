@@ -146,6 +146,8 @@ def prepared_restore(path, disabled_groups, include_secure, selection=None, inst
         except restore_selection.InvalidSelection:
             raise InvalidSelection() from None
         bundle.narrow(stage, disabled_groups)
+        requested_selection = restore_selection.canonical(stage)
+        duplicates = bundle.deduplicate_applications(stage)
         stage_identity = restore_fingerprint(stage)
         preparation_context = pkg_preparation.context(source_identity, stage_identity)
         if installer_preparations:
@@ -348,6 +350,13 @@ def prepared_restore(path, disabled_groups, include_secure, selection=None, inst
             "include_secure": include_secure,
             "secure_restore_status": "selected_pending" if include_secure else "not_selected",
             "modules": modules,
+            # Module warnings with no explanatory item remain visible separately
+            # from item counts. Assisted App Store warnings have their own rows.
+            "scope_warnings": sorted({module_domains.get(item["module"], "preview")
+                for item in modules if item["status"] == "warning" and not any(
+                    (row["domain"] == module_domains.get(item["module"]) or
+                     (module_domains.get(item["module"]) == "macOS Settings" and row["domain"].startswith("macos-")))
+                    and row["disposition"] not in ("planned", "satisfied") for row in records)}),
             "plan": records,
             "readiness": requirements,
             "has_planned_changes": any(item["planned"] for item in modules) or include_secure,
@@ -363,6 +372,9 @@ def prepared_restore(path, disabled_groups, include_secure, selection=None, inst
                                         if key != 'external_tools'}
         identity = {"bundle": source_identity, "stage": stage_identity,
                     "disabled_groups": sorted(disabled_groups), "summary": identity_summary}
+        if duplicates:
+            identity["requested_selection"] = requested_selection
+            identity["application_duplicates"] = duplicates
         if selection is not None:
             summary['selection'] = restore_selection.canonical(stage)
         summary["prepared_plan_id"] = hashlib.sha256(json.dumps(identity, sort_keys=True,
@@ -379,7 +391,13 @@ def prepared_restore(path, disabled_groups, include_secure, selection=None, inst
         # This identifies observed inputs and this module summary, never authorizes Apply.
         # Future Execute must rebuild and revalidate Preview before mutation.
         # Additive public fields after legacy identity calculation preserve old IDs.
-        summary['selection'] = restore_selection.canonical(stage)
+        summary['selection'] = requested_selection
+        if duplicates:
+            summary['effective_selection'] = restore_selection.canonical(stage)
+            summary['application_duplicates'] = [
+                {'app_store_item_id': restore_selection.identity('app-store', app_id),
+                 'cask_item_id': restore_selection.identity('homebrew-casks', token)}
+                for app_id, token in sorted(duplicates.items())]
         restore_selection.correlate(summary['plan'], stage)
         yield summary, stage, source_identity, stage_identity
 

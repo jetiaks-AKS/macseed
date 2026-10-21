@@ -3,35 +3,61 @@ import AppKit
 import SwiftUI
 
 @main struct RestoreTests {
+    static var finalUXFixtures: Bool {
+        CommandLine.arguments.contains("--final-restore-ux-only") || CommandLine.arguments.contains("--selection-preview-only") || CommandLine.arguments.contains("--preview-appstore-layout-only")
+    }
     static func write(_ value: String, _ path: URL) throws { try value.write(to: path, atomically: false, encoding: .utf8) }
     @MainActor static func render(_ model: RestoreModel, _ runtime: CoreRuntime, state: String, expanded: Bool = false, settingsOnly: Bool = false) throws {
+        guard !CommandLine.arguments.contains("--no-renders") else { return }
         _ = NSApplication.shared
         NSApp.appearance = NSAppearance(named: .aqua)
-        for width in [785, 985] {
+        for width in (Self.finalUXFixtures ? [420, 785, 985] : [785, 985]) {
             let selection = model.selection
             let preparedID = model.preparation?.preparedPlanID
-            let content = VStack(spacing: 0) {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 20) {
-                        WorkspaceHeader(title: ProductTask.restore.rawValue, subtitle: ProductTask.restore.subtitle, symbol: ProductTask.restore.symbol)
-                        if settingsOnly, let group = model.groups.first(where: { $0.id == "macOS Settings" }) {
-                            RestoreMacOSSelectionView(model: model, group: group, expansion: .constant(true), childExpansion: .constant(true))
-                                .modifier(WorkspaceCardSurface())
-                        } else {
-                            RestoreView(model: model, runtime: runtime, categoryExpansion: expanded ? .constant(true) : nil,
-                                showsPreviewActions: false, showsSelectionActions: false)
-                        }
-                    }.padding(28).frame(maxWidth: .infinity, alignment: .leading)
+            let workspace = VStack(alignment: .leading, spacing: 20) {
+                WorkspaceHeader(title: ProductTask.restore.rawValue, subtitle: ProductTask.restore.subtitle, symbol: ProductTask.restore.symbol)
+                if settingsOnly, let group = model.groups.first(where: { $0.id == "macOS Settings" }) {
+                    RestoreMacOSSelectionView(model: model, group: group, expansion: .constant(true), childExpansion: .constant(true))
+                        .modifier(WorkspaceCardSurface())
+                } else {
+                    RestoreView(model: model, runtime: runtime, categoryExpansion: expanded ? .constant(true) : nil,
+                        showsPreviewActions: false, showsSelectionActions: false, showsResultActions: false)
                 }
-                Divider()
-                if model.state == .review {
+            }.padding(28).frame(maxWidth: .infinity, alignment: .leading)
+            let footer = Group {
+                if model.showingAppStore {
+                    AppStoreRestoreActions(model: model).modifier(WorkspaceFooterPadding())
+                } else if model.state == .result, let result = model.executionResult {
+                    RestoreResultActions(result: result, refresh: {}, done: {}, logRuntime: runtime)
+                        .modifier(WorkspaceFooterPadding())
+                } else if model.state == .review {
                     RestoreSelectionActions(status: model.selectionSummary, canPreview: model.canPreview, preview: {})
                         .modifier(WorkspaceFooterPadding())
                 } else {
-                    RestorePreviewActions(back: {}, refresh: {}, rebuild: {}, canRebuild: model.canRebuild)
+                    RestorePreviewActions(back: {}, refresh: {}, rebuild: {}, canRebuild: model.canRebuild, showsRebuild: model.hasAutomaticSelection)
                         .modifier(WorkspaceFooterPadding())
                 }
+            }
+            let content = VStack(spacing: 0) {
+                ScrollView { workspace }
+                Divider()
+                footer
             }.frame(width: CGFloat(width), height: 850).background(Color(nsColor: .windowBackgroundColor))
+            if state.hasPrefix("layout-") || state == "final-selection" {
+                let fullContent = VStack(spacing: 0) { workspace; Divider(); footer }
+                    .frame(width: CGFloat(width)).background(Color(nsColor: .windowBackgroundColor))
+                let fullHost = NSHostingView(rootView: fullContent)
+                let fullHeight = fullHost.fittingSize.height
+                let fullWindow = NSWindow(contentRect: NSRect(x: 0, y: 0, width: CGFloat(width), height: fullHeight),
+                    styleMask: [.borderless], backing: .buffered, defer: false)
+                fullWindow.isReleasedWhenClosed = false; fullWindow.contentView = fullHost
+                fullHost.frame = fullWindow.contentView!.bounds
+                fullHost.layoutSubtreeIfNeeded(); fullHost.displayIfNeeded()
+                let bitmap = fullHost.bitmapImageRepForCachingDisplay(in: fullHost.bounds)!
+                fullHost.cacheDisplay(in: fullHost.bounds, to: bitmap)
+                try bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: "build/Debug/RestoreUnified-\(state)-full-\(width).png"))
+                fullWindow.close()
+            }
             let host = NSHostingView(rootView: content)
             let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: 850), styleMask: [.borderless], backing: .buffered, defer: false)
             window.isReleasedWhenClosed = false; window.contentView = host
@@ -42,6 +68,24 @@ import SwiftUI
             precondition(bitmap.pixelsWide == Int(CGFloat(width) * window.backingScaleFactor))
             try bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: "build/Debug/RestoreUnified-\(state)\(expanded ? "-expanded" : "")-\(width).png"))
             precondition(model.selection == selection && model.preparation?.preparedPlanID == preparedID)
+            if CommandLine.arguments.contains("--preview-appstore-layout-only"), state.hasPrefix("layout-") {
+                func findScroll(_ view: NSView) -> NSScrollView? {
+                    if let scroll = view as? NSScrollView { return scroll }
+                    return view.subviews.lazy.compactMap { findScroll($0) }.first
+                }
+                guard let scroll = findScroll(host), let document = scroll.documentView else {
+                    preconditionFailure("Expected the production ScrollView")
+                }
+                precondition(document.bounds.height > scroll.documentVisibleRect.height, "Fixture must exercise scrolling")
+                let original = scroll.documentVisibleRect.minY
+                scroll.contentView.scroll(to: NSPoint(x: 0, y: document.bounds.maxY - scroll.documentVisibleRect.height))
+                scroll.reflectScrolledClipView(scroll.contentView)
+                host.layoutSubtreeIfNeeded(); host.displayIfNeeded()
+                precondition(scroll.documentVisibleRect.minY > original, "Inventory must scroll independently of the footer")
+                let bottom = host.bitmapImageRepForCachingDisplay(in: host.bounds)!
+                host.cacheDisplay(in: host.bounds, to: bottom)
+                try bottom.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: "build/Debug/RestoreUnified-\(state)-bottom-\(width).png"))
+            }
             window.close()
         }
     }
@@ -494,6 +538,17 @@ import SwiftUI
         precondition(!RestoreExecutionPresentation.launcherFailureMessages(events: [launcherFailure]).first!.contains("points elsewhere"))
         let provider = CoreRestorePreparation.Diagnostic(primitive: "payload", condition: "provider_conflict")
         precondition(provider.explanation.contains("uncertain") && provider.repairExplanation == provider.explanation)
+        precondition(AssistedAppStoreItem(appID: "747648890", status: .missing).statusTitle == "Not in App Store")
+        precondition(AssistedAppStoreItem(appID: "747648890", status: .missing).message == "Install in App Store, then Refresh Status.")
+        let preparation = try JSONDecoder().decode(CoreRestorePreparation.Diagnostic.self,
+            from: JSONSerialization.data(withJSONObject: ["primitive": "pkgutil", "condition": "preparation_required"]))
+        let requirement = TaskItemPresentation(id: "pkg", item: DisplayItem(id: "pkg", title: "Fixture", status: .attention,
+            action: "Unsupported", reason: "cask_execution_requirements_unsupported"), state: .attention, diagnostic: preparation,
+            resultLabels: ["Unsupported"])
+        precondition(requirement.resultExplanation!.contains("Refresh Preview → Fix Issues… → Review → Rebuild"))
+        precondition(requirement.resultExplanation!.contains("does not guarantee installation"))
+        var unsupported = requirement; unsupported.diagnostic = nil
+        precondition(!unsupported.resultExplanation!.contains("Fix Issues"))
         let id = String(repeating: "a", count: 64)
         let skip: [String: Any] = ["record_id": "o:0", "domain": "homebrew-casks", "item_id": "tailscale-app", "action": "install", "outcome": "skipped", "reason": "cask_execution_requirements_unsupported"]
         let success: [String: Any] = ["record_id": "o:1", "domain": "homebrew-packages", "item_id": "bat", "action": "install", "outcome": "success"]
@@ -506,6 +561,12 @@ import SwiftUI
         }
         let partial = try payload([skip, success, noop, aggregate])
         precondition(RestoreExecutionPresentation.hasPartialEvidence(payload: partial, expectedID: id))
+        let manual: [String: Any] = ["domain": "app-store", "item_id": "747648890", "action": "inspect", "outcome": "skipped", "reason": "manual_installation_required"]
+        let manualObservation: [String: Any] = ["domain": "app-store", "item_id": "747648890", "predicate": "installed", "conformity": "mismatch"]
+        let mixedPartial = try payload([skip, success, aggregate, manual], observations: observations + [manualObservation])
+        precondition(RestoreExecutionPresentation.hasPartialEvidence(payload: mixedPartial, expectedID: id))
+        let launcherFailed = try payload([skip, success, aggregate, manual, launcherRecord], observations: observations + [manualObservation])
+        precondition(!RestoreExecutionPresentation.hasPartialEvidence(payload: launcherFailed, expectedID: id))
         precondition(!RestoreExecutionPresentation.hasPartialEvidence(payload: partial, expectedID: "wrong"))
         var wrongAggregate = aggregate; wrongAggregate["action"] = "install"
         let wrongAggregatePayload = try payload([skip, success, wrongAggregate])
@@ -603,7 +664,79 @@ import SwiftUI
             expectedDiagnostics: ["plan": "DO_NOT_COPY"]).diagnosticReport.contains("DO_NOT_COPY"))
         print("PASS: Working retains Preview warnings; execution awaits Verification; Partial requires typed independent success; item diagnostics preserve independent problems")
     }
+    @MainActor static func applicationPrecedenceChecks() throws {
+        let catalog = CoreRestoreInspection.Inventory(
+            groups: [.init(id: "Applications", domains: ["homebrew-casks", "app-store"])],
+            inventory: [
+                .init(domain: "homebrew-casks", label: "Homebrew Applications", selectionMode: "items",
+                      availability: "available", reason: nil, items: [.init(itemID: "cask", label: "Telegram")]),
+                .init(domain: "app-store", label: "App Store Applications", selectionMode: "items",
+                      availability: "available", reason: nil, items: [.init(itemID: "duplicate", label: "Telegram"),
+                          .init(itemID: "other", label: "Other application")])])
+        let requested = CoreRestoreSelection(categories: [], items: ["homebrew-casks": ["cask"], "app-store": ["duplicate", "other"]])
+        var raw: [String: Any] = [
+            "prepared_plan_id": String(repeating: "d", count: 64),
+            "selection": ["categories": [], "items": requested.items],
+            "effective_selection": ["categories": [], "items": ["homebrew-casks": ["cask"], "app-store": ["other"]]],
+            "application_duplicates": [["app_store_item_id": "duplicate", "cask_item_id": "cask"]],
+            "selected_groups": ["Applications"], "selected_categories": [],
+            "selected_item_counts": ["homebrew-casks": 1, "app-store": 1],
+            "include_secure": false, "secure_restore_status": "not_selected",
+            "plan": [
+                ["domain": "homebrew-casks", "item_id": "telegram", "selection_item_id": "cask", "action": "install", "disposition": "planned"],
+                ["domain": "app-store", "item_id": "425264550", "selection_item_id": "other", "action": "inspect", "disposition": "warning", "reason": "manual_installation_required"]],
+            "readiness": ["ready": true, "ready_scope": "environment", "conditions": [], "reentry": "restore_prepare"],
+            "has_planned_changes": true, "has_executable_changes": true, "warning_count": 1, "error_count": 0]
+        func decode(_ value: [String: Any]) throws -> CoreRestorePreparation {
+            try JSONDecoder().decode(CoreRestorePreparation.self, from: JSONSerialization.data(withJSONObject: value))
+        }
+        let plan = try decode(raw)
+        try plan.validate(expected: requested, catalog: catalog)
+        let preview = RestorePreviewPresentation(plan, catalog: catalog)
+        let tasks = RestoreTaskPresentation(preview: preview, plan: plan)
+        precondition(preview.categories.flatMap(\.items).filter { $0.title == "Telegram" }.count == 1)
+        precondition(plan.selection == requested && requested.items["app-store"]?.count == 2)
+        precondition(plan.selectedItemCounts["app-store"] == 1 && plan.effectiveSelection?.items["app-store"]?.count == 1)
+        precondition(tasks.appStore.items.count == 1)
+        precondition(tasks.appStore.items[0].item.title == "Other application")
+        var onlyDuplicate = raw
+        let onlyRequested = CoreRestoreSelection(categories: [], items: ["homebrew-casks": ["cask"], "app-store": ["duplicate"]])
+        onlyDuplicate["selection"] = ["categories": [], "items": onlyRequested.items]
+        onlyDuplicate["effective_selection"] = ["categories": [], "items": ["homebrew-casks": ["cask"]]]
+        onlyDuplicate["selected_item_counts"] = ["homebrew-casks": 1, "app-store": 0]
+        onlyDuplicate["plan"] = [(raw["plan"] as! [[String: String]])[0]]
+        let onlyPlan = try decode(onlyDuplicate)
+        try onlyPlan.validate(expected: onlyRequested, catalog: catalog)
+        let onlyPreview = RestorePreviewPresentation(onlyPlan, catalog: catalog)
+        precondition(onlyPreview.categories.count == 1)
+        precondition(RestoreTaskPresentation(preview: onlyPreview, plan: onlyPlan).appStore.items.isEmpty)
+        // A Core reduction must name exactly the removed MAS IDs and selected Casks.
+        for key in ["effective_selection", "application_duplicates"] {
+            var invalid = raw; invalid.removeValue(forKey: key)
+            do { try decode(invalid).validate(expected: requested, catalog: catalog); preconditionFailure("Unbound scope reduction") }
+            catch {}
+        }
+        var invalid = raw
+        invalid["application_duplicates"] = [["app_store_item_id": "duplicate", "cask_item_id": "unselected"]]
+        do { try decode(invalid).validate(expected: requested, catalog: catalog); preconditionFailure("Unselected provider") }
+        catch {}
+        invalid = raw
+        invalid["selected_item_counts"] = ["homebrew-casks": 1, "app-store": 2]
+        do { try decode(invalid).validate(expected: requested, catalog: catalog); preconditionFailure("Duplicate counts") }
+        catch {}
+        // A failed retained Cask stays failed; no manual duplicate is resurrected.
+        var rows = raw["plan"] as! [[String: String]]
+        rows[0]["disposition"] = "unknown"; rows[0]["reason"] = "observation_failed"
+        raw["plan"] = rows; raw["has_planned_changes"] = false; raw["has_executable_changes"] = false
+        let failed = try decode(raw)
+        try failed.validate(expected: requested, catalog: catalog)
+        let failedPreview = RestorePreviewPresentation(failed, catalog: catalog)
+        precondition(failedPreview.categories.first?.items.first?.status == .unverified)
+        precondition(RestoreTaskPresentation(preview: failedPreview, plan: failed).appStore.items.count == 1)
+    }
+
     @MainActor static func assistedAppStoreChecks() throws {
+        try applicationPrecedenceChecks()
         let id = "425264550"
         let url = AssistedAppStoreItem.productURL(id)!
         precondition(url.absoluteString == "macappstore://apps.apple.com/app/id425264550")
@@ -622,6 +755,7 @@ import SwiftUI
         let catalog = CoreRestoreInspection.Inventory(groups: [.init(id: "Applications", domains: ["app-store"])],
             inventory: [.init(domain: "app-store", label: "App Store Applications", selectionMode: "items", availability: "available", reason: nil,
                 items: [.init(itemID: "selected-app", label: "Blackmagic Disk Speed Test")])])
+        var appRows: [TaskItemPresentation] = []
         for (disposition, reason, expected) in [("satisfied", "", AssistedAppStoreItem.Status.installed),
                                                 ("warning", "manual_installation_required", .missing),
                                                 ("unknown", "observation_failed", .unverified)] {
@@ -640,6 +774,13 @@ import SwiftUI
             try plan.validate(expected: plan.selection, catalog: catalog)
             let preview = RestorePreviewPresentation(plan, catalog: catalog)
             let before = RestoreTaskPresentation(preview: preview, plan: plan).domains.flatMap(\.items)[0]
+            appRows.append(before)
+            let partition = RestoreTaskPresentation(preview: preview, plan: plan)
+            precondition(partition.automaticDomains.isEmpty && partition.appStore.items.count == 1)
+            precondition(partition.counters.isEmpty)
+            precondition(partition.appStore.allInstalled == (expected == .installed))
+            precondition(RestorePreviewMetrics.counts(partition.automaticDomains).attention == 0)
+            precondition(RestoreResultSummary(domains: partition.automaticDomains).cards.isEmpty)
             precondition(before.item.title == "Blackmagic Disk Speed Test" && before.assistedAppStore?.status == expected)
             precondition((before.assistedAppStore?.productURL != nil) == (expected != .installed))
             precondition(!TaskDomainItems.showsTechnicalDetails(before))
@@ -668,6 +809,12 @@ import SwiftUI
                 }
             }
         }
+        let summary = AppStoreRestorePresentation(domains: [.init(id: "app-store", title: "App Store", symbol: "app", items: appRows)])
+        precondition(summary.items.count == 3 && summary.installed.count == 1 && summary.pending.count == 2)
+        precondition(summary.missingCount == 1 && summary.unverifiedCount == 1 && !summary.allInstalled)
+        precondition(summary.pending.map { AppStoreRestorePresentation.status($0) } == [.missing, .unverified])
+        precondition(summary.summary == "1 installed · 1 manual action required · 1 unverified")
+        precondition(!AppStoreRestorePresentation(domains: []).allInstalled)
         for domain in ["homebrew-casks", "homebrew-packages", "workspace-folders", "macos-finder", "vscode-extensions"] {
             let item = TaskItemPresentation(id: domain, item: DisplayItem(id: domain, title: domain, status: .attention,
                 action: "Needs inspection", reason: "observation_failed"), state: .attention,
@@ -686,7 +833,7 @@ import SwiftUI
             print("PASS: Rosetta prerequisite and observation failure in Restore Preview and Technical Details")
             return
         }
-        if !CommandLine.arguments.contains("--independent-ownership-only") && !CommandLine.arguments.contains("--review-cancel-only") && !CommandLine.arguments.contains("--restore-macos-only") && !CommandLine.arguments.contains("--pkg-preparation-only") && !CommandLine.arguments.contains("--fix-issues-only") {
+        if !CommandLine.arguments.contains("--preview-appstore-layout-only") && !CommandLine.arguments.contains("--selection-preview-only") && !CommandLine.arguments.contains("--independent-ownership-only") && !CommandLine.arguments.contains("--review-cancel-only") && !CommandLine.arguments.contains("--restore-macos-only") && !CommandLine.arguments.contains("--pkg-preparation-only") && !CommandLine.arguments.contains("--fix-issues-only") {
             for id in WorkspaceCategoryStyle.groups.flatMap({ $0.1 }) {
                 let problem = TaskItemPresentation(id: "problem", item: DisplayItem(id: "problem", title: "Problem", status: .attention, action: "Needs inspection"), state: .failed, resultLabels: ["Failed", "Mismatch"])
                 var category = TaskDomainPresentation(id: id, title: id, symbol: "folder", items: [problem], activityState: .working)
@@ -814,12 +961,41 @@ import SwiftUI
                 include_secure=False,secure_restore_status='not_selected',plan=plan,readiness=dict(ready=not conditions or mode in ('safe','satisfied'),ready_scope='environment',conditions=conditions,reentry='restore_prepare'),
                 has_planned_changes=mode not in ('no_changes','no_changes_attention'),warning_count=1 if mode=='attention' else 0,error_count=0)
             if mode.startswith('assisted_'):
+                result['warning_count']=0 if mode=='assisted_installed' else 1
                 for index,row in enumerate(result['plan']):
                     if row['domain']=='app-store':
                         row['item_id']=str(425264550+index)
                         row['action']='inspect'
-                        row['disposition']={'assisted_missing':'warning','assisted_installed':'satisfied','assisted_unverified':'unknown'}[mode]
-                        row['reason']={'assisted_missing':'manual_installation_required','assisted_installed':None,'assisted_unverified':'observation_failed'}[mode]
+                        row['disposition']={'assisted_missing':'warning','assisted_installed':'satisfied','assisted_unverified':'unknown','assisted_launcher_failure':'warning','assisted_deduplicated':'warning'}[mode]
+                        row['reason']={'assisted_missing':'manual_installation_required','assisted_installed':None,'assisted_unverified':'observation_failed','assisted_launcher_failure':'manual_installation_required','assisted_deduplicated':'manual_installation_required'}[mode]
+                        if mode=='assisted_deduplicated':
+                            row['item_id']=str(425264550+int(row['selection_item_id'].split('-')[-1])-1)
+                if mode=='assisted_deduplicated' and selected_items.get('homebrew-casks') and selected_items.get('app-store'):
+                    duplicate=selected_items['app-store'][0]
+                    result['effective_selection']=json.loads(json.dumps(result['selection']))
+                    result['effective_selection']['items']['app-store'].remove(duplicate)
+                    result['application_duplicates']=[dict(app_store_item_id=duplicate,cask_item_id=selected_items['homebrew-casks'][0])]
+                    result['selected_item_counts']['app-store']-=1
+                    result['plan']=[row for row in result['plan'] if row.get('selection_item_id')!=duplicate]
+                result['has_executable_changes']=any(row['disposition']=='planned' for row in result['plan'])
+                result['has_planned_changes']=result['has_executable_changes']
+            if mode=='ux':
+                ux=json.loads(Path('ux.json').read_text())
+                store=[row for row in result['plan'] if row['domain']=='app-store']
+                for index,row in enumerate(store):
+                    missing=index<ux.get('manual',0)
+                    unverified=not missing and index<ux.get('manual',0)+ux.get('unverified',0)
+                    row.update(item_id=str(425264550+index),action='inspect',disposition='warning' if missing else 'unknown' if unverified else 'satisfied',reason='manual_installation_required' if missing else 'observation_failed' if unverified else None)
+                if ux.get('layout_preview'):
+                    casks=[row for row in result['plan'] if row['domain']=='homebrew-casks']
+                    for index,row in enumerate(casks):
+                        row.update(disposition='warning' if index==0 else 'planned' if index==1 else 'satisfied',reason='observation_failed' if index==0 else None)
+                    for row in result['plan']:
+                        if row['domain'] in ['homebrew-packages','vscode-extensions']: row.update(disposition='satisfied',reason=None)
+                if ux.get('partial'):
+                    cask=next(row for row in result['plan'] if row['domain']=='homebrew-casks')
+                    cask.update(disposition='blocked',reason='cask_execution_requirements_unsupported')
+                    result['readiness']['conditions']=[dict(domain='homebrew-casks',code='cask_execution_requirements_unsupported',status='unsupported',scope='item',selected_item_index=1)]
                 result['has_executable_changes']=any(row['disposition']=='planned' for row in result['plan'])
                 result['has_planned_changes']=result['has_executable_changes']
             if mode=='mixed_progress':
@@ -893,6 +1069,42 @@ import SwiftUI
             last_prepare=next(r for r in reversed(requests) if r['operation']=='restore_prepare')
             assert request['parameters']['selection']==last_prepare['parameters']['selection']
             assert request['parameters']['expected_prepared_plan_id']==(session_id if session else 'a'*64)
+            if mode=='ux':
+                ux=json.loads(Path('ux.json').read_text())
+                if ux.get('interrupted'): os._exit(9)
+                before=ux.get('before',False)
+                records=[]; operations=[]
+                if not before:
+                    for index in range(104):
+                        operations.append(dict(record_id='o:'+str(index),domain='workspace-folders',item_id=str(index+1),action='install',outcome='success'))
+                        records.append(dict(record_id='v:'+str(index),domain='workspace-folders',item_id=str(index+1),predicate='exists',conformity='verified'))
+                    if ux.get('layout'):
+                        for domain in ['homebrew-casks','homebrew-packages','vscode-extensions']:
+                            for index in range(4):
+                                operations.append(dict(record_id=domain+':o:'+str(index),domain=domain,item_id=str(index+1),action='install',outcome='success'))
+                                records.append(dict(record_id=domain+':v:'+str(index),domain=domain,item_id=str(index+1),predicate='installed',conformity='verified'))
+                    for index in range(15):
+                        records.append(dict(record_id='mas:'+str(index),domain='app-store',item_id=str(425264550+index),predicate='installed',conformity='mismatch' if index<ux.get('manual',0) else 'verified'))
+                if ux.get('partial'):
+                    operations.append(dict(domain='homebrew-casks',item_id='1',action='install',outcome='skipped',reason='cask_execution_requirements_unsupported'))
+                    records.append(dict(domain='homebrew-casks',item_id='1',predicate='payload',conformity='mismatch'))
+                launcher=dict(record_id='launcher:0',domain='launcher',item_id='scope',action='restore',outcome='failure',reason='launcher_destination_conflict')
+                if ux.get('launcher'):
+                    operations.append(launcher)
+                    emit('operation_record',launcher)
+                    emit('execution_event',dict(domain='launcher',item_id='scope',state='failed',reason='module_failed'))
+                details=dict(status='incomplete' if ux.get('unknown') else 'complete',operation_records=operations,verification_records=records,module_outcomes=[],diagnostics=[])
+                if ux.get('launcher'):
+                    details['module_outcomes']=[dict(domain='launcher',item_id='scope',state='failed',reason='module_failed')]
+                    details['diagnostics']=[dict(record_id='launcher:0',code='operation_failed',severity='error')]
+                mismatch=ux.get('manual',0)+(1 if ux.get('partial') else 0)
+                verification=dict(status='not_run' if before else 'complete',verdict='incomplete' if before else 'differences_detected' if mismatch else 'selected_requirements_verified',verified_count=0 if before else 119-ux.get('manual',0)+(12 if ux.get('layout') else 0),mismatch_count=mismatch,unverified_count=0,unresolved_count=0,warning_count=0,error_count=0,details=details)
+                failed=before or ux.get('launcher') or ux.get('partial') or ux.get('stopped')
+                result=dict(prepared_plan_id='a'*64,execution_status='failed' if failed else 'completed',target_mutation_may_have_started=not before,verification=verification,warning_count=1 if ux.get('unknown') else 0,error_count=1 if failed else 0,independent_work_completed=bool(ux.get('partial')))
+                if failed:
+                    result['code']='cancelled' if ux.get('stopped') else 'bootstrap_failed'
+                    emit('failed',result);sys.exit(130 if ux.get('stopped') else 2)
+                emit('result',result);emit('completed');sys.exit(0)
             if mode=='execute_missing_result': emit('completed'); sys.exit(0)
             if mode in ('execute_partial','execute_item_skip','execute_ownership_skip'):
                 emit('phase_started',dict(phase='bootstrap'))
@@ -922,8 +1134,22 @@ import SwiftUI
                 for index in range(300): emit('execution_event',dict(domain='verification',item_id='scope',state='started'))
             emit('execution_event',dict(domain='homebrew-packages',item_id='first',state='changed',action='install'))
             verification=dict(status='complete',verdict='selected_requirements_verified',mismatch_count=0,unverified_count=0,unresolved_count=0,warning_count=0,error_count=0,details={})
+            if mode in ('assisted_missing','assisted_launcher_failure'):
+                manual_selection=last_prepare['parameters']['selection']
+                manual_count=4 if 'app-store' in manual_selection['categories'] else len(manual_selection['items'].get('app-store',[]))
+                records=[dict(domain='app-store',item_id=str(425264550+i),predicate='installed',conformity='mismatch') for i in range(manual_count)]
+                records += [dict(domain='workspace-folders',item_id=str(i+1),predicate='exists',conformity='verified') for i in range(4)]
+                verification.update(verdict='differences_detected',verified_count=4,mismatch_count=manual_count,details=dict(verification_records=records))
+            if mode=='assisted_deduplicated':
+                records=[dict(domain='app-store',item_id=str(425264550+i),predicate='installed',conformity='mismatch') for i in range(1,4)]
+                records += [dict(domain=domain,item_id=str(i+1),predicate='installed',conformity='verified') for domain in ['homebrew-casks','workspace-folders'] for i in range(4)]
+                verification.update(verdict='differences_detected',verified_count=8,mismatch_count=3,details=dict(verification_records=records))
             if mode=='execute_attention': verification['unverified_count']=1; verification['verdict']='incomplete'
             result=dict(prepared_plan_id=session_id if session else 'a'*64,execution_status='completed',target_mutation_may_have_started=True,publication_occurred=True,verification=verification,warning_count=0,error_count=0)
+            if mode=='assisted_launcher_failure':
+                verification['details']['operation_records']=[dict(domain='launcher',item_id='scope',action='restore',outcome='failure',reason='launcher_destination_conflict')]
+                result.update(code='bootstrap_failed',execution_status='failed',error_count=1)
+                emit('failed',result); sys.exit(2)
         else:
             Path('MUTATION_ATTEMPT').write_text(operation)
             emit('failed',dict(code='forbidden_operation')); sys.exit(2)
@@ -934,8 +1160,8 @@ import SwiftUI
         let workspace = ["workspace-folders", "git-repositories"]
         let itemDomains = ["homebrew-packages"] + applications + workspace
         var inventory: [[String: Any]] = itemDomains.map { domain in
-            ["domain": domain, "label": "Core label " + domain, "selection_mode": "items", "availability": "available", "reason": NSNull(),
-             "items": (1...4).map { ["item_id": "stable-\(domain)-\($0)", "label": "Core item \($0)"] }]
+            ["domain": domain, "label": Self.finalUXFixtures ? CaptureCategory.title(for: domain) : "Core label " + domain, "selection_mode": "items", "availability": "available", "reason": NSNull(),
+             "items": (1...(Self.finalUXFixtures ? (CommandLine.arguments.contains("--preview-appstore-layout-only") ? (["homebrew-casks": 16, "homebrew-packages": 21, "vscode-extensions": 24, "app-store": 15][domain] ?? 4) : (domain == "workspace-folders" ? 104 : domain == "app-store" ? 15 : 4)) : 4)).map { ["item_id": "stable-\(domain)-\($0)", "label": "Core item \($0)"] }]
         }
         inventory += macOS.map { ["domain": $0, "label": "Core label " + $0, "selection_mode": "category", "availability": "available", "reason": NSNull(), "items": []] }
         inventory += [["domain": "ssh-configuration", "label": "SSH Configuration", "selection_mode": "category", "availability": "available", "reason": NSNull(), "items": []],
@@ -948,7 +1174,7 @@ import SwiftUI
                 inventory[index]["label"] = CaptureCategory.title(for: inventory[index]["domain"] as! String)
             }
         }
-        let inspection: [String: Any] = ["format_version": 1, "selected_categories": macOS + ["ssh-configuration"], "selected_item_counts": [:], "secure_component": true,
+        let inspection: [String: Any] = ["format_version": 1, "selected_categories": macOS + ["ssh-configuration"], "selected_item_counts": [:], "secure_component": !Self.finalUXFixtures,
                                         "restore_selection": ["groups": groups, "inventory": inventory]]
         try JSONSerialization.data(withJSONObject: inspection).write(to: core.appendingPathComponent("inspection.json"))
         let runtime = CoreRuntime()
@@ -957,7 +1183,149 @@ import SwiftUI
         model.choose(source); await model.waitForCompletion()
         precondition(model.state == .review && model.areas.count == inventory.count && model.groups.count == 5 && model.bulkState == .all)
         precondition(model.selectionSummary == "Everything selected" && model.canPreview)
-        precondition(model.inspection?.secureComponent == true && model.selectedAreaCount == 13)
+        precondition(model.inspection?.secureComponent == !Self.finalUXFixtures && model.selectedAreaCount == 13)
+        if Self.finalUXFixtures {
+            model.toggleAll()
+            model.selectArea("workspace-folders", included: true)
+            model.selectArea("app-store", included: true)
+            let chosen = model.selection
+            let included = RestorePresentationSection.includedAreas(model.areas)
+            let sections = RestorePresentationSection.visible(model.groups, inventory: included)
+            let displayed = sections.flatMap { $0.areas(in: included) }
+            precondition(sections.first?.areas(in: included).map(\.id) == ["app-store", "homebrew-casks", "homebrew-packages", "vscode-extensions"])
+            precondition(displayed.filter { $0.id == "app-store" }.count == 1)
+            precondition(Set(displayed.map(\.id)) == Set(included.map(\.id)))
+            let store = model.areas.first { $0.id == "app-store" }!
+            model.selectItem("app-store", item: store.items[0].id, included: false)
+            precondition(model.selectionState(store) == .mixed && model.selectedItems["app-store"]?.count == store.items.count - 1)
+            model.selectItem("app-store", item: store.items[0].id, included: true)
+            precondition(model.selectionState(store) == .all && model.selection == chosen)
+            try render(model, runtime, state: "final-selection")
+            if CommandLine.arguments.contains("--preview-appstore-layout-only") {
+                model.selectArea("workspace-folders", included: false)
+                for id in ["homebrew-casks", "homebrew-packages", "vscode-extensions"] { model.selectArea(id, included: true) }
+                let selected = model.selection
+                for (name, fixture) in [("installed", ["manual": 0]), ("missing", ["manual": 1]), ("unverified", ["unverified": 1])] {
+                    var values = fixture; values["layout_preview"] = 1
+                    try JSONSerialization.data(withJSONObject: values).write(to: core.appendingPathComponent("ux.json"))
+                    try write("ux", core.appendingPathComponent("mode"))
+                    model.refreshPreview(); await model.waitForCompletion()
+                    precondition(model.state == .preview && model.canRebuild && model.selection == selected)
+                    let tasks = RestoreTaskPresentation(preview: model.preview!, plan: model.preparation!)
+                    let casks = tasks.automaticDomains.first { $0.id == "homebrew-casks" }!
+                    precondition(casks.items.filter { $0.state == .attention }.count == 1)
+                    precondition(casks.items.filter { $0.state == .planned }.count == 1)
+                    precondition(casks.items.filter { $0.state == .matching }.count == 14)
+                    if name == "installed" { try render(model, runtime, state: "layout-expanded-preview", expanded: true) }
+                    model.reviewAppStore()
+                    precondition(model.showingAppStore && model.appStorePresentation.items.count == 15)
+                    precondition(model.appStorePresentation.pending.count == (name == "installed" ? 0 : 1))
+                    try render(model, runtime, state: "layout-store-" + name)
+                    if name == "unverified" {
+                        model.refreshAppStore(); await model.waitForCompletion()
+                        precondition(model.showingAppStore && model.state == .preview && model.selection == selected)
+                    }
+                    model.closeAppStore()
+                    precondition(model.selection == selected && model.state == .preview)
+                }
+                print("PASS: expanded Preview 1 attention/1 planned/14 matching plus 21 packages and 24 extensions; immediate installed/missing/unverified App Store lists; navigation/selection preserved")
+                return
+            }
+            if CommandLine.arguments.contains("--selection-preview-only") {
+                for id in ["homebrew-casks", "homebrew-packages", "vscode-extensions"] { model.selectArea(id, included: true) }
+                let selected = model.selection
+                try JSONSerialization.data(withJSONObject: ["manual": 1, "layout": true]).write(to: core.appendingPathComponent("ux.json"))
+                try write("ux", core.appendingPathComponent("mode"))
+                model.refreshPreview(); await model.waitForCompletion()
+                precondition(model.state == .preview && model.canRebuild)
+                try render(model, runtime, state: "layout-preview")
+                model.reviewAppStore(); model.closeAppStore()
+                precondition(model.selection == selected)
+                model.back()
+                precondition(model.state == .review && model.selection == selected)
+                print("PASS: App Store first in Selection group; item selection and navigation preserved; Preview hierarchy rendered at 420/785/985 pt")
+                return
+            }
+            let scenarios: [(String, [String: Any], RestoreExecutionPresentation.Outcome)] = [
+                ("successful", [:], .clean),
+                ("launcher-failed", ["launcher": true], .failedAfterMutation),
+                ("launcher-plus-manual", ["launcher": true, "manual": 1], .failedAfterMutation),
+                ("manual-only-outstanding", ["manual": 1], .attention),
+                ("all-appstore-installed", [:], .clean),
+                ("failed-before-mutation", ["before": true], .failedBeforeMutation),
+                ("interrupted", ["interrupted": true], .interrupted),
+                ("incomplete-evidence", ["unknown": true], .attention),
+                ("partial", ["partial": true], .partial),
+                ("stopped", ["stopped": true], .stoppedAfterMutation)]
+            for (name, fixture, expected) in scenarios {
+                if model.state == .result { model.checkCurrentState(); await model.waitForCompletion() }
+                model.selectArea("homebrew-casks", included: false)
+                if fixture["partial"] as? Bool == true { model.selectItem("homebrew-casks", item: "stable-homebrew-casks-1", included: true) }
+                try JSONSerialization.data(withJSONObject: fixture).write(to: core.appendingPathComponent("ux.json"))
+                try write("ux", core.appendingPathComponent("mode"))
+                model.refreshPreview(); await model.waitForCompletion()
+                precondition(model.state == .preview && model.canRebuild)
+                if name == "launcher-plus-manual" { try render(model, runtime, state: "final-preview") }
+                model.requestRebuild(); model.confirmRebuild(); await model.waitForCompletion()
+                precondition(model.state == .result && model.executionResult?.outcome == expected, name)
+                let result = model.executionResult!
+                let tasks = RestoreTaskPresentation(preview: model.executionPreview!, plan: model.executionPlan!, events: model.categoryPresentationEvents,
+                    result: result, executing: true, operationProgress: true)
+                let summary = RestoreResultSummary(domains: tasks.automaticDomains, result: result, appStore: tasks.appStore)
+                precondition(summary.successfulCount == (["failed-before-mutation", "interrupted"].contains(name) ? 0 : 104), name)
+                if name == "launcher-plus-manual" {
+                    precondition(summary.attentionCount == 2 && summary.automaticAttentionCount == 1 && summary.manualAttentionCount == 1)
+                    precondition(summary.issues.map(\.id) == ["launcher:scope", "app-store"])
+                    precondition(summary.attentionCaption == "1 restore issue · 1 app to install")
+                    precondition(RestoreResultContent.message(result: result, summary: summary) == "Macseed Launcher could not be configured.")
+                    var independent = summary
+                    independent.independentIssueTitles = ["Secure preparation"]
+                    precondition(RestoreResultContent.message(result: result, summary: independent)
+                        == "Macseed Launcher could not be configured; Secure preparation needs review.")
+                }
+                if name == "launcher-failed" {
+                    precondition(summary.attentionCount == 1)
+                    precondition(RestoreVerificationSummary(payload: result.structuredEvidence).requirementsTitle == "Verified",
+                        "Execution failure is independent from selected requirement conformity")
+                }
+                if name == "manual-only-outstanding" {
+                    precondition(summary.attentionCount == 1 && summary.automaticAttentionCount == 0)
+                    precondition(summary.issues.count == 1 && summary.issues[0].appStore)
+                    precondition(RestoreResultContent.heading(outcome: result.outcome, original: result.title, pendingManualWork: true, automaticProblems: false) == "Rebuild Completed")
+                }
+                if expected == .clean { precondition(summary.issues.isEmpty && summary.attentionCount == 0) }
+                if ["failed-before-mutation", "interrupted", "incomplete-evidence"].contains(name) { precondition(summary.attentionCount == nil) }
+                if name == "failed-before-mutation" {
+                    precondition(RestoreVerificationSummary(payload: result.structuredEvidence).requirementsTitle == "Not confirmed")
+                }
+                if name == "stopped" { precondition(summary.issues.isEmpty, "Stopping is not an invented failed requirement") }
+                if name == "partial" { precondition(summary.issues.filter { $0.id.hasPrefix("homebrew-casks:") }.count == 1) }
+                let snapshot = model.selection
+                try render(model, runtime, state: "final-" + name)
+                precondition(model.selection == snapshot)
+                print("PASS: consolidated Result \(name)")
+            }
+            model.checkCurrentState(); await model.waitForCompletion()
+            for id in ["homebrew-casks", "homebrew-packages", "vscode-extensions"] { model.selectArea(id, included: true) }
+            try JSONSerialization.data(withJSONObject: ["manual": 1, "launcher": true, "layout": true]).write(to: core.appendingPathComponent("ux.json"))
+            model.refreshPreview(); await model.waitForCompletion()
+            try render(model, runtime, state: "layout-preview")
+            model.requestRebuild(); model.confirmRebuild(); await model.waitForCompletion()
+            precondition(model.state == .result && model.executionResult?.outcome == .failedAfterMutation)
+            try render(model, runtime, state: "layout-result")
+            for id in ["homebrew-casks", "homebrew-packages", "vscode-extensions"] { model.selectArea(id, included: false) }
+            model.selectArea("workspace-folders", included: false)
+            try JSONSerialization.data(withJSONObject: ["manual": 1]).write(to: core.appendingPathComponent("ux.json"))
+            model.refreshPreview(); await model.waitForCompletion()
+            precondition(model.state == .preview && !model.canRebuild && !model.hasAutomaticSelection)
+            let before = model.selection
+            model.reviewAppStore(); model.closeAppStore()
+            precondition(model.selection == before && model.source == source)
+            try render(model, runtime, state: "final-appstore-only")
+            precondition(chosen.items.isEmpty)
+            print("PASS: App Store-only selection, navigation, original scope and fixed footer")
+            return
+        }
         if CommandLine.arguments.contains("--assisted-appstore-only") {
             model.toggleAll()
             model.selectArea("app-store", included: true)
@@ -965,8 +1333,22 @@ import SwiftUI
                                      ("assisted_installed", .installed), ("assisted_unverified", .unverified)] {
                 try write(mode, core.appendingPathComponent("mode"))
                 model.refreshPreview(); await model.waitForCompletion()
-                precondition(model.state == .preview && model.ready && !model.canRebuild)
+                precondition(model.state == .preview && model.ready && !model.canRebuild && !model.hasAutomaticSelection)
                 let plan = model.preparation!, selection = model.selection
+                let source = model.source, inspection = model.inspection
+                let requestBytes = try Data(contentsOf: core.appendingPathComponent("requests.jsonl"))
+                model.reviewAppStore()
+                precondition(model.showingAppStore && model.appStoreSelected)
+                precondition(model.appStorePresentation.items.count == 4)
+                try render(model, runtime, state: "screen-" + mode)
+                model.closeAppStore()
+                precondition(!model.showingAppStore && model.preparation?.preparedPlanID == plan.preparedPlanID)
+                precondition(model.selection == selection && model.source == source && model.inspection?.restoreSelection?.inventory.count == inspection?.restoreSelection?.inventory.count)
+                precondition(try! Data(contentsOf: core.appendingPathComponent("requests.jsonl")) == requestBytes)
+                model.reviewAppStore(); model.refreshAppStore(); await model.waitForCompletion()
+                precondition(model.showingAppStore && model.selection == selection && model.source == source)
+                precondition(model.appStorePresentation.items.allSatisfy { $0.assistedAppStore?.status == expected })
+                model.closeAppStore()
                 let items = RestoreTaskPresentation(preview: model.preview!, plan: plan).domains.flatMap(\.items)
                 precondition(items.allSatisfy { $0.assistedAppStore?.status == expected })
                 precondition(items.allSatisfy { ($0.assistedAppStore?.productURL != nil) == (expected != .installed) })
@@ -988,11 +1370,94 @@ import SwiftUI
                 model.selectArea("workspace-folders", included: true)
                 model.refreshPreview(); await model.waitForCompletion()
                 precondition(model.ready && model.canRebuild)
+                precondition(model.hasAutomaticSelection)
+                let mixed = RestoreTaskPresentation(preview: model.preview!, plan: model.preparation!)
+                precondition(mixed.automaticDomains.map(\.id) == ["workspace-folders"])
+                precondition(mixed.counters.count == 1 && mixed.counters[0].state == .planned && mixed.counters[0].count == 1)
+                precondition(mixed.automaticDomains.flatMap(\.items).count == 4 && mixed.appStore.items.count == 4)
+                precondition(RestorePreviewMetrics.counts(mixed.automaticDomains).changes == 4)
+                precondition(RestorePreviewMetrics.counts(mixed.automaticDomains).attention == 0)
+                precondition(mixed.automaticAttentionCount == 0)
+                precondition(model.confirmationMessages.count == (expected == .installed ? 0 : 1))
+                precondition(model.confirmationMessages.allSatisfy { $0.contains("App Store") && !$0.contains("automatic requirements need attention") })
+                var scopePlan = model.preparation!
+                scopePlan.scopeWarnings = ["homebrew-packages"]
+                precondition(mixed.confirmationMessages(scopePlan).contains { $0.contains("category-level warning") })
                 model.selectArea("workspace-folders", included: false)
             }
             let requests = try String(contentsOf: core.appendingPathComponent("requests.jsonl"))
             precondition(!requests.contains("restore_execute"))
-            print("PASS: Assisted Refresh preserves selection, reinspects all statuses and permits independent Rebuild without application-only mutation")
+            // Simulated execution only: automatic outcomes and final manual evidence stay independent.
+            try write("assisted_missing", core.appendingPathComponent("mode"))
+            model.selectArea("workspace-folders", included: true)
+            model.refreshPreview(); await model.waitForCompletion()
+            model.requestRebuild(); model.confirmRebuild(); await model.waitForCompletion()
+            precondition(model.state == .result && model.executionResult?.outcome == .attention)
+            let result = model.executionResult!, selection = model.selection, source = model.source
+            let finalTasks = RestoreTaskPresentation(preview: model.executionPreview!, plan: model.executionPlan!,
+                events: model.categoryPresentationEvents, result: result, executing: true, operationProgress: true)
+            precondition(finalTasks.appStore.missingCount == 4)
+            precondition(finalTasks.automaticDomains.map(\.id) == ["workspace-folders"])
+            precondition(RestoreResultSummary(domains: finalTasks.automaticDomains).cards.first { $0.id == "Success" }?.count == 4)
+            precondition(RestoreVerificationSummary(payload: result.structuredEvidence).overallResult(outcome: result.outcome) == "Needs Attention")
+            model.reviewAppStore()
+            precondition(model.appStorePresentation.missingCount == 4)
+            model.closeAppStore()
+            precondition(model.state == .result && model.executionResult?.operationID == result.operationID)
+            try render(model, runtime, state: "assisted-result")
+            model.reviewAppStore()
+            try write("assisted_installed", core.appendingPathComponent("mode"))
+            model.refreshAppStore(); await model.waitForCompletion()
+            precondition(model.state == .preview && model.showingAppStore && model.appStorePresentation.allInstalled)
+            precondition(model.selection == selection && model.source == source)
+            precondition(model.executionResult == nil)
+            model.closeAppStore()
+            model.selectItem("app-store", item: "stable-app-store-4", included: false)
+            let partialSelection = model.selection
+            model.refreshPreview(); await model.waitForCompletion()
+            model.reviewAppStore(); model.refreshAppStore(); await model.waitForCompletion()
+            precondition(model.selection == partialSelection && model.appStorePresentation.items.count == 3)
+            precondition(model.appStorePresentation.allInstalled)
+            // Failed refresh must not continue displaying confirmed installation from the prior Preview.
+            try write("prepare_failure", core.appendingPathComponent("mode"))
+            model.refreshAppStore(); await model.waitForCompletion()
+            precondition(model.state == .failed && model.appStorePresentation.items.isEmpty && !model.appStorePresentation.allInstalled)
+            precondition(model.selection == partialSelection && model.source == source)
+            model.closeAppStore()
+            precondition(!model.showingAppStore)
+            try write("assisted_launcher_failure", core.appendingPathComponent("mode"))
+            model.refreshPreview(); await model.waitForCompletion()
+            model.requestRebuild(); model.confirmRebuild(); await model.waitForCompletion()
+            precondition(model.state == .result && model.executionResult?.outcome == .failedAfterMutation)
+            let failed = model.executionResult!
+            precondition(failed.globalProblemMessages(knownDomains: ["app-store", "workspace-folders"]).contains { $0.contains("Macseed Launcher could not be restored") && $0.contains("preserved") })
+            precondition(model.appStorePresentation.missingCount == 3)
+            try render(model, runtime, state: "launcher-failed-manual-pending")
+            // Fresh Prepare after Result must keep requested IDs while displaying
+            // only Core's effective scope. The mock supplies the same confirmed
+            // decision; Core integration tests exercise real offline cache reuse.
+            model.checkCurrentState(); await model.waitForCompletion()
+            model.selectArea("homebrew-casks", included: true)
+            model.selectArea("app-store", included: true)
+            try write("assisted_deduplicated", core.appendingPathComponent("mode"))
+            model.refreshPreview(); await model.waitForCompletion()
+            let requested = model.canonicalSelection
+            precondition(model.preparation?.selection == requested && model.appStorePresentation.items.count == 3)
+            precondition(model.selectedItems["app-store"]?.count == 4)
+            let effective = model.preparation?.effectiveSelection
+            model.requestRebuild(); model.confirmRebuild(); await model.waitForCompletion()
+            precondition(model.state == .result && model.executionPlan?.effectiveSelection == effective)
+            precondition(model.appStorePresentation.items.count == 3 && model.canonicalSelection == requested)
+            model.reviewAppStore(); model.refreshAppStore(); await model.waitForCompletion()
+            precondition(model.state == .preview && model.showingAppStore)
+            precondition(model.preparation?.effectiveSelection == effective && model.canonicalSelection == requested)
+            precondition(model.appStorePresentation.items.count == 3)
+            model.closeAppStore()
+            model.selectArea("homebrew-casks", included: false)
+            model.refreshPreview(); await model.waitForCompletion()
+            precondition(model.preparation?.effectiveSelection == nil && model.appStorePresentation.items.count == 4)
+            print("PASS: Result Refresh preserves requested IDs and effective App Store scope; App Store-only restores the full scope")
+            print("PASS: Dedicated App Store navigation, refresh, independent automatic outcomes, truthful verification and failed recheck")
             return
         }
         if CommandLine.arguments.contains("--independent-ownership-only") {
@@ -1428,7 +1893,7 @@ import SwiftUI
         let presentationGroups = model.groups + [CoreRestoreInspection.Group(id: "Homebrew", domains: ["homebrew-packages"])]
         let sections = RestorePresentationSection.project(presentationGroups)
         precondition(sections.map(\.id) == ["Applications & Tools", "Settings", "Git", "SSH Configuration", "Workspace", "Shell", "Other Findings"])
-        precondition(sections[0].areas(in: model.areas).map(\.id) == ["homebrew-casks", "app-store", "homebrew-packages", "vscode-extensions"])
+        precondition(sections[0].areas(in: model.areas).map(\.id) == ["app-store", "homebrew-casks", "homebrew-packages", "vscode-extensions"])
         precondition(sections[1].groups.map(\.id) == ["macOS Settings"])
         precondition(sections[4].areas(in: model.areas).map(\.id) == workspace)
         let projectedIDs = sections.flatMap { $0.areas(in: model.areas).map(\.id) }
@@ -1524,7 +1989,7 @@ import SwiftUI
         // The dedicated Homebrew presentation fixture above covers both real domains.
         precondition(taskIDs.contains("homebrew-casks"))
         precondition(!taskIDs.contains("homebrew"))
-        precondition(taskPreview.counters.reduce(0) { $0 + $1.count } == taskPreview.domains.count)
+        precondition(taskPreview.counters.reduce(0) { $0 + $1.count } == taskPreview.automaticDomains.count)
         let taskWorking = RestoreTaskPresentation(preview: productPreview, plan: model.preparation!,
             events: [try event("homebrew-casks", "started")], executing: true)
         precondition(taskWorking.domains.map(\.id) == taskIDs)
@@ -1788,13 +2253,16 @@ import SwiftUI
             precondition(runtime.operationID == operation && model.state == .rebuilding)
             if mode.hasPrefix("execute_stop") {
                 for _ in 0..<100 { if runtime.currentPhase != nil { break }; try await Task.sleep(nanoseconds: 20_000_000) }
-                model.requestStop()
-                precondition(model.stopConfirmation && runtime.isActive && !runtime.stopping)
-                model.requestStop(); precondition(model.stopConfirmation && !runtime.stopping)
+                // This fixture has a TERM handler, not a graceful control channel.
+                // Exercise the explicit Force Stop confirmation for that boundary.
+                precondition(!runtime.homebrewGracefulSupported)
+                model.requestForceStop()
+                precondition(model.stopConfirmation && model.forceStopConfirmation && runtime.isActive && !runtime.stopping)
+                model.requestForceStop(); precondition(model.stopConfirmation && !runtime.stopping)
                 if mode == "execute_stop_after" {
                     precondition(model.mutationPossible)
                     model.dismissStopConfirmation(); precondition(runtime.isActive)
-                    model.requestStop()
+                    model.requestForceStop()
                 }
                 model.confirmStop(); model.confirmStop()
                 precondition(!model.stopConfirmation)
@@ -1804,18 +2272,19 @@ import SwiftUI
             precondition(!model.stopConfirmation)
             model.confirmStop(); model.requestStop()
             precondition(!runtime.stopping && !model.stopConfirmation)
-            precondition(model.state == .result && model.executionResult?.outcome == outcome)
+            precondition(model.state == .result && model.executionResult?.outcome == outcome,
+                "\(mode): state=\(model.state), outcome=\(String(describing: model.executionResult?.outcome)), failure=\(model.failure ?? "none")")
             precondition(model.executionStartedAt != nil && model.executionFinishedAt != nil)
             precondition(model.executionFinishedAt! >= model.executionStartedAt!)
             let tasks = RestoreTaskPresentation(preview: model.executionPreview!, plan: model.executionPlan!,
                 events: runtime.events, result: model.executionResult!)
             precondition(tasks.domains.map(\.id) == taskIDs)
-            precondition(tasks.counters.reduce(0) { $0 + $1.count } == tasks.domains.count)
+            precondition(tasks.counters.reduce(0) { $0 + $1.count } == tasks.automaticDomains.count)
             if mode == "execute_clean" {
                 precondition(tasks.domains.allSatisfy { $0.state == .completed })
                 let compact = RestoreTaskPresentation(preview: model.executionPreview!, plan: model.executionPlan!, events: runtime.events, result: model.executionResult!, operationProgress: true)
                 precondition(compact.domains.allSatisfy { [.completed, .matching].contains($0.executionStatus) })
-                precondition(model.executionResult!.title == "All Done")
+                precondition(model.executionResult!.title == "Rebuild Completed")
                 precondition(model.executionResult!.message.hasPrefix("Your selected environment has been restored and verified."))
                 precondition(model.executionResult!.findings.isEmpty)
             }
@@ -1831,7 +2300,7 @@ import SwiftUI
                 var evidence = verification["details"]!.object!
                 let casks = model.executionPlan!.plan.filter { $0.domain == "homebrew-casks" }
                 evidence["operation_records"] = .array(casks.map { row in
-                    .object(["domain": .string(row.domain), "item_id": .string(row.itemID),
+                    .object(["domain": .string(row.domain), "item_id": .string(row.itemID), "action": .string(row.action),
                         "outcome": .string(row.itemID == "1" ? "skipped" : "success"),
                         "reason": row.itemID == "1" ? .string("cask_execution_requirements_unsupported") : .null])
                 })
@@ -1863,7 +2332,7 @@ import SwiftUI
                 precondition(result.details.contains { $0.reason == "item_stalled_timeout" })
             }
             if mode == "execute_item_skip" {
-                precondition(model.executionResult!.title == "Rebuild Needs Attention")
+                precondition(model.executionResult!.title == "Partial Restore")
                 precondition(!model.executionResult!.details.contains { $0.action == "Rebuild could not complete." })
                 precondition(model.executionResult!.details.contains { $0.reason == "differences_detected" })
                 precondition(model.executionResult!.details.contains { $0.reason == "cask_execution_requirements_unsupported" })
@@ -1875,7 +2344,7 @@ import SwiftUI
             try write("clean", core.appendingPathComponent("mode")); model.checkCurrentState(); await model.waitForCompletion()
             precondition(model.state == .preview && model.canRebuild)
         }
-        print("PASS: Stage 16G eligibility, confirmation, fine Execute request, ownership, zero-change, Safe Stop, failure/interruption and Verification outcomes; fixtures only")
+        print("PASS: Stage 16G eligibility, confirmation, fine Execute request, ownership, zero-change, explicit Force Stop with handled fixture cancellation, failure/interruption and Verification outcomes; fixtures only")
         if !CommandLine.arguments.contains("--fixtures-only") { try await realPrepare(repo: repo, python: python, root: root) }
     }
 

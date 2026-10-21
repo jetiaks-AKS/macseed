@@ -168,7 +168,7 @@ struct CaptureMacOSSettingsGroup {
         return "\(areaSummary) · \(selectedItemCount) \(items) selected"
     }
     var confirmationAreas: [CaptureConfirmationArea] {
-        guard let prepared = preparation, let selection = prepared.selection else { return [] }
+        guard let prepared = preparation, let selection = prepared.publicationSelection else { return [] }
         let selected = Set(selection.categories).union(selection.items.keys)
         let categories = prepared.inventory.map { CaptureCategory(row: $0) }
         let macOS = categories.filter { CaptureMacOSSettingsGroup.domainIDs.contains($0.id) }
@@ -191,7 +191,7 @@ struct CaptureMacOSSettingsGroup {
         return rows
     }
     var confirmationWarnings: [CaptureCategory] {
-        guard let prepared = preparation, let selection = prepared.selection else { return [] }
+        guard let prepared = preparation, let selection = prepared.publicationSelection else { return [] }
         let selected = Set(selection.categories).union(selection.items.keys)
         return prepared.inventory.filter { selected.contains($0.domain) && $0.reason != nil }.map { CaptureCategory(row: $0) }
     }
@@ -314,7 +314,7 @@ struct CaptureMacOSSettingsGroup {
     }
     private func captureNotices() -> [DisplayCategory] {
         // Only Core's selected-category event facts contribute result warnings.
-        let chosen = Set(preparation?.selection?.categories ?? []).union(preparation?.selection?.items.keys.map { $0 } ?? [])
+        let chosen = Set(preparation?.publicationSelection?.categories ?? []).union(preparation?.publicationSelection?.items.keys.map { $0 } ?? [])
         return runtime.events.compactMap { event in
             guard event.type == "capture_category", let domain = event.data?["domain"]?.string, chosen.contains(domain),
                   let reason = event.data?["reason"]?.string, let category = categories.first(where: { $0.id == domain }) else { return nil }

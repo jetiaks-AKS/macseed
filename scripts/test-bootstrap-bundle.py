@@ -487,6 +487,9 @@ class BundleTests(unittest.TestCase):
         (fixture / "scripts").mkdir()
         shutil.copy2(MODULE, fixture / "modules/bundle/bundle.py")
         shutil.copy2(MODULE.with_name("commands.sh"), fixture / "modules/bundle/commands.sh")
+        (fixture / "modules/apps").mkdir()
+        shutil.copy2(MODULE.parents[1] / "apps/application_identity.py",
+                     fixture / "modules/apps/application_identity.py")
         (fixture / "config/blueprint.conf").write_text("old selection")
         (fixture / "config/generated/old").write_text("old state")
         fake_home = self.root / "target-home"
@@ -571,11 +574,12 @@ class BundleTests(unittest.TestCase):
         self.pack()
 
         fixture = self.root / "runtime"
-        for folder in ("modules/bundle", "modules/migration", "modules/verification", "scripts", "config/generated"):
+        for folder in ("modules/bundle", "modules/apps", "modules/migration", "modules/verification", "scripts", "config/generated"):
             (fixture / folder).mkdir(parents=True, exist_ok=True)
         for original, target in (
             (MODULE, fixture / "modules/bundle/bundle.py"),
             (MODULE.with_name("commands.sh"), fixture / "modules/bundle/commands.sh"),
+            (MODULE.parents[1] / "apps/application_identity.py", fixture / "modules/apps/application_identity.py"),
             (migration, fixture / "scripts/ssh-identity-migrate.sh"),
             (migration.parents[1] / "modules/migration/ssh-identities.sh",
              fixture / "modules/migration/ssh-identities.sh"),
@@ -708,13 +712,14 @@ class BundleTests(unittest.TestCase):
         bundle.write_file(self.stage / "generated/appstore.conf", b"")
         bundle.write_file(self.stage / "generated/vscode-extensions.conf", b"")
         fixture = self.root / "capture-runtime"
-        for folder in ("modules/bundle", "modules/migration", "scripts", "seed", "private-tmp"):
+        for folder in ("modules/bundle", "modules/apps", "modules/migration", "scripts", "seed", "private-tmp"):
             (fixture / folder).mkdir(parents=True, exist_ok=True)
         shutil.copytree(self.stage, fixture / "seed", dirs_exist_ok=True)
         migration = MODULE.parents[2] / "scripts/ssh-identity-migrate.sh"
         for original, target in (
             (MODULE, fixture / "modules/bundle/bundle.py"),
             (MODULE.with_name("commands.sh"), fixture / "modules/bundle/commands.sh"),
+            (MODULE.parents[1] / "apps/application_identity.py", fixture / "modules/apps/application_identity.py"),
             (migration, fixture / "scripts/ssh-identity-migrate.sh"),
             (migration.parents[1] / "modules/migration/ssh-identities.sh",
              fixture / "modules/migration/ssh-identities.sh"),

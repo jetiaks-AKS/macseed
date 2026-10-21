@@ -342,14 +342,57 @@ def cask_capabilities(value):
     return value
 
 
-def pack(stage, output, home, replacement_sha256=None):
+def application_precedence(blueprint, capabilities, allow_installed=False):
+    """Narrow effective requirements; source inventories and distributions stay intact."""
+    sys.path.insert(0, str(ROOT / 'modules/apps'))
+    from application_identity import overlaps
+    sections, _ = parse_blueprint(blueprint)
+    pairs, observed = overlaps(sections['homebrew-casks'], sections['app-store'],
+                               capabilities, allow_installed)
+    current = None
+    lines = []
+    for line in blueprint.decode().splitlines(keepends=True):
+        if line.startswith('[') and line.rstrip().endswith(']'):
+            current = line.strip()[1:-1]
+        if current == 'app-store' and line.strip() in pairs:
+            continue
+        lines.append(line)
+    return ''.join(lines).encode(), pairs, observed
+
+
+def deduplicate_applications(stage):
+    """Apply precedence to private Restore state after explicit user selection."""
+    path = stage / 'generated/homebrew-casks.json'
+    capabilities = cask_capabilities(json.loads(checked_file(path))) if path.exists() or path.is_symlink() else {'contract': 1, 'casks': {}}
+    blueprint, pairs, observed = application_precedence(
+        checked_file(stage / 'blueprint.conf', 65536), capabilities, allow_installed=True)
+    if pairs:
+        # Bind observed legacy identities to the same independent Cask predicates
+        # used by Preview, Execute requalification and final Verification.
+        if observed:
+            capabilities['casks'].update(observed)
+            temporary = path.with_name('homebrew-casks.precedence')
+            write_file(temporary, (json.dumps(cask_capabilities(capabilities), sort_keys=True) + '\n').encode())
+            temporary.replace(path)
+        temporary = stage / 'blueprint.precedence'
+        write_file(temporary, blueprint)
+        temporary.replace(stage / 'blueprint.conf')
+    return pairs
+
+
+def pack(stage, output, home, replacement_sha256=None, *, apply_precedence=True):
     blueprint = checked_file(stage / "blueprint.conf", 65536)
+    capabilities = stage / 'generated/homebrew-casks.json'
+    data = cask_capabilities(json.loads(checked_file(capabilities))) if capabilities.exists() or capabilities.is_symlink() else {'contract': 1, 'casks': {}}
+    # Discovery remains domain-local. Resolve overlaps only after its complete
+    # staged observations and the Capture selection exist, before atomic packing.
+    if apply_precedence:
+        blueprint, _, _ = application_precedence(blueprint, data)
     paths = required_paths(blueprint)
     files = {path: checked_file(stage / path) for path in paths}
+    files['blueprint.conf'] = blueprint
     files.update(completeness_files(stage))
-    capabilities = stage / 'generated/homebrew-casks.json'
     if capabilities.exists() or capabilities.is_symlink():
-        data = cask_capabilities(json.loads(checked_file(capabilities)))
         selected, _ = parse_blueprint(blueprint)
         data['casks'] = {token: row for token, row in data['casks'].items() if token in selected['homebrew-casks']}
         if data['casks']:
@@ -814,6 +857,7 @@ def main():
         unpack(Path(args[0]), Path(args[1]), args[2])
     elif command == "narrow" and len(args) >= 1 and set(args[1:]) <= set(GROUPS):
         narrow(Path(args[0]), args[1:])
+        deduplicate_applications(Path(args[0]))
     elif command == "summary" and len(args) >= 2 and args[1] in ("true", "false") and set(args[2:]) <= set(GROUPS):
         summary(Path(args[0]), args[1] == "true", args[2:])
     elif command == "publish" and len(args) == 1:

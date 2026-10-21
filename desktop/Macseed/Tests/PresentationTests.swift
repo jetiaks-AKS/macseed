@@ -2,6 +2,16 @@ import Foundation
 import AppKit
 import SwiftUI
 
+private final class PreviewExpansionState: ObservableObject {
+    @Published var ids: Set<String> = []
+}
+
+private struct PreviewExpansionHost: View {
+    @ObservedObject var state: PreviewExpansionState
+    let content: (Binding<Set<String>>) -> AnyView
+    var body: some View { content(Binding(get: { state.ids }, set: { state.ids = $0 })) }
+}
+
 @main struct PresentationTests {
     @MainActor static func captureResultActionsChecks() {
         let source = try! String(contentsOfFile: "Sources/CaptureView.swift")
@@ -130,7 +140,7 @@ import SwiftUI
         let restoreSource = try! String(contentsOfFile: "Sources/RestoreView.swift", encoding: .utf8)
         let resultSource = restoreSource.components(separatedBy: "struct RestoreResultContent:")[1].components(separatedBy: "struct RestorePreviewMetrics:")[0]
         precondition(!resultSource.contains("Text(\"Execution\")") && !resultSource.contains("receipts") && !resultSource.contains("Confirmed completed"))
-        precondition(resultSource.range(of: "RestoreVerificationResult")!.lowerBound < resultSource.range(of: "RestoreExecutionCategories")!.lowerBound)
+        precondition(resultSource.range(of: "RestoreResultSummaryView")!.lowerBound < resultSource.range(of: "RestoreExecutionCategories")!.lowerBound)
         for status in ["complete", "incomplete", "not_run"] {
             let payload: [String: CoreJSON] = ["verification": .object(["status": .string(status), "verified_count": .integer(12),
                 "mismatch_count": .integer(1), "unverified_count": .integer(2), "unresolved_count": .integer(3)])]
@@ -138,7 +148,7 @@ import SwiftUI
             precondition(image.nsImage != nil)
         }
         precondition(ImageRenderer(content: RestoreVerificationResult(outcome: .attention, payload: nil).frame(width: 760)).nsImage != nil)
-        print("PASS: Result reuses three Preview metric cards above categories and preserves missing Verification counts")
+        print("PASS: Result places confirmed summary before categories; Verification projection preserves missing counts")
         precondition(resultSource.contains("DisclosureGroup(\"Technical Details\")"))
         precondition(!resultSource.contains("Verified selected work"))
         precondition(resultSource.contains("result.compactTechnicalDetails") && resultSource.contains("Copy Diagnostic Details"))
@@ -668,7 +678,7 @@ import SwiftUI
         }
         precondition(domains[1].executionStatus == .unverified)
         let source = try! String(contentsOfFile: "Sources/RestoreView.swift")
-        precondition(source.contains("RestoreExecutionCategories(domains: tasks.domains, showsWarnings: false, resultStatuses: true)"))
+        precondition(source.contains("RestoreExecutionCategories(domains: tasks.automaticDomains, showsWarnings: false, resultStatuses: true,"))
         _ = NSApplication.shared; NSApp.appearance = NSAppearance(named: .aqua)
         let content = VStack(alignment: .leading, spacing: 20) {
             Text("Rebuild Cancelled").font(.title.weight(.bold))
@@ -713,19 +723,50 @@ import SwiftUI
         }
         let source = try! String(contentsOfFile: "Sources/RestoreView.swift")
             .components(separatedBy: "struct RestoreVerificationResult: View {")[1].components(separatedBy: "struct RestoreResultContent:")[0]
-        precondition(source.contains("WorkspaceThreeMetrics {") && !source.contains("metric(\"Result\"") && source.contains("ForEach(rows.cards)"))
+        precondition(!source.contains("WorkspaceMetricCard(") && !source.contains("Automatic Restore outcomes"))
         precondition(!source.contains("Verification mismatches:") && !source.contains("Verification unverified:"))
         precondition(source.contains("Label(summary.title") && source.contains("Some selected scope remains unresolved"))
+        precondition(source.contains("summary.requirementsTitle") && !source.contains("summary.overallResult(outcome:"))
         print("PASS: Result always present; only positive Core aggregates visible; missing/null/zero/invalid counts hidden; partial Verification caveats and Unresolved retained; no renders")
     }
 
     @MainActor static func resultCleanupChecks() {
+        precondition(RestoreResultContent.heading(outcome: .attention, original: "Rebuild Completed with Issues", pendingManualWork: true, automaticProblems: false)
+            == "Rebuild Completed")
+        precondition(RestoreResultContent.heading(outcome: .attention, original: "Rebuild Completed with Issues", pendingManualWork: false)
+            == "Rebuild Completed with Issues")
+        // Manual work never replaces failure, partial, interruption or stop headings,
+        // nor supplies evidence that automatic work succeeded.
+        for outcome: RestoreExecutionPresentation.Outcome in [.clean, .partial, .failedBeforeMutation, .failedAfterMutation,
+                                                               .interrupted, .stoppedBeforeMutation, .stoppedAfterMutation] {
+            precondition(RestoreResultContent.heading(outcome: outcome, original: "Authoritative outcome", pendingManualWork: true)
+                == "Authoritative outcome")
+        }
         let source = try! String(contentsOfFile: "Sources/RestoreView.swift")
         let result = source.components(separatedBy: "struct RestoreResultContent:")[1].components(separatedBy: "struct RestorePreviewMetrics:")[0]
         precondition(!result.contains("result.findings") && !result.contains("Text(\"Needs Attention\")"))
-        precondition(result.contains("RestoreVerificationResult(outcome: result.outcome, payload: result.structuredEvidence, domains: tasks?.domains)"))
-        precondition(result.contains("RestoreExecutionCategories(domains: tasks.domains, showsWarnings: false, resultStatuses: true)"))
-        precondition(result.contains("Text(result.message)") && result.contains("RestoreResultActions(result: result, refresh: refresh, done: done, logRuntime: logRuntime)"))
+        precondition(!result.contains("RestoreVerificationResult(") && !result.contains("Verification details"))
+        let sections = ["RestoreResultSummaryView(summary:", "RestoreExecutionCategories(domains:"]
+        let positions = sections.map { result.range(of: $0)!.lowerBound }
+        precondition(positions == positions.sorted(), "Summary followed directly by grouped details")
+        precondition(result.contains("appStore: tasks.appStore, reviewAppStore: reviewAppStore)"))
+        precondition(!result.contains("RestoreRequiresAttention") && !source.contains("Text(\"Requires Attention\")"))
+        precondition(!result.contains("App Store Applications — All Installed"))
+        precondition(result.contains("Text(Self.heading(outcome: result.outcome"))
+        precondition(!source.contains("Global Verification includes automatic Restore"))
+        precondition(!source.contains("Selected environment: "))
+        precondition(!source.contains("This Preview includes attention conditions"))
+        let preview = source.components(separatedBy: "struct RestorePreviewContent:")[1].components(separatedBy: "struct RestorePreparationActions:")[0]
+        precondition(!preview.contains("let message:") && !preview.contains("let counters:"))
+        precondition(!source.contains("message: preview.summary"))
+        precondition(result.contains("Text(Self.message(result:") && result.contains("RestoreResultActions(result: result, refresh: refresh, done: done, logRuntime: logRuntime)"))
+        let selection = source.components(separatedBy: "if model.state == .review {")[1].components(separatedBy: "} else if let prepared")[0]
+        precondition(selection.contains("RestorePresentationSection.visible(model.groups, inventory: includedAreas)"))
+        precondition(selection.contains("section.areas(in: includedAreas)") && !selection.contains("automaticAreas"))
+        precondition(!selection.contains("if let appStore"), "App Store uses the shared group and row exactly once")
+        precondition(preview.contains("WorkspaceSectionHeader(title: \"Manual Installation\", prominent: true)"))
+        let taskComponents = try! String(contentsOfFile: "Sources/TaskComponents.swift")
+        precondition(taskComponents.contains("WorkspaceSectionHeader(title: \"Automatic Restore Tasks\", prominent: true)"))
         precondition(result.contains("DisclosureGroup(\"Technical Details\") {") && !result.contains("isExpanded:"))
         precondition(result.contains("result.compactTechnicalDetails") && result.contains("Copy Diagnostic Details") && result.contains("result.diagnosticReport"))
         let model = try! String(contentsOfFile: "Sources/RestoreModel.swift")
@@ -915,7 +956,11 @@ import SwiftUI
         precondition(RestoreResultSummary(domains: []).cards.isEmpty)
         let source = try! String(contentsOfFile: "Sources/RestoreView.swift")
         precondition(source.contains("if !hasOperationLog && !result.technicalDetails.isEmpty"))
-        precondition(source.contains("result.stopNotice") && source.contains("Counts cover confirmed outcomes only"))
+        let stopContent = source.components(separatedBy: "if let notice = result.stopNotice {")[1]
+            .components(separatedBy: "RestoreResultSummaryView")[0]
+        precondition(stopContent.contains("Label(notice, systemImage: \"stop.circle\")")
+            && stopContent.contains("if let explanation = result.stopRequestExplanation {")
+            && stopContent.contains("Text(explanation)"))
         precondition(source.contains("Text(String(count))") && !source.contains("Text(label + \" \" + String(count))"))
         precondition(!source.contains("No item-level completion or Verification was reported.") && !source.contains("Finishing Current Installation"))
         precondition(source.contains("ForEach(domain.resultChildren)") && source.contains("Stopping Rebuild…"))
@@ -954,7 +999,7 @@ import SwiftUI
             .components(separatedBy: "struct PendingOperationLogButton:")[0]
         precondition(items.contains("TaskTextStatusLayout") && !items.contains("ViewThatFits"))
         let leaf = source.components(separatedBy: "struct RestoreSettingPreviewLeaf: View {")[1]
-        precondition(leaf.contains("TaskTextStatusLayout") && !leaf.contains("ViewThatFits"))
+        precondition(leaf.contains("RestorePreviewRow") && !leaf.contains("ViewThatFits"))
         print("PASS: text/status columns, long and short descriptions, narrow widths and larger text")
     }
 
@@ -1102,9 +1147,13 @@ import SwiftUI
                         RestoreResultColumns {
                             Text(row % 2 == 0 ? "Short" : String(repeating: "Long category title ", count: 4))
                                 .padding(.leading, RestoreResultColumns.titleInset(depth: row % 2, item: row > 3))
-                            Color(red: 1, green: 0, blue: 0).frame(height: 8)
-                            if row % 2 == 0 { Color(red: 0, green: 0, blue: 1).frame(height: 8) } else { Color.clear.frame(height: 0) }
-                            if row % 3 == 0 { Color(red: 0, green: 1, blue: 0).frame(height: 8) } else { Color.clear.frame(height: 0) }
+                            HStack(spacing: 8) {
+                                Color.red.frame(width: 40, height: 8)
+                                if row % 3 > 0 { Color.blue.frame(width: 32, height: 8) }
+                                if row % 3 > 1 { Color.blue.frame(width: 32, height: 8) }
+                                Color(red: 0, green: 1, blue: 0).frame(width: 12, height: 8)
+                            }.frame(maxWidth: .infinity, alignment: .leading)
+                            Color.clear.frame(width: 148, height: 0)
                         }
                     }
                 }.frame(width: width).environment(\.dynamicTypeSize, size)
@@ -1122,29 +1171,348 @@ import SwiftUI
                     }
                     if found { rows += 1 }
                 }
-                precondition(starts.count == 1 && countStarts.count == 1 && chevronStarts.count == 1 && rows >= 48,
+                precondition(starts.count == 1 && countStarts.count == 1 && chevronStarts.count == 3 && rows >= 48,
                     "Column origins: status=\(starts), count=\(countStarts), chevron=\(chevronStarts), rows=\(rows)")
-                precondition(starts.first! < countStarts.first! && countStarts.first! < chevronStarts.first!)
+                precondition(countStarts.first! - starts.first! == 48)
+                precondition(chevronStarts.sorted() == [48, 88, 128].map { starts.first! + $0 },
+                    "Absent badges reserve no slot; every adjacent control has only 8 pt spacing")
                 for (index, label) in labels.enumerated() {
                     let item = TaskItemPresentation(id: "item", item: DisplayItem(id: "item", title: String(repeating: "Long item name ", count: 5), status: .ready,
                         action: ""), state: .completed, resultLabels: [label])
                     let domain = TaskDomainPresentation(id: "fixture", title: String(repeating: "Category ", count: 4), symbol: "folder", items: [item])
                     let view = RestoreFinalDomain(domain: domain, expansion: .constant(true), depth: index % 2)
                         .frame(width: width).environment(\.dynamicTypeSize, size)
-                    precondition(ImageRenderer(content: view).nsImage != nil)
+                    let rendered = ImageRenderer(content: view.environment(\.restoreTrailingSamples, RestoreTrailingSample.result([domain], appStore: nil)))
+                    precondition(rendered.nsImage != nil)
+                    if size == .large {
+                        let bitmap = NSBitmapImageRep(cgImage: rendered.cgImage!)
+                        try! bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath:
+                            "build/Debug/RestoreLayout-expanded-\(index)-\(Int(width)).png"))
+                    }
                 }
             }
         }
         let source = try! String(contentsOfFile: "Sources/RestoreView.swift")
         let final = source.components(separatedBy: "struct RestoreFinalDomain: View {")[1].components(separatedBy: "struct RestoreResultStatusLabel:")[0]
-        precondition(final.components(separatedBy: "RestoreResultColumns {").count == 3)
+        precondition(final.components(separatedBy: "RestoreResultColumns {").count == 2)
+        precondition(final.contains("RestoreResultCategoryHeader(id: domain.id"))
+        let header = source.components(separatedBy: "struct RestoreResultCategoryHeader:")[1].components(separatedBy: "struct RestoreFinalDomain:")[0]
+        precondition(header.contains("RestoreResultColumns {"))
+        precondition(header.contains("RestoreCountBadges(counts: counts)") && !header.contains("Spacer("))
+        let itemSource = source.components(separatedBy: "struct RestoreResultItemRow:")[1].components(separatedBy: "struct RestoreResultStatusLabel:")[0]
+        precondition(itemSource.components(separatedBy: "Image(systemName: \"chevron.right\"").count == 2)
+        precondition(itemSource.contains("Text(\"Technical Details\")") && !itemSource.contains("Button(\"Technical Details\")"))
         precondition(!final.contains("TaskTextStatusLayout") && !final.contains("ViewThatFits") && !final.contains(".offset("))
         precondition(RestoreResultColumns.titleInset(depth: 1) == 52 && RestoreResultColumns.titleInset(depth: 1, item: true) == 88)
-        print("PASS: Restore Result Status/Count/Chevron columns share origins across depth, missing cells, long names and larger text")
+        print("PASS: Compact trailing groups: no reserved badge slots, shared status origins, wrapping and larger text at 420/785/985 pt")
+    }
+
+    @MainActor static func resultStatusAlignmentChecks() {
+        _ = NSApplication.shared; NSApp.appearance = NSAppearance(named: .aqua)
+        func origin<V: View>(_ view: V, width: CGFloat) -> Int {
+            let bitmap = NSBitmapImageRep(cgImage: ImageRenderer(content: view.frame(width: width).environment(\.restoreTrailingSamples, references)).cgImage!)
+            for x in 0..<bitmap.pixelsWide {
+                for y in 0..<bitmap.pixelsHigh {
+                    guard let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.sRGB), color.alphaComponent > 0.9 else { continue }
+                    if color.greenComponent > 0.2 && color.greenComponent > color.redComponent * 1.3 && color.greenComponent > color.blueComponent * 1.2 { return x }
+                }
+            }
+            preconditionFailure("Expected a green status")
+        }
+        let item = TaskItemPresentation(id: "row", item: DisplayItem(id: "row", title: "Item", status: .ready, action: ""),
+            state: .completed, resultLabels: ["Verified"])
+        let domain = TaskDomainPresentation(id: "fixture", title: "Category", symbol: "folder", items: [item])
+        let app = TaskItemPresentation(id: "app", item: item.item, state: .matching,
+            assistedAppStore: AssistedAppStoreItem(appID: "425264550", status: .installed))
+        let summary = AppStoreRestorePresentation(domains: [.init(id: "app-store", title: "Apps", symbol: "app", items: [app])])
+        let references = RestoreTrailingSample.result([domain], appStore: summary)
+        for width: CGFloat in [420, 785, 985] {
+            let positions = [
+                origin(RestoreFinalDomain(domain: domain), width: width),
+                origin(RestoreFinalDomain(domain: domain, depth: 1).padding(.horizontal, 16), width: width),
+                origin(RestoreResultItemRow(item: item, notRun: false, depth: 0).padding(.horizontal, 16), width: width),
+                origin(RestoreResultItemRow(item: item, notRun: false, depth: 1).padding(.horizontal, 16), width: width),
+                origin(AppStoreRestoreResultRow(summary: summary, review: {}, expansion: .constant(false)), width: width)]
+            precondition(positions.max()! - positions.min()! <= 3, "Category/nested/item/App Store status origins: \(positions)")
+            let previewDomain = TaskDomainPresentation(id: "homebrew-casks", title: "Homebrew Applications", symbol: "app", items: [app])
+            let previewSamples = [RestoreTrailingSample(title: previewDomain.state.rawValue),
+                RestoreTrailingSample(title: summary.categoryStatus, disclosure: false)]
+            let manual = origin(AppStoreRestoreCard(summary: summary, review: {}).environment(\.restoreTrailingSamples, previewSamples), width: width)
+            let automatic = origin(TaskDomainList(domains: [previewDomain], restoreSettingsPreview: true)
+                .environment(\.restoreTrailingSamples, previewSamples), width: width)
+            precondition(abs(manual - automatic) <= 3, "Preview manual and automatic status origins: \(manual), \(automatic)")
+        }
+        print("PASS: Real category, nested, leaf and App Store status origins align at 420/785/985 pt")
+    }
+
+    @MainActor static func previewColumnGeometryChecks() {
+        func item(_ id: String, _ state: TaskRowState) -> TaskItemPresentation {
+            TaskItemPresentation(id: id, item: DisplayItem(id: id, title: "Requirement " + id,
+                status: state == .matching ? .matching : .attention,
+                action: id == "cask-1" ? String(repeating: "Long explanatory context stays in the title area. ", count: 4) : ""), state: state)
+        }
+        let casks = TaskDomainPresentation(id: "homebrew-casks", title: "Homebrew Applications", symbol: "app",
+            items: (0..<16).map { item("cask-\($0)", $0 == 0 ? .attention : $0 == 1 ? .planned : .matching) })
+        precondition(casks.summary.contains("14") && casks.summary.count > 40, "Verbose source summary remains available")
+        let settings = [TaskDomainPresentation(id: "macos-finder", title: "Finder", symbol: "finder", items: [item("finder", .matching)]),
+            TaskDomainPresentation(id: "macos-windows", title: "Windows", symbol: "macwindow", items: [item("windows", .matching)])]
+        let domains = [casks,
+            TaskDomainPresentation(id: "homebrew-packages", title: "Homebrew Packages", symbol: "shippingbox", items: (0..<21).map { item("package-\($0)", .matching) }),
+            TaskDomainPresentation(id: "vscode-extensions", title: "VS Code Extensions", symbol: "puzzlepiece", items: (0..<24).map { item("extension-\($0)", .matching) }),
+            TaskDomainPresentation(id: "macos-settings", title: "macOS Settings", symbol: "slider.horizontal.3", items: settings.flatMap(\.items))]
+            + ["vscode-settings", "git-configuration", "workspace-folders", "git-repositories"].map {
+                TaskDomainPresentation(id: $0, title: CaptureCategory.title(for: $0), symbol: WorkspaceCategoryStyle.symbol($0), items: [item($0, .matching)])
+            }
+        for width: CGFloat in [420, 785, 985] {
+            let probe = TaskDomainList(domains: domains, restoreSettingsPreview: true, settingsCategories: settings,
+                expansion: .constant(Set(domains.map(\.id))), settingsExpansion: .constant(true))
+                .padding(16).frame(width: width).background(Color(nsColor: .windowBackgroundColor))
+            let renderer = ImageRenderer(content: probe)
+            let bitmap = NSBitmapImageRep(cgImage: renderer.cgImage!)
+            var origins: [Int] = []
+            var lastY = -100
+            for y in 0..<bitmap.pixelsHigh {
+                var left: Int? = nil
+                for x in 0..<bitmap.pixelsWide {
+                    guard let c = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.sRGB), c.alphaComponent > 0.9 else { continue }
+                    if c.greenComponent > 0.2 && c.greenComponent > c.redComponent * 1.3 && c.greenComponent > c.blueComponent * 1.2 { left = x; break }
+                }
+                if let left {
+                    if y - lastY > 8 { origins.append(left) }
+                    else { origins[origins.count - 1] = min(origins.last!, left) }
+                    lastY = y
+                }
+            }
+            precondition(origins.count >= 65 && origins.max()! - origins.min()! <= 3,
+                "Preview category/leaf/nested settings status origins at \(width): \(origins)")
+            try! bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: "build/Debug/RestorePreview-status-grid-\(Int(width)).png"))
+        }
+        let source = try! String(contentsOfFile: "Sources/TaskComponents.swift")
+        let previewHeader = source.components(separatedBy: "if restoreSettingsPreview {\n                RestorePreviewRow")[1].components(separatedBy: "} else { ViewThatFits")[0]
+        precondition(!previewHeader.contains("domainSummary") && !previewHeader.contains("Text("))
+        let samples = source.components(separatedBy: "transformEnvironment(\\.restoreTrailingSamples)")[1].components(separatedBy: "private func domainRow")[0]
+        precondition(!samples.contains("subtitle:") && !samples.contains("domainSummary"))
+        print("PASS: Preview category/leaf/nested settings anchors match at 420/785/985; long source summaries/descriptions cannot resize trailing controls")
+    }
+
+    @MainActor static func appStoreVisualChecks() {
+        func item(_ index: Int, _ status: AssistedAppStoreItem.Status) -> TaskItemPresentation {
+            TaskItemPresentation(id: "app-\(index)", item: DisplayItem(id: "app-\(index)", title: "Application \(index)", status: .information, action: ""),
+                state: .unverified, assistedAppStore: AssistedAppStoreItem(appID: String(425264550 + index), status: status))
+        }
+        func summary(_ rows: [TaskItemPresentation]) -> AppStoreRestorePresentation {
+            AppStoreRestorePresentation(domains: [.init(id: "app-store", title: "App Store", symbol: "app", items: rows)])
+        }
+        let automaticItems = (0..<105).map { index in
+            TaskItemPresentation(id: "auto-\(index)", item: DisplayItem(id: "auto-\(index)", title: "Requirement", status: .matching, action: ""), state: index < 101 ? .matching : .planned)
+        }
+        let automatic = [TaskDomainPresentation(id: "homebrew-casks", title: "Homebrew Applications", symbol: "app", items: automaticItems)]
+        let metrics = RestorePreviewMetrics.counts(automatic)
+        precondition(metrics.matching == 101 && metrics.changes == 4 && metrics.attention == 0)
+        let installed = summary((1...16).map { item($0, .installed) })
+        precondition(installed.allInstalled && installed.categoryStatus == "All Installed" && installed.counts.count == 1 && installed.counts[0].1 == 16)
+        let mixed = summary([item(1, .unverified), item(2, .installed), item(3, .missing)])
+        let large = (0..<2048).map { item($0, [.installed, .missing, .unverified][$0 % 3]) }
+        let samples = AppStoreRestoreList.statusSamples(large)
+        precondition(samples.count == 3 && samples.allSatisfy { !$0.disclosure })
+        precondition(Set(samples.map(\.title)) == ["Installed", "Not in App Store", "Unverified"])
+        precondition(AppStoreRestoreList.statusSamples(installed.items).count == 1)
+        precondition(AppStoreRestoreList.statusSamples([]).isEmpty)
+        precondition(mixed.counts.map { $0.0 } == ["Installed", "Missing", "Unverified"] && mixed.counts.allSatisfy { $0.1 == 1 })
+        precondition(mixed.pending.map { AppStoreRestorePresentation.status($0) } == [.missing, .unverified])
+        precondition(mixed.categoryState == .attention && !mixed.allInstalled)
+        var wording = RestoreResultSummary(domains: [])
+        wording.automaticAttentionCount = 1
+        wording.manualMissingCount = 1
+        wording.manualUnverifiedCount = 2
+        precondition(wording.attentionCaption == "1 restore issue · 1 app to install · 2 apps to check")
+        let unknown = summary([item(1, .unverified)])
+        precondition(unknown.categoryState == .unverified && unknown.categoryStatus == "Unverified" && unknown.counts.count == 1)
+        precondition(summary([]).counts.isEmpty && !summary([]).allInstalled)
+        func progress(_ installedCount: Int, _ missing: Int, _ unverified: Int) -> AppStoreRestorePresentation {
+            let statuses = Array(repeating: AssistedAppStoreItem.Status.installed, count: installedCount)
+                + Array(repeating: .missing, count: missing) + Array(repeating: .unverified, count: unverified)
+            return summary(statuses.enumerated().map { item($0.offset, $0.element) })
+        }
+        for (snapshot, installedCount, attention, breakdown) in [
+            (progress(13, 3, 0), 13, 3, "3 missing"),
+            (progress(14, 1, 1), 14, 2, "1 missing · 1 unverified"),
+            (installed, 16, 0, ""),
+            (progress(0, 0, 16), 0, 16, "16 unverified")] {
+            precondition(snapshot.installed.count == installedCount && snapshot.attentionCount == attention && snapshot.attentionBreakdown == breakdown)
+        }
+        let grouped = RestoreExecutionCategories.sections([
+            .init(id: "homebrew-casks", title: "Applications", symbol: "app", items: []),
+            .init(id: "vscode-extensions", title: "Extensions", symbol: "app", items: []),
+            .init(id: "workspace-folders", title: "Workspace", symbol: "folder", items: [])])
+        precondition(grouped.first?.title == "Applications & Tools" && grouped.last?.title == "Workspace")
+        precondition(grouped.first?.rows.map(\.id) == ["homebrew-casks", "vscode-extensions"])
+        let withManual = RestoreExecutionCategories.sections([
+            .init(id: "homebrew-casks", title: "Applications", symbol: "app", items: []),
+            .init(id: "homebrew-packages", title: "Packages", symbol: "app", items: []),
+            .init(id: "vscode-extensions", title: "Extensions", symbol: "app", items: []),
+            .init(id: "workspace-folders", title: "Workspace", symbol: "folder", items: [])], appStore: mixed)
+        precondition(withManual.first?.rows.map(\.id) == ["homebrew-casks", "homebrew-packages", "vscode-extensions", "app-store"])
+        precondition(withManual.flatMap(\.rows).filter { $0.id == "app-store" }.count == 1)
+        precondition(RestoreExecutionCategories.sections([]).isEmpty)
+        let manualOnly = RestoreExecutionCategories.sections([], appStore: mixed)
+        precondition(manualOnly.first?.title == "Applications & Tools" && manualOnly.first?.rows.map(\.id) == ["app-store"])
+        let allRows = ImageRenderer(content: AppStoreRestoreList(summary: installed).frame(width: 785)).nsImage!
+        precondition(allRows.size.height >= 16 * 28, "All Installed rows are immediately visible")
+        let pendingRows = ImageRenderer(content: AppStoreRestoreList(summary: mixed).frame(width: 785)).nsImage!
+        precondition(pendingRows.size.height >= 3 * 28, "Missing, Unverified and Installed rows are immediately visible")
+        for width in [420.0, 785.0, 985.0] {
+            let content = VStack(alignment: .leading, spacing: 20) {
+                RestorePreviewMetrics(domains: automatic)
+                AppStoreRestoreCard(summary: mixed, review: {})
+                AppStoreRestoreMetrics(summary: mixed)
+                AppStoreRestoreList(summary: mixed)
+                RestoreExecutionCategories(domains: [
+                    .init(id: "homebrew-casks", title: "Homebrew Applications", symbol: "app", items: []),
+                    .init(id: "workspace-folders", title: "Workspace Folders", symbol: "folder", items: [])],
+                    showsWarnings: false, resultStatuses: true, appStore: mixed, reviewAppStore: {})
+                AppStoreRestoreResultRow(summary: mixed, review: {}, expansion: .constant(true))
+            }.padding(16).frame(width: width).background(Color(nsColor: .windowBackgroundColor))
+            let renderer = ImageRenderer(content: content)
+            let image = renderer.nsImage!
+            precondition(image.size.width == width)
+            let data = NSBitmapImageRep(cgImage: renderer.cgImage!).representation(using: .png, properties: [:])!
+            try! data.write(to: URL(fileURLWithPath: "build/Debug/AppStore-Final-\(Int(width)).png"))
+        }
+        let source = try! String(contentsOfFile: "Sources/RestoreView.swift")
+        let appScreen = source.components(separatedBy: "struct AppStoreRestoreScreen:")[1].components(separatedBy: "struct AppStoreRestoreActions:")[0]
+        precondition(!appScreen.contains("Button(") && appScreen.contains("No App Store applications selected"))
+        precondition(appScreen.contains("Text(\"App Store Applications\")") && !appScreen.contains("selected applications"))
+        let metricsSource = source.components(separatedBy: "struct AppStoreRestoreMetrics:")[1].components(separatedBy: "struct AppStoreRestoreList:")[0]
+        precondition(metricsSource.contains("!summary.installed.isEmpty") && metricsSource.contains("summary.attentionCount > 0"))
+        precondition(metricsSource.contains("value: String(summary.installed.count)") && metricsSource.contains("selected"))
+        precondition(metricsSource.contains("value: nil") && metricsSource.contains("summary.attentionBreakdown"))
+        let card = source.components(separatedBy: "struct AppStoreRestoreCard:")[1].components(separatedBy: "struct AppStoreRestoreMetrics:")[0]
+        precondition(card.contains("WorkspaceCategoryTitle(id: \"app-store\", title: \"App Store Applications\""))
+        let noValue = WorkspaceMetricCard(title: "Needs Attention", value: nil, symbol: "exclamationmark.triangle", tint: .orange,
+            explanation: "1 missing · 1 unverified")
+        precondition(noValue.value == nil && noValue.explanation == "1 missing · 1 unverified")
+        let categories = source.components(separatedBy: "struct RestoreExecutionCategories:")[1].components(separatedBy: "struct RestoreResultColumns:")[0]
+        precondition(!categories.contains("AppStoreRestoreResultSection") && !categories.contains("AppStoreRestoreCard"))
+        precondition(categories.contains("domains.filter { $0.id != \"app-store\" }"))
+        let category = source.components(separatedBy: "struct AppStoreRestoreList:")[1].components(separatedBy: "struct AppStoreRestoreScreen:")[0]
+        precondition(!category.contains("installedExpanded") && !category.contains("DisclosureGroup("))
+        precondition(category.contains("let rows = summary.pending + summary.installed") && category.contains("ForEach(rows)"))
+        precondition(!category.contains("expansion") && !category.contains("isExpanded") && !category.contains("RestoreResultCategoryHeader") && !category.contains("chevron"))
+        let workspace = try! String(contentsOfFile: "Sources/ProductionWorkspace.swift")
+        precondition(workspace.contains("AppStoreRestoreActions(model: restore).modifier(WorkspaceFooterPadding())"))
+        print("PASS: App Store inventory immediately visible for installed/missing/unverified, no category header or disclosure, actions/status metrics/fixed footer retained")
+    }
+
+    @MainActor static func previewExpansionPerformanceChecks() {
+        setbuf(stdout, nil)
+        _ = NSApplication.shared
+        NSApp.setActivationPolicy(.accessory)
+        NSApp.appearance = NSAppearance(named: .aqua)
+        func flush(_ host: NSView) {
+            RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.005))
+            host.layoutSubtreeIfNeeded()
+            host.displayIfNeeded()
+        }
+        func scrollView(_ view: NSView) -> NSScrollView? {
+            (view as? NSScrollView) ?? view.subviews.lazy.compactMap(scrollView).first
+        }
+        let stress = CommandLine.arguments.contains("--stress")
+        let counts = stress ? [80, 100, 160] : [16, 21, 24]
+        let ids = ["homebrew-casks", "homebrew-packages", "vscode-extensions"]
+        func item(_ id: String, _ index: Int) -> TaskItemPresentation {
+            let state: TaskRowState = index == 0 ? .attention : index == 1 ? .planned : .matching
+            return TaskItemPresentation(id: id, item: DisplayItem(id: id, title: "Requirement " + id,
+                status: state == .matching ? .matching : .attention, action: "Existing requirement details"), state: state)
+        }
+        let settings = ["macos-finder", "macos-windows"].map { id in
+            TaskDomainPresentation(id: id, title: CaptureCategory.title(for: id), symbol: WorkspaceCategoryStyle.symbol(id),
+                items: (0..<4).map { item("\(id)-\($0)", $0) })
+        }
+        let domains = zip(ids, counts).map { id, count in
+            TaskDomainPresentation(id: id, title: CaptureCategory.title(for: id), symbol: WorkspaceCategoryStyle.symbol(id),
+                items: (0..<count).map { item("\(id)-\($0)", $0) })
+        } + [TaskDomainPresentation(id: "macos-settings", title: "macOS Settings", symbol: "slider.horizontal.3",
+                                   items: settings.flatMap(\.items))]
+        let manualItem = TaskItemPresentation(id: "manual", item: DisplayItem(id: "manual", title: "Manual application",
+            status: .attention, action: ""), state: .attention,
+            assistedAppStore: AssistedAppStoreItem(appID: "123", status: .missing))
+        let manual = AppStoreRestorePresentation(domains: [
+            TaskDomainPresentation(id: "app-store", title: "App Store Applications", symbol: "app", items: [manualItem])])
+        let expansion = PreviewExpansionState()
+        let content = PreviewExpansionHost(state: expansion) { binding in AnyView(ScrollView {
+            TaskDomainList(domains: domains, leadingContent: AnyView(VStack(alignment: .leading, spacing: 12) {
+                WorkspaceSectionHeader(title: "Manual Installation", prominent: true)
+                AppStoreRestoreCard(summary: manual, review: {})
+            }), restoreSettingsPreview: true, settingsCategories: settings, expansion: binding)
+                .padding(28).frame(maxWidth: .infinity, alignment: .leading)
+        }) }
+        let host = NSHostingView(rootView: content)
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 785, height: 850),
+            styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        window.orderFront(nil)
+        defer { window.close() }
+        RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.1))
+        flush(host)
+        let scroller = scrollView(host)!
+        let collapsedHeight = scroller.documentView!.frame.height
+        func toggle(_ open: Bool) -> Double {
+            // Same synchronous Set assignment used by the production button.
+            // Include the native SwiftUI update, layout and display, not just the setter.
+            let start = CFAbsoluteTimeGetCurrent()
+            expansion.ids = open ? Set(domains.map(\.id)) : []
+            flush(host)
+            return (CFAbsoluteTimeGetCurrent() - start) * 1000
+        }
+        var measurements: [[String: Double]] = []
+        var scrollSteps: [Double] = []
+        for iteration in 0..<3 {
+            let expand = toggle(true)
+            precondition(expansion.ids == Set(domains.map(\.id)))
+            precondition(scroller.documentView!.frame.height > collapsedHeight + CGFloat(counts.reduce(0, +)) * 25,
+                "Expanded document retains every application, package and extension row")
+            let beforeScroll = CFAbsoluteTimeGetCurrent()
+            let document = scroller.documentView!
+            scroller.contentView.scroll(to: NSPoint(x: 0, y: max(0, document.frame.height - scroller.contentView.bounds.height)))
+            scroller.reflectScrolledClipView(scroller.contentView)
+            flush(host)
+            precondition(scroller.contentView.bounds.minY > 0)
+            let scroll = (CFAbsoluteTimeGetCurrent() - beforeScroll) * 1000
+            if iteration == 2 {
+                let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds)!
+                host.cacheDisplay(in: host.bounds, to: bitmap)
+                try! bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath:
+                    "build/Debug/RestorePreview-expand-bottom-\(counts.reduce(0, +)).png"))
+                for step in 0...20 {
+                    let start = CFAbsoluteTimeGetCurrent()
+                    scroller.contentView.scroll(to: NSPoint(x: 0,
+                        y: max(0, document.frame.height - scroller.contentView.bounds.height) * CGFloat(step) / 20))
+                    scroller.reflectScrolledClipView(scroller.contentView)
+                    flush(host)
+                    scrollSteps.append((CFAbsoluteTimeGetCurrent() - start) * 1000)
+                }
+            }
+            scroller.contentView.scroll(to: .zero); scroller.reflectScrolledClipView(scroller.contentView); flush(host)
+            let collapse = toggle(false)
+            precondition(expansion.ids.isEmpty && abs(scroller.documentView!.frame.height - collapsedHeight) < 2)
+            measurements.append(["expand_ms": expand, "collapse_ms": collapse, "scroll_ms": scroll])
+        }
+        print("EXPANSION_BENCHMARK", String(data: try! JSONSerialization.data(withJSONObject: [
+            "items": counts.reduce(0, +) + 8, "width": 785, "measurements": measurements,
+            "scroll_step_max_ms": scrollSteps.max() ?? 0], options: [.sortedKeys]), encoding: .utf8)!)
+        let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds)!
+        host.cacheDisplay(in: host.bounds, to: bitmap)
+        try! bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: "build/Debug/RestorePreview-expand-placement.png"))
     }
 
     @MainActor static func main() {
-        if CommandLine.arguments.contains("--restore-result-columns-only") { restoreResultColumnsChecks(); resultCleanupChecks(); minimalResultSummaryChecks(); return }
+        if CommandLine.arguments.contains("--preview-expansion-only") { previewExpansionPerformanceChecks(); return }
+        if CommandLine.arguments.contains("--preview-appstore-layout-only") { previewColumnGeometryChecks(); resultStatusAlignmentChecks(); appStoreVisualChecks(); return }
+        if CommandLine.arguments.contains("--selection-preview-only") { resultCleanupChecks(); resultStatusAlignmentChecks(); return }
+        if CommandLine.arguments.contains("--appstore-visual-only") { appStoreVisualChecks(); return }
+        if CommandLine.arguments.contains("--restore-result-columns-only") { restoreResultColumnsChecks(); resultStatusAlignmentChecks(); resultCleanupChecks(); minimalResultSummaryChecks(); appStoreVisualChecks(); return }
         if CommandLine.arguments.contains("--capture-checkpoint-only") { captureResultActionsChecks(); screenshotsIncludedSettingsChecks(); windowsIncludedSettingsChecks(); captureResultAlignmentChecks(); return }
         if CommandLine.arguments.contains("--windows-included-only") { windowsIncludedSettingsChecks(); return }
         if CommandLine.arguments.contains("--screenshots-included-only") { screenshotsIncludedSettingsChecks(); return }
@@ -1185,8 +1553,8 @@ import SwiftUI
             let blocked = RestorePrerequisiteSummaryPresentation(conditions: [manual], ready: false)
             precondition(blocked.isVisible && !blocked.canFixIssues && blocked.displayConditions.count == 1)
             for (summary, visible) in [(ready, false), (pkgOnly, true), (permissionOnly, true), (both, true), (blocked, false)] {
-                let preview = RestorePreviewContent(title: "Needs Attention", message: "", state: .attention,
-                    domains: [], counters: [], alreadyMatches: false, prerequisites: summary, areas: [])
+                let preview = RestorePreviewContent(title: "Needs Attention", state: .attention,
+                    domains: [], alreadyMatches: false, prerequisites: summary, areas: [])
                 precondition(preview.showsFixIssues == visible && !preview.canRebuild)
             }
             precondition(pkgOnly.preparationCount == 1 && pkgOnly.manualConditions.isEmpty)
@@ -1265,7 +1633,14 @@ import SwiftUI
         print("PASS: DEBUG Restore scenarios use presentation fixtures, truthful Preview states and no runtime actions")
         #endif
         let components = try! String(contentsOfFile: "Sources/TaskComponents.swift", encoding: .utf8)
-        precondition(components.contains("if item.state != .working, let reason = item.item.reason"))
+        precondition(components.contains("if Self.showsTechnicalDetails(item), let reason = item.item.reason"))
+        for state in [TaskRowState.attention, .working] {
+            var row = TaskItemPresentation(id: "diagnostic", item: DisplayItem(id: "diagnostic", title: "Fixture",
+                status: .attention, action: "Inspect", reason: "observation_failed"), state: state)
+            precondition(TaskDomainItems.showsTechnicalDetails(row) == (state != .working))
+            row.assistedAppStore = AssistedAppStoreItem(appID: "12345", status: .unverified)
+            precondition(!TaskDomainItems.showsTechnicalDetails(row))
+        }
         let workspaceSource = try! String(contentsOfFile: "Sources/ProductionWorkspace.swift", encoding: .utf8)
         precondition(workspaceSource.range(of: "rebuildActionArea(synthetic: true)")!.lowerBound > workspaceSource.range(of: ".modifier(WorkspaceContentGeometry())")!.lowerBound)
         precondition(workspaceSource.contains("stop: synthetic ? nil : { restore.requestStop() }"))
@@ -1279,6 +1654,11 @@ import SwiftUI
         captureResultAlignmentChecks()
         restoreResultColumnsChecks()
         restoreSummaryChecks()
+        resultCleanupChecks()
+        minimalResultSummaryChecks()
+        previewColumnGeometryChecks()
+        resultStatusAlignmentChecks()
+        appStoreVisualChecks()
         precondition(CaptureMetricCard.tone(attention: false, count: 0) == .blue)
         precondition(CaptureMetricCard.tone(attention: false, count: 5) == .blue)
         precondition(CaptureMetricCard.tone(attention: true, count: 0) == .neutral)
@@ -1330,7 +1710,7 @@ import SwiftUI
         precondition(statusView.contains("if model.state != .choose { Spacer() }"))
         precondition(statusView.contains("if model.reference != nil {"))
         precondition(!statusView.contains("Text(result.summary)"))
-        precondition(content.contains(".font(.system(size: 13, weight: .semibold)).foregroundStyle(Color(nsColor: .labelColor))"))
+        precondition(content.contains(".font(.system(size: prominent ? 15 : 13, weight: .semibold)).foregroundStyle(Color(nsColor: .labelColor))"))
         precondition(statusView.contains("if let reason = item.comparisonTechnicalDetails"))
         precondition(statusView.contains("if let explanation = item.comparisonExplanation"))
         precondition(statusView.contains(".accessibilityLabel(\"Already Matches\")"))

@@ -89,7 +89,10 @@ struct ProductionWorkspace: View {
                     Divider()
                     CaptureActionsView(model: capture, runtime: runtime).modifier(WorkspaceFooterPadding())
                 }
-                if navigation.task == .restore {
+                if navigation.task == .restore && restore.showingAppStore {
+                    Divider()
+                    AppStoreRestoreActions(model: restore).modifier(WorkspaceFooterPadding())
+                } else if navigation.task == .restore {
                     #if DEBUG
                     if syntheticRestore {
                         if scenarios.selected == .rebuilding { rebuildActionArea(synthetic: true) }
@@ -118,6 +121,7 @@ struct ProductionWorkspace: View {
                 ToolbarItem(placement: .navigation) {
                     Button {
                         if navigation.task == .capture && capture.state == .confirmation { capture.editSelection() }
+                        else if navigation.task == .restore && restore.showingAppStore { restore.closeAppStore() }
                         else if navigation.task == .restore && restore.state == .preview { restore.back() }
                         else { navigation.task = nil }
                     } label: { Label("Back", systemImage: "chevron.backward") }
@@ -185,7 +189,7 @@ struct ProductionWorkspace: View {
         VStack(spacing: 0) {
             Divider()
             RestorePreviewActions(back: { restore.back() }, refresh: { restore.refreshPreview() },
-                                  rebuild: { restore.requestRebuild() }, canRebuild: restore.canRebuild)
+                                  rebuild: { restore.requestRebuild() }, canRebuild: restore.canRebuild, showsRebuild: restore.hasAutomaticSelection)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .modifier(WorkspaceFooterPadding())
                 .disabled(restore.busy || runtime.isActive)

@@ -143,11 +143,11 @@ struct RestoreDebugScenarioView: View {
             Text("DEBUG · Synthetic presentation · No Core actions")
                 .font(.caption).foregroundStyle(.secondary)
             if scenario == .preview {
-                RestorePreviewContent(title: "Needs Attention", message: scenario.previewSummary,
-                    state: .attention, domains: scenario.domains, counters: scenario.counters, alreadyMatches: false,
+                RestorePreviewContent(title: "Needs Attention",
+                    state: .attention, domains: scenario.domains, alreadyMatches: false,
                     prerequisites: RestorePrerequisiteSummaryPresentation(conditions: [
-                        CoreRestorePreparation.Condition(domain: "app-store", code: "authorization_required", status: "external_action_required", selectedItemIndex: nil, scope: "operation")], ready: false),
-                    areas: [CoreRestoreInspection.Area(domain: "app-store", label: "App Store Applications", selectionMode: "items", availability: "available", reason: nil, items: [])])
+                        CoreRestorePreparation.Condition(domain: "homebrew-packages", code: "homebrew_unavailable", status: "external_action_required", selectedItemIndex: nil, scope: "operation")], ready: false),
+                    areas: [CoreRestoreInspection.Area(domain: "homebrew-packages", label: "Homebrew Packages", selectionMode: "items", availability: "available", reason: nil, items: [])])
             } else {
                 OperationSummaryHeader(title: scenario == .rebuilding ? "Rebuilding Your Mac" : scenario == .done ? "All Done" : "Rebuild Completed with Issues",
                     message: scenario == .done ? "Your environment is ready. Everything was restored successfully." : "Synthetic scenario for manual visual review. Expand domains and Technical Details to inspect sample evidence.",

@@ -3,6 +3,7 @@
 import importlib.util
 import json
 import os
+import plistlib
 from pathlib import Path
 import select
 import shutil
@@ -115,6 +116,102 @@ esac
         row = next(row for row in prepared['inventory'] if row['domain'] == 'app-store')
         self.assertEqual(row['status'], 'present')
         self.assertEqual(row['items'], [{'item_id': '12345', 'label': 'Public App Name'}])
+
+    def overlap_fixture(self, confirmed=True):
+        self.fixture()
+        app = self.home / 'Applications/Fixture.app'
+        (app / 'Contents/MacOS').mkdir(parents=True)
+        (app / 'Contents/Info.plist').write_bytes(plistlib.dumps({
+            'CFBundleIdentifier': 'org.example.Fixture', 'CFBundleExecutable': 'Fixture'}))
+        executable = app / 'Contents/MacOS/Fixture'
+        executable.write_text('#!/bin/sh\n'); executable.chmod(0o700)
+        metadata = self.root / 'cask.json'
+        metadata.write_text(json.dumps({'casks': [{
+            'token': 'fixture-cask', 'installed': '1.0', 'tap': 'homebrew/cask',
+            'version': '1.0', 'disabled': False, 'sha256': 'a' * 64,
+            'url': 'https://example.org/fixture.dmg',
+            'artifacts': [{'app': ['Fixture.app'], 'target': str(app)}]}]}))
+        self.environment['CAPTURE_CASK_METADATA'] = str(metadata)
+        brew = self.root / 'bin/brew'
+        brew.write_text(brew.read_text().replace(
+            '"info --json=v2 --installed --cask") echo \'{"casks":[]}\'',
+            '"info --json=v2 --installed --cask"|"info --json=v2 --cask fixture-cask") cat "$CAPTURE_CASK_METADATA"'
+        ).replace('"list --cask") exit 0', '"list --cask") echo fixture-cask'))
+        (self.root / 'bin/mas').write_text('#!/bin/bash\necho "12345 Fixture (1.0)"\necho "67890 Other (1.0)"\n')
+        # Only the remote catalog is substituted; production observation, Prepare,
+        # Execute, Blueprint, packing and archive inspection all remain real.
+        helper = self.project / 'modules/apps/application_identity.py'
+        helper.write_text(helper.read_text() +
+            '\ndef fetch_catalog(ids):\n    return {"12345": "org.example.Fixture"} if "12345" in ids and '
+            + ('True' if confirmed else 'False') + ' else {}\n')
+        self.selection = {'categories': ['app-store', 'homebrew-casks'], 'items': {}, 'secure_identities': []}
+
+    def test_overlap_prepare_execute_and_effective_publication(self):
+        self.overlap_fixture()
+        prepared = self.prepare(self.selection)
+        self.assertEqual(prepared['selection'], self.selection)
+        self.assertEqual(prepared['effective_selection'], {
+            'categories': ['homebrew-casks'], 'items': {'app-store': ['67890']}, 'secure_identities': []})
+        self.assertEqual(prepared['application_duplicates'], [
+            {'app_store_item_id': '12345', 'cask_item_id': 'fixture-cask'}])
+        self.assertEqual(prepared['summary']['selected_items'], 2)
+        self.assertEqual(prepared['prepared_capture_id'], self.prepare(self.selection)['prepared_capture_id'])
+        # Packing must consume the validated scope without another identity decision.
+        helper = self.project / 'modules/bundle/bundle.py'
+        helper.write_text(helper.read_text() +
+            '\n_original_pack = pack\n'
+            'def pack(*args, **kwargs):'
+            '\n    assert kwargs.get("apply_precedence") is False\n'
+            '    return _original_pack(*args, **kwargs)\n')
+        result, events = self.execute(prepared['prepared_capture_id'])
+        self.assertEqual(result.returncode, 0, events)
+        published = events[-2]['data']
+        self.assertEqual(published['prepared_capture_id'], prepared['prepared_capture_id'])
+        self.assertEqual(published['bundle']['selected_item_counts']['app-store'], 1)
+        files = bundle.validate_archive(self.root / 'captured.mbt')
+        sections, _ = bundle.parse_blueprint(files['blueprint.conf'])
+        self.assertEqual(sections['app-store'], ['67890'])
+        self.assertEqual(sections['homebrew-casks'], ['fixture-cask'])
+        self.assertFalse((self.project / 'config/generated').exists())
+        self.assertFalse(Path(self.environment['TEST_MUTATIONS']).exists())
+
+    def test_overlap_without_evidence_preserves_both_requirements(self):
+        self.overlap_fixture(confirmed=False)
+        prepared = self.prepare(self.selection)
+        self.assertNotIn('effective_selection', prepared)
+        self.assertNotIn('application_duplicates', prepared)
+        self.assertEqual(prepared['summary']['selected_items'], 3)
+        result, events = self.execute(prepared['prepared_capture_id'])
+        self.assertEqual(result.returncode, 0, events)
+        files = bundle.validate_archive(self.root / 'captured.mbt')
+        self.assertEqual(bundle.parse_blueprint(files['blueprint.conf'])[0]['app-store'], ['12345', '67890'])
+
+    def test_overlap_changed_decision_rejects_before_publication(self):
+        self.overlap_fixture()
+        prepared = self.prepare(self.selection)
+        (self.home / 'Library/Application Support/Macseed/ApplicationIdentities/12345.json').unlink()
+        helper = self.project / 'modules/apps/application_identity.py'
+        helper.write_text(helper.read_text() + '\ndef fetch_catalog(ids):\n    return {}\n')
+        result, events = self.execute(prepared['prepared_capture_id'])
+        self.assertEqual(result.returncode, 2, events)
+        self.assertEqual(events[-1]['data']['code'], 'stale_prepared_capture')
+        self.assertFalse(events[-1]['data']['publication_occurred'])
+        self.assertFalse((self.root / 'captured.mbt').exists())
+
+    def test_overlap_explicit_subset_and_appstore_only(self):
+        self.overlap_fixture()
+        selected = {'categories': [], 'items': {'homebrew-casks': ['fixture-cask'], 'app-store': ['12345']},
+                    'secure_identities': []}
+        prepared = self.prepare(selected)
+        self.assertEqual(prepared['effective_selection']['items'], {'homebrew-casks': ['fixture-cask']})
+        self.assertEqual(prepared['summary']['selected_domains'], 1)
+        result, events = self.execute(prepared['prepared_capture_id'], selected)
+        self.assertEqual(result.returncode, 0, events)
+        self.assertEqual(events[-2]['data']['bundle']['selected_item_counts']['app-store'], 0)
+        selected['items'].pop('homebrew-casks')
+        store_only = self.prepare(selected)
+        self.assertNotIn('effective_selection', store_only)
+        self.assertEqual(store_only['summary']['selected_items'], 1)
 
     def workspace_fixture(self, duplicate=False):
         self.fixture(workspace=True)

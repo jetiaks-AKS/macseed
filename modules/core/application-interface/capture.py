@@ -96,12 +96,43 @@ def selection_for(selection, rows, secure):
     return chosen, [candidates[x] for x in sorted(identities)], canonical
 
 
-def blueprint(stage, chosen):
+def blueprint_data(chosen):
     flags = {name: name in chosen for name in bundle.CATEGORY_FLAGS}
     raw = '[categories]\n' + ''.join(f'{key}="{str(value).lower()}"\n' for key, value in sorted(flags.items()))
     raw += ''.join('\n[' + key + ']\n' + ''.join(value + '\n' for value in chosen.get(key, [])) for key in bundle.ITEMS)
     bundle.parse_blueprint(raw.encode())
-    bundle.write_file(stage / 'blueprint.conf', raw.encode())
+    return raw.encode()
+
+
+def blueprint(stage, chosen):
+    bundle.write_file(stage / 'blueprint.conf', blueprint_data(chosen))
+
+
+def application_scope(stage, chosen, rows, requested):
+    """Resolve the same bounded precedence before confirmation and Execute binding."""
+    if not chosen.get('homebrew-casks') or not chosen.get('app-store'):
+        return chosen, None, []
+    path = stage / 'generated/homebrew-casks.json'
+    capabilities = bundle.cask_capabilities(json.loads(bundle.checked_file(path))) if path.exists() or path.is_symlink() else {'contract': 1, 'casks': {}}
+    _, pairs, _ = bundle.application_precedence(blueprint_data(chosen), capabilities)
+    if not pairs:
+        return chosen, None, []
+    ids = {row['domain']: {entry['_source']: entry['item_id'] for entry in row['items']}
+           for row in rows if row['domain'] in ('app-store', 'homebrew-casks')}
+    effective_chosen = dict(chosen)
+    remaining = [value for value in chosen['app-store'] if value not in pairs]
+    if remaining:
+        effective_chosen['app-store'] = remaining
+    else:
+        del effective_chosen['app-store']
+    effective = {**requested, 'categories': [domain for domain in requested['categories'] if domain != 'app-store'],
+                 'items': dict(requested['items'])}
+    effective['items'].pop('app-store', None)
+    if remaining:
+        effective['items']['app-store'] = sorted(ids['app-store'][value] for value in remaining)
+    duplicates = [{'app_store_item_id': ids['app-store'][app_id], 'cask_item_id': ids['homebrew-casks'][token]}
+                  for app_id, token in sorted(pairs.items())]
+    return effective_chosen, effective, duplicates
 
 
 def scan(root, stage, event):
@@ -167,6 +198,7 @@ def included_settings(stage, row):
 
 def prepared(stage, rows, secure, selection):
     chosen, identities, canonical = selection_for(selection, rows, secure) if selection is not None else ({}, [], None)
+    chosen, effective, duplicates = application_scope(stage, chosen, rows, canonical)
     # Hash private staged inputs; neither input values nor their per-file hashes are public.
     fingerprints = {}
     for path in sorted((stage / 'generated').rglob('*')):
@@ -175,6 +207,8 @@ def prepared(stage, rows, secure, selection):
         if path.is_file():
             fingerprints[str(path.relative_to(stage))] = bundle.digest(bundle.checked_file(path))
     binding = {'schema': 1, 'inputs': fingerprints, 'inventory': rows, 'secure': secure, 'selection': canonical}
+    if duplicates:
+        binding.update(effective_selection=effective, application_duplicates=duplicates)
     prepared_id = bundle.digest(json.dumps(binding, sort_keys=True, separators=(',', ':')).encode())
     public_rows = []
     for row in rows:
@@ -186,6 +220,8 @@ def prepared(stage, rows, secure, selection):
     result = {'prepared_capture_id': prepared_id, 'inventory': public_rows, 'secure_identities': public_secure,
               'selection': canonical, 'summary': {'selected_domains': len(chosen),
                'selected_items': sum(len(values) for values in chosen.values()), 'secure_identity_count': len(identities)}}
+    if duplicates:
+        result.update(effective_selection=effective, application_duplicates=duplicates)
     return result, chosen, identities
 
 
@@ -228,7 +264,10 @@ def capture(root, operation, parameters, channel, event):
             event('phase_started', {'phase': 'bundle_creation'})
             previous = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGINT, signal.SIGTERM})
             try:
-                bundle.pack(stage, target, os.environ['HOME'], replacement_sha256=parameters.get('replacement_sha256'))
+                # Execute has freshly recomputed and checked the effective scope.
+                # Packing must not make another optional network-dependent decision.
+                bundle.pack(stage, target, os.environ['HOME'], replacement_sha256=parameters.get('replacement_sha256'),
+                            apply_precedence=False)
                 published = True
                 result = {'publication_occurred': True, 'destination': str(target),
                           'bundle': bundle.inspect_bundle(target, os.environ['HOME']),

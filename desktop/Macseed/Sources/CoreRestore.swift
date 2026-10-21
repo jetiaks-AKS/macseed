@@ -60,6 +60,15 @@ struct CoreRestorePreparation: Decodable {
     let preparedPlanID: String
     let planDiagnostics: [String: String]?
     let selection: CoreRestoreSelection
+    var effectiveSelection: CoreRestoreSelection? = nil
+    var applicationDuplicates: [ApplicationDuplicate]? = nil
+    struct ApplicationDuplicate: Decodable {
+        let appStoreItemID: String
+        let caskItemID: String
+        enum CodingKeys: String, CodingKey {
+            case appStoreItemID = "app_store_item_id", caskItemID = "cask_item_id"
+        }
+    }
     let selectedGroups: [String]
     let selectedCategories: [String]
     let selectedItemCounts: [String: Int]
@@ -70,6 +79,7 @@ struct CoreRestorePreparation: Decodable {
     let hasPlannedChanges: Bool
     let warningCount: Int
     let errorCount: Int
+    var scopeWarnings: [String]? = nil
     var hasExecutableChanges: Bool { executableChanges ?? hasPlannedChanges }
     let executableChanges: Bool?
     struct Diagnostic: Decodable, Equatable {
@@ -192,6 +202,8 @@ struct CoreRestorePreparation: Decodable {
         enum CodingKeys: String, CodingKey { case diagnostic, domain, code, status, scope, selectedItemIndex = "selected_item_index" }
     }
     enum CodingKeys: String, CodingKey {
+        case effectiveSelection = "effective_selection", applicationDuplicates = "application_duplicates"
+        case scopeWarnings = "scope_warnings"
         case planDiagnostics = "plan_diagnostics"
         case selection, preparedPlanID = "prepared_plan_id", selectedGroups = "selected_groups", selectedCategories = "selected_categories"
         case selectedItemCounts = "selected_item_counts", includeSecure = "include_secure", secureRestoreStatus = "secure_restore_status"
@@ -203,6 +215,24 @@ struct CoreRestorePreparation: Decodable {
             && readiness.conditions.contains { $0.isItemLocal && $0.domain == row.domain && $0.code == row.reason }
     }
     func validate(expected: CoreRestoreSelection, catalog: CoreRestoreInspection.Inventory) throws {
+        let effective = effectiveSelection ?? selection
+        if effectiveSelection != nil || applicationDuplicates != nil {
+            let duplicates = applicationDuplicates ?? []
+            let removed = Set(duplicates.map(\.appStoreItemID))
+            var items = expected.items
+            let remaining = (items["app-store"] ?? []).filter { !removed.contains($0) }
+            items["app-store"] = remaining.isEmpty ? nil : remaining
+            guard !duplicates.isEmpty, duplicates.count <= 2048,
+                  removed.count == duplicates.count,
+                  Set(duplicates.map(\.caskItemID)).count == duplicates.count,
+                  duplicates.allSatisfy({
+                      expected.items["app-store"]?.contains($0.appStoreItemID) == true &&
+                      expected.items["homebrew-casks"]?.contains($0.caskItemID) == true
+                  }),
+                  effective == CoreRestoreSelection(categories: expected.categories, items: items) else {
+                throw CoreRuntimeError.malformedEvent
+            }
+        }
         guard preparedPlanID.range(of: "^[0-9a-f]{64}$", options: .regularExpression) != nil,
               !includeSecure, secureRestoreStatus == "not_selected",
               Set(selectedGroups).count == selectedGroups.count,
@@ -211,6 +241,8 @@ struct CoreRestorePreparation: Decodable {
               Set(selectedCategories).count == selectedCategories.count,
               selectedItemCounts.values.allSatisfy({ (0...2048).contains($0) }),
               warningCount >= 0, errorCount >= 0, plan.count <= 65536,
+              (scopeWarnings ?? []).count <= 128,
+              (scopeWarnings ?? []).allSatisfy({ $0.range(of: "^[A-Za-z][A-Za-z -]{0,63}$", options: .regularExpression) != nil }),
               readiness.readyScope == "environment", readiness.reentry == "restore_prepare",
               readiness.conditions.allSatisfy({ ["satisfied", "safely_satisfiable", "external_action_required", "unsupported"].contains($0.status) }),
               plan.allSatisfy({ ["satisfied", "planned", "blocked", "conflict", "warning", "unknown", "pending_unlock"].contains($0.disposition) }) else {
@@ -224,11 +256,11 @@ struct CoreRestorePreparation: Decodable {
                     && row.diagnostic?.condition == "preparation_required"
                     && row.installerPreparationID!.range(of: "^[0-9a-f]{64}$", options: .regularExpression) != nil)
               }) else { throw CoreRuntimeError.malformedEvent }
-        let domains = Set(expected.categories).union(expected.items.keys)
+        let domains = Set(effective.categories).union(effective.items.keys)
         guard plan.allSatisfy({ row in
-            (row.diagnostic?.valid ?? true) && domains.contains(row.domain) && (row.selectionItemID == nil || expected.items[row.domain]?.contains(row.selectionItemID!) == true)
-        }), expected.items.allSatisfy({ selectedItemCounts[$0.key] == $0.value.count }),
-        selectedItemCounts.allSatisfy({ (expected.items[$0.key]?.count ?? 0) == $0.value }) else { throw CoreRuntimeError.malformedEvent }
+            (row.diagnostic?.valid ?? true) && domains.contains(row.domain) && (row.selectionItemID == nil || effective.items[row.domain]?.contains(row.selectionItemID!) == true)
+        }), effective.items.allSatisfy({ selectedItemCounts[$0.key] == $0.value.count }),
+        selectedItemCounts.allSatisfy({ (effective.items[$0.key]?.count ?? 0) == $0.value }) else { throw CoreRuntimeError.malformedEvent }
         guard readiness.conditions.allSatisfy({ condition in
             (condition.diagnostic?.valid ?? true) && (condition.scope == nil || condition.scope == "operation" ||
                 (condition.isItemLocal && (condition.selectedItemIndex ?? 0) <= (selectedItemCounts[condition.domain] ?? 0)))
@@ -253,11 +285,12 @@ struct AssistedAppStoreItem {
         return URL(string: "macappstore://apps.apple.com/app/id" + appID)
     }
     var productURL: URL? { status == .installed ? nil : Self.productURL(appID) }
+    var statusTitle: String { status == .missing ? "Not in App Store" : status.rawValue }
     var message: String {
         switch status {
-        case .installed: "Installation confirmed by the current App Store inventory."
-        case .missing: "Install this application in App Store, then Refresh Preview to check again."
-        case .unverified: "Macseed could not confirm installation. Refresh Preview to check again."
+        case .installed: "Confirmed by the latest check."
+        case .missing: "Install in App Store, then Refresh Status."
+        case .unverified: "Installation could not be confirmed. Refresh Status to check again."
         }
     }
 }
