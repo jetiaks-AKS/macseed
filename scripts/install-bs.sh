@@ -8,19 +8,24 @@ LAUNCHER="$TOOLKIT_ROOT/bin/bs"
 
 link_points_to_launcher() {
     local link_path="$1"
-    local link_target link_directory target_directory
+    local link_target link_directory target_directory hops=0
 
     [[ -L "$link_path" ]] || return 1
-    link_target="$(readlink "$link_path")" || return 1
-    link_directory="$(cd "$(dirname "$link_path")" && pwd -P)" || return 1
-    [[ "$link_target" == /* ]] || link_target="$link_directory/$link_target"
-    target_directory="$(cd "$(dirname "$link_target")" && pwd -P)" || return 1
-    [[ "$target_directory/$(basename "$link_target")" == "$LAUNCHER" ]]
+    while [[ -L "$link_path" ]]; do
+        ((hops+=1))
+        [[ $hops -le 40 ]] || return 1
+        link_target="$(readlink "$link_path")" || return 1
+        link_directory="$(cd "$(dirname "$link_path")" && pwd -P)" || return 1
+        [[ "$link_target" == /* ]] || link_target="$link_directory/$link_target"
+        target_directory="$(cd "$(dirname "$link_target")" && pwd -P)" || return 1
+        link_path="$target_directory/$(basename "$link_target")"
+    done
+    [[ "$link_path" == "$LAUNCHER" ]]
 }
 
 if [[ ! -x "$LAUNCHER" ]]; then
     printf 'Error: launcher is missing or not executable: %s\n' "$LAUNCHER" >&2
-    exit 1
+    exit 3
 fi
 
 if [[ -n "${BS_INSTALL_DIR:-}" ]]; then
@@ -28,7 +33,7 @@ if [[ -n "${BS_INSTALL_DIR:-}" ]]; then
 elif command -v brew >/dev/null 2>&1; then
     INSTALL_DIR="$(brew --prefix)/bin" || {
         printf 'Error: failed to resolve the Homebrew prefix\n' >&2
-        exit 1
+        exit 3
     }
 elif [[ "$(uname -m)" == arm64 ]]; then
     INSTALL_DIR="/opt/homebrew/bin"

@@ -1095,11 +1095,34 @@ struct RestoreResultFindings {
 
 // Presentation-only global issues; item/category diagnostics remain in their own rows.
 extension RestoreExecutionPresentation {
+    static func launcherFailureReason(events: [CoreEvent], payload: [String: CoreJSON]? = nil) -> String? {
+        var records = events.filter { $0.type == "operation_record" }.compactMap(\.data)
+        if case .array(let rows) = payload?["verification"]?.object?["details"]?.object?["operation_records"] {
+            records += rows.compactMap(\.object)
+        }
+        let failure = records.last { $0["domain"]?.string == "launcher" && $0["outcome"]?.string == "failure" }
+        guard failure != nil || events.contains(where: { $0.type == "execution_event" && $0.data?["domain"]?.string == "launcher"
+            && $0.data?["state"]?.string == "failed" }) else { return nil }
+        return failure?["reason"]?.string ?? "unknown"
+    }
+    static func launcherFailureMessages(events: [CoreEvent], payload: [String: CoreJSON]? = nil) -> [String] {
+        guard let reason = launcherFailureReason(events: events, payload: payload) else { return [] }
+        let explanation: String
+        switch reason {
+        case "launcher_destination_conflict": explanation = "An existing bs command points elsewhere or occupies the destination. It was preserved. Choose which Macseed installation should own the command before retrying."
+        case "launcher_inspection_failed": explanation = "The launcher destination could not be inspected. Review View Log."
+        case "launcher_install_failed": explanation = "The launcher could not be installed. Review View Log."
+        case "launcher_verification_failed": explanation = "The launcher installation could not be verified. Review View Log."
+        default: explanation = "Review View Log for the reported cause."
+        }
+        return ["Macseed Launcher could not be restored. " + explanation + " Automatic requirement counts do not include this step."]
+    }
     func globalProblemMessages(knownDomains: Set<String>) -> [String] {
+        let launcherFailures = Self.launcherFailureMessages(events: diagnosticEvents, payload: structuredEvidence)
         var seen = Set<String>()
-        return findings.filter { finding in
+        return launcherFailures + findings.filter { finding in
             let domain = String(finding.id.split(separator: ":").first ?? "")
-            return finding.id != "result-incomplete" && !knownDomains.contains(domain)
+            return (launcherFailures.isEmpty || domain != "launcher") && finding.id != "result-incomplete" && !knownDomains.contains(domain)
                 && !["bootstrap_failed", "cancelled", "secure_cancelled"].contains(finding.reason ?? "")
         }.compactMap { finding in
             seen.insert(finding.action).inserted ? finding.action : nil

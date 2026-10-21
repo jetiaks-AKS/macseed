@@ -2475,6 +2475,25 @@ exit 0
         self.assertEqual(rejected[-1]['data']['code'], 'stale_plan')
         self.assertFalse(rejected[-1]['data']['target_mutation_may_have_started'])
 
+    def test_launcher_conflict_is_typed_and_never_becomes_appstore_failure(self):
+        self.mas_fixture()
+        launcher = self.root / 'bin/bs'
+        launcher.unlink()
+        launcher.write_text('#!/bin/sh\nexit 0\n'); launcher.chmod(0o700)
+        before = launcher.read_bytes()
+        self.pack()
+        plan = self.plan_result()
+        result, events = self.execute(plan['prepared_plan_id'])
+        self.assertEqual(result.returncode, 2, events)
+        payload = events[-1]['data']
+        records = payload['verification']['details']['operation_records']
+        self.assertTrue(any(r['domain'] == 'launcher' and r['reason'] == 'launcher_destination_conflict'
+                            and r['outcome'] == 'failure' for r in records), records)
+        self.assertFalse(any(r['domain'] == 'app-store' and r['outcome'] == 'failure' for r in records))
+        self.assertEqual(payload['verification']['status'], 'complete')
+        self.assertEqual(launcher.read_bytes(), before)
+        self.assertFalse((self.root / 'mas-log').exists())
+
     def test_assisted_appstore_unverified_does_not_block_workspace(self):
         mas = self.mas_fixture()
         self.pack()

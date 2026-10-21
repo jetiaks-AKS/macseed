@@ -146,6 +146,37 @@ else
 fi
 
 rm "$TEST_ROOT/other-bin/bs"
+ln -s ../toolkit/bin/bs "$TEST_ROOT/other-bin/intermediate"
+ln -s intermediate "$TEST_ROOT/other-bin/bs"
+PATH="$TEST_ROOT/other-bin:$INSTALL_DIR:/usr/bin:/bin" BS_INSTALL_DIR="$INSTALL_DIR" \
+    "$FIXTURE/scripts/install-bs.sh" --check
+if [[ $? -eq 0 && ! -e "$INSTALL_DIR/bs" ]]; then
+    pass "equivalent launcher symlink chain is an unchanged no-op"
+else
+    fail "equivalent symlink chain"
+fi
+rm "$TEST_ROOT/other-bin/bs"
+# Identical launcher bytes in a different checkout dispatch a different Core.
+mkdir -p "$TEST_ROOT/other-checkout/bin"
+cp "$FIXTURE/bin/bs" "$TEST_ROOT/other-checkout/bin/bs"
+ln -s "$TEST_ROOT/other-checkout/bin/bs" "$INSTALL_DIR/bs"
+PATH="$INSTALL_DIR:/usr/bin:/bin" BS_INSTALL_DIR="$INSTALL_DIR" \
+    "$FIXTURE/scripts/install-bs.sh" --check > "$TEST_ROOT/other-checkout-output" 2>&1
+if [[ $? -eq 2 && "$(readlink "$INSTALL_DIR/bs")" == "$TEST_ROOT/other-checkout/bin/bs" ]]; then
+    pass "another checkout is preserved even with identical launcher bytes"
+else
+    fail "other checkout conflict"
+fi
+rm "$INSTALL_DIR/bs"
+ln -s missing-target "$INSTALL_DIR/bs"
+PATH="$INSTALL_DIR:/usr/bin:/bin" BS_INSTALL_DIR="$INSTALL_DIR" \
+    "$FIXTURE/scripts/install-bs.sh" > "$TEST_ROOT/dangling-output" 2>&1
+if [[ $? -eq 2 && "$(readlink "$INSTALL_DIR/bs")" == missing-target ]]; then
+    pass "dangling destination is preserved"
+else
+    fail "dangling destination conflict"
+fi
+rm "$INSTALL_DIR/bs"
 printf '#!/bin/bash\n' > "$INSTALL_DIR/bs"
 chmod +x "$INSTALL_DIR/bs"
 PATH="$INSTALL_DIR:/usr/bin:/bin" BS_INSTALL_DIR="$INSTALL_DIR" \
@@ -191,6 +222,7 @@ chmod +x "$MODULE_INSTALLER"
 success() { MODULE_OUTPUT="${MODULE_OUTPUT}SUCCESS:$1\n"; }
 action() { MODULE_OUTPUT="${MODULE_OUTPUT}ACTION:$1\n"; }
 error() { MODULE_OUTPUT="${MODULE_OUTPUT}ERROR:$1\n"; }
+verification_application_operation_hook() { MODULE_RECORD="$*"; }
 cd "$FIXTURE" || exit 2
 source "$FIXTURE/modules/core/launcher/launcher.sh"
 
@@ -199,6 +231,7 @@ run_module_case() {
     export MODULE_SCENARIO MODULE_CALLS MODULE_MARKER
     MODULE_CHANGED=false
     MODULE_OUTPUT=""
+    MODULE_RECORD=""
     : > "$MODULE_CALLS"
     rm -f "$MODULE_MARKER"
     configure_bs_launcher
@@ -247,6 +280,13 @@ for failure_case in conflict unwritable install-failure verify-failure; do
     else
         fail "$failure_case failure lifecycle"
     fi
+    case "$failure_case" in
+        conflict) expected_reason=launcher_destination_conflict ;;
+        verify-failure) expected_reason=launcher_verification_failed ;;
+        *) expected_reason=launcher_install_failed ;;
+    esac
+    [[ "$MODULE_RECORD" == "launcher scope restore failure $expected_reason" ]] &&
+        pass "$failure_case has a current typed cause" || fail "$failure_case typed cause"
 done
 
 bootstrap_launcher_line="$(rg -n 'run_module "bs Launcher" configure_bs_launcher' \

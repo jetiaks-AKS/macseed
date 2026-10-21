@@ -483,6 +483,15 @@ import SwiftUI
         func json(_ value: [String: Any]) throws -> [String: CoreJSON] {
             try JSONDecoder().decode(CoreJSON.self, from: JSONSerialization.data(withJSONObject: value)).object!
         }
+        let launcherFailure = try CoreEvent(line: JSONSerialization.data(withJSONObject: ["protocol_version": 1,
+            "operation_id": "checks", "sequence": 1, "type": "execution_event",
+            "data": ["domain": "launcher", "item_id": "scope", "state": "failed", "reason": "module_failed"]]))
+        precondition(RestoreExecutionPresentation.launcherFailureMessages(events: [launcherFailure]).count == 1)
+        precondition(RestoreExecutionPresentation.launcherFailureMessages(events: []).isEmpty)
+        let launcherRecord: [String: Any] = ["domain": "launcher", "item_id": "scope", "action": "restore", "outcome": "failure", "reason": "launcher_destination_conflict"]
+        let launcherPayload = try json(["verification": ["details": ["operation_records": [launcherRecord]]]])
+        precondition(RestoreExecutionPresentation.launcherFailureMessages(events: [], payload: launcherPayload).first!.contains("It was preserved"))
+        precondition(!RestoreExecutionPresentation.launcherFailureMessages(events: [launcherFailure]).first!.contains("points elsewhere"))
         let provider = CoreRestorePreparation.Diagnostic(primitive: "payload", condition: "provider_conflict")
         precondition(provider.explanation.contains("uncertain") && provider.repairExplanation == provider.explanation)
         let id = String(repeating: "a", count: 64)
