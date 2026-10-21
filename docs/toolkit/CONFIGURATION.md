@@ -506,6 +506,25 @@ Checkout only on confirmed branch mismatch or detached HEAD with clean state;
 verify exact `CURRENT_BRANCH` afterwards. Failed observation or mismatch is an
 error. No reset, clean, forced checkout or automatic remote change occurs.
 
+### Linked Git worktree capability limits
+
+Repository Discovery recursively scans HOME folders classified as `workspace`
+for `.git` directories. It currently ignores `.git` files, so linked worktrees
+are absent from Capture inventory. Capture Prepare rescans into private staging;
+refreshing a saved Discovery snapshot does not remove this limitation.
+
+Bundle repository records do not encode a common Git directory or relationships
+between worktrees. Restore can inspect an existing linked worktree, but treats
+each record independently: an absent path plans a clone, and branch mismatch can
+plan checkout without detecting occupancy in another worktree. This does not
+provide topology restoration or justify treating an absent linked worktree as an
+independent clone. Adding `.git` file detection alone is not a complete solution.
+
+Topology-aware Discovery, Capture and Restore require the separate
+[Workspace/Git checkpoint](../../ROADMAP.md#complete-workspace--git-worktree-restoration)
+and its architecture/data-contract review. No independent-clone fallback has been
+selected; current Protocol V1 and Bundle v1 contracts remain unchanged.
+
 ## VS Code settings lifecycle
 
 `vscode/settings.json` is an optional byte-for-byte snapshot. Missing source

@@ -36,9 +36,8 @@ owns the implemented application contract.
 secure integration or packaged clean-Mac readiness. Slice IDs are historical
 identifiers, not execution order. The historical Homebrew baseline is `778b816`,
 with subsequent real-Mac qualification (2026-10-17). Assisted App Store Restore is
-an accepted development milestone; branch integration and later product gates
-remain separate. Implemented means
-code exists; automated-tested and
+completed and integrated into `develop`; later product gates remain open.
+Implemented means code exists; automated-tested and
 real-Mac qualified describe separate evidence. Partial qualification does not close
 open/deferred gates, and no completed slice alone establishes release readiness.
 
@@ -85,7 +84,10 @@ Assisted App Store Restore now captures requirements, supports selection/Preview
 manual installation in Apple App Store and fresh Core verification. Confirmed
 identity overlap follows Cask-first precedence. Automatic MAS development is
 preserved on `archive/mas-automatic-restore-v4` and is outside the active path.
-This milestone does not complete Stage 16 or make Macseed 1.0 release-ready.
+The Assisted Restore milestone's Stage 5 Core/Desktop regression gate passed.
+A fresh real Capture → Rebuild → Verification gate on the current Mac remains
+outstanding. This completed development milestone does not complete Stage 16 or
+make Macseed 1.0 release-ready.
 
 1. **Remaining supported-domain Restore qualification:** continue Homebrew
    compatibility gates and the Desktop Zsh, configuration and other supported-domain
@@ -96,9 +98,11 @@ This milestone does not complete Stage 16 or make Macseed 1.0 release-ready.
    Cask reconciliation, installer/privileged-process quiescence, watchdog, partial
    and interrupted Verification, stale inputs, transport, accessibility and lifecycle
    ownership. Diagnostic logs do not provide recovery authority.
-4. **Stage 17 — Distribution & Clean-Mac Qualification.**
-5. **Early Access / Alpha.**
-6. **Macseed 1.0.** Release Readiness is not the current checkpoint.
+4. **[Complete Workspace & Git Worktree Restoration](#complete-workspace--git-worktree-restoration):**
+   review architecture/data contracts before implementation and qualification.
+5. **Stage 17 — Distribution & Clean-Mac Qualification.**
+6. **Early Access / Alpha.**
+7. **Macseed 1.0.** Release Readiness is not the current checkpoint.
 
 Real-Mac performance observations and their differing-run limitations are recorded
 in [Desktop qualification](docs/DESKTOP.md#recent-restore-qualification-and-performance),
@@ -112,6 +116,28 @@ The bounded macOS settings expansion and Capture Result refinements are
 implemented with focused automated coverage. Their remaining macOS 27 manual
 qualification is tracked in [TODO](TODO.md#macos-settings-manual-qualification);
 this does not close Stage 16 or the remaining supported-domain Restore gates.
+
+## Complete Workspace & Git Worktree Restoration
+
+**Planned capability checkpoint.** Requires its own architecture and data-contract
+review before implementation; no partial support or independent-clone fallback is
+approved. [Configuration](docs/toolkit/CONFIGURATION.md#linked-git-worktree-capability-limits)
+records the current Discovery/Capture and Restore limitations.
+
+- Discover repositories and linked worktrees, identify common Git directories
+  and capture their topology and checkout relationships.
+- Restore base repositories and linked worktrees in a safe dependency order;
+  validate remotes, branches and paths, including occupied branches and conflicting
+  worktree destinations.
+- Preserve existing tracked, staged, untracked and ignored files. Cover Workspace
+  folder structure and VS Code workspace relationships through Selection, Preview,
+  explicit conflict handling and Global Verification.
+- Establish idempotency, fresh-inspection retry and representative real-world
+  gates, including repeat/no-op convergence.
+
+Any transfer of unique Workspace data requires a separate bounded secure migration
+contract. Current Folders restores structure only; unrestricted project-content
+copying and general backup remain outside scope.
 
 ## Stage 17 — Distribution & Clean-Mac E2E
 

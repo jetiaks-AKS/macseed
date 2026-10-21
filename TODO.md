@@ -40,6 +40,13 @@ confirmed 37/37 saved values, not all visual effects or the remaining Restore ga
 
 ## Mandatory Restore capability gaps
 
+The completed Assisted Restore milestone's Stage 5 Core/Desktop regression gate
+passed; fresh real current-Mac end-to-end qualification remains open.
+
+- [ ] Complete a fresh real Capture → Rebuild → Verification gate on the current
+  Mac after explicit scope approval and fresh Preview. Preserve archive/worktree
+  state, resolve or explicitly exclude conflicts through supported selection, and
+  check repeat/no-op convergence. This does not replace Stage 17 clean-Mac gates.
 - [ ] **Secure SSH Desktop (16H):** implement/qualify the inherited FD/challenge
   bridge, opt-in Capture encryption and Restore unlock/import confirmation over
   the existing engine; qualify age/OpenSSH PTY behavior. Extend privacy/report
@@ -52,11 +59,21 @@ confirmed 37/37 saved values, not all visual effects or the remaining Restore ga
   scope through the [capability process](CONTRIBUTING.md#capability-qualification).
   VS Code dependency protection must remain explicit in install/re-entry results;
   current Restore has no uninstall consumer.
-- [ ] Define whether configurable Workspace discovery roots are needed (current
-  folder discovery observes immediate HOME children), and qualify existing folder/
-  repository conflict preservation and repeat/no-op under that supported contract.
-  Folders remains structure-only; unique-data transfer is a separate
-  [future direction](ROADMAP.md#post-10--future-direction).
+
+## Complete Workspace & Git Worktree Restoration
+
+Follow the [planned capability checkpoint](ROADMAP.md#complete-workspace--git-worktree-restoration);
+the [current limits](docs/toolkit/CONFIGURATION.md#linked-git-worktree-capability-limits)
+remain in force until a reviewed contract is implemented.
+
+- [ ] Review topology/identity, Capture/Bundle compatibility and Restore ordering
+  contracts before coding; decide discovery roots and branch/path conflict policy.
+- [ ] Implement the agreed Discovery → Selection → Capture → Preview → Restore
+  → Verification path, including Workspace folders and VS Code workspace relations.
+- [ ] Qualify file preservation, occupied branches, conflicting paths, observation
+  failure, retry and repeat/no-op with disposable fixtures and representative real gates.
+- [ ] Define any unique Workspace-data transfer through a separate bounded secure
+  migration contract; keep current folder restoration structure-only.
 
 ## Remaining completion qualification (16I)
 
