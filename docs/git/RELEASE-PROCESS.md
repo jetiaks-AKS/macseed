@@ -3,6 +3,9 @@
 Procedure for preparing and publishing a new stable version of
 **Macseed**.
 
+For everyday development, branch roles and worktree safety, see
+[Git Workflow](GIT-WORKFLOW.md).
+
 The release process publishes an already completed and validated state of the
 project. It must not introduce new functionality during release preparation.
 

@@ -214,9 +214,12 @@ Report validation, limitations and publication state precisely.
 
 ## Git process
 
-Check the branch before edits. Development belongs on `develop`; `main` is stable
-releases only. If not on `develop`, report and wait for a decision; never switch
-branches automatically over local changes. Preserve unrelated work.
+Follow [Git Workflow](docs/git/GIT-WORKFLOW.md) for branch roles and worktree safety.
+Check the directory, branch and HEAD before edits. Use `develop` by default;
+`feat/*` worktrees require task authorization. `main` changes require separately
+agreed stabilization or release work. If the context differs from the authorized
+task, report and wait; never switch branches automatically over local changes.
+Preserve unrelated work.
 
 Do not commit/push unless authorized. Never push, merge, tag, rebase, force-push
 or modify remote state without explicit request. Before authorized commits review

@@ -73,6 +73,7 @@ remains supported and released toolkit/CLI history is preserved.
 - [Core application interface](docs/core/APPLICATION-INTERFACE.md)
 - [Desktop](docs/DESKTOP.md) and [Distribution](docs/DISTRIBUTION.md)
 - [Roadmap](ROADMAP.md) and [Changelog](CHANGELOG.md)
+- [Git Workflow](docs/git/GIT-WORKFLOW.md) and [Release Process](docs/git/RELEASE-PROCESS.md)
 - [Russian convenience copies](docs/ru/INDEX.md) — English is authoritative
 
 ## Support and license
