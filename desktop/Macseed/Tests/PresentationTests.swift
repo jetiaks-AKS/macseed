@@ -13,6 +13,97 @@ private struct PreviewExpansionHost: View {
 }
 
 @main struct PresentationTests {
+    @MainActor static func sidebarLayoutChecks() {
+        _ = NSApplication.shared
+        func splitController(in view: NSView) -> NSSplitViewController? {
+            if let split = view as? NSSplitView, let controller = split.delegate as? NSSplitViewController {
+                return controller
+            }
+            return view.subviews.lazy.compactMap { splitController(in: $0) }.first
+        }
+        func navigationList(in view: NSView) -> NSTableView? {
+            if let table = view as? NSTableView { return table }
+            return view.subviews.lazy.compactMap { navigationList(in: $0) }.first
+        }
+        func settle(_ window: NSWindow, duration: TimeInterval = 0.08) {
+            window.contentView?.layoutSubtreeIfNeeded()
+            RunLoop.main.run(until: Date(timeIntervalSinceNow: duration))
+            window.contentView?.layoutSubtreeIfNeeded()
+        }
+        func detailWidth(_ split: NSSplitViewController) -> CGFloat {
+            let detail = split.splitViewItems.last!.viewController.view
+            // On macOS 26 the native floating sidebar occupies a safe-area inset
+            // rather than reducing the full-bleed detail view's frame.
+            return detail.bounds.width - detail.safeAreaInsets.left - detail.safeAreaInsets.right
+        }
+        func check<V: View>(_ view: V, name: String, tasks: [ProductTask?], navigate: (ProductTask?, NSView) -> Void) {
+            let host = NSHostingController(rootView: view.frame(minWidth: MainWindowPolicy.minimum.width,
+                                                               minHeight: MainWindowPolicy.minimum.height))
+            host.sizingOptions = []
+            let window = NSWindow(contentViewController: host)
+            window.isReleasedWhenClosed = false
+            MainWindowPolicy.apply(to: window)
+            window.setContentSize(NSSize(width: 1600, height: 800))
+            window.orderFront(nil)
+            defer { window.close() }
+            settle(window)
+            guard let split = splitController(in: host.view), let sidebar = split.splitViewItems.first else {
+                preconditionFailure("Missing native sidebar in \(name)")
+            }
+            for task in tasks {
+                navigate(task, host.view)
+                for width in [1600.0, 1200, 1000, 1200, 1600, 1000] {
+                    window.setContentSize(NSSize(width: width, height: 800))
+                    settle(window)
+                    let thickness = sidebar.viewController.view.frame.width
+                    precondition(abs(host.view.bounds.width - width) < 1)
+                    precondition(!sidebar.isCollapsed && abs(thickness - 215) < 1,
+                                 "Visible sidebar must stay 215pt wide during resize")
+                    precondition(!sidebar.viewController.view.isHiddenOrHasHiddenAncestor)
+                    precondition(sidebar.viewController.view.visibleRect.width >= 214)
+                    precondition(!sidebar.canCollapseFromWindowResize)
+                    precondition(detailWidth(split) > width - 240, "Detail must retain the remaining width")
+                }
+                let visibleDetailWidth = detailWidth(split)
+                let selectedRows = navigationList(in: sidebar.viewController.view)?.selectedRowIndexes
+                split.toggleSidebar(nil)
+                settle(window, duration: 0.4)
+                precondition(sidebar.isCollapsed, "Existing sidebar toggle must hide the sidebar")
+                precondition(detailWidth(split) > visibleDetailWidth + 200,
+                             "Hidden sidebar must release its width to detail")
+                for width in [1600.0, 1200, 1000] {
+                    window.setContentSize(NSSize(width: width, height: 800))
+                    settle(window)
+                    precondition(sidebar.isCollapsed, "Resize must preserve explicit hidden state")
+                }
+                split.toggleSidebar(nil)
+                settle(window, duration: 0.4)
+                precondition(!sidebar.isCollapsed && abs(sidebar.viewController.view.frame.width - 215) < 1,
+                             "Existing toggle must restore the normal sidebar width")
+                precondition(!sidebar.viewController.view.isHiddenOrHasHiddenAncestor)
+                precondition(sidebar.viewController.view.visibleRect.width >= 214)
+                precondition(navigationList(in: sidebar.viewController.view)?.selectedRowIndexes == selectedRows,
+                             "Resize and toggle must preserve navigation selection")
+            }
+            print("PASS: \(name) sidebar resize/toggle at 1600/1200/1000pt across \(tasks.count) navigation destinations")
+        }
+        let tasks = [nil] + ProductTask.allCases.map(Optional.some)
+        #if DEBUG
+        let session = DemoSession()
+        check(DemoWorkspace(session: session), name: "preview", tasks: tasks) { task, _ in session.navigate(task) }
+        #endif
+        // No Core launch or local operation-log writes in this native layout fixture.
+        let runtime = CoreRuntime(resolver: CoreLocationResolver(resources: nil), operationLogs: nil)
+        check(ProductionWorkspace(runtime: runtime), name: "production", tasks: tasks) { task, view in
+            guard let table = navigationList(in: view) else { preconditionFailure("Missing native navigation list") }
+            let row = task.map { ProductTask.allCases.firstIndex(of: $0)! + 2 } ?? 1
+            table.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+            precondition(table.selectedRow == row)
+        }
+        precondition(!runtime.isActive && runtime.events.isEmpty)
+        print("PASS: Native sidebar stays fixed at 1600/1200/1000pt; toggle hides/restores it and expands detail")
+    }
+
     @MainActor static func captureResultActionsChecks() {
         let source = try! String(contentsOfFile: "Sources/CaptureView.swift")
         let result = source.components(separatedBy: "            case .result:")[1]
@@ -1508,6 +1599,7 @@ private struct PreviewExpansionHost: View {
     }
 
     @MainActor static func main() {
+        if CommandLine.arguments.contains("--sidebar-layout-only") { sidebarLayoutChecks(); return }
         if CommandLine.arguments.contains("--preview-expansion-only") { previewExpansionPerformanceChecks(); return }
         if CommandLine.arguments.contains("--preview-appstore-layout-only") { previewColumnGeometryChecks(); resultStatusAlignmentChecks(); appStoreVisualChecks(); return }
         if CommandLine.arguments.contains("--selection-preview-only") { resultCleanupChecks(); resultStatusAlignmentChecks(); return }
@@ -1664,6 +1756,7 @@ private struct PreviewExpansionHost: View {
         precondition(CaptureMetricCard.tone(attention: true, count: 0) == .neutral)
         precondition(CaptureMetricCard.tone(attention: true, count: 1) == .amber)
         visualContractChecks()
+        sidebarLayoutChecks()
         renderUnifiedSettings()
         renderRestoreV2()
         renderInitialStates()

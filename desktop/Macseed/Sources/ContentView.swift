@@ -518,7 +518,7 @@ struct DemoWorkspace: View {
             }
             .modifier(InsetSidebarSurface())
             .disabled(session.busy)
-            .navigationSplitViewColumnWidth(min: 200, ideal: 215)
+            .modifier(MainSidebarLayout())
         } detail: {
             VStack(spacing: 0) {
                 ScrollView {

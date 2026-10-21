@@ -40,7 +40,7 @@ struct ProductionWorkspace: View {
             }
             .modifier(InsetSidebarSurface())
             .disabled(busy)
-            .navigationSplitViewColumnWidth(min: 200, ideal: 215)
+            .modifier(MainSidebarLayout())
         } detail: {
             VStack(spacing: 0) {
                 ScrollView {
@@ -225,6 +225,48 @@ struct ProductionWorkspace: View {
         if restore.source != bundle { restore.choose(bundle) }
         task = .restore
     }
+}
+
+// Keep the native split view and its toolbar toggle. SwiftUI column widths are
+// preferences; enforce the visible width and disable resize-driven collapsing
+// on the owning AppKit item without changing its explicit collapsed state.
+struct MainSidebarLayout: ViewModifier {
+    static let width: CGFloat = 215
+    func body(content: Content) -> some View {
+        content.navigationSplitViewColumnWidth(Self.width)
+            .background(MainSidebarConfiguration())
+    }
+}
+
+private struct MainSidebarConfiguration: NSViewRepresentable {
+    final class SidebarView: NSView {
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            configureSidebar()
+        }
+        override func layout() {
+            super.layout()
+            configureSidebar()
+        }
+        func configureSidebar() {
+            var responder: NSResponder? = self
+            while let current = responder {
+                if let split = current as? NSSplitViewController,
+                   let sidebar = split.splitViewItems.first(where: { $0.behavior == .sidebar }) {
+                    if sidebar.minimumThickness != MainSidebarLayout.width { sidebar.minimumThickness = MainSidebarLayout.width }
+                    if sidebar.maximumThickness != MainSidebarLayout.width { sidebar.maximumThickness = MainSidebarLayout.width }
+                    if sidebar.canCollapseFromWindowResize { sidebar.canCollapseFromWindowResize = false }
+                    if sidebar.collapseBehavior != .preferResizingSiblingsWithFixedSplitView {
+                        sidebar.collapseBehavior = .preferResizingSiblingsWithFixedSplitView
+                    }
+                    return
+                }
+                responder = current.nextResponder
+            }
+        }
+    }
+    func makeNSView(context: Context) -> SidebarView { SidebarView() }
+    func updateNSView(_ view: SidebarView, context: Context) { view.configureSidebar() }
 }
 
 // Applied only to the main scene; sheets and Settings retain native sizing.
