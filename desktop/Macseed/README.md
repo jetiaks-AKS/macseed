@@ -91,9 +91,21 @@ build and `git diff --check` (plus syntax/lint when code requires it). Run canon
 `./scripts/test.sh` full regression at major checkpoints/releases or when broad
 contracts require it, not mechanically after every small slice. Documentation-only
 changes require consistency/link review and diff-check, not runtime tests or builds.
-The `Debug --test` command below runs the registered Desktop suites, including
-OperationLogTests, OperationLogViewTests and DiagnosticReportTests; select focused
-harnesses for narrower work.
+The canonical `Debug --test` command below runs all eight registered Desktop
+suites sequentially: PresentationTests, DiagnosticReportTests, OperationLogViewTests,
+OperationLogTests, CoreRuntimeTests, EnvironmentStatusTests, CaptureTests and
+RestoreTests. Each executable is compiled once. Restore additionally runs its
+existing final-UX and Assisted App Store flow subsets using that same executable;
+the full Restore suite is not repeated.
+
+Standard coverage includes Selection/Preview state, Assisted App Store navigation
+and Refresh, requested/effective Capture scope and real Bundle publication,
+Result/Verification projection and responsive status/column geometry at
+420/785/985 points. Capture and Restore use `--no-renders` to omit their large
+window/screenshot matrices; model/Core assertions still run, and the complete
+PresentationTests suite retains bounded native layout assertions. Production Core
+tests use disposable HOME/tools/Bundles, not real Capture/Rebuild or installations.
+Native layout checks require a logged-in macOS GUI session.
 
 - `Sources/Presentation.swift`: small shared display values, no domain algorithms.
 - `Sources/ContentView.swift`: native reusable views and task content.
@@ -109,11 +121,26 @@ harnesses for narrower work.
 ./desktop/Macseed/build.sh Release --test
 ```
 
+For optional screenshots or performance investigation, run the already-built
+harnesses from `desktop/Macseed`:
+
+```bash
+cd desktop/Macseed
+./build/Debug/RestoreTests "$(cd ../.. && pwd -P)" "$(xcrun --find python3)" --preview-appstore-layout-only
+./build/Debug/CaptureTests "$(cd ../.. && pwd -P)" "$(xcrun --find python3)"
+./build/Debug/PresentationTests --preview-expansion-only
+```
+
+Existing focused flags remain available. Omitting `--no-renders` enables
+Capture/Restore screenshots; `--stress` expands the optional Preview benchmark.
+These specialized matrices and benchmarks are not required by the standard gate.
+
 For the focused native checkbox test in a logged-in macOS GUI session, after the
 Debug test build:
 
 ```bash
-desktop/Macseed/build/Debug/PresentationTests --native-controls
+cd desktop/Macseed
+./build/Debug/PresentationTests --native-controls
 ```
 
 This checks actual NSButton mixed states/actions and checkbox/label hit bounds;
@@ -413,9 +440,11 @@ CI success is claimed. Final Restore Result categories/disclosures and confirmed
 Successful / Needs Attention / Skipped cards are implemented and manually accepted;
 Verified evidence is distinct from Applied, and Process Result from Verification.
 Controlled Early Cancelled/Partial Stopped checks are accepted. These do not close
-all 16I/16K qualification, Stage 3C or native installer quiescence. The next checkpoint
-is the current Cask/Tailscale unsupported capability, followed by MAS and remaining
-Restore/Secure SSH gaps in the authoritative Roadmap order.
+all 16I/16K qualification, Stage 3C or native installer quiescence. Remaining work
+continues supported-domain Restore/Homebrew qualification and Secure SSH gaps in
+the authoritative Roadmap order. Assisted App Store Restore is an accepted
+development milestone, with manual installation and fresh Core verification;
+automatic MAS development is archived on `archive/mas-automatic-restore-v4`.
 
 The full Debug Scenario Catalog is deferred UI/dev tooling, not cancelled. Retain
 Debug design-preview, sample fixtures and DemoSession; a small Lite catalog over

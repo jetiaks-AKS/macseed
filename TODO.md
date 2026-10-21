@@ -1,9 +1,12 @@
 # TODO
 
 Concrete unfinished actions only. Functional Restore Result/Visual Unification,
-operation-wide Graceful Stop implementation, performance optimization and Stage 16J
-Logging & Diagnostics are implemented. Their remaining qualification gates below
-do not reopen completed UI work. Stage 16 as a whole remains open; follow the single
+operation-wide Graceful Stop implementation, performance optimization, Stage 16J
+Logging & Diagnostics and Assisted App Store Restore are implemented. Assisted
+Restore is an accepted development milestone, not Macseed 1.0 completion.
+Automatic MAS development is archived on `archive/mas-automatic-restore-v4`.
+The remaining qualification gates below do not reopen completed UI work.
+Stage 16 as a whole remains open; follow the single
 [Current Execution Order](ROADMAP.md#current-practical-execution-order).
 
 <a id="restorehomebrew-checkpoint--08e2b469"></a>
@@ -11,8 +14,8 @@ do not reopen completed UI work. Stage 16 as a whole remains open; follow the si
 ## Continuing Homebrew qualification
 
 Clean Install qualification is recorded in
-[Desktop](docs/DESKTOP.md#recent-restore-qualification-and-performance). MAS Restore
-is the next mandatory functional priority. Unsafe Tailscale Repair remains
+[Desktop](docs/DESKTOP.md#recent-restore-qualification-and-performance). Continue
+the remaining supported-domain Restore gates below. Unsafe Tailscale Repair remains
 Unsupported (`ownership_unproven`); in-place Repair is not implemented.
 
 - [ ] Broaden representative Homebrew Install/Repair → Verify → fresh no-op gates
@@ -23,7 +26,7 @@ Unsupported (`ownership_unproven`); in-place Repair is not implemented.
 
 Focused fixtures and the Desktop Debug build cover the settings/Capture UX
 checkpoint. The [2026-10-17 real Restore](docs/toolkit/CONFIGURATION.md#controlled-macos-27-restore-qualification)
-confirmed 37/37 saved values, not all visual effects; MAS Restore priority is unchanged.
+confirmed 37/37 saved values, not all visual effects or the remaining Restore gates.
 
 - [ ] Qualify the real visual effect of Screenshots Window shadow and Floating
   thumbnail on macOS 27, including repeat/no-op behavior.
@@ -37,12 +40,6 @@ confirmed 37/37 saved values, not all visual effects; MAS Restore priority is un
 
 ## Mandatory Restore capability gaps
 
-- [ ] **MAS automatic restoration — mandatory before 1.0:** close real Desktop
-  authorization → install → post-Verify → repeat/no-op qualification. Core already
-  has the non-interactive `sudo -n` install path and mock coverage; complete any
-  missing safe authorization interaction through that boundary. Deselecting MAS
-  or showing `authorization_required` does not close the task. Preserve account,
-  entitlement and privileged-child interruption safeguards.
 - [ ] **Secure SSH Desktop (16H):** implement/qualify the inherited FD/challenge
   bridge, opt-in Capture encryption and Restore unlock/import confirmation over
   the existing engine; qualify age/OpenSSH PTY behavior. Extend privacy/report
@@ -81,8 +78,9 @@ Diagnostic records do not establish durable recovery or installer quiescence.
 - [ ] Qualify native installer Stop timing and detached/privileged process
   quiescence; controlled real-Mac Stop cases and the historical Firefox smoke
   test do not prove universal safety.
-- [ ] Qualify MAS interruption separately, plus Formula, VS Code Extensions and
-  Git re-entry. Operation-wide Stop admission does not qualify every native lifecycle.
+- [ ] Qualify Formula, VS Code Extensions and Git re-entry. Operation-wide Stop
+  admission does not qualify every native lifecycle; App Store installation is
+  manual and outside Core's installer cancellation boundary.
 - [ ] Independently qualify a real approximately 180-second no-progress watchdog
   stall, owned descendant termination and continued independent work.
 - [ ] **16K:** qualify unexercised stale-input/plan and transport/terminal failures,

@@ -378,6 +378,54 @@ stricter and belongs to the Core reference.
 
 App Store presence uses exact ID, VS Code exact case-sensitive extension ID.
 Inventory errors are not absence; exact presence is verified after installation.
+App Store absence means its provider-specific requirement is unsatisfied; it does
+not establish physical application absence. Bundle v1 `ID|name` records do not
+prove an App Store ID-to-bundle-identifier relationship. Matching display names
+or Homebrew installation never satisfy an App Store requirement.
+
+When both requirements are selected and their application identity is confirmed,
+**Homebrew Cask takes precedence over App Store**. Capture removes the duplicate
+from the saved effective Blueprint; Restore applies the same rule to its private
+Blueprint after Selection. Original archives and complete Discovery inventories
+remain intact. Selecting App Store without the Cask preserves the App Store
+requirement. Preview, execution and Global Verification use the effective scope;
+an excluded duplicate contributes neither a manual action nor a MAS mismatch.
+Failure of the retained Cask remains a Cask failure, with no App Store fallback.
+
+Confirmation requires an exact numeric ID binding from Apple's HTTPS Mac software
+catalog and a single app identity from satisfied Cask payload evidence. Existing
+`homebrew-casks.json` supplies qualified source evidence. For legacy Bundles
+without it, bounded read-only inspection can identify a currently registered,
+qualified local app Cask; its portable predicates then accompany the private
+Restore stage. Names, token guesses, unqualified bundle IDs, suites, ambiguous
+matches and non-Mac catalog records cannot establish an overlap.
+
+Confirmed catalog bindings are retained for 30 days in owner-private
+`~/Library/Application Support/Macseed/ApplicationIdentities/` (0700 directory,
+0600 atomic records, at most 2048 records). They contain only the numeric ID,
+bundle ID, confirmation time and schema version, not installation or ownership
+state. Repeated Prepare, Execute and Result refresh reuse unexpired bindings
+across Core processes; offline reads do not renew their lifetime or erase them.
+Selected Cask qualification is still required on every preparation.
+
+The optional catalog request sends unresolved selected numeric App Store IDs to Apple, never
+names, paths or credentials. It uses one request for at most 50 IDs, a four-second
+transfer deadline and a 1 MiB response limit, without redirects or retries.
+Failed lookups are not cached. Missing, expired, malformed or unsafe records need
+fresh confirmation; without it, requirements remain selected. An unwritable/full
+cache can use current HTTPS evidence but cannot guarantee offline reuse. Restore
+does not require network availability. Execute recomputes the effective scope:
+changed evidence rejects the old plan before publication and requires fresh
+Preview. Captured metadata and Bundle checksums are not source authentication;
+catalog identity is not proof of target distribution ownership or installation.
+
+The Cask adapter protects exact artifact targets containing `Contents/_MASReceipt`,
+including registered Casks and suite members. Such a marker is a conservative
+conflict signal, not validated App Store ownership. Missing, malformed or stale
+receipt contents cannot authorize replacement. This item-local conflict is
+rechecked during execution qualification; independent categories can continue.
+Absence of the marker does not prove distribution equivalence. Provider precedence
+never relaxes this protection or authorizes adopting/replacing an MAS target.
 Cask presence requires public Homebrew registration and nonempty typed payload
 predicates. Apps require valid bundle metadata/executables, links require owned
 sources, and packages require exact macOS receipts plus actual required payload.
@@ -449,8 +497,10 @@ HEAD, permitting safe branch restoration after confirming clean state. Failed
 branch reads are not mismatches.
 
 Clean-state checks use both tracked/staged `git diff --quiet` forms. Untracked
-files are not a new dirty criterion; Git may refuse conflicting checkout and
-those files remain intact. Observation errors block that repository's action.
+and ignored files are not dirty criteria; checkout uses `--no-overwrite-ignore`
+so Git refuses conflicts with either kind of local file and preserves their
+contents. Nonconflicting local files do not block checkout. Observation errors
+block that repository's action.
 Clone only on confirmed absence; verify destination/worktree/exact origin.
 Checkout only on confirmed branch mismatch or detached HEAD with clean state;
 verify exact `CURRENT_BRANCH` afterwards. Failed observation or mismatch is an

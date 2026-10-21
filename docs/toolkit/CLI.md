@@ -81,6 +81,13 @@ symlink is accepted; an unrelated `bs` is never replaced. Manual installation or
 repair uses `./scripts/install-bs.sh`; `--check` checks launcher state. A moved
 repository requires repairing the link. Homebrew-free Restore may defer launcher
 setup with warning; `bootstrap.sh` remains available from the root.
+Equivalent symlink chains to this checkout are accepted without changes. A link
+to another checkout is a conflict even if the launcher files have identical bytes:
+they dispatch different Core roots. The destination remains untouched until the
+user chooses its owner. `--check` returns 0 for available, 1 for missing/off-PATH,
+2 for destination conflict and 3 for inspection/setup failure. Restore reports
+launcher failure as an independent operation with a typed cause; it is not an
+application Verification mismatch.
 
 ## Capture and Restore
 

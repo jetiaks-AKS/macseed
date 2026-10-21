@@ -3,6 +3,11 @@
 **Stage 16 remains in development. Supported 16B–16G flows and the final Restore
 Result UI are implemented and manually accepted; 16J is complete. Secure SSH
 Desktop integration remains open in 16H.**
+Assisted App Store Restore is an accepted development milestone: requirements,
+selection/Preview, manual installation and fresh Core verification are implemented.
+Automatic MAS development is permanently retired; `archive/mas-automatic-restore-v4`
+preserves historical evidence only, with no planned return to the active product.
+Stage 16 and Macseed 1.0 qualification remain open.
 Normal launch checks real Core capabilities over Protocol V1. The approved sample
 flows remain available only in explicit DEBUG design-preview mode. Environment
 Status uses real read-only Core comparison. Capture scans/selects/prepares and
@@ -16,7 +21,7 @@ Tailscale installation and subsequent matching observation passed. Earlier Repai
 → Verify → fresh no-op gates for Keka, Termius and VLC and generated completions
 through Codex remain valid. Clean Install does not qualify universal Tailscale
 Repair: ambiguous/damaged privileged Repair states remain fail-closed. Continuing
-compatibility qualification, MAS, Desktop Zsh and Secure SSH remain open. The
+compatibility qualification, Desktop Zsh and Secure SSH remain open. The
 [latest qualification snapshot](#recent-restore-qualification-and-performance)
 records the qualified Tailscale 1.104.1 Clean Install and the remaining unsafe
 Repair boundary; neither qualifies every metadata/state combination.
@@ -415,16 +420,75 @@ does not replace all real-process or packaged-runtime qualification.
    completed when it did not. Confirm Rebuild in the Review area; add a sheet/alert
    only when a specific risk justifies it, not another confirmation page.
 
-App Store Restore is assisted. Selected Bundle applications show Installed,
-Missing or Unverified from Core evidence. Missing rows offer **Open in App Store**
-using `NSWorkspace` and a fixed Apple product URL constructed from a validated
-numeric ID. Opening a page leaves the accepted Preview and selection unchanged.
-The user installs through App Store, then **Refresh Preview** requests a fresh
-Core preparation. Result uses fresh Core Verification; **Refresh Preview** checks current state
-again in a new Preview.
-App Store-only plans have no Rebuild; missing/unverified App Store rows do not
-block executable work in other categories. No MAS helper, approval, recovery UI,
-privileged process or automatic installation participates in this flow.
+App Store Restore is assisted and has a dedicated screen within the same Restore
+session. Selection places App Store Applications first inside Applications & Tools,
+followed by Homebrew Applications, Homebrew Packages and VS Code Extensions, using
+the existing checkbox/item-selection rows. Selection counts reflect the chosen
+Bundle records; Preview counts reflect effective requirements after confirmed Cask
+precedence. This preserves the selected IDs when returning to Selection or refreshing.
+Preview places one
+compact App Store card under **Manual Installation** directly below **Tasks**,
+followed by **Automatic Restore Tasks** and automatic categories;
+**Expand All / Collapse All** is aligned with that subsection heading and changes
+only local disclosure state. Each Preview width reference contains only distinct
+status/disclosure combinations, rather than repeating the entire item inventory
+in every row.
+Automatic Restore metrics and relevant prerequisites stay above Tasks. Preview
+category headers show only status and disclosure on the right; verbose count
+summaries remain in the underlying model and are represented by metrics and items.
+Category and leaf rows share the parent-provided status geometry; indentation is
+confined to titles, including nested settings. Zero-valued
+metrics are hidden, and manual requirements never inflate automatic counts.
+**Review App Store Apps** opens the dedicated screen without reloading the Bundle
+or changing selection.
+
+Result shows the authoritative execution outcome, then **Restore Summary** with
+confirmed verified automatic requirements under Successful and outstanding automatic
+and App Store issues together under Needs Attention (for example, “1 restore issue ·
+1 app to install”; uncertain installations are “apps to check”). No separate
+Requires Attention section repeats these issues. A completed execution with only manual work remaining stays completed;
+actual failures, partial results, interruption and stopping retain their meaning.
+The launcher reason comes only from current-operation evidence. A destination-conflict
+record does not distinguish a foreign installation from another occupied destination,
+so the ordinary explanation remains conservative.
+
+The summary reuses existing row/category outcomes and normalized findings. Stable
+requirement identities combine repeated operation/verification consequences;
+launcher scope records and linked diagnostics describe one launcher issue. Manual
+IDs are counted once and excluded from automatic successes. Independent category
+issues remain visible. Where evidence cannot establish an exact independent issue
+count, Needs Attention has no numeric value. Unrun requirements and unreported
+auxiliary restarts do not become failed operations or successful requirements.
+
+Result proceeds directly from **Restore Summary** to **Details by Category**, without
+a separate Verification details disclosure. Global Verification, model evidence,
+Operation Logs and Diagnostic Report retain process completion, requirement conformity
+and verified/mismatch/unverified/unresolved totals under their existing privacy and
+completeness contracts. **Details by Category** retains automatic categories
+and adds App Store Applications once, as the last row in the same Applications &
+Tools surface. Its disclosure shows a short manual summary and Review App Store Apps,
+never the inventory. Manual requirements remain outside automatic execution counts.
+Shared status/badge/chevron groups measure their content, with no empty badge slots;
+category and leaf statuses share a measured lane, and narrow rows stack without
+changing title indentation. Expand All / Collapse All and leaf-level Technical Details
+remain available. Result categories start collapsed. Technical diagnostics remain in View Log or the existing collapsed
+fallback disclosure; bottom actions retain the fixed footer.
+
+The dedicated App Store screen retains Installed and Needs Attention metrics and
+shows every selected effective application immediately in one surface, without a
+repeated category header or disclosure. Missing comes first, Unverified next and
+Installed afterward. Missing and Unverified rows
+retain **Open in App Store**, using validated numeric IDs and `NSWorkspace`.
+**Not in App Store** describes the provider requirement, not physical absence.
+Opening a page never changes installation evidence.
+
+**Refresh Status** runs existing Core Restore preparation with the same selection.
+From Result it starts a fresh Preview; returning without refreshing preserves Result.
+Failed refreshes do not retain stale installation claims. App Store-only plans have
+no executable Rebuild. Missing/unverified manual requirements do not block independent
+automatic work. Existing Core provider deduplication, readiness, prepared-plan checks,
+Verification and the assisted installation policy remain Core-owned. The bounded identity/provider
+contract belongs to [Configuration](toolkit/CONFIGURATION.md#other-application-generated-inputs).
 
 Missing Homebrew needs external installation; Desktop does not automatically
 install it. Explain selected dependencies such as Command Line Tools, `mas`, VS
@@ -439,9 +503,10 @@ Repair are qualified semantically, without name exceptions. Preview identifies
 administrator authorization; the Rebuild confirmation explains the separate masked
 Homebrew prompt. Privileged uncertainty blocks Homebrew re-entry and is not cleared
 by a successful payload check. See the
-[Core execution policy](core/APPLICATION-INTERFACE.md). Automatic MAS Restore
-remains mandatory before 1.0; the authorization/
-install gate is unresolved. Deselecting MAS for the passed gate does not resolve it.
+[Core execution policy](core/APPLICATION-INTERFACE.md). App Store installation and
+its Apple account/authorization interaction belong to Apple App Store, outside
+Core. MASHelper/XPC and privileged MAS installation are retired historical work;
+the archive does not authorize deploying or registering those components.
 
 Restore preserves Homebrew Applications and Homebrew Packages as separate task
 domains through Preview, Rebuild and Result. Qualified missing-app repairs show
@@ -738,8 +803,9 @@ Tailscale was performed separately from Macseed and is not a Restore capability.
 A real Partial Restore completed with **105 Verified and one Tailscale Mismatch**,
 correctly showing **Rebuild Needs Attention**. Item-local `cask_target_conflict`
 and `cask_execution_requirements_unsupported` preserve independent executable work
-unless a global prerequisite blocks it. MAS Restore is the next mandatory
-functional priority; Secure SSH and the remaining release gates stay open.
+unless a global prerequisite blocks it. Assisted App Store Restore is now an
+accepted development milestone; continuing supported-domain qualification,
+Secure SSH and the remaining product gates stay open.
 
 Historical performance evidence at `c06e530` (2026-10-16): user-reported controlled
 real-Mac checks accepted the final category/item Result UI, nested macOS settings,
@@ -830,7 +896,7 @@ Interrupted/Unknown outcome rather than claiming confirmed termination.
 Operation-wide Restore Graceful Stop is implemented over the existing private
 control pipe and locked controller. Requests latch during preparation and every
 module scope. Safe checkpoints apply Stop around preparation/publication/Bootstrap,
-between modules, Workspace folder/repository items, VS Code/App Store items and
+between modules, Workspace folder/repository items, VS Code items, App Store observations and
 macOS settings categories, and before/after Global Verification. Atomic publication,
 a current clone/install with post-checks, settings category, Git configuration,
 SSH/Shell application and secure import finish as indivisible work. Already-running
@@ -898,7 +964,8 @@ installer-interruption qualification or prove Stop was accepted during installat
 
 Remaining Cancellation Safety work includes Stage 3C durable ordinary-Cask
 journal/reconciliation, operation-owned DMG/re-entry evidence, detached/privileged
-process quiescence and separate MAS and other-category qualification. It must protect
+process quiescence and other-category qualification. Manual App Store installs are
+outside this cancellation boundary. It must protect
 user data and never detach unrelated volumes. Completed Stage 16J diagnostics
 records evidence; it provides no durable recovery/reconciliation or re-entry authority.
 

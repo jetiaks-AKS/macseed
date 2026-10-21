@@ -49,6 +49,12 @@ safe contract exists, and exclude disposable/derived state and obsolete artifact
 from migration. This does not authorize target cleanup.
 Exact domain limits belong to [Configuration](toolkit/CONFIGURATION.md).
 
+App Store Restore is assisted: Capture saves requirements, Restore selects and
+previews them, and the user installs manually through Apple App Store before
+refreshing Core verification. Confirmed shared identity gives Homebrew Cask
+precedence; unresolved identity preserves both requirements. Automatic MAS
+development is [archived](toolkit/ARCHITECTURE.md), outside the current workflow.
+
 ## Bundle and selection
 
 Capture stages and validates data privately without replacing the source Mac's

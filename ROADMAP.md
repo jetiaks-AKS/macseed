@@ -34,8 +34,10 @@ owns the implemented application contract.
 
 **In progress.** Completed slices do not establish full Restore qualification,
 secure integration or packaged clean-Mac readiness. Slice IDs are historical
-identifiers, not execution order. Status is reviewed against `develop` at
-`778b816`, with subsequent real-Mac qualification (2026-10-17). Implemented means
+identifiers, not execution order. The historical Homebrew baseline is `778b816`,
+with subsequent real-Mac qualification (2026-10-17). Assisted App Store Restore is
+an accepted development milestone; branch integration and later product gates
+remain separate. Implemented means
 code exists; automated-tested and
 real-Mac qualified describe separate evidence. Partial qualification does not close
 open/deferred gates, and no completed slice alone establishes release readiness.
@@ -48,7 +50,7 @@ open/deferred gates, and no completed slice alone establishes release readiness.
 | 16D — Environment Status | Completed | Read-only comparison; Saved Environment reference and Restore handoff accepted |
 | 16E — Capture | Completed in supported scope | Real inventory/selection, preparation and publication; secure interaction remains 16H |
 | 16F — Restore preparation | Completed in supported scope | Inspection, selection, prerequisites and fresh Preview |
-| 16G — Restore execution | Implemented; qualification open | Core Rebuild/Verification; Cask requirements, MAS and interruption/re-entry gaps remain |
+| 16G — Restore execution | Implemented; qualification open | Core Rebuild/Verification and Assisted App Store Restore; continuing Cask and interruption/re-entry qualification |
 | 16H — Secure SSH interactions | Open | Desktop FD/challenge bridge and secure Capture/Restore qualification |
 | 16I — Verification and completion | UI implemented/manually accepted; qualification open | Final category/item Result, disjoint confirmed cards and Process/Verification separation; remaining completion edge cases open |
 | 16J — Logging & Diagnostics | Completed | Typed persistent logs, history, Important/All and immutable Diagnostic Report preview/copy/save |
@@ -79,9 +81,15 @@ Repair. Independent Restore continues safe work around item-local Cask conflicts
 a real Partial Restore reported 105 Verified and one Tailscale Mismatch with
 **Rebuild Needs Attention**. These bounded gates do not close Stage 16.
 
-1. **Next — MAS automatic restoration:** close native authorization/install/post-Verify
-   and repeat/no-op qualification through the existing Core; mandatory before 1.0.
-   Complete the remaining supported-domain Restore gates tracked in TODO.
+Assisted App Store Restore now captures requirements, supports selection/Preview,
+manual installation in Apple App Store and fresh Core verification. Confirmed
+identity overlap follows Cask-first precedence. Automatic MAS development is
+preserved on `archive/mas-automatic-restore-v4` and is outside the active path.
+This milestone does not complete Stage 16 or make Macseed 1.0 release-ready.
+
+1. **Remaining supported-domain Restore qualification:** continue Homebrew
+   compatibility gates and the Desktop Zsh, configuration and other supported-domain
+   checks tracked in TODO. Preserve the accepted Assisted Restore flow.
 2. **Secure SSH Desktop (16H):** implement and qualify the inherited secret-channel
    interaction, encryption/unlock/import confirmation and secure privacy coverage.
 3. **Reliability / security and remaining 16I/16K qualification:** Stage 3C durable
@@ -103,7 +111,7 @@ does not close visual-effect or remaining settings qualification gates.
 The bounded macOS settings expansion and Capture Result refinements are
 implemented with focused automated coverage. Their remaining macOS 27 manual
 qualification is tracked in [TODO](TODO.md#macos-settings-manual-qualification);
-this does not close Stage 16 or change the next mandatory MAS Restore priority.
+this does not close Stage 16 or the remaining supported-domain Restore gates.
 
 ## Stage 17 — Distribution & Clean-Mac E2E
 

@@ -51,9 +51,12 @@ security risk and maintenance cost justify narrowing, deferring or rejecting
 capabilities whose user value is insufficient. For high-value capabilities,
 investigate a bounded safe implementation before reducing the intended outcome.
 
-Applications remain important: continue qualifying existing Homebrew coverage,
-and qualify safe automatic MAS Restore before 1.0. Direct/vendor application
-restoration is not current work.
+Applications remain important: continue qualifying existing Homebrew coverage.
+Current App Store Restore is assisted: capture requirements, select and preview,
+install manually in Apple App Store, then refresh and verify through Core.
+Confirmed shared identity gives Homebrew Cask precedence; unresolved identity
+preserves both requirements. Automatic MAS development is archived, outside the
+active implementation path. Direct/vendor application restoration is not current work.
 
 ## Direction
 

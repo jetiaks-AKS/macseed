@@ -54,11 +54,13 @@ Performance optimization and an opt-in private trace are implemented through
 `c06e530`; individual real-Mac measurements and limits are recorded in
 [Desktop qualification](docs/DESKTOP.md#recent-restore-qualification-and-performance).
 
-**Stage 16 remains open.** The next checkpoint is current Homebrew Cask / Tailscale
-capability qualification; the latest reported Restore still has one unsupported/
-unverified requirement and a failed process result. MAS automatic Restore,
-Secure SSH Desktop, remaining completion/runtime qualification and Stage 3C durable
-recovery remain open. Stage 17 packaged clean-Mac qualification and Early Access
+**Stage 16 remains open.** Assisted App Store Restore is an accepted development
+milestone: capture requirements, select/preview, install manually in Apple App Store
+and refresh Core verification. Confirmed identity overlap uses Cask-first precedence;
+automatic MAS development is archived on `archive/mas-automatic-restore-v4`.
+Continuing Homebrew qualification, Secure SSH Desktop, remaining completion/runtime
+qualification and Stage 3C durable recovery remain open. Stage 17 packaged
+clean-Mac qualification and Early Access
 precede **Macseed 1.0**, the first complete Desktop product release. See the
 [Current Execution Order](ROADMAP.md#current-practical-execution-order). The CLI
 remains supported and released toolkit/CLI history is preserved.

@@ -254,7 +254,13 @@ rollback нет. Повторный запуск заново строит Previ
 Global Verification сохраняет predicates worktree/origin/branch. Human CLI clone
 не изменён; Secure Restore требует отдельного канала секретов.
 
-## Восстановление приложений Mac App Store в режиме приложения
+## Исторический Automatic MAS Restore
+
+Этот раздел описывает прежнюю реализацию, сохранённую в
+`archive/mas-automatic-restore-v4`. Она не входит в текущий runtime и не является
+следующим этапом. Сейчас используется Assisted Restore: ручная установка через
+Apple App Store, Refresh и проверка Core. Актуальный контракт — в английской
+[Architecture](../toolkit/ARCHITECTURE.md) и [Core reference](../core/APPLICATION-INTERFACE.md).
 
 Выбранные приложения используют существующие numeric IDs, Preview, MAS consumer
 и Global Verification. Для выбранной работы требуется работающий `mas` из PATH:
@@ -271,7 +277,7 @@ readiness gate. Установка `mas` через Homebrew остаётся в
 автоматического Homebrew bootstrap нет. Desktop может объяснить предпосылку и
 предложить Check Again после внешней подготовки.
 
-Текущий mas требует root privileges и уже выполненного входа в App Store Apple
+В той реализации mas требовал root privileges и уже выполненного входа в App Store Apple
 Account. Application install использует `sudo -n`, найденный CLI и
 `MAS_NO_AUTO_INDEX=1`: сохраняется контекст вызывающего пользователя mas,
 password fallback исключён при истечении локальной авторизации. Существующий
@@ -315,8 +321,9 @@ Desktop; создавать privileged helper/XPC только ради неё �
 Режим приложения не устанавливает его интерактивно. Подсказки Desktop и возможная
 безопасная установка через formula path остаются будущей работой. Application
 readiness требует интернет только для отсутствующих installs/clones, Command Line
-Tools для отсутствующих Homebrew installs и неинтерактивную авторизацию
-администратора для отсутствующих MAS apps. Подготовка и выполнение settings-only
+Tools для отсутствующих Homebrew installs. Авторизация Homebrew зависит от
+выбранных квалифицированных операций; App Store устанавливает приложения вручную
+вне Core. Подготовка и выполнение settings-only
 и Secure-only планов не требуют этих посторонних предпосылок. Human CLI preflight
 сохраняет прежние общие проверки.
 

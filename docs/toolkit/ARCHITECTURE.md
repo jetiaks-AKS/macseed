@@ -86,6 +86,16 @@ reduces state drift; external filesystem/launchd changes are not atomic with the
 native command. Existing cancellation, watchdog and final Verification remain
 Core-owned. This is a static adapter boundary, not a plugin framework.
 
+App Store Restore is assisted: Core captures and selects requirements, inspects
+inventory for Preview and verifies fresh observations after the user installs
+through Apple App Store. Confirmed Cask/App Store identity overlap uses Cask-first
+precedence; unresolved evidence retains both requirements. The detailed contract
+belongs to [Configuration](CONFIGURATION.md#other-application-generated-inputs).
+Automatic MAS development, including MASHelper/XPC and privileged installation,
+is historical and preserved on `archive/mas-automatic-restore-v4`. It is not an
+active runtime or the next implementation step. Homebrew's qualified native
+authorization remains an independent current capability.
+
 ## Publication and mutation boundaries
 
 Exporters collect, validate and serialize before replacing a generated file.

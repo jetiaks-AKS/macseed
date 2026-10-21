@@ -95,6 +95,15 @@ SSH candidates expose safe names, key types, public fingerprints and
 `candidate_requires_pair_validation`; Prepare does not unlock keys.
 Inventory limits are 2048 items per domain and 1 MiB internally.
 
+When selected Cask and App Store requirements have a confirmed shared application
+identity, Prepare applies Cask-first precedence. `selection` remains the canonical
+requested selection; additive `effective_selection` and `application_duplicates`
+(`app_store_item_id`, `cask_item_id` pairs) describe the exact reduction. These
+fields are absent when no duplicate is confirmed. `summary` describes the effective
+publication scope; unresolved identity preserves both requirements. Desktop
+validates each reduction against the requested inventory and uses the effective
+scope for confirmation and strict publication-count validation.
+
 The six category-only `macos-*` inventory rows add `included_settings`, an array
 of `{ "id": "autohide", "label": "Auto-hide" }` entries. IDs identify preference
 keys within that domain. This read-only projection describes only records in the
@@ -108,7 +117,11 @@ ID binding or Execute semantics.
 
 Execute requires a non-null selection and the ID from Prepare for that selection.
 It repeats Discovery and binds the ID to staged data, candidate metadata and
-selection, then uses production Preview, portability and Bundle checks.
+selection, including the effective scope and confirmed duplicate pairs when present,
+then uses production Preview, portability and Bundle checks. Execute receives the
+original requested selection and recomputes precedence before checking the ID.
+Bundle packing uses that freshly validated effective scope without a second
+identity lookup. This adds no archive fields and does not rewrite existing Bundles.
 `stale_prepared_capture` requires fresh preparation and confirmation.
 
 `destination` must be an absolute `.mbt` path whose existing parent is canonical
@@ -171,21 +184,40 @@ Repository positional Preview `item_id`
 remains unchanged; additive `selection_item_id` correlates selectable plan rows
 with inventory IDs. Secure material and preference values are never projected.
 
-Prepare returns canonical effective `selection`: sorted category-only domain IDs
+Prepare returns canonical requested `selection`: sorted category-only domain IDs
 and sorted item-ID subsets, expanding whole item domains. New finer selection is
 bound into `prepared_plan_id`; Execute repeats the same validated private staged
 Blueprint narrowing and rejects mismatched/stale plans before publication/mutation.
 Equivalent whitelist representations canonicalize to the same effective scope.
 Legacy requests receive the additive public selection/correlation fields after
 legacy identity calculation. The source Bundle, ordinary generated state,
-persistent Blueprint, mutation consumers and CLI selection remain unchanged.
+persistent Blueprint and mutation consumers remain unchanged during preparation.
 `include_secure` and the separate secret transport remain independent.
+
+For proven, selected Cask/App Store overlaps, Core applies
+[Cask precedence](../toolkit/CONFIGURATION.md) to the private Blueprint. Additive
+`effective_selection` and `application_duplicates` fields occur only when an App
+Store requirement is suppressed. Each duplicate contains `app_store_item_id` and
+`cask_item_id`, both existing opaque Selection IDs. `selection` retains user intent
+for refresh/Execute validation; counts, plan, readiness and Verification use
+`effective_selection`. The only permitted reduction is the listed App Store IDs,
+each paired with a retained selected Cask. No successful MAS installation is
+inferred. Both requested scope and the deduplication decision are plan-bound.
+Positive catalog bindings use the bounded private cache described in Configuration;
+network loss alone does not change a still-confirmed decision. Cache timestamps
+are not plan inputs; the effective staged requirements and qualification remain so.
+Execute repeats qualification and rejects changed decisions as `stale_plan`.
+Older nonduplicate responses retain their existing fields and behavior; clients
+which cannot validate an effective reduction must reject it rather than guess.
 
 Prepare validates/unpacks into private staging, narrows selection and runs the
 production Preview. It returns:
 
 - `prepared_plan_id`, selected groups/categories and item counts;
 - `modules`, `plan`, `has_planned_changes`, `has_executable_changes`, `warning_count`, `error_count`;
+- optional `scope_warnings`: domain names for warning modules without an explanatory
+  attention row. These are distinct from item counters and readiness blockers;
+  `warning_count` remains the complete module count, including Assisted App Store;
 - `include_secure`, `secure_restore_status`, `preview_detail_level`;
 - `readiness` with environmental prerequisites.
 
@@ -424,8 +456,10 @@ emit a structured skipped operation reason, prevent that item's native mutation
 and preserve independent work and final Verification. No preview or precondition
 snapshot provides an atomic filesystem/launchd guarantee.
 
-Internet is required for missing installs/clones, Command Line Tools for missing
-Homebrew formulae/casks, and administrator authorization for missing MAS apps.
+Internet is required for missing automatic installs/clones, and Command Line Tools
+for missing Homebrew formulae/casks. Qualified Homebrew authorization follows the
+selected plan. Manual App Store installation uses Apple App Store's own account
+and authorization outside Core; there is no MAS installation or sudo prerequisite.
 Unrelated prerequisites do not block settings-only or Secure-only plans.
 Selected SSH configuration is an existing operation-wide Restore prerequisite.
 Preparation and Execute reuse its read-only inspector: conflicts or excluded source

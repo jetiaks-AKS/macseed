@@ -9,10 +9,15 @@ is implemented; native SwiftUI Desktop consumes the same Core. Core/CLI 3.4.0
 includes completed Stage 15 Protocol V1. Desktop Stage 16 is in progress: supported
 16B–16G flows, final Restore Result/Visual Unification and Stage 16J diagnostics are
 implemented; Result UI and controlled Graceful Stop cases are manually accepted.
-Performance optimization/opt-in trace is implemented through `c06e530`. The next
-checkpoint is the current unsupported Homebrew Cask / Tailscale capability and real
-Install → Verify → no-op qualification. MAS automatic Restore, Secure SSH Desktop
-(16H), remaining 16I/16K qualification and Stage 3C recovery remain open. Unified UI
+Performance optimization/opt-in trace is implemented through `c06e530`. Assisted
+App Store Restore is an accepted development milestone: capture requirements,
+select/preview, install manually in Apple App Store, then refresh and verify.
+Confirmed identity overlap uses Cask-first precedence; unresolved evidence retains
+both requirements. Automatic MAS development is permanently retired;
+`archive/mas-automatic-restore-v4` preserves historical evidence only. Do not
+reactivate its install, helper, authorization or deployment paths.
+Continuing Homebrew qualification, Secure SSH Desktop (16H), remaining 16I/16K
+qualification and Stage 3C recovery remain open. Unified UI
 Scenario Catalog is deferred tooling. Follow the current
 [execution order](ROADMAP.md#current-practical-execution-order), one checkpoint
 at a time without unrelated task hopping; historical slice IDs are unchanged.
@@ -44,8 +49,8 @@ generic capability-based behavior over application-name/version special cases
 where practical, and fail closed without required evidence. Contributor guidance
 is in [Contributing](CONTRIBUTING.md#capability-qualification).
 
-Applications remain important: continue Homebrew qualification and deliver safe
-automatic MAS Restore before 1.0. Direct/vendor application restoration is not
+Applications remain important: continue Homebrew and supported Restore qualification;
+current App Store restoration uses the assisted flow. Direct/vendor restoration is not
 current work. Current Workspace Folders restores structure only; any future bounded
 unique-data transfer requires an explicit contract, never silent expansion into a
 general backup/file-migration engine. Post-1.0 ideas stay compactly in Roadmap.

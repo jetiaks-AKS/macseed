@@ -11,11 +11,35 @@ The format is based on the principles of **Keep a Changelog**.
 
 ### Added
 
+* Consolidated Restore Selection, Preview and Result: consistent App Store placement,
+  one summary of verified automatic work and outstanding issues, concise actions,
+  and category details using existing execution evidence. Verification diagnostics
+  remain in Operation Logs and Diagnostic Report. Compact
+  status groups and a shared Applications & Tools Result group keep manual App Store
+  work visible without repeated attention sections. Preview statuses align across
+  expanded categories and items; the dedicated App Store list is visible immediately.
+  Preview expansion avoids repeated hidden status measurements, with Expand All
+  beside Automatic Restore Tasks.
+
+* Automatically retain Homebrew Cask for confirmed duplicate Cask/App Store
+  requirements during Capture and Restore. Effective selection, manual App Store
+  counts and Verification agree, while explicit App Store-only selection and
+  protected App Store targets remain respected. Confirmed catalog identities persist
+  across Prepare and Result refresh for 30 days, preventing transient lookup failure
+  from restoring a duplicate requirement. Legacy identity lookup is optional;
+  unresolved records stay selected.
+
 * Assisted App Store Restore: open missing applications in App Store, install
   manually and refresh Core inspection. Missing or uncertain App Store items no
-  longer block other Restore categories. Automatic MAS installation and its
-  privileged fallback are disabled; existing Bundle application records remain
-  compatible.
+  longer block other Restore categories. Automatic MAS development and its
+  privileged fallback are archived on `archive/mas-automatic-restore-v4`, outside
+  the active runtime; existing Bundle application records remain compatible.
+
+* Separated automatic Restore warnings and results from manual App Store work,
+  hid empty Preview metrics, and exposed independent launcher failures with
+  current operation evidence. Protected Homebrew targets with App Store receipt
+  markers and clarified provider-specific absence without assuming application
+  identity or distribution equivalence.
 
 * Recorded the controlled macOS 27 settings Restore on 2026-10-17: 127/127
   Successful in Macseed and 37/37 saved preferences matched independently with
@@ -187,6 +211,14 @@ The format is based on the principles of **Keep a Changelog**.
   informational labels for the settings included in the current preparation.
 
 ### Fixed
+
+* Capture confirmation and strict Desktop publication validation use the same
+  effective Cask-first scope. Changed identity decisions require fresh preparation;
+  unresolved identity preserves both requirements.
+* Malformed optional application identity metadata, including unexpected JSON types
+  and excessive nesting, leaves identity unresolved without aborting the workflow.
+* Git branch restoration preserves conflicting ignored files as well as untracked
+  files, while allowing nonconflicting local files.
 
 * Restore Result aligns categories, nested domains and individual items with
   reserved Status, Count and Chevron columns while retaining title indentation
