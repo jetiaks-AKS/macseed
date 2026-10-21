@@ -771,6 +771,21 @@ def bundle_matches(target, app=True, expected_id=None, payload_diagnostics=False
     return matches
 
 
+def check_distribution_target(target):
+    """A receipt marker is a protection signal, never App Store ownership proof.
+
+    Check the exact Homebrew artifact destination, including registered casks:
+    registration and matching bundle IDs do not authorize replacing another
+    distribution. Requalification invokes this again immediately before Apply.
+    """
+    try:
+        (target / 'Contents/_MASReceipt').lstat()
+    except (FileNotFoundError, NotADirectoryError):
+        # bundle_matches rejects a non-directory target as a target conflict.
+        return
+    raise Unsafe(CONFLICT, {'primitive': 'payload', 'condition': 'provider_conflict'})
+
+
 @contract('payload')
 @timed("cask.payload_observation")
 def observe(payloads, row, prefix):
@@ -790,9 +805,12 @@ def observe(payloads, row, prefix):
             continue
         kind = predicate['kind']
         if kind in ('app', 'suite', 'bundle'):
+            check_distribution_target(target)
             satisfied = bundle_matches(target, kind == 'app', predicate.get('bundle_id'))
             if kind == 'suite':
                 members = list(target.glob('*.app'))
+                for member in members:
+                    check_distribution_target(member)
                 satisfied = bool(members) and all(bundle_matches(member) for member in members)
                 required_members = predicate.get('members', [])
                 require(isinstance(required_members, list) and len(required_members) <= 2048, CONFLICT)

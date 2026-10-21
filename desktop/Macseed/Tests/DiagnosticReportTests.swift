@@ -74,6 +74,11 @@ private actor ReportReadGate {
         print("PASS: success / Failed Restore, independent process / Verification / log state, absent counters, partial/truncated, stop evidence and invalid terminal")
     }
     static func privacyChecks() {
+        for reason in ["provider_conflict", "manual_installation_required", "launcher_destination_conflict", "launcher_inspection_failed", "launcher_install_failed", "launcher_verification_failed"] {
+            let id = UUID()
+            let report = makeReport([header(id), event(1, "operation_record", OperationLogFacts(codes: ["reason": reason])), finish()], id: id)
+            check(report.text.contains(reason))
+        }
         let id = UUID(), secret = "PRIVATE_TOKEN_abc123", path = "/Users/private-person/private-repo/key.pem"
         var h = header(id); h.desktopVersion = secret; h.desktopBuild = path; h.coreVersion = "version " + secret
         var record = event(1, "diagnostic_record", OperationLogFacts(codes: ["severity": "warning", "code": "observation_failed", "phase": path, "stdout": secret, "user": "private-person", "reason": "token_shaped_private_value"], counts: ["verified_count": 2, "error_count": -1, "warning_count": 1_000_000_001, "secret": 1337], flags: ["publication_occurred": true, "environment": true], references: ["item_id": "anon-012345678901234567890123", "token": secret]))

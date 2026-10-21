@@ -5,6 +5,7 @@ import json
 import hashlib
 import importlib.util
 import os
+import plistlib
 from pathlib import Path
 import shutil
 import signal
@@ -2439,6 +2440,37 @@ exit 0
         self.assertEqual(repeated_events[-2]['data']['verification']['verdict'], 'selected_requirements_verified')
         self.assertFalse((self.root / 'mas-log').exists())
         self.assertNotIn(b'private-account', result.stdout + result.stderr)
+
+    def test_provider_marker_is_item_local_and_selection_preserves_other_work(self):
+        self.cask_fixture(mixed=True)
+        app = Path(self.environment['TEST_CASK_TARGET'])
+        (app / 'Contents/MacOS').mkdir(parents=True)
+        (app / 'Contents/Info.plist').write_bytes(plistlib.dumps({
+            'CFBundleIdentifier': 'org.example.Fixture', 'CFBundleExecutable': 'Fixture'}))
+        binary = app / 'Contents/MacOS/Fixture'
+        binary.write_text('#!/bin/sh\n'); binary.chmod(0o700)
+        (app / 'Contents/_MASReceipt').mkdir()
+        Path(self.environment['TEST_CASK_STATE']).touch()
+        before = (app / 'Contents/Info.plist').read_bytes()
+        self.pack()
+        plan = self.plan_result()
+        row = next(r for r in plan['plan'] if r['domain'] == 'homebrew-casks')
+        self.assertEqual(row['diagnostic']['condition'], 'provider_conflict')
+        self.assertEqual((row['disposition'], row['reason']), ('blocked', 'cask_target_conflict'))
+        self.assertTrue(plan['readiness']['ready'])
+        self.assertTrue(plan['has_executable_changes'])
+        result, events = self.execute(plan['prepared_plan_id'])
+        self.assertEqual(result.returncode, 2, events)
+        self.assertTrue(Path(self.environment['TEST_CASK_STATE'] + '.formula').exists())
+        self.assertFalse(Path(self.environment['TEST_CASK_LOG']).exists())
+        self.assertEqual((app / 'Contents/Info.plist').read_bytes(), before)
+        selected = {'categories': ['homebrew-packages', 'workspace-folders'], 'items': {}}
+        fresh = self.plan_result(selection=selected)
+        self.assertFalse(any(r['domain'] == 'homebrew-casks' for r in fresh['plan']))
+        self.assertTrue(fresh['readiness']['ready'])
+        stale, rejected = self.execute(plan['prepared_plan_id'], selection=selected)
+        self.assertEqual(rejected[-1]['data']['code'], 'stale_plan')
+        self.assertFalse(rejected[-1]['data']['target_mutation_may_have_started'])
 
     def test_assisted_appstore_unverified_does_not_block_workspace(self):
         mas = self.mas_fixture()

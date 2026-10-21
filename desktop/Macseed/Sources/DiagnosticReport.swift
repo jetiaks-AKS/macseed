@@ -38,6 +38,7 @@ enum DiagnosticReportPrivacy {
         "secure_import_failed", "secure_export_failed", "secure_input_invalid", "invalid_secure_selection", "readiness_failed", "cask_authorization_required",
         "cask_execution_requirements_unsupported", "cask_target_conflict", "cask_rosetta_required", "rosetta", "installation_required", "cask_observation_failed", "cask_not_ready", "homebrew_unavailable", "homebrew_broken",
         "homebrew_platform_incompatible", "formula_dependency_unavailable", "dependency_unavailable", "unsupported_capability", "authorization_denied", "authorization_unavailable",
+        "provider_conflict", "manual_installation_required", "launcher_destination_conflict", "launcher_inspection_failed", "launcher_install_failed", "launcher_verification_failed",
         "foreign_target", "conflicting_plist", "identity_ambiguous", "ownership_ambiguous", "live_ownership_unproven", "malformed_observation", "observation_limit",
         "ssh_configuration_not_ready", "ssh_configuration_observation_failed", "prerequisite_failed", "input_missing", "input_invalid", "unsupported", "not_selected", "redacted",
         "module_failed", "module_warning", "selected_input_unresolved", "operation_failed", "partial_source_coverage", "external_management", "input_changed",

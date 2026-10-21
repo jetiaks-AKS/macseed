@@ -32,6 +32,10 @@ import Darwin
 
     static func sanitizerTests() throws {
         var sanitizer = OperationLogSanitizer()
+        for reason in ["provider_conflict", "manual_installation_required", "launcher_destination_conflict", "launcher_inspection_failed", "launcher_install_failed", "launcher_verification_failed"] {
+            let record = sanitizer.event(try event(1, "operation_record", ["domain": .string("launcher"), "reason": .string(reason)]), at: Date())
+            check(record.facts?.codes["reason"] == reason)
+        }
         let secret = "fixture-secret-token-user-repository"
         let data: [String: CoreJSON] = ["phase": .string("verification"), "domain": .string("git-repositories"),
             "item_id": .string("/Users/" + secret), "record_id": .string(secret), "code": .string("observation_failed"),

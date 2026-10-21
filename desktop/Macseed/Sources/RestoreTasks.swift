@@ -209,7 +209,9 @@ struct RestoreTaskPresentation {
                 }
                 let reason = operation?["reason"]?.string ?? activity?.data?["reason"]?.string ?? observed?["reason"]?.string ?? item.reason
                 let message: String
-                if result == nil && !executing && !operationProgress, entry?.diagnostic?.primitive == "rosetta" {
+                if result == nil && !executing && !operationProgress, entry?.diagnostic?.condition == "provider_conflict" {
+                    message = entry!.diagnostic!.explanation
+                } else if result == nil && !executing && !operationProgress, entry?.diagnostic?.primitive == "rosetta" {
                     message = entry!.diagnostic!.explanation
                 } else if result == nil && !executing && !operationProgress, let explanation = entry?.unsupportedRepairExplanation {
                     message = explanation

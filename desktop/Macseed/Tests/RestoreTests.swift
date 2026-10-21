@@ -483,6 +483,8 @@ import SwiftUI
         func json(_ value: [String: Any]) throws -> [String: CoreJSON] {
             try JSONDecoder().decode(CoreJSON.self, from: JSONSerialization.data(withJSONObject: value)).object!
         }
+        let provider = CoreRestorePreparation.Diagnostic(primitive: "payload", condition: "provider_conflict")
+        precondition(provider.explanation.contains("uncertain") && provider.repairExplanation == provider.explanation)
         let id = String(repeating: "a", count: 64)
         let skip: [String: Any] = ["record_id": "o:0", "domain": "homebrew-casks", "item_id": "tailscale-app", "action": "install", "outcome": "skipped", "reason": "cask_execution_requirements_unsupported"]
         let success: [String: Any] = ["record_id": "o:1", "domain": "homebrew-packages", "item_id": "bat", "action": "install", "outcome": "success"]

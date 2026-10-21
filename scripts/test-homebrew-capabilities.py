@@ -88,6 +88,34 @@ class CapabilityTests(unittest.TestCase):
     def classify(self, **kwargs):
         return cask.classify(self.row, self.prefix, self.observer, **kwargs)
 
+    def test_appstore_marker_blocks_registered_cask_without_claiming_ownership(self):
+        self.application()
+        self.historical()
+        before = (self.app / 'Contents/Info.plist').read_bytes()
+        self.assertEqual(self.classify()['state'], 'satisfied')
+        marker = self.app / 'Contents/_MASReceipt'
+        marker.mkdir()
+        for operation in (None, 'reinstall'):
+            value = self.classify(operation=operation)
+            self.assertEqual((value['state'], value['reason']), ('unsupported', cask.CONFLICT))
+            self.assertEqual(value['diagnostic'], {'primitive': 'payload', 'condition': 'provider_conflict'})
+            self.assertNotIn('qualification_id', value)
+        self.assertEqual((self.app / 'Contents/Info.plist').read_bytes(), before)
+        marker.rmdir()
+        # Malformed/dangling receipt evidence is also protected, never trusted.
+        marker.symlink_to(self.root / 'absent-receipt')
+        self.assertEqual(self.classify(operation='reinstall')['reason'], cask.CONFLICT)
+
+    def test_provider_change_invalidates_existing_reinstall_qualification(self):
+        self.historical()
+        accepted = self.classify(operation='reinstall')
+        self.assertIn('qualification_id', accepted)
+        self.application()
+        (self.app / 'Contents/_MASReceipt').mkdir()
+        current = self.classify(operation='reinstall')
+        self.assertNotIn('qualification_id', current)
+        self.assertEqual(current['diagnostic']['condition'], 'provider_conflict')
+
     def application(self, target=None):
         app = target or self.app
         (app / 'Contents/MacOS').mkdir(parents=True)

@@ -86,6 +86,7 @@ struct CoreRestorePreparation: Decodable {
             return value
         }
         var repairExplanation: String? {
+            if condition == "provider_conflict" { return explanation }
             if safeCode(reasonCode) == "script_effects_unbounded" {
                 return "Macseed could not verify that the installer's scripts are safe to run again. Review the official installer’s instructions before restoring the application manually."
             }
@@ -118,6 +119,7 @@ struct CoreRestorePreparation: Decodable {
                         : "Macseed cannot inspect login items without System Events permission. Choose Fix Issues… to allow access and check the current state again."
             }
             switch condition {
+            case "provider_conflict": return "An App Store receipt marker exists at this Homebrew target. Distribution ownership is uncertain, so the application is preserved. Exclude this Homebrew item in Selection or resolve the installation source before retrying."
             case "preparation_required": return "Installer preparation required before this application can be restored."
             case "foreign_target": return "This " + primitiveName + " points outside the expected application. Existing state will be preserved."
             case "conflicting_plist": return "The launch service has conflicting configuration ownership. Existing state will be preserved."
