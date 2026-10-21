@@ -22,6 +22,7 @@ English is authoritative. Read from product purpose toward technical contracts:
 | [TODO](../TODO.md) | Concrete unfinished work |
 | [Changelog](../CHANGELOG.md) | Completed release-visible changes and released history |
 | [Contributing](../CONTRIBUTING.md) / [AGENTS](../AGENTS.md) | Contributor/agent workflow and proportional capability qualification |
+| [Git Workflow](git/GIT-WORKFLOW.md) | Everyday branches, worktree safety and the dated local checkout example |
 | [Release Process](git/RELEASE-PROCESS.md) | Current repository/CLI release procedure |
 
 Module READMEs describe local responsibilities and point to the owning references.

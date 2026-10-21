@@ -9,56 +9,16 @@ The remaining qualification gates below do not reopen completed UI work.
 Stage 16 as a whole remains open; follow the single
 [Current Execution Order](ROADMAP.md#current-practical-execution-order).
 
-<a id="restorehomebrew-checkpoint--08e2b469"></a>
+## Desktop CI validation
 
-## Continuing Homebrew qualification
-
-Clean Install qualification is recorded in
-[Desktop](docs/DESKTOP.md#recent-restore-qualification-and-performance). Continue
-the remaining supported-domain Restore gates below. Unsafe Tailscale Repair remains
-Unsupported (`ownership_unproven`); in-place Repair is not implemented.
-
-- [ ] Broaden representative Homebrew Install/Repair → Verify → fresh no-op gates
-  as compatibility maintenance. Keep ambiguous/damaged privileged Repair states
-  fail-closed and retain action-specific requirements/ownership evidence.
-
-## macOS settings manual qualification
-
-Focused fixtures and the Desktop Debug build cover the settings/Capture UX
-checkpoint. The [2026-10-17 real Restore](docs/toolkit/CONFIGURATION.md#controlled-macos-27-restore-qualification)
-confirmed 37/37 saved values, not all visual effects or the remaining Restore gates.
-
-- [ ] Qualify the real visual effect of Screenshots Window shadow and Floating
-  thumbnail on macOS 27, including repeat/no-op behavior.
-- [ ] Complete real Apply and visual-behavior qualification of the four new
-  WindowManager preferences on macOS 27, including mode dependencies, session
-  refresh and repeat/no-op. `EnableTilingByEdgeDrag` and `EnableTopTilingByEdgeDrag`
-  already matched in the controlled test, so their write paths remain untested.
-  Stored-preference Verification alone does not establish live effect.
-
-<a id="broad-restore-manual-gate--2026-10-05"></a>
-
-## Mandatory Restore capability gaps
-
-The completed Assisted Restore milestone's Stage 5 Core/Desktop regression gate
-passed; fresh real current-Mac end-to-end qualification remains open.
-
-- [ ] Complete a fresh real Capture → Rebuild → Verification gate on the current
-  Mac after explicit scope approval and fresh Preview. Preserve archive/worktree
-  state, resolve or explicitly exclude conflicts through supported selection, and
-  check repeat/no-op convergence. This does not replace Stage 17 clean-Mac gates.
-- [ ] **Secure SSH Desktop (16H):** implement/qualify the inherited FD/challenge
-  bridge, opt-in Capture encryption and Restore unlock/import confirmation over
-  the existing engine; qualify age/OpenSSH PTY behavior. Extend privacy/report
-  fixtures for secure operations without exporting keys, names or secret input.
-- [ ] Run a controlled real Desktop Zsh drift → Preview → Rebuild → Verification
-  → independent check → idempotent Preview gate, with safe backup.
-- [ ] Close the remaining supported Git/SSH configuration, VS Code and macOS
-  settings qualification matrix: matching state, drift, conflicts, observation
-  failure and repeat/no-op. Preserve accepted flows and record any unsupported
-  scope through the [capability process](CONTRIBUTING.md#capability-qualification).
-  VS Code dependency protection must remain explicit in install/re-entry results;
-  current Restore has no uninstall consumer.
+- [ ] Add hosted macOS Desktop validation using the existing
+  `./desktop/Macseed/build.sh Debug --test` entrypoint; retain its presentation,
+  Core/runtime, Capture/Restore and diagnostics coverage without a second test inventory.
+- [ ] Integrate Desktop into the required CI result while retaining lint and every
+  repository regression shard. Run repository/Desktop gates sequentially unless
+  temporary-state isolation is explicitly proven; use disposable fixtures only.
+- [ ] Observe a successful hosted run after implementation and qualify failure
+  reporting without publishing private configuration or real operation logs.
 
 ## Complete Workspace & Git Worktree Restoration
 
@@ -74,6 +34,65 @@ remain in force until a reviewed contract is implemented.
   failure, retry and repeat/no-op with disposable fixtures and representative real gates.
 - [ ] Define any unique Workspace-data transfer through a separate bounded secure
   migration contract; keep current folder restoration structure-only.
+
+## Secure SSH Desktop (16H)
+
+- [ ] **Secure SSH Desktop (16H):** implement/qualify the inherited FD/challenge
+  bridge, opt-in Capture encryption and Restore unlock/import confirmation over
+  the existing engine; qualify age/OpenSSH PTY behavior. Extend privacy/report
+  fixtures for secure operations without exporting keys, names or secret input.
+
+## Remaining supported-domain Restore qualification
+
+<a id="restorehomebrew-checkpoint--08e2b469"></a>
+
+### Continuing Homebrew qualification
+
+Clean Install qualification is recorded in
+[Desktop](docs/DESKTOP.md#recent-restore-qualification-and-performance). Continue
+the remaining supported-domain Restore gates below. Unsafe Tailscale Repair remains
+Unsupported (`ownership_unproven`); in-place Repair is not implemented.
+
+- [ ] Broaden representative Homebrew Install/Repair → Verify → fresh no-op gates
+  as compatibility maintenance. Keep ambiguous/damaged privileged Repair states
+  fail-closed and retain action-specific requirements/ownership evidence.
+
+### macOS settings manual qualification
+
+Focused fixtures and the Desktop Debug build cover the settings/Capture UX
+checkpoint. The [2026-10-17 real Restore](docs/toolkit/CONFIGURATION.md#controlled-macos-27-restore-qualification)
+confirmed 37/37 saved values, not all visual effects or the remaining Restore gates.
+
+- [ ] Qualify the real visual effect of Screenshots Window shadow and Floating
+  thumbnail on macOS 27, including repeat/no-op behavior.
+- [ ] Complete real Apply and visual-behavior qualification of the four new
+  WindowManager preferences on macOS 27, including mode dependencies, session
+  refresh and repeat/no-op. `EnableTilingByEdgeDrag` and `EnableTopTilingByEdgeDrag`
+  already matched in the controlled test, so their write paths remain untested.
+  Stored-preference Verification alone does not establish live effect.
+
+<a id="broad-restore-manual-gate--2026-10-05"></a>
+
+### Mandatory Restore capability gaps
+
+The completed Assisted Restore milestone's Stage 5 Core/Desktop regression gate
+passed. The [2026-10-21 existing-Bundle Rebuild](docs/DESKTOP.md#recent-restore-qualification-and-performance)
+qualified Launcher and selected Global Verification; a fresh full cycle from a new
+Capture remains open.
+
+- [ ] Complete a fresh full Capture → Rebuild → Verification gate from a newly
+  captured Bundle on the current Mac after explicit scope approval and fresh
+  Preview. Preserve archive/worktree state, resolve or explicitly exclude conflicts
+  through supported selection, and
+  check repeat/no-op convergence. This does not replace Stage 17 clean-Mac gates.
+- [ ] Run a controlled real Desktop Zsh drift → Preview → Rebuild → Verification
+  → independent check → idempotent Preview gate, with safe backup.
+- [ ] Close the remaining supported Git/SSH configuration, VS Code and macOS
+  settings qualification matrix: matching state, drift, conflicts, observation
+  failure and repeat/no-op. Preserve accepted flows and record any unsupported
+  scope through the [capability process](CONTRIBUTING.md#capability-qualification).
+  VS Code dependency protection must remain explicit in install/re-entry results;
+  current Restore has no uninstall consumer.
 
 ## Remaining completion qualification (16I)
 

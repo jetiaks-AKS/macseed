@@ -5,8 +5,9 @@ Result UI are implemented and manually accepted; 16J is complete. Secure SSH
 Desktop integration remains open in 16H.**
 Assisted App Store Restore is an accepted development milestone: requirements,
 selection/Preview, manual installation and fresh Core verification are implemented.
-Automatic MAS development is permanently retired; `archive/mas-automatic-restore-v4`
-preserves historical evidence only, with no planned return to the active product.
+Automatic MAS is outside active development; `archive/mas-automatic-restore-v4`
+preserves historical evidence for future research only under a separate explicit
+decision. Its automatic install/helper paths are outside the current product flow.
 Stage 16 and Macseed 1.0 qualification remain open.
 Normal launch checks real Core capabilities over Protocol V1. The approved sample
 flows remain available only in explicit DEBUG design-preview mode. Environment
@@ -474,9 +475,12 @@ changing title indentation. Expand All / Collapse All and leaf-level Technical D
 remain available. Result categories start collapsed. Technical diagnostics remain in View Log or the existing collapsed
 fallback disclosure; bottom actions retain the fixed footer.
 
-The dedicated App Store screen retains Installed and Needs Attention metrics and
-shows every selected effective application immediately in one surface, without a
-repeated category header or disclosure. Missing comes first, Unverified next and
+The dedicated App Store screen shows **Installed** with `N of M selected`, or
+**All Installed** when every effective requirement matches. **Needs Attention**
+has no aggregate numeric value: its text retains the separate missing/unverified
+counts, such as `1 missing · 1 unverified`. Zero-valued metrics are hidden.
+Every selected effective application appears immediately in one surface, without
+a repeated category header or disclosure. Missing comes first, Unverified next and
 Installed afterward. Missing and Unverified rows
 retain **Open in App Store**, using validated numeric IDs and `NSWorkspace`.
 **Not in App Store** describes the provider requirement, not physical absence.
@@ -785,6 +789,15 @@ indentation still indicates hierarchy. Text wraps within its column as width or
 text size changes. Status classification and Preview/Capture layouts are unchanged.
 
 ## Recent Restore qualification and performance
+
+On 2026-10-21, a controlled current-Mac Rebuild from the existing `Test_1.mbt`
+completed successfully for its selected scope. The Launcher was already configured
+for `macseed-develop`; Core reported zero warnings/errors, and the typed Desktop
+result recorded completed execution with exit `0`. Global Verification was complete:
+**118/118 verified**, zero mismatch, unverified or unresolved requirements, and
+`selected_requirements_verified`. This qualifies that existing-Bundle Restore
+scope, not a fresh full Capture → Rebuild → Verification cycle from a new Bundle,
+linked-worktree topology restoration or clean-Mac readiness. Those gates remain open.
 
 The controlled macOS 27 Restore on 2026-10-17 restored the saved values in its
 37-record settings Bundle: Macseed reported 127/127 Successful, and independent

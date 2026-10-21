@@ -42,19 +42,20 @@ behind; finish with `git worktree remove` after the checks below.
 
 **Current development environment — local example, not a required repository layout.**
 
-Snapshot: **21 October 2026**. Reinspect before relying on this state.
+Snapshot: **21 October 2026, after Assisted worktree removal and milestone
+publication**. Reinspect before relying on this state.
 
 | Directory | Branch | Purpose |
 |---|---|---|
 | `~/Projects/macseed` | `archive/mas-automatic-restore-v4` | Historical worktree; physically holds the shared `.git`. |
 | `~/Projects/macseed-develop` | `develop` | Primary permanent development checkout. |
-| `~/Projects/macseed-assisted` | `feat/assisted-appstore-restore` | Completed temporary feature worktree awaiting removal. |
 | `~/Projects/bootstrap-branch-test` | Unconfirmed | Separate old directory; do not classify without inspection. |
 
-`develop` and the assisted feature branch both point to `0a344696`
-(`0a34469636fb20b60ea7aac9d3307a5327665d6c`). The locally recorded `origin/develop`
-has not been updated and is seven commits behind; no remote refresh is implied by
-this snapshot. `main` was not changed by this feature integration.
+`macseed-assisted` has been removed with `git worktree remove`. The retained
+`feat/assisted-appstore-restore` branch points to `0a344696` and is fully integrated
+into `develop`. At the post-cleanup milestone baseline, `develop` and
+`origin/develop` were synchronized at `e75a00f`; later documentation commits advance
+them normally. `main` was unchanged. Recheck live refs before starting work.
 
 The shared Git directory is `~/Projects/macseed/.git`. Removing or moving that
 directory without a dedicated migration breaks the other worktrees. An archived

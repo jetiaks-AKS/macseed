@@ -157,7 +157,12 @@ Before proceeding, the working tree must be clean.
 
 # 7. Merge `develop` into `main`
 
-Switch to `main`:
+Keep the permanent `develop` checkout on `develop`. Run the following steps in a
+separately agreed release checkout. If `main` is already held by another worktree,
+use that worktree instead; follow [Git worktree safety](GIT-WORKFLOW.md#how-worktrees-relate).
+Do not use the historical archive checkout for release work.
+
+In the release checkout, switch to `main` if it is not already active there:
 
 ```bash
 git checkout main
@@ -259,7 +264,9 @@ At this point the stable release is published.
 
 # 11. Return to `develop`
 
-Switch back to the development branch:
+Return to the existing `develop` worktree. The command below applies only when
+`develop` is not already checked out elsewhere; do not repurpose the permanent
+development checkout during release work.
 
 ```bash
 git checkout develop

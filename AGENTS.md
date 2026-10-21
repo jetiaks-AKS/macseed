@@ -13,9 +13,10 @@ Performance optimization/opt-in trace is implemented through `c06e530`. Assisted
 App Store Restore is an accepted development milestone: capture requirements,
 select/preview, install manually in Apple App Store, then refresh and verify.
 Confirmed identity overlap uses Cask-first precedence; unresolved evidence retains
-both requirements. Automatic MAS development is permanently retired;
-`archive/mas-automatic-restore-v4` preserves historical evidence only. Do not
-reactivate its install, helper, authorization or deployment paths.
+both requirements. Automatic MAS is retired from active development;
+`archive/mas-automatic-restore-v4` preserves historical evidence. Future research
+using that archive requires a separate explicit decision. Do not reactivate its
+install, helper, authorization or deployment paths in the current workflow.
 Continuing Homebrew qualification, Secure SSH Desktop (16H), remaining 16I/16K
 qualification and Stage 3C recovery remain open. Unified UI
 Scenario Catalog is deferred tooling. Follow the current

@@ -85,24 +85,27 @@ manual installation in Apple App Store and fresh Core verification. Confirmed
 identity overlap follows Cask-first precedence. Automatic MAS development is
 preserved on `archive/mas-automatic-restore-v4` and is outside the active path.
 The Assisted Restore milestone's Stage 5 Core/Desktop regression gate passed.
-A fresh real Capture → Rebuild → Verification gate on the current Mac remains
-outstanding. This completed development milestone does not complete Stage 16 or
-make Macseed 1.0 release-ready.
+A [controlled Rebuild from the existing `Test_1.mbt` on 2026-10-21](docs/DESKTOP.md#recent-restore-qualification-and-performance)
+passed Launcher and Global Verification. A fresh full Capture → Rebuild →
+Verification gate from a new Bundle remains outstanding. This completed development
+milestone does not complete Stage 16 or make Macseed 1.0 release-ready.
 
-1. **Remaining supported-domain Restore qualification:** continue Homebrew
+1. **[Desktop CI validation](#desktop-ci-validation):** add hosted native-client
+   validation through existing build/test entrypoints and qualify the hosted gate.
+2. **[Complete Workspace & Git Worktree Restoration](#complete-workspace--git-worktree-restoration):**
+   review architecture/data contracts before implementation and qualification.
+3. **Secure SSH Desktop (16H):** implement and qualify the inherited secret-channel
+   interaction, encryption/unlock/import confirmation and secure privacy coverage.
+4. **Remaining supported-domain Restore qualification:** continue Homebrew
    compatibility gates and the Desktop Zsh, configuration and other supported-domain
    checks tracked in TODO. Preserve the accepted Assisted Restore flow.
-2. **Secure SSH Desktop (16H):** implement and qualify the inherited secret-channel
-   interaction, encryption/unlock/import confirmation and secure privacy coverage.
-3. **Reliability / security and remaining 16I/16K qualification:** Stage 3C durable
+5. **Reliability / security and remaining 16I/16K qualification:** Stage 3C durable
    Cask reconciliation, installer/privileged-process quiescence, watchdog, partial
    and interrupted Verification, stale inputs, transport, accessibility and lifecycle
    ownership. Diagnostic logs do not provide recovery authority.
-4. **[Complete Workspace & Git Worktree Restoration](#complete-workspace--git-worktree-restoration):**
-   review architecture/data contracts before implementation and qualification.
-5. **Stage 17 — Distribution & Clean-Mac Qualification.**
-6. **Early Access / Alpha.**
-7. **Macseed 1.0.** Release Readiness is not the current checkpoint.
+6. **Stage 17 — Distribution & Clean-Mac Qualification.**
+7. **Early Access / Alpha.**
+8. **Macseed 1.0.** Release Readiness is not the current checkpoint.
 
 Real-Mac performance observations and their differing-run limitations are recorded
 in [Desktop qualification](docs/DESKTOP.md#recent-restore-qualification-and-performance),
@@ -116,6 +119,14 @@ The bounded macOS settings expansion and Capture Result refinements are
 implemented with focused automated coverage. Their remaining macOS 27 manual
 qualification is tracked in [TODO](TODO.md#macos-settings-manual-qualification);
 this does not close Stage 16 or the remaining supported-domain Restore gates.
+
+## Desktop CI validation
+
+**Planned next checkpoint.** Add hosted macOS Desktop build, presentation and
+Core/runtime integration validation through existing canonical entrypoints.
+Retain the repository CI gate and run repository/Desktop validation sequentially
+unless temporary-state isolation is explicitly proven. Confirm an actual hosted
+pass before claiming Desktop CI coverage; this is not distribution qualification.
 
 ## Complete Workspace & Git Worktree Restoration
 
