@@ -2375,14 +2375,9 @@ case "$1" in
    echo '111 Installed Fixture (1.0)'
    [[ ! -f "$TEST_MAS_STATE" ]] || echo '222 Missing Fixture (1.0)' ;;
  install)
-   [[ "$2" == 222 && "$#" == 2 && -f "$TEST_BOUNDARY" ]] || exit 2
-   [[ ! -t 0 && ! -t 1 ]] || exit 2
-   if (: </dev/tty) 2>/dev/null; then exit 2; fi
-   read -r input && exit 2
+   # Forbidden-call tripwire; Assisted Restore must never request installation.
    echo "install:$2" >> "$TEST_MAS_LOG"
-   echo 'private-account@example.test' >&2
-   [[ "${TEST_MAS_AUTH_FAIL:-false}" != true ]] || exit 2
-   touch "$TEST_MAS_STATE" ;;
+   exit 99 ;;
  *) exit 2 ;;
 esac
 exit 0

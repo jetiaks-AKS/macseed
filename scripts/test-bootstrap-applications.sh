@@ -38,26 +38,18 @@ blueprint_generated_file() {
 
 MAS_LIST_STATUS=0
 MAS_LIST_OUTPUT=""
-MAS_INSTALL_STATUS=0
 mas() {
     [[ "${MAS_NO_AUTO_INDEX:-}" == 1 ]] || fail "mas call lost MAS_NO_AUTO_INDEX=1"
     case "$1" in
         list)
             printf 'mas list\n' >> "$OBSERVATION_LOG"
-            if [[ -s "$TEST_DIR/MAS-installed" && $MAS_VERIFY_STATUS -ne 0 ]]; then
-                return "$MAS_VERIFY_STATUS"
-            fi
-            cat "$TEST_DIR/MAS-installed"
             printf '%s' "$MAS_LIST_OUTPUT"
             return "$MAS_LIST_STATUS"
             ;;
         install)
+            # Retain the forbidden-call tripwire, without simulating automatic MAS.
             printf 'mas install %s\n' "$2" >> "$COMMAND_LOG"
-            [[ "$2" != "$MAS_FAIL_ITEM" ]] || return 2
-            if [[ $MAS_INSTALL_STATUS -eq 0 && $MAS_INSTALL_MAKES_PRESENT == true ]]; then
-                printf '%s Mock App (1.0)\n' "$2" >> "$TEST_DIR/MAS-installed"
-            fi
-            return "$MAS_INSTALL_STATUS"
+            return 99
             ;;
     esac
 }
@@ -217,11 +209,6 @@ reset_state() {
     SELECTED_ITEMS=""
     MAS_LIST_STATUS=0
     MAS_LIST_OUTPUT=""
-    MAS_INSTALL_STATUS=0
-    MAS_VERIFY_STATUS=0
-    MAS_FAIL_ITEM=""
-    MAS_INSTALL_MAKES_PRESENT=true
-    : > "$TEST_DIR/MAS-installed"
     CODE_LIST_STATUS=0
     CODE_LIST_OUTPUT=""
     CODE_INSTALL_STATUS=0

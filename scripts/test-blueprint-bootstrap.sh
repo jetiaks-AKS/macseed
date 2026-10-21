@@ -59,11 +59,12 @@ brew() {
 }
 
 mas() {
-    if [[ "$1" == list ]]; then
-        printf '%s\n' ${PROCESSED_ITEMS:-}
+    if [[ "$*" == list && "${MAS_NO_AUTO_INDEX:-}" == 1 ]]; then
+        printf '%s\n' '111 Selected App (1.0)' '222 Unselected App (1.0)'
         return 0
     fi
-    PROCESSED_ITEMS="${PROCESSED_ITEMS}${PROCESSED_ITEMS:+ }$2"
+    printf '%s\n' "$*" >> "$TEST_ROOT/forbidden-mas-calls"
+    return 99
 }
 
 code() {
@@ -109,6 +110,26 @@ expect_processed() {
         pass "$label"
     else
         fail "$label (expected '$expected', got '$PROCESSED_ITEMS')"
+    fi
+}
+
+verification_application_operation_hook() {
+    [[ "$1" == app-store && "$3" == inspect && "$4" == noop ]] || return 2
+    PROCESSED_ITEMS="${PROCESSED_ITEMS}${PROCESSED_ITEMS:+ }$2"
+}
+
+expect_appstore_observed() {
+    local label="$1" expected="$2" status
+    PROCESSED_ITEMS=""
+    MODULE_CHANGED=false
+    : > "$TEST_ROOT/forbidden-mas-calls"
+    install_appstore_apps >/dev/null
+    status=$?
+    if [[ $status -eq 0 && "$PROCESSED_ITEMS" == "$expected" &&
+          "$MODULE_CHANGED" == false && ! -s "$TEST_ROOT/forbidden-mas-calls" ]]; then
+        pass "$label"
+    else
+        fail "$label (status=$status, observed='$PROCESSED_ITEMS', expected='$expected', changed=$MODULE_CHANGED)"
     fi
 }
 
@@ -285,8 +306,8 @@ expect_processed "missing Blueprint keeps all Homebrew packages eligible" \
     "selected-package unselected-package" install_brew_packages
 expect_processed "missing Blueprint keeps all Homebrew casks eligible" \
     "selected-cask unselected-cask" install_brew_casks
-expect_processed "missing Blueprint keeps all App Store IDs eligible" \
-    "111 222" install_appstore_apps
+expect_appstore_observed "missing Blueprint observes all App Store IDs without installation" \
+    "111 222"
 expect_processed "missing Blueprint keeps all VS Code extensions eligible" \
     "selected.extension unselected.extension" install_vscode_extensions
 bootstrap_workspace_folders >/dev/null
@@ -307,8 +328,8 @@ expect_processed "Blueprint filters Homebrew packages" \
     "selected-package" install_brew_packages
 expect_processed "Blueprint filters Homebrew casks" \
     "selected-cask" install_brew_casks
-expect_processed "Blueprint filters App Store applications by ID" \
-    "111" install_appstore_apps
+expect_appstore_observed "Blueprint filters assisted App Store observation by ID" \
+    "111"
 expect_processed "Blueprint filters VS Code extensions" \
     "selected.extension" install_vscode_extensions
 bootstrap_workspace_folders >/dev/null
@@ -331,8 +352,7 @@ expect_processed "empty Homebrew package section processes zero items" \
     "" install_brew_packages
 expect_processed "empty Homebrew cask section processes zero items" \
     "" install_brew_casks
-expect_processed "empty App Store section processes zero items" \
-    "" install_appstore_apps
+expect_appstore_observed "empty App Store section observes zero items" ""
 expect_processed "empty VS Code extension section processes zero items" \
     "" install_vscode_extensions
 bootstrap_workspace_folders >/dev/null
