@@ -372,9 +372,10 @@ git() {
             return "$WORKTREE_STATUS"
             ;;
         checkout)
-            printf 'checkout:%s:%s\n' "$repo_path" "$2" >> "$MUTATION_LOG"
+            [[ "$2" == --no-overwrite-ignore ]] || return 128
+            printf 'checkout:%s:%s\n' "$repo_path" "$3" >> "$MUTATION_LOG"
             [[ "$CHECKOUT_STATUS" -eq 0 ]] || return "$CHECKOUT_STATUS"
-            [[ "$CHECKOUT_UPDATES_BRANCH" != true ]] || OBSERVED_BRANCH="$2"
+            [[ "$CHECKOUT_UPDATES_BRANCH" != true ]] || OBSERVED_BRANCH="$3"
             [[ "$CHECKOUT_VERIFY_MODE" == normal ]] || OBSERVATION_MODE="$CHECKOUT_VERIFY_MODE"
             ;;
         *) return 128 ;;
@@ -735,6 +736,59 @@ reset_preview_messages
 preview_workspace_folders; status=$?
 expect_status 0 "$status" 'folder Preview preserves Blueprint subset'
 [[ -z "$PREVIEW_ACTIONS" && ! -s "$MUTATION_LOG" ]] || fail 'unselected folder was inspected or mutated'
+
+# Real Git filesystem protection, exclusively inside disposable repositories.
+(
+    unset -f git mkdir
+    source modules/bootstrap/workspace/repositories-helpers.sh
+    export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
+    export GIT_AUTHOR_NAME=Fixture GIT_AUTHOR_EMAIL=fixture@example.invalid
+    export GIT_COMMITTER_NAME=Fixture GIT_COMMITTER_EMAIL=fixture@example.invalid
+    for scenario in clean tracked staged untracked-conflict ignored-conflict nonconflicting; do
+        repo="$TEST_ROOT/checkout-$scenario"
+        git init -q -b base "$repo" || exit 1
+        git -C "$repo" remote add origin https://example.invalid/fixture.git || exit 1
+        printf 'original\n' > "$repo/tracked"
+        printf 'ignored-conflict\nignored-local\n' > "$repo/.gitignore"
+        git -C "$repo" add tracked .gitignore || exit 1
+        git -C "$repo" -c commit.gpgsign=false commit -qm base || exit 1
+        git -C "$repo" checkout -qb target || exit 1
+        printf 'target\n' > "$repo/tracked"
+        printf 'target\n' > "$repo/untracked-conflict"
+        printf 'target\n' > "$repo/ignored-conflict"
+        git -C "$repo" add tracked untracked-conflict || exit 1
+        git -C "$repo" add -f ignored-conflict || exit 1
+        git -C "$repo" -c commit.gpgsign=false commit -qm target || exit 1
+        git -C "$repo" checkout -q base || exit 1
+        case "$scenario" in
+            tracked|staged) printf 'private\n' > "$repo/tracked" ;;
+            untracked-conflict|ignored-conflict) printf 'private\n' > "$repo/$scenario" ;;
+            nonconflicting)
+                printf 'private-untracked\n' > "$repo/untracked-local"
+                printf 'private-ignored\n' > "$repo/ignored-local" ;;
+        esac
+        [[ "$scenario" != staged ]] || git -C "$repo" add tracked || exit 1
+        before_index="$(git -C "$repo" ls-files --stage)"
+        MODULE_CHANGED=false
+        repository_verify "$repo" https://example.invalid/fixture.git target fixture >/dev/null 2>&1
+        result=$?
+        case "$scenario" in
+            clean|nonconflicting)
+                [[ $result -eq 0 && "$MODULE_CHANGED" == true && "$(git -C "$repo" branch --show-current)" == target ]] || exit 1
+                repository_verify "$repo" https://example.invalid/fixture.git target fixture >/dev/null 2>&1 || exit 1
+                if [[ "$scenario" == nonconflicting ]]; then
+                    [[ "$(cat "$repo/untracked-local")" == private-untracked && "$(cat "$repo/ignored-local")" == private-ignored ]] || exit 1
+                fi ;;
+            *)
+                [[ $result -ne 0 && "$MODULE_CHANGED" == false && "$(git -C "$repo" branch --show-current)" == base ]] || exit 1
+                [[ "$(git -C "$repo" ls-files --stage)" == "$before_index" ]] || exit 1
+                file=tracked
+                [[ "$scenario" != *-conflict ]] || file="$scenario"
+                [[ "$(cat "$repo/$file")" == private ]] || exit 1 ;;
+        esac
+        printf 'PASS: real Git checkout protects %s state\n' "$scenario"
+    done
+) || fail 'real Git checkout filesystem protection'
 
 echo
 if [[ $TEST_FAILURES -eq 0 ]]; then

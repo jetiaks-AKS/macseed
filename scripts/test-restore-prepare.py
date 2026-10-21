@@ -2150,7 +2150,10 @@ case "$1" in
      remote) echo "${TEST_ORIGIN:-$TEST_REPO_REMOTE}" ;;
      branch) cat "$target/.branch" ;;
      diff) [[ "${TEST_DIRTY:-false}" != true ]] || exit 1 ;;
-     checkout) [[ "${TEST_CHECKOUT_FAIL:-false}" != true ]] || exit 2; echo "$2" > "$target/.branch"; echo checkout >> "$TEST_REPO_LOG" ;;
+     checkout)
+       [[ "$2" == --no-overwrite-ignore && "$#" == 3 ]] || exit 2
+       [[ "${TEST_CHECKOUT_FAIL:-false}" != true ]] || exit 2
+       echo "$3" > "$target/.branch"; echo checkout >> "$TEST_REPO_LOG" ;;
      *) exit 2 ;;
    esac
    exit 0 ;;

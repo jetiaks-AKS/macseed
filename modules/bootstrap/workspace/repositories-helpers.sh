@@ -165,7 +165,7 @@ repository_checkout() {
     local repository_path="$1"
     local branch="$2"
 
-    git -C "$repository_path" checkout "$branch" >/dev/null 2>&1
+    git -C "$repository_path" checkout --no-overwrite-ignore "$branch" >/dev/null 2>&1
 
 }
 
