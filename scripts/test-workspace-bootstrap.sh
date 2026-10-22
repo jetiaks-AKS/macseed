@@ -17,7 +17,7 @@ SELECTED_REPOSITORIES=""
 MUTATION_LOG="$TEST_ROOT/mutations.log"
 TEST_FAILURES=0
 
-mkdir -p "$HOME" "$BLUEPRINT_GENERATED_DIR/workspace"
+command mkdir -p "$HOME" "$BLUEPRINT_GENERATED_DIR/workspace"
 : > "$MUTATION_LOG"
 
 source modules/core/common/common.sh
