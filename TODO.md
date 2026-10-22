@@ -121,10 +121,11 @@ acceptance; [Desktop](docs/DESKTOP.md#restore-cancellation-safety) records its s
 Diagnostic records do not establish durable recovery or installer quiescence.
 
 - [ ] Address the remaining Restore failure-isolation audit findings for Workspace
-  folders, repositories and the macOS category Check boundary as separate tasks.
+  folders and repositories as separate tasks.
   D1 Formula write-ahead state, detected-quiescence propagation and durable re-entry
-  blocking are implemented with isolated mocks; the real lifecycle gates below
-  remain open.
+  blocking, and D4 macOS category isolation after selected-input validation, are
+  implemented with isolated mocks; the real lifecycle and macOS 27 qualification
+  gates remain open.
 - [ ] **Stage 3C:** implement durable ordinary-Cask journal/reconciliation and safe
   re-entry, including operation-owned DMG evidence. Do not delete user data or
   detach unrelated volumes.

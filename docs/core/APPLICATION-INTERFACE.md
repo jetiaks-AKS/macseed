@@ -545,6 +545,24 @@ and may leave unknown consequences. This is not rollback, Resume, Stage 3C durab
 ordinary-Cask reconciliation, or qualification of arbitrary privileged descendants.
 Automated fixtures establish checkpoint behavior, not real-Mac installer safety.
 
+### Independent macOS settings
+
+Application Restore validates all selected macOS configuration inputs, including
+the Screenshots destination safety checks, before applying the first category.
+It uses `run_module` over the existing `apply_macos_components` dispatcher:
+Finder, Dock, Windows, Keyboard, Trackpad and Screenshots each retain their own
+Check → Apply → Verify sequence. A category observation error skips its Apply;
+an Apply or local Verify failure retains partial changes. Independently checked
+categories continue, while the aggregate remains failed with existing counters
+and category failure records. Normal Global Verification still follows safe
+partial failures; it does not erase the execution failure.
+
+Invalid selected inputs block the entire group. Existing Stop checkpoints and the
+external-tool unknown-consequences marker block subsequent categories. Ordinary
+CLI retains its aggregate `run_configuration` Check gate. Disposable fixtures
+(`bash scripts/test-macos-bootstrap.sh --d4-only`) cover these boundaries; they do
+not qualify real macOS 27 visual effects or remaining native Restore gates.
+
 ### Independent Homebrew items
 
 Application Restore watches each formula/cask metadata/install subprocess for

@@ -212,6 +212,11 @@ The format is based on the principles of **Keep a Changelog**.
 
 ### Fixed
 
+* Application Restore continues independent macOS settings categories after a
+  local Check, Apply or Verify failure, retaining a failed aggregate and partial
+  changes. All selected inputs are validated before mutation; Stop and unknown
+  consequences still block continuation. Ordinary CLI behavior is unchanged.
+
 * Homebrew Formula Restore retains detected process uncertainty across nested
   executors, including metadata observers. Durable write-ahead state is required
   before affected subprocesses launch; supervisor crashes and failed uncertainty

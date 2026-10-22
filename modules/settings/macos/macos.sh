@@ -129,7 +129,57 @@ check_macos_settings() {
 # Apply macOS Settings
 # ==========================================
 
+validate_macos_settings_inputs() {
+    if blueprint_category_enabled macos-finder; then
+        validate_defaults_config "$FINDER_CONFIG" finder || return 2
+    fi
+    if blueprint_category_enabled macos-dock; then
+        validate_defaults_config "$DOCK_CONFIG" dock || return 2
+    fi
+    if blueprint_category_enabled macos-windows; then
+        validate_defaults_config "$WINDOWS_CONFIG" windows || return 2
+    fi
+    if blueprint_category_enabled macos-keyboard; then
+        validate_defaults_config "$KEYBOARD_CONFIG" keyboard || return 2
+    fi
+    if blueprint_category_enabled macos-trackpad; then
+        validate_defaults_config "$TRACKPAD_CONFIG" trackpad || return 2
+    fi
+    if blueprint_category_enabled macos-screenshots; then
+        validate_screenshots_config || return 2
+    fi
+    return 0
+}
+
+macos_settings_checkpoint() {
+    if declare -F application_stop_checkpoint >/dev/null; then
+        application_stop_checkpoint "$1"
+    fi
+    if [[ "${MACSEED_APPLICATION_EXECUTION:-false}" == true &&
+          -f "${MACSEED_ITEM_STATE_DIR:-}/external-tool-active.json" ]]; then
+        error "External lifecycle consequences are unknown; further mutation is blocked"
+        return 2
+    fi
+    return 0
+}
+
+apply_macos_restore_components() {
+    # Validate the complete selected input before any category may mutate.
+    # Category-local observation/Apply failures remain owned by the dispatcher.
+    validate_macos_settings_inputs || return 2
+    apply_macos_components
+    local result=$?
+    macos_settings_checkpoint "$result" || return 2
+    return "$result"
+}
+
 apply_macos_settings() {
+
+    if [[ "${MACSEED_APPLICATION_EXECUTION:-false}" == true &&
+          "${BUNDLE_RESTORE_ACTIVE:-false}" == true ]]; then
+        run_module "macOS Settings" apply_macos_restore_components
+        return $?
+    fi
 
     run_configuration \
         "macOS Settings" \
@@ -147,7 +197,7 @@ apply_macos_components() {
     local apply_result=0
     local category_result
 
-    if declare -F application_stop_checkpoint >/dev/null; then application_stop_checkpoint "$apply_result"; fi
+    macos_settings_checkpoint "$apply_result" || return 2
     if blueprint_category_enabled macos-finder; then
         check_finder
         category_result=$?
@@ -169,7 +219,7 @@ apply_macos_components() {
         fi
     fi
 
-    if declare -F application_stop_checkpoint >/dev/null; then application_stop_checkpoint "$apply_result"; fi
+    macos_settings_checkpoint "$apply_result" || return 2
     if blueprint_category_enabled macos-dock; then
         check_dock
         category_result=$?
@@ -191,7 +241,7 @@ apply_macos_components() {
         fi
     fi
 
-    if declare -F application_stop_checkpoint >/dev/null; then application_stop_checkpoint "$apply_result"; fi
+    macos_settings_checkpoint "$apply_result" || return 2
     if blueprint_category_enabled macos-windows; then
         check_windows
         category_result=$?
@@ -213,7 +263,7 @@ apply_macos_components() {
         fi
     fi
 
-    if declare -F application_stop_checkpoint >/dev/null; then application_stop_checkpoint "$apply_result"; fi
+    macos_settings_checkpoint "$apply_result" || return 2
     if blueprint_category_enabled macos-keyboard; then
         check_keyboard
         category_result=$?
@@ -235,7 +285,7 @@ apply_macos_components() {
         fi
     fi
 
-    if declare -F application_stop_checkpoint >/dev/null; then application_stop_checkpoint "$apply_result"; fi
+    macos_settings_checkpoint "$apply_result" || return 2
     if blueprint_category_enabled macos-trackpad; then
         check_trackpad
         category_result=$?
@@ -257,7 +307,7 @@ apply_macos_components() {
         fi
     fi
 
-    if declare -F application_stop_checkpoint >/dev/null; then application_stop_checkpoint "$apply_result"; fi
+    macos_settings_checkpoint "$apply_result" || return 2
     if blueprint_category_enabled macos-screenshots; then
         check_screenshots
         category_result=$?

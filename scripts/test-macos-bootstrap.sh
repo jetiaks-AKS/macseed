@@ -220,6 +220,209 @@ assert_observation_count() {
     [[ "$actual" == "$2" ]] && pass "$3" || fail "$3 ($actual)"
 }
 
+# A bounded application-Restore entrypoint check; never enters the full suite.
+d4_setup() {
+    reset_case
+    MODULES_CHECKED=0
+    INSTALLED_COUNT=0
+    SKIPPED_COUNT=0
+    WARNING_COUNT=0
+    ERROR_COUNT=0
+    export MACSEED_APPLICATION_EXECUTION=true BUNDLE_RESTORE_ACTIVE=true
+    export MACSEED_ITEM_STATE_DIR="$TEST_ROOT/item-state" TMPDIR="$TEST_ROOT"
+    unset MACSEED_HOMEBREW_STOP
+    command mkdir -p "$MACSEED_ITEM_STATE_DIR"
+    rm -f "$MACSEED_ITEM_STATE_DIR/external-tool-active.json"
+    MACSEED_REPORT_FD=3
+    MACSEED_REPORT_COUNT=0
+    MACSEED_REPORT_INVALID=false
+    exec 3> "$TEST_ROOT/d4-records"
+    record "$FINDER_CONFIG" 'com.apple.finder|ShowPathbar|bool|true'
+    record "$DOCK_CONFIG" 'com.apple.dock|orientation|string|right'
+    record "$WINDOWS_CONFIG" 'NSGlobalDomain|AppleActionOnDoubleClick|string|Minimize'
+    record "$KEYBOARD_CONFIG" 'NSGlobalDomain|KeyRepeat|int|2'
+    record "$TRACKPAD_CONFIG" 'com.apple.AppleMultitouchTrackpad|Clicking|bool|true'
+    record "$SCREENSHOTS_CONFIG" 'com.apple.screencapture|show-thumbnail|bool|true'
+}
+
+d4_check_failures() {
+    local category domain key
+    while IFS='|' read -r category domain key; do
+        d4_setup
+        READ_TYPE_FAILURE="$domain|$key"
+        run apply_macos_settings
+        expect_status 2 "$status" "$category observation failure retains failed aggregate"
+        assert_count '^write:' 5 "$category failure permits the other five categories"
+        assert_count "^write:$domain:$key:" 0 "$category is not applied after failed Check"
+        assert_changed true "$category failure retains independent changes"
+        [[ $MODULES_CHECKED -eq 1 && $ERROR_COUNT -eq 1 && $INSTALLED_COUNT -eq 1 &&
+           $SKIPPED_COUNT -eq 0 && $WARNING_COUNT -eq 0 ]] &&
+            pass 'one failed, changed module is counted' || fail 'aggregate failure/change accounting'
+        if grep -F "\"domain\":\"macos-$category\"" "$TEST_ROOT/d4-records" |
+           grep -Fq '"state":"failed"'; then
+            pass "$category typed failure record retained"
+        else
+            fail "$category typed failure record missing"
+        fi
+        [[ "$MACSEED_REPORT_INVALID" == false ]] || fail 'structured reporting failed'
+        run toolkit_exit_code
+        expect_status 2 "$status" 'Bootstrap summary preserves the category failure'
+    done <<'D4_CATEGORIES'
+finder|com.apple.finder|ShowPathbar
+dock|com.apple.dock|orientation
+windows|NSGlobalDomain|AppleActionOnDoubleClick
+keyboard|NSGlobalDomain|KeyRepeat
+trackpad|com.apple.AppleMultitouchTrackpad|Clicking
+screenshots|com.apple.screencapture|show-thumbnail
+D4_CATEGORIES
+
+    # Ordinary CLI keeps the aggregate Check gate.
+    d4_setup
+    MACSEED_APPLICATION_EXECUTION=false
+    BUNDLE_RESTORE_ACTIVE=false
+    READ_TYPE_FAILURE='com.apple.finder|ShowPathbar'
+    run apply_macos_settings
+    expect_status 2 "$status" 'ordinary CLI retains its aggregate Check contract'
+    assert_no_mutation 'ordinary CLI does not Apply after failed aggregate Check'
+}
+
+d4_matching() {
+    d4_setup
+    state_set com.apple.finder ShowPathbar bool true
+    state_set com.apple.dock orientation string right
+    state_set NSGlobalDomain AppleActionOnDoubleClick string Minimize
+    state_set NSGlobalDomain KeyRepeat int 2
+    state_set com.apple.AppleMultitouchTrackpad Clicking bool true
+    state_set com.apple.screencapture show-thumbnail bool true
+    run apply_macos_settings
+    expect_status 0 "$status" 'all six matching categories succeed'
+    assert_no_mutation 'matching categories do not write or restart'
+    assert_changed false 'matching categories retain unchanged state'
+    [[ $MODULES_CHECKED -eq 1 && $SKIPPED_COUNT -eq 1 && $INSTALLED_COUNT -eq 0 &&
+       $ERROR_COUNT -eq 0 && $WARNING_COUNT -eq 0 ]] &&
+        pass 'matching aggregate is counted once as skipped' || fail 'matching aggregate accounting'
+    [[ "$MACSEED_REPORT_INVALID" == false ]] || fail 'structured reporting failed'
+    run toolkit_exit_code
+    expect_status 0 "$status" 'matching Bootstrap summary succeeds'
+}
+
+d4_invalid_inputs() {
+    local config_file
+    for config_file in "$FINDER_CONFIG" "$DOCK_CONFIG" "$WINDOWS_CONFIG" \
+                       "$KEYBOARD_CONFIG" "$TRACKPAD_CONFIG" "$SCREENSHOTS_CONFIG"; do
+        d4_setup
+        printf '%s\n' malformed >> "$config_file"
+        run apply_macos_settings
+        expect_status 2 "$status" "invalid selected $(basename "$config_file") blocks entry"
+        assert_no_mutation 'all selected inputs are validated before the first mutation'
+        [[ ! -s "$OBSERVATION_LOG" ]] && pass 'invalid input precedes category observation' ||
+            fail 'invalid input reached observation'
+        assert_changed false 'invalid input retains unchanged state'
+        [[ $ERROR_COUNT -eq 1 && $INSTALLED_COUNT -eq 0 ]] || fail 'invalid-input accounting'
+    done
+    d4_setup
+    ENABLED_CATEGORIES=macos-dock
+    record "$SCREENSHOTS_CONFIG" malformed
+    run apply_macos_settings
+    expect_status 0 "$status" 'unselected invalid input is outside Restore scope'
+    assert_count '^write:' 1 'only the selected Dock is applied'
+}
+
+d4_boundaries() {
+    local action
+    # Use the production Stop checkpoint/controller and reporter, only private state.
+    killall() {
+        printf 'killall:%s\n' "$1" >> "$MUTATION_LOG"
+        if [[ "$1" == Finder ]]; then
+            if [[ "$action" == stop ]]; then
+                printf '%s\n' '{"stop":true,"scope":"idle"}' > "$MACSEED_HOMEBREW_STOP"
+            else
+                printf '%s\n' '{}' > "$MACSEED_ITEM_STATE_DIR/external-tool-active.json"
+            fi
+        fi
+        return 0
+    }
+    d4_isolated_execute() ( apply_macos_settings )
+    for action in stop unknown; do
+        d4_setup
+        ENABLED_CATEGORIES=$'macos-finder\nmacos-dock'
+        if [[ "$action" == stop ]]; then
+            export MACSEED_HOMEBREW_STOP="$TEST_ROOT/d4-stop.json"
+            printf '%s\n' '{"stop":false,"scope":"idle"}' > "$MACSEED_HOMEBREW_STOP"
+            chmod 600 "$MACSEED_HOMEBREW_STOP"
+        fi
+        run d4_isolated_execute
+        if [[ "$action" == stop ]]; then
+            expect_status 132 "$status" 'accepted Stop after Finder prevents Dock'
+        else
+            expect_status 2 "$status" 'unknown consequences after Finder prevent Dock'
+            [[ -f "$MACSEED_ITEM_STATE_DIR/external-tool-active.json" ]] ||
+                fail 'unknown-consequences marker was lost'
+        fi
+        assert_count '^write:com.apple.finder:' 1 'active Finder finishes before the boundary'
+        assert_observation_count 'com.apple.dock' 0 'Dock is not started past the boundary'
+        assert_count '^write:com.apple.dock:' 0 'Dock is not mutated past the boundary'
+    done
+    d4_setup
+    printf '%s\n' '{}' > "$MACSEED_ITEM_STATE_DIR/external-tool-active.json"
+    run apply_macos_settings
+    expect_status 2 "$status" 'pre-existing unknown consequences block entry'
+    assert_no_mutation 'unknown entry cannot mutate'
+    [[ ! -s "$OBSERVATION_LOG" ]] || fail 'unknown entry reached category observation'
+}
+
+d4_apply_failures() {
+    local mode
+    local modes=(write post-verify)
+    if [[ -n "${1:-}" ]]; then modes=("$1"); fi
+    for mode in "${modes[@]}"; do
+        d4_setup
+        ENABLED_CATEGORIES=$'macos-finder\nmacos-dock'
+        case "$mode" in
+            write)
+                printf '%s\n' 'com.apple.finder|ShowStatusBar|bool|true' >> "$FINDER_CONFIG"
+                WRITE_FAILURE_KEY=ShowStatusBar
+                ;;
+            post-verify)
+                printf '%s\n' 'com.apple.finder|NewWindowTarget|string|PfHm' >> "$FINDER_CONFIG"
+                FINDER_RESTART_MODE=observation-error
+                ;;
+            *) echo "Unknown D4 Apply case: $mode" >&2; return 2 ;;
+        esac
+        run apply_macos_settings
+        expect_status 2 "$status" "$mode failure retains failed aggregate"
+        assert_count '^write:com.apple.dock:' 1 'independent Dock still applies'
+        [[ "$(state_get com.apple.dock orientation 4)" == right ]] &&
+            pass 'Dock final state verified' || fail 'Dock state after independent Apply'
+        [[ "$(state_get com.apple.finder ShowPathbar 4)" == true ]] &&
+            pass 'successful partial Finder write retained' || fail 'partial Finder state lost'
+        assert_changed true 'partial writes retain MODULE_CHANGED'
+        [[ $ERROR_COUNT -eq 1 && $INSTALLED_COUNT -eq 1 ]] || fail 'partial-failure accounting'
+        if grep -F '"domain":"macos-finder"' "$TEST_ROOT/d4-records" | grep -Fq '"state":"failed"'; then
+            pass 'failed category record retained after partial Apply'
+        else
+            fail 'partial Apply failure record missing'
+        fi
+        run toolkit_exit_code
+        expect_status 2 "$status" 'Bootstrap summary preserves partial Apply failure'
+    done
+}
+
+if [[ "${1:-}" == --d4-only ]]; then
+    cd "$PROJECT_ROOT" || exit 1
+    d4_result=0
+    d4_cases=(check_failures matching invalid_inputs boundaries apply_failures)
+    if [[ -n "${2:-}" ]]; then d4_cases=("$2"); fi
+    for d4_case in "${d4_cases[@]}"; do
+        case "$d4_case" in
+            check_failures|matching|invalid_inputs|boundaries|apply_failures) ;;
+            *) echo "Unknown D4 case: $d4_case" >&2; exit 2 ;;
+        esac
+        ( "d4_$d4_case" "${3:-}" && [[ "$TEST_FAILURES" -eq 0 ]] ) || d4_result=1
+    done
+    exit "$d4_result"
+fi
+
 windows_expansion_checks() {
     local key value mode
     for key in EnableStandardClickToShowDesktop EnableTilingByEdgeDrag EnableTopTilingByEdgeDrag EnableTiledWindowMargins; do
