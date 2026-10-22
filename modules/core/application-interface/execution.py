@@ -274,7 +274,10 @@ class OwnedBootstrap:
         if self.unknown_consequences:
             try:
                 cause = json.loads(Path(self.item_state.name, 'external-tool-active.json').read_text()).get('cause')
-                if cause in {'item_stalled_timeout', 'progress_observation_failed', 'cancelled', 'item_install_failed'}:
+                if cause in {'item_stalled_timeout', 'progress_observation_failed', 'cancelled', 'item_install_failed',
+                             'vscode_inventory_deadline', 'vscode_install_deadline',
+                             'vscode_process_observation_failed', 'vscode_quiescence_unconfirmed',
+                             'vscode_lifecycle_state_failed', 'vscode_process_interrupted'}:
                     self.external_lifecycle_cause = cause
             except (OSError, ValueError, TypeError, AttributeError):
                 pass

@@ -3,7 +3,14 @@
 OBSERVED_VSCODE_STATUS=
 observe_vscode_inventory() {
     local inventory
-    inventory="$(vscode_cli --list-extensions)" || return 2
+    if ! inventory="$(vscode_cli --list-extensions)"; then
+        case "$inventory" in
+            reason:vscode_inventory_deadline|reason:vscode_process_observation_failed|reason:vscode_quiescence_unconfirmed|reason:vscode_lifecycle_state_failed|reason:vscode_lifecycle_pending|reason:vscode_cli_delegation_unsupported|reason:cancelled|reason:vscode_process_interrupted)
+                error "${inventory#reason:}" ;;
+            *) error "vscode_inventory_observation_failed" ;;
+        esac
+        return 2
+    fi
     LC_ALL=C awk '/^$/ { next } { if ($0 !~ /^[A-Za-z0-9][A-Za-z0-9_-]*\.[A-Za-z0-9][A-Za-z0-9_-]*$/) exit 2; print }' <<< "$inventory"
 }
 
@@ -69,7 +76,7 @@ vscode_cli_resolve() {
 
 vscode_cli() {
     vscode_cli_resolve || return 2
-    "$VSCODE_CLI_COMMAND" "$@"
+    python3 -B modules/vscode/cli_execution.py "$VSCODE_CLI_COMMAND" "$@" 2>/dev/null
 }
 
 check_vscode_cli() {
@@ -178,33 +185,31 @@ install_vscode_extension() {
     VSCODE_INSTALL_EXIT_CODE=2
     VSCODE_INSTALL_REASON=unknown
     VSCODE_INSTALL_DIAGNOSTIC_VALID=false
+    VSCODE_INSTALL_QUIESCENT=false
 
-    command -v python3 >/dev/null 2>&1 && [[ -r modules/vscode/cli_diagnostic.py ]] || {
+    command -v python3 >/dev/null 2>&1 && [[ -r modules/vscode/cli_execution.py ]] || {
         error "VS Code CLI diagnostics are unavailable"
         return 2
     }
 
     action "Installing $extension..."
 
-    # Both ordinary and VERBOSE paths drain both streams without ever exposing
-    # opaque tool output. Only three small typed lines cross this substitution.
-    report="$(
-        vscode_cli --install-extension "$extension" 2>&1 |
-            python3 -B modules/vscode/cli_diagnostic.py 2>/dev/null
-        pipeline_status=("${PIPESTATUS[@]}")
-        printf 'exit:%d\nreader:%d\n' "${pipeline_status[0]}" "${pipeline_status[1]}"
-    )"
+    # The supervisor drains opaque output and emits only bounded typed facts.
+    report="$(vscode_cli --install-extension "$extension")"
     while IFS=: read -r field value; do
         case "$field:$value" in
-            reason:network_reset|reason:unknown) VSCODE_INSTALL_REASON="$value" ;;
+            reason:network_reset|reason:unknown|reason:vscode_install_deadline|reason:vscode_process_observation_failed|reason:vscode_quiescence_unconfirmed|reason:vscode_lifecycle_state_failed|reason:vscode_lifecycle_pending|reason:vscode_cli_delegation_unsupported|reason:cancelled|reason:vscode_process_interrupted)
+                VSCODE_INSTALL_REASON="$value" ;;
             exit:*) [[ "$value" =~ ^[0-9]+$ && "$value" -le 255 ]] && VSCODE_INSTALL_EXIT_CODE="$value" ;;
             reader:0) VSCODE_INSTALL_DIAGNOSTIC_VALID=true ;;
+            quiescence:confirmed) VSCODE_INSTALL_QUIESCENT=true ;;
         esac
     done <<< "$report"
     [[ "$VSCODE_INSTALL_DIAGNOSTIC_VALID" == true ]] || VSCODE_INSTALL_REASON=unknown
     detail "VS Code CLI result: exit_code=$VSCODE_INSTALL_EXIT_CODE reason=$VSCODE_INSTALL_REASON"
 
-    if [[ "$VSCODE_INSTALL_EXIT_CODE" -eq 0 ]]; then
+    if [[ "$VSCODE_INSTALL_EXIT_CODE" -eq 0 && "$VSCODE_INSTALL_QUIESCENT" == true &&
+          "$VSCODE_INSTALL_DIAGNOSTIC_VALID" == true ]]; then
         return 0
     fi
 
@@ -294,6 +299,7 @@ install_vscode_extensions() {
             # item-local. Never turn them into permission to launch more work.
             [[ "$VSCODE_INSTALL_REASON" == network_reset &&
                "$VSCODE_INSTALL_DIAGNOSTIC_VALID" == true &&
+               "$VSCODE_INSTALL_QUIESCENT" == true &&
                "$VSCODE_INSTALL_EXIT_CODE" -gt 0 && "$VSCODE_INSTALL_EXIT_CODE" -lt 128 ]] || return 2
 
             OBSERVED_VSCODE_STATUS=pending

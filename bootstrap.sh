@@ -438,6 +438,13 @@ bootstrap_application_readiness_timed() (
         echo privileged_lifecycle_unknown
         return 2
     fi
+    # VS Code uncertainty blocks fresh Execute even when extensions are unselected.
+    python3 -B modules/vscode/cli_execution.py --pending
+    lifecycle_state=$?
+    if [[ "$lifecycle_state" -ne 1 ]]; then
+        echo privileged_lifecycle_unknown
+        return 2
+    fi
     application_scope_selected() {
         [[ "$focus" == all || "$focus" == "$1" ]] && bootstrap_item_scope_selected "$1"
     }

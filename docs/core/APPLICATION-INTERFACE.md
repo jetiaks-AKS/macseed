@@ -563,6 +563,70 @@ CLI retains its aggregate `run_configuration` Check gate. Disposable fixtures
 (`bash scripts/test-macos-bootstrap.sh --d4-only`) cover these boundaries; they do
 not qualify real macOS 27 visual effects or remaining native Restore gates.
 
+### Bounded VS Code CLI execution
+
+Restore's `--list-extensions` and `--install-extension` calls use a VS Code
+supervisor over Core's existing `ProcessTree`. Absolute policy budgets are
+120 seconds for inventory and 3,600 seconds for one extension installation,
+including its CLI-managed dependencies. They bound waiting; they do not detect
+absent progress. No terminal output, CPU sample or Homebrew `ProgressProbe` resets
+these budgets. Downloads can run for the entire installation budget. Exceeding it
+is `vscode_install_deadline` (inventory: `vscode_inventory_deadline`), never a
+claim that a slow operation made no progress. Real budget qualification remains open.
+
+The supervisor starts a private session, drains output without forwarding it,
+and reuses birth-identity/session tracking and bounded TERM → KILL termination.
+It also bounds the root wait after termination. Failed process observation or
+unconfirmed termination cannot become Success, including after native exit zero.
+Only validated extension IDs leave inventory; installation output reaches only
+the existing bounded, closed `network_reset` classifier. URLs, credentials,
+profile paths and arbitrary arguments/output never enter reports or logs.
+
+Before either CLI call, the existing private-directory/atomic-journal primitives
+publish and fsync VS Code safety state under
+`~/Library/Application Support/Macseed/VSCode/active.json`, holding its lifecycle
+lock. Read-only Prepare observations also write this infrastructure metadata;
+they do not install extensions or modify target settings. Execute additionally
+publishes the existing operation-local `external-tool-active.json` marker.
+Failure to establish durable state denies launch. Confirmed ordinary completion
+publishes a quiescent success/failure record and removes only its own operation
+marker. Interrupted, timed-out or unobservable calls retain blocking active or
+unknown state, including if the supervisor dies or a diagnostic update fails.
+
+An interrupted installation stays unknown even when the observed tree stops;
+unchanged inventory cannot rule out detached/delegated background work. Later
+modules are blocked by the operation marker, and the global readiness gate denies
+fresh Restore before publication even with Applications unselected. Existing V1
+`unknown_consequences` / `privileged_lifecycle_unknown` carry this fail-closed
+result; the legacy code name does not imply that VS Code ran privileged.
+Verification and another Preview cannot clear the journal. No automatic retry,
+rollback or journal reconciliation is introduced.
+Prepare's per-domain readiness report can be empty when Applications are disabled;
+the mandatory live Execute gate still rejects that plan before publication.
+
+Independent continuation remains limited to a normally exited `network_reset`
+failure, confirmed observed quiescence, successful diagnostics and a fresh
+unchanged inventory with the requested ID still absent. Native signals, deadline,
+observation/quiescence failure and unknown errors do not authorize another install.
+Surviving observed workers after root exit are terminated, but retain unknown
+consequences (`vscode_process_interrupted`); a killed worker is not a normal
+quiescent completion.
+The disposable orphan-worker fixture covers root exit zero with a live owned
+worker, confirmed and unconfirmed termination, retained unknown journals and
+blocked fresh Execute before publication, including without Applications selected.
+Graceful Stop still waits for the existing item checkpoints; it does not signal
+active VS Code work. Hard Cancel preserves uncertainty instead of reporting safe
+cancellation from command termination alone.
+
+The [macOS launcher](https://github.com/microsoft/vscode/blob/main/resources/darwin/bin/code.sh)
+can redirect through remote IPC. An inherited `VSCODE_IPC_HOOK_CLI` or resolved
+`remote-cli` path is declined before launch; no remote target is silently changed.
+ProcessTree still cannot prove absence of children detached before observation,
+external services or concurrent unowned VS Code activity. Discovery/Comparison
+observers outside this Restore path, real termination/re-entry and Extension Pack
+dependency closure remain separate qualification work. Disposable coverage:
+`python3 scripts/test-vscode-extensions.py --r5a-only`.
+
 ### Independent Homebrew items
 
 Application Restore watches each formula/cask metadata/install subprocess for

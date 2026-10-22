@@ -212,6 +212,12 @@ The format is based on the principles of **Keep a Changelog**.
 
 ### Fixed
 
+* Restore bounds VS Code extension inventory and installation CLI waits with
+  separate absolute budgets and owned-process termination. Durable safety state
+  blocks further mutation and fresh Restore after interrupted or unconfirmed
+  operations; confirmed `network_reset` continuation and private diagnostics are
+  preserved. These limits do not claim no-progress or real lifecycle qualification.
+
 * Application Restore can continue independent existing Git repositories after a
   checkout refusal only with unchanged HEAD/index/files and proven separate Git
   metadata. The original failure, partial changes and failed result remain;

@@ -15,40 +15,47 @@ RESET_LINES = {
 PROGRESS_LINES = {b"", b"Installing extensions..."}
 
 
-def classify(stream):
-    pending = b""
-    oversized = False
-    reset = False
-    unknown = False
+class Diagnostic:
+    """Bounded incremental reader, also used by the owned CLI supervisor."""
+    def __init__(self):
+        self.pending = b""
+        self.oversized = self.reset = self.unknown = False
 
-    def observe(line):
-        nonlocal reset, unknown
+    def observe(self, line):
         line = line.removesuffix(b"\r")
         if line in RESET_LINES:
-            reset = True
+            self.reset = True
         elif line not in PROGRESS_LINES:
-            unknown = True
+            self.unknown = True
 
+    def feed(self, chunk):
+        parts = chunk.split(b"\n")
+        for index, part in enumerate(parts):
+            if not self.oversized:
+                if len(self.pending) + len(part) > MAX_LINE:
+                    self.pending = b""
+                    self.oversized = self.unknown = True
+                else:
+                    self.pending += part
+            if index < len(parts) - 1:
+                if not self.oversized:
+                    self.observe(self.pending)
+                self.pending = b""
+                self.oversized = False
+
+    def reason(self):
+        if self.pending and not self.oversized:
+            self.observe(self.pending)
+        return "network_reset" if self.reset and not self.unknown else "unknown"
+
+
+def classify(stream):
+    diagnostic = Diagnostic()
     while True:
         chunk = stream.read(4096)
         if not chunk:
-            break
-        parts = chunk.split(b"\n")
-        for index, part in enumerate(parts):
-            if not oversized:
-                if len(pending) + len(part) > MAX_LINE:
-                    pending = b""
-                    oversized = unknown = True
-                else:
-                    pending += part
-            if index < len(parts) - 1:
-                if not oversized:
-                    observe(pending)
-                pending = b""
-                oversized = False
-    if pending and not oversized:
-        observe(pending)
-    return "network_reset" if reset and not unknown else "unknown"
+            return diagnostic.reason()
+        diagnostic.feed(chunk)
 
 
 if __name__ == "__main__":
