@@ -229,6 +229,8 @@ else: sys.exit(2)
     def test_dependency_block_and_independent_continuation(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
+            home, items = root / 'home', root / 'items'
+            home.mkdir(mode=0o700); items.mkdir(mode=0o700)
             brew = root / 'brew'
             brew.write_text('''#!/usr/bin/env python3
 import json,sys
@@ -238,19 +240,20 @@ if a[0]=='info': print(json.dumps({'formulae':[{'full_name':a[-1], 'dependencies
 else: Path(sys.argv[-1]).touch()
 ''')
             brew.chmod(0o700)
-            (root / 'failed-items.json').write_text('["formula:failed"]')
-            old = os.environ['PATH']; os.environ['PATH'] = str(root) + ':' + old
-            try:
+            (items / 'failed-items.json').write_text('["formula:failed"]')
+            with patch.dict(os.environ, HOME=str(home), MACSEED_ITEM_STATE_DIR=str(items),
+                            MACSEED_APPLICATION_EXECUTION='true',
+                            PATH=str(root) + os.pathsep + os.environ['PATH']):
                 executor = BrewItemExecutor()
-                status = executor.execute('formula', 'dependent', ['brew','install',str(root/'dependent')], root)
+                status = executor.execute('formula', 'dependent', ['brew','install',str(root/'dependent')], items)
                 self.assertEqual(status, 125)
                 self.assertEqual(executor.reason, 'dependency_failed')
                 self.assertFalse((root/'dependent').exists())
                 independent = BrewItemExecutor()
-                self.assertEqual(independent.execute('formula','independent',['brew','install',str(root/'independent')],root),0)
+                self.assertEqual(independent.execute('formula','independent',['brew','install',str(root/'independent')],items),0)
                 self.assertTrue((root/'independent').exists())
-            finally:
-                os.environ['PATH'] = old
+                self.assertFalse(lifecycle.pending())
+                self.assertFalse((items / 'external-tool-active.json').exists())
 
 
 class FormulaQuiescenceTests(unittest.TestCase):
@@ -485,6 +488,22 @@ class FormulaDurabilityTests(unittest.TestCase):
 
     environment = FormulaQuiescenceTests.environment
     restore_fixture = FormulaQuiescenceTests.restore_fixture
+
+    def test_missing_item_state_prevents_journal_and_launch(self):
+        environment, items = self.environment()
+        with environment:
+            os.environ.pop('MACSEED_ITEM_STATE_DIR')
+            executor = BrewItemExecutor()
+            with patch.object(executor, 'run') as launch, \
+                 patch.object(lifecycle, 'state_directory_fd', wraps=lifecycle.state_directory_fd) as durable, \
+                 patch.object(lifecycle, 'journal', wraps=lifecycle.journal) as journal:
+                self.assertEqual(executor.execute('formula', 'first', ['native'], items), lifecycle.UNKNOWN)
+                self.assertTrue(lifecycle.operation_unknown())
+                launch.assert_not_called()
+                durable.assert_not_called()
+                journal.assert_not_called()
+            self.assertFalse((Path.home() / 'Library').exists())
+            self.assertEqual(list(items.iterdir()), [])
 
     def test_persistent_prepare_failures_prevent_every_launch(self):
         for failure in ('create', 'write', 'file_fsync', 'directory_fsync'):

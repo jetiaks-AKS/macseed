@@ -160,7 +160,10 @@ def journal(directory, value, directory_fd=None, name='active.json'):
 
 
 def marker_fd():
-    descriptor = os.open(os.environ['MACSEED_ITEM_STATE_DIR'], os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    directory = os.environ.get('MACSEED_ITEM_STATE_DIR')
+    if not directory:
+        raise ValueError('missing operation state directory')
+    descriptor = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     info = os.fstat(descriptor)
     if info.st_uid != os.getuid() or info.st_mode & 0o077:
         os.close(descriptor)
@@ -206,6 +209,9 @@ class WriteAhead:
 
     def __enter__(self):
         try:
+            # Reject missing/unsafe operation state before creating durable state.
+            marker = marker_fd()
+            os.close(marker)
             self.directory_fd = state_directory_fd(state_directory(), create=True)
             try:
                 self.value = read_state(self.directory_fd)
