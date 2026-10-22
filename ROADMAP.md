@@ -90,6 +90,14 @@ passed Launcher and Global Verification. A fresh full Capture → Rebuild →
 Verification gate from a new Bundle remains outstanding. This completed development
 milestone does not complete Stage 16 or make Macseed 1.0 release-ready.
 
+The VS Code Restore Reliability checkpoint completed on 2026-10-22 adds safe typed
+`network_reset` diagnostics. Independent extension installs continue only after a
+confirmed network reset and a fresh, valid, unchanged inventory with the failed
+requirement still absent. Unknown errors and safety violations still stop further
+installs. The checkpoint's Core regression gate passed **40/40** suites. Real
+[VS Code Restore requalification](TODO.md#vs-code-restore-requalification) and a
+read-only resilience audit across all Restore modules remain open.
+
 1. **[Desktop CI validation](#desktop-ci-validation):** add hosted native-client
    validation through existing build/test entrypoints and qualify the hosted gate.
 2. **[Complete Workspace & Git Worktree Restoration](#complete-workspace--git-worktree-restoration):**

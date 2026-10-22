@@ -19,6 +19,10 @@ Stage 16 as a whole remains open; follow the single
   temporary-state isolation is explicitly proven; use disposable fixtures only.
 - [ ] Observe a successful hosted run after implementation and qualify failure
   reporting without publishing private configuration or real operation logs.
+- [ ] Investigate the existing baseline FAIL at
+  `desktop/Macseed/Tests/PresentationTests.swift:72`: measure detail-width growth
+  after manual Sidebar Toggle, including bounds and safe-area insets, to distinguish
+  a test-measurement issue from a real layout defect.
 
 ## Complete Workspace & Git Worktree Restoration
 
@@ -94,6 +98,14 @@ Capture remains open.
   VS Code dependency protection must remain explicit in install/re-entry results;
   current Restore has no uninstall consumer.
 
+### VS Code Restore requalification
+
+- [ ] Run a targeted real Restore for `ms-azuretools.vscode-containers`,
+  `ms-azuretools.vscode-docker` and `usernamehw.errorlens`; then independently check
+  the installed-extension inventory and a fresh Preview.
+- [ ] Separately qualify VS Code Extension Pack dependency closure; installed-ID
+  presence alone does not establish that every required dependency is installed.
+
 ## Remaining completion qualification (16I)
 
 - [ ] Real-Mac qualify unexercised final-result combinations: absent/malformed terminal
@@ -108,6 +120,9 @@ Operation-wide checkpoint Graceful Stop is implemented and has controlled real-M
 acceptance; [Desktop](docs/DESKTOP.md#restore-cancellation-safety) records its scope.
 Diagnostic records do not establish durable recovery or installer quiescence.
 
+- [ ] Audit all Restore modules read-only for safe continuation of independent
+  operations after item-local failure. Distinguish operation-wide failures and
+  safety stops, and assess Operation Records and Global Verification consistency.
 - [ ] **Stage 3C:** implement durable ordinary-Cask journal/reconciliation and safe
   re-entry, including operation-owned DMG evidence. Do not delete user data or
   detach unrelated volumes.
