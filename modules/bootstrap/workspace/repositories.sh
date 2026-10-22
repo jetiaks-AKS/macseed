@@ -73,11 +73,26 @@ bootstrap_workspace_repositories() {
 
     local has_warnings=false
     local repository_result
+    local has_errors=false failed_checkouts=""
 
     local repository path remote branch
     while IFS=$'\t' read -r repository path remote branch; do
         [[ -n "$repository" ]] || continue
-        if declare -F application_stop_checkpoint >/dev/null; then application_stop_checkpoint; fi
+        if declare -F application_stop_checkpoint >/dev/null; then
+            if [[ "$has_errors" == true ]]; then application_stop_checkpoint 2; else application_stop_checkpoint; fi
+        fi
+        if [[ "${MACSEED_APPLICATION_EXECUTION:-false}" == true &&
+              -f "${MACSEED_ITEM_STATE_DIR:-}/external-tool-active.json" ]]; then
+            error "External lifecycle consequences are unknown; further mutation is blocked"
+            return 2
+        fi
+        if [[ -n "$failed_checkouts" ]]; then
+            if ! workspace_bootstrap_path_valid "${path#"$HOME"/}" ||
+               ! printf '%s\n' "$failed_checkouts" | python3 -B modules/bootstrap/workspace/checkout-evidence.py independent "$path" 2>/dev/null; then
+                error "Repository independence is unproven; further restoration is blocked: $repository"
+                return 2
+            fi
+        fi
 
     info "Repository: $repository"
 
@@ -85,6 +100,13 @@ bootstrap_workspace_repositories() {
         repository_result=$?
         if [[ $repository_result -eq 2 ]]; then
             error "Repository inspection failed: $repository"
+            if [[ "${MACSEED_APPLICATION_EXECUTION:-false}" == true &&
+                  "${BUNDLE_RESTORE_ACTIVE:-false}" == true &&
+                  -n "${REPOSITORY_CHECKOUT_FAILURE_EVIDENCE:-}" ]]; then
+                has_errors=true
+                failed_checkouts="${failed_checkouts}${failed_checkouts:+$'\n'}$REPOSITORY_CHECKOUT_FAILURE_EVIDENCE"
+                continue
+            fi
             return 2
         fi
         if [[ $repository_result -ne 0 ]]; then
@@ -96,6 +118,9 @@ bootstrap_workspace_repositories() {
 
     done <<< "$repositories"
 
+    if [[ "$has_errors" == true ]]; then
+        return 2
+    fi
     if [[ "$has_warnings" == true ]]; then
         return 1
     fi

@@ -169,6 +169,10 @@ repository_checkout() {
 
 }
 
+repository_checkout_failure_snapshot() {
+    python3 -B modules/bootstrap/workspace/checkout-evidence.py snapshot "$@" 2>/dev/null
+}
+
 # ==========================================
 # Preview Repository
 # ==========================================
@@ -262,6 +266,10 @@ repository_verify() {
     local repository_subject="${4:-$path}"
     local repository_cloned=false
     local repository_checked_out=false
+    local checkout_before="" checkout_after="" checkout_result
+    # Private evidence consumed only by the application Restore repository loop.
+    # shellcheck disable=SC2034
+    REPOSITORY_CHECKOUT_FAILURE_EVIDENCE=""
 
     local inspection_result
     repository_exists "$path"
@@ -364,9 +372,23 @@ if [[ "$current_branch" != "$expected_branch" ]]; then
 
     action "Restoring branch..."
 
-    if ! repository_checkout "$path" "$expected_branch"; then
+    if [[ "${MACSEED_APPLICATION_EXECUTION:-false}" == true &&
+          "${BUNDLE_RESTORE_ACTIVE:-false}" == true && "$repository_cloned" == false ]]; then
+        checkout_before="$(repository_checkout_failure_snapshot "$path" "$expected_branch" "$expected_remote")" || checkout_before=""
+    fi
+    repository_checkout "$path" "$expected_branch"
+    checkout_result=$?
+    if [[ $checkout_result -ne 0 ]]; then
         declare -F verification_operation_hook >/dev/null && verification_operation_hook git-repositories "$repository_subject" checkout failure
         error "Failed to restore branch"
+        if [[ $checkout_result -eq 1 && -n "$checkout_before" ]]; then
+            checkout_after="$(repository_checkout_failure_snapshot "$path" "$expected_branch" "$expected_remote")" || checkout_after=""
+            if [[ "$checkout_after" == "$checkout_before" ]]; then
+                # Read by the application Restore consumer in repositories.sh.
+                # shellcheck disable=SC2034
+                REPOSITORY_CHECKOUT_FAILURE_EVIDENCE="$checkout_after"
+            fi
+        fi
         return 2
     fi
 

@@ -534,6 +534,30 @@ Checkout only on confirmed branch mismatch or detached HEAD with clean state;
 verify exact `CURRENT_BRANCH` afterwards. Failed observation or mismatch is an
 error. No reset, clean, forced checkout or automatic remote change occurs.
 
+Application Restore alone may continue after a narrowly qualified checkout
+refusal: a local target branch has an observed untracked/ignored obstruction,
+Git exits normally with `1`, and complete before/after evidence is identical.
+Evidence includes HEAD/current branch, origin/configuration, raw index, Git
+metadata, tracked and protected local file bytes and file identity/mode/timestamps.
+Read-only Git observations use `GIT_OPTIONAL_LOCKS=0`; evidence remains private
+process-local digests, not a recovery journal or a second Restore engine.
+
+Qualification requires an existing ordinary repository with its own `.git`
+directory and exactly one worktree. Hooks, filters, fsmonitor, shared metadata,
+alternates, submodules, symlinks/hardlinks, foreign/writable-by-others entries or
+incomplete/unstable observations decline qualification. Inspection is limited to 4,096 filesystem entries and
+64 MiB across worktree and Git metadata; oversized Git output or an observation
+timeout also declines it. These limits do not turn an error into success.
+
+Before each later repository, recheck the failed evidence and prove a disjoint
+existing worktree/common directory, including filesystem identity. An absent
+destination or unproven relationship stops traversal. Preserve the original
+checkout `failure`, earlier Changed and overall `2`; normal Global Verification
+still follows safe partial failures. Clone failures, failed post-checkout Verify,
+unknown errors/consequences and accepted Stop still block further work. Ordinary
+CLI retains immediate failure semantics and the Folders → Repositories gate is
+unchanged. Fixtures: `bash scripts/test-workspace-bootstrap.sh --d3-only`.
+
 ### Linked Git worktree capability limits
 
 Repository Discovery recursively scans HOME folders classified as `workspace`
@@ -542,11 +566,12 @@ are absent from Capture inventory. Capture Prepare rescans into private staging;
 refreshing a saved Discovery snapshot does not remove this limitation.
 
 Bundle repository records do not encode a common Git directory or relationships
-between worktrees. Restore can inspect an existing linked worktree, but treats
-each record independently: an absent path plans a clone, and branch mismatch can
-plan checkout without detecting occupancy in another worktree. This does not
-provide topology restoration or justify treating an absent linked worktree as an
-independent clone. Adding `.git` file detection alone is not a complete solution.
+between worktrees. Restore can inspect an existing linked worktree, but ordinary
+planning still handles individual records: an absent path plans a clone, and branch
+mismatch can plan checkout without detecting occupancy in another worktree. This
+does not provide topology restoration or justify treating an absent linked worktree as an
+independent clone. The bounded refusal-continuation gate above rejects linked or
+shared topology. Adding `.git` file detection alone is not a complete solution.
 
 Topology-aware Discovery, Capture and Restore require the separate
 [Workspace/Git checkpoint](../../ROADMAP.md#complete-workspace--git-worktree-restoration)

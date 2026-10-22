@@ -124,6 +124,241 @@ write_valid_repositories() {
     } > "$BLUEPRINT_GENERATED_DIR/workspace/repositories.conf"
 }
 
+if [[ "${1:-}" == --d3-only ]]; then
+    # Real Git operates only beneath this disposable HOME. No full-suite entry.
+    source modules/bootstrap/workspace/repositories-helpers.sh
+    source modules/core/verification/verification.sh
+    source modules/verification/verification.sh
+    export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
+    export GIT_AUTHOR_NAME=Fixture GIT_AUTHOR_EMAIL=fixture@example.invalid
+    export GIT_COMMITTER_NAME=Fixture GIT_COMMITTER_EMAIL=fixture@example.invalid
+    d3_setup() {
+        D3_SERIAL=$((D3_SERIAL + 1))
+        D3_ROOT="$TEST_ROOT/d3-$D3_CASE-$D3_SERIAL"
+        HOME="$D3_ROOT/home"
+        BLUEPRINT_GENERATED_DIR="$D3_ROOT/generated"
+        MUTATION_LOG="$D3_ROOT/operations"
+        export MACSEED_APPLICATION_EXECUTION=true BUNDLE_RESTORE_ACTIVE=true
+        export MACSEED_ITEM_STATE_DIR="$D3_ROOT/items"
+        unset MACSEED_HOMEBREW_STOP
+        mkdir -p "$HOME" "$BLUEPRINT_GENERATED_DIR/workspace" "$MACSEED_ITEM_STATE_DIR"
+        chmod 700 "$HOME" "$MACSEED_ITEM_STATE_DIR"
+        BLUEPRINT_PRESENT=true
+        SELECTED_FOLDERS=""
+        SELECTED_REPOSITORIES=$'repo-a\nrepo-b'
+        MODULE_CHANGED=false
+        MODULES_CHECKED=0 INSTALLED_COUNT=0 SKIPPED_COUNT=0 ERROR_COUNT=0 WARNING_COUNT=0
+        D3_FAULT=none
+        D3_BOUNDARY=none
+        D3_A="$HOME/repo-a"
+        D3_B="$HOME/repo-b"
+        d3_repository "$D3_A" repo-a
+        d3_repository "$D3_B" repo-b
+        d3_configuration
+        : > "$MUTATION_LOG"
+        verification_reset bootstrap
+    }
+    d3_repository() {
+        local path="$1" name="$2"
+        command git init -q -b base "$path" || return 1
+        command git -C "$path" remote add origin "git@example.com:$name.git" || return 1
+        printf 'base\n' > "$path/tracked"
+        printf 'ignored-conflict\n' > "$path/.gitignore"
+        command git -C "$path" add tracked .gitignore || return 1
+        command git -C "$path" -c commit.gpgsign=false commit -qm base || return 1
+        command git -C "$path" checkout -qb target || return 1
+        printf 'target\n' > "$path/tracked"
+        printf 'target\n' > "$path/untracked-conflict"
+        printf 'target\n' > "$path/ignored-conflict"
+        command git -C "$path" add tracked untracked-conflict || return 1
+        command git -C "$path" add -f ignored-conflict || return 1
+        command git -C "$path" -c commit.gpgsign=false commit -qm target || return 1
+        command git -C "$path" checkout -q base || return 1
+    }
+    d3_configuration() {
+        {
+            write_repository_section repo-a "$D3_A" | sed 's/CURRENT_BRANCH="main"/CURRENT_BRANCH="target"/'
+            write_repository_section repo-b "$D3_B" | sed 's/CURRENT_BRANCH="main"/CURRENT_BRANCH="target"/'
+        } > "$BLUEPRINT_GENERATED_DIR/workspace/repositories.conf"
+    }
+    info() { printf 'info:%s\n' "$*" >> "$MUTATION_LOG"; }
+    git() {
+        local argument result
+        for argument in "$@"; do
+            if [[ "$argument" == clone ]]; then
+                echo clone-refused >> "$MUTATION_LOG"
+                return 1 # Never contact a real remote, even in a failed fixture.
+            fi
+        done
+        if [[ "${1:-}" == -C && "${3:-}" == checkout ]]; then
+            printf 'checkout:%s\n' "$2" >> "$MUTATION_LOG"
+            if [[ "$2" == "$D3_A" ]]; then
+                case "$D3_FAULT" in
+                    unknown) return 1 ;;
+                    abnormal) return 128 ;;
+                    changed) printf 'unexpected mutation\n' > "$D3_A/tracked"; return 1 ;;
+                    post-verify) return 0 ;;
+                esac
+            fi
+            command git "$@"
+            result=$?
+            if [[ "$2" == "$D3_A" ]]; then
+                case "$D3_BOUNDARY" in
+                    stop) printf '%s\n' '{"stop":true,"scope":"idle"}' > "$MACSEED_HOMEBREW_STOP" ;;
+                    unknown) printf '%s\n' '{}' > "$MACSEED_ITEM_STATE_DIR/external-tool-active.json" ;;
+                esac
+            fi
+            return "$result"
+        fi
+        command git "$@"
+    }
+    d3_run() {
+        "$@" > "$D3_ROOT/output" 2>&1
+        status=$?
+        output="$(cat "$D3_ROOT/output")"
+    }
+    d3_assert_b_blocked() {
+        if grep -Fq 'info:Repository: repo-b' "$MUTATION_LOG"; then fail 'Repo B started past the safety boundary';
+        else pass 'Repo B did not start'; fi
+        [[ "$(command git -C "$HOME/repo-b" branch --show-current)" == base ]] || fail 'Repo B changed past the boundary'
+    }
+    d3_assert_failure_record() {
+        local i found=false
+        for ((i=0; i<${#GV_O[@]}; i+=5)); do
+            if [[ "${GV_O[i+1]}" == repo-a && "${GV_O[i+2]}" == checkout && "${GV_O[i+3]}" == failure ]]; then found=true; fi
+        done
+        [[ "$found" == true ]] && pass 'Repo A retains a typed checkout failure' || fail 'checkout failure record lost'
+    }
+    d3_safe() {
+        d3_setup
+        printf 'private\n' > "$D3_A/untracked-conflict"
+        d3_run bootstrap_workspace_repositories
+        expect_status 2 "$status" 'unchanged checkout refusal allows independent Repo B, retaining Failed'
+        [[ "$(command git -C "$D3_B" branch --show-current)" == target && "$MODULE_CHANGED" == true ]] ||
+            fail 'independent checkout did not complete or lost Changed'
+        d3_assert_failure_record
+        d3_setup
+        printf 'private\n' > "$D3_A/untracked-conflict"
+        MACSEED_APPLICATION_EXECUTION=false BUNDLE_RESTORE_ACTIVE=false
+        d3_run bootstrap_workspace_repositories
+        expect_status 2 "$status" 'ordinary CLI keeps immediate failure semantics'
+        d3_assert_b_blocked
+    }
+    d3_protected() {
+        local kind before_head
+        for kind in untracked ignored; do
+            d3_setup
+            printf 'private\000bytes\n' > "$D3_A/$kind-conflict"
+            cp "$D3_A/$kind-conflict" "$D3_ROOT/protected-before"
+            cp "$D3_A/.git/index" "$D3_ROOT/index-before"
+            cp "$D3_A/tracked" "$D3_ROOT/tracked-before"
+            before_head="$(command git -C "$D3_A" rev-parse HEAD)"
+            d3_run bootstrap_workspace_repositories
+            expect_status 2 "$status" "$kind conflict retains Failed"
+            cmp -s "$D3_ROOT/protected-before" "$D3_A/$kind-conflict" && pass "$kind bytes preserved" || fail "$kind bytes changed"
+            cmp -s "$D3_ROOT/index-before" "$D3_A/.git/index" || fail 'index bytes changed'
+            cmp -s "$D3_ROOT/tracked-before" "$D3_A/tracked" || fail 'tracked bytes changed'
+            [[ "$(command git -C "$D3_A" rev-parse HEAD)" == "$before_head" &&
+               "$(command git -C "$D3_A" branch --show-current)" == base ]] || fail 'HEAD/branch changed'
+            [[ "$(command git -C "$D3_B" branch --show-current)" == target ]] || fail 'protected refusal blocked independent work'
+        done
+    }
+    d3_unknown() {
+        local fault
+        for fault in unknown abnormal changed marker; do
+            d3_setup
+            D3_FAULT="$fault"
+            if [[ "$fault" != unknown ]]; then printf 'private\n' > "$D3_A/untracked-conflict"; fi
+            if [[ "$fault" == marker ]]; then D3_FAULT=none; D3_BOUNDARY=unknown; fi
+            d3_run bootstrap_workspace_repositories
+            expect_status 2 "$status" "$fault checkout evidence blocks continuation"
+            d3_assert_b_blocked
+            if [[ "$fault" == marker ]]; then
+                [[ -f "$MACSEED_ITEM_STATE_DIR/external-tool-active.json" ]] || fail 'unknown marker lost'
+            fi
+        done
+    }
+    d3_shared() {
+        local topology
+        for topology in linked common-alias; do
+            d3_setup
+            printf 'private\n' > "$D3_A/untracked-conflict"
+            if [[ "$topology" == linked ]]; then
+                command git -C "$D3_A" worktree add -q --detach "$HOME/linked" || return 1
+            else
+                ln -s "$D3_A" "$HOME/common-alias"
+                D3_B="$HOME/common-alias"
+                d3_configuration
+            fi
+            d3_run bootstrap_workspace_repositories
+            expect_status 2 "$status" "$topology is not assumed independent"
+            d3_assert_b_blocked
+        done
+    }
+    d3_hard_failures() {
+        local failure
+        for failure in clone post-verify; do
+            d3_setup
+            if [[ "$failure" == clone ]]; then D3_A="$HOME/absent"; d3_configuration;
+            else D3_FAULT=post-verify; fi
+            d3_run bootstrap_workspace_repositories
+            expect_status 2 "$status" "$failure blocks all subsequent repositories"
+            d3_assert_b_blocked
+        done
+    }
+    d3_stop() {
+        local active_result
+        d3_isolated_execute() ( bootstrap_workspace_repositories )
+        for active_result in success failure; do
+            d3_setup
+            if [[ "$active_result" == failure ]]; then printf 'private\n' > "$D3_A/untracked-conflict"; fi
+            export MACSEED_HOMEBREW_STOP="$D3_ROOT/stop.json"
+            printf '%s\n' '{"stop":false,"scope":"idle"}' > "$MACSEED_HOMEBREW_STOP"
+            chmod 600 "$MACSEED_HOMEBREW_STOP"
+            D3_BOUNDARY=stop
+            d3_run d3_isolated_execute
+            if [[ "$active_result" == success ]]; then expect_status 132 "$status" 'Stop after successful checkout is accepted';
+            else expect_status 2 "$status" 'Stop preserves the failed checkout result'; fi
+            d3_assert_b_blocked
+        done
+    }
+    d3_partial() {
+        d3_setup
+        d3_repository "$HOME/repo-first" repo-first || return 1
+        SELECTED_REPOSITORIES=$'repo-first\nrepo-a\nrepo-b'
+        {
+            write_repository_section repo-first "$HOME/repo-first" | sed 's/CURRENT_BRANCH="main"/CURRENT_BRANCH="target"/'
+            cat "$BLUEPRINT_GENERATED_DIR/workspace/repositories.conf"
+        } > "$D3_ROOT/selected.conf"
+        mv "$D3_ROOT/selected.conf" "$BLUEPRINT_GENERATED_DIR/workspace/repositories.conf"
+        printf 'private\n' > "$D3_A/untracked-conflict"
+        d3_run run_module Workspace bootstrap_workspace
+        expect_status 2 "$status" 'partial Workspace retains Failed'
+        [[ "$MODULE_CHANGED" == true && $ERROR_COUNT -eq 1 && $INSTALLED_COUNT -eq 1 ]] || fail 'partial aggregate accounting lost'
+        [[ "$output" != *'SUCCESS:Workspace Bootstrap completed'* ]] || fail 'partial Workspace reported success'
+        d3_assert_failure_record
+        # Exercise the unchanged production Global Verification domain collector.
+        verify_workspace_repositories || fail 'repository Verification collector failed'
+        local i failed=false verified=false
+        for ((i=0; i<${#GV_V[@]}; i+=6)); do
+            [[ "${GV_V[i+1]}" != repo-a || "${GV_V[i+2]}" != branch || "${GV_V[i+3]}" != mismatch ]] || failed=true
+            [[ "${GV_V[i+1]}" != repo-b || "${GV_V[i+2]}" != branch || "${GV_V[i+3]}" != verified ]] || verified=true
+        done
+        [[ "$failed" == true && "$verified" == true ]] && pass 'Verification retains failed A and matching B separately' || fail 'Verification evidence incomplete'
+        toolkit_exit_code; status=$?
+        expect_status 2 "$status" 'Verification does not erase execution failure'
+    }
+    d3_result=0
+    d3_cases=(safe protected unknown shared hard_failures stop partial)
+    if [[ -n "${2:-}" ]]; then d3_cases=("$2"); fi
+    for d3_case in "${d3_cases[@]}"; do
+        case "$d3_case" in safe|protected|unknown|shared|hard_failures|stop|partial) ;;
+            *) echo "Unknown D3 fixture: $d3_case" >&2; exit 2 ;; esac
+        ( D3_CASE="$d3_case"; D3_SERIAL=0; "d3_$d3_case" && [[ "$TEST_FAILURES" -eq 0 ]] ) || d3_result=1
+    done
+    exit "$d3_result"
+fi
+
 if [[ "${1:-}" == --d2-only ]]; then
     # Only disposable folder lifecycle fixtures; exit before the full suite.
     d2_setup() {

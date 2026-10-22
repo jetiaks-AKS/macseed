@@ -212,6 +212,12 @@ The format is based on the principles of **Keep a Changelog**.
 
 ### Fixed
 
+* Application Restore can continue independent existing Git repositories after a
+  checkout refusal only with unchanged HEAD/index/files and proven separate Git
+  metadata. The original failure, partial changes and failed result remain;
+  unknown state, shared topology, clone/post-Verify failures and Stop still block
+  continuation. Ordinary CLI behavior and the Workspace Folders gate are unchanged.
+
 * Workspace Folders continues safe independent creation after confirmed local
   `mkdir` failures, retaining partial changes and a failed result. Related paths
   are skipped, unsafe or uncertain state stops creation, and any folder failure

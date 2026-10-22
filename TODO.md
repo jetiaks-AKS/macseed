@@ -120,12 +120,9 @@ Operation-wide checkpoint Graceful Stop is implemented and has controlled real-M
 acceptance; [Desktop](docs/DESKTOP.md#restore-cancellation-safety) records its scope.
 Diagnostic records do not establish durable recovery or installer quiescence.
 
-- [ ] Address the remaining Restore failure-isolation audit finding for Git
-  Repositories (D3) as a separate task.
-  D1 Formula write-ahead state, detected-quiescence propagation and durable re-entry
-  blocking, D2 independent safe Workspace folder creation and D4 macOS category
-  isolation after selected-input validation are implemented with isolated mocks;
-  the real lifecycle and macOS 27 qualification gates remain open.
+D1–D4 failure-isolation fixes have focused fixture coverage within their documented
+contracts. Real lifecycle, broader Git and macOS 27 qualification remain open.
+
 - [ ] **Stage 3C:** implement durable ordinary-Cask journal/reconciliation and safe
   re-entry, including operation-owned DMG evidence. Do not delete user data or
   detach unrelated volumes.
