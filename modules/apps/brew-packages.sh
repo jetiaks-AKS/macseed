@@ -205,6 +205,10 @@ install_brew_packages() {
         fi
 
         local install_result=$?
+        if [[ "${MACSEED_APPLICATION_EXECUTION:-false}" == true &&
+              -f "${MACSEED_ITEM_STATE_DIR:-}/external-tool-active.json" ]]; then
+            install_result=129
+        fi
         if [[ $install_result -ne 0 ]]; then
             local reason='' outcome=failure
             if [[ "${MACSEED_APPLICATION_EXECUTION:-false}" == true ]]; then
@@ -215,12 +219,17 @@ install_brew_packages() {
                     126) reason=dependency_observation_failed ;;
                     127) reason=progress_observation_failed ;;
                     128) reason="$(jq -er '.reason' "$MACSEED_ITEM_STATE_DIR/homebrew-precondition.json" 2>/dev/null)" || reason=homebrew_precondition_changed; outcome=skipped ;;
+                    129)
+                        reason=privileged_lifecycle_unknown
+                        [[ -f "$MACSEED_ITEM_STATE_DIR/external-tool-active.json" ]] ||
+                            printf '%s\n' '{"tool":"homebrew","state":"unknown_consequences"}' > "$MACSEED_ITEM_STATE_DIR/external-tool-active.json" ;;
                     130) return 130 ;;
-                132) return 132 ;;
+                    132) return 132 ;;
                 esac
             fi
             declare -F verification_operation_hook >/dev/null && verification_operation_hook homebrew-packages "$package" install "$outcome" "$reason"
             error "Failed to install $package"
+            [[ $install_result -ne 129 ]] || return 2
             [[ "${MACSEED_APPLICATION_EXECUTION:-false}" == true ]] || return 2
             item_errors=$((item_errors + 1))
             continue

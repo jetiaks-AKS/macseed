@@ -8,6 +8,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'core/application-interface'))
 from item_execution import ItemExecutor, STALLED, BLOCKED, UNOBSERVABLE, OBSERVATION_FAILED, CANCELLED
+from .homebrew_lifecycle import UNKNOWN, WriteAhead, pending as lifecycle_pending, operation_unknown, quarantine
 
 
 def valid_name(name):
@@ -19,8 +20,15 @@ def valid_name(name):
 
 class BrewItemExecutor(ItemExecutor):
     def info(self, kind, name):
-        status, raw = self.run(['brew', 'info', '--json=v2', '--' + kind, name], capture=True)
-        if status:
+        previous = self.inherited_fds
+        try:
+            with WriteAhead(kind, name) as lease:
+                self.inherited_fds = (lease.descriptor,)
+                status, raw = self.run(['brew', 'info', '--json=v2', '--' + kind, name], capture=True)
+                status = lease.finish(status, not self.unquiescent)
+        finally:
+            self.inherited_fds = previous
+        if status or self.unquiescent:
             raise RuntimeError('dependency_observation_failed')
         data = json.loads(raw)
         row = data['formulae' if kind == 'formula' else 'casks'][0]
@@ -43,6 +51,22 @@ class BrewItemExecutor(ItemExecutor):
         return kind + ':' + canonical, pairs
 
     def execute(self, kind, name, command, directory):
+        if kind != 'formula':
+            return self._execute(kind, name, command, directory)
+        previous = self.inherited_fds
+        try:
+            with WriteAhead(kind, name) as lease:
+                self.inherited_fds = (lease.descriptor,)
+                status = self._execute(kind, name, command, directory)
+                return lease.finish(status, not self.unquiescent)
+        except (OSError, ValueError):
+            return quarantine(kind, name, self.reason)
+        finally:
+            self.inherited_fds = previous
+
+    def _execute(self, kind, name, command, directory):
+        if self.unquiescent or operation_unknown() or lifecycle_pending():
+            return quarantine(kind, name, self.reason)
         (directory / 'homebrew-precondition.json').unlink(missing_ok=True)
         ledger = directory / 'failed-items.json'
         failed = set(json.loads(ledger.read_text())) if ledger.exists() else set()
@@ -74,6 +98,8 @@ class BrewItemExecutor(ItemExecutor):
         except (KeyError, IndexError, TypeError, ValueError, OSError, RuntimeError):
             status = CANCELLED if self.cancelled else STALLED if self.reason == 'item_stalled_timeout' else OBSERVATION_FAILED if self.reason == 'progress_observation_failed' else UNOBSERVABLE
             self.reason = self.reason or 'dependency_observation_failed'
+        if self.unquiescent or status == UNKNOWN or operation_unknown() or lifecycle_pending():
+            return quarantine(kind, name, self.reason)
         if status != CANCELLED:
             # Not ready until the authoritative Bash consumer verifies installation.
             identities = directory / 'item-identities.json'

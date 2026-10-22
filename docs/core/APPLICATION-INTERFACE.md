@@ -418,6 +418,27 @@ before explicitly reconciling this quarantine; no automatic rollback or safe roo
 cancellation is claimed. Completed native lifecycle plus quiescent tracked processes
 allows final independent Verification and repeat-run idempotency.
 
+Formula execution uses the same `active.json` and lifecycle lock with write-ahead
+publication before its outer metadata/native chain. Homebrew dependency metadata
+observers also establish active state before launch. Private files and directory
+entries must both pass fsync before any affected subprocess starts; preparation,
+publication or durability failure denies launch. Nested Formula supervisors inherit
+the validated owner lock descriptor; they cannot clear the parent's journal.
+
+Unconfirmed quiescence overrides zero and nonzero exits with
+`privileged_lifecycle_unknown`. The operation marker blocks later items/modules;
+the durable active record survives supervisor termination and failed diagnostic
+updates, blocking fresh Execute before publication even without Homebrew selected.
+Only the owning supervisor can publish confirmed quiescence. A successful,
+quiescent operation removes its own record; a confirmed safe item failure retains
+`quiescent`/`failure` state and allows independent work. Active/unknown records are
+never cleared by failed operations, later observation or Verification.
+
+This closes D1's detected-uncertainty and durable re-entry gap. ProcessTree still
+cannot prove absence of children that detached before observation or of external
+service activity outside its tracked identities/session. Real native/watchdog
+qualification and ordinary-Cask recovery remain separate open gates.
+
 ### External tool adapter results
 
 The concrete Homebrew adapter exposes contract version 1 with `tool`, `state`,

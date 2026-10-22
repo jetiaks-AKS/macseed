@@ -120,9 +120,11 @@ Operation-wide checkpoint Graceful Stop is implemented and has controlled real-M
 acceptance; [Desktop](docs/DESKTOP.md#restore-cancellation-safety) records its scope.
 Diagnostic records do not establish durable recovery or installer quiescence.
 
-- [ ] Audit all Restore modules read-only for safe continuation of independent
-  operations after item-local failure. Distinguish operation-wide failures and
-  safety stops, and assess Operation Records and Global Verification consistency.
+- [ ] Address the remaining Restore failure-isolation audit findings for Workspace
+  folders, repositories and the macOS category Check boundary as separate tasks.
+  D1 Formula write-ahead state, detected-quiescence propagation and durable re-entry
+  blocking are implemented with isolated mocks; the real lifecycle gates below
+  remain open.
 - [ ] **Stage 3C:** implement durable ordinary-Cask journal/reconciliation and safe
   re-entry, including operation-owned DMG evidence. Do not delete user data or
   detach unrelated volumes.

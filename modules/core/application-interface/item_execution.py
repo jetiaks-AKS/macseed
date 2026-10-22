@@ -191,6 +191,7 @@ class ItemExecutor:
         self.cancelled = False
         self.reason = None
         self.unquiescent = False
+        self.inherited_fds = ()
 
     def cancel(self, *_):
         self.cancelled = True
@@ -206,7 +207,8 @@ class ItemExecutor:
             def launch(arguments):
                 return subprocess.Popen(arguments, stdin=subprocess.DEVNULL,
                                         stdout=output if capture else subprocess.DEVNULL,
-                                        stderr=subprocess.DEVNULL, start_new_session=True)
+                                        stderr=subprocess.DEVNULL, start_new_session=True,
+                                        pass_fds=self.inherited_fds)
             try:
                 if os.environ.get(KEY) and command[:2] in (['brew', 'install'], ['brew', 'reinstall']):
                     process = State(os.environ[KEY]).launch(command, launch)
@@ -216,7 +218,7 @@ class ItemExecutor:
                 return STOPPED, b''
             except (OSError, ValueError):
                 self.reason = 'progress_observation_failed'
-                return OBSERVATION_FAILED, b
+                return OBSERVATION_FAILED, b''
             tree = None
             try:
                 tree = ProcessTree(process.pid)
@@ -243,11 +245,17 @@ class ItemExecutor:
                 self.reason = 'progress_observation_failed'
                 return OBSERVATION_FAILED, b''
             finally:
-                if tree is not None:
-                    self.unquiescent |= not tree.stop()
-                else:
-                    try:
-                        os.killpg(process.pid, signal.SIGKILL)
-                    except ProcessLookupError:
-                        pass
+                try:
+                    if tree is not None:
+                        self.unquiescent |= not tree.stop()
+                    else:
+                        # Killing the root group cannot prove descendant quiescence
+                        # when process observation never initialized.
+                        self.unquiescent = True
+                        try:
+                            os.killpg(process.pid, signal.SIGKILL)
+                        except ProcessLookupError:
+                            pass
+                except (OSError, ValueError, RuntimeError, subprocess.SubprocessError):
+                    self.unquiescent = True
                 process.wait()

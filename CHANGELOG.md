@@ -212,6 +212,12 @@ The format is based on the principles of **Keep a Changelog**.
 
 ### Fixed
 
+* Homebrew Formula Restore retains detected process uncertainty across nested
+  executors, including metadata observers. Durable write-ahead state is required
+  before affected subprocesses launch; supervisor crashes and failed uncertainty
+  updates retain the re-entry block. Unconfirmed quiescence blocks further mutations
+  even after a zero exit; confirmed safe item failures retain independent continuation.
+
 * Environment Status aligns nested statuses, hides zero summary metrics and keeps
   additional applications in diagnostic evidence. Category match labels, compact
   leaf checkmarks and a shared red difference palette improve readability.
