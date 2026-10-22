@@ -42,6 +42,25 @@ workspace_folder_first_missing_path() {
 
 }
 
+# Resolve an existing ancestor, retaining the validated missing path components.
+workspace_folder_physical_path() {
+    workspace_bootstrap_path_valid "$1" || return 2
+    local ancestor="$HOME/$1" suffix="" physical
+    while [[ ! -e "$ancestor" && ! -L "$ancestor" ]]; do
+        suffix="/${ancestor##*/}$suffix"
+        ancestor="${ancestor%/*}"
+    done
+    physical="$(cd "$ancestor" && pwd -P)" || return 2
+    printf '%s%s\n' "$physical" "$suffix"
+}
+
+# Component boundaries matter; conservatively include case aliases on macOS.
+# Keep the shell option local to this comparison.
+workspace_folder_paths_related() (
+    shopt -s nocasematch
+    [[ "$1" == "$2" || "$1" == "$2"/* || "$2" == "$1"/* ]]
+)
+
 # ==========================================
 # Workspace Folders Preview
 # ==========================================
@@ -104,6 +123,8 @@ bootstrap_workspace_folders() {
     config_file="$(blueprint_generated_file workspace-folders)"
 
     local folders folder target first_missing_path inspection_result
+    local folders_result=0 physical_path checked_physical_path failed_path related
+    local failed_paths=()
     if ! folders="$(workspace_read_bootstrap_folders "$config_file")"; then
         error "Workspace folders configuration is missing, unreadable, or not actionable"
         return 2
@@ -111,7 +132,12 @@ bootstrap_workspace_folders() {
 
     while IFS= read -r folder; do
         [[ -n "$folder" ]] || continue
-        if declare -F application_stop_checkpoint >/dev/null; then application_stop_checkpoint; fi
+        if declare -F application_stop_checkpoint >/dev/null; then application_stop_checkpoint "$folders_result"; fi
+        if [[ "${MACSEED_APPLICATION_EXECUTION:-false}" == true &&
+              -f "${MACSEED_ITEM_STATE_DIR:-}/external-tool-active.json" ]]; then
+            error "External lifecycle consequences are unknown; further mutation is blocked"
+            return 2
+        fi
 
         target="$HOME/$folder"
         workspace_folder_state "$folder"
@@ -127,6 +153,24 @@ bootstrap_workspace_folders() {
             return 2
         fi
 
+        physical_path="$(workspace_folder_physical_path "$folder")" || {
+            error "Failed to resolve workspace folder safely: $folder"
+            return 2
+        }
+        related=false
+        for failed_path in "${failed_paths[@]:-}"; do
+            [[ -n "$failed_path" ]] || continue
+            if workspace_folder_paths_related "$target" "$failed_path" ||
+               workspace_folder_paths_related "$physical_path" "$failed_path"; then
+                related=true
+                break
+            fi
+        done
+        if [[ "$related" == true ]]; then
+            error "Skipping workspace folder after related creation failure: $folder"
+            continue
+        fi
+
         first_missing_path="$(workspace_folder_first_missing_path "$folder")" || {
             error "Failed to determine workspace folder mutation: $folder"
             return 2
@@ -137,7 +181,25 @@ bootstrap_workspace_folders() {
         if ! mkdir -p "$target"; then
             [[ ! -d "$first_missing_path" ]] || MODULE_CHANGED=true
             error "Failed to create workspace folder: $folder"
-            return 2
+            folders_result=2
+            # A synchronous mkdir failure is local only while its retained state
+            # remains observable and its validated physical destination is stable.
+            workspace_folder_state "$folder"
+            inspection_result=$?
+            if [[ $inspection_result -ne 0 && $inspection_result -ne 1 ]]; then
+                error "Workspace folder state is uncertain after failed creation: $folder"
+                return 2
+            fi
+            checked_physical_path="$(workspace_folder_physical_path "$folder")" || {
+                error "Failed to resolve workspace folder after failed creation: $folder"
+                return 2
+            }
+            if [[ "$checked_physical_path" != "$physical_path" ]]; then
+                error "Workspace folder destination changed during creation: $folder"
+                return 2
+            fi
+            failed_paths+=("$target" "$physical_path")
+            continue
         fi
 
         # Shared lifecycle flag is read by the calling module wrapper.
@@ -152,6 +214,11 @@ bootstrap_workspace_folders() {
         success "Workspace folder created: $folder"
 
     done <<< "$folders"
+
+    if [[ $folders_result -ne 0 ]]; then
+        error "Workspace folders completed with errors"
+        return 2
+    fi
 
     success "Workspace configuration loaded"
 

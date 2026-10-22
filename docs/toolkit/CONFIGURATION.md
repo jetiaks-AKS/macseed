@@ -504,6 +504,16 @@ item actionability. Create folders only on confirmed safe absence; wrong type,
 unsafe links and access error block `mkdir -p`. Verify created directories; matching
 ones are unchanged. Folder failure blocks repository restoration.
 
+A failed `mkdir` permits later independent folders only after reinspection confirms
+safe absence or a usable retained directory at the same physical destination.
+Failed paths and related ancestor/descendant creation requests are not retried;
+relations use component boundaries and physical aliases, conservatively including
+case aliases. Every later path is checked again before creation. Errors remain
+item-specific, partial directories retain Changed, and the group returns `2`
+without a completion-success message. Path/observation or post-Verify errors,
+changed destinations, accepted Stop and unknown external consequences stop further
+creation. Git Repositories remains blocked by any final folder failure.
+
 ### Workspace repository inspection
 
 Check access to the existing destination ancestor before clone. An existing

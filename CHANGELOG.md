@@ -212,6 +212,11 @@ The format is based on the principles of **Keep a Changelog**.
 
 ### Fixed
 
+* Workspace Folders continues safe independent creation after confirmed local
+  `mkdir` failures, retaining partial changes and a failed result. Related paths
+  are skipped, unsafe or uncertain state stops creation, and any folder failure
+  continues to block Git Repositories.
+
 * Application Restore continues independent macOS settings categories after a
   local Check, Apply or Verify failure, retaining a failed aggregate and partial
   changes. All selected inputs are validated before mutation; Stop and unknown

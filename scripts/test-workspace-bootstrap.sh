@@ -124,6 +124,190 @@ write_valid_repositories() {
     } > "$BLUEPRINT_GENERATED_DIR/workspace/repositories.conf"
 }
 
+if [[ "${1:-}" == --d2-only ]]; then
+    # Only disposable folder lifecycle fixtures; exit before the full suite.
+    d2_setup() {
+        D2_SERIAL=$((D2_SERIAL + 1))
+        local case_root="$TEST_ROOT/d2-$D2_CASE-$D2_SERIAL"
+        HOME="$case_root/home"
+        BLUEPRINT_GENERATED_DIR="$case_root/generated"
+        MUTATION_LOG="$case_root/mutations"
+        export MACSEED_ITEM_STATE_DIR="$case_root/items" MACSEED_APPLICATION_EXECUTION=false
+        unset MACSEED_HOMEBREW_STOP
+        command mkdir -p "$HOME" "$BLUEPRINT_GENERATED_DIR/workspace" "$MACSEED_ITEM_STATE_DIR"
+        chmod 700 "$HOME" "$MACSEED_ITEM_STATE_DIR"
+        : > "$MUTATION_LOG"
+        BLUEPRINT_PRESENT=false
+        MODULE_CHANGED=false
+        D2_FAIL_TARGET="$HOME/Projects/A"
+        D2_FAIL_MODE=fail
+        D2_BOUNDARY_TARGET=""
+        D2_BOUNDARY_ACTION=stop
+        write_valid_repositories
+    }
+    d2_folders() { printf '%s|workspace\n' "$@" > "$BLUEPRINT_GENERATED_DIR/workspace/folders.conf"; }
+    d2_run() {
+        "$@" > "$TEST_ROOT/d2-output" 2>&1
+        status=$?
+        output="$(cat "$TEST_ROOT/d2-output")"
+    }
+    d2_attempts() {
+        local count
+        count="$(grep -Fxc "mkdir:$HOME/$1" "$MUTATION_LOG" || true)"
+        [[ "$count" -eq "$2" ]] && pass "$1 has $2 creation attempts" || fail "$1 has $count creation attempts"
+    }
+    mkdir() {
+        local target="${!#}" result=0
+        [[ "$target" == "$HOME"/* ]] || return 2
+        printf 'mkdir:%s\n' "$target" >> "$MUTATION_LOG"
+        if [[ "$target" == "$D2_FAIL_TARGET" ]]; then
+            result=1
+            case "$D2_FAIL_MODE" in
+                partial) command mkdir -p "${target%/*}" || return 2 ;;
+                uncertain)
+                    command mkdir -p "${target%/*}" || return 2
+                    printf 'mock conflict\n' > "$target"
+                    ;;
+                next-unsafe)
+                    command mkdir -p "$TEST_ROOT/d2-outside" || return 2
+                    ln -s "$TEST_ROOT/d2-outside" "$HOME/Other" || return 2
+                    ;;
+            esac
+        else
+            command mkdir "$@" || result=$?
+        fi
+        if [[ "$target" == "$D2_BOUNDARY_TARGET" ]]; then
+            if [[ "$D2_BOUNDARY_ACTION" == stop ]]; then
+                printf '%s\n' '{"stop":true,"scope":"idle"}' > "$MACSEED_HOMEBREW_STOP"
+            else
+                printf '%s\n' '{}' > "$MACSEED_ITEM_STATE_DIR/external-tool-active.json"
+            fi
+        fi
+        return "$result"
+    }
+    bootstrap_workspace_repositories() { echo repositories-started >> "$MUTATION_LOG"; }
+
+    d2_independent() {
+        d2_setup
+        d2_folders Projects/A Other/B
+        d2_run bootstrap_workspace_folders
+        expect_status 2 "$status" 'local creation failure retains Failed'
+        [[ -d "$HOME/Other/B" && ! -e "$HOME/Projects/A" && "$MODULE_CHANGED" == true ]] ||
+            fail 'independent folder missing or Changed lost'
+        d2_attempts Projects/A 1
+        d2_attempts Other/B 1
+        [[ "$output" == *'ERROR:Failed to create workspace folder: Projects/A'* ]] || fail 'item error missing'
+        [[ "$output" != *'SUCCESS:Workspace configuration loaded'* ]] || fail 'partial result reported complete success'
+    }
+    d2_dependencies() {
+        d2_setup
+        command mkdir -p "$HOME/Projects"
+        ln -s "$HOME/Projects" "$HOME/Alias"
+        d2_folders Projects/A Projects/A/Subfolder Projects/A Alias/A/Subfolder Projects/a/Subfolder Projects/AB Other/B
+        d2_run bootstrap_workspace_folders
+        expect_status 2 "$status" 'failed parent blocks related paths and aliases'
+        d2_attempts Projects/A 1
+        d2_attempts Projects/A/Subfolder 0
+        d2_attempts Alias/A/Subfolder 0
+        d2_attempts Projects/a/Subfolder 0
+        d2_attempts Projects/AB 1
+        [[ -d "$HOME/Projects/AB" && -d "$HOME/Other/B" ]] || fail 'text prefix blocked independent folders'
+        [[ "$output" == *'ERROR:Skipping workspace folder after related creation failure: Projects/A/Subfolder'* ]] ||
+            fail 'dependent folder diagnostic missing'
+        d2_setup
+        D2_FAIL_TARGET="$HOME/Projects/A/Subfolder"
+        d2_folders Projects/A/Subfolder Projects/A Other/B
+        d2_run bootstrap_workspace_folders
+        expect_status 2 "$status" 'failed descendant blocks ancestor creation'
+        d2_attempts Projects/A 0
+        d2_attempts Other/B 1
+    }
+    d2_invalid_input() {
+        local invalid
+        for invalid in folder repository; do
+            d2_setup
+            d2_folders Projects/A Other/B
+            if [[ "$invalid" == folder ]]; then
+                printf '../outside|workspace\n' >> "$BLUEPRINT_GENERATED_DIR/workspace/folders.conf"
+            else
+                printf '[broken]\nPATH=""\n' >> "$BLUEPRINT_GENERATED_DIR/workspace/repositories.conf"
+            fi
+            d2_run bootstrap_workspace
+            expect_status 2 "$status" "late invalid selected $invalid input blocks Workspace"
+            [[ ! -s "$MUTATION_LOG" && ! -e "$HOME/Projects" && ! -e "$HOME/Other" &&
+               "$MODULE_CHANGED" == false ]] || fail 'invalid selected input reached mutation'
+        done
+    }
+    d2_stop() {
+        local boundary
+        d2_isolated_execute() ( bootstrap_workspace_folders )
+        for boundary in stop stop-after-error unknown; do
+            d2_setup
+            d2_folders Projects/A Other/B
+            export MACSEED_APPLICATION_EXECUTION=true
+            D2_BOUNDARY_TARGET="$HOME/Projects/A"
+            if [[ "$boundary" != stop-after-error ]]; then D2_FAIL_TARGET=""; fi
+            if [[ "$boundary" == unknown ]]; then
+                D2_BOUNDARY_ACTION=unknown
+            else
+                export MACSEED_HOMEBREW_STOP="$TEST_ROOT/d2-stop.json"
+                printf '%s\n' '{"stop":false,"scope":"idle"}' > "$MACSEED_HOMEBREW_STOP"
+                chmod 600 "$MACSEED_HOMEBREW_STOP"
+            fi
+            d2_run d2_isolated_execute
+            if [[ "$boundary" == stop ]]; then
+                expect_status 132 "$status" 'accepted Stop prevents the next folder'
+                [[ -d "$HOME/Projects/A" ]] || fail 'Stop interrupted the active folder'
+            else
+                expect_status 2 "$status" "$boundary preserves failure and blocks continuation"
+            fi
+            d2_attempts Other/B 0
+            [[ ! -e "$HOME/Other" ]] || fail 'boundary allowed the next mutation'
+        done
+    }
+    d2_partial() {
+        d2_setup
+        D2_FAIL_TARGET="$HOME/Projects/A/Subfolder"
+        D2_FAIL_MODE=partial
+        d2_folders Projects/A/Subfolder
+        d2_run bootstrap_workspace_folders
+        expect_status 2 "$status" 'partial failed mkdir retains failure'
+        [[ -d "$HOME/Projects/A" && "$MODULE_CHANGED" == true ]] || fail 'partial mkdir lost Changed'
+        d2_folders Projects/A/Subfolder Other/B
+        : > "$MUTATION_LOG"
+        MODULE_CHANGED=false
+        d2_run bootstrap_workspace
+        expect_status 2 "$status" 'partial Workspace remains Failed'
+        [[ -d "$HOME/Other/B" && "$MODULE_CHANGED" == true ]] || fail 'partial Workspace lost independent success'
+        [[ "$output" != *'SUCCESS:Workspace Bootstrap completed'* ]] || fail 'failed Workspace reported success'
+        grep -q '^repositories-started$\|^clone:\|^checkout:' "$MUTATION_LOG" && fail 'folder failure entered repositories'
+        d2_attempts Projects/A/Subfolder 1
+        local mode
+        for mode in uncertain next-unsafe; do
+            d2_setup
+            D2_FAIL_MODE="$mode"
+            d2_folders Projects/A Other/B
+            d2_run bootstrap_workspace_folders
+            expect_status 2 "$status" "$mode filesystem state stops continuation"
+            d2_attempts Other/B 0
+            if [[ "$mode" == uncertain ]]; then
+                [[ "$(cat "$HOME/Projects/A")" == 'mock conflict' ]] || fail 'conflicting file was changed'
+            fi
+        done
+    }
+    d2_result=0
+    d2_cases=(independent dependencies invalid_input stop partial)
+    if [[ -n "${2:-}" ]]; then d2_cases=("$2"); fi
+    for d2_case in "${d2_cases[@]}"; do
+        case "$d2_case" in
+            independent|dependencies|invalid_input|stop|partial) ;;
+            *) echo "Unknown D2 fixture: $d2_case" >&2; exit 2 ;;
+        esac
+        ( D2_CASE="$d2_case"; D2_SERIAL=0; "d2_$d2_case"; [[ "$TEST_FAILURES" -eq 0 ]] ) || d2_result=1
+    done
+    exit "$d2_result"
+fi
+
 # Valid no-Blueprint input retains all-inclusive behavior.
 reset_case
 write_valid_folders
