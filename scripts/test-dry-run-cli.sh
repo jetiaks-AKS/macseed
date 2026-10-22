@@ -136,6 +136,15 @@ write_fixture_file modules/settings/macos/macos.sh \
     'SCREENSHOTS_CONFIG=screenshots' \
     'validate_screenshots_config() { return "${TEST_INPUT_STATUS:-0}"; }' \
     'validate_defaults_config() { return "${TEST_INPUT_STATUS:-0}"; }' \
+    'validate_macos_settings_inputs() {' \
+    '    if blueprint_category_enabled macos-finder; then validate_defaults_config "$FINDER_CONFIG" finder || return 2; fi' \
+    '    if blueprint_category_enabled macos-dock; then validate_defaults_config "$DOCK_CONFIG" dock || return 2; fi' \
+    '    if blueprint_category_enabled macos-windows; then validate_defaults_config "$WINDOWS_CONFIG" windows || return 2; fi' \
+    '    if blueprint_category_enabled macos-keyboard; then validate_defaults_config "$KEYBOARD_CONFIG" keyboard || return 2; fi' \
+    '    if blueprint_category_enabled macos-trackpad; then validate_defaults_config "$TRACKPAD_CONFIG" trackpad || return 2; fi' \
+    '    if blueprint_category_enabled macos-screenshots; then validate_screenshots_config || return 2; fi' \
+    '    return 0' \
+    '}' \
     'check_macos_settings() { return 1; }' \
     'preview_macos_settings() { printf "%s\n" macos-preview >> "$TEST_SPY_FILE"; }' \
     'apply_macos_settings() { printf "%s\n" defaults-write >> "$TEST_SPY_FILE"; }'
