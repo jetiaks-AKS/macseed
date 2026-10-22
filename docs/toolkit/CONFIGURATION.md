@@ -378,6 +378,24 @@ stricter and belongs to the Core reference.
 
 App Store presence uses exact ID, VS Code exact case-sensitive extension ID.
 Inventory errors are not absence; exact presence is verified after installation.
+VS Code CLI installation output is drained without retaining or displaying raw
+stdout/stderr, including in verbose mode. The Core technical log retains the
+native exit code. Existing operation records carry `network_reset` only for a
+recognized pre-install `read ECONNRESET` failure; other output is `unknown`.
+Unknown/contradictory output, signals, failed observation and post-install Verify
+failures stop further extension installs. A recognized network reset may continue
+with later selected items only after a fresh, valid, unchanged inventory confirms
+the failed requirement is still absent. Earlier changes remain recorded; any
+failed install keeps the module/Restore failed, and normal Global Verification
+still observes the complete selected scope.
+
+Extension packs and their dependencies remain owned by the VS Code CLI; Macseed
+does not infer dependencies from IDs or introduce a dependency graph. A later
+pack installation can retry its dependencies through the CLI. A failed pack is
+recorded as failed, never installed or successfully skipped. Current Verification
+qualifies installed IDs, not a separately audited dependency closure or runtime
+behavior. No new Protocol V1 fields or automatic retries are introduced.
+
 App Store absence means its provider-specific requirement is unsatisfied; it does
 not establish physical application absence. Bundle v1 `ID|name` records do not
 prove an App Store ID-to-bundle-identifier relationship. Matching display names

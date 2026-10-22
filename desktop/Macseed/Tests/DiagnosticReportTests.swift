@@ -74,6 +74,20 @@ private actor ReportReadGate {
         print("PASS: success / Failed Restore, independent process / Verification / log state, absent counters, partial/truncated, stop evidence and invalid terminal")
     }
     static func privacyChecks() {
+        for reason in ["network_reset", "unknown"] {
+            let secret = "https://marketplace.invalid/private?token=PRIVATE_VSCODE_SECRET"
+            var sanitizer = OperationLogSanitizer()
+            let core = try! CoreEvent(line: JSONEncoder().encode(CoreJSON.object(["protocol_version": .integer(1),
+                "operation_id": .string("fixture"), "sequence": .integer(1), "type": .string("operation_record"),
+                "data": .object(["domain": .string("vscode-extensions"), "reason": .string(reason),
+                    "outcome": .string("failure"), "stdout": .string(secret), "stderr": .string(secret),
+                    "profile": .string("/Users/private/Code"), "exit_code": .integer(42)])])))
+            let record = sanitizer.event(core, at: time)
+            let id = UUID()
+            let report = makeReport([header(id), record, finish("failed")], id: id).text
+            check(report.contains("reason=" + reason) && report.contains("outcome=failure"))
+            check(!report.contains(secret) && !report.contains("/Users/private") && !report.contains("exit_code"))
+        }
         for reason in ["provider_conflict", "manual_installation_required", "launcher_destination_conflict", "launcher_inspection_failed", "launcher_install_failed", "launcher_verification_failed"] {
             let id = UUID()
             let report = makeReport([header(id), event(1, "operation_record", OperationLogFacts(codes: ["reason": reason])), finish()], id: id)

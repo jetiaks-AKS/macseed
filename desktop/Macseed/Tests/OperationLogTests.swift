@@ -32,6 +32,15 @@ import Darwin
 
     static func sanitizerTests() throws {
         var sanitizer = OperationLogSanitizer()
+        for reason in ["network_reset", "unknown"] {
+            let secret = "https://marketplace.invalid/private?token=PRIVATE_VSCODE_SECRET"
+            let record = sanitizer.event(try event(1, "operation_record", ["domain": .string("vscode-extensions"),
+                "reason": .string(reason), "outcome": .string("failure"), "stderr": .string(secret),
+                "stdout": .string(secret), "profile": .string("/Users/private/Code"), "exit_code": .integer(42)]), at: Date())
+            check(record.facts?.codes["reason"] == reason && record.facts?.codes["outcome"] == "failure")
+            let text = String(decoding: try raw(record), as: UTF8.self)
+            check(!text.contains(secret) && !text.contains("/Users/private") && !text.contains("exit_code"))
+        }
         for reason in ["provider_conflict", "manual_installation_required", "launcher_destination_conflict", "launcher_inspection_failed", "launcher_install_failed", "launcher_verification_failed"] {
             let record = sanitizer.event(try event(1, "operation_record", ["domain": .string("launcher"), "reason": .string(reason)]), at: Date())
             check(record.facts?.codes["reason"] == reason)

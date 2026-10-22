@@ -45,6 +45,7 @@ SUITES=(
     scripts/test-ssh-identity-evidence.py
     scripts/test-ssh-identity-migrate.sh
     scripts/test-vscode-settings.sh
+    scripts/test-vscode-extensions.py
     scripts/test-workspace-bootstrap.sh
     scripts/test-workspace-discovery.sh
     scripts/test-workspace-folders.sh

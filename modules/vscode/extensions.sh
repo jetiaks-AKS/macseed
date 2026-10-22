@@ -103,7 +103,7 @@ is_vscode_extension_installed() {
         [[ "$OBSERVED_VSCODE_STATUS" == 0 ]] || return 2
         inventory="$OBSERVED_VSCODE_INVENTORY"
     else
-        inventory="$(vscode_cli --list-extensions)" || return 2
+        inventory="$(observe_vscode_inventory)" || return 2
     fi
     grep -Fxq -- "$1" <<< "$inventory"
 
@@ -172,27 +172,44 @@ preview_vscode_extensions() {
 install_vscode_extension() {
 
     local extension="$1"
+    local report field value
+    # Process-local facts; the public module status remains 0/1/2. The exact
+    # native status belongs to the existing Core technical log, not new V1 fields.
+    VSCODE_INSTALL_EXIT_CODE=2
+    VSCODE_INSTALL_REASON=unknown
+    VSCODE_INSTALL_DIAGNOSTIC_VALID=false
+
+    command -v python3 >/dev/null 2>&1 && [[ -r modules/vscode/cli_diagnostic.py ]] || {
+        error "VS Code CLI diagnostics are unavailable"
+        return 2
+    }
 
     action "Installing $extension..."
 
-    if [[ "$VERBOSE" == true ]]; then
+    # Both ordinary and VERBOSE paths drain both streams without ever exposing
+    # opaque tool output. Only three small typed lines cross this substitution.
+    report="$(
+        vscode_cli --install-extension "$extension" 2>&1 |
+            python3 -B modules/vscode/cli_diagnostic.py 2>/dev/null
+        pipeline_status=("${PIPESTATUS[@]}")
+        printf 'exit:%d\nreader:%d\n' "${pipeline_status[0]}" "${pipeline_status[1]}"
+    )"
+    while IFS=: read -r field value; do
+        case "$field:$value" in
+            reason:network_reset|reason:unknown) VSCODE_INSTALL_REASON="$value" ;;
+            exit:*) [[ "$value" =~ ^[0-9]+$ && "$value" -le 255 ]] && VSCODE_INSTALL_EXIT_CODE="$value" ;;
+            reader:0) VSCODE_INSTALL_DIAGNOSTIC_VALID=true ;;
+        esac
+    done <<< "$report"
+    [[ "$VSCODE_INSTALL_DIAGNOSTIC_VALID" == true ]] || VSCODE_INSTALL_REASON=unknown
+    detail "VS Code CLI result: exit_code=$VSCODE_INSTALL_EXIT_CODE reason=$VSCODE_INSTALL_REASON"
 
-    vscode_cli --install-extension "$extension"
+    if [[ "$VSCODE_INSTALL_EXIT_CODE" -eq 0 ]]; then
+        return 0
+    fi
 
-else
-
-    vscode_cli --install-extension "$extension" >/dev/null 2>&1
-
-fi
-
-if [[ $? -eq 0 ]]; then
-
-    return 0
-
-fi
-
-error "Failed to install $extension"
-return 2
+    error "Failed to install $extension (exit_code=$VSCODE_INSTALL_EXIT_CODE; reason=$VSCODE_INSTALL_REASON)"
+    return 2
 
 }
 
@@ -227,18 +244,21 @@ install_vscode_extensions() {
         return 1
     fi
 
-    local missing_extensions=0
-    local inspection_result
+    local missing_extensions=0 failures=0
+    local inspection_result before_inventory
+    local OBSERVED_VSCODE_STATUS='' OBSERVED_VSCODE_INVENTORY
 
     while IFS= read -r extension || [[ -n "$extension" ]]; do
 
         [[ -z "$extension" ]] && continue
         [[ "$extension" =~ ^# ]] && continue
         blueprint_item_selected vscode-extensions "$extension" || continue
-        if declare -F application_stop_checkpoint >/dev/null; then application_stop_checkpoint; fi
+        if declare -F application_stop_checkpoint >/dev/null; then application_stop_checkpoint "$failures"; fi
 
+        OBSERVED_VSCODE_STATUS=pending
         is_vscode_extension_installed "$extension"
         inspection_result=$?
+        before_inventory="$OBSERVED_VSCODE_INVENTORY"
 
         if [[ $inspection_result -eq 0 ]]; then
 
@@ -262,12 +282,35 @@ install_vscode_extensions() {
 
         fi
 
+        if declare -F application_stop_checkpoint >/dev/null; then application_stop_checkpoint "$failures"; fi
         declare -F verification_applying_hook >/dev/null && verification_applying_hook vscode-extensions "$extension" install
         install_vscode_extension "$extension"
 
         if [[ $? -ne 0 ]]; then
-            declare -F verification_application_operation_hook >/dev/null && verification_application_operation_hook vscode-extensions "$extension" install failure
-            return 2
+            declare -F verification_application_operation_hook >/dev/null && verification_application_operation_hook vscode-extensions "$extension" install failure "$VSCODE_INSTALL_REASON"
+            failures=2
+            if declare -F application_stop_checkpoint >/dev/null; then application_stop_checkpoint "$failures"; fi
+            # Unknown failures, signals and failed diagnostics are not proven
+            # item-local. Never turn them into permission to launch more work.
+            [[ "$VSCODE_INSTALL_REASON" == network_reset &&
+               "$VSCODE_INSTALL_DIAGNOSTIC_VALID" == true &&
+               "$VSCODE_INSTALL_EXIT_CODE" -gt 0 && "$VSCODE_INSTALL_EXIT_CODE" -lt 128 ]] || return 2
+
+            OBSERVED_VSCODE_STATUS=pending
+            is_vscode_extension_installed "$extension"
+            inspection_result=$?
+            if [[ "$OBSERVED_VSCODE_STATUS" != 0 ]]; then
+                error "Failed to inspect VS Code extensions after installation failure"
+                return 2
+            fi
+            if [[ "$OBSERVED_VSCODE_INVENTORY" != "$before_inventory" ]]; then
+                error "VS Code extension inventory changed during a failed installation; further installs stopped"
+                return 2
+            fi
+            [[ "$inspection_result" -eq 1 ]] || return 2
+            # Pack/dependency installation remains owned by the VS Code CLI. A
+            # later pack may retry its requirements; no dependency is guessed.
+            continue
         fi
         declare -F verification_application_operation_hook >/dev/null && verification_application_operation_hook vscode-extensions "$extension" install success
 
@@ -275,6 +318,7 @@ install_vscode_extensions() {
         # shellcheck disable=SC2034
         MODULE_CHANGED=true
 
+        OBSERVED_VSCODE_STATUS=pending
         is_vscode_extension_installed "$extension"
         inspection_result=$?
         declare -F verification_application_post_hook >/dev/null && verification_application_post_hook "$inspection_result"
@@ -286,6 +330,11 @@ install_vscode_extensions() {
         success "$extension installed successfully"
 
     done <<< "$extensions"
+
+    if [[ "$failures" -ne 0 ]]; then
+        error "Some VS Code extensions failed; independent work completed where safe"
+        return 2
+    fi
 
     if [[ $missing_extensions -eq 0 ]]; then
 

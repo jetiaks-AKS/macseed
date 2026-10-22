@@ -41,7 +41,7 @@ enum DiagnosticReportPrivacy {
         "provider_conflict", "manual_installation_required", "launcher_destination_conflict", "launcher_inspection_failed", "launcher_install_failed", "launcher_verification_failed",
         "foreign_target", "conflicting_plist", "identity_ambiguous", "ownership_ambiguous", "live_ownership_unproven", "malformed_observation", "observation_limit",
         "ssh_configuration_not_ready", "ssh_configuration_observation_failed", "prerequisite_failed", "input_missing", "input_invalid", "unsupported", "not_selected", "redacted",
-        "module_failed", "module_warning", "selected_input_unresolved", "operation_failed", "partial_source_coverage", "external_management", "input_changed",
+        "module_failed", "module_warning", "selected_input_unresolved", "operation_failed", "partial_source_coverage", "external_management", "input_changed", "network_reset", "unknown",
         "ready", "authorization_required", "unsupported_interactive_operation", "vscode_cli_required", "vscode_cli_unavailable", "vscode_cli_ambiguous",
         "git_required", "git_unavailable", "repository_target_conflict", "mas_required", "mas_unavailable", "age_required", "homebrew_installation_requires_interaction",
         "homebrew_capability_unavailable", "homebrew_metadata_incompatible", "cask_launchctl_observation_failed", "missing_required_dependency", "secure_bridge_required",

@@ -75,6 +75,13 @@ code() {
     PROCESSED_ITEMS="${PROCESSED_ITEMS}${PROCESSED_ITEMS:+ }$2"
 }
 
+# This filtering harness observes parent-shell state, as does the Cask stub
+# below. Real CLI installs cross a process boundary; their output/lifecycle is
+# covered by test-vscode-extensions.py instead of this in-memory counter.
+install_vscode_extension() {
+    PROCESSED_ITEMS="${PROCESSED_ITEMS}${PROCESSED_ITEMS:+ }$1"
+}
+
 is_cask_installed() {
     return 1
 }
