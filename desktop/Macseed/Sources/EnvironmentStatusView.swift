@@ -148,14 +148,14 @@ struct EnvironmentComparisonView: View {
     static func toggledCategories(_ expanded: Set<String>, ids: Set<String>) -> Set<String> {
         ids.isSubset(of: expanded) ? [] : ids
     }
-    static func summaryOutcomes(_ result: EnvironmentStatusPresentation) -> [ComparisonOutcome] {
-        ComparisonOutcome.allCases.filter { $0 == .needsAttention ? result.needsAttention : $0.count(result) > 0 }
+    static func summaryOutcomes(_ result: EnvironmentStatusPresentation) -> [ComparisonSummaryOutcome] {
+        ComparisonSummaryOutcome.allCases.filter { $0 == .needsAttention ? result.needsAttention : ($0.count(result) ?? 0) > 0 }
     }
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
             EnvironmentComparisonMetricsLayout {
                 ForEach(Self.summaryOutcomes(result)) { outcome in
-                    ComparisonMetricCard(outcome: outcome, count: outcome == .needsAttention ? result.attentionCount : outcome.count(result))
+                    ComparisonMetricCard(outcome: outcome, count: outcome.count(result), explanation: outcome.explanation(result))
                 }
             }
             if result.needsAttention || result.counts["extra", default: 0] > 0 || result.counts["unverified", default: 0] > 0 || result.counts["unresolved", default: 0] > 0 {
@@ -375,8 +375,7 @@ enum EnvironmentComparisonPalette {
     static func color(for status: DisplayStatus) -> Color {
         switch status {
         case .matching, .verified: RestoreStatusTone.success.color
-        case .missing: .red
-        case .different: Color(nsColor: .systemBlue)
+        case .missing, .different: .red
         case .unverified, .unresolved, .attention, .unsupported: .orange
         default: .secondary
         }
@@ -421,16 +420,48 @@ enum ComparisonOutcome: String, CaseIterable, Identifiable {
     }
 }
 
-struct ComparisonMetricCard: View {
-    let outcome: ComparisonOutcome
-    let count: Int?
-    var body: some View {
-        WorkspaceMetricCard(title: outcome.title, value: count.map(String.init), symbol: outcome.symbol,
-            tint: outcome.tint, explanation: outcome.explanation)
+// Summary aggregation does not change the separate category/leaf outcomes above.
+enum ComparisonSummaryOutcome: String, CaseIterable, Identifiable {
+    case match, differences, notApplicable, needsAttention
+    var id: String { rawValue }
+    private var outcome: ComparisonOutcome {
+        switch self {
+        case .match: .match
+        case .differences: .different
+        case .notApplicable: .notApplicable
+        case .needsAttention: .needsAttention
+        }
+    }
+    var title: String { self == .differences ? "Differences Found" : outcome.title }
+    var tint: Color { outcome.tint }
+    var symbol: String { outcome.symbol }
+    func count(_ result: EnvironmentStatusPresentation) -> Int? {
+        switch self {
+        case .differences: ComparisonOutcome.different.count(result) + ComparisonOutcome.missing.count(result)
+        case .needsAttention: result.attentionCount
+        default: outcome.count(result)
+        }
+    }
+    func explanation(_ result: EnvironmentStatusPresentation) -> String {
+        guard self == .differences else { return outcome.explanation }
+        return [ComparisonOutcome.different, .missing].compactMap { kind in
+            let count = kind.count(result)
+            return count > 0 ? "\(count) \(kind.title)" : nil
+        }.joined(separator: " · ")
     }
 }
 
-// Status owns this layout: 1–5 nonzero metrics, with no empty placeholder slots.
+struct ComparisonMetricCard: View {
+    let outcome: ComparisonSummaryOutcome
+    let count: Int?
+    let explanation: String
+    var body: some View {
+        WorkspaceMetricCard(title: outcome.title, value: count.map(String.init), symbol: outcome.symbol,
+            tint: outcome.tint, explanation: explanation)
+    }
+}
+
+// Status owns this layout: only applicable metrics, with no empty placeholder slots.
 struct EnvironmentComparisonMetricsLayout: Layout {
     static func columns(_ width: CGFloat, count: Int) -> Int {
         guard width.isFinite else { return max(1, count) }
@@ -451,8 +482,11 @@ struct EnvironmentComparisonMetricsLayout: Layout {
         let width = (bounds.width - CGFloat(columns - 1) * 10) / CGFloat(columns)
         let height = subviews.map { $0.sizeThatFits(.init(width: width, height: nil)).height }.max() ?? 0
         for (index, view) in subviews.enumerated() {
-            view.place(at: CGPoint(x: bounds.minX + CGFloat(index % columns) * (width + 10), y: bounds.minY + CGFloat(index / columns) * (height + 10)),
-                anchor: .topLeading, proposal: .init(width: width, height: height))
+            let rowStart = (index / columns) * columns
+            let rowColumns = min(columns, subviews.count - rowStart)
+            let rowWidth = (bounds.width - CGFloat(rowColumns - 1) * 10) / CGFloat(rowColumns)
+            view.place(at: CGPoint(x: bounds.minX + CGFloat(index % columns) * (rowWidth + 10), y: bounds.minY + CGFloat(index / columns) * (height + 10)),
+                anchor: .topLeading, proposal: .init(width: rowWidth, height: height))
         }
     }
 }

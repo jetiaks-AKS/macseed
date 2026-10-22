@@ -67,12 +67,13 @@ struct TaskDisclosureStyle: DisclosureGroupStyle {
 struct TaskStatusLabel: View {
     let state: TaskRowState
     var title: String? = nil
+    var tint: Color? = nil
     var body: some View {
         HStack(spacing: 7) {
             if state == .working { ProgressView().controlSize(.small).frame(width: TaskRowLayout.iconWidth).accessibilityHidden(true) }
             else { Image(systemName: state.symbol).frame(width: TaskRowLayout.iconWidth).accessibilityHidden(true) }
             Text(title ?? state.rawValue)
-        }.font(.callout).foregroundStyle(state == .planned ? Color.primary : state.tone.color)
+        }.font(.callout).foregroundStyle(tint ?? (state == .planned ? Color.primary : state.tone.color))
             .accessibilityElement(children: .ignore).accessibilityLabel(title ?? state.rawValue)
     }
 }
@@ -250,14 +251,19 @@ struct TaskDomainList: View {
         }.transformEnvironment(\.restoreTrailingSamples) { samples in
             if restoreSettingsPreview {
                 let rows = domains + settingsCategories
-                let headers = rows.map { RestoreTrailingSample(title: stateTitles[$0.state] ?? $0.state.rawValue) }
+                let headers = rows.map {
+                    RestoreTrailingSample(title: RestorePreviewCategoryStatus.title($0, stateTitles: stateTitles),
+                        counts: RestorePreviewMetrics.badges($0))
+                }
                 let items = rows.flatMap(\.items).map { RestoreTrailingSample(title: $0.assistedAppStore?.status.rawValue ?? stateTitles[$0.state] ?? $0.state.rawValue, disclosure: false) }
                 // Every visible row uses this hidden width reference. Retaining one
                 // copy per item made expansion build a quadratic number of views.
-                // Equal status text + disclosure measures identically; keep it once.
+                // Equal status, badge counts and disclosure measure identically.
                 var seen = Set<String>()
                 samples += (headers + items).filter {
-                    seen.insert(($0.disclosure ? "header:" : "item:") + $0.title).inserted
+                    let key = ($0.disclosure ? "header:" : "item:") + $0.title
+                        + $0.counts.map { "|\($0.0):\($0.1)" }.joined()
+                    return seen.insert(key).inserted
                 }
             }
         }
@@ -295,7 +301,8 @@ struct TaskDomainList: View {
         } label: {
             if restoreSettingsPreview {
                 RestorePreviewRow(title: domainTitle(domain),
-                    status: TaskStatusLabel(state: domain.state, title: stateTitles[domain.state]),
+                    status: RestorePreviewCategoryStatus(domain: domain, stateTitles: stateTitles),
+                    counts: RestorePreviewMetrics.badges(domain),
                     expanded: expandedIDs.contains(domain.id)).padding(.vertical, 6)
             } else { ViewThatFits(in: .horizontal) {
                 HStack(spacing: 12) { domainTitle(domain); Spacer(); domainStatus(domain) }
@@ -331,21 +338,56 @@ struct TaskDomainList: View {
     }
 }
 
+// Preview category labels retain attention priority; leaf statuses remain precise.
+struct RestorePreviewCategoryStatus: View {
+    let domain: TaskDomainPresentation
+    let stateTitles: [TaskRowState: String]
+    static func title(_ domain: TaskDomainPresentation, stateTitles: [TaskRowState: String]) -> String {
+        guard !domain.items.isEmpty else { return "No Requirements" }
+        return stateTitles[domain.state] ?? (domain.state == .unverified ? "Needs Attention" : domain.state.rawValue)
+    }
+    var body: some View {
+        TaskStatusLabel(state: domain.items.isEmpty ? .notRun : domain.state,
+            title: Self.title(domain, stateTitles: stateTitles),
+            tint: !domain.items.isEmpty && domain.state == .planned ? .blue : nil)
+    }
+}
+
 // Same parent-provided measurement reference for Preview categories and leaves.
 // Only title contents receive indentation; every row retains the full container width.
 struct RestorePreviewRow<Title: View, Status: View>: View {
     let title: Title
     let status: Status
+    var counts: [(String, Int)] = []
     var titleInset: CGFloat = 0
     var expanded: Bool? = nil
     var body: some View {
         RestoreResultColumns {
             title.padding(.leading, titleInset).fixedSize(horizontal: false, vertical: true)
-            HStack(spacing: 8) {
-                status.fixedSize(horizontal: false, vertical: true)
-                if let expanded { RestoreDisclosureIndicator(expanded: expanded) }
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) {
+                    status.frame(width: TaskRowLayout.statusWidth, alignment: .leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if !counts.isEmpty { RestoreCountBadges(counts: counts).fixedSize() }
+                    if let expanded {
+                        HStack(spacing: 0) {
+                            Spacer(minLength: 0)
+                            RestoreDisclosureIndicator(expanded: expanded)
+                        }
+                    }
+                }
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 8) {
+                        status.fixedSize(horizontal: false, vertical: true)
+                        if let expanded {
+                            Spacer(minLength: 0)
+                            RestoreDisclosureIndicator(expanded: expanded)
+                        }
+                    }
+                    if !counts.isEmpty { RestoreCountBadges(counts: counts).fixedSize() }
+                }
             }.frame(maxWidth: .infinity, alignment: .leading)
-            RestoreTrailingReference()
+            RestoreTrailingReference(statusWidth: TaskRowLayout.statusWidth)
         }
     }
 }
@@ -441,7 +483,8 @@ struct TaskSettingsCategoryDetails: View {
             }
         } label: {
             if restorePreview {
-                RestorePreviewRow(title: title, status: TaskStatusLabel(state: domain.state, title: stateTitles[domain.state]),
+                RestorePreviewRow(title: title, status: RestorePreviewCategoryStatus(domain: domain, stateTitles: stateTitles),
+                    counts: RestorePreviewMetrics.badges(domain),
                     titleInset: 36, expanded: expansion?.wrappedValue ?? expanded).padding(.vertical, 6)
             } else { ViewThatFits(in: .horizontal) {
                 HStack(spacing: 12) { title; Spacer(); TaskStatusLabel(state: domain.state, title: stateTitles[domain.state]).frame(width: restorePreview || captureResultLayout ? TaskRowLayout.statusWidth : nil, alignment: .leading) }

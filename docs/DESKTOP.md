@@ -261,6 +261,8 @@ selection. Known limitations show Needs Attention; insufficient item evidence st
 Unverified without inventing an item list. These are capture states, not target
 Verification. Core provides no separate inventory/count of omitted items. Result
 warnings come from selected-category event evidence.
+Review and Result omit a zero Needs Attention metric; the remaining metric cards
+share the available width without an empty slot. Count sources remain unchanged.
 Stale preparation or any failed/interrupted attempt requires a fresh scan and
 confirmation, never a silent execute retry. The exact `stale_prepared_capture` code
 shows **Capture Preparation Is Outdated** and asks for Scan Again, preserving the
@@ -287,6 +289,11 @@ uses a focused native secure sheet when required.
 
 Restore Preview summary cards follow **Already Match → Changes Planned → Need
 Attention**; the existing detailed task rows, statuses and disclosures are retained.
+Category and nested macOS headers show nonzero item badges in Match → Planned →
+Attention order, colored green, blue and amber. They reuse the current Preview's
+task-item counts, with each child counting only its own items; parent counts do
+not add child totals again. Status/badges use the shared trailing-width reference
+and reserved columns; indentation remains in titles and disclosure stays right.
 
 Inspection and Core Verification run within these states; neither requires a
 separate page. Prerequisites appear inline only when needed.
@@ -527,7 +534,7 @@ technical code in Details, rather than guessed remediation.
 **Choose reference → Compare → Result**, with inline expandable Details.
 Inspection and comparison are logical work, not additional navigation pages.
 The initial Choose Saved Environment card owns reference selection and the read-only notice.
-Results use the fixed action footer, semantic Match/Different/Missing/
+Results use the fixed action footer, semantic Match/Differences Found/Needs Attention/
 Not Applicable metrics and whole-row Domain → Items disclosures. Not Applicable
 counts only Core Coverage `no_requirement`; excluded, unverified, unsupported,
 unresolved and extra facts retain their own labels in summary/details. Domain
@@ -579,8 +586,8 @@ and passed manual GUI acceptance.
 Implemented in normal Debug/Release: native Bundle file selection, the selected
 filename, Core comparison and fresh **Compare Again**. Reference changes clear
 previous results.
-Status shows Match, Different and Missing cards; Not Applicable appears only when
-nonzero. Blue category icons are preserved. Details reuse Core/Restore grouping,
+Status shows Match, Differences Found and Needs Attention cards; Not Applicable
+appears only when nonzero. Blue category icons are preserved. Details reuse Core/Restore grouping,
 with one macOS Settings disclosure over participating child domains; Git Repositories
 appears in Workspace after Workspace Folders. Excluded inventory is hidden only in presentation.
 Diagnostics correlate to comparison items by their record owner and domain/item ID;
@@ -589,7 +596,7 @@ show a compact accessible checkmark without generic subtitles or Technical Detai
 problem items retain reasons and useful technical evidence. macOS child domains use
 independent collapsed disclosures inside macOS Settings; Expand All controls only
 main categories. Setting names reuse Capture labels.
-Category rows retain nonzero Core-record count pills. Already Matches indicates
+Category rows retain nonzero logical-item count pills. Already Matches indicates
 confirmed conformity; independent verification or coverage problems show Needs
 Attention. Confirmed differences alone produce Differences Found overall.
 Only Result actions use a fixed footer outside
@@ -628,14 +635,15 @@ and items; indentation affects names only. Categories/subcategories show a green
 green checkmark. The shared Status layout reserves 160–240 pt for results and keeps
 disclosure arrows on a separate trailing rail. Narrow layouts reduce name
 indentation without moving the status anchor. Nonzero summary cards retain Core
-predicate totals for Match,
-Different and Missing; Not Applicable reflects empty selected scope. Needs
+predicate totals: Match stays separate; the red **Differences Found** card sums
+Different + Missing and uses a triangle icon, with a compact nonzero breakdown
+below the total. Not Applicable reflects empty selected scope. Needs
 Attention counts independent unverified/unresolved records, including Unsupported
 once, and excludes confirmed differences and dependent checks blocked by a proven
 absent repository. Uncountable independent diagnostics show the card without a
-number, with the explanation **Unsupported or incomplete checks**. The Different
-summary card uses a blue accent and pale blue-gray background. One Status palette
-also colors category/leaf differences and count pills blue; Missing stays red,
+number, with the explanation **Unsupported or incomplete checks**. One Status palette
+colors Different, Missing and Differences Found red across summary, category/leaf
+statuses and count pills. Separate Different/Missing badges, labels and leaf icons remain;
 matching stays green and attention/unsupported/unverified states stay amber.
 Technical Core totals remain intact.
 

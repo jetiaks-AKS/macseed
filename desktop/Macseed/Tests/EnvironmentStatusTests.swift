@@ -281,7 +281,7 @@ private struct StatusAnchorFrames: PreferenceKey {
             "app_store_names": ["747648890": "Telegram", "123": "Additional App"], "setting_labels": labels,
             "repository_labels": Dictionary(uniqueKeysWithValues: names.map { ($0, $0) })]
         let visual = try presentation(visualPayload)
-        precondition(EnvironmentComparisonView.summaryOutcomes(visual).count == 5 && visual.attentionCount == 4)
+        precondition(EnvironmentComparisonView.summaryOutcomes(visual).count == 4 && visual.attentionCount == 4)
         precondition(ComparisonOutcome.needsAttention.explanation == "Unsupported or incomplete checks")
         precondition(ComparisonOutcome.different.tint != ComparisonOutcome.needsAttention.tint)
         precondition(ComparisonOutcome.different.tint == EnvironmentComparisonPalette.color(for: .different))
@@ -363,7 +363,9 @@ private struct StatusAnchorFrames: PreferenceKey {
                     settingsExpansion: .constant(true)), "category-" + name, width)
             }
             try snapshot(EnvironmentComparisonMetricsLayout {
-                ForEach(ComparisonOutcome.allCases) { ComparisonMetricCard(outcome: $0, count: 1) }
+                ForEach(ComparisonSummaryOutcome.allCases) {
+                    ComparisonMetricCard(outcome: $0, count: $0.count(visual), explanation: $0.explanation(visual))
+                }
             }, "metrics-dark", width, scheme: .dark)
             for (name, scenario) in repositoryScenarios {
                 let category = scenario.categories[0]
@@ -381,10 +383,11 @@ private struct StatusAnchorFrames: PreferenceKey {
                 counts: [.match: matchingSettings.flatMap(\.items).count], expansion: .constant(true), childExpansion: .constant(true),
                 categoryCounts: Dictionary(uniqueKeysWithValues: matchingSettings.map { ($0.id, [.match: $0.items.count]) }))
                 .modifier(WorkspaceCardSurface()), "settings-all-matching", width)
-            for count in 1...5 {
+            for count in 1...ComparisonSummaryOutcome.allCases.count {
                 try snapshot(EnvironmentComparisonMetricsLayout {
-                    ForEach(Array(ComparisonOutcome.allCases.prefix(count))) { outcome in
-                        ComparisonMetricCard(outcome: outcome, count: outcome == .needsAttention ? nil : 1)
+                    ForEach(Array(ComparisonSummaryOutcome.allCases.prefix(count))) { outcome in
+                        ComparisonMetricCard(outcome: outcome, count: outcome == .needsAttention ? nil : outcome.count(visual),
+                            explanation: outcome.explanation(visual))
                     }
                 }, "metrics-\(count)", width)
             }

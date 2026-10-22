@@ -1813,7 +1813,7 @@ private struct PreviewExpansionHost: View {
             precondition(!statusView.contains(technical), "Status uses a Bundle, not internal reference controls")
         }
         precondition(statusView.contains("EnvironmentComparisonView(result: result)"))
-        precondition(statusView.contains("$0 == .needsAttention ? result.needsAttention : $0.count(result) > 0"))
+        precondition(statusView.contains("$0 == .needsAttention ? result.needsAttention : ($0.count(result) ?? 0) > 0"))
         precondition(statusView.contains("EnvironmentComparisonMetricsLayout {"))
         precondition(!statusView.contains("Additional applications") && !statusView.contains("additionalExpanded"))
         precondition(statusView.contains("tint: outcome.tint"))

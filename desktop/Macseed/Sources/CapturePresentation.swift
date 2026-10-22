@@ -244,7 +244,9 @@ struct CaptureReviewMetrics: View {
     @ViewBuilder private var cards: some View {
         CaptureMetricCard(title: "Selected Domains", count: summary.domainCount, symbol: "square.stack")
         CaptureMetricCard(title: "Selected Items", count: summary.itemCount, symbol: "checklist")
-        CaptureMetricCard(title: "Needs Attention", count: summary.attentionCount, symbol: "exclamationmark.triangle", attention: true)
+        if summary.attentionCount > 0 {
+            CaptureMetricCard(title: "Needs Attention", count: summary.attentionCount, symbol: "exclamationmark.triangle", attention: true)
+        }
     }
 }
 
@@ -341,7 +343,9 @@ struct CaptureSavedMetrics: View {
     @ViewBuilder private func cards(_ attention: Int) -> some View {
         CaptureMetricCard(title: "Domains Saved", count: publication.bundle.capturedDomains.count, symbol: "square.stack")
         CaptureMetricCard(title: "Items Saved", count: publication.bundle.itemCount, symbol: "checklist")
-        CaptureMetricCard(title: "Needs Attention", count: attention, symbol: "exclamationmark.triangle", attention: true)
+        if attention > 0 {
+            CaptureMetricCard(title: "Needs Attention", count: attention, symbol: "exclamationmark.triangle", attention: true)
+        }
     }
 }
 

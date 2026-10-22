@@ -879,6 +879,7 @@ extension EnvironmentValues {
 }
 
 struct RestoreTrailingReference: View {
+    var statusWidth: CGFloat? = nil
     @Environment(\.restoreTrailingSamples) private var samples
     var body: some View {
         ZStack {
@@ -887,7 +888,7 @@ struct RestoreTrailingReference: View {
                     VStack(alignment: .leading, spacing: 3) {
                         TaskStatusLabel(state: .waiting, title: sample.title)
                         if let subtitle = sample.subtitle { Text(subtitle).font(.caption).padding(.leading, TaskRowLayout.iconWidth + 7) }
-                    }
+                    }.frame(width: statusWidth, alignment: .leading)
                     if !sample.counts.isEmpty { RestoreCountBadges(counts: sample.counts) }
                     if sample.disclosure { RestoreDisclosureIndicator(expanded: false) }
                 }.fixedSize()
@@ -908,6 +909,9 @@ struct RestoreDisclosureIndicator: View {
 struct RestoreCountBadges: View {
     let counts: [(String, Int)]
     static func color(_ label: String) -> Color {
+        if label == "Match" { return RestoreStatusTone.success.color }
+        if label == "Planned" { return .blue }
+        if label == "Attention" { return RestoreStatusTone.warning.color }
         if label == "Unverified" { return .secondary }
         if ["Installed", "All Installed"].contains(label) { return RestoreStatusTone.success.color }
         if label == "Missing" { return .orange }
@@ -1238,6 +1242,11 @@ struct RestorePreviewMetrics: View {
         return (items.filter { $0.state == .planned }.count,
                 items.filter { [.attention, .unverified].contains($0.state) }.count,
                 items.filter { $0.state == .matching }.count)
+    }
+    static func badges(_ domain: TaskDomainPresentation) -> [(String, Int)] {
+        let counts = Self.counts([domain])
+        return [("Match", counts.matching), ("Planned", counts.changes), ("Attention", counts.attention)]
+            .filter { $0.1 > 0 }
     }
     var body: some View {
         let counts = Self.counts(domains)
