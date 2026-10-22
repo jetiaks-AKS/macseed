@@ -3,6 +3,7 @@
 import hashlib
 import json
 import os
+import plistlib
 from pathlib import Path
 import shutil
 import signal
@@ -160,6 +161,43 @@ class CompareTests(unittest.TestCase):
         self.assertEqual(data['comparison_records'][0]['item_id'], '1136220934')
         self.assertTrue(any(g['id'] == 'Applications' and 'app-store' in g['domains']
                             for g in data['reference_presentation']['groups']))
+
+    def test_telegram_cask_does_not_satisfy_selected_app_store_requirement(self):
+        self.write_blueprint(packages='', casks='telegram')
+        self.blueprint.write_text(self.blueprint.read_text().replace('[app-store]\n', '[app-store]\n747648890\n'))
+        (self.generated / 'brew-casks.conf').write_text('telegram\n')
+        (self.generated / 'appstore.conf').write_text('747648890|Telegram\n')
+        app = self.home / 'Applications/Telegram.app'
+        (app / 'Contents/MacOS').mkdir(parents=True)
+        (app / 'Contents/Info.plist').write_bytes(plistlib.dumps({
+            'CFBundleIdentifier': 'ru.keepcoder.Telegram', 'CFBundleExecutable': 'Telegram'}))
+        executable = app / 'Contents/MacOS/Telegram'
+        executable.write_text('#!/bin/sh\n')
+        executable.chmod(0o700)
+        prefix = self.root / 'brew'
+        prefix.mkdir()
+        metadata = self.root / 'cask.json'
+        metadata.write_text(json.dumps({'casks': [{
+            'token': 'telegram', 'installed': '1.0', 'tap': 'homebrew/cask',
+            'disabled': False, 'version': '1.0', 'sha256': 'a' * 64,
+            'url': 'https://example.invalid/telegram.dmg',
+            'artifacts': [{'app': ['Telegram.app'], 'target': str(app)}]}]}))
+        self.environment.update(TEST_CASK_METADATA=str(metadata), TEST_BREW_PREFIX=str(prefix))
+        self.mock('brew', '''case "$*" in
+'info --json=v2 --cask telegram') cat "$TEST_CASK_METADATA";;
+'--prefix') echo "$TEST_BREW_PREFIX";;
+'list --cask') echo telegram;;
+*) echo "brew $*" >> "$TEST_MUTATIONS"; exit 99;; esac''')
+        self.mock('mas', '[[ "$*" == list ]] || exit 99; exit 0')
+        for parameters in ({}, {'bundle_path': str(self.make_bundle())}):
+            data = self.comparison(**parameters)
+            kinds = {(r['domain'], r['item_id']): r['comparison_kind'] for r in data['comparison_records']}
+            self.assertEqual(kinds, {('homebrew-casks', 'telegram'): 'matching', ('app-store', '747648890'): 'missing'})
+            self.assertEqual(data['comparison']['counts']['matching'], 1)
+            self.assertEqual(data['comparison']['counts']['missing'], 1)
+            self.assertEqual(data['comparison']['verdict'], 'differences_detected')
+            self.assertNotIn('effective_selection', data)
+            self.assertNotIn('application_duplicates', data)
 
     def test_bundle_repository_display_labels_keep_diagnostics_private(self):
         self.write_blueprint(packages='')

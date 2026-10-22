@@ -622,6 +622,41 @@ Compare This Mac, Cancel, Compare Again and Choose a Different Environment remai
 explicit actions. Comparison metrics, collapsed Domain → Items and Technical
 Details preserve Core verdict/completeness and extra evidence.
 
+Environment Status uses one status column across categories, macOS subcategories
+and items; indentation affects names only. Categories/subcategories show a green
+**Already Matches** label and applicable counts; matching leaf items show only a
+green checkmark. The shared Status layout reserves 160–240 pt for results and keeps
+disclosure arrows on a separate trailing rail. Narrow layouts reduce name
+indentation without moving the status anchor. Nonzero summary cards retain Core
+predicate totals for Match,
+Different and Missing; Not Applicable reflects empty selected scope. Needs
+Attention counts independent unverified/unresolved records, including Unsupported
+once, and excludes confirmed differences and dependent checks blocked by a proven
+absent repository. Uncountable independent diagnostics show the card without a
+number, with the explanation **Unsupported or incomplete checks**. The Different
+summary card uses a blue accent and pale blue-gray background. One Status palette
+also colors category/leaf differences and count pills blue; Missing stays red,
+matching stays green and attention/unsupported/unverified states stay amber.
+Technical Core totals remain intact.
+
+Categories/subcategories use **Differences Found** for any confirmed Different or
+Missing, with **Needs Attention** taking priority for independent verification gaps
+or warnings. Leaf statuses retain their precise Missing/Different classification;
+category badges keep their counts separate. A Missing macOS `stored_preference`
+explains that the saved preference is not explicitly set, without claiming the
+feature is absent or inferring an effective system default.
+
+Category badges count visible logical items. Each Git repository has one outcome
+from its Worktree/Origin/Branch evidence; incomplete or unsupported checks cannot
+produce Match. An absent worktree with only dependent prerequisite failures is
+Missing; independent failures retain attention. Technical Details preserve all
+predicate results, record IDs and diagnostics. Extra items and their availability
+rows are hidden from the main window, including categories containing only extras.
+Core/model evidence, Operation Logs and Diagnostic Report retain their existing
+projections; extras contribute no Match/Different/Missing/Needs Attention counts. App Store absence
+remains provider-specific under the current
+[Comparison scope contract](core/APPLICATION-INTERFACE.md#verification-and-environment-status).
+
 The final flow uses **Saved Environment / Bundle** consistently: Capture creates
 one, Restore selects one, and Environment Status selects one to compare with this
 Mac. After Restore, that Saved Environment must also be available as the natural

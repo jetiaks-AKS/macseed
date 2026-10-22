@@ -2,6 +2,13 @@ import Foundation
 import AppKit
 import SwiftUI
 
+private struct StatusAnchorFrames: PreferenceKey {
+    static var defaultValue: [Int: CGRect] = [:]
+    static func reduce(value: inout [Int: CGRect], nextValue: () -> [Int: CGRect]) {
+        value.merge(nextValue(), uniquingKeysWith: { _, new in new })
+    }
+}
+
 @main struct EnvironmentStatusTests {
     typealias Object = [String: Any]
     static func row(_ id: Int, _ kind: String, support: String = "supported", reason: String? = nil) -> Object {
@@ -62,7 +69,379 @@ import SwiftUI
         window.close()
     }
 
+    @MainActor static func nativeStatusAnchorChecks(width: Int) throws {
+        var frames: [Int: CGRect] = [:]
+        precondition(EnvironmentComparisonRowLayout.leadingInset(306, depth: 2, item: true) == 50)
+        precondition(EnvironmentComparisonRowLayout.leadingInset(1102, depth: 2, item: true) == 82)
+        let root = VStack(spacing: 0) {
+            ForEach(0..<3) { depth in
+                EnvironmentComparisonRowLayout(depth: depth) {
+                    Text("A long nested preference name")
+                    Label("Already Matches", systemImage: "checkmark.circle.fill").font(.callout)
+                        .background(GeometryReader { geometry in
+                            Color.clear.preference(key: StatusAnchorFrames.self,
+                                value: [depth: geometry.frame(in: .named("status-anchors"))])
+                        })
+                }.padding(.trailing, 26)
+            }
+        }.padding(.horizontal, 36).coordinateSpace(name: "status-anchors")
+            .onPreferenceChange(StatusAnchorFrames.self) { frames = $0 }
+        let host = NSHostingView(rootView: root)
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: 300), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = host
+        defer { window.close() }
+        host.frame = NSRect(x: 0, y: 0, width: width, height: 300)
+        host.layoutSubtreeIfNeeded()
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.03))
+        host.layoutSubtreeIfNeeded()
+        precondition(frames.count == 3)
+        let xs = frames.values.map(\.minX)
+        precondition(xs.max()! - xs.min()! < 0.5, "All depths share one native status anchor")
+        precondition(frames.values.allSatisfy { $0.height < 20 }, "Category match text must fit on one line")
+        let old = TaskTextStatusLayout.widths(CGFloat(width) - 98)
+        precondition(xs[0] < CGFloat(width) - 62 - old.status - 20, "Status anchor moves left")
+    }
+
+    static func categorySemanticsCases() throws -> [(String, EnvironmentStatusPresentation)] {
+        let cases: [(String, [DisplayStatus], String)] = [
+            ("only-different", [.different], "Differences Found"),
+            ("only-missing", [.missing], "Differences Found"),
+            ("different-and-missing", [.different, .missing], "Differences Found"),
+            ("different-and-unsupported", [.different, .unsupported], "Needs Attention"),
+            ("all-match", [.matching], "Already Matches"),
+            ("no-requirements", [], "No Requirement")]
+        let domains = ["macos-finder", "macos-dock", "macos-screenshots", "homebrew-casks"]
+        return try cases.map { name, statuses, expected in
+            var rows: [Object] = [], owners: [Object] = [], coverage: [Object] = []
+            for domain in domains {
+                if statuses.isEmpty {
+                    coverage.append(["record_id": "c:" + domain, "domain": domain, "item_id": "scope",
+                        "disposition": "no_requirement", "source_status": "observed_absent"])
+                }
+                for (index, status) in statuses.enumerated() {
+                    let id = rows.count
+                    let kind = status == .different ? "differing" : (status == .missing ? "missing" : (status == .matching ? "matching" : "unverified"))
+                    var fact = row(id, kind, support: status == .unsupported ? "unsupported" : "supported",
+                        reason: status == .unsupported ? "unsupported_predicate" : (status == .matching ? nil : "confirmed_mismatch"))
+                    fact["domain"] = domain; fact["item_id"] = "preference-\(index + 1)"
+                    rows.append(fact)
+                    owners.append(["record_id": "v:\(id)", "domain": domain, "item_id": "preference-\(index + 1)",
+                        "predicate": domain.hasPrefix("macos-") ? "stored_preference" : "installed"])
+                }
+            }
+            let uncertain = statuses.contains(.unsupported)
+            let verdict = statuses.isEmpty ? "no_comparable_requirements" : (statuses == [.matching] ? "no_differences_detected" : "differences_detected")
+            var object = payload(rows, verdict: verdict, alsoIncomplete: uncertain)
+            var records = object["records"] as! Object
+            records["verification_records"] = owners; records["coverage_records"] = coverage
+            object["records"] = records
+            object["reference_presentation"] = ["groups": [
+                ["id": "Applications", "domains": ["homebrew-casks"]],
+                ["id": "macOS Settings", "domains": Array(domains.prefix(3))]], "app_store_names": [:]] as Object
+            let result = try presentation(object)
+            for entry in result.sections.flatMap(\.entries) {
+                for category in [entry.category] + entry.children {
+                    precondition(category.comparisonStatusText == expected, "One category policy across all domains")
+                }
+            }
+            for category in result.categories {
+                precondition(result.categoryCount(.different, category: category) == statuses.filter { $0 == .different }.count)
+                precondition(result.categoryCount(.missing, category: category) == statuses.filter { $0 == .missing }.count)
+                precondition(result.categoryCount(.needsAttention, category: category) == statuses.filter { $0 == .unsupported }.count)
+                precondition(category.items.map(\.status) == (statuses.isEmpty ? [.noRequirement] : statuses))
+            }
+            for independent in [DisplayStatus.unverified, .unresolved, .attention] {
+                let category = DisplayCategory(id: "case", title: "Case", symbol: "folder", items: [
+                    DisplayItem(id: "difference", title: "Difference", status: .different, action: ""),
+                    DisplayItem(id: "gap", title: "Gap", status: independent, action: "")])
+                precondition(category.comparisonStatusText == "Needs Attention")
+            }
+            return (name, result)
+        }
+    }
+
+    @MainActor static func finalConsistencyChecks() throws -> EnvironmentStatusPresentation {
+        let semanticCases = try categorySemanticsCases()
+        var rows: [Object] = []
+        var owners: [Object] = []
+        let names = ["Infrastructure", "macseed", "bootstrap-branch-test"]
+        for repo in 0..<3 {
+            for (offset, predicate) in ["worktree", "origin", "branch"].enumerated() {
+                let id = repo * 3 + offset
+                var fact = row(id, id == 5 ? "differing" : "matching", reason: id == 5 ? "confirmed_mismatch" : nil)
+                fact["domain"] = "git-repositories"; fact["item_id"] = names[repo]
+                rows.append(fact)
+                owners.append(["record_id": "v:\(id)", "domain": "git-repositories", "item_id": names[repo], "predicate": predicate])
+            }
+        }
+        func repositories(_ facts: [Object], diagnostics: [Object] = []) throws -> EnvironmentStatusPresentation {
+            var value = payload(facts, verdict: "differences_detected", alsoIncomplete: facts.contains { $0["comparison_kind"] as? String == "unverified" })
+            var evidence = value["records"] as! Object
+            evidence["verification_records"] = owners.filter { owner in facts.contains { $0["record_id"] as? String == owner["record_id"] as? String } }
+            evidence["diagnostics"] = diagnostics
+            value["records"] = evidence
+            return try presentation(value)
+        }
+        let result = try repositories(rows)
+        precondition(result.counts["matching"] == 8 && result.counts["differing"] == 1)
+        precondition(result.categoryCount(.match, category: result.categories[0]) == 2)
+        precondition(result.categoryCount(.different, category: result.categories[0]) == 1)
+        precondition(result.categories[0].items.map(\.status) == [.matching, .different, .matching])
+        precondition(result.categories[0].items[1].action == "Repository checks differ from the selected reference.")
+        precondition(result.technicalFacts["git-repositories:macseed"]!.count == 3)
+        for offset in rows.indices {
+            let reordered = try repositories(Array(rows[offset...] + rows[..<offset]).reversed())
+            precondition(reordered.counts == result.counts)
+            precondition(Dictionary(uniqueKeysWithValues: reordered.categories[0].items.map { ($0.id, $0.status) })
+                == Dictionary(uniqueKeysWithValues: result.categories[0].items.map { ($0.id, $0.status) }))
+            precondition(reordered.categoryCount(.match, category: reordered.categories[0]) == 2)
+        }
+        var partial = rows
+        partial.remove(at: 0)
+        let incomplete = try repositories(partial)
+        precondition(incomplete.categories[0].items[0].status == .unverified && incomplete.attentionCount == nil)
+        var repositoryScenarios: [(String, EnvironmentStatusPresentation)] = [("Incomplete predicates", incomplete)]
+        for reason in ["unknown_difference", "unsupported_predicate", "observation_failed"] {
+            var uncertain = rows
+            uncertain[0]["comparison_kind"] = "unverified"; uncertain[0]["reason"] = reason
+            uncertain[0]["support"] = reason == "unsupported_predicate" ? "unsupported" : "supported"
+            let value = try repositories(uncertain)
+            precondition(value.needsAttention && value.attentionCount == 1)
+            precondition(value.categoryCount(.match, category: value.categories[0]) == 1)
+            precondition(value.categoryCount(.needsAttention, category: value.categories[0]) == 1)
+            repositoryScenarios.append((reason, value))
+        }
+        var absentRows = rows
+        for index in 0..<3 {
+            absentRows[index]["comparison_kind"] = index == 0 ? "missing" : "unverified"
+            absentRows[index]["reason"] = index == 0 ? "confirmed_mismatch" : "prerequisite_unmet"
+        }
+        let absentWorktree = try repositories(absentRows, diagnostics: (0..<3).map {
+            ["record_id": "v:\($0)", "severity": "warning", "code": $0 == 0 ? "confirmed_mismatch" : "prerequisite_unmet", "phase": "observation"]
+        })
+        precondition(absentWorktree.categories[0].items[0].status == .missing && !absentWorktree.needsAttention)
+        repositoryScenarios.append(("Absent worktree", absentWorktree))
+        var missingOrigin = rows
+        missingOrigin[1]["comparison_kind"] = "missing"; missingOrigin[1]["reason"] = "confirmed_mismatch"
+        let absentOrigin = try repositories(missingOrigin)
+        precondition(absentOrigin.categories[0].items[0].status == .different)
+        let warning = try repositories(rows, diagnostics: [["record_id": "v:0", "severity": "warning", "code": "independent_issue", "phase": "observation"]])
+        precondition(warning.attentionCount == nil && warning.categories[0].items[0].status == .unverified)
+
+        var visualRows = rows
+        var visualOwners = owners
+        var labels: [String: [String: String]] = [:]
+        for domain in CaptureMacOSSettingsGroup.domainIDs {
+            let identities = domain == "macos-finder"
+                ? ["NSGlobalDomain/AppleShowAllExtensions", "com.apple.finder/FXEnableExtensionChangeWarning"]
+                : ["preference-1", "preference-2"]
+            let titles = domain == "macos-finder"
+                ? ["Show extensions", "Extension change warning"] : ["Supported preference", "Window and item display preferences"]
+            for index in 0..<2 {
+                let id = visualRows.count
+                let kind = domain == "macos-finder" ? (index == 0 ? "missing" : "differing")
+                    : (domain == "macos-dock" ? "differing" : "matching")
+                var fact = row(id, kind, reason: kind == "matching" ? nil : "confirmed_mismatch")
+                fact["domain"] = domain; fact["item_id"] = identities[index]
+                visualRows.append(fact); labels[domain, default: [:]][identities[index]] = titles[index]
+                visualOwners.append(["record_id": "v:\(id)", "domain": domain, "item_id": identities[index], "predicate": "stored_preference"])
+            }
+        }
+        for (domain, identity, kind) in [("homebrew-casks", "telegram", "matching"), ("app-store", "747648890", "missing"),
+            ("homebrew-packages", "git", "matching"), ("vscode-extensions", "extension", "matching"),
+            ("vscode-settings", "settings.json", "matching"), ("git-configuration", "user.name", "matching"),
+            ("ssh-configuration", "config", "matching"), ("workspace-folders", "Projects", "matching"),
+            ("homebrew-packages", "unknown", "unverified"), ("homebrew-casks", "different-app", "differing"),
+            ("homebrew-casks", "unsupported-one", "unverified"), ("homebrew-casks", "unsupported-two", "unverified"),
+            ("homebrew-casks", "unsupported-three", "unverified")] {
+            let unsupported = identity.hasPrefix("unsupported-")
+            var fact = row(visualRows.count, kind, support: unsupported ? "unsupported" : "supported",
+                reason: unsupported ? "unsupported_predicate" : (kind == "unverified" ? "observation_failed" : nil))
+            fact["domain"] = domain; fact["item_id"] = identity; visualRows.append(fact)
+        }
+        let extras: Object = ["domains": ["app-store", "homebrew-casks", "vscode-extensions"].map {
+            ["domain": $0, "status": "available", "count": 1, "reason": NSNull()] as Object
+        }, "items": ["app-store", "homebrew-casks", "vscode-extensions"].map {
+            ["domain": $0, "item_id": $0 == "app-store" ? "123" : "extra-application"]
+        }]
+        var visualPayload = payload(visualRows, verdict: "differences_detected", extras: extras, alsoIncomplete: true)
+        var evidence = visualPayload["records"] as! Object
+        evidence["verification_records"] = visualOwners
+        evidence["coverage_records"] = [["record_id": "c:empty", "domain": "shell-zsh", "item_id": "scope", "disposition": "no_requirement", "source_status": "observed_absent"]]
+        visualPayload["records"] = evidence
+        visualPayload["reference_presentation"] = ["groups": [
+            ["id": "Applications", "domains": ["homebrew-casks", "app-store", "vscode-extensions"]],
+            ["id": "Homebrew", "domains": ["homebrew-packages"]],
+            ["id": "macOS Settings", "domains": CaptureMacOSSettingsGroup.domainIDs],
+            ["id": "VS Code Settings", "domains": ["vscode-settings"]],
+            ["id": "Git", "domains": ["git-configuration"]],
+            ["id": "Workspace", "domains": ["workspace-folders", "git-repositories"]],
+            ["id": "SSH Configuration", "domains": ["ssh-configuration"]],
+            ["id": "Shell", "domains": ["shell-zsh"]]],
+            "app_store_names": ["747648890": "Telegram", "123": "Additional App"], "setting_labels": labels,
+            "repository_labels": Dictionary(uniqueKeysWithValues: names.map { ($0, $0) })]
+        let visual = try presentation(visualPayload)
+        precondition(EnvironmentComparisonView.summaryOutcomes(visual).count == 5 && visual.attentionCount == 4)
+        precondition(ComparisonOutcome.needsAttention.explanation == "Unsupported or incomplete checks")
+        precondition(ComparisonOutcome.different.tint != ComparisonOutcome.needsAttention.tint)
+        precondition(ComparisonOutcome.different.tint == EnvironmentComparisonPalette.color(for: .different))
+        for status in [DisplayStatus.unsupported, .unverified, .unresolved, .attention] {
+            precondition(EnvironmentComparisonPalette.color(for: status) == ComparisonOutcome.needsAttention.tint)
+        }
+        precondition(ComparisonOutcome.missing.tint == .red && ComparisonOutcome.needsAttention.tint == .orange)
+        let casks = visual.categories.first { $0.id == "homebrew-casks" }!
+        let caskCounts = Dictionary(uniqueKeysWithValues: ComparisonOutcome.allCases.map { ($0, visual.categoryCount($0, category: casks)) })
+        let caskBadges = EnvironmentComparisonDomain.visibleOutcomes(caskCounts)
+        precondition(caskBadges == [.match, .different, .needsAttention])
+        precondition(caskBadges[2].title == "Needs Attention" && caskCounts[caskBadges[2]] == 3)
+        precondition(caskBadges[2].tint == .orange && caskCounts[.missing] == 0)
+        precondition(visual.counts["unsupported"] == 3 && visual.counts["unverified"] == 4 && visual.attentionCount == 4)
+        let appStore = visual.categories.first { $0.id == "app-store" }!
+        precondition(appStore.items[0].status == .missing && appStore.items[0].action.contains("App Store version"))
+        precondition(appStore.items.last!.reason!.contains("Extra evidence: available · Count: 1"))
+        precondition(visual.categoryCount(.missing, category: appStore) == 1 && visual.categoryCount(.needsAttention, category: appStore) == 0)
+        let visible = EnvironmentComparisonView.visibleSections(visual)
+        precondition(visible.flatMap(\.entries).flatMap { $0.category.items }.allSatisfy { $0.status != .extra })
+        precondition(visual.counts["extra"] == 3 && visual.categories.flatMap(\.items).filter { $0.status == .extra }.count == 3)
+        let event = try CoreEvent(line: data(["protocol_version": 1, "operation_id": "extra-fixture", "sequence": 1,
+            "type": "result", "data": visualPayload]))
+        var sanitizer = OperationLogSanitizer()
+        let logRecord = sanitizer.event(event, at: Date())
+        precondition(logRecord.evidence?.contains { $0.counts["extra"] == 3 } == true)
+        var report = DiagnosticReportBuilder(id: UUID(), environment: .init(version: "3.4.0", build: nil,
+            macOS: .init(majorVersion: 14, minorVersion: 0, patchVersion: 0), architecture: "arm64"))
+        report.receive(logRecord)
+        precondition(report.snapshot().text.contains("extra=3"))
+        let extrasOnly = try presentation(payload([], verdict: "differences_detected", extras: extras))
+        precondition(EnvironmentComparisonView.visibleSections(extrasOnly).isEmpty)
+        precondition(ComparisonOutcome.allCases.allSatisfy { $0.count(extrasOnly) == 0 })
+        let extraAvailability = DisplayCategory(id: "homebrew-casks", title: "Homebrew Applications", symbol: "app", items: [
+            DisplayItem(id: "extra-availability:homebrew-casks", title: "Extra-item evidence", status: .information, action: "Unavailable")])
+        precondition(EnvironmentComparisonView.visibleCategory(extraAvailability).items.isEmpty)
+        precondition(extraAvailability.items.count == 1)
+        for count in 1...5 {
+            for width in [420.0, 785, 985, 1200] {
+                precondition(EnvironmentComparisonMetricsLayout.columns(width, count: count) <= count)
+            }
+        }
+        _ = NSApplication.shared
+        NSApp.appearance = NSAppearance(named: .aqua)
+        func snapshot<V: View>(_ view: V, _ name: String, _ width: Int, scheme: ColorScheme = .light) throws {
+            NSApp.appearance = NSAppearance(named: scheme == .dark ? .darkAqua : .aqua)
+            let content = view.padding(20).frame(width: CGFloat(width))
+                .frame(maxHeight: .infinity, alignment: .top)
+                .background(Color(nsColor: .windowBackgroundColor)).environment(\.colorScheme, scheme)
+            let host = NSHostingView(rootView: content)
+            let height = ceil(host.fittingSize.height) + 1
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: CGFloat(width), height: height),
+                styleMask: [.borderless], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false; window.contentView = host
+            defer { window.close() }
+            host.frame = NSRect(x: 0, y: 0, width: CGFloat(width), height: height)
+            host.layoutSubtreeIfNeeded()
+            RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.01))
+            host.layoutSubtreeIfNeeded(); host.displayIfNeeded()
+            guard let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds) else {
+                preconditionFailure("Native Status composition did not render")
+            }
+            precondition(host.bounds.width == CGFloat(width))
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            try bitmap.representation(using: .png, properties: [:])!
+                .write(to: URL(fileURLWithPath: "build/Debug/Status-colors-\(name)-\(width).png"))
+        }
+        precondition(EnvironmentComparisonMetricsLayout.columns(.infinity, count: 5) == 5)
+        precondition(EnvironmentComparisonMetricsLayout.columns(0, count: 5) == 1)
+        let expanded = Set(visual.sections.flatMap(\.entries).map(\.id))
+        let childCounts = Dictionary(uniqueKeysWithValues: visual.categories.map { category in
+            (category.id, Dictionary(uniqueKeysWithValues: ComparisonOutcome.allCases.map { ($0, visual.categoryCount($0, category: category)) }))
+        })
+        for width in [420, 785, 985, 1200] {
+            try nativeStatusAnchorChecks(width: width)
+            for (name, scenario) in semanticCases {
+                let ids = Set(scenario.sections.flatMap(\.entries).map(\.id))
+                try snapshot(EnvironmentComparisonView(result: scenario, categoryExpansion: .constant(ids),
+                    settingsExpansion: .constant(true)), "category-" + name, width)
+            }
+            try snapshot(EnvironmentComparisonMetricsLayout {
+                ForEach(ComparisonOutcome.allCases) { ComparisonMetricCard(outcome: $0, count: 1) }
+            }, "metrics-dark", width, scheme: .dark)
+            for (name, scenario) in repositoryScenarios {
+                let category = scenario.categories[0]
+                try snapshot(EnvironmentComparisonDomain(category: category, technicalFacts: scenario.technicalFacts,
+                    counts: Dictionary(uniqueKeysWithValues: ComparisonOutcome.allCases.map { ($0, scenario.categoryCount($0, category: category)) }),
+                    expansion: .constant(true), technicalExpansion: .constant(true)).modifier(WorkspaceCardSurface()),
+                    "repositories-" + name.replacingOccurrences(of: " ", with: "-"), width)
+            }
+            let matchingSettings = visual.sections.first { $0.id == "Settings" }!.entries[0].children.map { category in
+                DisplayCategory(id: category.id, title: category.title, symbol: category.symbol,
+                    items: category.items.map { DisplayItem(id: $0.id, title: $0.title, status: .matching, action: "") })
+            }
+            try snapshot(EnvironmentComparisonDomain(category: DisplayCategory(id: "macos-settings", title: "macOS Settings",
+                symbol: "slider.horizontal.3", items: matchingSettings.flatMap(\.items)), children: matchingSettings,
+                counts: [.match: matchingSettings.flatMap(\.items).count], expansion: .constant(true), childExpansion: .constant(true),
+                categoryCounts: Dictionary(uniqueKeysWithValues: matchingSettings.map { ($0.id, [.match: $0.items.count]) }))
+                .modifier(WorkspaceCardSurface()), "settings-all-matching", width)
+            for count in 1...5 {
+                try snapshot(EnvironmentComparisonMetricsLayout {
+                    ForEach(Array(ComparisonOutcome.allCases.prefix(count))) { outcome in
+                        ComparisonMetricCard(outcome: outcome, count: outcome == .needsAttention ? nil : 1)
+                    }
+                }, "metrics-\(count)", width)
+            }
+            try snapshot(EnvironmentComparisonView(result: visual), "collapsed", width)
+            try snapshot(EnvironmentComparisonView(result: visual, categoryExpansion: .constant(expanded), settingsExpansion: .constant(true)), "expanded", width)
+            for section in visual.sections {
+                try snapshot(VStack(alignment: .leading, spacing: 12) {
+                    WorkspaceSectionHeader(title: section.id)
+                    VStack(spacing: 0) {
+                        ForEach(section.entries) { entry in
+                            EnvironmentComparisonDomain(category: entry.category, children: entry.children, technicalFacts: visual.technicalFacts,
+                                counts: Dictionary(uniqueKeysWithValues: ComparisonOutcome.allCases.map { ($0, visual.categoryCount($0, category: entry.category, children: entry.children)) }),
+                                expansion: .constant(true), childExpansion: .constant(true), categoryCounts: childCounts, technicalExpansion: .constant(true))
+                        }
+                    }.modifier(WorkspaceCardSurface())
+                }, section.id.replacingOccurrences(of: " ", with: "-"), width)
+            }
+        }
+        print("PASS: 8/1 predicates → 2/1 repository items, order independence, incomplete/unsupported/independent errors, provider-specific scope, Extra evidence; actual SwiftUI at 420/785/985/1200pt with expanded/collapsed details")
+        return visual
+    }
+
+    @MainActor static func renderResultViewport(_ visual: EnvironmentStatusPresentation, model: EnvironmentStatusModel, runtime: CoreRuntime, width: Int) throws {
+        let expanded = Set(visual.sections.flatMap(\.entries).map(\.id))
+        // Exercise the production scroll/content/footer composition with real actions.
+        let root = VStack(spacing: 0) {
+            ScrollView { EnvironmentComparisonView(result: visual, categoryExpansion: .constant(expanded), settingsExpansion: .constant(true)).modifier(WorkspaceContentGeometry()) }
+            Divider()
+            EnvironmentStatusActions(model: model, runtime: runtime, reviewInRestore: {}).modifier(WorkspaceFooterPadding())
+        }.frame(width: CGFloat(width), height: 800).background(Color(nsColor: .windowBackgroundColor))
+        let host = NSHostingView(rootView: root)
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: 800), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = host
+        host.frame = window.contentView!.bounds
+        host.layoutSubtreeIfNeeded()
+        func scrollView(_ view: NSView) -> NSScrollView? {
+            (view as? NSScrollView) ?? view.subviews.lazy.compactMap { scrollView($0) }.first
+        }
+        guard let scroll = scrollView(host), let document = scroll.documentView else { preconditionFailure("Missing native scroll") }
+        let scrollFrame = scroll.convert(scroll.bounds, to: host)
+        precondition(scrollFrame.height < 800 && document.bounds.height > scroll.bounds.height)
+        for position in ["top", "bottom"] {
+            if position == "bottom" {
+                scroll.contentView.scroll(to: NSPoint(x: 0, y: document.bounds.height - scroll.contentView.bounds.height))
+                scroll.reflectScrolledClipView(scroll.contentView)
+            }
+            host.layoutSubtreeIfNeeded(); host.displayIfNeeded()
+            precondition(scroll.convert(scroll.bounds, to: host) == scrollFrame)
+            let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds)!
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            try bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: "build/Debug/Status-colors-viewport-\(position)-\(width).png"))
+        }
+        window.close()
+    }
+
     @MainActor static func main() async throws {
+        let finalVisual = try finalConsistencyChecks()
         let renderRuntime = CoreRuntime()
         let renderModel = EnvironmentStatusModel(runtime: renderRuntime)
         for (label, width) in [("narrow", 1000), ("wide", 1600)] {
@@ -98,9 +477,12 @@ import SwiftUI
             repositoryOwners.append(["record_id": "v:\(index)", "domain": "git-repositories", "item_id": identities[0], "predicate": predicate])
             repositoryDiagnostics.append(["record_id": "v:\(index)", "code": index == 0 ? "confirmed_mismatch" : "prerequisite_unmet", "severity": "warning", "phase": "observation"])
         }
-        var matchingRepository = row(3, "matching")
-        matchingRepository["domain"] = "git-repositories"; matchingRepository["item_id"] = identities[1]
-        repositoryRows.append(matchingRepository)
+        for (index, predicate) in ["worktree", "origin", "branch"].enumerated() {
+            var fact = row(index + 3, "matching")
+            fact["domain"] = "git-repositories"; fact["item_id"] = identities[1]
+            repositoryRows.append(fact)
+            repositoryOwners.append(["record_id": "v:\(index + 3)", "domain": "git-repositories", "item_id": identities[1], "predicate": predicate])
+        }
         var repositoryPayload = payload(repositoryRows, verdict: "differences_detected", alsoIncomplete: true)
         var repositoryEvidence = repositoryPayload["records"] as! Object
         repositoryEvidence["verification_records"] = repositoryOwners
@@ -111,7 +493,7 @@ import SwiftUI
         let namedItems = namedRepositories.categories[0].items
         precondition(!namedRepositories.needsAttention && namedRepositories.headline == "Differences Found")
         precondition(namedRepositories.counts["unverified"] == 2 && namedRepositories.counts["missing"] == 1)
-        precondition(namedItems[0].status == .missing && namedRepositories.categories[0].comparisonStatus == .missing)
+        precondition(namedItems[0].status == .missing && namedRepositories.categories[0].comparisonStatus == .different)
         let repositoryDetails = namedRepositories.technicalFacts[namedItems[0].id]!
         precondition(repositoryDetails.count == 3 && Set(repositoryDetails.compactMap(\.predicate)) == Set(["worktree", "origin", "branch"]))
         precondition(Set(repositoryDetails.flatMap(\.phases)) == Set(["observation"]))
@@ -143,6 +525,21 @@ import SwiftUI
         unsupportedDependency["records"] = unsupportedEvidence
         let unsupportedDependencyPresentation = try presentation(unsupportedDependency)
         precondition(unsupportedDependencyPresentation.needsAttention)
+
+        var mixedFailureRows = repositoryRows
+        mixedFailureRows[2]["reason"] = "observation_failed"
+        var mixedFailure = payload(mixedFailureRows, verdict: "differences_detected", alsoIncomplete: true)
+        var mixedFailureEvidence = repositoryEvidence
+        mixedFailureEvidence["verification_records"] = repositoryOwners
+        var mixedFailureDiagnostics = repositoryDiagnostics
+        mixedFailureDiagnostics[2]["code"] = "observation_failed"
+        mixedFailureEvidence["diagnostics"] = mixedFailureDiagnostics
+        mixedFailure["records"] = mixedFailureEvidence
+        let mixedRepositoryFailure = try presentation(mixedFailure)
+        precondition(mixedRepositoryFailure.categories[0].items[0].status == .unverified)
+        precondition(mixedRepositoryFailure.counts["unverified"] == 2 && mixedRepositoryFailure.attentionCount == 1)
+        precondition(mixedRepositoryFailure.categories[0].items[0].reason!.contains("prerequisite_unmet"))
+        precondition(mixedRepositoryFailure.categories[0].items[0].reason!.contains("observation_failed"))
 
         print("PASS: Exact opaque repository label correlation, reordered facts, safe fallback and independent technical evidence")
 
@@ -176,7 +573,7 @@ import SwiftUI
         let mixedApplications = DisplayCategory(id: "homebrew-casks", title: "Homebrew Applications", symbol: "app",
             items: [firefoxItem, DisplayItem(id: "matching", title: "Matching app", status: .matching, action: "")])
         precondition(EnvironmentComparisonDomain.summaryStatus(mixedApplications) == .different)
-        precondition(EnvironmentComparisonDomain.summaryStatus(precise.categories.first { $0.id == "git-repositories" }!) == .missing)
+        precondition(EnvironmentComparisonDomain.summaryStatus(precise.categories.first { $0.id == "git-repositories" }!) == .different)
 
         precondition(precise.categories.first { $0.id == "workspace-folders" }!.items[0].status == .missing)
         precondition(precise.categories.first { $0.id == "ssh-configuration" }!.comparisonStatus == .attention)
@@ -188,7 +585,7 @@ import SwiftUI
         precondition(workspaceGroup.entries.map(\.id) == ["workspace-folders", "git-repositories"])
         precondition(precise.categoryCount(.match, category: workspaceGroup.entries[1].category) == 1 && precise.categoryCount(.missing, category: workspaceGroup.entries[1].category) == 1)
         let sshGroup = precise.sections.first { $0.id == "SSH Configuration" }!
-        precondition(ComparisonOutcome.allCases.allSatisfy { precise.categoryCount($0, category: sshGroup.entries[0].category) == 0 })
+        precondition(precise.categoryCount(.needsAttention, category: sshGroup.entries[0].category) == 1)
         try render(EnvironmentComparisonView(result: precise), name: "EnvironmentStatus-final-groups", width: 1000)
         for width in [1000, 785] {
             let ids = Set(precise.sections.flatMap(\.entries).map(\.id))
@@ -214,7 +611,7 @@ import SwiftUI
 
         let clean = payload([row(0, "matching")], verdict: "no_differences_detected")
         let ready = try presentation(clean)
-        precondition(EnvironmentComparisonView.summaryOutcomes(ready) == [.match, .different, .missing])
+        precondition(EnvironmentComparisonView.summaryOutcomes(ready) == [.match])
 
         precondition(ready.headline == "No differences detected" && !ready.needsAttention && ready.summary == "1 matching")
         precondition(ready.categories[0].items[0].status == .matching && !ready.categories[0].hasAttention)
@@ -246,10 +643,10 @@ import SwiftUI
         noRequirementPayload["records"] = noRequirementRecords
         let notApplicable = try presentation(noRequirementPayload)
         precondition(ComparisonOutcome.notApplicable.count(notApplicable) == 1)
-        precondition(EnvironmentComparisonView.summaryOutcomes(notApplicable) == [.match, .different, .missing, .notApplicable])
+        precondition(EnvironmentComparisonView.summaryOutcomes(notApplicable) == [.notApplicable])
 
         precondition(!notApplicable.categories.flatMap(\.items).contains { $0.status == .excluded })
-        precondition(ComparisonOutcome.allCases.map { $0.count(visualResult) } == [1, 1, 1, 0])
+        precondition(ComparisonOutcome.allCases.map { $0.count(visualResult) } == [1, 1, 1, 0, 1])
         let unknown = try presentation(payload([row(0, "unverified", reason: "unknown_difference")], verdict: "incomplete"))
         precondition(unknown.categories[0].items[0].status == .unverified && unknown.summary.contains("unknown difference"))
         let mixed = try presentation(payload([row(0, "matching"), row(1, "differing"), row(2, "unverified", reason: "observation_failed")],
@@ -319,8 +716,8 @@ import SwiftUI
         precondition(ssh.message.contains("SSH Configuration") && ssh.message.contains("only part"))
         precondition(ssh.counts["matching"] == 1 && ComparisonOutcome.notApplicable.count(ssh) == 0)
         precondition(ssh.sections.map(\.id) == ["SSH Configuration"])
-        precondition(ssh.categoryCount(.match, category: ssh.categories[0]) == 1)
-        precondition(EnvironmentComparisonDomain.visibleOutcomes([.match: ssh.categoryCount(.match, category: ssh.categories[0])]) == [.match])
+        precondition(ssh.categoryCount(.match, category: ssh.categories[0]) == 0)
+        precondition(ssh.categoryCount(.needsAttention, category: ssh.categories[0]) == 1)
 
         var excludedOnly = payload([], verdict: "no_comparable_requirements")
         excludedOnly["records"] = ["status": "complete", "verification_records": [], "operation_records": [], "diagnostics": [],
@@ -339,7 +736,7 @@ import SwiftUI
         precondition(macOS.sections[0].id == "Settings")
         let macOSEntry = macOS.sections[0].entries[0]
         precondition(macOSEntry.category.title == "macOS Settings" && macOSEntry.children.map(\.id) == ["macos-finder", "macos-dock"])
-        precondition(macOSEntry.category.comparisonStatusText == "Different")
+        precondition(macOSEntry.category.comparisonStatusText == "Differences Found")
         precondition(!macOS.needsAttention && macOS.headline == "Differences Found")
         let mixedSettings = DisplayCategory(id: "macos-dock", title: "Dock", symbol: "dock.rectangle", items: [
             DisplayItem(id: "a", title: "A", status: .different, action: ""), DisplayItem(id: "b", title: "B", status: .missing, action: "")])
@@ -352,7 +749,7 @@ import SwiftUI
             try render(EnvironmentComparisonView(result: notApplicable), name: "EnvironmentStatus-four-metrics-\(width)", width: width)
         }
 
-        precondition(ComparisonOutcome.allCases.map { macOS.categoryCount($0, category: macOSEntry.category, children: macOSEntry.children) } == [1, 1, 0, 0])
+        precondition(ComparisonOutcome.allCases.map { macOS.categoryCount($0, category: macOSEntry.category, children: macOSEntry.children) } == [1, 1, 0, 0, 0])
         precondition(EnvironmentComparisonDomain.visibleOutcomes([.match: 1, .different: 1]) == [.match, .different])
 
         let mainIDs = Set(macOS.sections.flatMap(\.entries).map(\.id))
@@ -521,6 +918,10 @@ import SwiftUI
             await bundleModel.waitForCompletion()
             precondition(bundleModel.restoreReviewBundle == (kind == "matching" ? nil : bundleURL))
             if kind == "differing" {
+                for width in [420, 785, 985, 1200] {
+                    try renderResultViewport(finalVisual, model: bundleModel, runtime: bundleRuntime, width: width)
+                }
+                print("PASS: Real result actions, scroll and fixed footer at 420/785/985/1200pt")
                 for width in [1000, 1600] {
                     try render(EnvironmentStatusActions(model: bundleModel, runtime: bundleRuntime, reviewInRestore: {}), name: "Status-Restore-footer-\(width)", width: width)
                 }
@@ -662,5 +1063,51 @@ import SwiftUI
         precondition(afterReference == beforeReference && afterHome == beforeHome && afterBlueprint == beforeBlueprint)
         precondition(!FileManager.default.fileExists(atPath: marker.path) && !FileManager.default.fileExists(atPath: core.appendingPathComponent("logs").path))
         print("PASS: Swift → production Core → disposable readers → Status (matching/difference/observation/invalid reference); no mutation")
+
+        // Exercise the actual preference observer and Comparison projector, never live defaults.
+        let macOS = generated.appendingPathComponent("macos")
+        try FileManager.default.createDirectory(at: macOS, withIntermediateDirectories: false)
+        try write("NSGlobalDomain|AppleShowAllExtensions|bool|true\ncom.apple.finder|FXEnableExtensionChangeWarning|bool|true\n", macOS.appendingPathComponent("finder.conf"))
+        let finderBlueprint = String(decoding: beforeBlueprint, as: UTF8.self)
+            .replacingOccurrences(of: "macos-finder=\"false\"", with: "macos-finder=\"true\"")
+            .replacingOccurrences(of: "[homebrew-packages]\ngit\n", with: "[homebrew-packages]\n")
+        try write(finderBlueprint, blueprint)
+        try write("""
+        #!/bin/bash
+        case "$1:$2:$3" in
+          read-type:NSGlobalDomain:AppleShowAllExtensions) echo 'The domain/default pair does not exist' >&2; exit 1;;
+          read-type:com.apple.finder:FXEnableExtensionChangeWarning) echo 'Type is boolean';;
+          read:com.apple.finder:FXEnableExtensionChangeWarning) echo 0;;
+          *) echo attempted >> \(quote(marker.path)); exit 99;;
+        esac
+        """, bin.appendingPathComponent("defaults"), executable: true)
+        let beforeFinderReference = try snapshot(generated), beforeFinderHome = try snapshot(home)
+        model.compare(); await model.waitForCompletion()
+        precondition(model.state == .result)
+        let event = runtime.latestResult!
+        let comparison = try event.decodeData(CoreComparisonResult.self)
+        precondition(comparison.comparisonRecords.count == 2 && comparison.comparison.counts["missing"] == 1 && comparison.comparison.counts["differing"] == 1)
+        let expected = ["NSGlobalDomain/AppleShowAllExtensions": "missing", "com.apple.finder/FXEnableExtensionChangeWarning": "differing"]
+        for fact in comparison.comparisonRecords {
+            precondition(fact.comparisonKind == expected[fact.itemID] && fact.reason == "confirmed_mismatch" && fact.support == "supported")
+            precondition(comparison.records.verificationRecords.contains { $0.recordID == fact.recordID && $0.itemID == fact.itemID && $0.predicate == "stored_preference" })
+            precondition(comparison.records.diagnostics.contains { $0.recordID == fact.recordID && $0.code == "confirmed_mismatch" && $0.phase == "observation" })
+            let item = model.presentation!.categories.flatMap(\.items).first { $0.id == "macos-finder:" + fact.itemID }!
+            precondition(item.status == (fact.comparisonKind == "missing" ? .missing : .different))
+            precondition(item.reason!.contains(fact.recordID) && item.reason!.contains("Predicate: stored_preference"))
+            if fact.comparisonKind == "missing" { precondition(item.action == "Saved preference is not explicitly set on this Mac.") }
+        }
+        precondition(model.presentation!.categories.first { $0.id == "macos-finder" }!.comparisonStatusText == "Differences Found")
+        let afterFinderReference = try snapshot(generated), afterFinderHome = try snapshot(home)
+        let afterFinderBlueprint = try String(contentsOf: blueprint)
+        precondition(afterFinderReference == beforeFinderReference && afterFinderHome == beforeFinderHome)
+        precondition(afterFinderBlueprint == finderBlueprint)
+        precondition(!FileManager.default.fileExists(atPath: marker.path))
+        let raw = event.data!, records = raw["records"]!.object!
+        let proof: [String: CoreJSON] = ["comparison": raw["comparison"]!, "comparison_records": raw["comparison_records"]!,
+            "verification_records": records["verification_records"]!, "diagnostics": records["diagnostics"]!]
+        let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        try encoder.encode(proof).write(to: URL(fileURLWithPath: "build/Debug/Status-colors-Finder-core-records.json"))
+        print("PASS: Production Finder records: Show extensions = Missing (absent explicit key), Extension change warning = Different (stored false vs saved true); exact predicates/IDs/diagnostics retained, fixtures unchanged")
     }
 }

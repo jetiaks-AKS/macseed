@@ -1797,10 +1797,10 @@ private struct PreviewExpansionHost: View {
         precondition(statusView.contains("Compare This Mac") && statusView.contains("Choose Saved Environment…"))
         precondition(statusView.contains("panel.canChooseDirectories = false") && statusView.contains("UTType(filenameExtension: \"mbt\")"))
         precondition(statusView.contains("model.selectBundle(url)"))
-        precondition(statusView.contains("EnvironmentComparisonDomain(category: child, expansion: childExpansion)"))
+        precondition(statusView.contains("EnvironmentComparisonDomain(category: child, technicalFacts: technicalFacts,"))
         precondition(statusView.contains("DisclosureGroup(isExpanded: expansion ?? $expanded)"))
         precondition(statusView.contains("@ReferenceViewState<Bool> private var expanded = false"))
-        precondition(statusView.contains("if model.state != .choose { Spacer() }"))
+        precondition(statusView.contains("if model.state != .choose && horizontal { Spacer() }"))
         precondition(statusView.contains("if model.reference != nil {"))
         precondition(!statusView.contains("Text(result.summary)"))
         precondition(content.contains(".font(.system(size: prominent ? 15 : 13, weight: .semibold)).foregroundStyle(Color(nsColor: .labelColor))"))
@@ -1813,8 +1813,14 @@ private struct PreviewExpansionHost: View {
             precondition(!statusView.contains(technical), "Status uses a Bundle, not internal reference controls")
         }
         precondition(statusView.contains("EnvironmentComparisonView(result: result)"))
-        precondition(statusView.contains("$0 != .notApplicable || $0.count(result) > 0"))
-        precondition(statusView.contains("if Self.summaryOutcomes(result).count == 3") && statusView.contains("HStack(spacing: 10)"))
+        precondition(statusView.contains("$0 == .needsAttention ? result.needsAttention : $0.count(result) > 0"))
+        precondition(statusView.contains("EnvironmentComparisonMetricsLayout {"))
+        precondition(!statusView.contains("Additional applications") && !statusView.contains("additionalExpanded"))
+        precondition(statusView.contains("tint: outcome.tint"))
+        precondition(statusView.contains("Unsupported or incomplete checks"))
+        precondition(statusView.contains("enum EnvironmentComparisonPalette"))
+        precondition(statusView.contains("EnvironmentComparisonPalette.color(for: status)"))
+        precondition(!statusView.contains("summaryTint"))
 
         precondition(statusView.contains("result.categoryCount($0, category: entry.category, children: entry.children)"))
         precondition(statusView.contains("counts[$0, default: 0] > 0") && statusView.contains("ComparisonOutcome.allCases.filter"))
@@ -1823,22 +1829,22 @@ private struct PreviewExpansionHost: View {
         let domainView = statusView.components(separatedBy: "struct EnvironmentComparisonDomain: View")[1].components(separatedBy: "struct EnvironmentComparisonItem: View")[0]
         precondition(domainView.contains("Capsule()") && domainView.contains("if let counts"))
         precondition(domainView.contains("WorkspaceCategoryIcon(symbol: category.symbol)") && content.contains(".fontWeight(.semibold).foregroundStyle(.blue)"))
-        precondition(domainView.contains(".padding(.horizontal, 8).frame(minWidth: 46, minHeight: 23)"))
+        precondition(domainView.contains(".padding(.horizontal, 6).frame(minWidth: 24, minHeight: 23)"))
         precondition(content.contains("Rectangle().fill(Color.primary.opacity(0.22)).frame(height: 1.5)"))
 
-        precondition(domainView.contains("if ![.different, .missing].contains(status) { statusLabel }"))
-        precondition(domainView.contains("Text(counts == nil ? category.comparisonStatusText : status.rawValue)"))
+        precondition(domainView.contains("statusLabel.frame(width: 152, alignment: .leading)"))
+        precondition(domainView.contains("title: EnvironmentComparisonView.visibleCategory(category).comparisonStatusText)"))
         precondition(!domainView.contains("warningCompanion") && !domainView.contains("warning && outcomes"))
 
         let sectionHeader = content.components(separatedBy: "struct WorkspaceSectionHeader:")[1].components(separatedBy: "struct WorkspaceCategoryIcon:")[0]
         precondition(!sectionHeader.contains("Capsule()") && !sectionHeader.contains("counts"))
-        precondition(domainView.contains("EnvironmentComparisonDomain(category: child, expansion: childExpansion)"))
+        precondition(domainView.contains("EnvironmentComparisonDomain(category: child, technicalFacts: technicalFacts,"))
 
         precondition(WorkspaceActionLayout.columns(659) == 1 && WorkspaceActionLayout.columns(660) == 3)
         precondition(WorkspaceMetricLayout.columns(899) == 2 && WorkspaceMetricLayout.columns(900) == 4)
         for task in ProductTask.allCases { precondition(NSImage(systemSymbolName: task.symbol, accessibilityDescription: nil) != nil) }
         precondition(statusView.contains("WorkspacePrimaryActionCard(title: \"Choose Saved Environment\""))
-        precondition(!statusView.contains("WorkspaceResultHeader(title:") && statusView.contains("ForEach(ComparisonOutcome.allCases)"))
+        precondition(!statusView.contains("WorkspaceResultHeader(title:") && statusView.contains("ForEach(Self.summaryOutcomes(result))"))
 
         let production = try! String(contentsOf: sources.appendingPathComponent("ProductionWorkspace.swift"), encoding: .utf8)
         let scrollEnd = production.range(of: "                if navigation.task == .status && status.state == .result {")!
@@ -2059,7 +2065,7 @@ private struct PreviewExpansionHost: View {
         print("PASS: Shared neutral material sidebar/header in production and preview; native Appearance setting")
         let categoryStart = content.range(of: "struct CategoryRow: View")!
         precondition(content[categoryStart.lowerBound...].contains("@ViewState<Bool> private var expanded = false"))
-        precondition(statusView.contains("ForEach(result.sections) { section in") && statusView.contains("EnvironmentComparisonDomain(category: entry.category, children: entry.children, technicalFacts: result.technicalFacts, counts: Dictionary("))
+        precondition(statusView.contains("ForEach(Self.visibleSections(result)) { section in") && statusView.contains("EnvironmentComparisonDomain(category: entry.category, children: entry.children, technicalFacts: result.technicalFacts, counts: Dictionary("))
         let referenceRuntime = CoreRuntime()
         let referenceModel = EnvironmentStatusModel(runtime: referenceRuntime)
         let directory = URL(fileURLWithPath: "/private/tmp/presentation-saved-environment")

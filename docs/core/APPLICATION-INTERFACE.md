@@ -653,6 +653,17 @@ unresolved, extra, unknown_difference. Verdicts are `incomplete`,
 run integrity takes precedence; otherwise differences precede verification gaps,
 confirmed matching requirements or proven empty scope.
 
+These are predicate-level counts: a repository can contribute separate Worktree,
+Origin and Branch results. Desktop may aggregate its visible repository row and
+category badges by stable item identity, without replacing these Core totals.
+Comparison preserves the reference Blueprint; unlike Restore Prepare, it does not
+apply Cask-first narrowing or return `effective_selection`. A legacy reference
+selecting both Telegram Cask and its App Store ID therefore retains both
+provider-specific requirements, even when their application identity overlaps.
+A matching Cask cannot satisfy the App Store predicate. Extending Comparison to
+an effective scope requires an explicit contract decision covering records,
+counts, verdict and source-inventory provenance together.
+
 `extra.domains` contains status/count/reason; `extra.items` exposes safe IDs.
 Extras are supported only for casks, App Store and VS Code extensions with complete
 digest-bound source inventory and valid successful target enumeration. Excluded

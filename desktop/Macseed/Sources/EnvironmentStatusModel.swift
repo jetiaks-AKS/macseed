@@ -70,26 +70,26 @@ struct EnvironmentStatusPresentation {
     let sections: [EnvironmentStatusSection]
     let needsAttention: Bool
     let counts: [String: Int]
-    private let comparisonRecords: [CoreComparisonResult.Row]
-    private let coverageRecords: [CoreComparisonResult.Coverage]
+    let attentionCount: Int?
     let technicalFacts: [String: [ComparisonTechnicalFact]]
 
     func categoryCount(_ outcome: ComparisonOutcome, category: DisplayCategory, children: [DisplayCategory] = []) -> Int {
-        let domains = Set(children.isEmpty ? [category.id] : children.map(\.id))
-        switch outcome {
-        case .match, .different, .missing:
-            let kind = outcome == .match ? "matching" : (outcome == .different ? "differing" : "missing")
-            return comparisonRecords.filter { domains.contains($0.domain) && $0.comparisonKind == kind }.count
-        case .notApplicable:
-            return coverageRecords.filter { domains.contains($0.domain) && $0.disposition == "no_requirement" }.count
-        }
+        // Category badges count the logical rows shown below them, not Core predicates.
+        let items = children.isEmpty ? category.items : children.flatMap(\.items)
+        return items.filter { item in
+            switch outcome {
+            case .match: item.status == .matching
+            case .different: item.status == .different
+            case .missing: item.status == .missing
+            case .notApplicable: item.status == .noRequirement
+            case .needsAttention: [.attention, .unverified, .unsupported, .unresolved].contains(item.status)
+            }
+        }.count
     }
 
     init(_ result: CoreComparisonResult) throws {
         try result.validate()
         counts = result.comparison.counts
-        comparisonRecords = result.comparisonRecords
-        coverageRecords = result.records.coverageRecords
         technicalFacts = Dictionary(grouping: result.comparisonRecords.filter { $0.domain == "git-repositories" }, by: { $0.domain + ":" + $0.itemID }).mapValues { rows in
             rows.map { row in
                 ComparisonTechnicalFact(recordID: row.recordID,
@@ -153,11 +153,22 @@ struct EnvironmentStatusPresentation {
             return parts.isEmpty ? nil : parts.joined(separator: "\n")
         }
         for row in result.comparisonRecords {
+            let owner = result.records.verificationRecords.first {
+                $0.recordID == row.recordID && $0.domain == row.domain && $0.itemID == row.itemID
+            }
             let status: DisplayStatus
             let action: String
             switch row.comparisonKind {
             case "matching": status = .matching; action = "Matches the selected reference."
-            case "missing": status = .missing; action = "Reference requirement was not found on this Mac."
+            case "missing":
+                status = .missing
+                if row.domain.hasPrefix("macos-"), owner?.predicate == "stored_preference", row.reason == "confirmed_mismatch" {
+                    action = "Saved preference is not explicitly set on this Mac."
+                } else {
+                    action = row.domain == "app-store"
+                        ? "The App Store requirement was not found. A Homebrew installation does not confirm the App Store version."
+                        : "Reference requirement was not found on this Mac."
+                }
             case "differing": status = .different; action = "Current state differs from the selected reference."
             default:
                 status = row.support == "unsupported" ? .unsupported : .unverified
@@ -170,7 +181,7 @@ struct EnvironmentStatusPresentation {
             add(row.domain, DisplayItem(id: logicalID(row.domain, row.itemID), title: title(row.itemID, domain: row.domain), status: status,
                                         action: action, reason: [technical(row.reason, row.phase), "Comparison: " + row.comparisonKind + " · " + row.recordID,
                                                                 row.domain == "app-store" ? "App Store ID: " + row.itemID : nil,
-                                                                row.domain == "git-repositories" ? result.records.verificationRecords.first(where: { $0.recordID == row.recordID })?.predicate.map { "Predicate: " + $0 } : nil].compactMap { $0 }.joined(separator: "\n")))
+                                                                row.domain == "git-repositories" || row.domain.hasPrefix("macos-") ? owner?.predicate.map { "Predicate: " + $0 } : nil].compactMap { $0 }.joined(separator: "\n")))
         }
         for row in result.records.coverageRecords where !["resolved", "excluded"].contains(row.disposition) {
             let status: DisplayStatus = row.disposition == "unresolved" ? .unresolved : (row.disposition == "excluded" ? .excluded : .noRequirement)
@@ -200,6 +211,7 @@ struct EnvironmentStatusPresentation {
                                     + (coverage.map { "\nSource status: " + $0.sourceStatus } ?? "")))
         }
         var dependentRepositoryRecords = Set<String>()
+        var collapsedRepositoryIDs = Set<String>()
         // Summarize only the proven absent-worktree + blocked origin/branch combination.
         for identity in repositoryIDs {
             let rows = result.comparisonRecords.filter { $0.domain == "git-repositories" && $0.itemID == identity }
@@ -207,12 +219,19 @@ struct EnvironmentStatusPresentation {
             let facts = Dictionary(grouping: predicates, by: { $0.predicate ?? "" })
             guard rows.count == 3, predicates.count == 3,
                   Set(facts.keys) == Set(["worktree", "origin", "branch"]), facts.values.allSatisfy({ $0.count == 1 }) else { continue }
-            let valid = predicates.allSatisfy { owner in
+            func absentOrDependent(_ owner: CoreComparisonResult.Owner) -> Bool {
                 guard let row = rows.first(where: { $0.recordID == owner.recordID }), row.support == "supported" else { return false }
                 let codes = result.records.diagnostics.filter { $0.recordID == owner.recordID }.map(\.code)
                 return owner.predicate == "worktree"
                     ? row.comparisonKind == "missing" && row.reason == "confirmed_mismatch" && Set(codes) == Set(["confirmed_mismatch"])
                     : row.comparisonKind == "unverified" && (row.reason == nil || row.reason == "prerequisite_unmet") && Set(codes) == Set(["prerequisite_unmet"])
+            }
+            let valid = predicates.allSatisfy(absentOrDependent)
+            if let worktree = facts["worktree"]?.first, absentOrDependent(worktree) {
+                // Even in a mixed failure, blocked dependent checks are not independent issues.
+                dependentRepositoryRecords.formUnion(predicates.filter {
+                    $0.predicate != "worktree" && absentOrDependent($0)
+                }.map(\.recordID))
             }
             let ownerIDs = Set(predicates.map(\.recordID))
             let related = result.records.coverageRecords.filter { $0.domain == "git-repositories" && $0.itemID == identity }
@@ -221,15 +240,49 @@ struct EnvironmentStatusPresentation {
                   !result.records.diagnostics.contains(where: { diagnostic in
                       related.contains(where: { $0.recordID == diagnostic.recordID }) && !ownerIDs.contains(diagnostic.recordID)
                   }), let index = grouped["git-repositories"]?.firstIndex(where: { $0.id == logicalID("git-repositories", identity) }) else { continue }
-            dependentRepositoryRecords.formUnion(predicates.filter { $0.predicate != "worktree" }.map(\.recordID))
+            collapsedRepositoryIDs.insert(identity)
             let previous = grouped["git-repositories"]![index]
             grouped["git-repositories"]![index] = DisplayItem(id: previous.id, title: previous.title, status: .missing,
                 action: "Repository not found on this Mac. Its remote and branch could not be verified.", reason: previous.reason)
         }
+        // Finalize one repository explanation after all facts and independent diagnostics.
+        // Missing is reserved for an explicitly absent worktree; a missing origin is Different.
+        var incompleteRepositoryEvidence = false
+        for identity in repositoryIDs {
+            guard let index = grouped["git-repositories"]?.firstIndex(where: { $0.id == logicalID("git-repositories", identity) }) else { continue }
+            let previous = grouped["git-repositories"]![index]
+            let facts = technicalFacts[previous.id] ?? []
+            if collapsedRepositoryIDs.contains(identity) { continue }
+            let complete = facts.count == 3 && Set(facts.compactMap(\.predicate)) == Set(["worktree", "origin", "branch"])
+            let status: DisplayStatus
+            let explanation: String
+            if previous.status == .noRequirement && facts.isEmpty { continue }
+            if !complete || facts.contains(where: { $0.result == "unverified" || $0.support == "unsupported" })
+                || [.attention, .unresolved].contains(previous.status) {
+                status = facts.contains(where: { $0.support == "unsupported" }) ? .unsupported : .unverified
+                explanation = "Repository checks are incomplete. Review Worktree, Origin and Branch in Technical Details."
+                if !complete { incompleteRepositoryEvidence = true }
+            } else if facts.contains(where: { $0.predicate == "worktree" && $0.result == "missing" && $0.reason == "confirmed_mismatch" }) {
+                status = .missing
+                explanation = "Repository worktree was not found on this Mac."
+            } else if facts.contains(where: { ["missing", "differing"].contains($0.result) }) {
+                status = .different
+                explanation = "Repository checks differ from the selected reference."
+            } else {
+                status = .matching
+                explanation = "Matches the selected reference."
+            }
+            grouped["git-repositories"]![index] = DisplayItem(id: previous.id, title: previous.title,
+                status: status, action: explanation, reason: previous.reason)
+        }
         for (index, item) in result.extra.items.enumerated() {
             add(item.domain, DisplayItem(id: "extra:\(index)", title: title(item.itemID, domain: item.domain), status: .extra,
                                         action: "Present on this Mac outside the complete source inventory. Nothing will be removed.",
-                                        reason: item.domain == "app-store" ? "App Store ID: " + item.itemID : nil))
+                                        reason: (["Domain: " + item.domain, "Item: " + item.itemID]
+                                            + result.extra.domains.filter { $0.domain == item.domain }.map {
+                                                "Extra evidence: " + $0.status + " · Count: " + String($0.count ?? 0)
+                                                    + ($0.reason.map { " · " + $0 } ?? "")
+                                            }).joined(separator: "\n")))
         }
         for domain in result.extra.domains where domain.status == "unavailable" && grouped[domain.domain] != nil {
             add(domain.domain, DisplayItem(id: "extra-availability:" + domain.domain, title: "Extra-item evidence", status: .information,
@@ -257,10 +310,17 @@ struct EnvironmentStatusPresentation {
                ["missing", "differing"].contains(fact.comparisonKind) { return false }
             return true
         }
-        needsAttention = result.comparison.verdict == "incomplete" || independentUnverified
+        needsAttention = incompleteRepositoryEvidence || result.comparison.verdict == "incomplete" || independentUnverified
             || result.records.coverageRecords.contains { $0.disposition == "unresolved" }
             || !independentDiagnostics.isEmpty
             || (result.comparison.alsoIncomplete && result.comparison.counts["unverified"] == 0 && result.comparison.counts["unresolved"] == 0)
+        let attentionIDs = Set(result.comparisonRecords.filter {
+            $0.comparisonKind == "unverified" && !dependentRepositoryRecords.contains($0.recordID)
+        }.map(\.recordID) + result.records.coverageRecords.filter { $0.disposition == "unresolved" }.map(\.recordID))
+        // Unsupported is already inside Unverified. Independent diagnostics without a
+        // counted owner, or incomplete predicate sets, have no trustworthy numeric total.
+        attentionCount = !needsAttention ? 0 : (!incompleteRepositoryEvidence && !attentionIDs.isEmpty
+            && independentDiagnostics.allSatisfy { attentionIDs.contains($0.recordID) } ? attentionIDs.count : nil)
         if needsAttention {
             headline = "Needs Attention"
             message = independentDiagnostics.isEmpty ? "Some requirements could not be verified completely." : independentDiagnostics.map { diagnostic in
@@ -360,17 +420,13 @@ extension DisplayCategory {
         let statuses = Set(items.map(\.status))
         if statuses.contains(.attention) || statuses.contains(.unresolved) { return .attention }
         if statuses.contains(.unverified) || statuses.contains(.unsupported) { return .attention }
-        if statuses.contains(.missing) { return .missing }
-        if statuses.contains(.different) { return .different }
-        if statuses.contains(.extra) { return .extra }
+        if statuses.contains(.missing) || statuses.contains(.different) { return .different }
         if statuses.contains(.matching) { return .matching }
+        if statuses.contains(.extra) { return .extra }
         return .noRequirement
     }
     var comparisonStatusText: String {
-        if comparisonStatus == .attention { return comparisonStatus.rawValue }
-        let statuses = Set(items.map(\.status))
-        if statuses.contains(.different) && statuses.contains(.missing) { return "Differences Found" }
-        return comparisonStatus.rawValue
+        comparisonStatus == .different ? "Differences Found" : comparisonStatus.rawValue
     }
 }
 

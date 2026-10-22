@@ -212,6 +212,16 @@ The format is based on the principles of **Keep a Changelog**.
 
 ### Fixed
 
+* Environment Status aligns nested statuses, hides zero summary metrics and keeps
+  additional applications in diagnostic evidence. Category match labels, compact
+  leaf checkmarks and a shared blue difference palette improve readability.
+  Categories consistently report Differences Found with separate Missing/Different
+  counts; preference-key absence uses a precise explanation.
+  Repository category counts now reflect one
+  logical item per repository, with consistent explanations and full predicate
+  diagnostics; Core comparison totals and provider-specific App Store scope remain
+  unchanged.
+
 * Capture confirmation and strict Desktop publication validation use the same
   effective Cask-first scope. Changed identity decisions require fresh preparation;
   unresolved identity preserves both requirements.

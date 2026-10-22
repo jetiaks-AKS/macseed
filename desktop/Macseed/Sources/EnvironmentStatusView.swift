@@ -69,25 +69,30 @@ struct EnvironmentStatusActions: View {
     var handoffBlocked = false
     private var busy: Bool { runtime.isActive || model.state == .running }
     var body: some View {
-        HStack(spacing: 12) {
-            if let reference = runtime.operationLogReference(matching: model.operationID),
-               OperationLogVisibility.status(model.state, active: runtime.isActive, reference: reference, terminal: runtime.termination != nil && runtime.operationID == model.operationID) {
-                OperationLogButton(runtime: runtime, reference: reference)
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 12) { actions(horizontal: true) }
+            VStack(alignment: .leading, spacing: 8) { actions(horizontal: false) }
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+    @ViewBuilder private func actions(horizontal: Bool) -> some View {
+        if let reference = runtime.operationLogReference(matching: model.operationID),
+           OperationLogVisibility.status(model.state, active: runtime.isActive, reference: reference, terminal: runtime.termination != nil && runtime.operationID == model.operationID) {
+            OperationLogButton(runtime: runtime, reference: reference).fixedSize()
+        }
+        if model.state == .running {
+            Button("Cancel") { model.cancel() }.disabled(runtime.stopping).fixedSize()
+            if horizontal { Spacer() }
+        } else {
+            Button(model.reference == nil ? "Choose Saved Environment…" : "Choose a Different Environment…", action: chooseReference).disabled(busy).fixedSize()
+            if model.state != .choose && horizontal { Spacer() }
+            if model.restoreReviewBundle != nil, let reviewInRestore {
+                Button("Review in Restore", action: reviewInRestore).buttonStyle(.bordered)
+                    .disabled(busy || handoffBlocked).fixedSize()
             }
-            if model.state == .running {
-                Button("Cancel") { model.cancel() }.disabled(runtime.stopping)
-                Spacer()
-            } else {
-                Button(model.reference == nil ? "Choose Saved Environment…" : "Choose a Different Environment…", action: chooseReference).disabled(busy)
-                if model.state != .choose { Spacer() }
-                if model.restoreReviewBundle != nil, let reviewInRestore {
-                    Button("Review in Restore", action: reviewInRestore).buttonStyle(.bordered)
-                        .disabled(busy || handoffBlocked)
-                }
-                if model.reference != nil {
-                    Button(model.state == .choose ? "Compare This Mac" : "Compare Again") { model.compare() }
-                        .buttonStyle(.borderedProminent).disabled(busy)
-                }
+            if model.reference != nil {
+                Button(model.state == .choose ? "Compare This Mac" : "Compare Again") { model.compare() }
+                    .buttonStyle(.borderedProminent).disabled(busy).fixedSize()
             }
         }
     }
@@ -114,36 +119,44 @@ struct EnvironmentComparisonView: View {
     let result: EnvironmentStatusPresentation
     var categoryExpansion: Binding<Set<String>>? = nil
     var settingsExpansion: Binding<Bool>? = nil
+    var technicalExpansion: Binding<Bool>? = nil
     @ReferenceViewState<Set<String>> private var expandedCategories = []
     private var expandedIDs: Set<String> { categoryExpansion?.wrappedValue ?? expandedCategories }
-    private var categoryIDs: Set<String> { Set(result.sections.flatMap(\.entries).map(\.id)) }
+    private var categoryIDs: Set<String> { Set(Self.visibleSections(result).flatMap(\.entries).map(\.id)) }
+    private var categoryCounts: [String: [ComparisonOutcome: Int]] {
+        Dictionary(uniqueKeysWithValues: result.categories.map { category in
+            (category.id, Dictionary(uniqueKeysWithValues: ComparisonOutcome.allCases.map {
+                ($0, result.categoryCount($0, category: category))
+            }))
+        })
+    }
+    // Extra evidence remains in the result and diagnostics; only its window projection is hidden.
+    static func visibleCategory(_ category: DisplayCategory) -> DisplayCategory {
+        DisplayCategory(id: category.id, title: category.title, symbol: category.symbol,
+            items: category.items.filter { $0.status != .extra && !$0.id.hasPrefix("extra-availability:") })
+    }
+    static func visibleSections(_ result: EnvironmentStatusPresentation) -> [EnvironmentStatusSection] {
+        result.sections.compactMap { section in
+            let entries = section.entries.compactMap { entry -> EnvironmentStatusSection.Entry? in
+                let category = visibleCategory(entry.category)
+                guard !category.items.isEmpty else { return nil }
+                return .init(category: category, children: entry.children.map(visibleCategory).filter { !$0.items.isEmpty })
+            }
+            return entries.isEmpty ? nil : .init(id: section.id, entries: entries)
+        }
+    }
     static func toggledCategories(_ expanded: Set<String>, ids: Set<String>) -> Set<String> {
         ids.isSubset(of: expanded) ? [] : ids
     }
     static func summaryOutcomes(_ result: EnvironmentStatusPresentation) -> [ComparisonOutcome] {
-        ComparisonOutcome.allCases.filter { $0 != .notApplicable || $0.count(result) > 0 }
+        ComparisonOutcome.allCases.filter { $0 == .needsAttention ? result.needsAttention : $0.count(result) > 0 }
     }
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
-            if Self.summaryOutcomes(result).count == 3 {
-                ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 10) {
-                        ForEach(Self.summaryOutcomes(result)) { outcome in
-                            ComparisonMetricCard(outcome: outcome, count: outcome.count(result)).frame(minWidth: 220)
-                        }
-                    }
-                    VStack(spacing: 10) {
-                        ForEach(Self.summaryOutcomes(result)) { outcome in
-                            ComparisonMetricCard(outcome: outcome, count: outcome.count(result))
-                        }
-                    }
+            EnvironmentComparisonMetricsLayout {
+                ForEach(Self.summaryOutcomes(result)) { outcome in
+                    ComparisonMetricCard(outcome: outcome, count: outcome == .needsAttention ? result.attentionCount : outcome.count(result))
                 }
-            } else {
-            WorkspaceMetricLayout {
-                ForEach(ComparisonOutcome.allCases) { outcome in
-                    ComparisonMetricCard(outcome: outcome, count: outcome.count(result))
-                }
-            }
             }
             if result.needsAttention || result.counts["extra", default: 0] > 0 || result.counts["unverified", default: 0] > 0 || result.counts["unresolved", default: 0] > 0 {
                 Text(result.message).font(.callout).foregroundStyle(.secondary)
@@ -158,7 +171,7 @@ struct EnvironmentComparisonView: View {
                     }.buttonStyle(.plain).foregroundStyle(.secondary)
                 }
             }
-            ForEach(result.sections) { section in
+            ForEach(Self.visibleSections(result)) { section in
                 WorkspaceSectionHeader(title: section.id)
                 VStack(spacing: 0) {
                     ForEach(section.entries) { entry in
@@ -168,13 +181,51 @@ struct EnvironmentComparisonView: View {
                                 var ids = expandedIDs
                                 if value { ids.insert(entry.id) } else { ids.remove(entry.id) }
                                 if let categoryExpansion { categoryExpansion.wrappedValue = ids } else { expandedCategories = ids }
-                            }), childExpansion: settingsExpansion)
+                            }), childExpansion: settingsExpansion, categoryCounts: categoryCounts, technicalExpansion: technicalExpansion)
                         if entry.id != section.entries.last?.id { Divider() }
                     }
                 }.modifier(WorkspaceCardSurface())
             }
             Text("Nothing will be removed or changed.").font(.callout).foregroundStyle(.secondary)
         }
+    }
+}
+
+// Every depth receives the same row width. Only the title content carries indentation.
+struct EnvironmentComparisonRowLayout: Layout {
+    var depth = 0
+    var itemIndent = false
+    var spansStatusColumn = false
+
+    static func widths(_ width: CGFloat) -> (text: CGFloat, status: CGFloat) {
+        let available = max(0, width - 12)
+        let status = min(available, min(240, max(160, available * 0.46)))
+        return (available - status, status)
+    }
+    static func leadingInset(_ width: CGFloat, depth: Int, item: Bool) -> CGFloat {
+        let step: CGFloat = widths(width).text < 180 ? 8 : 24
+        return CGFloat(depth) * step + (item && depth > 0 ? 34 : 0)
+    }
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let proposed = proposal.width ?? 520
+        let width = proposed.isFinite ? max(0, proposed) : 520
+        let rowWidth = spansStatusColumn ? max(0, width - 26) : width
+        let columns = Self.widths(rowWidth)
+        let inset = Self.leadingInset(rowWidth, depth: depth, item: itemIndent)
+        let text = subviews[0].sizeThatFits(.init(width: max(0, (spansStatusColumn ? width : columns.text) - inset), height: nil))
+        if spansStatusColumn { return CGSize(width: width, height: text.height) }
+        let status = subviews[1].sizeThatFits(.init(width: columns.status, height: nil))
+        return CGSize(width: width, height: max(text.height, status.height))
+    }
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let rowWidth = spansStatusColumn ? max(0, bounds.width - 26) : bounds.width
+        let columns = Self.widths(rowWidth)
+        let inset = Self.leadingInset(rowWidth, depth: depth, item: itemIndent)
+        subviews[0].place(at: CGPoint(x: bounds.minX + inset, y: bounds.minY), anchor: .topLeading,
+            proposal: .init(width: max(0, (spansStatusColumn ? bounds.width : columns.text) - inset), height: nil))
+        if spansStatusColumn { return }
+        subviews[1].place(at: CGPoint(x: bounds.maxX - columns.status, y: bounds.minY), anchor: .topLeading,
+            proposal: .init(width: columns.status, height: nil))
     }
 }
 
@@ -185,24 +236,33 @@ struct EnvironmentComparisonDomain: View {
     var counts: [ComparisonOutcome: Int]? = nil
     var expansion: Binding<Bool>? = nil
     var childExpansion: Binding<Bool>? = nil
+    var categoryCounts: [String: [ComparisonOutcome: Int]] = [:]
+    var technicalExpansion: Binding<Bool>? = nil
+    var depth = 0
     @ReferenceViewState<Bool> private var expanded = false
     var body: some View {
         DisclosureGroup(isExpanded: expansion ?? $expanded) {
             VStack(alignment: .leading, spacing: 0) {
                 if !children.isEmpty {
                     ForEach(children) { child in
-                        EnvironmentComparisonDomain(category: child, expansion: childExpansion)
+                        EnvironmentComparisonDomain(category: child, technicalFacts: technicalFacts,
+                            counts: categoryCounts[child.id], expansion: childExpansion, categoryCounts: categoryCounts,
+                            technicalExpansion: technicalExpansion, depth: depth + 1)
                     }
                 } else {
-                    ForEach(category.items) { item in EnvironmentComparisonItem(item: item, facts: technicalFacts[item.id] ?? []) }
+                    ForEach(EnvironmentComparisonView.visibleCategory(category).items) { item in
+                        EnvironmentComparisonItem(item: item, facts: technicalFacts[item.id] ?? [],
+                            depth: depth + 1, technicalExpansion: technicalExpansion)
+                    }
                 }
-            }.padding(.leading, 36).padding(.vertical, 4)
+            }.padding(.vertical, 4)
         } label: {
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: 12) { title; Spacer(); domainStatus }
-                VStack(alignment: .leading, spacing: 8) { title; domainStatus }
+            EnvironmentComparisonRowLayout(depth: depth) {
+                title
+                domainStatus
             }.padding(.vertical, 6)
-        }.disclosureGroupStyle(TaskDisclosureStyle()).padding(.horizontal, 16)
+        }.disclosureGroupStyle(TaskDisclosureStyle(contentTrailingInset: 0))
+            .padding(.horizontal, depth == 0 ? 16 : 0)
     }
     private var title: some View {
         HStack(spacing: 12) {
@@ -214,46 +274,66 @@ struct EnvironmentComparisonDomain: View {
         ComparisonOutcome.allCases.filter { counts[$0, default: 0] > 0 }
     }
     static func summaryStatus(_ category: DisplayCategory) -> DisplayStatus {
-        return category.comparisonStatus
+        return EnvironmentComparisonView.visibleCategory(category).comparisonStatus
     }
-    private var status: DisplayStatus { counts == nil ? category.comparisonStatus : Self.summaryStatus(category) }
+    private var status: DisplayStatus { Self.summaryStatus(category) }
     @ViewBuilder private var domainStatus: some View {
         if let counts {
-            HStack(spacing: 6) {
-                if ![.different, .missing].contains(status) { statusLabel }
-                ForEach(Self.visibleOutcomes(counts)) { outcome in
-                    Text(String(counts[outcome, default: 0])).font(.caption2.weight(.semibold)).monospacedDigit()
-                        .padding(.horizontal, 8).frame(minWidth: 46, minHeight: 23)
-                        .foregroundStyle(outcome.tint).background(outcome.tint.opacity(0.12), in: Capsule())
-                        .accessibilityLabel(outcome.title).accessibilityValue(String(counts[outcome, default: 0]))
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 6) {
+                    statusLabel.frame(width: 152, alignment: .leading)
+                    badges(counts)
+                }.fixedSize()
+                VStack(alignment: .leading, spacing: 4) {
+                    statusLabel
+                    badges(counts)
                 }
-            }.fixedSize()
+            }
         } else { statusLabel }
     }
+    private func badges(_ counts: [ComparisonOutcome: Int]) -> some View {
+        HStack(spacing: 4) {
+            ForEach(Self.visibleOutcomes(counts)) { outcome in
+                Text(String(counts[outcome, default: 0])).font(.caption2.weight(.semibold)).monospacedDigit()
+                    .padding(.horizontal, 6).frame(minWidth: 24, minHeight: 23)
+                    .foregroundStyle(outcome.tint).background(outcome.tint.opacity(0.12), in: Capsule())
+                    .help(outcome.title).accessibilityLabel(outcome.title).accessibilityValue(String(counts[outcome, default: 0]))
+            }
+        }
+    }
     private var statusLabel: some View {
-        Label {
-            Text(counts == nil ? category.comparisonStatusText : status.rawValue)
-        } icon: {
-            Image(systemName: status.symbol)
-        }.font(.callout).foregroundStyle(status == .matching ? RestoreStatusTone.success.color :
-            (status == .missing ? Color.red : ([.noRequirement, .information, .extra].contains(status) ? Color.secondary : Color.orange)))
+        EnvironmentComparisonStatusLabel(status: status,
+            title: EnvironmentComparisonView.visibleCategory(category).comparisonStatusText)
     }
 }
 
 struct EnvironmentComparisonItem: View {
     let item: DisplayItem
     var facts: [ComparisonTechnicalFact] = []
+    var depth = 0
+    var technicalExpansion: Binding<Bool>? = nil
+    @ReferenceViewState<Bool> private var technicalExpanded = false
     var body: some View {
-        TaskTextStatusLayout {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(item.title)
-                if let explanation = item.comparisonExplanation {
-                    Text(explanation).font(.caption).foregroundStyle(.secondary)
-                }
-                if let reason = item.comparisonTechnicalDetails {
-                    DisclosureGroup("Technical Details") {
-                        if facts.isEmpty { Text(reason).font(.caption.monospaced()).textSelection(.enabled) }
-                        else {
+        VStack(alignment: .leading, spacing: 4) {
+            EnvironmentComparisonRowLayout(depth: depth, itemIndent: true) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(item.title)
+                    if let explanation = item.comparisonExplanation {
+                        Text(explanation).font(.caption).foregroundStyle(.secondary)
+                    }
+                }.frame(maxWidth: .infinity, alignment: .leading).fixedSize(horizontal: false, vertical: true)
+                if item.isNormalComparisonMatch {
+                    Image(systemName: "checkmark").foregroundStyle(EnvironmentComparisonPalette.color(for: .matching))
+                        .accessibilityLabel("Already Matches")
+                } else { EnvironmentComparisonStatusLabel(status: item.status) }
+            }.padding(.trailing, 26)
+            if let reason = item.comparisonTechnicalDetails {
+                EnvironmentComparisonRowLayout(depth: depth, itemIndent: true, spansStatusColumn: true) {
+                    DisclosureGroup("Technical Details", isExpanded: technicalExpansion ?? $technicalExpanded) {
+                        if facts.isEmpty {
+                            Text(reason).font(.caption.monospaced()).textSelection(.enabled)
+                                .fixedSize(horizontal: false, vertical: true)
+                        } else {
                             VStack(alignment: .leading, spacing: 6) {
                                 let phases = Set(facts.flatMap(\.phases))
                                 if phases.count == 1, let phase = phases.first { Text("Phase: " + phase).foregroundStyle(.secondary) }
@@ -272,59 +352,63 @@ struct EnvironmentComparisonItem: View {
                                 }
                                 DisclosureGroup("Full Diagnostic Details") {
                                     Text(reason).font(.caption.monospaced()).textSelection(.enabled)
+                                        .fixedSize(horizontal: false, vertical: true)
                                 }.disclosureGroupStyle(TaskDisclosureStyle(minimumHeight: 22))
                             }.font(.caption).textSelection(.enabled)
                         }
                     }
-                        .disclosureGroupStyle(TaskDisclosureStyle(minimumHeight: 22)).font(.caption)
+                        .disclosureGroupStyle(TaskDisclosureStyle(minimumHeight: 22, contentTrailingInset: 0)).font(.caption)
                 }
-            }.frame(maxWidth: .infinity, alignment: .leading).fixedSize(horizontal: false, vertical: true)
-            if item.isNormalComparisonMatch {
-                Image(systemName: "checkmark").foregroundStyle(RestoreStatusTone.success.color)
-                    .accessibilityLabel("Already Matches")
-            } else { EnvironmentComparisonStatusLabel(status: item.status) }
+            }
         }.padding(.vertical, 7).frame(minHeight: 28)
     }
     private func factDetails(_ fact: ComparisonTechnicalFact, showPhases: Bool) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text((fact.codes + [fact.recordID]).joined(separator: " · ")).font(.caption.monospaced())
             if showPhases && !fact.phases.isEmpty { Text("Phase: " + fact.phases.joined(separator: " · ")).foregroundStyle(.secondary) }
-        }.frame(maxWidth: .infinity, alignment: .leading)
+        }.frame(maxWidth: .infinity, alignment: .leading).fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+// Status owns one palette for summary, category, leaf and badge presentation.
+enum EnvironmentComparisonPalette {
+    static func color(for status: DisplayStatus) -> Color {
+        switch status {
+        case .matching, .verified: RestoreStatusTone.success.color
+        case .missing: .red
+        case .different: Color(nsColor: .systemBlue)
+        case .unverified, .unresolved, .attention, .unsupported: .orange
+        default: .secondary
+        }
     }
 }
 
 private struct EnvironmentComparisonStatusLabel: View {
     let status: DisplayStatus
-    private var color: Color {
-        switch status {
-        case .matching, .verified: RestoreStatusTone.success.color
-        case .missing: .red
-        case .different, .unverified, .unresolved, .attention, .unsupported: .orange
-        default: .secondary
-        }
-    }
+    var title: String? = nil
     var body: some View {
-        Label(status.rawValue, systemImage: status.symbol).font(.callout).foregroundStyle(color)
+        Label(title ?? status.rawValue, systemImage: status.symbol).font(.callout)
+            .foregroundStyle(EnvironmentComparisonPalette.color(for: status))
     }
 }
 
 enum ComparisonOutcome: String, CaseIterable, Identifiable {
-    case match, different, missing, notApplicable
+    case match, different, missing, notApplicable, needsAttention
     var id: String { rawValue }
     var title: String {
-        switch self { case .match: "Match"; case .different: "Different"; case .missing: "Missing"; case .notApplicable: "Not Applicable" }
+        switch self { case .match: "Match"; case .different: "Different"; case .missing: "Missing"; case .notApplicable: "Not Applicable"; case .needsAttention: "Needs Attention" }
     }
     var status: DisplayStatus {
-        switch self { case .match: .matching; case .different: .different; case .missing: .missing; case .notApplicable: .noRequirement }
+        switch self { case .match: .matching; case .different: .different; case .missing: .missing; case .notApplicable: .noRequirement; case .needsAttention: .attention }
     }
     var tint: Color {
-        switch self { case .match: RestoreStatusTone.success.color; case .different: .orange; case .missing: .red; case .notApplicable: .secondary }
+        EnvironmentComparisonPalette.color(for: status)
     }
     var symbol: String {
-        switch self { case .match: "checkmark.circle.fill"; case .different: "exclamationmark.triangle.fill"; case .missing: "xmark.circle.fill"; case .notApplicable: "minus.circle.fill" }
+        switch self { case .match: "checkmark.circle.fill"; case .different: "exclamationmark.triangle.fill"; case .missing: "xmark.circle.fill"; case .notApplicable: "minus.circle.fill"; case .needsAttention: "questionmark.circle.fill" }
     }
     var explanation: String {
-        switch self { case .match: "Items match"; case .different: "Items differ"; case .missing: "Not found on this Mac"; case .notApplicable: "No requirement in selected scope" }
+        switch self { case .match: "Checks match"; case .different: "Checks differ"; case .missing: "Not found on this Mac"; case .notApplicable: "No requirement in selected scope"; case .needsAttention: "Unsupported or incomplete checks" }
     }
     func count(_ result: EnvironmentStatusPresentation) -> Int {
         switch self {
@@ -332,15 +416,43 @@ enum ComparisonOutcome: String, CaseIterable, Identifiable {
         case .different: result.counts["differing"] ?? 0
         case .missing: result.counts["missing"] ?? 0
         case .notApplicable: result.categories.flatMap(\.items).filter { $0.status == .noRequirement }.count
+        case .needsAttention: result.attentionCount ?? 0
         }
     }
 }
 
 struct ComparisonMetricCard: View {
     let outcome: ComparisonOutcome
-    let count: Int
+    let count: Int?
     var body: some View {
-        WorkspaceMetricCard(title: outcome.title, value: String(count), symbol: outcome.symbol,
+        WorkspaceMetricCard(title: outcome.title, value: count.map(String.init), symbol: outcome.symbol,
             tint: outcome.tint, explanation: outcome.explanation)
+    }
+}
+
+// Status owns this layout: 1–5 nonzero metrics, with no empty placeholder slots.
+struct EnvironmentComparisonMetricsLayout: Layout {
+    static func columns(_ width: CGFloat, count: Int) -> Int {
+        guard width.isFinite else { return max(1, count) }
+        return Int(max(1, min(CGFloat(count), (width + 10) / 190)))
+    }
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        guard !subviews.isEmpty else { return .zero }
+        let proposed = proposal.width ?? 785
+        let width = proposed.isFinite ? max(0, proposed) : CGFloat(subviews.count) * 190 - 10
+        let columns = Self.columns(width, count: subviews.count)
+        let itemWidth = max(0, (width - CGFloat(columns - 1) * 10) / CGFloat(columns))
+        let height = subviews.map { $0.sizeThatFits(.init(width: itemWidth, height: nil)).height }.max() ?? 0
+        let rows = (subviews.count + columns - 1) / columns
+        return CGSize(width: width, height: CGFloat(rows) * height + CGFloat(rows - 1) * 10)
+    }
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let columns = Self.columns(bounds.width, count: subviews.count)
+        let width = (bounds.width - CGFloat(columns - 1) * 10) / CGFloat(columns)
+        let height = subviews.map { $0.sizeThatFits(.init(width: width, height: nil)).height }.max() ?? 0
+        for (index, view) in subviews.enumerated() {
+            view.place(at: CGPoint(x: bounds.minX + CGFloat(index % columns) * (width + 10), y: bounds.minY + CGFloat(index / columns) * (height + 10)),
+                anchor: .topLeading, proposal: .init(width: width, height: height))
+        }
     }
 }
