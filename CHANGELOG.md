@@ -11,6 +11,13 @@ The format is based on the principles of **Keep a Changelog**.
 
 ### Added
 
+* Bounded application Git clone with owned transport termination, durable unknown
+  re-entry protection and retained partial-destination fences. Confirmed local
+  clone failure can continue independent repositories without hiding the failure.
+  Added separate deadlines for application observations and aggregate phases,
+  numeric Git phase progress detection and bounded watchdog/output cleanup.
+  Native lifecycle qualification and unsupported delegation remain open.
+
 * Consolidated Restore Selection, Preview and Result: consistent App Store placement,
   one summary of verified automatic work and outstanding issues, concise actions,
   and category details using existing execution evidence. Verification diagnostics

@@ -539,8 +539,8 @@ not start a new full-scope Verification. Homebrew admission still orders Stop an
 native launch under the same `flock`; Graceful Stop never signals an active installer.
 Errors retain precedence and partial records/publication/mutation facts are preserved.
 
-An active installer may take unbounded time after accepted Stop: the ordinary
-no-progress termination remains suppressed while stopping. Force Stop is separate
+An active installer may continue until the aggregate execution deadline after
+accepted Stop: the ordinary no-progress termination remains suppressed while stopping. Force Stop is separate
 and may leave unknown consequences. This is not rollback, Resume, Stage 3C durable
 ordinary-Cask reconciliation, or qualification of arbitrary privileged descendants.
 Automated fixtures establish checkpoint behavior, not real-Mac installer safety.
@@ -563,6 +563,83 @@ CLI retains its aggregate `run_configuration` Check gate. Disposable fixtures
 (`bash scripts/test-macos-bootstrap.sh --d4-only`) cover these boundaries; they do
 not qualify real macOS 27 visual effects or remaining native Restore gates.
 
+### External process waiting and Git clone (R5)
+
+Application process bounds are implemented and covered by disposable fixtures;
+they are not native lifecycle qualification. Existing ProcessTree birth identities,
+private sessions, private directory checks and atomic/fsynced journal publication
+remain authoritative. No second execution engine or Protocol V2 is introduced.
+
+| Operation / caller | Mode and budget | Progress evidence | Quiescence / re-entry |
+|---|---|---|---|
+| `repository_clone` → `clone_execution.py` | Restore Execute only; 7,200 s per clone | Local Git `Receiving objects`, `Resolving deltas`, `Updating files` increasing numeric counters/received bytes: 600 s without advancement while a reported phase is incomplete | Bounded owned TERM/KILL/reap and pipe EOF; known partial destination retained and fenced; unknown blocks every fresh Execute |
+| VS Code extension install / Execute inventory | Existing Restore lifecycle; 3,600 / 120 s | Deadline only | R5A durable uncertainty and continuation rules retained; open output writer cannot be success |
+| VS Code Discovery, Preview/readiness, Comparison, secure verify-only; assisted App Store `mas list` | Read-only inventory: 120 s | Deadline only | Complete bounded output required; no persistent observer journal/lock |
+| Git repository/configuration reads, developer-tool readiness, macOS scalar reads | Application read-only calls: 30 s | Deadline only | Failed read remains observation failure, never absence/match |
+| Homebrew shell inventories/metadata; Python provider reads | Application reads: 120 s inventories, 30 s provider/local reads | Deadline only; existing Homebrew installation progress policy unchanged | Read-only route, no installer lifecycle adoption |
+| Preview, staged Capture/Discovery, Comparison, final Verification | 900 s aggregate phase budget; readiness 180 s | Deadline only | Failed/incomplete result; final Verification retains operation context until collection |
+| Owned application Bootstrap | 86,400 s last-resort aggregate budget | Deadline only, including otherwise unqualified local subprocesses | Interrupted mutation is unknown; no independent continuation or automatic retry |
+| Watchdog `ps` / `lsof`, report drain, final child reap | 2 s per kernel observer; 32 chunks per drain; 1 s final reap | No inferred progress | Failed observation cannot certify quiescence |
+
+Budgets are production policy constants; tests inject short budgets without changing
+production defaults. Completed Git phases revert to deadline-only waiting until a
+new numeric phase starts. Increasing received-byte totals also count, even inside
+one large object. Remote messages, stdout volume, a live PID and generic
+CPU activity never reset the clone no-progress timer. Authentication, DNS, initial
+negotiation and unreported local work remain deadline-only. The overall no-progress
+qualification checkpoint therefore remains open.
+
+Clone admission requires application Restore flags and a private execution-state
+directory. Missing/invalid state does not select native Git. Before launch, the
+GitClone lifecycle lock and `active.json` under
+`~/Library/Application Support/Macseed/GitClone/` and the existing operation-local
+`external-tool-active.json` are durably published. Publication failure denies launch;
+active state survives supervisor death. Only its owner publishes confirmed completion.
+
+The clone passes the selected branch directly to Git and retains the original remote.
+It disables prompts, credential helpers, hooks, templates, automatic maintenance,
+recursive submodules and local hardlink cloning for that command. Configured filters
+(including LFS), URL rewriting/includes, global remote/upload-pack customization and
+Git routing overrides are declined before mutation. Supported transports are local
+paths/file, HTTPS and SSH. SSH uses `-F /dev/null`, strict known-host verification,
+no host-key updates, no multiplexing, proxies, forwarding or local commands. Thus
+SSH aliases, custom identity/config/proxy routing are outside this bounded clone
+contract; default keys and an existing agent remain available. No global Git/SSH
+configuration, known_hosts, keys, shared master or agent is changed or terminated.
+See [Git clone](https://git-scm.com/docs/git-clone) and
+[OpenSSH configuration](https://man.openbsd.org/ssh_config) for command semantics.
+
+A confirmed terminated controlled clone may leave a known partial destination.
+It is never deleted or repaired. A durable path-digest fence prevents treating even
+an apparently valid `.git` as ready on Preview, Verification or another Execute.
+The failure record stays a failure. Later repositories may run only at disjoint
+resolved destinations without linked/shared Git metadata; earlier successful Changed
+state and ordinary Global Verification are retained. This does not extend D3 checkout-refusal evidence to partial clones.
+Stop still acts at item checkpoints; Force Cancel terminates owned work.
+Unconfirmed process observation/termination or state publication leaves unknown
+consequences and blocks later modules and fresh Execute, even with Git unselected.
+There is no journal-clear, rollback, cleanup or automatic retry command.
+
+Read-only calls use bounded nonblocking output collection and confirm owned-tree
+termination plus pipe EOF. Timeouts/errors do not publish an empty inventory. These
+calls create no durable mutation state and never clear safety journals. Within an
+existing Execute, unconfirmed termination marks the operation unsafe; its parent
+retains a fail-closed `ExternalProcesses/active.json` fence using the same journal
+primitives. A last-resort Bootstrap deadline also retains this fence. Readiness only
+reads it. Read-only failure alone does not imply installer uncertainty. Python shell
+entrypoints use `-B`, including Capture helpers, to prevent startup/import bytecode
+writes into the observed HOME.
+
+Limitations: ProcessTree covers observed descendants and private-session members,
+not a child that escapes before observation, arbitrary external services or concurrent
+unowned changes. Unsupported clone delegation is declined rather than qualified.
+The 24-hour aggregate bound is not per-command lifecycle qualification for existing
+checkout, preferences or other local mutations. Blocking filesystem/kernel calls,
+including an uninterruptible fsync, are outside a Python subprocess deadline.
+Real network/large-repository budgets, SSH transport, native Stop timing, detached
+workers and reconciliation remain qualification work. Focused CI entry:
+`scripts/test-external-process-reliability.py`; all mutations use disposable fixtures.
+
 ### Bounded VS Code CLI execution
 
 Inside application Restore Execute, the extension module and final Verification
@@ -575,12 +652,11 @@ these budgets. Downloads can run for the entire installation budget. Exceeding i
 is `vscode_install_deadline` (inventory: `vscode_inventory_deadline`), never a
 claim that a slow operation made no progress. Real budget qualification remains open.
 
-The shared `vscode_cli()` retains its native shell invocation. Ordinary CLI,
-Preview, Prepare/readiness, Comparison and secure verify-only observations do not
-enter the Restore supervisor or create permanent VS Code lifecycle state. These
-paths retain their baseline waiting behavior; R5A does not qualify a general
-read-only CLI watchdog. Inventory supervision is scoped explicitly to the Restore
-extension module and its final Verification, not every shared inventory reader.
+The shared `vscode_cli()` retains its native shell invocation. Ordinary CLI keeps
+its native contract. Application Preview, Prepare/readiness, Capture/Discovery,
+Comparison and secure verify-only inventory use the bounded read-only observer
+above, without permanent VS Code lifecycle state. Installation lifecycle
+supervision remains explicit to Restore and its final extension Verification.
 
 The supervised route requires application mode, active Bundle Restore,
 `MODE=--bootstrap`, and no Preview/secure verify-only scope. Its dedicated Bash
@@ -643,9 +719,9 @@ The [macOS launcher](https://github.com/microsoft/vscode/blob/main/resources/dar
 can redirect through remote IPC. An inherited `VSCODE_IPC_HOOK_CLI` or resolved
 `remote-cli` path is declined before launch; no remote target is silently changed.
 ProcessTree still cannot prove absence of children detached before observation,
-external services or concurrent unowned VS Code activity. Discovery/Comparison
-observers outside this Restore path, real termination/re-entry and Extension Pack
-dependency closure remain separate qualification work. Disposable coverage:
+external services or concurrent unowned VS Code activity. Read-only observers are
+bounded separately above; real termination/re-entry and Extension Pack dependency
+closure remain separate qualification work. Disposable coverage:
 `python3 scripts/test-vscode-extensions.py --r5a-only`. The focused
 `--routing-only` selector also checks native/typed diagnostic separation,
 operation-state admission and lifetime, and full HOME snapshots for

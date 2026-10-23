@@ -136,12 +136,16 @@ contracts. Real lifecycle, broader Git and macOS 27 qualification remain open.
   termination and durable re-entry/reconciliation; interrupted installs remain
   fail-closed even after observed tree termination. Fixtures do not qualify detached workers or
   external services.
-- [ ] Add a separately qualified Git clone/SSH watchdog/quiescence contract.
-- [ ] Audit and bound other synchronous external processes and observers,
-  including VS Code Discovery/Comparison; do not reuse Homebrew progress evidence
-  without domain qualification.
-- [ ] Define and qualify reliable no-progress detection for remaining external
-  commands; absolute deadlines alone do not establish a stall.
+- [ ] Real-Mac qualify implemented application clone budgets, SSH transport,
+  partial-destination fencing and owned termination. Filters/LFS, custom SSH
+  config/proxies and detached/delegated work remain outside the bounded contract.
+- [ ] Qualify implemented application observer/aggregate deadlines and unknown
+  re-entry fences against real tools. Existing checkout and local mutations have
+  an aggregate execution bound, not new per-command lifecycle qualification.
+  See the [R5 process map](docs/core/APPLICATION-INTERFACE.md#external-process-waiting-and-git-clone-r5).
+- [ ] Qualify numeric Git clone phase progress on real repositories and define
+  reliable evidence for remaining external commands/unreported phases; absolute
+  deadlines alone do not establish a stall.
 - [ ] Independently qualify a real approximately 180-second no-progress watchdog
   stall, owned descendant termination and continued independent work.
 - [ ] **16K:** qualify unexercised stale-input/plan and transport/terminal failures,
@@ -180,6 +184,9 @@ contracts. Real lifecycle, broader Git and macOS 27 qualification remain open.
 
 ## Deferred tooling and maintenance
 
+- [ ] Reconcile scoped ShellCheck SC2034 diagnostics in `bootstrap.sh` and macOS
+  Discovery with their cross-file consumers before adding annotations. The R5
+  scoped run reproduces 10 baseline warnings; it introduces no new diagnostics.
 - [ ] Consider Unified UI Scenario Catalog / Lite after functional priorities:
   a small Debug-only set of applicable Ready, Working, Already Matches,
   Needs Attention, Error, Cancelled and Interrupted states using production/shared

@@ -553,10 +553,37 @@ Before each later repository, recheck the failed evidence and prove a disjoint
 existing worktree/common directory, including filesystem identity. An absent
 destination or unproven relationship stops traversal. Preserve the original
 checkout `failure`, earlier Changed and overall `2`; normal Global Verification
-still follows safe partial failures. Clone failures, failed post-checkout Verify,
-unknown errors/consequences and accepted Stop still block further work. Ordinary
-CLI retains immediate failure semantics and the Folders → Repositories gate is
+still follows safe partial failures. Failed post-checkout Verify, unknown
+errors/consequences and accepted Stop still block further work. Application clone
+uses the separate bounded contract below. Ordinary CLI retains immediate failure semantics and the Folders → Repositories gate is
 unchanged. Fixtures: `bash scripts/test-workspace-bootstrap.sh --d3-only`.
+
+### Application clone reliability
+
+Application Restore clones the selected `CURRENT_BRANCH` with a two-hour absolute
+deadline. Increasing local Git receive/resolve/update counters and received bytes
+support a ten-minute no-progress limit within an incomplete reported phase; silent phases remain
+deadline-only. Ordinary CLI clone/checkout behavior is unchanged.
+
+Clone requires durable private safety state before launch. It disables interactive
+prompts, credential helpers, hooks/templates, recursive submodules and shared SSH
+connections for that invocation. Filters/LFS, config includes/URL rewrites and
+custom Git routing are unsupported. SSH ignores custom config for this child;
+default identities/agent and strict known-host verification remain available, while
+SSH aliases, custom key routing and proxies require separate qualification.
+
+A failed, confirmed stopped clone preserves its destination and records a private
+path-digest fence. Even a `.git` left there is not treated as a ready repository.
+Preview/Execute and Verification report the conflict or failed observation; Macseed
+never deletes, overwrites or repairs that directory automatically. Independent
+disjoint clones can continue with an overall Failed/Partial result. Unknown process
+consequences block all subsequent mutations and fresh Execute, including selections
+without Git. Existing journals are never cleared by inspection.
+
+Read-only application Git, VS Code, Homebrew, assisted App Store inventory and scalar
+preference observations have separate deadlines and cannot turn timeout into absent/matching state. Budgets,
+ownership limits and remaining real-Mac qualification belong to the
+[Core process contract](../core/APPLICATION-INTERFACE.md#external-process-waiting-and-git-clone-r5).
 
 ### Linked Git worktree capability limits
 
