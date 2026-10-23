@@ -1,4 +1,5 @@
 #!/bin/bash
+source modules/core/application-interface/observation.sh
 
 # ==========================================
 # Homebrew Discovery
@@ -35,7 +36,7 @@ export_brew_packages() {
         error "Failed to observe Homebrew provenance"
         return 2
     }
-    if ! inventory="$(brew list --formula --installed-on-request)"; then
+    if ! inventory="$(application_observe inventory brew list --formula --installed-on-request)"; then
         error "Failed to inventory Homebrew Formulae"
         return 2
     fi
@@ -73,13 +74,13 @@ export_brew_casks() {
     action "Exporting Homebrew Casks..."
 
     local inventory metadata capabilities prefix
-    if ! inventory="$(brew list --cask)"; then
+    if ! inventory="$(application_observe inventory brew list --cask)"; then
         error "Failed to inventory Homebrew Casks"
         return 2
     fi
 
-    metadata="$(HOMEBREW_NO_AUTO_UPDATE=1 brew info --json=v2 --installed --cask)" || return 2
-    prefix="$(HOMEBREW_NO_AUTO_UPDATE=1 brew --prefix)" || return 2
+    metadata="$(HOMEBREW_NO_AUTO_UPDATE=1 application_observe inventory brew info --json=v2 --installed --cask)" || return 2
+    prefix="$(HOMEBREW_NO_AUTO_UPDATE=1 application_observe inventory brew --prefix)" || return 2
     capabilities="$(python3 -B modules/apps/adapters/homebrew_cask.py "$prefix" --capture <<< "$metadata")" || return 2
     jq -e --arg inventory "$inventory" '(.casks | keys | sort) ==
         ($inventory | split("\n") | map(select(length > 0)) | sort)' <<< "$capabilities" >/dev/null || return 2

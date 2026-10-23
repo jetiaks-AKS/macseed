@@ -825,5 +825,5 @@ if interaction is not None:
 sys.exit(status)
 PY
 )" || return 2
-    exec python3 -c "$migration_code" "$SCRIPT_ROOT/modules/migration" "$@"
+    exec python3 -B -c "$migration_code" "$SCRIPT_ROOT/modules/migration" "$@"
 }

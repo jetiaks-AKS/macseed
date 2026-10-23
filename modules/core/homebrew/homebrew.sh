@@ -1,4 +1,5 @@
 #!/bin/bash
+source modules/core/application-interface/observation.sh
 
 # ==========================================
 # Check Homebrew
@@ -35,7 +36,7 @@ homebrew_activate_installed() {
     local prefix observed
     prefix="$(homebrew_expected_prefix)" || return 2
     [[ -f "$prefix/bin/brew" && -x "$prefix/bin/brew" ]] || return 2
-    observed="$("$prefix/bin/brew" --prefix)" || return 2
+    observed="$(application_observe local "$prefix/bin/brew" --prefix)" || return 2
     [[ "$observed" == "$prefix" ]] || return 2
     export PATH="$prefix/bin:$prefix/sbin:$PATH"
     hash -r

@@ -17,6 +17,8 @@ import re
 import stat
 import subprocess
 import sys
+
+sys.dont_write_bytecode = True
 import tempfile
 import time
 import urllib.request
@@ -25,6 +27,8 @@ from urllib.parse import urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'core'))
 from external_tool import result
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'core/application-interface'))
+from observation import read as bounded_read
 from performance_trace import timed, measure, add, ENABLED
 import homebrew_pkg_preparation as pkg_preparation
 
@@ -244,9 +248,13 @@ class PublicObserver:
                  ('/usr/sbin/pkgutil', '--expand-full'): 'pkgutil.expand',
                  ('/usr/sbin/pkgutil', '--file-info-plist'): 'pkgutil.ownership'}.get(tuple(command), 'other')
         with measure('cask.external.' + label):
-            observed = subprocess.run(arguments, env=dict(os.environ, HOMEBREW_NO_AUTO_UPDATE='1',
-                                  HOMEBREW_NO_SUDO='1'), stdin=subprocess.DEVNULL,
-                                  capture_output=True, timeout=30, check=False)
+            environment = dict(os.environ, HOMEBREW_NO_AUTO_UPDATE='1', HOMEBREW_NO_SUDO='1')
+            if (os.environ.get('MACSEED_APPLICATION_EXECUTION') == 'true' or
+                os.environ.get('MACSEED_APPLICATION_OBSERVATION') == 'true'):
+                observed = bounded_read(arguments, 30, env=environment)
+            else:
+                observed = subprocess.run(arguments, env=environment, stdin=subprocess.DEVNULL,
+                                          capture_output=True, timeout=30, check=False)
         require(observed.returncode == 0, OBSERVATION)
         require(len(observed.stdout) <= 4 * 1024 * 1024, OBSERVATION)
         return observed.stdout

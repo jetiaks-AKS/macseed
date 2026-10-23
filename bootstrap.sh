@@ -432,6 +432,12 @@ bootstrap_application_readiness() { performance_measure readiness.live bootstrap
 
 bootstrap_application_readiness_timed() (
     local focus="${1:-all}" needs_network=false needs_clt=false
+    python3 -B modules/core/application-interface/external_state.py
+    local external_state=$?
+    if [[ "$external_state" -ne 1 ]]; then
+        echo privileged_lifecycle_unknown
+        return 2
+    fi
     python3 -B modules/apps/adapters/homebrew_lifecycle.py --pending
     local lifecycle_state=$?
     if [[ "$lifecycle_state" -ne 1 ]]; then
@@ -440,6 +446,12 @@ bootstrap_application_readiness_timed() (
     fi
     # VS Code uncertainty blocks fresh Execute even when extensions are unselected.
     python3 -B modules/vscode/cli_execution.py --pending
+    lifecycle_state=$?
+    if [[ "$lifecycle_state" -ne 1 ]]; then
+        echo privileged_lifecycle_unknown
+        return 2
+    fi
+    python3 -B modules/bootstrap/workspace/clone_execution.py --pending
     lifecycle_state=$?
     if [[ "$lifecycle_state" -ne 1 ]]; then
         echo privileged_lifecycle_unknown
@@ -1100,6 +1112,9 @@ if [[ "$MODE" == --bootstrap ]]; then
         verification_operation orchestration bootstrap execute success
     fi
     application_stop_checkpoint
+    if [[ "${MACSEED_APPLICATION_EXECUTION:-false}" == true && -d "${MACSEED_ITEM_STATE_DIR:-}" ]]; then
+        : > "$MACSEED_ITEM_STATE_DIR/verification-active"
+    fi
     verification_run
     application_stop_checkpoint
 fi

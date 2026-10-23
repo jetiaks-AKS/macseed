@@ -33,7 +33,7 @@ secure_verification_channel() {
     # nothing left for a shell signal trap to clean up.
     rm -f "$directory/channel"
     rmdir "$directory" || return 2
-    python3 modules/migration/evidence.py ./scripts/ssh-identity-migrate.sh \
+    python3 -B modules/migration/evidence.py ./scripts/ssh-identity-migrate.sh \
         "$BUNDLE_RESTORE_SECURE_FILE" "$GV_SECURE_ATTEMPT"
     result=$?
     GV_SECURE_EXIT=$result

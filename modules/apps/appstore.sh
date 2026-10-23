@@ -1,11 +1,12 @@
 #!/bin/bash
+source modules/core/application-interface/observation.sh
 
 OBSERVED_MAS_STATUS=
 observe_appstore_inventory() {
     local inventory
     command -v mas >/dev/null 2>&1 || return 2
     if [[ "${MACSEED_APPLICATION_EXECUTION:-false}" == true ]]; then
-        inventory="$(MAS_NO_AUTO_INDEX=1 mas list 2>/dev/null)" || return 2
+        inventory="$(MAS_NO_AUTO_INDEX=1 application_observe inventory mas list 2>/dev/null)" || return 2
     else
         inventory="$(MAS_NO_AUTO_INDEX=1 mas list)" || return 2
     fi

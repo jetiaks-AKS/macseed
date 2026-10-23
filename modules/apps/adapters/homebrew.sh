@@ -1,5 +1,6 @@
 #!/bin/bash
 # shellcheck disable=SC2034 # Provider fields are consumed by sourcing domain scripts.
+source modules/core/application-interface/observation.sh
 # Concrete Homebrew provider. Consumers use normalized state; all metadata,
 # lifecycle qualification and native command construction stay here.
 [[ "${MACSEED_HOMEBREW_ADAPTER_LOADED:-false}" != true ]] || return 0
@@ -11,7 +12,7 @@ HOMEBREW_RESULT_JSON=
 
 observe_brew_formula_inventory() {
     local inventory
-    inventory="$(brew list --formula --full-name)" || return 2
+    inventory="$(application_observe inventory brew list --formula --full-name)" || return 2
     LC_ALL=C awk '
         /^$/ { next }
         { n=split($0,p,"/"); if (n != 1 && n != 3) exit 2
@@ -22,13 +23,13 @@ observe_brew_formula_inventory() {
 
 observe_brew_cask_inventory() {
     local inventory
-    inventory="$(HOMEBREW_NO_AUTO_UPDATE=1 performance_measure cask.inventory.external brew list --cask)" || return 2
+    inventory="$(HOMEBREW_NO_AUTO_UPDATE=1 performance_measure cask.inventory.external application_observe inventory brew list --cask)" || return 2
     LC_ALL=C awk '/^$/ { next } { if ($0 !~ /^[A-Za-z0-9][A-Za-z0-9+_.@-]*$/) exit 2; print }' <<< "$inventory"
 }
 
 homebrew_adapter_capture_provenance() {
     local version
-    version="$(HOMEBREW_NO_AUTO_UPDATE=1 brew --version)" || return 2
+    version="$(HOMEBREW_NO_AUTO_UPDATE=1 application_observe local brew --version)" || return 2
     version="${version%%$'\n'*}"
     [[ "$version" == 'Homebrew '* && ${#version} -le 265 ]] || return 2
     python3 -B -c 'import json,sys; print(json.dumps({"homebrew":{"version":sys.argv[1]}}))' "${version#Homebrew }"
@@ -118,7 +119,7 @@ is_brew_package_installed() {
         [[ "$OBSERVED_FORMULA_STATUS" == 0 ]] || return 2
         inventory="$OBSERVED_FORMULA_INVENTORY"
     else
-        inventory="$(brew list --formula --full-name)" || return 2
+        inventory="$(application_observe inventory brew list --formula --full-name)" || return 2
     fi
 
     # Discovery emits short names. Qualified inputs must match the tap too;
@@ -145,7 +146,7 @@ homebrew_cask_result_timed() {
     homebrew_adapter_result observation_error observation_failure homebrew_unavailable "$operation" || return 2
     CASK_REINSTALL_REQUIRED=false
     CASK_OBSERVATION_CONDITION=homebrew_unavailable
-    metadata="$(HOMEBREW_NO_AUTO_UPDATE=1 performance_measure cask.metadata.external brew info --json=v2 --cask "$item")" || return 2
+    metadata="$(HOMEBREW_NO_AUTO_UPDATE=1 performance_measure cask.metadata.external application_observe inventory brew info --json=v2 --cask "$item")" || return 2
     HOMEBREW_ADAPTER_METADATA="$metadata"
     jq -e --arg token "$item" '(.casks | length == 1) and .casks[0].token == $token' <<< "$metadata" >/dev/null || {
         homebrew_adapter_failure homebrew_metadata_incompatible "$operation"; return 2;
@@ -154,14 +155,14 @@ homebrew_cask_result_timed() {
     # must not introduce new prefix/inventory probes that the observer never needed.
     if [[ "${OBSERVED_CASK_STATUS:-}" == pending ]]; then
         OBSERVED_CASK_STATUS=2
-        OBSERVED_CASK_PREFIX="$(HOMEBREW_NO_AUTO_UPDATE=1 performance_measure cask.prefix.external brew --prefix)" &&
+        OBSERVED_CASK_PREFIX="$(HOMEBREW_NO_AUTO_UPDATE=1 performance_measure cask.prefix.external application_observe inventory brew --prefix)" &&
             OBSERVED_CASK_INVENTORY="$(observe_brew_cask_inventory)" && OBSERVED_CASK_STATUS=0
     fi
     if [[ -n "${OBSERVED_CASK_STATUS:-}" ]]; then
         [[ "$OBSERVED_CASK_STATUS" == 0 ]] || return 2
         prefix="$OBSERVED_CASK_PREFIX"
     else
-        prefix="$(HOMEBREW_NO_AUTO_UPDATE=1 performance_measure cask.prefix.external brew --prefix)" || return 2
+        prefix="$(HOMEBREW_NO_AUTO_UPDATE=1 performance_measure cask.prefix.external application_observe inventory brew --prefix)" || return 2
     fi
     # Public info reports registration; cross-check public inventory rather than
     # silently treating malformed/missing installed fields as confirmed absence.
@@ -169,7 +170,7 @@ homebrew_cask_result_timed() {
     if [[ -n "${OBSERVED_CASK_STATUS:-}" ]]; then
         inventory="$OBSERVED_CASK_INVENTORY"
     else
-        inventory="$(HOMEBREW_NO_AUTO_UPDATE=1 performance_measure cask.inventory.external brew list --cask)" || return 2
+        inventory="$(HOMEBREW_NO_AUTO_UPDATE=1 performance_measure cask.inventory.external application_observe inventory brew list --cask)" || return 2
     fi
     if grep -Fxq "$item" <<< "$inventory"; then registered=true; fi
     if [[ "$registered" == true ]] && ! jq -e '.casks[0].installed | type == "string" and length > 0' <<< "$metadata" >/dev/null; then

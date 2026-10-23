@@ -213,7 +213,7 @@ def selected_payload(files, blueprint):
             write_file(source, files[name])
             result = subprocess.run(["git", "config", "--file", str(source),
                                      "--no-includes", "--null", "--list"],
-                                    capture_output=True, check=False)
+                                    capture_output=True, check=False, timeout=30)
             if result.returncode:
                 raise Invalid("invalid selected Git configuration")
             selected = {key.lower() for key in sections["git-configuration"]}
@@ -227,7 +227,7 @@ def selected_payload(files, blueprint):
                     continue
                 written = subprocess.run(["git", "config", "--file", str(target),
                                           key.decode("ascii"), value.decode("utf-8")],
-                                         capture_output=True, check=False)
+                                         capture_output=True, check=False, timeout=30)
                 if written.returncode:
                     raise Invalid("failed to select Git configuration")
             files[name] = target.read_bytes() if target.exists() else b""

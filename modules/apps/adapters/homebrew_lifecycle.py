@@ -12,6 +12,8 @@ import signal
 import stat
 import subprocess
 import sys
+
+sys.dont_write_bytecode = True
 import uuid
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'core/application-interface'))

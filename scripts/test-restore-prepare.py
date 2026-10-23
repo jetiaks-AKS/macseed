@@ -2133,7 +2133,8 @@ case "$1" in
    [[ "$SSH_ASKPASS_REQUIRE" == never && "$GIT_SSH_COMMAND" == *'BatchMode=yes'* &&
       "$GIT_SSH_COMMAND" == *'StrictHostKeyChecking=yes'* &&
       "$GIT_SSH_COMMAND" == *'UpdateHostKeys=no'* ]] || exit 2
-   [[ "$*" == *'credential.helper= -c credential.interactive=false clone'* ]] || exit 2
+   [[ "$*" == '-c credential.helper= -c credential.interactive=false -c core.hooksPath=/dev/null -c core.fsmonitor=false -c gc.auto=0 -c maintenance.auto=false -c submodule.recurse=false -c protocol.allow=never -c protocol.https.allow=always -c protocol.ssh.allow=always -c protocol.file.allow=always clone --progress --no-local --no-recurse-submodules --template= --branch main -- '* ]] || exit 2
+   [[ "$GIT_SSH_COMMAND" == *'ControlPath=none'* && "$GIT_SSH_COMMAND" == *'-F /dev/null'* ]] || exit 2
    [[ ! -t 0 && ! -t 1 && -f "$TEST_BOUNDARY" ]] || exit 2
    if (: </dev/tty) 2>/dev/null; then exit 2; fi
    read -r input && exit 2
@@ -2142,7 +2143,8 @@ case "$1" in
    mkdir -p "$target"
    [[ "${TEST_CLONE_FAIL:-false}" != true ]] || exit 2
    mkdir "$target/.git"
-   echo default > "$target/.branch"
+   [[ "${TEST_CHECKOUT_FAIL:-false}" != true ]] || exit 2
+   echo main > "$target/.branch"
    exit 0 ;;
  -C)
    target="$2"; shift 2
@@ -2245,7 +2247,7 @@ esac
         self.assertNotIn(b"example.test", result.stdout)
         plan = self.invoke()[1][1]["data"]["prepared_plan_id"]
         self.assertEqual(self.execute(plan)[0].returncode, 0)
-        self.assertEqual((self.root / "repo-log").read_text(), "clone\ncheckout\n")
+        self.assertEqual((self.root / "repo-log").read_text(), "clone\n")
         self.assertTrue(Path(self.environment["TEST_CASK_STATE"]).exists())
         self.assertTrue(Path(self.environment["TEST_CASK_STATE"] + ".formula").exists())
         self.assertTrue(Path(self.environment["TEST_EXTENSION_STATE"]).exists())
@@ -2334,7 +2336,7 @@ esac
         self.assertEqual(result.returncode, 2, events)
         self.assertEqual(events[-1]["data"]["code"], "bootstrap_failed")
         self.assertTrue(events[-1]["data"]["target_mutation_may_have_started"])
-        self.assertEqual((target / ".branch").read_text().strip(), "default")
+        self.assertFalse((target / ".branch").exists())
 
     def test_repository_credentials_rejected_privately(self):
         self.repository_fixture(remote="https://user:secret@example.test/private.git")

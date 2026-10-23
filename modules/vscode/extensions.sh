@@ -1,4 +1,5 @@
 #!/bin/bash
+source modules/core/application-interface/observation.sh
 
 OBSERVED_VSCODE_STATUS=
 VSCODE_SUPERVISED_INVENTORY=false
@@ -13,6 +14,8 @@ observe_vscode_inventory() {
             esac
             return 2
         fi
+    elif [[ "${MACSEED_APPLICATION_EXECUTION:-false}" == true ]]; then
+        inventory="$(vscode_cli_resolve && application_observe inventory "$VSCODE_CLI_COMMAND" --list-extensions)" || return 2
     else
         inventory="$(vscode_cli --list-extensions)" || return 2
     fi

@@ -27,22 +27,14 @@ class CaptureError(Exception):
 
 
 def run(root, command, environment, output=None, progress=None):
-    child = subprocess.Popen(command, cwd=root, env=environment, stdin=subprocess.DEVNULL,
-                             stdout=output if output is not None else subprocess.DEVNULL,
-                             stderr=subprocess.DEVNULL, start_new_session=True)
+    from observation import read, ObservationError, PHASE_SECONDS
     try:
-        while child.poll() is None:
-            if progress is not None:
-                progress()
-            try:
-                child.wait(timeout=.1)
-            except subprocess.TimeoutExpired:
-                pass
-        if progress is not None:
-            progress()
-        return child.returncode
-    finally:
-        terminate(child)
+        result = read(command, PHASE_SECONDS, cwd=root, env=environment, progress=progress)
+    except ObservationError:
+        return 2
+    if output is not None:
+        output.write(result.stdout)
+    return result.returncode
 
 
 def destination(path, replacement_sha256=None):

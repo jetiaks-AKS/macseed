@@ -1,4 +1,5 @@
 #!/bin/bash
+source modules/core/application-interface/observation.sh
 
 # ==========================================
 # Repository Helpers
@@ -21,9 +22,9 @@ repository_git_readiness() {
     # Apple's shim can offer to install developer tools; do not invoke it
     # without an already selected developer directory.
     if [[ "$executable" == /usr/bin/git ]]; then
-        xcode-select -p >/dev/null 2>&1 || return 2
+        application_observe local xcode-select -p >/dev/null 2>&1 || return 2
     fi
-    git --version >/dev/null 2>&1 || return 2
+    application_observe local git --version >/dev/null 2>&1 || return 2
     return 0
 }
 
@@ -60,6 +61,11 @@ repository_exists() {
 
     local repository_path="$1"
 
+    if [[ "${MACSEED_APPLICATION_EXECUTION:-false}" == true ]]; then
+        python3 -B modules/bootstrap/workspace/clone_execution.py --partial "$repository_path"
+        [[ $? -eq 1 ]] || return 2
+    fi
+
     local ancestor="$repository_path"
     while [[ ! -e "$ancestor" && ! -L "$ancestor" ]]; do
         ancestor="$(dirname "$ancestor")"
@@ -80,9 +86,13 @@ repository_is_git() {
 
     local worktree
     [[ -d "$repository_path" && -r "$repository_path" && -x "$repository_path" ]] || return 2
+    if [[ "${MACSEED_APPLICATION_EXECUTION:-false}" == true ]]; then
+        python3 -B modules/bootstrap/workspace/clone_execution.py --partial "$repository_path"
+        [[ $? -eq 1 ]] || return 2
+    fi
     # Require a repository rooted here, not an enclosing parent repository.
     [[ -e "$repository_path/.git" || -L "$repository_path/.git" ]] || return 1
-    worktree="$(git -C "$repository_path" rev-parse --is-inside-work-tree)" || return 2
+    worktree="$(application_observe local git -C "$repository_path" rev-parse --is-inside-work-tree)" || return 2
     case "$worktree" in
         true) return 0 ;;
         false) return 1 ;;
@@ -99,7 +109,7 @@ repository_origin() {
 
     local repository_path="$1"
 
-    git -C "$repository_path" remote get-url origin || return 2
+    application_observe local git -C "$repository_path" remote get-url origin || return 2
 
 }
 
@@ -111,7 +121,7 @@ repository_branch() {
 
     local repository_path="$1"
 
-    git -C "$repository_path" branch --show-current || return 2
+    application_observe local git -C "$repository_path" branch --show-current || return 2
 
 }
 
@@ -123,14 +133,26 @@ repository_clone() {
 
     local remote="$1"
     local path="$2"
+    local branch="${3:-}" report key value status=2
+    REPOSITORY_CLONE_FAILURE_SAFE=false
+    REPOSITORY_CLONE_REASON=git_clone_failed
 
     if [[ "${MACSEED_APPLICATION_EXECUTION:-false}" == true ]]; then
-        # Disable helper/UI prompting for this command only. Existing ssh-agent
-        # identities and SSH config remain available; unknown hosts fail closed.
-        GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=/usr/bin/false SSH_ASKPASS=/usr/bin/false \
-        SSH_ASKPASS_REQUIRE=never GIT_SSH_VARIANT=ssh \
-        GIT_SSH_COMMAND='ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o UpdateHostKeys=no -o CheckHostIP=no' \
-            git -c credential.helper= -c credential.interactive=false clone "$remote" "$path" </dev/null >/dev/null 2>&1
+        [[ "${BUNDLE_RESTORE_ACTIVE:-false}" == true && "${MODE:-}" == --bootstrap &&
+           "${BUNDLE_RESTORE_PREVIEW:-false}" != true &&
+           "${MACSEED_APPLICATION_SECURE_VERIFY_ONLY:-false}" != true ]] || return 2
+        report="$(MACSEED_GIT_CLONE_RESTORE=true python3 -B modules/bootstrap/workspace/clone_execution.py \
+            "$remote" "$path" "$branch" 2>/dev/null)" || return 2
+        while IFS=: read -r key value; do
+            case "$key:$value" in
+                exit:*) [[ "$value" =~ ^[0-9]+$ && "$value" -le 255 ]] && status="$value" ;;
+                safe:true) REPOSITORY_CLONE_FAILURE_SAFE=true ;;
+                reason:git_clone_*|reason:cancelled|reason:none) REPOSITORY_CLONE_REASON="$value" ;;
+            esac
+        done <<< "$report"
+        [[ "$REPOSITORY_CLONE_FAILURE_SAFE" == true ]] || return 2
+        [[ "$status" -ne 0 ]] || REPOSITORY_CLONE_FAILURE_SAFE=false
+        return "$status"
     else
         git clone "$remote" "$path"
     fi
@@ -146,9 +168,9 @@ repository_is_clean() {
     local repository_path="$1"
 
     local worktree_result index_result
-    git -C "$repository_path" diff --quiet
+    application_observe local git -C "$repository_path" diff --quiet
     worktree_result=$?
-    git -C "$repository_path" diff --cached --quiet
+    application_observe local git -C "$repository_path" diff --cached --quiet
     index_result=$?
     [[ $worktree_result -le 1 && $index_result -le 1 ]] || return 2
     [[ $worktree_result -eq 0 && $index_result -eq 0 ]] || return 1
@@ -270,6 +292,7 @@ repository_verify() {
     # Private evidence consumed only by the application Restore repository loop.
     # shellcheck disable=SC2034
     REPOSITORY_CHECKOUT_FAILURE_EVIDENCE=""
+    REPOSITORY_CLONE_FAILURE_SAFE=false
 
     local inspection_result
     repository_exists "$path"
@@ -283,8 +306,8 @@ repository_verify() {
 
         action "Cloning repository..."
 
-        if ! repository_clone "$expected_remote" "$path"; then
-            declare -F verification_operation_hook >/dev/null && verification_operation_hook git-repositories "$repository_subject" clone failure
+        if ! repository_clone "$expected_remote" "$path" "$expected_branch"; then
+            declare -F verification_operation_hook >/dev/null && verification_operation_hook git-repositories "$repository_subject" clone failure "${REPOSITORY_CLONE_REASON:-git_clone_failed}"
             error "Failed to clone repository"
             return 2
         fi

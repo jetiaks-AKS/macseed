@@ -200,7 +200,7 @@ def tool(command, secret, stdout=None, pass_fds=(), secret_repeats=1):
                     child.wait(timeout=2)
                 except subprocess.TimeoutExpired:
                     child.kill()
-                    child.wait()
+                    child.wait(timeout=1)
             if child.stdout is not None:
                 child.stdout.close()
         if slave is not None:

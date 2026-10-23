@@ -1,4 +1,5 @@
 #!/bin/bash
+source modules/core/application-interface/observation.sh
 
 # ==========================================
 # macOS Discovery
@@ -31,7 +32,7 @@ macos_collect_preference() {
         expected_native_type="$(macos_defaults_type_name "$generated_type")" || return 2
     fi
 
-    native_type="$(defaults read-type "$domain" "$key" 2>&1)"
+    native_type="$(application_observe local-diagnostic defaults read-type "$domain" "$key" 2>&1)"
     local type_result=$?
 
     if [[ $type_result -ne 0 ]]; then

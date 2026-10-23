@@ -61,7 +61,7 @@ bundle_capture() (
         ./bootstrap.sh --dry-run
     result=$?
     [[ $result -le 1 ]] || return "$result"
-    python3 "$BUNDLE_HELPER" check-portability "$stage" "$HOME" || return 2
+    python3 -B "$BUNDLE_HELPER" check-portability "$stage" "$HOME" || return 2
     if [[ -e "$HOME/.ssh" || -L "$HOME/.ssh" ]] &&
        bundle_prompt "Select SSH identities for encrypted Secure Credentials? [y/N]"; then
         if bundle_offer_age; then
@@ -85,7 +85,7 @@ bundle_capture() (
     fi
     chmod 700 exports || return 2
     output="$(cd exports && pwd -P)/bootstrap-$timestamp.mbt"
-    python3 "$BUNDLE_HELPER" pack "$stage" "$output" "$HOME" || return 2
+    python3 -B "$BUNDLE_HELPER" pack "$stage" "$output" "$HOME" || return 2
     success "Bootstrap Bundle created: $output"
     info "Transfer this one private Bundle to the new Mac."
 )
@@ -101,7 +101,7 @@ bundle_choose_categories() {
         groups=()
         for index in "${disabled[@]}"; do groups+=("${names[$index]}"); done
         echo "Restore selection:"
-        python3 "$BUNDLE_HELPER" summary "$stage" "$BUNDLE_SECURE_SELECTED" "${groups[@]}" || return 2
+        python3 -B "$BUNDLE_HELPER" summary "$stage" "$BUNDLE_SECURE_SELECTED" "${groups[@]}" || return 2
         printf 'Enter=continue, C=change categories, Q=cancel: '
         IFS= read -r answer || return 3
         case "$answer" in
@@ -133,7 +133,7 @@ bundle_choose_categories() {
     done
     groups=()
     for index in "${disabled[@]}"; do groups+=("${names[$index]}"); done
-    python3 "$BUNDLE_HELPER" narrow "$stage" "${groups[@]}" || return 2
+    python3 -B "$BUNDLE_HELPER" narrow "$stage" "${groups[@]}" || return 2
 }
 
 # Called only by Restore Bootstrap, after complete selected-input validation and
@@ -174,8 +174,8 @@ bundle_restore() (
     [[ -n "$input" ]] || { error "Restore requires a Bundle path"; return 2; }
     stage="$(bundle_stage)" || return 2
     trap 'rm -rf "$stage"' EXIT
-    python3 "$BUNDLE_HELPER" unpack "$input" "$stage" "$HOME" || return 2
-    python3 "$BUNDLE_HELPER" recover || return 2
+    python3 -B "$BUNDLE_HELPER" unpack "$input" "$stage" "$HOME" || return 2
+    python3 -B "$BUNDLE_HELPER" recover || return 2
     bundle_choose_categories "$stage"
     result=$?
     if [[ $result -eq 3 ]]; then info "Restore cancelled."; return 0; fi
@@ -189,7 +189,7 @@ bundle_restore() (
         info "Restore cancelled before publication."
         return 0
     }
-    python3 "$BUNDLE_HELPER" publish "$stage" || return 2
+    python3 -B "$BUNDLE_HELPER" publish "$stage" || return 2
     local secure_file=""
     [[ "$secure_selected" != true ]] || secure_file="$stage/secure.age"
     env -u BLUEPRINT_FILE -u BLUEPRINT_GENERATED_DIR -u SSH_SNAPSHOT_FILE \

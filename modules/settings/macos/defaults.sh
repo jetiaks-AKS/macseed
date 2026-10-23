@@ -1,4 +1,5 @@
 #!/bin/bash
+source modules/core/application-interface/observation.sh
 
 # ==========================================
 # macOS Defaults Executor
@@ -100,7 +101,7 @@ check_defaults_record() {
 
     expected_native_type="$(defaults_native_type "$type")" || return 2
 
-    native_type="$(defaults read-type "$domain" "$key" 2>&1)"
+    native_type="$(application_observe local-diagnostic defaults read-type "$domain" "$key" 2>&1)"
     local type_result=$?
 
     if [[ $type_result -ne 0 ]]; then

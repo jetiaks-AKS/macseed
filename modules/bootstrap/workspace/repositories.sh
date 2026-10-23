@@ -73,7 +73,7 @@ bootstrap_workspace_repositories() {
 
     local has_warnings=false
     local repository_result
-    local has_errors=false failed_checkouts=""
+    local has_errors=false failed_checkouts="" failed_clones="" failed_path
 
     local repository path remote branch
     while IFS=$'\t' read -r repository path remote branch; do
@@ -93,6 +93,11 @@ bootstrap_workspace_repositories() {
                 return 2
             fi
         fi
+        # A known partial clone is isolated only from disjoint destinations.
+        while IFS= read -r failed_path; do
+            [[ -n "$failed_path" ]] || continue
+            python3 -B modules/bootstrap/workspace/clone_execution.py --independent "$failed_path" "$path" || return 2
+        done <<< "$failed_clones"
 
     info "Repository: $repository"
 
@@ -100,6 +105,13 @@ bootstrap_workspace_repositories() {
         repository_result=$?
         if [[ $repository_result -eq 2 ]]; then
             error "Repository inspection failed: $repository"
+            if [[ "${MACSEED_APPLICATION_EXECUTION:-false}" == true &&
+                  "${BUNDLE_RESTORE_ACTIVE:-false}" == true &&
+                  "${REPOSITORY_CLONE_FAILURE_SAFE:-false}" == true ]]; then
+                has_errors=true
+                failed_clones="${failed_clones}${failed_clones:+$'\n'}$path"
+                continue
+            fi
             if [[ "${MACSEED_APPLICATION_EXECUTION:-false}" == true &&
                   "${BUNDLE_RESTORE_ACTIVE:-false}" == true &&
                   -n "${REPOSITORY_CHECKOUT_FAILURE_EVIDENCE:-}" ]]; then

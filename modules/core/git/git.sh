@@ -1,4 +1,5 @@
 #!/bin/bash
+source modules/core/application-interface/observation.sh
 
 GIT_CONFIGURATION_FILE="${BLUEPRINT_GENERATED_DIR:-config/generated}/git.conf"
 GIT_CONFIGURATION_KEYS=(user.name user.email init.defaultBranch pull.rebase core.editor user.useConfigOnly pull.ff)
@@ -70,7 +71,7 @@ git_configuration_validate_value() {
                ! "$value" =~ [[:cntrl:]] ]]
             ;;
         init.defaultBranch)
-            git check-ref-format --branch "$value" >/dev/null 2>&1
+            application_observe local git check-ref-format --branch "$value" >/dev/null 2>&1
             ;;
         pull.rebase)
             case "$value" in true|false|merges|interactive) return 0 ;; esac
@@ -141,13 +142,13 @@ git_global_observe() {
     stream="$(mktemp)" || return 2
     # Git's --global query can select ~/.gitconfig when both global files
     # exist. Probe that layer, then inventory each validated physical file.
-    if ! git config --global --no-includes --null --list --show-origin --show-scope > "$stream" 2>/dev/null; then
+    if ! application_observe local git config --global --no-includes --null --list --show-origin --show-scope > "$stream" 2>/dev/null; then
         rm -f "$stream"
         return 2
     fi
     for path in "$xdg" "$dot"; do
         [[ -e "$path" ]] || continue
-        if ! git config --file "$path" --no-includes --null --list --show-origin --show-scope > "$stream" 2>/dev/null; then
+        if ! application_observe local git config --file "$path" --no-includes --null --list --show-origin --show-scope > "$stream" 2>/dev/null; then
             rm -f "$stream"
             return 2
         fi
@@ -183,7 +184,7 @@ load_git_configuration() {
         return 2
     }
     stream="$(mktemp)" || return 2
-    if ! git config --file "$config_file" --no-includes --null --list > "$stream" 2>/dev/null; then
+    if ! application_observe local git config --file "$config_file" --no-includes --null --list > "$stream" 2>/dev/null; then
         rm -f "$stream"
         error "Invalid generated Git configuration; run Discovery again"
         return 2

@@ -1,4 +1,5 @@
 #!/bin/bash
+source modules/core/application-interface/observation.sh
 
 # ==========================================
 # VS Code Discovery
@@ -46,7 +47,7 @@ export_vscode_extensions() {
     action "Exporting VS Code Extensions..."
 
     local inventory
-    if ! inventory="$(code --list-extensions)"; then
+    if ! inventory="$(application_observe inventory code --list-extensions)"; then
         error "Failed to inventory VS Code Extensions"
         return 2
     fi

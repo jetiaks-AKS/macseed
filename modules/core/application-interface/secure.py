@@ -7,6 +7,8 @@ import signal
 import socket
 import subprocess
 import sys
+
+sys.dont_write_bytecode = True
 import tempfile
 import time
 import uuid
@@ -47,7 +49,7 @@ def terminate(child):
             child.wait(timeout=3)
         except subprocess.TimeoutExpired:
             os.killpg(child.pid, signal.SIGKILL)
-            child.wait()
+            child.wait(timeout=1)
 
 
 def import_secure(root, package, channel, operation_id, event, mutation, export_selection=None):

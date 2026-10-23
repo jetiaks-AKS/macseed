@@ -15,7 +15,7 @@ capture_observe() {
         [[ $result -ne 1 ]] || reason=source_partial
     fi
     local file
-    file="$BLUEPRINT_GENERATED_DIR/$(python3 modules/core/application-interface/capture.py --path "$domain")" || return 2
+    file="$BLUEPRINT_GENERATED_DIR/$(python3 -B modules/core/application-interface/capture.py --path "$domain")" || return 2
     local items=() labels=()
     if [[ "$status" != observation_error && -f "$file" ]]; then
         local validator=''
@@ -60,7 +60,7 @@ capture_observe() {
     {
         printf '%s\0' "$domain" "$status" "$reason"
         for index in "${!items[@]}"; do printf '%s\0' "${items[$index]}" "${labels[$index]}"; done
-    } | python3 modules/core/application-interface/capture.py --row "$MACSEED_CAPTURE_INVENTORY" || return 2
+    } | python3 -B modules/core/application-interface/capture.py --row "$MACSEED_CAPTURE_INVENTORY" || return 2
     return 0
 }
 

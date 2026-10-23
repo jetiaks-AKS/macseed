@@ -235,14 +235,19 @@ class CLIExecutor:
                 elif safe:
                     # With the tree stopped there is no live owned pipe writer.
                     # Drain only the bounded kernel buffer, never wait for EOF.
+                    drained = False
                     for _ in range(32):
                         try:
                             if not consume():
+                                drained = True
                                 break
                         except BlockingIOError:
                             break
+                    if not drained:
+                        status, reason, safe = 129, 'vscode_quiescence_unconfirmed', False
                     if operation == 'install':
-                        reason = diagnostic.reason()
+                        if safe:
+                            reason = diagnostic.reason()
                     elif status == 0:
                         rows = inventory.decode('ascii').splitlines()
                         if any(row and not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]*\.[A-Za-z0-9][A-Za-z0-9_-]*', row) for row in rows):

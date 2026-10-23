@@ -1,4 +1,5 @@
 #!/bin/bash
+source modules/core/application-interface/observation.sh
 
 # Transient projection of the current Verification run. CV_KIND is indexed by
 # Verification record offset; it contains only typed observations, never values.
@@ -80,14 +81,14 @@ comparison_extra() {
             state=unavailable
             reason=target_inventory_unavailable
             case "$domain" in
-                homebrew-casks) target="$(brew list --cask)" && state=available ;;
+                homebrew-casks) target="$(application_observe inventory brew list --cask)" && state=available ;;
                 app-store)
                     if command -v mas >/dev/null 2>&1; then
-                        target="$(env MAS_NO_AUTO_INDEX=1 mas list)" && state=available
+                        target="$(MAS_NO_AUTO_INDEX=1 application_observe inventory mas list)" && state=available
                     else reason=dependency_unavailable; fi ;;
                 vscode-extensions)
                     if command -v code >/dev/null 2>&1; then
-                        target="$(code --list-extensions)" && state=available
+                        target="$(application_observe inventory code --list-extensions)" && state=available
                     else reason=dependency_unavailable; fi ;;
             esac
             if [[ "$state" == available ]]; then

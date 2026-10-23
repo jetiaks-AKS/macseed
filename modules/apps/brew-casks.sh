@@ -235,8 +235,8 @@ install_brew_cask() {
 
     if [[ "${MACSEED_APPLICATION_EXECUTION:-false}" == true ]]; then
         local metadata prefix
-        metadata="$(HOMEBREW_NO_AUTO_UPDATE=1 brew info --json=v2 --cask "$cask")" || return 2
-        prefix="$(HOMEBREW_NO_AUTO_UPDATE=1 brew --prefix)" || return 2
+        metadata="$(HOMEBREW_NO_AUTO_UPDATE=1 application_observe inventory brew info --json=v2 --cask "$cask")" || return 2
+        prefix="$(HOMEBREW_NO_AUTO_UPDATE=1 application_observe inventory brew --prefix)" || return 2
         python3 -B modules/apps/adapters/homebrew_cask.py "$prefix" --record <<< "$metadata" || return 2
         python3 -B modules/apps/brew_items.py --verified homebrew-casks "$cask" || {
             error "Homebrew item state unavailable after verification"

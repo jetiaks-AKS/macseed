@@ -1,4 +1,5 @@
 #!/bin/bash
+source modules/core/application-interface/observation.sh
 
 # ==========================================
 # App Store Discovery
@@ -39,7 +40,7 @@ discover_appstore() {
     action "Exporting App Store applications..."
 
     local inventory
-    if ! inventory="$(MAS_NO_AUTO_INDEX=1 mas list)"; then
+    if ! inventory="$(MAS_NO_AUTO_INDEX=1 application_observe inventory mas list)"; then
         error "Failed to inventory App Store applications"
         return 2
     fi

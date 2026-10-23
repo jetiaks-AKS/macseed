@@ -1,4 +1,5 @@
 #!/bin/bash
+source modules/core/application-interface/observation.sh
 
 MACOS_FINDER_WINDOW_TARGET_PATTERN='^(PfCm|PfVo|PfHm|PfDe|PfDo|PfAF)$'
 MACOS_DOCK_ORIENTATION_PATTERN='^(left|bottom|right)$'
@@ -127,7 +128,7 @@ macos_read_scalar() {
     local value_file
     MACOS_DEFAULTS_VALUE=""
     value_file="$(mktemp)" || return 2
-    if ! defaults read "$1" "$2" > "$value_file" 2>/dev/null ||
+    if ! application_observe local defaults read "$1" "$2" > "$value_file" 2>/dev/null ||
        ! macos_record_bytes_valid "$value_file" ||
        ! LC_ALL=C awk 'NR > 1 || /\|/ { exit 2 }' "$value_file"; then
         rm -f "$value_file"

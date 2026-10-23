@@ -7,6 +7,8 @@ import select
 from pathlib import Path
 import sys
 
+sys.dont_write_bytecode = True
+
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from reporting import MAX_LINE, MAX_RECORDS, item
 import signal
@@ -24,16 +26,19 @@ class OwnedBootstrap:
     def __init__(self, root, environment, secure_evidence=None, on_record=None, identities=None, mode="--bootstrap", skipped_casks=None, cask_plans=None, graceful_control=None):
         if mode not in {"--bootstrap", "--application-compare"}:
             raise ValueError("unsupported owned mode")
-        if mode == "--bootstrap":
-            # Observation capability must be checked before starting a mutating child.
-            try:
-                process_table()
-            except (OSError, subprocess.SubprocessError, ValueError) as exc:
-                raise ProcessObservationUnavailable() from exc
+        # Both execution and read-only Comparison must account for child workers.
+        try:
+            process_table()
+        except (OSError, subprocess.SubprocessError, ValueError) as exc:
+            raise ProcessObservationUnavailable() from exc
         read_fd, write_fd = os.pipe()
         verification_read, verification_write = os.pipe()
         report_read, report_write = os.pipe()
         self.mode = mode
+        self.observation_deadline = time.monotonic() + 900 if (
+            mode == '--application-compare' or environment.get('MACSEED_APPLICATION_SECURE_VERIFY_ONLY') == 'true') else None
+        self.mutating = mode == '--bootstrap' and environment.get('MACSEED_APPLICATION_SECURE_VERIFY_ONLY') != 'true'
+        self.execution_deadline = time.monotonic() + 86400
         self.comparison = None
         self.comparison_records = []
         self.extra_status = []
@@ -92,7 +97,7 @@ class OwnedBootstrap:
                     os.killpg(self.process.pid, signal.SIGKILL)
                 except ProcessLookupError:
                     pass
-                self.process.wait()
+                self.process.wait(timeout=1)
             self.item_state.cleanup()
             if receipt is not None:
                 receipt.close()
@@ -110,7 +115,7 @@ class OwnedBootstrap:
         os.close(report_write)
         self.signal_fd = read_fd
         self.verification_fd = verification_read
-        self.tree = ProcessTree(self.process.pid, initialize=False) if mode == "--bootstrap" else None
+        self.tree = ProcessTree(self.process.pid, initialize=False)
         self.last_tree_scan = time.monotonic() - .5
         self.mutation_may_have_started = False
         self.verification = None
@@ -241,7 +246,7 @@ class OwnedBootstrap:
     def _drain(self):
         if self.report_fd is None:
             return
-        while True:
+        for _ in range(32):
             try:
                 data = os.read(self.report_fd, 65536)
             except BlockingIOError:
@@ -270,14 +275,17 @@ class OwnedBootstrap:
 
     def _collect(self):
         self.unknown_consequences = getattr(self, 'unknown_consequences', False) or Path(self.item_state.name, 'external-tool-active.json').exists()
-        self.external_lifecycle_cause = None
+        self.external_lifecycle_cause = getattr(self, 'external_lifecycle_cause', None)
         if self.unknown_consequences:
             try:
                 cause = json.loads(Path(self.item_state.name, 'external-tool-active.json').read_text()).get('cause')
                 if cause in {'item_stalled_timeout', 'progress_observation_failed', 'cancelled', 'item_install_failed',
                              'vscode_inventory_deadline', 'vscode_install_deadline',
                              'vscode_process_observation_failed', 'vscode_quiescence_unconfirmed',
-                             'vscode_lifecycle_state_failed', 'vscode_process_interrupted'}:
+                             'vscode_lifecycle_state_failed', 'vscode_process_interrupted',
+                             'git_clone_deadline', 'git_clone_no_progress', 'git_clone_observation_failed',
+                             'git_clone_quiescence_unconfirmed', 'git_clone_state_failed',
+                             'external_observation_unquiescent'}:
                     self.external_lifecycle_cause = cause
             except (OSError, ValueError, TypeError, AttributeError):
                 pass
@@ -287,9 +295,11 @@ class OwnedBootstrap:
                 self.graceful.close()
             self._control_events()
             self.unknown_consequences |= self.graceful.lost
-        self.item_state.cleanup()
         self._drain()
         if self.report_fd is not None:
+            self.reporting_invalid = True
+            self.details['status'] = 'invalid'
+            self.unknown_consequences = True
             os.close(self.report_fd)
             self.report_fd = None
         for descriptor, attribute in ((self.signal_fd, "signal_fd"),
@@ -320,6 +330,10 @@ class OwnedBootstrap:
                         }
                     except ValueError:
                         pass
+        if self.unknown_consequences and self.mutating:
+            from external_state import retain
+            retain()
+        self.item_state.cleanup()
 
     def _control_events(self):
         if self.graceful and self.on_record:
@@ -327,6 +341,20 @@ class OwnedBootstrap:
 
     def wait(self):
         while self.process.poll() is None:
+            if time.monotonic() >= self.execution_deadline:
+                # Last-resort total budget, not progress evidence. Interrupting
+                # an unqualified mutation never permits a fresh Execute.
+                self.unknown_consequences = self.mutating
+                self.external_lifecycle_cause = 'external_execution_deadline'
+                self.cancel()
+                return 2
+            if self.observation_deadline is None and Path(self.item_state.name, 'verification-active').is_file():
+                self.observation_deadline = time.monotonic() + 900
+            if self.observation_deadline is not None and time.monotonic() >= self.observation_deadline:
+                self.cancel()
+                self.verification = None
+                self.details['status'] = 'partial'
+                return 2
             self._control_events()
             if self.tree is not None and time.monotonic() - self.last_tree_scan >= .5:
                 self.tree.scan(); self.last_tree_scan = time.monotonic()
@@ -338,7 +366,11 @@ class OwnedBootstrap:
                     self.process.wait(timeout=.1)
                 except subprocess.TimeoutExpired:
                     pass
-        result = self.process.wait()
+        result = self.process.wait(timeout=1)
+        if self.tree is not None and self.tree.scan():
+            self.unknown_consequences = True
+            self.tree.stop()
+            result = 2
         self._collect()
         return result
 

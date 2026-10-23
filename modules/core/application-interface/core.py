@@ -22,6 +22,7 @@ import bundle
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "apps/adapters"))
 import homebrew_pkg_preparation as pkg_preparation
 from execution import OwnedBootstrap, ProcessObservationUnavailable
+from observation import read as bounded_read, ObservationError, PHASE_SECONDS
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from performance_trace import timed, add, ENABLED
 from time import monotonic
@@ -180,23 +181,11 @@ def prepared_restore(path, disabled_groups, include_secure, selection=None, inst
                            BLUEPRINT_GENERATED_DIR=str(stage / "generated"),
                            BUNDLE_RESTORE_PREVIEW="true", MACSEED_PERFORMANCE_SCOPE="preview", PREVIEW_SUMMARY_FILE=str(summary_file),
                            MACSEED_APPLICATION_EXECUTION="true", PREVIEW_PLAN_FILE=str(plan_file))
-        preview = subprocess.Popen(["./bootstrap.sh", "--dry-run"], cwd=ROOT, env=environment,
-                                   stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                                   stderr=subprocess.DEVNULL, start_new_session=True)
         try:
-            preview_status = preview.wait()
-        except BaseException:
-            if preview.poll() is None:
-                try:
-                    os.killpg(preview.pid, signal.SIGTERM)
-                except ProcessLookupError:
-                    pass
-                try:
-                    preview.wait(timeout=3)
-                except subprocess.TimeoutExpired:
-                    os.killpg(preview.pid, signal.SIGKILL)
-                    preview.wait()
-            raise
+            preview_status = bounded_read(["./bootstrap.sh", "--dry-run"], PHASE_SECONDS,
+                                          cwd=ROOT, env=environment).returncode
+        except ObservationError:
+            raise PreviewFailed() from None
         if bundle.RECOVERY.exists() or bundle.RECOVERY.is_symlink():
             raise RecoveryRequired()
         if preview_status not in (0, 1, 2) or restore_fingerprint(stage) != stage_identity:
@@ -429,22 +418,12 @@ def prepared_requirements(stage, include_secure, preparation_context=""):
                        MACSEED_APPLICATION_ALLOW_ITEM_SKIPS="true",
                        MACSEED_APPLICATION_SECURE_SELECTED=str(include_secure).lower(),
                        MACSEED_APPLICATION_SECURE_READY="true")
-    child = subprocess.Popen(["./bootstrap.sh", "--application-readiness"], cwd=ROOT,
-                             env=environment, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                             stderr=subprocess.DEVNULL, start_new_session=True)
     try:
-        output, _ = child.communicate(timeout=180)
-    except BaseException as exc:
-        if child.poll() is None:
-            os.killpg(child.pid, signal.SIGTERM)
-            try:
-                child.wait(timeout=3)
-            except subprocess.TimeoutExpired:
-                os.killpg(child.pid, signal.SIGKILL)
-                child.wait()
-        if isinstance(exc, subprocess.TimeoutExpired):
-            raise PreviewFailed() from None
-        raise
+        child = bounded_read(["./bootstrap.sh", "--application-readiness"], 180,
+                             cwd=ROOT, env=environment)
+        output = child.stdout
+    except ObservationError:
+        raise PreviewFailed() from None
     if child.returncode != 0:
         raise PreviewFailed()
     sections, _ = bundle.parse_blueprint(bundle.checked_file(stage / "blueprint.conf"))
@@ -480,9 +459,8 @@ def prepared_requirements(stage, include_secure, preparation_context=""):
     for domain, kind in (("homebrew-packages", "formula"), ("homebrew-casks", "cask")):
         if not sections[domain]:
             continue
-        probe = subprocess.run([sys.executable, '-B', str(ROOT / 'modules/apps/adapters/homebrew.py'),
-                                'probe', kind], cwd=ROOT, env=environment,
-                               stdin=subprocess.DEVNULL, capture_output=True, timeout=120)
+        probe = bounded_read([sys.executable, '-B', str(ROOT / 'modules/apps/adapters/homebrew.py'),
+                              'probe', kind], 120, cwd=ROOT, env=environment)
         observed = json.loads(probe.stdout)
         observed['domain'] = domain
         external_tools.append(observed)
@@ -515,23 +493,12 @@ def readiness(stage, include_secure, secure_ready=False, secure_only=False, prep
                        MACSEED_APPLICATION_SECURE_READY=str(secure_ready).lower(),
                        MACSEED_APPLICATION_SECURE_ONLY=str(secure_only).lower(),
                        MACSEED_APPLICATION_ALLOW_ITEM_SKIPS="true")
-    process = subprocess.Popen(["./bootstrap.sh", "--application-readiness"], cwd=ROOT,
-                               env=environment, stdin=subprocess.DEVNULL,
-                               stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                               start_new_session=True)
     try:
-        output, _ = process.communicate(timeout=180)
-    except BaseException as exc:
-        if process.poll() is None:
-            os.killpg(process.pid, signal.SIGTERM)
-            try:
-                process.wait(timeout=3)
-            except subprocess.TimeoutExpired:
-                os.killpg(process.pid, signal.SIGKILL)
-                process.wait()
-        if isinstance(exc, subprocess.TimeoutExpired):
-            raise ExecuteFailed("readiness_failed") from None
-        raise
+        process = bounded_read(["./bootstrap.sh", "--application-readiness"], 180,
+                               cwd=ROOT, env=environment)
+        output = process.stdout
+    except ObservationError:
+        raise ExecuteFailed("readiness_failed") from None
     fields = output.decode("ascii", errors="replace").strip().split("\t")
     status = fields[0]
     cask_conditions = {"cask_metadata_unavailable", "cask_execution_requirements_unsupported",
@@ -970,6 +937,9 @@ def environment_compare(operation_id, parameters):
 
 
 def main(version, channel=None):
+    # Python providers called before shell Preview are also application reads.
+    # This flag confers no mutation or Restore lifecycle authority.
+    os.environ['MACSEED_APPLICATION_OBSERVATION'] = 'true'
     operation_id = None
     for name in ("MACSEED_APPLICATION_SECURE_READY", "MACSEED_APPLICATION_SECURE_ONLY",
                  "MACSEED_APPLICATION_SECURE_VERIFY_ONLY", "MACSEED_SECURE_EVIDENCE_FD",

@@ -1,4 +1,5 @@
 #!/bin/bash
+source modules/core/application-interface/observation.sh
 
 # ==========================================
 # Run Preflight Checks
@@ -66,7 +67,7 @@ check_xcode() {
 
     detail "Checking Xcode Command Line Tools..."
 
-    if xcode-select -p >/dev/null 2>&1; then
+    if application_observe local xcode-select -p >/dev/null 2>&1; then
 
         detail "Xcode Command Line Tools are installed"
         return 0
@@ -87,7 +88,7 @@ check_macos() {
     detail "Checking macOS version..."
 
     local current_version
-    current_version=$(sw_vers -productVersion | cut -d "." -f1)
+    current_version=$(application_observe local sw_vers -productVersion | cut -d "." -f1)
 
     if [[ "$current_version" -ge "$MIN_MACOS_VERSION" ]]; then
 

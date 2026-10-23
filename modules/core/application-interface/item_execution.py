@@ -8,9 +8,22 @@ from pathlib import Path
 import signal
 import subprocess
 import time
+import tempfile
 
 STALL_SECONDS = 180
 STALLED, BLOCKED, UNOBSERVABLE, OBSERVATION_FAILED, CANCELLED = 124, 125, 126, 127, 130
+
+
+def pipe_eof(stream):
+    """Discard only bounded buffered diagnostics; an open writer is not EOF."""
+    os.set_blocking(stream.fileno(), False)
+    for _ in range(32):
+        try:
+            if not os.read(stream.fileno(), 65536):
+                return True
+        except BlockingIOError:
+            return False
+    return False
 
 
 class StallTimer:
@@ -24,10 +37,28 @@ class StallTimer:
         return now - self.last_progress >= self.interval
 
 
+def kernel_read(command, timeout=2):
+    """Bound the watchdog itself, including output inherited by a child."""
+    with tempfile.TemporaryFile() as output:
+        child = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=output,
+                                 stderr=subprocess.DEVNULL)
+        try:
+            status = child.wait(timeout=timeout)
+            output.seek(0)
+            data = output.read(8 * 1024 * 1024 + 1)
+            if len(data) > 8 * 1024 * 1024:
+                raise ValueError('process observation too large')
+            return subprocess.CompletedProcess(command, status, data)
+        finally:
+            if child.poll() is None:
+                child.kill()
+                child.wait(timeout=1)
+
+
 def process_table():
     # Kernel process fields only; never arguments, environment or tool diagnostics.
-    result = subprocess.run(['/bin/ps', '-axo', 'pid=,ppid=,lstart=,time=,stat=,comm='],
-                            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=2, check=True)
+    result = kernel_read(['/bin/ps', '-axo', 'pid=,ppid=,lstart=,time=,stat=,comm='])
+    result.check_returncode()
     rows = {}
     for line in result.stdout.decode(errors='replace').splitlines():
         fields = line.split(None, 9)
@@ -149,8 +180,7 @@ class ProgressProbe:
             self.cpu[key] = cpu
         if not rows:
             return progress
-        result = subprocess.run(['/usr/sbin/lsof', '-nP', '-o', '-F0pftasnioD', '-p', ','.join(map(str, rows))],
-                                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=2)
+        result = kernel_read(['/usr/sbin/lsof', '-nP', '-o', '-F0pftasnioD', '-p', ','.join(map(str, rows))])
         if result.returncode not in (0, 1):
             raise RuntimeError('progress observation unavailable')
         record = {}
@@ -226,17 +256,17 @@ class ItemExecutor:
                 timer = StallTimer(time.monotonic(), self.interval)
                 while process.poll() is None:
                     if self.cancelled:
-                        self.reason = 'cancelled'; tree.stop(); process.wait()
+                        self.reason = 'cancelled'; tree.stop(); process.wait(timeout=1)
                         return CANCELLED, b''
                     progress = probe.sample(tree.scan())
                     if process.poll() is not None:
                         break
                     from homebrew_stop import stopped
                     if timer.observe(time.monotonic(), progress) and not stopped():
-                        self.reason = 'item_stalled_timeout'; tree.stop(); process.wait()
+                        self.reason = 'item_stalled_timeout'; tree.stop(); process.wait(timeout=1)
                         return STALLED, b''
                     time.sleep(self.poll)
-                status = process.wait()
+                status = process.wait(timeout=1)
                 if self.cancelled:
                     self.reason = 'cancelled'; return CANCELLED, b''
                 output.seek(0)
@@ -258,4 +288,7 @@ class ItemExecutor:
                             pass
                 except (OSError, ValueError, RuntimeError, subprocess.SubprocessError):
                     self.unquiescent = True
-                process.wait()
+                try:
+                    process.wait(timeout=1)
+                except subprocess.TimeoutExpired:
+                    self.unquiescent = True

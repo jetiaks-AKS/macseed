@@ -1,4 +1,5 @@
 #!/bin/bash
+source modules/core/application-interface/observation.sh
 
 # ==========================================
 # Repository Helpers
@@ -9,13 +10,13 @@ get_repository_remote() {
     local repository_path="$1"
     local remotes
 
-    remotes="$(git -C "$repository_path" remote 2>/dev/null)" || return 2
+    remotes="$(application_observe local git -C "$repository_path" remote 2>/dev/null)" || return 2
 
     if ! grep -Fxq origin <<< "$remotes"; then
         return 1
     fi
 
-    git -C "$repository_path" remote get-url origin 2>/dev/null || return 2
+    application_observe local git -C "$repository_path" remote get-url origin 2>/dev/null || return 2
 
 }
 
@@ -63,7 +64,7 @@ workspace_remote_for_snapshot() {
 
 get_repository_current_branch() {
 
-    git -C "$1" symbolic-ref --quiet --short HEAD 2>/dev/null
+    application_observe local git -C "$1" symbolic-ref --quiet --short HEAD 2>/dev/null
 
     local result=$?
     [[ $result -eq 1 ]] && return 1
@@ -77,7 +78,7 @@ get_repository_default_branch() {
     local repository_path="$1"
     local head_ref
 
-    head_ref="$(git -C "$repository_path" symbolic-ref --quiet --short \
+    head_ref="$(application_observe local git -C "$repository_path" symbolic-ref --quiet --short \
         refs/remotes/origin/HEAD 2>/dev/null)"
 
     local result=$?
@@ -92,7 +93,7 @@ get_repository_status() {
 
     local status_output
 
-    status_output="$(git -C "$1" status --porcelain 2>/dev/null)" || return 2
+    status_output="$(application_observe local git -C "$1" status --porcelain 2>/dev/null)" || return 2
 
     if [[ -n "$status_output" ]]; then
         echo "true"

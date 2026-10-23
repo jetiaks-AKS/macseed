@@ -10,8 +10,12 @@ import shutil
 import subprocess
 import sys
 
+sys.dont_write_bytecode = True
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'core'))
 from external_tool import result
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'core/application-interface'))
+from observation import read as bounded_read
 
 
 ENV = dict(os.environ, HOMEBREW_NO_AUTO_UPDATE='1', HOMEBREW_NO_SUDO='1',
@@ -19,8 +23,12 @@ ENV = dict(os.environ, HOMEBREW_NO_AUTO_UPDATE='1', HOMEBREW_NO_SUDO='1',
 
 
 def read(command):
-    process = subprocess.run(command, env=ENV, stdin=subprocess.DEVNULL,
-                             capture_output=True, timeout=30, check=False)
+    if (os.environ.get('MACSEED_APPLICATION_EXECUTION') == 'true' or
+                os.environ.get('MACSEED_APPLICATION_OBSERVATION') == 'true'):
+        process = bounded_read(command, 30, env=ENV)
+    else:
+        process = subprocess.run(command, env=ENV, stdin=subprocess.DEVNULL,
+                                 capture_output=True, timeout=30, check=False)
     if process.returncode:
         raise OSError('public interface unavailable')
     return process.stdout.decode('utf-8').strip()

@@ -36,6 +36,7 @@ SUITES=(
     scripts/test-restore-prerequisites.py
     scripts/test-item-stall.py
     scripts/test-external-tools.py
+    scripts/test-external-process-reliability.py
     scripts/test-homebrew-capabilities.py
     scripts/test-restore-prepare.py
     scripts/test-restore-selection.py
