@@ -1,11 +1,12 @@
 """Privacy projection of production records, never a state observer."""
+import sys
+sys.dont_write_bytecode = True
+
 import hashlib
 import json
 import os
 import re
-import sys
 
-sys.dont_write_bytecode = True
 MAX_RECORDS = 8192
 MAX_LINE = 4096
 MODULES = {
