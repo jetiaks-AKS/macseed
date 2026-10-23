@@ -81,6 +81,16 @@ class RunnerTests(unittest.TestCase):
         self.fixture('a', "print('PRIVATE_SENTINEL'); self.fail('PRIVATE_SENTINEL')")
         self.fixture('b', 'self.assertEqual(1, 2)')
         self.fixture('c', 'self.assertTrue(True)')
+        # Modern unittest formatting mutates traceback links. Simulate this on
+        # older local Python too: diagnostics must snapshot locations first.
+        path = self.root / self.inventory[0]
+        path.write_text(path.read_text() + '''
+original_format = unittest.TestResult._exc_info_to_string
+def truncate_then_format(self, err, test):
+    err[2].tb_next = None
+    return original_format(self, err, test)
+unittest.TestResult._exc_info_to_string = truncate_then_format
+''')
         result, rows = self.run_fixture('--ci')
         self.assertEqual(result.returncode, 1, result.stderr)
         self.assertEqual([row['status'] for row in rows], ['FAIL', 'FAIL', 'PASS'])
@@ -90,6 +100,11 @@ class RunnerTests(unittest.TestCase):
         self.assertIn('--case test_a.Fixture.test_fixture', safe)
         self.assertIn('body', safe)
         self.assertIn('cleanup', safe)
+        self.assertIn({'file': 'scripts/test-a.py', 'line': 5},
+                      rows[0]['cases'][0]['diagnostics'][0]['frames'])
+        raw = ''.join(path.read_text() for path in (self.root / 'result/raw').glob('*.log'))
+        self.assertIn('PRIVATE_SENTINEL', raw)
+        self.assertIn('test-a.py", line 5', raw)
 
     def test_local_fail_fast(self):
         self.fixture('a', 'self.fail()')

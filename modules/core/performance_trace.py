@@ -128,6 +128,13 @@ def collect(parent):
         now = time.monotonic()
         if len(fields) == 2 and LABEL.fullmatch(fields[1]):
             event, label = fields
+            if event == 'finish':
+                flush()
+                # A failed diagnostic write must not retry at interpreter exit
+                # after the shell has already received the finish ACK.
+                TOTALS.clear()
+                print('ok', flush=True)
+                return
             if event == 'begin':
                 active.setdefault(label, []).append(now)
             elif event == 'end' and active.get(label):

@@ -938,6 +938,14 @@ os.write(fd, b'{"kind":"details_complete"}\\n')
 
     def test_opt_in_performance_trace_preserves_protocol(self):
         self.mas_fixture()
+        # A clock helper must be joined before Bootstrap exits, even when its
+        # interpreter takes time to finalize after EOF or a finish request.
+        helper = self.project / 'modules/core/performance_trace.py'
+        source = helper.read_text()
+        boundary = '    collect(int(sys.argv[1]))'
+        self.assertEqual(source.count(boundary), 1)
+        helper.write_text(source.replace(boundary,
+            "    if SCOPE == 'bootstrap':\n        atexit.register(lambda: time.sleep(0.5))\n" + boundary))
         Path(self.environment['TEST_MAS_STATE']).touch()
         self.pack()
         trace = self.root / 'performance'
@@ -1012,6 +1020,35 @@ os.write(fd, b'{"kind":"details_complete"}\\n')
             self.fail('missing Execute timing: ' + str([label for label in required if label not in totals]))
         self.assertFalse(Path(self.environment['TEST_MAS_LOG']).exists())
         self.assertNotIn(str(self.root), destination.read_text())
+
+        # A wedged diagnostic finalizer must also be bounded and reaped. A
+        # subshell cannot stop its owner's clock; unrelated work is untouched.
+        helper.write_text(helper.read_text().replace('time.sleep(0.5)', 'time.sleep(30)'))
+        pid_file = self.root / 'clock-pid'
+        shutdown = ('source modules/core/performance_trace.sh; performance_trace_start; '
+                    'printf "%s" "$MACSEED_PERFORMANCE_PID" > "$TEST_CLOCK_PID"; '
+                    '(performance_trace_stop); '
+                    'kill -0 "$MACSEED_PERFORMANCE_PID" || exit 91; '
+                    'performance_measure fixture.command bash -c "printf fixture-output; exit 7"')
+        unrelated = subprocess.Popen(['sleep', '30'])
+        try:
+            stopped = subprocess.run(['bash', '-c', shutdown], cwd=self.project,
+                env=dict(self.environment, MACSEED_PERFORMANCE_SCOPE='bootstrap',
+                         TEST_CLOCK_PID=str(pid_file)), capture_output=True, timeout=5)
+            self.assertEqual((stopped.returncode, stopped.stdout, stopped.stderr),
+                             (7, b'fixture-output', b''))
+            with self.assertRaises(ProcessLookupError):
+                os.kill(int(pid_file.read_text()), 0)
+            self.assertIsNone(unrelated.poll())
+        finally:
+            unrelated.terminate()
+            unrelated.wait(timeout=2)
+        preserved = subprocess.run(['bash', '-c',
+            "trap 'printf existing-exit' EXIT; source modules/core/performance_trace.sh; "
+            'performance_trace_start; [[ "$MACSEED_PERFORMANCE_ACTIVE" == false ]] || exit 91; exit 7'],
+            cwd=self.project, env=self.environment, capture_output=True, timeout=5)
+        self.assertEqual((preserved.returncode, preserved.stdout, preserved.stderr),
+                         (7, b'existing-exit', b''))
 
     def test_prepare_plan_and_recomputation(self):
         self.pack()

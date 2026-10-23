@@ -226,6 +226,10 @@ The format is based on the principles of **Keep a Changelog**.
 
 ### Fixed
 
+* Reap the optional performance clock before Bootstrap exits, preventing a late
+  diagnostic helper from producing an unknown Restore lifecycle result. Regression
+  diagnostics retain the assertion's relative file and line without exception data.
+
 * Restored complete module-relative dependencies in Homebrew activation and
   Dry-run CLI fixtures. Comparison cancellation now exercises actual owned-stop
   kill denial and confirms the injection with runtime evidence.

@@ -824,8 +824,11 @@ phases. `cask.unsupported` measures classification that returned unsupported,
 not installation. Metrics aggregate across items: a maximum does not identify a
 specific Cask. Instrumentation adds diagnostic IPC/I/O overhead; it is for locating
 expensive work, not comparing small timing differences. The helper flushes on idle
-and exit; allow a second after completion before reading. Forced termination can
-omit unfinished/unflushed spans. Invalid/unwritable output or unavailable helper
+and an acknowledged finish request. An opt-in Bash EXIT hook waits for its own
+clock helper and forcibly reaps a stuck helper after a bounded wait, preserving
+the command's exit status. An existing EXIT hook is left intact and prevents
+starting the clock. Forced termination can omit unfinished/unflushed spans.
+Invalid/unwritable output or unavailable helper
 disables diagnostics without changing operation outcomes. No trace enters Protocol
 V1, operation JSONL or Diagnostic Report. This trace is not restoration evidence.
 

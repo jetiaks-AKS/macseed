@@ -88,8 +88,16 @@ class TimedResult(unittest.TestResult):
 
     def diagnostic(self, err):
         # No exception values, source lines, locals, environment or operation logs.
-        return dict(error=err[0].__name__, frames=[dict(file=Path(f.filename).name, line=f.lineno)
-                    for f in traceback.extract_tb(err[2])])
+        root = Path(__file__).resolve().parent.parent
+        frames = []
+        for frame, line in traceback.walk_tb(err[2]):
+            try:
+                relative = Path(frame.f_code.co_filename).resolve().relative_to(root)
+            except ValueError:
+                continue
+            if relative != Path('scripts/test_unittest.py'):
+                frames.append(dict(file=relative.as_posix(), line=line))
+        return dict(error=err[0].__name__, frames=frames)
 
     def failure(self, test, status, err=None):
         if self.current is None:
@@ -105,17 +113,22 @@ class TimedResult(unittest.TestResult):
                 self.cleanup_error = True
 
     def addFailure(self, test, err):
-        super().addFailure(test, err)
+        # unittest may truncate traceback links during formatting. Preserve the
+        # assertion location first; full exceptions stay in the runner's raw log.
         self.failure(test, 'FAIL', err)
+        traceback.print_exception(*err, file=sys.stderr)
+        super().addFailure(test, err)
 
     def addError(self, test, err):
-        super().addError(test, err)
         self.failure(test, 'ERROR', err)
+        traceback.print_exception(*err, file=sys.stderr)
+        super().addError(test, err)
 
     def addSubTest(self, test, subtest, err):
-        super().addSubTest(test, subtest, err)
         if err:
             self.failure(test, 'FAIL' if issubclass(err[0], test.failureException) else 'ERROR', err)
+            traceback.print_exception(*err, file=sys.stderr)
+        super().addSubTest(test, subtest, err)
 
     def addSkip(self, test, reason):
         super().addSkip(test, reason)
