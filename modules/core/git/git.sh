@@ -1,5 +1,5 @@
 #!/bin/bash
-source modules/core/application-interface/observation.sh
+source "$(dirname "${BASH_SOURCE[0]}")/../application-interface/observation.sh" || return 2
 
 GIT_CONFIGURATION_FILE="${BLUEPRINT_GENERATED_DIR:-config/generated}/git.conf"
 GIT_CONFIGURATION_KEYS=(user.name user.email init.defaultBranch pull.rebase core.editor user.useConfigOnly pull.ff)

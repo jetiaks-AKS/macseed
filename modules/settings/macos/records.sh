@@ -1,5 +1,5 @@
 #!/bin/bash
-source modules/core/application-interface/observation.sh
+source "$(dirname "${BASH_SOURCE[0]}")/../../core/application-interface/observation.sh" || return 2
 
 MACOS_FINDER_WINDOW_TARGET_PATTERN='^(PfCm|PfVo|PfHm|PfDe|PfDo|PfAF)$'
 MACOS_DOCK_ORIENTATION_PATTERN='^(left|bottom|right)$'

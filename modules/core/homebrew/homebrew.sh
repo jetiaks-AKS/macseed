@@ -1,5 +1,5 @@
 #!/bin/bash
-source modules/core/application-interface/observation.sh
+source "$(dirname "${BASH_SOURCE[0]}")/../application-interface/observation.sh" || return 2
 
 # ==========================================
 # Check Homebrew

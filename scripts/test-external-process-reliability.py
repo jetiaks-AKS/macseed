@@ -174,6 +174,27 @@ class ReliabilityTests(unittest.TestCase):
         self.assertEqual(before, self.snapshot())
         self.assertFalse((self.items / 'external-tool-active.json').exists())
 
+        # Capture batches existing macOS serializers inside the same observer.
+        # A hung native read must stop with its owned child, not publish Missing.
+        native = self.root / 'defaults'
+        pidfile = self.root / 'defaults-pid'
+        native.write_text('#!/bin/bash\necho $$ > "$TEST_DEFAULTS_PID"\nexec sleep 10\n')
+        native.chmod(0o700)
+        candidate = self.root / 'candidate.conf'
+        candidate.touch()
+        environment = dict(os.environ, PATH=str(self.root) + ':' + os.environ['PATH'],
+                           MACSEED_APPLICATION_CAPTURE='true', BLUEPRINT_GENERATED_DIR=str(self.root / 'generated'),
+                           TEST_DEFAULTS_PID=str(pidfile))
+        with self.assertRaises(observation.ObservationError) as raised:
+            observation.read(['bash', str(ROOT / 'modules/discovery/macos/macos.sh'),
+                              '--capture-serialize', 'finder', str(candidate)],
+                             timeout=2, cwd=ROOT, env=environment)
+        self.assertEqual(raised.exception.reason, 'external_observation_deadline')
+        self.assertTrue(raised.exception.quiescent)
+        self.assertNotIn(int(pidfile.read_text()), item_execution.process_table())
+        self.assertEqual(before, self.snapshot())
+        self.assertFalse((self.items / 'external-tool-active.json').exists())
+
     def test_observation_failure_is_not_empty_success_or_permission_to_mutate(self):
         original = observation.ProcessTree.stop
         def unconfirmed(tree):

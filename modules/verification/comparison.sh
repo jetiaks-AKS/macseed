@@ -1,5 +1,5 @@
 #!/bin/bash
-source modules/core/application-interface/observation.sh
+source "$(dirname "${BASH_SOURCE[0]}")/../core/application-interface/observation.sh" || return 2
 
 # Transient projection of the current Verification run. CV_KIND is indexed by
 # Verification record offset; it contains only typed observations, never values.

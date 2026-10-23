@@ -576,6 +576,7 @@ remain authoritative. No second execution engine or Protocol V2 is introduced.
 | VS Code extension install / Execute inventory | Existing Restore lifecycle; 3,600 / 120 s | Deadline only | R5A durable uncertainty and continuation rules retained; open output writer cannot be success |
 | VS Code Discovery, Preview/readiness, Comparison, secure verify-only; assisted App Store `mas list` | Read-only inventory: 120 s | Deadline only | Complete bounded output required; no persistent observer journal/lock |
 | Git repository/configuration reads, developer-tool readiness, macOS scalar reads | Application read-only calls: 30 s | Deadline only | Failed read remains observation failure, never absence/match |
+| Capture macOS settings serialization | 30 s for all sequential reads in one category | Deadline only | Existing Bash serializer inside one owned observer; atomic publication waits for quiescence, EOF and validation |
 | Homebrew shell inventories/metadata; Python provider reads | Application reads: 120 s inventories, 30 s provider/local reads | Deadline only; existing Homebrew installation progress policy unchanged | Read-only route, no installer lifecycle adoption |
 | Preview, staged Capture/Discovery, Comparison, final Verification | 900 s aggregate phase budget; readiness 180 s | Deadline only | Failed/incomplete result; final Verification retains operation context until collection |
 | Owned application Bootstrap | 86,400 s last-resort aggregate budget | Deadline only, including otherwise unqualified local subprocesses | Interrupted mutation is unknown; no independent continuation or automatic retry |
@@ -631,6 +632,12 @@ primitives. A last-resort Bootstrap deadline also retains this fence. Readiness 
 reads it. Read-only failure alone does not imply installer uncertainty. Python shell
 entrypoints use `-B`, including Capture helpers, to prevent startup/import bytecode
 writes into the observed HOME.
+
+Capture groups each macOS category's short `defaults read-type/read` calls inside
+one supervised serializer, avoiding repeated Python startup and nested process-table
+scans. The private child admits only these read commands; ordinary CLI and other
+application reads retain their existing routes. Warning/error classification and
+the existing candidate-file validation/publication remain production-owned.
 
 The shared `ExternalProcesses` fence is recorded during result collection, not
 write-ahead admission. A parent crash or journal write failure before publication

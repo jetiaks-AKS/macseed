@@ -880,10 +880,19 @@ os.write(fd, b'{"kind":"details_complete"}\\n')
         self.pack()
         plan = self.plan_result()
         copied = self.project / 'modules/core/application-interface/execution.py'
-        text = copied.read_text().replace('            try:\n                process_table()',
-            '            try:\n                raise PermissionError("fixture process inspection denied")', 1)
-        copied.write_text(text)
+        marker = self.root / 'process-observer-fault-fired'
+        # Replace only execution's imported dependency. Other Preview/readiness
+        # observers remain real; this call is the pre-Bootstrap admission check.
+        copied.write_text(copied.read_text() + '\ndef process_table():\n'
+            f'    Path({str(marker)!r}).write_text("pre-bootstrap")\n'
+            '    raise PermissionError("fixture process inspection denied")\n')
+        launched = self.root / 'bootstrap-launched'
+        entry = self.project / 'bootstrap.sh'
+        entry.write_text('#!/bin/bash\n'
+            f'if [[ "$1" == --bootstrap ]]; then touch "{launched}"; exit 99; fi\n' + entry.read_text())
         result, events = self.execute(plan['prepared_plan_id'])
+        self.assertEqual(marker.read_text(), 'pre-bootstrap')
+        self.assertFalse(launched.exists())
         self.assertEqual(result.returncode, 2)
         self.assertEqual(events[-1]['data']['code'], 'process_observation_unavailable')
         self.assertTrue(events[-1]['data']['publication_occurred'])

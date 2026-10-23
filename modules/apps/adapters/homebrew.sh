@@ -1,6 +1,6 @@
 #!/bin/bash
 # shellcheck disable=SC2034 # Provider fields are consumed by sourcing domain scripts.
-source modules/core/application-interface/observation.sh
+source "$(dirname "${BASH_SOURCE[0]}")/../../core/application-interface/observation.sh" || return 2
 # Concrete Homebrew provider. Consumers use normalized state; all metadata,
 # lifecycle qualification and native command construction stay here.
 [[ "${MACSEED_HOMEBREW_ADAPTER_LOADED:-false}" != true ]] || return 0

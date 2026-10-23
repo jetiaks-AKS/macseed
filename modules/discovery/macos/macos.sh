@@ -1,5 +1,5 @@
 #!/bin/bash
-source modules/core/application-interface/observation.sh
+source "$(dirname "${BASH_SOURCE[0]}")/../../core/application-interface/observation.sh" || return 2
 
 # ==========================================
 # macOS Discovery
@@ -129,7 +129,25 @@ macos_collect_preference() {
 # Called inside the existing atomic publisher, before its final rename.
 macos_serialize_candidate() {
     local output_file="$1" category="$2" serializer="$3"
-    "$serializer" "$output_file" || return 2
+    if [[ "${MACSEED_APPLICATION_CAPTURE:-false}" == true &&
+          "${MACSEED_APPLICATION_EXECUTION:-false}" == true ]]; then
+        # One owned read-only category, not a Python/process-table supervisor for
+        # every short defaults call. The 30-second budget covers the whole batch.
+        [[ "$serializer" == "serialize_${category}_settings" ]] || return 2
+        application_observe local bash "${BASH_SOURCE[0]}" --capture-serialize "$category" "$output_file"
+        local result=$?
+        [[ $result -lt 2 ]] || return 2
+        if [[ $result -eq 1 ]]; then
+            case "$category" in
+                finder) FINDER_DISCOVERY_WARNING=true ;;
+                dock) DOCK_DISCOVERY_WARNING=true ;;
+                windows) WINDOWS_DISCOVERY_WARNING=true ;;
+                *) return 2 ;;
+            esac
+        fi
+    else
+        "$serializer" "$output_file" || return 2
+    fi
     validate_defaults_config "$output_file" "$category"
 }
 
@@ -211,3 +229,31 @@ discover_macos() {
     return "$discovery_result"
 
 }
+
+# Private Capture serializer entrypoint. It only runs existing read-only
+# serializers under application_observe's owned tree, deadline and EOF checks.
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    [[ $# -eq 3 && "$1" == --capture-serialize &&
+       "${MACSEED_APPLICATION_CAPTURE:-false}" == true &&
+       "${MACSEED_APPLICATION_EXECUTION:-false}" == true ]] || exit 2
+    case "$2" in finder|dock|windows|keyboard|trackpad|screenshots) ;; *) exit 2 ;; esac
+    [[ -f "$3" && ! -L "$3" && -w "$3" ]] || exit 2
+    source modules/core/common/common.sh || exit 2
+    source modules/core/logger/logger.sh || exit 2
+    VERBOSE="${VERBOSE:-false}"
+    # Local to this child. No environment flag can bypass the shared observer;
+    # only defaults read/read-type are admitted, within the enclosing supervisor.
+    application_observe() {
+        [[ $# -eq 5 && "$2" == defaults ]] || return 2
+        case "$1:$3" in local:read|local-diagnostic:read-type) ;; *) return 2 ;; esac
+        shift
+        "$@"
+    }
+    "serialize_${2}_settings" "$3" || exit 2
+    if [[ "${FINDER_DISCOVERY_WARNING:-false}" == true ||
+          "${DOCK_DISCOVERY_WARNING:-false}" == true ||
+          "${WINDOWS_DISCOVERY_WARNING:-false}" == true ]]; then
+        exit 1
+    fi
+    exit 0
+fi

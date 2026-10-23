@@ -224,6 +224,11 @@ The format is based on the principles of **Keep a Changelog**.
   resolves the external App Store inventory command with auto-indexing disabled,
   preserving Extra counts and malformed-inventory detection.
 
+* Capture observes macOS settings under one bounded serializer per category,
+  avoiding a Python supervisor for every scalar read. Shared observation libraries
+  resolve relative to their module, preserving Git operations from other working
+  directories and the meaning of relative configuration paths.
+
 * Application Restore Execute bounds VS Code extension inventory and installation
   CLI waits with separate absolute budgets and owned-process termination. Durable
   safety state blocks further mutation and fresh Restore after interrupted or unconfirmed
