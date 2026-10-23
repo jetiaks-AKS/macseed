@@ -58,7 +58,9 @@ def read(command, timeout=LOCAL_SECONDS, *, env=None, cwd=None, progress=None, m
         confirmed = False
         tree = ProcessTree(process.pid)
         os.set_blocking(process.stdout.fileno(), False)
-        deadline, scan_at, eof = time.monotonic() + timeout, 0, False
+        now = time.monotonic()
+        deadline, scan_at, eof = now + timeout, now + .25, False
+        root_exited = False
         while True:
             if progress is not None:
                 progress()
@@ -66,7 +68,7 @@ def read(command, timeout=LOCAL_SECONDS, *, env=None, cwd=None, progress=None, m
                 reason = 'external_observation_deadline'
                 break
             if time.monotonic() >= scan_at:
-                rows = tree.scan()
+                tree.scan()
                 scan_at = time.monotonic() + .25
             if not eof:
                 ready, _, _ = select.select([process.stdout], [], [], .05)
@@ -80,19 +82,23 @@ def read(command, timeout=LOCAL_SECONDS, *, env=None, cwd=None, progress=None, m
             else:
                 time.sleep(.05)
             if process.poll() is not None:
-                if tree.scan():
+                # Scan once on exit and again at EOF if it arrives later. The
+                # constructor already scanned; do not repeat it immediately.
+                if (not root_exited or eof) and tree.scan():
                     reason = 'external_observation_worker'
                     break
+                root_exited = True
                 if eof:
+                    # Reaped root, EOF and no owned workers establish completion.
+                    # Repeated stop scans add no evidence on this success path.
+                    confirmed = True
                     break
-        confirmed = tree.stop()
-        process.wait(timeout=1)
     except ERRORS:
         reason = reason or 'external_observation_failed'
     finally:
         if process is not None:
             try:
-                if tree is not None:
+                if tree is not None and not confirmed:
                     confirmed = tree.stop()
                 if process.poll() is None:
                     os.killpg(process.pid, signal.SIGKILL)

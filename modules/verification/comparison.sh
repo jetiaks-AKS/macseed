@@ -84,7 +84,7 @@ comparison_extra() {
                 homebrew-casks) target="$(application_observe inventory brew list --cask)" && state=available ;;
                 app-store)
                     if command -v mas >/dev/null 2>&1; then
-                        target="$(MAS_NO_AUTO_INDEX=1 application_observe inventory mas list)" && state=available
+                        target="$(application_observe inventory env MAS_NO_AUTO_INDEX=1 mas list)" && state=available
                     else reason=dependency_unavailable; fi ;;
                 vscode-extensions)
                     if command -v code >/dev/null 2>&1; then

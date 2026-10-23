@@ -277,17 +277,32 @@ class CompareTests(unittest.TestCase):
         adapter.write_text(original)
         self.comparison(bundle_path=str(path))
 
+    def inject_after_cancel(self, fault):
+        # Wrap the completed operation, not a textual return branch: cancel()
+        # can finish through several paths after stopping and collecting readers.
+        marker = self.root / 'cancel-fault-fired'
+        execution = self.project / 'modules/core/application-interface/execution.py'
+        execution.write_text(execution.read_text() +
+            '\n_fixture_cancel = OwnedBootstrap.cancel\n'
+            'def _cancel_with_fault(self):\n'
+            '    result = _fixture_cancel(self)\n'
+            '    assert not Path(self.item_state.name).exists()\n'
+            f'    Path({str(marker)!r}).write_text(str(result))\n' +
+            ''.join('    ' + line + '\n' for line in fault.splitlines()) +
+            'OwnedBootstrap.cancel = _cancel_with_fault\n')
+        return marker
+
     def test_cancel_cleanup_error_is_not_bundle_unavailable(self):
         path = self.make_bundle()
         before = path.read_bytes()
-        execution = self.project / 'modules/core/application-interface/execution.py'
-        original = execution.read_text()
-        # Fault only after the owned readers have been stopped and collected.
-        execution.write_text(original.replace('        self._collect()\n        return 130',
-            '        self._collect()\n        raise FileNotFoundError(2, "fixture staging vanished", self.item_state.name)\n        return 130'))
+        marker = self.inject_after_cancel(
+            'raise FileNotFoundError(2, "fixture staging vanished", self.item_state.name)')
         payload = self.payload
         self.payload = lambda **kwargs: payload(bundle_path=str(path))
-        self.test_cancellation_owned_group(expected_code='comparison_unavailable')
+        try:
+            self.test_cancellation_owned_group(expected_code='comparison_unavailable')
+        finally:
+            self.assertEqual(marker.read_text(), '130', 'Cleanup fault must execute after cancellation')
         self.assertEqual(path.read_bytes(), before)
         self.assertEqual(list(self.temporary.glob("macseed-compare-*")), [])
 
@@ -304,15 +319,18 @@ class CompareTests(unittest.TestCase):
         self.test_cancellation_owned_group()
 
     def test_cancel_does_not_hide_source_error(self):
-        self.deny_compare_descendant_kill()
         path = self.make_bundle()
-        execution = self.project / 'modules/core/application-interface/execution.py'
-        original = execution.read_text()
-        execution.write_text(original.replace('        self._collect()\n        return 130',
-            '        self._collect()\n        from pathlib import Path\n        source = Path(' + repr(str(path)) + ')\n        source.unlink()\n        source.read_bytes()\n        return 130'))
+        # Confirm source-error precedence even with uncertain cleanup evidence;
+        # the real owned readers are already stopped before injecting this state.
+        marker = self.inject_after_cancel(
+            'self.unknown_consequences = True\n'
+            f'source = Path({str(path)!r})\nsource.unlink()\nsource.read_bytes()')
         payload = self.payload
         self.payload = lambda **kwargs: payload(bundle_path=str(path))
-        self.test_cancellation_owned_group(expected_code='bundle_unavailable')
+        try:
+            self.test_cancellation_owned_group(expected_code='bundle_unavailable')
+        finally:
+            self.assertEqual(marker.read_text(), '130', 'Source fault must execute after cancellation')
 
     def test_matching_and_projections(self):
         data = self.comparison()

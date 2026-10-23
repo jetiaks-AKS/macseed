@@ -219,6 +219,11 @@ The format is based on the principles of **Keep a Changelog**.
 
 ### Fixed
 
+* Reduced repeated process-table scans during application Capture while retaining
+  observation deadlines, owned-process quiescence and EOF checks. Comparison again
+  resolves the external App Store inventory command with auto-indexing disabled,
+  preserving Extra counts and malformed-inventory detection.
+
 * Application Restore Execute bounds VS Code extension inventory and installation
   CLI waits with separate absolute budgets and owned-process termination. Durable
   safety state blocks further mutation and fresh Restore after interrupted or unconfirmed

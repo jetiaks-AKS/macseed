@@ -180,7 +180,9 @@ class ReliabilityTests(unittest.TestCase):
             original(tree)
             return False
         with patch.object(observation.ProcessTree, 'stop', unconfirmed), self.assertRaises(observation.ObservationError):
-            observation.read(self.script('print("publisher.extension")'), timeout=2)
+            # Force the cleanup path: a successful EOF/empty-tree observation
+            # no longer needs stop(). Partial output must still be rejected.
+            observation.read(self.script('import time; print("publisher.extension", flush=True); time.sleep(10)'), timeout=.3)
         self.assertTrue((self.items / 'external-tool-active.json').exists())
         result = subprocess.run(['bash', '-c', 'source modules/core/common/common.sh; '
             'later() { echo UNSAFE; }; run_module later later'], cwd=ROOT, capture_output=True, timeout=5)

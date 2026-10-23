@@ -621,14 +621,21 @@ consequences and blocks later modules and fresh Execute, even with Git unselecte
 There is no journal-clear, rollback, cleanup or automatic retry command.
 
 Read-only calls use bounded nonblocking output collection and confirm owned-tree
-termination plus pipe EOF. Timeouts/errors do not publish an empty inventory. These
-calls create no durable mutation state and never clear safety journals. Within an
+termination plus pipe EOF. A reaped root, EOF and a final empty owned-tree scan
+complete a read without redundant stop scans; failures still require bounded
+termination and EOF confirmation. Timeouts/errors do not publish an empty inventory.
+These calls create no durable mutation state and never clear safety journals. Within an
 existing Execute, unconfirmed termination marks the operation unsafe; its parent
 retains a fail-closed `ExternalProcesses/active.json` fence using the same journal
 primitives. A last-resort Bootstrap deadline also retains this fence. Readiness only
 reads it. Read-only failure alone does not imply installer uncertainty. Python shell
 entrypoints use `-B`, including Capture helpers, to prevent startup/import bytecode
 writes into the observed HOME.
+
+The shared `ExternalProcesses` fence is recorded during result collection, not
+write-ahead admission. A parent crash or journal write failure before publication
+can leave no durable fence. Its crash coverage and reconciliation contract remain
+open; handled-failure tests do not qualify this as durable recovery.
 
 Limitations: ProcessTree covers observed descendants and private-session members,
 not a child that escapes before observation, arbitrary external services or concurrent
