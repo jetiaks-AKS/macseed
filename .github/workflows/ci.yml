@@ -9,6 +9,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.ref == 'refs/heads/develop' }}
+
 jobs:
   lint:
     runs-on: macos-latest
@@ -51,7 +55,27 @@ jobs:
           rg --version
 
       - name: Regression tests
-        run: ./scripts/test.sh --shard ${{ matrix.shard }}/4
+        run: ./scripts/test.sh --ci --shard ${{ matrix.shard }}/4 --output logs/regression/ci
+
+      - name: Regression summary
+        if: ${{ always() }}
+        run: |
+          if test -f logs/regression/ci/safe/summary.md; then
+            cat logs/regression/ci/safe/summary.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'ERROR: regression did not produce a summary; mandatory work may be NOT RUN.' >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+
+      # Only typed runner diagnostics. Never upload raw test/operation output.
+      - name: Retain regression diagnostics
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: regression-${{ matrix.shard }}
+          path: logs/regression/ci/safe/
+          if-no-files-found: error
+          retention-days: 7
 
   # Preserve the existing combined check name for required-status consumers.
   validate:

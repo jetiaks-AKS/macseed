@@ -148,6 +148,10 @@ contracts. Real lifecycle, broader Git and macOS 27 qualification remain open.
   before publication can leave no durable re-entry evidence. Define and qualify
   its reconciliation contract; passing handled-failure fixtures does not close
   this risk or authorize clearing existing journals.
+- [ ] Review the first weighted four-runner CI timings and refresh provisional
+  weights from complete reports. Qualify the hosted Quick five-minute and full
+  regression 15–20-minute targets; local timings and the estimated plan are not
+  hosted acceptance. See [testing instructions](CONTRIBUTING.md#focused-feedback-and-ci).
 - [ ] Qualify numeric Git clone phase progress on real repositories and define
   reliable evidence for remaining external commands/unreported phases; absolute
   deadlines alone do not establish a stall.

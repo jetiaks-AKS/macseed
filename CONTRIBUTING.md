@@ -62,6 +62,68 @@ regression and Desktop validation must run sequentially unless temporary-state
 isolation has explicitly been proven. Complete one checkpoint at a time without
 unrelated task hopping.
 
+### Focused feedback and CI
+
+```bash
+./scripts/test.sh --quick
+./scripts/test.sh --suite scripts/test-dry-run-cli.sh
+./scripts/test.sh --suite scripts/test-restore-prepare.py \
+  --case RestorePrepareTests.test_cask_execution_and_convergence
+./scripts/test.sh --shard 1/4 --list
+./scripts/test.sh --ci --shard 1/4
+```
+
+No arguments run the full inventory sequentially. Quick selects existing
+entrypoint, mode, fixture-dependency and runner checks; it is not full acceptance.
+Its hosted budget is a target of five minutes, pending hosted measurement. Local
+execution on 23 October 2026 took about 19 seconds. Use focused checks first and
+honor task-specific limits on full local runs. Repeat `--case` to select several
+methods in one process; full IDs from `--list` or `Class.method` are accepted.
+
+`scripts/test.sh` owns the only suite inventory. `--list` prints the selected plan
+and all partitions as JSON without executing tests. Four CI runners use longest
+estimated work first to balance whole suites and independent RestorePrepare
+methods. IDs come from the existing unittest loader; setup, cleanup, subtests and
+conditional skips are retained. The planner checks exact ID union and disjointness,
+missing suites, discovery errors and empty partitions before execution. Methods
+remain sequential in one interpreter per assigned suite. RestorePrepare methods
+own separate temporary projects, HOME and safety state; other suites stay whole.
+
+`scripts/test-timings.json` contains weights, never a second test inventory. Current
+weights use completed suites from CI `39977240274`, older complete measurements
+from `39919575036` where needed, and four local case measurements. Failed/truncated
+suite durations are excluded. Unmeasured methods share the remaining measured
+suite weight; new suites receive a provisional 180 seconds. New IDs are always
+assigned. Update weights from complete safe reports, retaining their provenance.
+The initial plan estimates about 18.9 minutes per runner, excluding provisioning;
+this is not a measured hosted speedup. Historical weights, unmeasured methods and
+the new external-process suite remain sources of uncertainty.
+
+Each run writes a private ignored `logs/regression/<run>/` directory; `--output`
+can select a new destination. `safe/summary.md` and `.json` list PASS, FAIL, ERROR,
+SKIP and NOT RUN, slow suites/cases and exact reproduction commands. Per-suite
+safe logs/JSON include exception types and source locations, unittest setup/body/
+teardown/cleanup time and Prepare/Execute helper counts. Nested timing fields
+overlap and must not be added together. `raw/` is private local debugging output;
+never upload it. CI publishes only `safe/` as job summaries and seven-day artifacts,
+without exception values, environment, user file contents or Core operation logs.
+
+Local runs stop after the first failing suite. `--ci` continues after ordinary
+assertion failures only when the worker completed, its owned processes are gone
+and its private temporary directory is empty. Cleanup errors, surviving processes,
+invalid/incomplete results, cancellation and deadlines stop the shard and mark
+remaining work NOT RUN. Existing conditional skips remain visible. Process
+ownership reuses Core's observed-descendant/private-session boundary; it cannot
+prove absence of a child that detached before observation. Fixtures must retain
+their own cleanup contracts. No HOME, journal, installed-state or test-result cache
+is shared between tests or CI runs.
+
+Suite deadlines are three estimated durations plus 60 seconds, with a five-minute
+minimum; a case also has a fifteen-minute ceiling. Expiry reports ERROR and attempts
+owned cleanup, never success. CI keeps lint and every regression shard mandatory;
+`validate` rejects failure, cancellation or missing execution. Concurrency cancels
+stale development runs only within the same workflow and branch/PR group.
+
 For Bash changes, include syntax checks:
 
 ```bash

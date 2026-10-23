@@ -2813,8 +2813,9 @@ esac
     def test_execute_rejects_target_change_and_publication_failure(self):
         self.pack()
         self.allow_application_bootstrap()
-        prepared = self.invoke()[1][1]["data"]["prepared_plan_id"]
-        baseline = self.invoke()[1][1]['data']['plan_diagnostics']
+        initial = self.plan_result()
+        prepared = initial['prepared_plan_id']
+        baseline = initial['plan_diagnostics']
         (self.home / "Projects").mkdir()
         stale, events = self.execute(prepared)
         self.assertEqual(stale.returncode, 2)

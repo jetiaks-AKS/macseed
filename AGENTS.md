@@ -191,6 +191,9 @@ Validate proportionally. Documentation-only changes use diff/link review and
 inspection or workflows merely for documentation. For code, run focused existing
 harnesses first. Use `scripts/test.sh` for justified full integration/release
 validation and `scripts/lint.sh` for ShellCheck. Do not replace canonical runners.
+Use `scripts/test.sh --quick`, `--suite` and `--case` for focused feedback;
+[Contributing](CONTRIBUTING.md#focused-feedback-and-ci) owns runner options,
+partition completeness, timings and diagnostic privacy. Quick is not full acceptance.
 When Desktop production presentation/state semantics change, focused validation
 must include both the relevant feature tests and `PresentationTests`. Run full
 canonical validation at implementation checkpoint closure. Canonical repository

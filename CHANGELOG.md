@@ -139,6 +139,13 @@ The format is based on the principles of **Keep a Changelog**.
 
 ### Changed
 
+* Balanced the four regression runners using recorded durations and discovered
+  RestorePrepare case IDs, retaining the full mandatory inventory. Added Quick
+  and suite/case selection, phase timings, safe per-suite diagnostics and exact
+  failure reproduction. CI collects isolated assertion failures, stops on unsafe
+  cleanup and cancels stale development runs. Removed a redundant Prepare call
+  from a stale-plan fixture; hosted performance targets remain unqualified.
+
 * Reduce repeated inventories and input validation in Restore Preview/readiness and
   Global Verification, reuse immutable Homebrew result serialization, and avoid duplicate
   Bundle validation during preparation while retaining integrity and stale-plan gates.
