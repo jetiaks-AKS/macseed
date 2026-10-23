@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 """VS Code reliability using only disposable CLI, target and Core fixtures."""
 import importlib.util
+import hashlib
 import io
 import json
 import os
 from pathlib import Path
 import signal
+import socket
+import stat
 import subprocess
 import sys
 import tempfile
@@ -28,7 +31,8 @@ DIAGNOSTIC = load('vscode_diagnostic', ROOT / 'modules/vscode/cli_diagnostic.py'
 EXECUTION = load('vscode_cli_execution', ROOT / 'modules/vscode/cli_execution.py')
 PREPARE = load('vscode_restore_fixture', ROOT / 'scripts/test-restore-prepare.py')
 SECRET = 'PRIVATE_VSCODE_SECRET'
-CLI = r'''#!/usr/bin/env python3
+# Scope bytecode isolation to the mock interpreter, never its production parent.
+CLI = r'''#!/usr/bin/env -S PYTHONDONTWRITEBYTECODE=1 python3
 import json, os, pathlib, signal, subprocess, sys, time
 root = pathlib.Path(os.environ['TEST_VSCODE_ROOT'])
 spec = json.loads((root / 'spec.json').read_text())
@@ -36,6 +40,23 @@ state = root / 'installed.json'
 installed = json.loads(state.read_text())
 attempts = root / 'attempts'
 mode = spec.get('mode', 'success')
+if spec.get('trace_context'):
+    directory = os.environ.get('MACSEED_ITEM_STATE_DIR')
+    durable = pathlib.Path.home() / 'Library/Application Support/Macseed/VSCode/active.json'
+    marker = pathlib.Path(directory) / 'external-tool-active.json' if directory else None
+    def value(path):
+        return json.loads(path.read_text()) if path is not None and path.is_file() else None
+    row = dict(arguments=sys.argv[1:], installed=installed,
+        bytecode_disabled=(os.environ.get('PYTHONDONTWRITEBYTECODE') == '1' and sys.dont_write_bytecode),
+        supervised=os.environ.get('MACSEED_VSCODE_SUPERVISED_RESTORE') == 'true',
+        secure_verify_only=os.environ.get('MACSEED_APPLICATION_SECURE_VERIFY_ONLY') == 'true',
+        operation_state=directory, state_exists=bool(directory and pathlib.Path(directory).is_dir()),
+        final_verify=bool(directory and (pathlib.Path(directory) / 'execution-complete').is_file()),
+        durable=value(durable), marker=value(marker))
+    with (root / 'contexts.jsonl').open('a') as stream:
+        stream.write(json.dumps(row) + '\n')
+if mode == 'supervised_inventory_hang':
+    mode = 'inventory_hang' if os.environ.get('MACSEED_VSCODE_SUPERVISED_RESTORE') == 'true' else 'success'
 if sys.argv[1:] == ['--list-extensions']:
     if mode == 'inventory_hang':
         (root / 'active').write_text(str(os.getpid()))
@@ -151,17 +172,28 @@ class ExtensionBootstrapTests(unittest.TestCase):
         (self.root / 'items').mkdir(mode=0o700)
         self.environment = dict(os.environ, HOME=str(self.root), TEST_VSCODE_ROOT=str(self.root),
                                 TEST_CONFIGURATION=str(self.config), MACSEED_APPLICATION_EXECUTION='true',
+                                BUNDLE_RESTORE_ACTIVE='true',
                                 MACSEED_ITEM_STATE_DIR=str(self.root / 'items'),
                                 PATH=str(self.root / 'bin') + ':/usr/bin:/bin:/usr/sbin:/sbin')
 
     def mode(self, value):
         (self.root / 'spec.json').write_text(json.dumps({'mode': value}))
 
-    def run_install(self, verbose=False):
+    def run_install(self, verbose=False, reader_failure=False):
         script = '''
 source modules/core/common/common.sh
 source modules/core/verification/verification.sh
 source modules/vscode/extensions.sh
+MODE=--bootstrap
+if [[ "${TEST_READER_FAILURE:-false}" == true ]]; then
+    python3() {
+        if [[ "$*" == '-B modules/vscode/cli_diagnostic.py' ]]; then
+            cat >/dev/null
+            return 19
+        fi
+        command python3 "$@"
+    }
+fi
 log() { printf '%s\n' "$1" >> "$TEST_VSCODE_ROOT/technical.log"; }
 blueprint_exists() { return 1; }
 blueprint_generated_file() { printf '%s\n' "$TEST_CONFIGURATION"; }
@@ -177,11 +209,15 @@ verification_reset restore
 install_vscode_extensions
 install_status=$?
 printf '%s\n' "$MODULE_CHANGED" > "$TEST_VSCODE_ROOT/changed"
+printf '%s %s %s %s\n' "${VSCODE_INSTALL_EXIT_CODE:-unset}" \
+    "${VSCODE_INSTALL_DIAGNOSTIC_VALID:-false}" "${VSCODE_INSTALL_SUPERVISED:-false}" \
+    "${VSCODE_INSTALL_QUIESCENT:-false}" > "$TEST_VSCODE_ROOT/diagnostic-status"
 exit "$install_status"
 '''
         with tempfile.TemporaryFile() as records:
             environment = dict(self.environment, MACSEED_REPORT_FD=str(records.fileno()),
-                               TEST_VERBOSE=str(verbose).lower())
+                               TEST_VERBOSE=str(verbose).lower(),
+                               TEST_READER_FAILURE=str(reader_failure).lower())
             result = subprocess.run(['bash', '-c', script], cwd=ROOT, env=environment,
                                     pass_fds=(records.fileno(),), capture_output=True, timeout=15)
             records.seek(0)
@@ -394,6 +430,7 @@ class CLIWatchdogTests(unittest.TestCase):
                             if not key.startswith(('MACSEED_', 'VSCODE_'))}
         self.environment.update(HOME=str(self.root), TEST_VSCODE_ROOT=str(self.root),
                                 MACSEED_APPLICATION_EXECUTION='true',
+                                BUNDLE_RESTORE_ACTIVE='true', MACSEED_VSCODE_SUPERVISED_RESTORE='true',
                                 MACSEED_ITEM_STATE_DIR=str(self.root / 'items'))
         self.environment_patch = patch.dict(os.environ, self.environment, clear=True)
         self.environment_patch.start()
@@ -678,7 +715,282 @@ class CLIWatchdogRestoreTests(unittest.TestCase):
                 self.assertNotIn(private, data)
 
 
+class ExecutionBoundaryTests(unittest.TestCase):
+    """Production Core/Bootstrap routing; only external tools are disposable mocks."""
+    def setUp(self):
+        ExtensionRestoreTests.setUp(self)
+        for name in tuple(self.fixture.environment):
+            if name.startswith(('MACSEED_', 'VSCODE_', 'BUNDLE_RESTORE_')):
+                self.fixture.environment.pop(name)
+        self.mode('success')
+
+    def mode(self, mode):
+        (self.root / 'spec.json').write_text(json.dumps(dict(mode=mode, trace_context=True)))
+
+    def contexts(self):
+        path = self.root / 'contexts.jsonl'
+        return [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
+
+    def snapshot(self):
+        # Include every HOME path, lifecycle lock/journal, bytes and metadata.
+        result = {}
+        for path in (self.fixture.home, *sorted(self.fixture.home.rglob('*'))):
+            info = path.lstat()
+            content = (os.readlink(path) if path.is_symlink() else
+                       path.read_bytes() if path.is_file() else None)
+            result[str(path.relative_to(self.fixture.home))] = (
+                stat.S_IMODE(info.st_mode), info.st_uid, info.st_mtime_ns, content)
+        return result
+
+    def assert_home_unchanged(self, before):
+        after = self.snapshot()
+        if after == before:
+            return
+        added = sorted(after.keys() - before.keys())
+        removed = sorted(before.keys() - after.keys())
+        changed = sorted(path for path in before.keys() & after.keys() if before[path] != after[path])
+
+        def describe(entry):
+            if entry is None:
+                return None
+            mode, uid, mtime, content = entry
+            result = dict(mode=mode, uid=uid, mtime_ns=mtime)
+            if content is not None:
+                raw = content if isinstance(content, bytes) else os.fsencode(content)
+                result.update(size=len(raw), sha256=hashlib.sha256(raw).hexdigest())
+            return result
+
+        details = {path: dict(before=describe(before.get(path)), after=describe(after.get(path)))
+                   for path in added + removed + changed}
+        self.fail('HOME snapshot mismatch:\n' + json.dumps(dict(
+            added=added, removed=removed, changed=changed, details=details), indent=2, sort_keys=True))
+
+    def seed_quiescent(self):
+        directory = self.fixture.home / 'Library/Application Support/Macseed/VSCode'
+        directory.mkdir(parents=True, mode=0o700)
+        value = dict(contract=1, tool='vscode', owner='a' * 32, operation='inventory',
+                     state='quiescent', quiescence_confirmed=True, outcome='success')
+        for name, raw in (('active.json', json.dumps(value)), ('lifecycle.lock', 'a' * 32)):
+            path = directory / name
+            path.write_text(raw)
+            path.chmod(0o600)
+
+    def assert_native_observations(self, rows):
+        self.assertTrue(rows)
+        self.assertTrue(all(row['arguments'] == ['--list-extensions'] and
+                            not row['supervised'] for row in rows), rows)
+        self.assertTrue(all(row['bytecode_disabled'] for row in rows), rows)
+
+    def test_prepare_and_readiness_preserve_lifecycle(self):
+        for existing in (False, True):
+            with self.subTest(existing_journal=existing):
+                if existing:
+                    self.seed_quiescent()
+                before, first = self.snapshot(), len(self.contexts())
+                plan = self.fixture.plan_result()
+                self.assertTrue(plan['readiness']['ready'], plan)
+                environment = dict(self.fixture.environment, MACSEED_APPLICATION_EXECUTION='true',
+                    BUNDLE_RESTORE_ACTIVE='true', BLUEPRINT_FILE=str(self.fixture.stage / 'blueprint.conf'),
+                    BLUEPRINT_GENERATED_DIR=str(self.fixture.stage / 'generated'))
+                result = subprocess.run(['bash', './bootstrap.sh', '--application-readiness'],
+                    cwd=self.fixture.project, env=environment, capture_output=True, timeout=20)
+                self.assertEqual((result.returncode, result.stdout.strip()), (0, b'ready'), result.stderr)
+                self.assert_home_unchanged(before)
+                self.assert_native_observations(self.contexts()[first:])
+
+    def test_compare_verification_preserves_lifecycle(self):
+        self.seed_quiescent()
+        before = self.snapshot()
+        request = dict(protocol_version=1, operation_id='routing-verify', operation='environment_compare',
+                       parameters=dict(bundle_path=str(self.fixture.archive)))
+        result = subprocess.run(['bash', './modules/core/application-interface/core.sh'],
+            input=json.dumps(request).encode(), cwd=self.fixture.project,
+            env=self.fixture.environment, capture_output=True, timeout=20)
+        events = [json.loads(line) for line in result.stdout.splitlines()]
+        self.assertEqual((result.returncode, events[-1]['type']), (0, 'completed'), events)
+        self.assert_home_unchanged(before)
+        self.assert_native_observations(self.contexts())
+        state = next(event['data'] for event in events if event['type'] == 'result')
+        self.assertEqual(state['verification']['status'], 'complete')
+
+    def test_secure_failure_verification_preserves_lifecycle(self):
+        self.seed_quiescent()
+        # Mock the external importer protocol, retaining real Core SecureError,
+        # OwnedBootstrap, receipt validation and the entire verification dispatch.
+        (self.root / 'bin/age').write_text('#!/bin/bash\n[[ "$*" == --version ]]\n')
+        importer = self.fixture.project / 'scripts/ssh-identity-migrate.sh'
+        importer.write_text('''#!/usr/bin/env -S PYTHONDONTWRITEBYTECODE=1 python3
+import json, os, pathlib, socket, struct, sys
+args = sys.argv[1:]
+attempt = args[args.index('--attempt') + 1]
+endpoint = pathlib.Path(args[args.index('--internal-evidence') + 1])
+raw = ('E\\t1\\t' + attempt + '\\tvalidated\\t1\\tskipped\\ttarget_conflict\\n'
+       'I\\tid_fixture\\tunverified\\t-\\ttarget_conflict\\tobservation\\nEND\\n').encode()
+descriptor = os.open(endpoint, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+with os.fdopen(descriptor, 'wb') as stream: stream.write(raw)
+body = json.dumps(dict(type='finish', code='secure_target_conflict')).encode()
+channel = socket.socket(fileno=int(args[args.index('--application-channel-fd') + 1]))
+channel.sendall(struct.pack('!I', len(body)) + body)
+sys.exit(1)
+''')
+        importer.chmod(0o700)
+        self.fixture.archive = self.root / 'secure routing.mbt'
+        self.fixture.pack(secure=True)
+        plan = self.fixture.plan_result(secure=True)
+        before, first = self.snapshot(), len(self.contexts())
+        request = dict(protocol_version=1, operation_id='routing-secure', operation='restore_execute',
+            parameters=dict(path=str(self.fixture.archive), disabled_groups=[], include_secure=True,
+                            expected_prepared_plan_id=plan['prepared_plan_id']))
+        parent, child = socket.socketpair()
+        try:
+            result = subprocess.run(['bash', './modules/core/application-interface/core.sh',
+                '--secure-fd', str(child.fileno())], input=json.dumps(request).encode(),
+                pass_fds=(child.fileno(),), cwd=self.fixture.project, env=self.fixture.environment,
+                capture_output=True, timeout=25)
+        finally:
+            parent.close()
+            child.close()
+        events = [json.loads(line) for line in result.stdout.splitlines()]
+        self.assertEqual(result.returncode, 2, events)
+        terminal = events[-1]['data']
+        self.assertEqual(terminal['code'], 'secure_target_conflict', events)
+        self.assertEqual(terminal['verification']['status'], 'complete')
+        self.assertTrue(any(row['domain'] == 'secure-ssh-identities'
+            for row in terminal['verification']['details']['operation_records']))
+        self.assert_home_unchanged(before)
+        rows = self.contexts()[first:]
+        self.assert_native_observations(rows)
+        self.assertTrue(any(row['secure_verify_only'] for row in rows), rows)
+        self.assertFalse((self.root / 'attempts').exists())
+
+    def test_execute_keeps_context_through_final_verification(self):
+        plan = self.fixture.plan_result()
+        result, events = self.fixture.execute(plan['prepared_plan_id'])
+        self.assertEqual(result.returncode, 0, events)
+        self.assertEqual(events[-1]['type'], 'completed')
+        terminal = events[-2]['data']
+        self.assertEqual(terminal['execution_status'], 'completed')
+        self.assertFalse(terminal['unknown_consequences'])
+        verification = terminal['verification']
+        self.assertEqual((verification['status'], verification['verdict']),
+                         ('complete', 'selected_requirements_verified'))
+        details = verification['details']
+        self.assertEqual(details['status'], 'complete')
+        operations = [row for row in details['operation_records'] if row['domain'] == 'vscode-extensions']
+        self.assertEqual([row['outcome'] for row in operations], ['noop'] + ['success'] * 4)
+        self.assertTrue(any(row['domain'] == 'vscode-extensions' and row['state'] == 'changed'
+                            and row['changed'] is True for row in details['module_outcomes']), details)
+        rows = [row for row in self.contexts() if row['supervised']]
+        self.assertTrue(rows)
+        states = {row['operation_state'] for row in rows}
+        self.assertEqual(len(states), 1)
+        for row in rows:
+            self.assertTrue(row['state_exists'], row)
+            self.assertEqual(row['durable'], row['marker'])
+            self.assertEqual(row['durable']['state'], 'active')
+            operation = 'inventory' if row['arguments'] == ['--list-extensions'] else 'install'
+            self.assertEqual(row['durable']['operation'], operation)
+        final = [row for row in rows if row['final_verify']]
+        self.assertEqual(len(final), 1, rows)
+        self.assertEqual(final[0]['arguments'], ['--list-extensions'])
+        self.assertEqual(set(final[0]['installed']), set((self.fixture.stage /
+            'generated/vscode-extensions.conf').read_text().splitlines()))
+        self.assertFalse(Path(next(iter(states))).exists())  # Cleanup is after final Verify.
+        journal = self.fixture.home / 'Library/Application Support/Macseed/VSCode/active.json'
+        self.assertTrue(EXECUTION.completed(json.loads(journal.read_text())))
+
+    def test_missing_or_invalid_state_has_no_native_fallback(self):
+        consumer = ExtensionBootstrapTests('test_success_and_repeated_noop')
+        consumer.setUp()
+        self.addCleanup(consumer.doCleanups)
+        invalid = consumer.root / 'unsafe-items'
+        invalid.mkdir(mode=0o755)
+        linked = consumer.root / 'linked-items'
+        linked.symlink_to(consumer.root / 'items', target_is_directory=True)
+        for state in (None, str(consumer.root / 'missing'), str(invalid), str(linked)):
+            with self.subTest(operation_state=state):
+                consumer.environment.pop('MACSEED_ITEM_STATE_DIR', None)
+                if state is not None:
+                    consumer.environment['MACSEED_ITEM_STATE_DIR'] = state
+                (consumer.root / 'spec.json').write_text('{"mode":"success","trace_context":true}')
+                result, records = consumer.run_install()
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertEqual(consumer.attempts(), [])
+                self.assertFalse((consumer.root / 'Library/Application Support/Macseed/VSCode').exists())
+                self.assertFalse((consumer.root / 'contexts.jsonl').exists())
+                self.assertFalse(any(row['outcome'] == 'success' for row in records))
+
+    def test_native_and_supervised_diagnostics_keep_statuses(self):
+        for supervised, reader_failure in ((False, False), (False, True), (True, False)):
+            with self.subTest(supervised=supervised, reader_failure=reader_failure):
+                consumer = ExtensionBootstrapTests('test_success_and_repeated_noop')
+                consumer.setUp()
+                self.addCleanup(consumer.doCleanups)
+                if not supervised:
+                    consumer.environment.pop('BUNDLE_RESTORE_ACTIVE')
+                consumer.config.write_text('publisher.failed\n')
+                consumer.mode('reset')
+                result, records = consumer.run_install(verbose=True, reader_failure=reader_failure)
+                self.assertEqual(result.returncode, 2)
+                expected_reason = 'unknown' if reader_failure else 'network_reset'
+                self.assertEqual(records[0]['reason'], expected_reason)
+                self.assertEqual((consumer.root / 'diagnostic-status').read_text().strip(),
+                    f'42 {str(not reader_failure).lower()} {str(supervised).lower()} {str(supervised).lower()}')
+                self.assertIn(f'exit_code=42 reason={expected_reason}',
+                              (consumer.root / 'technical.log').read_text())
+                self.assertEqual(consumer.attempts(), ['publisher.failed'])
+                for data in (result.stdout, result.stderr, json.dumps(records).encode(),
+                             (consumer.root / 'technical.log').read_bytes()):
+                    self.assertNotIn(b'Error while installing extensions:', data)
+                    self.assertNotIn(SECRET.encode(), data)
+
+    def test_execute_inventory_deadline_prevents_install(self):
+        plan = self.fixture.plan_result()
+        runner = self.fixture.project / 'modules/vscode/cli_execution.py'
+        runner.write_text(runner.read_text().replace('executor = CLIExecutor()',
+            'executor = CLIExecutor(inventory_seconds=1, install_seconds=2, poll=.05)'))
+        self.mode('supervised_inventory_hang')
+        result, events = self.fixture.execute(plan['prepared_plan_id'])
+        self.assertEqual(result.returncode, 2, events)
+        terminal = events[-1]['data']
+        self.assertEqual(terminal['code'], 'privileged_lifecycle_unknown')
+        self.assertTrue(terminal['unknown_consequences'])
+        self.assertEqual(terminal['external_lifecycle_cause'], 'vscode_inventory_deadline')
+        self.assertFalse((self.root / 'attempts').exists())
+        journal = self.fixture.home / 'Library/Application Support/Macseed/VSCode/active.json'
+        before = journal.read_bytes()
+        self.assertEqual(json.loads(before)['state'], 'unknown_consequences')
+        blocked = self.fixture.plan_result(groups=('Applications',))
+        retry, retry_events = self.fixture.execute(blocked['prepared_plan_id'], groups=('Applications',))
+        self.assertEqual(retry.returncode, 2, retry_events)
+        self.assertEqual(retry_events[-1]['data']['code'], 'privileged_lifecycle_unknown')
+        self.assertFalse(retry_events[-1]['data']['publication_occurred'])
+        self.assertEqual(journal.read_bytes(), before)
+
+
 if __name__ == '__main__':
+    if '--routing-only' in sys.argv:
+        sys.argv.remove('--routing-only')
+        suite = unittest.TestSuite()
+        suite.addTests(ExecutionBoundaryTests(name) for name in (
+            'test_prepare_and_readiness_preserve_lifecycle',
+            'test_compare_verification_preserves_lifecycle',
+            'test_secure_failure_verification_preserves_lifecycle',
+            'test_execute_keeps_context_through_final_verification',
+            'test_missing_or_invalid_state_has_no_native_fallback',
+            'test_native_and_supervised_diagnostics_keep_statuses',
+            'test_execute_inventory_deadline_prevents_install',
+        ))
+        for cls, names in (
+            (ExtensionBootstrapTests, ['test_reset_continues_independent_and_preserves_native_exit',
+                'test_inventory_errors_stop_immediately',
+                'test_unknown_and_contradictory_errors_stop_and_do_not_leak']),
+            (ExtensionRestoreTests, ['test_cancellation_stops_active_cli_and_never_starts_later_items']),
+            (CLIWatchdogRestoreTests, ['test_unknown_result_and_reentry_without_extensions']),
+            (CLIWatchdogTests, ['test_orphan_worker_after_root_exit_zero']),
+        ):
+            suite.addTests(cls(name) for name in names)
+        sys.exit(not unittest.TextTestRunner(verbosity=2, failfast=True).run(suite).wasSuccessful())
     if '--r5a-only' in sys.argv:
         sys.argv.remove('--r5a-only')
         suite = unittest.TestSuite()

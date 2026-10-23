@@ -1,15 +1,20 @@
 #!/bin/bash
 
 OBSERVED_VSCODE_STATUS=
+VSCODE_SUPERVISED_INVENTORY=false
 observe_vscode_inventory() {
     local inventory
-    if ! inventory="$(vscode_cli --list-extensions)"; then
-        case "$inventory" in
-            reason:vscode_inventory_deadline|reason:vscode_process_observation_failed|reason:vscode_quiescence_unconfirmed|reason:vscode_lifecycle_state_failed|reason:vscode_lifecycle_pending|reason:vscode_cli_delegation_unsupported|reason:cancelled|reason:vscode_process_interrupted)
-                error "${inventory#reason:}" ;;
-            *) error "vscode_inventory_observation_failed" ;;
-        esac
-        return 2
+    if [[ "${VSCODE_SUPERVISED_INVENTORY:-false}" == true ]]; then
+        if ! inventory="$(vscode_supervised_cli --list-extensions)"; then
+            case "$inventory" in
+                reason:vscode_inventory_deadline|reason:vscode_process_observation_failed|reason:vscode_quiescence_unconfirmed|reason:vscode_lifecycle_state_failed|reason:vscode_lifecycle_pending|reason:vscode_cli_delegation_unsupported|reason:cancelled|reason:vscode_process_interrupted)
+                    error "${inventory#reason:}" ;;
+                *) error "vscode_inventory_observation_failed" ;;
+            esac
+            return 2
+        fi
+    else
+        inventory="$(vscode_cli --list-extensions)" || return 2
     fi
     LC_ALL=C awk '/^$/ { next } { if ($0 !~ /^[A-Za-z0-9][A-Za-z0-9_-]*\.[A-Za-z0-9][A-Za-z0-9_-]*$/) exit 2; print }' <<< "$inventory"
 }
@@ -76,7 +81,23 @@ vscode_cli_resolve() {
 
 vscode_cli() {
     vscode_cli_resolve || return 2
-    python3 -B modules/vscode/cli_execution.py "$VSCODE_CLI_COMMAND" "$@" 2>/dev/null
+    "$VSCODE_CLI_COMMAND" "$@"
+}
+
+# Application flags alone also occur in Prepare/readiness. Missing operation
+# state must fail inside the supervisor, never select an unsupervised fallback.
+vscode_restore_execution() {
+    [[ "${MACSEED_APPLICATION_EXECUTION:-false}" == true &&
+       "${BUNDLE_RESTORE_ACTIVE:-false}" == true && "${MODE:-}" == --bootstrap &&
+       "${BUNDLE_RESTORE_PREVIEW:-false}" != true &&
+       "${MACSEED_APPLICATION_SECURE_VERIFY_ONLY:-false}" != true ]]
+}
+
+vscode_supervised_cli() {
+    vscode_restore_execution || return 2
+    vscode_cli_resolve || return 2
+    MACSEED_VSCODE_SUPERVISED_RESTORE=true \
+        python3 -B modules/vscode/cli_execution.py "$VSCODE_CLI_COMMAND" "$@" 2>/dev/null
 }
 
 check_vscode_cli() {
@@ -121,6 +142,8 @@ is_vscode_extension_installed() {
 # ==========================================
 
 preview_vscode_extensions() {
+    # Explicit read-only scope, even when called from another domain consumer.
+    local VSCODE_SUPERVISED_INVENTORY=false
 
     if blueprint_exists &&
        [[ -z "$(blueprint_selected_items vscode-extensions)" ]]; then
@@ -186,30 +209,46 @@ install_vscode_extension() {
     VSCODE_INSTALL_REASON=unknown
     VSCODE_INSTALL_DIAGNOSTIC_VALID=false
     VSCODE_INSTALL_QUIESCENT=false
+    VSCODE_INSTALL_SUPERVISED=false
+    vscode_restore_execution && VSCODE_INSTALL_SUPERVISED=true
 
-    command -v python3 >/dev/null 2>&1 && [[ -r modules/vscode/cli_execution.py ]] || {
+    command -v python3 >/dev/null 2>&1 && [[ -r modules/vscode/cli_diagnostic.py ]] || {
         error "VS Code CLI diagnostics are unavailable"
         return 2
     }
 
     action "Installing $extension..."
 
-    # The supervisor drains opaque output and emits only bounded typed facts.
-    report="$(vscode_cli --install-extension "$extension")"
+    if [[ "$VSCODE_INSTALL_SUPERVISED" == true ]]; then
+        # Owned Restore emits typed status and quiescence; never reclassify it
+        # as native output or fall back when its state/launch admission fails.
+        report="$(vscode_supervised_cli --install-extension "$extension")"
+    else
+        # Preserve the baseline shell call/interceptors and native status. Both
+        # streams still pass only through the closed, bounded diagnostic reader.
+        report="$(
+            vscode_cli --install-extension "$extension" 2>&1 |
+                python3 -B modules/vscode/cli_diagnostic.py 2>/dev/null
+            pipeline_status=("${PIPESTATUS[@]}")
+            printf 'exit:%d\nreader:%d\n' "${pipeline_status[0]}" "${pipeline_status[1]}"
+        )"
+    fi
     while IFS=: read -r field value; do
         case "$field:$value" in
             reason:network_reset|reason:unknown|reason:vscode_install_deadline|reason:vscode_process_observation_failed|reason:vscode_quiescence_unconfirmed|reason:vscode_lifecycle_state_failed|reason:vscode_lifecycle_pending|reason:vscode_cli_delegation_unsupported|reason:cancelled|reason:vscode_process_interrupted)
                 VSCODE_INSTALL_REASON="$value" ;;
             exit:*) [[ "$value" =~ ^[0-9]+$ && "$value" -le 255 ]] && VSCODE_INSTALL_EXIT_CODE="$value" ;;
             reader:0) VSCODE_INSTALL_DIAGNOSTIC_VALID=true ;;
-            quiescence:confirmed) VSCODE_INSTALL_QUIESCENT=true ;;
+            quiescence:confirmed)
+                [[ "$VSCODE_INSTALL_SUPERVISED" != true ]] || VSCODE_INSTALL_QUIESCENT=true ;;
         esac
     done <<< "$report"
     [[ "$VSCODE_INSTALL_DIAGNOSTIC_VALID" == true ]] || VSCODE_INSTALL_REASON=unknown
     detail "VS Code CLI result: exit_code=$VSCODE_INSTALL_EXIT_CODE reason=$VSCODE_INSTALL_REASON"
 
-    if [[ "$VSCODE_INSTALL_EXIT_CODE" -eq 0 && "$VSCODE_INSTALL_QUIESCENT" == true &&
-          "$VSCODE_INSTALL_DIAGNOSTIC_VALID" == true ]]; then
+    if [[ "$VSCODE_INSTALL_EXIT_CODE" -eq 0 ]] &&
+       { [[ "$VSCODE_INSTALL_SUPERVISED" != true ]] ||
+         [[ "$VSCODE_INSTALL_QUIESCENT" == true && "$VSCODE_INSTALL_DIAGNOSTIC_VALID" == true ]]; }; then
         return 0
     fi
 
@@ -252,6 +291,8 @@ install_vscode_extensions() {
     local missing_extensions=0 failures=0
     local inspection_result before_inventory
     local OBSERVED_VSCODE_STATUS='' OBSERVED_VSCODE_INVENTORY
+    local VSCODE_SUPERVISED_INVENTORY=false
+    vscode_restore_execution && VSCODE_SUPERVISED_INVENTORY=true
 
     while IFS= read -r extension || [[ -n "$extension" ]]; do
 
@@ -299,8 +340,9 @@ install_vscode_extensions() {
             # item-local. Never turn them into permission to launch more work.
             [[ "$VSCODE_INSTALL_REASON" == network_reset &&
                "$VSCODE_INSTALL_DIAGNOSTIC_VALID" == true &&
-               "$VSCODE_INSTALL_QUIESCENT" == true &&
                "$VSCODE_INSTALL_EXIT_CODE" -gt 0 && "$VSCODE_INSTALL_EXIT_CODE" -lt 128 ]] || return 2
+            [[ "${VSCODE_INSTALL_SUPERVISED:-false}" != true ||
+               "$VSCODE_INSTALL_QUIESCENT" == true ]] || return 2
 
             OBSERVED_VSCODE_STATUS=pending
             is_vscode_extension_installed "$extension"
@@ -364,6 +406,8 @@ verify_vscode_extensions() {
     verification_select_subjects vscode-extensions "$records" || return 2
     [[ ${#GV_SUBJECTS[@]} -gt 0 ]] || return 0
     local OBSERVED_VSCODE_STATUS=2 OBSERVED_VSCODE_INVENTORY
+    local VSCODE_SUPERVISED_INVENTORY=false
+    vscode_restore_execution && VSCODE_SUPERVISED_INVENTORY=true
     OBSERVED_VSCODE_INVENTORY="$(observe_vscode_inventory)" && OBSERVED_VSCODE_STATUS=0
     local observed_at
     observed_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"

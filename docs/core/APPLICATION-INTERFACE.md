@@ -565,14 +565,35 @@ not qualify real macOS 27 visual effects or remaining native Restore gates.
 
 ### Bounded VS Code CLI execution
 
-Restore's `--list-extensions` and `--install-extension` calls use a VS Code
-supervisor over Core's existing `ProcessTree`. Absolute policy budgets are
+Inside application Restore Execute, the extension module and final Verification
+use supervised `--list-extensions` and `--install-extension` calls over Core's
+existing `ProcessTree`. Absolute policy budgets are
 120 seconds for inventory and 3,600 seconds for one extension installation,
 including its CLI-managed dependencies. They bound waiting; they do not detect
 absent progress. No terminal output, CPU sample or Homebrew `ProgressProbe` resets
 these budgets. Downloads can run for the entire installation budget. Exceeding it
 is `vscode_install_deadline` (inventory: `vscode_inventory_deadline`), never a
 claim that a slow operation made no progress. Real budget qualification remains open.
+
+The shared `vscode_cli()` retains its native shell invocation. Ordinary CLI,
+Preview, Prepare/readiness, Comparison and secure verify-only observations do not
+enter the Restore supervisor or create permanent VS Code lifecycle state. These
+paths retain their baseline waiting behavior; R5A does not qualify a general
+read-only CLI watchdog. Inventory supervision is scoped explicitly to the Restore
+extension module and its final Verification, not every shared inventory reader.
+
+The supervised route requires application mode, active Bundle Restore,
+`MODE=--bootstrap`, and no Preview/secure verify-only scope. Its dedicated Bash
+consumer supplies `MACSEED_VSCODE_SUPERVISED_RESTORE=true` to Python. Both inventory
+and installation then require a valid operation-state directory before any durable
+state is created; missing state denies launch without a native fallback.
+The owned Bootstrap keeps that operation-state directory alive through final
+Verification and removes it only after the child exits and lifecycle facts are
+collected. Readiness observations within Execute still use the read-only route.
+Installation diagnostics follow the selected route: native installs retain the
+bounded output classifier plus captured native/reader exit statuses; supervised
+installs consume the supervisor's typed result and additionally require quiescence.
+Native execution never claims ProcessTree quiescence it did not observe.
 
 The supervisor starts a private session, drains output without forwarding it,
 and reuses birth-identity/session tracking and bounded TERM → KILL termination.
@@ -582,12 +603,12 @@ Only validated extension IDs leave inventory; installation output reaches only
 the existing bounded, closed `network_reset` classifier. URLs, credentials,
 profile paths and arbitrary arguments/output never enter reports or logs.
 
-Before either CLI call, the existing private-directory/atomic-journal primitives
+Before either supervised CLI call, the existing private-directory/atomic-journal primitives
 publish and fsync VS Code safety state under
 `~/Library/Application Support/Macseed/VSCode/active.json`, holding its lifecycle
-lock. Read-only Prepare observations also write this infrastructure metadata;
-they do not install extensions or modify target settings. Execute additionally
-publishes the existing operation-local `external-tool-active.json` marker.
+lock and publish the existing operation-local `external-tool-active.json` marker.
+The global `--pending` check only reads existing state, including in Prepare and
+live readiness; it creates no journal, lock or directory and never clears one.
 Failure to establish durable state denies launch. Confirmed ordinary completion
 publishes a quiescent success/failure record and removes only its own operation
 marker. Interrupted, timed-out or unobservable calls retain blocking active or
@@ -625,7 +646,14 @@ ProcessTree still cannot prove absence of children detached before observation,
 external services or concurrent unowned VS Code activity. Discovery/Comparison
 observers outside this Restore path, real termination/re-entry and Extension Pack
 dependency closure remain separate qualification work. Disposable coverage:
-`python3 scripts/test-vscode-extensions.py --r5a-only`.
+`python3 scripts/test-vscode-extensions.py --r5a-only`. The focused
+`--routing-only` selector also checks native/typed diagnostic separation,
+operation-state admission and lifetime, and full HOME snapshots for
+Prepare/readiness, Comparison and secure failure verify-only. The latter uses a
+separate secure Bundle and the real verification dispatch. Snapshots include
+caches, bytecode and lifecycle state without exclusions; only mock interpreters
+receive a mock-local bytecode setting. Production reporting disables bytecode
+before imports and at its Bash entry point.
 
 ### Independent Homebrew items
 

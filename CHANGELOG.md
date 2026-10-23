@@ -212,11 +212,15 @@ The format is based on the principles of **Keep a Changelog**.
 
 ### Fixed
 
-* Restore bounds VS Code extension inventory and installation CLI waits with
-  separate absolute budgets and owned-process termination. Durable safety state
-  blocks further mutation and fresh Restore after interrupted or unconfirmed
+* Application Restore Execute bounds VS Code extension inventory and installation
+  CLI waits with separate absolute budgets and owned-process termination. Durable
+  safety state blocks further mutation and fresh Restore after interrupted or unconfirmed
   operations; confirmed `network_reset` continuation and private diagnostics are
-  preserved. These limits do not claim no-progress or real lifecycle qualification.
+  preserved. Native CLI keeps its diagnostic pipeline; Preview, Prepare/readiness,
+  Comparison and secure verify-only preserve existing lifecycle state. Supervised
+  Execute requires valid operation-state through final Verification and never
+  falls back to native execution when that state is missing or invalid. These
+  limits do not claim no-progress or real lifecycle qualification.
 
 * Application Restore can continue independent existing Git repositories after a
   checkout refusal only with unchanged HEAD/index/files and proven separate Git

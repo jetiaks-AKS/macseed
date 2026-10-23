@@ -31,6 +31,15 @@ MAX_INVENTORY = 1024 * 1024
 ERRORS = (OSError, ValueError, RuntimeError, subprocess.SubprocessError)
 
 
+def restore_execution():
+    # Set only by the explicit Bash Restore consumer, not the shared native CLI.
+    return (os.environ.get('MACSEED_VSCODE_SUPERVISED_RESTORE') == 'true' and
+            os.environ.get('MACSEED_APPLICATION_EXECUTION') == 'true' and
+            os.environ.get('BUNDLE_RESTORE_ACTIVE') == 'true' and
+            os.environ.get('BUNDLE_RESTORE_PREVIEW') != 'true' and
+            os.environ.get('MACSEED_APPLICATION_SECURE_VERIFY_ONLY') != 'true')
+
+
 def state_directory():
     return Path.home().resolve() / 'Library/Application Support/Macseed/VSCode'
 
@@ -59,8 +68,8 @@ def pending():
 class Lifecycle:
     """VS Code state using the existing no-follow, atomic, fsynced journal IO.
 
-    No Homebrew state is adopted or changed. Even read-only CLI observations
-    write private safety metadata, so a lost observer cannot erase uncertainty.
+    No Homebrew state is adopted or changed. Only explicitly supervised
+    application Restore consumers may begin a lifecycle, including inventory.
     """
     def __init__(self, operation):
         self.operation = operation
@@ -68,16 +77,17 @@ class Lifecycle:
 
     def __enter__(self):
         try:
-            if os.environ.get('MACSEED_ITEM_STATE_DIR'):
-                self.marker = marker_fd()
-                try:
-                    read_state(self.marker, 'external-tool-active.json')
-                except FileNotFoundError:
-                    pass
-                else:
-                    raise ValueError('external operation already active')
-            elif self.operation == 'install' and os.environ.get('MACSEED_APPLICATION_EXECUTION') == 'true':
-                raise ValueError('missing operation state')
+            if not restore_execution():
+                raise ValueError('outside supervised Restore execution')
+            # Required for inventory too: missing state denies launch rather
+            # than silently losing the current-operation unknown marker.
+            self.marker = marker_fd()
+            try:
+                read_state(self.marker, 'external-tool-active.json')
+            except FileNotFoundError:
+                pass
+            else:
+                raise ValueError('external operation already active')
             self.directory = state_directory_fd(state_directory(), create=True)
             self.lock = os.open('lifecycle.lock', os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK,
                                 0o600, dir_fd=self.directory)
@@ -146,6 +156,8 @@ class CLIExecutor:
         lifecycle = None
         failure_reason = reason
         try:
+            if not restore_execution():
+                return 2, 'vscode_lifecycle_state_failed', False, b''
             # An IPC redirect can transfer work outside the owned tree. Do not
             # silently change its target or infer ownership from inventory.
             executable = shutil.which(command[0]) or command[0]

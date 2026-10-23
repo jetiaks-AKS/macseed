@@ -132,9 +132,9 @@ contracts. Real lifecycle, broader Git and macOS 27 qualification remain open.
 - [ ] Qualify Formula, VS Code Extensions and Git re-entry. Operation-wide Stop
   admission does not qualify every native lifecycle; App Store installation is
   manual and outside Core's installer cancellation boundary.
-- [ ] Qualify VS Code CLI absolute budgets, real owned-process termination and
-  durable re-entry/reconciliation; interrupted installs remain fail-closed even
-  after observed tree termination. Fixtures do not qualify detached workers or
+- [ ] Qualify application Restore's VS Code CLI absolute budgets, real owned-process
+  termination and durable re-entry/reconciliation; interrupted installs remain
+  fail-closed even after observed tree termination. Fixtures do not qualify detached workers or
   external services.
 - [ ] Add a separately qualified Git clone/SSH watchdog/quiescence contract.
 - [ ] Audit and bound other synchronous external processes and observers,
