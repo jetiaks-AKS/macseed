@@ -219,6 +219,10 @@ The format is based on the principles of **Keep a Changelog**.
 
 ### Fixed
 
+* Restored complete module-relative dependencies in Homebrew activation and
+  Dry-run CLI fixtures. Comparison cancellation now exercises actual owned-stop
+  kill denial and confirms the injection with runtime evidence.
+
 * Reduced repeated process-table scans during application Capture while retaining
   observation deadlines, owned-process quiescence and EOF checks. Comparison again
   resolves the external App Store inventory command with auto-indexing disabled,

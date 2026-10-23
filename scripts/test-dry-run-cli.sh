@@ -35,6 +35,15 @@ cp "$PROJECT_ROOT/modules/core/preflight/preflight.sh" \
     "$FIXTURE_ROOT/modules/core/preflight/preflight.sh"
 cp "$PROJECT_ROOT/modules/discovery/homebrew.sh" \
     "$FIXTURE_ROOT/modules/discovery/homebrew.sh"
+# Preserve the real observer's module-relative dependencies, including its
+# exceptional retain-unknown path. Ordinary CLI still uses direct reads.
+for dependency in modules/core/application-interface/observation.sh \
+    modules/core/application-interface/observation.py \
+    modules/core/application-interface/item_execution.py \
+    modules/apps/adapters/homebrew_lifecycle.py; do
+    mkdir -p "$FIXTURE_ROOT/$(dirname "$dependency")"
+    cp "$PROJECT_ROOT/$dependency" "$FIXTURE_ROOT/$dependency" || exit 2
+done
 
 write_fixture_file() {
     local relative_path="$1"

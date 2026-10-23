@@ -148,10 +148,6 @@ contracts. Real lifecycle, broader Git and macOS 27 qualification remain open.
   before publication can leave no durable re-entry evidence. Define and qualify
   its reconciliation contract; passing handled-failure fixtures does not close
   this risk or authorize clearing existing journals.
-- [ ] Repair Comparison's descendant-kill-denial fixture: its legacy process-group
-  fallback injection can be bypassed by `ProcessTree.stop()`. Inject at the owned
-  stop dependency and confirm runtime execution; an ordinary cancellation PASS
-  does not establish denial coverage.
 - [ ] Qualify numeric Git clone phase progress on real repositories and define
   reliable evidence for remaining external commands/unreported phases; absolute
   deadlines alone do not establish a stall.

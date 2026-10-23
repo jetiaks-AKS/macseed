@@ -308,15 +308,33 @@ class CompareTests(unittest.TestCase):
 
     def deny_compare_descendant_kill(self):
         execution = self.project / 'modules/core/application-interface/execution.py'
-        original = execution.read_text()
-        boundary = '                os.killpg(self.process.pid, signal.SIGKILL)'
-        self.assertIn(boundary, original)
-        execution.write_text(original.replace(boundary,
-            '                raise PermissionError(1, "fixture descendant stop denied")', 1))
+        marker = self.root / 'kill-denied'
+        # Inject at the dependency actually used by cancel. The first stop sees
+        # real PermissionErrors; finally reap our disposable readers with the
+        # real implementation, while preserving the unconfirmed result.
+        execution.write_text(execution.read_text() + f'''
+_fixture_stop = ProcessTree.stop
+def _fixture_denied_stop(self):
+    original_kill = os.kill
+    def denied_kill(pid, sig):
+        Path({str(marker)!r}).write_text('denied')
+        raise PermissionError(1, 'fixture descendant stop denied')
+    try:
+        os.kill = denied_kill
+        stopped = _fixture_stop(self)
+    finally:
+        os.kill = original_kill
+        if not _fixture_stop(self):
+            raise RuntimeError('fixture reader cleanup failed')
+    return stopped
+ProcessTree.stop = _fixture_denied_stop
+''')
+        return marker
 
     def test_cancel_descendant_kill_denied(self):
-        self.deny_compare_descendant_kill()
+        marker = self.deny_compare_descendant_kill()
         self.test_cancellation_owned_group()
+        self.assertEqual(marker.read_text(), 'denied', 'Owned stop must reach kill denial')
 
     def test_cancel_does_not_hide_source_error(self):
         path = self.make_bundle()

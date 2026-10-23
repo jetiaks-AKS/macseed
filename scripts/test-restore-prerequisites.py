@@ -261,11 +261,11 @@ fi
                 prefix = self.root / architecture
                 # Relocate only installation roots; run the production helper,
                 # availability checks and parent/child PATH handling unchanged.
-                module = self.root / (architecture + ".sh")
+                module = self.project / "modules/core/homebrew/homebrew.sh"
                 module.write_text(source.replace("/opt/homebrew", str(prefix))
                                   .replace("/usr/local", str(prefix)))
                 script = r'''
-source "$TEST_MODULE"
+source "$TEST_MODULE" || exit $?
 info(){ :; }; warning(){ :; }; success(){ :; }; error(){ echo "$*" >&2; }
 uname(){ echo "$TEST_ARCH"; }
 install_homebrew(){
