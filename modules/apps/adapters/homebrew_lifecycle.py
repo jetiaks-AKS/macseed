@@ -28,9 +28,9 @@ def state_directory():
     return Path.home().resolve() / 'Library/Application Support/Macseed/Homebrew'
 
 
-def state_directory_fd(directory, create=False):
+def state_directory_fd(directory, create=False, home=None):
     """Walk beneath HOME without following links or writing through foreign parents."""
-    home = Path.home()
+    home = Path.home() if home is None else Path(home)
     parts = directory.relative_to(home.resolve()).parts
     descriptor = os.open(home, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     try:

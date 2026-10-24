@@ -16,6 +16,7 @@ import subprocess
 import tempfile
 import time
 from item_execution import ProcessTree, process_table
+from external_state import Lifecycle, ExternalStateUnavailable
 
 
 class ProcessObservationUnavailable(Exception):
@@ -69,6 +70,7 @@ class OwnedBootstrap:
                          MACSEED_VERIFICATION_FD=str(verification_write),
                          MACSEED_REPORT_FD=str(report_write), MACSEED_REPORT_COUNT="0", MACSEED_REPORT_INVALID="false")
         receipt = None
+        self.external_lifecycle = None
         descriptors = (write_fd, verification_write, report_write)
         if secure_evidence is not None:
             raw, attempt, status = secure_evidence
@@ -86,12 +88,21 @@ class OwnedBootstrap:
             descriptor = os.open(Path(self.item_state.name) / 'prepared-casks.json', os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
             with os.fdopen(descriptor, 'w') as stream:
                 json.dump(cask_plans or {}, stream)
+            if self.mutating:
+                from external_state import KEY
+                self.external_lifecycle = Lifecycle(environment.get('HOME')).__enter__()
+                child_env[KEY] = str(self.external_lifecycle.descriptor)
+                descriptors += (self.external_lifecycle.descriptor,)
             self.process = subprocess.Popen(
                 ["./bootstrap.sh", mode], cwd=root, env=child_env,
                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL, start_new_session=True,
                 pass_fds=descriptors)
         except BaseException:
+            if self.external_lifecycle is not None:
+                # Failed/ambiguous launch retains write-ahead evidence.
+                self.external_lifecycle.__exit__(None, None, None)
+                self.external_lifecycle = None
             if mode == "--application-compare" and getattr(self, "process", None) is not None:
                 try:
                     os.killpg(self.process.pid, signal.SIGKILL)
@@ -273,7 +284,7 @@ class OwnedBootstrap:
         if self.reporting_invalid:
             self.details["status"] = "invalid"
 
-    def _collect(self):
+    def _collect(self, confirmed=False):
         self.unknown_consequences = getattr(self, 'unknown_consequences', False) or Path(self.item_state.name, 'external-tool-active.json').exists()
         self.external_lifecycle_cause = getattr(self, 'external_lifecycle_cause', None)
         if self.unknown_consequences:
@@ -330,9 +341,18 @@ class OwnedBootstrap:
                         }
                     except ValueError:
                         pass
-        if self.unknown_consequences and self.mutating:
-            from external_state import retain
-            retain()
+        if self.external_lifecycle is not None:
+            confirmed = (confirmed and not self.unknown_consequences and
+                         (not self.mutation_may_have_started or self.independent_work_completed or
+                          (self.process.returncode == 132 and self.graceful and self.graceful.accepted)))
+            try:
+                self.external_lifecycle.finish(bool(confirmed))
+            except (OSError, ValueError):
+                confirmed = False  # Failed collection cannot certify completion to this caller.
+            finally:
+                self.external_lifecycle.__exit__(None, None, None)
+                self.external_lifecycle = None
+            self.unknown_consequences |= not confirmed
         self.item_state.cleanup()
 
     def _control_events(self):
@@ -371,7 +391,7 @@ class OwnedBootstrap:
             self.unknown_consequences = True
             self.tree.stop()
             result = 2
-        self._collect()
+        self._collect(confirmed=result in (0, 1, 2, 132))
         return result
 
     def _stop_compare_descendants(self):

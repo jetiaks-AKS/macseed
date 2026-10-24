@@ -226,6 +226,11 @@ The format is based on the principles of **Keep a Changelog**.
 
 ### Fixed
 
+* Persist the shared external-process admission before application Bootstrap can
+  launch. Parent crashes and unconfirmed completion retain the re-entry fence;
+  only the owning, confirmed lifecycle can finalize it. Read-only routes create
+  no mutation journal, and existing unknown records remain blocked.
+
 * Reap the optional performance clock before Bootstrap exits, preventing a late
   diagnostic helper from producing an unknown Restore lifecycle result. Regression
   diagnostics retain the assertion's relative file and line without exception data.

@@ -3015,11 +3015,14 @@ esac
         events = [json.loads(line) for line in core.stdout.read().splitlines()]
         core.stdout.close()
         core.stderr.close()
-        self.assertEqual(core.returncode, 130)
+        self.assertEqual(core.returncode, 2)
         self.assertEqual(sum(row['type'] in ('completed', 'failed') for row in events), 1)
         self.assertEqual(events[-1]['data']['verification']['details']['status'], 'partial')
         self.assertEqual(events[-1]["type"], "failed")
-        self.assertEqual(events[-1]["data"]["code"], "cancelled")
+        self.assertEqual(events[-1]["data"]["code"], "privileged_lifecycle_unknown")
+        self.assertTrue(events[-1]['data']['unknown_consequences'])
+        retained = json.loads((self.home / 'Library/Application Support/Macseed/ExternalProcesses/active.json').read_bytes())
+        self.assertEqual(retained['state'], 'unknown_consequences')
         self.assertTrue(events[-1]["data"]["publication_occurred"])
         self.assertTrue(events[-1]["data"]["target_mutation_may_have_started"])
         self.assertIsNone(unrelated.poll())
@@ -3079,7 +3082,13 @@ esac
         script.write_text("#!/bin/bash\n"
                           "printf 'mutation_may_have_started\\n' >&\"$MACSEED_EXECUTION_SIGNAL_FD\"\n"
                           "exit 2\n")
-        failed = execution.OwnedBootstrap(fixture, self.environment)
+        # Interrupted mutation keeps its durable admission; do not erase it to
+        # exercise an independent ordinary failure in the same disposable test.
+        with self.assertRaises(execution.ExternalStateUnavailable):
+            execution.OwnedBootstrap(fixture, self.environment)
+        fresh_home = self.root / 'failed-home'
+        fresh_home.mkdir(mode=0o700)
+        failed = execution.OwnedBootstrap(fixture, dict(self.environment, HOME=str(fresh_home)))
         self.assertEqual(failed.wait(), 2)
         self.assertTrue(failed.mutation_may_have_started)
 

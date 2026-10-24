@@ -627,7 +627,7 @@ complete a read without redundant stop scans; failures still require bounded
 termination and EOF confirmation. Timeouts/errors do not publish an empty inventory.
 These calls create no durable mutation state and never clear safety journals. Within an
 existing Execute, unconfirmed termination marks the operation unsafe; its parent
-retains a fail-closed `ExternalProcesses/active.json` fence using the same journal
+retains the write-ahead `ExternalProcesses/active.json` fence using the same journal
 primitives. A last-resort Bootstrap deadline also retains this fence. Readiness only
 reads it. Read-only failure alone does not imply installer uncertainty. Python shell
 entrypoints use `-B`, including Capture helpers, to prevent startup/import bytecode
@@ -639,10 +639,26 @@ scans. The private child admits only these read commands; ordinary CLI and other
 application reads retain their existing routes. Warning/error classification and
 the existing candidate-file validation/publication remain production-owned.
 
-The shared `ExternalProcesses` fence is recorded during result collection, not
-write-ahead admission. A parent crash or journal write failure before publication
-can leave no durable fence. Its crash coverage and reconciliation contract remain
-open; handled-failure tests do not qualify this as durable recovery.
+Before launching a mutating OwnedBootstrap, its parent takes the private
+`ExternalProcesses/lifecycle.lock` and publishes an owner-bound `active.json`
+with file and directory fsync. Failed admission prevents the subprocess launch;
+a parent crash before collection leaves `active` blocking fresh Execute. The
+child's readiness may recognize its own admission only through the inherited,
+inode-checked lock descriptor and matching owner token. Another Execute cannot
+adopt it. Bundle publication and Secure Migration retain their separate contracts.
+
+Collection may finalize only the same owner's active record, after normal root
+exit, observed tree quiescence and no uncertainty marker. A mutation must also
+have reached traversal completion or an accepted Graceful Stop checkpoint.
+Confirmed ordinary failure is not success, but does not leave a false global
+block. Hard cancellation, abnormal exit and unconfirmed completion retain blocking
+active/unknown state, even when owned processes were stopped. A valid quiescent
+record permits later admission; existing unknown or foreign records are never
+automatically cleared. Preview/Prepare, Comparison and secure verify-only create
+no such journal or lock. Disposable fault injection covers admission write failure,
+parent exit after mutation before collection, blocked retry, owner protection and
+normal completion/re-entry; it is not real-Mac or power-loss qualification. There
+is no recovery, journal-clear or bypass operation.
 
 Limitations: ProcessTree covers observed descendants and private-session members,
 not a child that escapes before observation, arbitrary external services or concurrent
@@ -828,6 +844,10 @@ and an acknowledged finish request. An opt-in Bash EXIT hook waits for its own
 clock helper and forcibly reaps a stuck helper after a bounded wait, preserving
 the command's exit status. An existing EXIT hook is left intact and prevents
 starting the clock. Forced termination can omit unfinished/unflushed spans.
+The final shell `wait` reaps that same nonprivileged Python child after normal
+exit or SIGKILL; the helper neither changes identity nor launches delegated work.
+This bounds ordinary user-space stalls, including interpreter finalization, but
+is not a hard wall-clock guarantee against an unresponsive kernel or storage stack.
 Invalid/unwritable output or unavailable helper
 disables diagnostics without changing operation outcomes. No trace enters Protocol
 V1, operation JSONL or Diagnostic Report. This trace is not restoration evidence.

@@ -20,6 +20,7 @@ sys.path.insert(0, str(ROOT / 'modules/core/application-interface'))
 import clone_execution as clone
 import observation
 import item_execution
+import external_state
 spec = importlib.util.spec_from_file_location('restore_fixture', ROOT / 'scripts/test-restore-prepare.py')
 fixture = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(fixture)
@@ -288,6 +289,104 @@ class ReliabilityTests(unittest.TestCase):
         self.assertEqual(result.returncode, 2, events)
         self.assertEqual(events[-1]['data']['code'], 'privileged_lifecycle_unknown')
         self.assertFalse(events[-1]['data']['publication_started'])
+
+    def test_external_admission_write_failure_prevents_mutation(self):
+        f = self.restore()
+        f.allow_application_bootstrap()
+        f.pack()
+        plan = f.plan_result()
+        module = f.project / 'modules/core/application-interface/external_state.py'
+        source = module.read_text()
+        boundary = '            journal(None, self.value, self.directory_fd)'
+        self.assertEqual(source.count(boundary), 1)
+        module.write_text(source.replace(boundary, "            raise OSError('fixture fsync failure')"))
+        result, events = f.execute(plan['prepared_plan_id'])
+        self.assertEqual(result.returncode, 2, events)
+        self.assertEqual(events[-1]['data']['code'], 'privileged_lifecycle_unknown')
+        self.assertFalse(events[-1]['data']['target_mutation_may_have_started'])
+        self.assertFalse((f.home / 'Projects').exists())
+        # The actual durable primitive must also deny launch on fsync failure.
+        from execution import OwnedBootstrap
+        with patch('homebrew_lifecycle.os.fsync', side_effect=OSError('fixture fsync failure')), \
+             patch('execution.process_table'), patch('execution.subprocess.Popen') as launch:
+            with self.assertRaises(external_state.ExternalStateUnavailable):
+                OwnedBootstrap(f.project, f.environment)
+            launch.assert_not_called()
+
+    def test_external_parent_crash_after_mutation_blocks_fresh_execute(self):
+        f = self.restore()
+        f.allow_application_bootstrap()
+        f.pack()
+        plan = f.plan_result()
+        module = f.project / 'modules/core/application-interface/execution.py'
+        source = module.read_text()
+        boundary = '    def _collect(self, confirmed=False):\n'
+        self.assertEqual(source.count(boundary), 1)
+        module.write_text(source.replace(boundary, boundary + '        os._exit(17)\n'))
+        request = dict(protocol_version=1, operation_id='crash', operation='restore_execute',
+                       parameters=dict(path=str(f.archive), disabled_groups=[], include_secure=False,
+                                       expected_prepared_plan_id=plan['prepared_plan_id']))
+        crashed = subprocess.run(['bash', str(f.project / 'modules/core/application-interface/core.sh')],
+                                 cwd=f.project, env=f.environment, input=json.dumps(request).encode(),
+                                 capture_output=True, timeout=20)
+        self.assertEqual(crashed.returncode, 17)
+        self.assertTrue((f.home / 'Projects').is_dir())
+        fence = external_state.directory(f.home) / 'active.json'
+        retained = fence.read_bytes()
+        self.assertEqual(json.loads(retained)['state'], 'active')
+        module.write_text(source)
+        # A hard crash legitimately leaves staging behind. Keep that evidence;
+        # the next request gets its own disposable temporary namespace.
+        f.private_temp = f.root / 'retry-tmp'
+        f.private_temp.mkdir(mode=0o700)
+        f.environment['TMPDIR'] = str(f.private_temp)
+        fresh = f.plan_result()
+        result, events = f.execute(fresh['prepared_plan_id'])
+        self.assertEqual(result.returncode, 2, events)
+        self.assertEqual(events[-1]['data']['code'], 'privileged_lifecycle_unknown')
+        self.assertFalse(events[-1]['data']['publication_started'])
+        self.assertEqual(fence.read_bytes(), retained)
+
+    def test_external_completion_ownership_and_read_only_routes(self):
+        from execution import OwnedBootstrap
+        f = self.restore()
+        f.allow_application_bootstrap()
+        f.pack()
+        plan = f.plan_result()  # Production Prepare includes authoritative Preview.
+        directory = external_state.directory(f.home)
+        self.assertFalse(directory.exists())
+        root = self.root / 'reader'
+        root.mkdir()
+        (root / 'bootstrap.sh').write_text('#!/bin/bash\nexit 0\n')
+        (root / 'bootstrap.sh').chmod(0o700)
+        for mode, extra in (('--application-compare', {}),
+                            ('--bootstrap', {'MACSEED_APPLICATION_SECURE_VERIFY_ONLY': 'true'})):
+            child = OwnedBootstrap(root, dict(f.environment, **extra), mode=mode)
+            self.assertEqual(child.wait(), 0)
+            self.assertFalse(directory.exists())
+        for _ in range(2):
+            result, events = f.execute(plan['prepared_plan_id'])
+            self.assertEqual(result.returncode, 0, events)
+            self.assertTrue(external_state.completed(json.loads((directory / 'active.json').read_bytes())))
+            plan = f.plan_result()
+        with external_state.Lifecycle(f.home) as owner:
+            with self.assertRaises(external_state.ExternalStateUnavailable):
+                with external_state.Lifecycle(f.home):
+                    self.fail('overlapping admission')
+            # Finalization failure leaves the already durable admission blocking.
+            with patch.object(external_state, 'journal', side_effect=OSError('fixture fsync failure')):
+                with self.assertRaises(OSError):
+                    owner.finish(True)
+            self.assertEqual(json.loads((directory / 'active.json').read_bytes()), owner.value)
+            foreign = dict(owner.value, owner='f' * 32, state='unknown_consequences')
+            external_state.journal(None, foreign, owner.directory_fd)
+            with self.assertRaises(ValueError):
+                owner.finish(True)
+            self.assertEqual(json.loads((directory / 'active.json').read_bytes()), foreign)
+        with self.assertRaises(external_state.ExternalStateUnavailable):
+            with external_state.Lifecycle(f.home):
+                self.fail('unknown journal admitted')
+        self.assertEqual(json.loads((directory / 'active.json').read_bytes()), foreign)
 
     def test_read_only_vscode_routing_preserves_snapshot_and_error(self):
         cli = self.root / 'code'

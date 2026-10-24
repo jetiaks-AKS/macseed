@@ -143,11 +143,6 @@ contracts. Real lifecycle, broader Git and macOS 27 qualification remain open.
   re-entry fences against real tools. Existing checkout and local mutations have
   an aggregate execution bound, not new per-command lifecycle qualification.
   See the [R5 process map](docs/core/APPLICATION-INTERFACE.md#external-process-waiting-and-git-clone-r5).
-- [ ] Resolve the shared `ExternalProcesses` journal's crash/publication gap:
-  the fence is written during result collection, so a parent crash or write failure
-  before publication can leave no durable re-entry evidence. Define and qualify
-  its reconciliation contract; passing handled-failure fixtures does not close
-  this risk or authorize clearing existing journals.
 - [ ] Review the first weighted four-runner CI timings and refresh provisional
   weights from complete reports. Qualify the hosted Quick five-minute and full
   regression 15–20-minute targets; local timings and the estimated plan are not

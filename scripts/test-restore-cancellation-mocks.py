@@ -79,7 +79,9 @@ class CancellationMocks(unittest.TestCase):
             launcher.write_text('#!/bin/sh\nexec ' + ' '.join(map(shlex.quote,
                 [sys.executable, '-B', str(FIXTURE), mode, str(self.directory)])) + '\n')
             launcher.chmod(0o700)
-            self.owned = OwnedBootstrap(self.directory, dict(os.environ))
+            home = self.directory / 'home'
+            home.mkdir(mode=0o700)
+            self.owned = OwnedBootstrap(self.directory, dict(os.environ, HOME=str(home)))
             self.process = self.owned.process
         else:
             self.process = subprocess.Popen([sys.executable, '-B', str(FIXTURE), mode, str(self.directory)],
@@ -179,7 +181,7 @@ class CancellationMocks(unittest.TestCase):
 
     def test_09_owned_normal_cancel(self):
         # OwnedBootstrap reaps after tree.stop(), just as the real Restore path.
-        # An exited but unreaped root must not produce unknown consequences.
+        # Confirmed stop is distinct from normal completion of admitted mutation.
         self.launch('plain', owned=True, reap=False)
         self.owned.tree.scan()
         original_stop = self.owned.tree.stop
@@ -191,7 +193,9 @@ class CancellationMocks(unittest.TestCase):
             result = self.owned.cancel()
         self.assertEqual(returned, [True])
         self.assertEqual(result, 130)
-        self.assertFalse(self.owned.unknown_consequences)
+        self.assertTrue(self.owned.unknown_consequences)
+        retained = json.loads((self.directory / 'home/Library/Application Support/Macseed/ExternalProcesses/active.json').read_bytes())
+        self.assertEqual(retained['state'], 'unknown_consequences')
         self.assertFalse(self.record('owned-normal-cancel', started, returned[0], cancel_return=result))
 
     def test_terminal_unknown_propagation(self):

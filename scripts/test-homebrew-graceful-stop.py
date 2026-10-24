@@ -186,8 +186,9 @@ apply_macos_components
         root = self.base / 'owned'; root.mkdir()
         bootstrap = root / 'bootstrap.sh'
         bootstrap.write_text('#!/bin/bash\nexit 0\n'); bootstrap.chmod(0o700)
+        home = self.base / 'home'; home.mkdir(mode=0o700)
         with patch('homebrew_stop.Controller', side_effect=AssertionError('second controller')):
-            owned = OwnedBootstrap(root, dict(os.environ, MACSEED_GRACEFUL_FD=str(self.read_fd)), graceful_control=self.control)
+            owned = OwnedBootstrap(root, dict(os.environ, HOME=str(home), MACSEED_GRACEFUL_FD=str(self.read_fd)), graceful_control=self.control)
             self.assertIs(owned.graceful, self.control)
             self.assertEqual(owned.wait(), 0)
         self.assertFalse(self.control.closed.is_set())

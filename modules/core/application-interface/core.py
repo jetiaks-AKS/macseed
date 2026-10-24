@@ -21,7 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "bundle"))
 import bundle
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "apps/adapters"))
 import homebrew_pkg_preparation as pkg_preparation
-from execution import OwnedBootstrap, ProcessObservationUnavailable
+from execution import OwnedBootstrap, ProcessObservationUnavailable, ExternalStateUnavailable
 from observation import read as bounded_read, ObservationError, PHASE_SECONDS
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from performance_trace import timed, add, ENABLED
@@ -777,6 +777,9 @@ def restore_execute(operation_id, path, disabled_groups, include_secure, expecte
         return failure("unsupported_bundle")
     except ProcessObservationUnavailable:
         return failure("process_observation_unavailable")
+    except ExternalStateUnavailable:
+        state['unknown_consequences'] = True
+        return failure('privileged_lifecycle_unknown')
     except (FileNotFoundError, PermissionError):
         return failure("bundle_unavailable")
     except (bundle.Invalid, tarfile.TarError, ValueError, TypeError, KeyError, UnicodeError):
