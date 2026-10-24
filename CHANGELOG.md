@@ -227,6 +227,11 @@ The format is based on the principles of **Keep a Changelog**.
 
 ### Fixed
 
+* Reduce Restore preparation and Already Matches overhead with per-pass Cask
+  metadata batches and validated formula/VS Code inventories for consecutive
+  noops. Fresh Apply admission, post-Apply checks, final Verification and all
+  item records remain intact; see the comparable [measurements](docs/DESKTOP.md#recent-restore-qualification-and-performance).
+
 * Restore Git authentication with existing custom SSH identities through bounded
   local configuration, retaining typed clone causes and native exit codes in Log.
 

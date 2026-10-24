@@ -71,8 +71,10 @@ preview_brew_casks() {
     local cask
     local inspection_result observation_status=0
     local OBSERVED_CASK_STATUS='' OBSERVED_CASK_INVENTORY OBSERVED_CASK_PREFIX
+    local OBSERVED_CASK_METADATA_STATUS='' OBSERVED_CASK_METADATA OBSERVED_CASK_CANDIDATES="$casks"
     if [[ "${BUNDLE_RESTORE_PREVIEW:-false}" == true && "${MACSEED_APPLICATION_EXECUTION:-false}" == true ]]; then
         OBSERVED_CASK_STATUS=pending
+        OBSERVED_CASK_METADATA_STATUS=pending
     fi
 
     while IFS= read -r cask || [[ -n "$cask" ]]; do
@@ -369,6 +371,11 @@ verify_brew_casks() {
     verification_select_subjects homebrew-casks "$records" || return 2
     [[ ${#GV_SUBJECTS[@]} -gt 0 ]] || return 0
     local OBSERVED_CASK_STATUS=pending OBSERVED_CASK_PREFIX OBSERVED_CASK_INVENTORY
+    local OBSERVED_CASK_METADATA_STATUS='' OBSERVED_CASK_METADATA OBSERVED_CASK_CANDIDATES
+    if [[ "${MACSEED_APPLICATION_EXECUTION:-false}" == true ]]; then
+        OBSERVED_CASK_METADATA_STATUS=pending
+        OBSERVED_CASK_CANDIDATES="$(printf '%s\n' "${GV_SUBJECTS[@]}")"
+    fi
     for item in "${GV_SUBJECTS[@]}"; do
         is_cask_installed "$item"
         result=$?

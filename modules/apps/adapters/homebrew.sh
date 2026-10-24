@@ -8,11 +8,12 @@ MACSEED_HOMEBREW_ADAPTER_LOADED=true
 declare -F performance_measure >/dev/null || source modules/core/performance_trace.sh
 # Never inherit observation snapshots from a caller/environment or an Apply phase.
 OBSERVED_FORMULA_STATUS='' OBSERVED_CASK_STATUS=''
+OBSERVED_CASK_METADATA_STATUS=''
 HOMEBREW_RESULT_JSON=
 
 observe_brew_formula_inventory() {
     local inventory
-    inventory="$(application_observe inventory brew list --formula --full-name)" || return 2
+    inventory="$(performance_measure formula.inventory.external application_observe inventory brew list --formula --full-name)" || return 2
     LC_ALL=C awk '
         /^$/ { next }
         { n=split($0,p,"/"); if (n != 1 && n != 3) exit 2
@@ -119,7 +120,7 @@ is_brew_package_installed() {
         [[ "$OBSERVED_FORMULA_STATUS" == 0 ]] || return 2
         inventory="$OBSERVED_FORMULA_INVENTORY"
     else
-        inventory="$(application_observe inventory brew list --formula --full-name)" || return 2
+        inventory="$(performance_measure formula.inventory.external application_observe inventory brew list --formula --full-name)" || return 2
     fi
 
     # Discovery emits short names. Qualified inputs must match the tap too;
@@ -137,6 +138,31 @@ is_brew_package_installed() {
 
 CASK_REINSTALL_REQUIRED=false
 
+# Only read-only callers create a local pending scope. Native metadata is batched,
+# while receipt, payload, ownership and requirement checks remain per item.
+homebrew_cask_metadata_batch() {
+    [[ "${OBSERVED_CASK_METADATA_STATUS:-}" == pending ]] || return 0
+    OBSERVED_CASK_METADATA_STATUS=individual
+    local candidate metadata
+    local -a tokens=()
+    while IFS= read -r candidate || [[ -n "$candidate" ]]; do
+        [[ -n "$candidate" && "$candidate" != \#* ]] || continue
+        blueprint_item_selected homebrew-casks "$candidate" || continue
+        tokens+=("$candidate")
+    done <<< "$OBSERVED_CASK_CANDIDATES"
+    # Keep bounded argv/output and the established single-item path for small or
+    # unusually large scopes. Never accept an incomplete batch as an inventory.
+    [[ ${#tokens[@]} -gt 1 && ${#tokens[@]} -le 128 ]] || return 0
+    metadata="$(HOMEBREW_NO_AUTO_UPDATE=1 performance_measure cask.metadata.external \
+        application_observe inventory brew info --json=v2 --cask "${tokens[@]}")" || return 0
+    jq -e --args '(.casks | type == "array") and
+        ([.casks[].token] | sort) == ($ARGS.positional | sort) and
+        ([.casks[].token] | unique | length) == ($ARGS.positional | length)' \
+        "${tokens[@]}" <<< "$metadata" >/dev/null 2>&1 || return 0
+    OBSERVED_CASK_METADATA="$metadata"
+    OBSERVED_CASK_METADATA_STATUS=0
+}
+
 # One provider projection drives Preview, execution requalification and independent
 # Verification. Payload evidence is never inferred from registration alone.
 homebrew_cask_result() { performance_measure cask.observation homebrew_cask_result_timed "$@"; }
@@ -146,7 +172,14 @@ homebrew_cask_result_timed() {
     homebrew_adapter_result observation_error observation_failure homebrew_unavailable "$operation" || return 2
     CASK_REINSTALL_REQUIRED=false
     CASK_OBSERVATION_CONDITION=homebrew_unavailable
-    metadata="$(HOMEBREW_NO_AUTO_UPDATE=1 performance_measure cask.metadata.external application_observe inventory brew info --json=v2 --cask "$item")" || return 2
+    homebrew_cask_metadata_batch
+    if [[ "${OBSERVED_CASK_METADATA_STATUS:-}" == 0 ]]; then
+        metadata="$(jq -ce --arg token "$item" '{casks: [.casks[] | select(.token == $token)]}' <<< "$OBSERVED_CASK_METADATA")" || return 2
+    else
+        # A failed/malformed batch supplies no evidence. Preserve independent
+        # per-item inspection, including its ordinary failure classification.
+        metadata="$(HOMEBREW_NO_AUTO_UPDATE=1 performance_measure cask.metadata.external application_observe inventory brew info --json=v2 --cask "$item")" || return 2
+    fi
     HOMEBREW_ADAPTER_METADATA="$metadata"
     jq -e --arg token "$item" '(.casks | length == 1) and .casks[0].token == $token' <<< "$metadata" >/dev/null || {
         homebrew_adapter_failure homebrew_metadata_incompatible "$operation"; return 2;

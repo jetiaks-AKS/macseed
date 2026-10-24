@@ -403,6 +403,51 @@ assert_status 2 "$status" "verbose formula install failure returns 2"
 [[ "$MODULE_CHANGED" == false ]] || fail "verbose failed formula install set Changed"
 assert_no_false_success "$output" "verbose failed formula install emits no success"
 
+# Application module snapshots must expire at Apply and at the next module pass.
+# Keep native tools disposable; production input/inventory validation stays real.
+(
+    export MACSEED_APPLICATION_EXECUTION=true MACSEED_ITEM_STATE_DIR="$TEST_DIR/formula-items"
+    mkdir -m 700 "$MACSEED_ITEM_STATE_DIR"
+    application_observe() { shift; "$@"; }
+    brew_install_formula() {
+        brew install "$1" || return $?
+        # An installation can also add a later selected dependency.
+        printf 'gamma\n' >> "$FORMULA_INSTALLED_FILE"
+        jq -n --arg id "formula:$1" '{($id):$id}' > "$MACSEED_ITEM_STATE_DIR/item-identities.json"
+        jq -n --arg id "formula:$1" '[$id]' > "$MACSEED_ITEM_STATE_DIR/failed-items.json"
+        chmod 600 "$MACSEED_ITEM_STATE_DIR/"*.json
+    }
+    reset_formula_case
+    printf 'alpha\nbeta\n' > "$FORMULA_INSTALLED_FILE"
+    run_formula_case
+    assert_status 0 "$status" "application formula noop group succeeds"
+    assert_no_mutation "application formula noop group does not install"
+    [[ "$(grep -c '^brew formula list$' "$OBSERVATION_LOG")" -eq 1 ]] || fail "noop group repeated inventory"
+    run_formula_case
+    [[ "$(grep -c '^brew formula list$' "$OBSERVATION_LOG")" -eq 2 ]] || fail "next module pass reused old inventory"
+
+    reset_formula_case
+    printf 'alpha\nbeta\ngamma\n' > "$TEST_DIR/brew-packages.conf"
+    printf 'alpha\n' > "$FORMULA_INSTALLED_FILE"
+    run_formula_case
+    assert_status 0 "$status" "application formula mixed group observes installed dependencies"
+    [[ "$(cat "$COMMAND_LOG")" == 'brew install beta' && "$MODULE_CHANGED" == true ]] || fail "post-Apply inventory was stale"
+    [[ "$(grep -c '^brew formula list$' "$OBSERVATION_LOG")" -eq 3 ]] || fail "fresh pre/post-Apply observations missing"
+
+    reset_formula_case
+    printf 'alpha\n' > "$FORMULA_INSTALLED_FILE"
+    FORMULA_READ_FAIL_AT=2
+    run_formula_case
+    assert_status 2 "$status" "cached formula absence requires successful fresh admission read"
+    assert_no_mutation "failed admission inventory prevents formula install"
+
+    reset_formula_case
+    printf 'invalid inventory\n' > "$FORMULA_INSTALLED_FILE"
+    run_formula_case
+    assert_status 2 "$status" "malformed application inventory is not absence"
+    assert_no_mutation "malformed application inventory prevents formula install"
+) || exit 1
+
 # Complete required application inputs must validate before observation/apply.
 run_application_input_case() {
     "$validation_consumer" > "$TEST_DIR/input-validation.out" 2>&1

@@ -526,8 +526,10 @@ application_record() {
     if [[ "$MACSEED_REPORT_COUNT" -gt 8193 ]]; then return 0; fi
     if [[ "$MACSEED_REPORT_COUNT" -eq 8193 ]]; then set -- truncated; fi
     if [[ "${MACSEED_REPORT_INVALID:-false}" == true && "$1" == complete ]]; then set -- reporting_failed; fi
+    if [[ "${MACSEED_PERFORMANCE_ACTIVE:-false}" == true ]]; then performance_trace_edge begin reporting.record; fi
     printf '%s\0' "$@" | python3 -B modules/core/application-interface/reporting.py \
         1>&"$MACSEED_REPORT_FD" 2>/dev/null || MACSEED_REPORT_INVALID=true
+    if [[ "${MACSEED_PERFORMANCE_ACTIVE:-false}" == true ]]; then performance_trace_edge end reporting.record; fi
     return 0
 }
 

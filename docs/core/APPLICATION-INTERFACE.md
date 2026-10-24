@@ -869,7 +869,9 @@ launch-to-first-lifecycle delivery and the shell interval before the Launcher mo
 commands. The explicit PKG inspector retains a download timer, but state
 classification no longer invokes that download. Timings also include unsupported
 classification and Verification domains, plus `observation.read` and
-`observer.process_table` call counts and durations.
+`observer.process_table` call counts and durations. Formula/VS Code inventory and
+module spans, `readiness.lifecycle`, and `reporting.record` separate native reads,
+journal checks and ordered operation-record serialization.
 
 Python uses `time.monotonic()`. Bash uses one persistent opt-in clock helper per
 Bootstrap process, with acknowledged begin/end messages; no Python is launched
@@ -893,11 +895,33 @@ V1, operation JSONL or Diagnostic Report. This trace is not restoration evidence
 ## Verification and Environment Status
 
 Each structured Restore Preview, read-only readiness invocation and Global
-Verification domain pass obtains fresh formula, App Store and VS Code inventories. Cask passes reuse only their
-common prefix/registration inventory; item metadata and payload observations stay
-independent. These shell-local snapshots never survive into Apply or a later
-pass. Capture and ordinary CLI Preview retain their existing observation path.
-Failed or malformed inventories remain observation errors, not absence.
+Verification domain pass obtains fresh formula, App Store and VS Code inventories.
+Cask passes reuse their common prefix/registration inventory and batch public
+metadata for 2–128 selected tokens. A batch must contain exactly one row for every
+selected token and no other tokens. Failed, malformed or incomplete batches provide
+no evidence; the pass falls back to independent per-item reads with their existing
+error classification. Single-item and larger scopes use the per-item path.
+Receipt, payload, ownership and installation requirements are still checked per
+item. Snapshots stay shell-local to that read-only pass; Cask Apply requalification
+and post-Apply checks retain fresh per-item observations. Capture and ordinary CLI
+Preview retain their existing observation path.
+
+During application Restore, each formula or supervised VS Code module obtains one
+fresh, complete, validated inventory for consecutive Already Matches records.
+An absent item in a reused snapshot requires a fresh read before installation.
+Every installation attempt invalidates the snapshot; successful installation still
+requires observed post-Apply verification. Each selected item retains its own
+operation record and Stop checkpoint. A later module invocation and final Global
+Verification start fresh. Failed or malformed inventories remain observation
+errors, never absence or Match.
+
+| Repeated work | Purpose and retained boundary | Reuse within one pass |
+|---|---|---|
+| Cask public metadata | Current provider facts; separate receipt/payload/ownership checks | One complete batch in each read-only pass |
+| Formula/VS Code inventory | Observe installed IDs; fresh pre/post-Apply and final Verification | One validated snapshot for consecutive noops |
+| Bundle/plan validation and readiness | Fresh Execute preparation, pre-publication admission and Bootstrap startup | No reuse across those boundaries |
+| Lifecycle journals and item records | Block uncertain re-entry; preserve every outcome and event order | No removal or batching; trace measures their cost |
+
 Inventory-based Verification records use the snapshot's observation timestamp.
 Application macOS scalar Preview, category Check and Verification batch native
 `defaults read-type`/`read` calls inside one owned observer per selected category,

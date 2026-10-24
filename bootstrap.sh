@@ -432,26 +432,26 @@ bootstrap_application_readiness() { performance_measure readiness.live bootstrap
 
 bootstrap_application_readiness_timed() (
     local focus="${1:-all}" needs_network=false needs_clt=false
-    python3 -B modules/core/application-interface/external_state.py
+    performance_measure readiness.lifecycle python3 -B modules/core/application-interface/external_state.py
     local external_state=$?
     if [[ "$external_state" -ne 1 ]]; then
         echo privileged_lifecycle_unknown
         return 2
     fi
-    python3 -B modules/apps/adapters/homebrew_lifecycle.py --pending
+    performance_measure readiness.lifecycle python3 -B modules/apps/adapters/homebrew_lifecycle.py --pending
     local lifecycle_state=$?
     if [[ "$lifecycle_state" -ne 1 ]]; then
         echo privileged_lifecycle_unknown
         return 2
     fi
     # VS Code uncertainty blocks fresh Execute even when extensions are unselected.
-    python3 -B modules/vscode/cli_execution.py --pending
+    performance_measure readiness.lifecycle python3 -B modules/vscode/cli_execution.py --pending
     lifecycle_state=$?
     if [[ "$lifecycle_state" -ne 1 ]]; then
         echo privileged_lifecycle_unknown
         return 2
     fi
-    python3 -B modules/bootstrap/workspace/clone_execution.py --pending
+    performance_measure readiness.lifecycle python3 -B modules/bootstrap/workspace/clone_execution.py --pending
     lifecycle_state=$?
     if [[ "$lifecycle_state" -ne 1 ]]; then
         echo privileged_lifecycle_unknown
@@ -571,6 +571,7 @@ bootstrap_application_readiness_timed() (
             echo invalid_selected_input
             return 2
         }
+        local OBSERVED_CASK_METADATA_STATUS=pending OBSERVED_CASK_METADATA OBSERVED_CASK_CANDIDATES="$casks"
         while IFS= read -r cask || [[ -n "$cask" ]]; do
             [[ -n "$cask" && "$cask" != \#* ]] || continue
             blueprint_item_selected homebrew-casks "$cask" || continue

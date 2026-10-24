@@ -58,6 +58,7 @@ if spec.get('trace_context'):
 if mode == 'supervised_inventory_hang':
     mode = 'inventory_hang' if os.environ.get('MACSEED_VSCODE_SUPERVISED_RESTORE') == 'true' else 'success'
 if sys.argv[1:] == ['--list-extensions']:
+    with (root / 'inventory-reads').open('a') as stream: stream.write('read\n')
     if mode == 'inventory_hang':
         (root / 'active').write_text(str(os.getpid()))
         print('PRIVATE_VSCODE_SECRET https://private.invalid/?token=PRIVATE_VSCODE_SECRET', flush=True)
@@ -233,11 +234,15 @@ exit "$install_status"
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual([row['outcome'] for row in records], ['success', 'success'])
         self.assertEqual((self.root / 'changed').read_text(), 'true\n')
+        # Initial read, post-Apply read, fresh absent-item admission, post-Apply.
+        self.assertEqual(len((self.root / 'inventory-reads').read_text().splitlines()), 4)
+        (self.root / 'inventory-reads').write_text('')
         result, records = self.run_install()
         self.assertEqual(result.returncode, 0)
         self.assertEqual([row['outcome'] for row in records], ['noop', 'noop'])
         self.assertEqual(len(self.attempts()), 2)
         self.assertEqual((self.root / 'changed').read_text(), 'false\n')
+        self.assertEqual((self.root / 'inventory-reads').read_text(), 'read\n')
 
     def test_reset_continues_independent_and_preserves_native_exit(self):
         for verbose in (False, True):

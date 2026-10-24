@@ -1,9 +1,12 @@
 #!/bin/bash
 source "$(dirname "${BASH_SOURCE[0]}")/../core/application-interface/observation.sh" || return 2
+declare -F performance_measure >/dev/null || source modules/core/performance_trace.sh
 
 OBSERVED_VSCODE_STATUS=
 VSCODE_SUPERVISED_INVENTORY=false
-observe_vscode_inventory() {
+observe_vscode_inventory() { performance_measure vscode.inventory.external observe_vscode_inventory_timed; }
+
+observe_vscode_inventory_timed() {
     local inventory
     if [[ "${VSCODE_SUPERVISED_INVENTORY:-false}" == true ]]; then
         if ! inventory="$(vscode_supervised_cli --list-extensions)"; then
@@ -264,7 +267,9 @@ install_vscode_extension() {
 # Install VS Code Extensions
 # ==========================================
 
-install_vscode_extensions() {
+install_vscode_extensions() { performance_measure module.vscode_extensions install_vscode_extensions_timed; }
+
+install_vscode_extensions_timed() {
 
     if blueprint_exists &&
        [[ -z "$(blueprint_selected_items vscode-extensions)" ]]; then
@@ -292,10 +297,11 @@ install_vscode_extensions() {
     fi
 
     local missing_extensions=0 failures=0
-    local inspection_result before_inventory
+    local inspection_result before_inventory inventory_reused
     local OBSERVED_VSCODE_STATUS='' OBSERVED_VSCODE_INVENTORY
     local VSCODE_SUPERVISED_INVENTORY=false
     vscode_restore_execution && VSCODE_SUPERVISED_INVENTORY=true
+    OBSERVED_VSCODE_STATUS=pending
 
     while IFS= read -r extension || [[ -n "$extension" ]]; do
 
@@ -304,9 +310,16 @@ install_vscode_extensions() {
         blueprint_item_selected vscode-extensions "$extension" || continue
         if declare -F application_stop_checkpoint >/dev/null; then application_stop_checkpoint "$failures"; fi
 
-        OBSERVED_VSCODE_STATUS=pending
+        [[ "$VSCODE_SUPERVISED_INVENTORY" == true ]] || OBSERVED_VSCODE_STATUS=pending
+        inventory_reused=false
+        [[ "$OBSERVED_VSCODE_STATUS" != 0 ]] || inventory_reused=true
         is_vscode_extension_installed "$extension"
         inspection_result=$?
+        if [[ $inspection_result -eq 1 && "$inventory_reused" == true ]]; then
+            OBSERVED_VSCODE_STATUS=pending
+            is_vscode_extension_installed "$extension"
+            inspection_result=$?
+        fi
         before_inventory="$OBSERVED_VSCODE_INVENTORY"
 
         if [[ $inspection_result -eq 0 ]]; then

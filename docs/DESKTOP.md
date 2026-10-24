@@ -842,8 +842,16 @@ text size changes. Status classification and Preview/Capture layouts are unchang
 
 ## Recent Restore qualification and performance
 
-On 2026-10-24, inspection of the failed Git Restore established that the application
-clone discarded local SSH configuration, losing a custom identity. Historical
+The user confirmed green CI at `1bd8d85`, restoration of `bootstrap-branch-test`,
+and a successful real Restore on 2026-10-24: exit `0`, **136/136 Verified** and
+`unknown_consequences=false`. Retained Core operation
+`A7764C72-C82E-4908-AE21-7559204386CC` / store
+`D38CEA6F-9E4A-4A77-955C-3F7AC4139E46` confirms the result. It ran from
+15:13:50.803 to 15:16:31.249 UTC (160.446 s), including a Git clone and Firefox
+reinstall. That total is not comparable with a fully matching disposable Restore.
+
+Earlier on 2026-10-24, inspection of the failed Git Restore established that the
+application clone discarded local SSH configuration, losing a custom identity. Historical
 native stderr/exit had not been retained; a controlled read with the old command
 reproduced authentication exit `128`. The corrected owned clone completed with
 exit `0`, the selected branch and original remote in a new disposable destination.
@@ -855,8 +863,8 @@ deadline, a changed selected folder could produce `stale_plan` before the durabl
 unknown-lifecycle fence. The existing case now forces that timing outcome and
 passes with `privileged_lifecycle_unknown`, no publication and the journal intact.
 
-Same-Mac measurements with the existing opt-in trace, after the Homebrew observation
-repair, compared identical successful Capture scope and the same Bundle:
+Earlier same-Mac measurements with the existing opt-in trace, after the Homebrew
+observation repair, compared identical successful Capture scope and the same Bundle:
 
 | Scenario | Before | After | Evidence |
 |---|---:|---:|---|
@@ -881,12 +889,82 @@ no separate Desktop delivery stall was established. Disposable first-event deliv
 stayed about 1.3 s, while historical real-Restore event intervals cannot by themselves
 separate shell startup, work and UI delivery.
 
-Remaining Restore Prepare cost includes the fresh readiness report (14.08 s),
-15 per-item Cask metadata calls per pass (about 4.8 s in Preview), and native startup
+At that checkpoint, remaining Restore Prepare cost included the fresh readiness
+report (14.08 s), 15 per-item Cask metadata calls per pass (about 4.8 s in Preview), and native startup
 checks. Bundle unpack/fingerprints were milliseconds. These nested spans are not
 additive. Inventories remain phase-local, and Homebrew analytics/auto-update remain
 disabled per application read. Full user Restore and clean-Mac qualification were
 not rerun by this repair.
+
+The subsequent preparation/noop checkpoint used `1bd8d85` as its baseline, the same
+Saved Environment and Xcode Python through the existing production Desktop runtime.
+One before/after pair ran with the opt-in trace; user caches were not cleared. Both
+runs used an established environment, so warm-cache/load effects remain possible.
+Capture's unchanged path is a control, and its small timing difference is not
+attributed to this optimization.
+
+| Scenario | Before | After | Equivalent result |
+|---|---:|---:|---|
+| Real read-only Capture Prepare | 9.07 s | 7.86 s | Complete payload identical; 22 formulas, 15 Casks |
+| Real read-only Environment Status | 19.44 s | 15.00 s | 126 matching, 5 differing, 1 extra; only observation timestamps differ |
+| Real read-only Restore Prepare | 31.61 s | 22.39 s | Complete plan/readiness identical; all 15 Casks satisfied |
+| Disposable Prepare | 16.17 s | 12.34 s | Same selection, actions, reasons and requirements |
+| Disposable noop Execute | 54.96 s | 43.54 s | 62/62 Verified, exit 0, no unknown consequences |
+| Formula module within that Execute | 3.91 s | 1.05 s | All 22 individual noop records retained |
+| VS Code module within that Execute | 4.40 s | 1.15 s | All 24 individual noop records retained |
+
+The disposable fixture selected 22 formulas, 24 extensions, 15 Casks and one folder;
+native-tool stand-ins represented the same installed state and rejected installs.
+It reused production preparation, supervisors, execution and Verification. Its full
+206-event stream, sequence, item/record IDs, outcomes, reasons, coverage and final
+Verification matched after excluding only observation timestamps and prepared-plan
+identity. Prepare also normalized the fresh private fixture executable roots and
+Bundle/stage identity digests. Real Capture/Prepare required no normalization;
+real Comparison differed only in 131 `observed_at` fields. These measurements do
+not estimate the duration of a full user Restore with installation or Git clone.
+
+| Expensive calls and scope | Before | After | Boundary preserved |
+|---|---:|---:|---|
+| Cask metadata, real Prepare Preview + readiness | 30 | 2 | One fresh batch in each read-only pass |
+| Cask metadata, disposable Execute including re-preparation and final Verify | 90 | 20 | Five fresh batches; 15 individual Apply-pass reads remain |
+| Formula inventory, matching module | 22 | 1 | Fresh complete snapshot; invalidate on every install attempt |
+| VS Code inventory, matching module | 24 | 1 | Same rule; existing supervised observer retained |
+| Lifecycle journal Python probes, real readiness report | 28 | 28 | All seven domain checks remain live |
+| Record serialization Python calls, disposable Bootstrap | 216 | 216 | Every ordered operation/report record retained |
+
+The two real Cask metadata spans fell from 5.17/5.08 s to 0.44/0.44 s; their
+30 per-item classifiers still ran. Preview/readiness observer reads fell from
+63/54 to 49/40. Whole disposable Execute formula/extension inventory calls fell
+from 27/29 to 6/6, retaining the five other preparation/admission/Verification reads.
+Capability probes remain scoped to their process/kind and fresh readiness boundary:
+the fixture still makes ten sets of version/prefix/list/info/install-help probes.
+No Desktop delivery stall was established or worked around.
+
+Remaining measured cost includes real readiness collection (10.50 s, including
+the 8.20 s report), per-item payload/classification and startup validation
+(0.87/0.91 s). The 28 journal probes cost 0.72 s; Bundle unpack/fingerprints remain
+milliseconds. Disposable pre-publication readiness is 4.47 s, Bootstrap readiness
+4.82 s, launch-to-first-event 5.55 s and record serialization 7.15 s. These are
+nested spans, not additive phases. Reporting was retained after the dominant noop
+inventory duplication was removed. The [Core contract](core/APPLICATION-INTERFACE.md#verification-and-environment-status)
+defines snapshot lifetime, incomplete-batch fallback and fresh Apply/final checks.
+
+Historical Preview/Core logs identify **Firefox** as the repaired Cask. The existing
+classifier selects Repair for a registered Cask with missing/invalid required
+payload; the exact historical missing path was not retained. There is no evidence
+that the reinstall was unnecessary or failed to converge: the new real Preview
+reports all 15 Casks satisfied, and the disposable damaged app/CLI repair converges
+to noop. Repair policy is unchanged. Its historical 10.743 s installation interval
+is distinct from observation overhead.
+
+Focused validation passed ten selected Homebrew, VS Code and Restore cases plus
+the application-consumer, startup and dry-run partial-fixture harnesses. They cover
+complete/incomplete metadata, mixed Apply/noop, observation failures, post-Apply
+freshness, Stop, stale plans, final Verification and trace/Protocol equivalence.
+No full regression/Desktop suite or real user Execute ran for this checkpoint.
+CoreRoot remains this checkout; the existing development `.app` uses
+`/Applications/Xcode.app/Contents/Developer/usr/bin/python3` and needs no rebuild
+for these Core-only changes.
 
 The user confirmed that a real Restore successfully installed previously missing
 VS Code extensions. This is user-reported installation evidence; no operation date,

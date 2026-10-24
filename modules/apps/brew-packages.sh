@@ -126,7 +126,9 @@ preview_brew_packages() {
 # Install Homebrew Packages
 # ==========================================
 
-install_brew_packages() {
+install_brew_packages() { performance_measure module.formulas install_brew_packages_timed; }
+
+install_brew_packages_timed() {
 
     if blueprint_exists &&
        [[ -z "$(blueprint_selected_items homebrew-packages)" ]]; then
@@ -155,7 +157,11 @@ install_brew_packages() {
     local missing_packages=0
     local item_errors=0
     local package
-    local inspection_result
+    local inspection_result inventory_reused
+    local OBSERVED_FORMULA_STATUS='' OBSERVED_FORMULA_INVENTORY
+    if [[ "${MACSEED_APPLICATION_EXECUTION:-false}" == true ]]; then
+        OBSERVED_FORMULA_STATUS=pending
+    fi
 
     while IFS= read -r package || [[ -n "$package" ]]; do
 
@@ -169,8 +175,17 @@ install_brew_packages() {
             }
         fi
 
+        inventory_reused=false
+        [[ "$OBSERVED_FORMULA_STATUS" != 0 ]] || inventory_reused=true
         is_brew_package_installed "$package"
         inspection_result=$?
+        # A complete inventory can serve consecutive noops. An earlier absence
+        # never authorizes a later mutation without a fresh read.
+        if [[ $inspection_result -eq 1 && "$inventory_reused" == true ]]; then
+            OBSERVED_FORMULA_STATUS=pending
+            is_brew_package_installed "$package"
+            inspection_result=$?
+        fi
 
         if [[ $inspection_result -eq 0 ]]; then
 
@@ -205,6 +220,8 @@ install_brew_packages() {
         fi
 
         local install_result=$?
+        # Every attempt invalidates the snapshot, including known local failure.
+        [[ -z "$OBSERVED_FORMULA_STATUS" ]] || OBSERVED_FORMULA_STATUS=pending
         if [[ "${MACSEED_APPLICATION_EXECUTION:-false}" == true &&
               -f "${MACSEED_ITEM_STATE_DIR:-}/external-tool-active.json" ]]; then
             install_result=129

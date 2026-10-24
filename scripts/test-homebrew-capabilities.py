@@ -88,6 +88,42 @@ class CapabilityTests(unittest.TestCase):
     def classify(self, **kwargs):
         return cask.classify(self.row, self.prefix, self.observer, **kwargs)
 
+    def test_metadata_batch_requires_complete_unique_selected_scope(self):
+        script = '''
+source modules/apps/adapters/homebrew.sh
+blueprint_item_selected() { [[ "$2" != unselected ]]; }
+application_observe() {
+    printf '%s\n' "$*" >> "$TEST_BATCH_CALLS"
+    cat "$TEST_BATCH_DATA"
+    return "$TEST_BATCH_EXIT"
+}
+inspect() {
+    local OBSERVED_CASK_METADATA_STATUS=pending OBSERVED_CASK_METADATA=''
+    local OBSERVED_CASK_CANDIDATES=$'alpha\nunselected\nbeta'
+    homebrew_cask_metadata_batch
+    homebrew_cask_metadata_batch
+    printf '%s\n%s\n' "$OBSERVED_CASK_METADATA_STATUS" "$OBSERVED_CASK_METADATA"
+}
+inspect
+'''
+        cases = [({'casks': [{'token': 'beta'}, {'token': 'alpha'}]}, 0, True),
+                 ({'casks': [{'token': 'alpha'}]}, 0, False),
+                 ({'casks': [{'token': 'alpha'}, {'token': 'alpha'}]}, 0, False),
+                 ({'casks': [{'token': 'alpha'}, {'token': 'unselected'}]}, 0, False),
+                 ({'casks': None}, 0, False),
+                 ({'casks': [{'token': 'alpha'}, {'token': 'beta'}]}, 7, False)]
+        data, calls = self.root / 'batch.json', self.root / 'batch-calls'
+        for payload, status, accepted in cases:
+            with self.subTest(payload=payload, status=status):
+                data.write_text(json.dumps(payload)); calls.write_text('')
+                env = dict(os.environ, TEST_BATCH_DATA=str(data), TEST_BATCH_CALLS=str(calls), TEST_BATCH_EXIT=str(status))
+                result = subprocess.run(['bash', '-c', script], cwd=ROOT, env=env, capture_output=True, text=True, timeout=10)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                state, metadata = result.stdout.split('\n', 1)
+                self.assertEqual(state, '0' if accepted else 'individual')
+                self.assertEqual(json.loads(metadata) if accepted else metadata.strip(), payload if accepted else '')
+                self.assertEqual(calls.read_text(), 'inventory brew info --json=v2 --cask alpha beta\n')
+
     def test_appstore_marker_blocks_registered_cask_without_claiming_ownership(self):
         self.application()
         self.historical()
@@ -1351,7 +1387,8 @@ class RestoreCapabilityTests(unittest.TestCase):
         brew = fixture.root / 'bin/brew'
         contents = brew.read_text()
         line = next(line for line in contents.splitlines() if line.strip().startswith('"info --json=v2 --cask fixture-cask")'))
-        contents = contents.replace(line, "  info\\ --json=v2\\ --cask\\ *) python3 -B -c 'import json,os,sys; from pathlib import Path; rows=json.loads(Path(os.environ[\"TEST_CASK_METADATA\"]).read_text())[\"casks\"]; print(json.dumps({\"casks\":[r for r in rows if r[\"token\"]==sys.argv[1]]}))' \"$4\" ;;")
+        fixture.environment['TEST_METADATA_CALLS'] = str(fixture.root / 'metadata-calls')
+        contents = contents.replace(line, "  info\\ --json=v2\\ --cask\\ *) printf '%s\\n' \"$*\" >> \"$TEST_METADATA_CALLS\"; python3 -B -c 'import json,os,sys; from pathlib import Path; rows=json.loads(Path(os.environ[\"TEST_CASK_METADATA\"]).read_text())[\"casks\"]; print(json.dumps({\"casks\":[r for r in rows if r[\"token\"] in sys.argv[1:]]}))' \"${@:4}\" ;;")
         contents = contents.replace('|| echo fixture-cask ;;', '|| echo "' + '\n'.join(row['token'] for row in rows) + '" ;;')
         brew.write_text(contents)
         adapter = fixture.project / 'modules/apps/adapters/homebrew_cask.py'
@@ -1380,6 +1417,8 @@ class RestoreCapabilityTests(unittest.TestCase):
         self.assertTrue(any(row.get('diagnostic', {}).get('primitive') == 'login_item' for row in conditions), conditions)
         self.assertFalse(plan['readiness']['ready'])
         self.assertFalse(Path(fixture.environment['TEST_CASK_LOG']).exists())
+        self.assertEqual(Path(fixture.environment['TEST_METADATA_CALLS']).read_text().splitlines(),
+                         ['info --json=v2 --cask ' + ' '.join(tokens)] * 2)
 
     def test_missing_qualification_cannot_be_replaced_by_diagnostics(self):
         fixture, _ = self.fixture()
