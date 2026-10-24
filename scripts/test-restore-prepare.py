@@ -1461,45 +1461,113 @@ for artifact in row['artifacts']:
         self.assertFalse(Path(self.environment['TEST_CASK_LOG']).exists())
 
     def test_cask_repair_safe_stop_owns_child_processes(self):
+        # The historical name covers ownership; SIGTERM is Force Cancel, not Graceful Stop.
         self.repair_cask_fixture()
         import shlex
+        sys.path.insert(0, str(ROOT / 'modules/core/application-interface'))
+        from item_execution import ProcessTree
         pidfile = self.root / 'repair-child-pid'
         self.environment['TEST_REPAIR_PID'] = str(pidfile)
         sleep_script = '''import os, subprocess, sys, time
-from pathlib import Path
-child = subprocess.Popen([sys.executable, '-B', '-c', 'import signal,time; signal.signal(signal.SIGTERM,signal.SIG_IGN); time.sleep(60)'], start_new_session=True)
-Path(os.environ['TEST_REPAIR_PID']).write_text(str(child.pid))
+child = subprocess.Popen([sys.executable, '-B', '-c', 'import os,signal,time; from pathlib import Path; signal.signal(signal.SIGTERM,signal.SIG_IGN); Path(os.environ["TEST_REPAIR_PID"]).write_text(str(os.getpid())); time.sleep(60)'], start_new_session=True)
 time.sleep(60)
 '''
         brew = self.root / 'bin/brew'
         brew.write_text(brew.read_text().replace('mkdir "$TEST_CASK_TARGET"',
             'python3 -B -c ' + shlex.quote(sleep_script) + '; mkdir "$TEST_CASK_TARGET"'))
+        later_mutation = self.root / 'repair-later-mutation'
+        self.environment['TEST_REPAIR_LATER_MUTATION'] = str(later_mutation)
+        bootstrap = self.project / 'bootstrap.sh'
+        next_module = '        run_module "App Store" install_appstore_apps'
+        self.assertIn(next_module, bootstrap.read_text())
+        bootstrap.write_text(bootstrap.read_text().replace(next_module,
+            '        touch "$TEST_REPAIR_LATER_MUTATION"\n' + next_module))
         self.pack()
         prepared = self.plan_result()
         request = {'protocol_version': 1, 'operation_id': 'repair-stop', 'operation': 'restore_execute',
                    'parameters': {'path': str(self.archive), 'include_secure': False, 'disabled_groups': [],
                                   'expected_prepared_plan_id': prepared['prepared_plan_id']}}
+        unrelated = subprocess.Popen(['sleep', '120'], start_new_session=True)
+        def cleanup_unrelated():
+            if unrelated.poll() is None:
+                unrelated.kill()
+            unrelated.wait(timeout=5)
+        self.addCleanup(cleanup_unrelated)
         core = subprocess.Popen(['bash', str(self.project / 'modules/core/application-interface/core.sh')],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            cwd=self.project, env=self.environment)
-        self.addCleanup(lambda: core.kill() if core.poll() is None else None)
+            cwd=self.project, env=self.environment, start_new_session=True)
+        tree = ProcessTree(core.pid, initialize=False)
+        def cleanup_core():
+            try:
+                self.assertTrue(tree.stop(), 'Fixture process cleanup was not confirmed')
+                core.wait(timeout=5)
+            finally:
+                core.stdin.close(); core.stdout.close(); core.stderr.close()
+        self.addCleanup(cleanup_core)
         core.stdin.write(json.dumps(request).encode()); core.stdin.close()
-        import time
-        for _ in range(1000):
+        # Execute repeats preparation/readiness before starting the mock repair.
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            tree.scan()
             if pidfile.exists() or core.poll() is not None: break
-            time.sleep(.01)
-        self.assertTrue(pidfile.exists(), core.stdout.read() if core.poll() is not None else 'Mock repair never started')
-        core.send_signal(signal.SIGTERM)
-        core.wait(timeout=20)
+            time.sleep(.05)
+        try:
+            self.assertTrue(pidfile.exists(), 'Mock repair never started')
+            core.send_signal(signal.SIGTERM)
+            core.wait(timeout=20)
+        finally:
+            # Assert production termination before fixture cleanup, even on an earlier failure.
+            with self.subTest(check='term_ignoring_child_stopped'):
+                self.assertTrue(pidfile.exists(), 'TERM-ignoring child never became ready')
+                child_state = subprocess.run(['/bin/ps', '-p', pidfile.read_text(), '-o', 'stat='],
+                                             capture_output=True, timeout=5)
+                self.assertIn(child_state.returncode, (0, 1))
+                state = child_state.stdout.strip()
+                self.assertTrue(not state or state.startswith(b'Z'), 'Repair child is still running')
+            with self.subTest(check='owned_processes_stopped'):
+                self.assertFalse(tree.scan(), 'Owned fixture processes are still running')
+            with self.subTest(check='unrelated_process_survives'):
+                self.assertIsNone(unrelated.poll())
+            with self.subTest(check='no_followup_mutation'):
+                self.assertEqual(Path(self.environment['TEST_CASK_LOG']).read_text(), 'reinstall\n')
+                self.assertFalse(Path(self.environment['TEST_CASK_TARGET']).exists())
+                self.assertFalse(later_mutation.exists())
         events = [json.loads(line) for line in core.stdout.read().splitlines()]
         core.stdout.close(); core.stderr.close()
-        self.assertEqual(events[-1]['data']['code'], 'cancelled', events)
-        self.assertTrue(events[-1]['data']['target_mutation_may_have_started'])
-        self.assertEqual(Path(self.environment['TEST_CASK_LOG']).read_text(), 'reinstall\n')
-        self.assertFalse(Path(self.environment['TEST_CASK_TARGET']).exists())
-        child_state = subprocess.run(['/bin/ps', '-p', pidfile.read_text(), '-o', 'stat='],
-                                     capture_output=True).stdout.strip()
-        self.assertTrue(not child_state or child_state.startswith(b'Z'), child_state)
+        print(json.dumps(dict(core_exit=core.returncode, **{key: events[-1]['data'].get(key) for key in (
+            'code', 'unknown_consequences', 'target_mutation_may_have_started',
+            'publication_started', 'publication_occurred', 'execution_status')})))
+        with self.subTest(check='force_cancel_contract'):
+            self.assertEqual(core.returncode, 2)
+            self.assertEqual(sum(row['type'] in ('completed', 'failed') for row in events), 1)
+            self.assertEqual(events[-1]['type'], 'failed')
+            final = events[-1]['data']
+            self.assertEqual(final['code'], 'privileged_lifecycle_unknown')
+            self.assertIs(final['unknown_consequences'], True)
+            self.assertIs(final['target_mutation_may_have_started'], True)
+            self.assertFalse(any(row['type'] == 'operation_record' and
+                                 row['data']['domain'] == 'homebrew-casks' and
+                                 row['data']['outcome'] == 'success' for row in events))
+        fence = self.home / 'Library/Application Support/Macseed/ExternalProcesses/active.json'
+        retained = fence.read_bytes()
+        with self.subTest(check='durable_unknown_fence'):
+            self.assertEqual(json.loads(retained)['state'], 'unknown_consequences')
+            self.assertEqual(json.loads(retained)['cause'], 'external_execution_unconfirmed')
+        with self.subTest(check='fresh_execute_blocked'):
+            fresh = self.plan_result()
+            repeated, repeated_events = self.execute(fresh['prepared_plan_id'])
+            final = repeated_events[-1]['data']
+            self.assertEqual(repeated.returncode, 2)
+            self.assertEqual(final['code'], 'privileged_lifecycle_unknown')
+            self.assertIs(final['unknown_consequences'], True)
+            self.assertFalse(final['publication_started'])
+            self.assertFalse(final['target_mutation_may_have_started'])
+        with self.subTest(check='retry_preserves_state'):
+            self.assertEqual(fence.read_bytes(), retained)
+            self.assertEqual(Path(self.environment['TEST_CASK_LOG']).read_text(), 'reinstall\n')
+            self.assertFalse(Path(self.environment['TEST_CASK_TARGET']).exists())
+            self.assertFalse(later_mutation.exists())
+            self.assertIsNone(unrelated.poll())
 
     def test_cask_failure_preserves_mutation_boundary(self):
         self.cask_fixture()
