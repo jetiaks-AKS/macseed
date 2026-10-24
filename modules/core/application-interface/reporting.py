@@ -6,6 +6,79 @@ import hashlib
 import json
 import os
 import re
+import stat
+import tempfile
+from contextlib import contextmanager
+
+OBSERVATION_REPORT = 'MACSEED_OBSERVATION_REPORT'
+OBSERVATION_REASONS = frozenset({'external_observation_process', 'external_observation_launch',
+    'external_observation_failed', 'external_observation_deadline', 'external_observation_limit',
+    'external_observation_worker', 'external_observation_unquiescent', 'external_observation_native'})
+
+
+@contextmanager
+def observation_reporting():
+    """Private operation scratch feeding the existing Protocol/Operation Log."""
+    # Never accept a caller-supplied report destination.
+    os.environ.pop(OBSERVATION_REPORT, None)
+    with tempfile.TemporaryDirectory(prefix='macseed-observation-', dir='/private/tmp') as directory:
+        path = os.path.join(directory, 'failures.jsonl')
+        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        os.close(descriptor)
+        os.environ[OBSERVATION_REPORT] = path
+        try:
+            yield
+        finally:
+            os.environ.pop(OBSERVATION_REPORT, None)
+
+
+def observation_failure(command, reason, elapsed, native_status, quiescent):
+    """No argv, paths, output, environment or exception text cross this boundary."""
+    path = os.environ.get(OBSERVATION_REPORT)
+    if not path or reason not in OBSERVATION_REASONS:
+        return
+    tool = 'homebrew' if os.path.basename(command[0]) == 'brew' else 'other'
+    probe = {'--version': 'version', '--prefix': 'prefix', 'list': 'inventory',
+             'info': 'metadata', 'help': 'capability'}.get(command[1] if len(command) > 1 else '', 'read') if tool == 'homebrew' else 'read'
+    value = dict(tool=tool, probe=probe, reason=reason, phase='observation',
+                 duration_ms=min(1_000_000_000, max(0, int(elapsed * 1000))), quiescent=quiescent)
+    if native_status is not None:
+        value['native_exit_code' if native_status >= 0 else 'native_signal'] = abs(native_status)
+    try:
+        descriptor = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_NOFOLLOW | os.O_NONBLOCK)
+        try:
+            info = os.fstat(descriptor)
+            if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
+                    or info.st_mode & 0o077 or info.st_nlink != 1 or info.st_size >= 32768):
+                return
+            os.write(descriptor, (json.dumps(value, separators=(',', ':')) + '\n').encode())
+        finally:
+            os.close(descriptor)
+    except OSError:
+        pass  # Diagnostic availability cannot change the observation outcome.
+
+
+def observation_failures():
+    path = os.environ.get(OBSERVATION_REPORT)
+    if not path:
+        return []
+    try:
+        with open(path, 'rb') as stream:
+            data = stream.read(32768)
+        values = []
+        for line in data.split(b'\n')[:-1][:64]:
+            value = json.loads(line)
+            if (set(value) <= {'tool', 'probe', 'reason', 'phase', 'duration_ms', 'quiescent', 'native_exit_code', 'native_signal'}
+                    and value.get('tool') in {'homebrew', 'other'}
+                    and value.get('probe') in {'version', 'prefix', 'inventory', 'metadata', 'capability', 'read'}
+                    and value.get('reason') in OBSERVATION_REASONS and value.get('phase') == 'observation'
+                    and type(value.get('quiescent')) is bool
+                    and type(value.get('duration_ms')) is int and 0 <= value['duration_ms'] <= 1_000_000_000
+                    and all(type(value[k]) is int and 0 <= value[k] <= 255 for k in ('native_exit_code', 'native_signal') if k in value)):
+                values.append(value)
+        return values
+    except (OSError, ValueError, TypeError):
+        return []
 
 MAX_RECORDS = 8192
 MAX_LINE = 4096

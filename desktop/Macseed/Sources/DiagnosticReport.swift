@@ -27,9 +27,13 @@ enum DiagnosticReportPrivacy {
         "comparison_kind": ["matching", "missing", "differing", "unverified", "unsupported", "unresolved", "extra", "unknown_difference"],
         "predicate": ["exists", "installed", "configured", "matching", "repository", "branch", "remote", "identity", "settings", "folder_exists", "package_installed", "configuration_matches", "identity_pair_matches_package", "directory", "file_content", "stored_preference", "direct_global_value", "supported_config_match", "worktree", "origin", "revision"],
         "scope": ["operation", "item"],
-        "section": ["summary", "verification", "verification_details", "comparison", "records", "readiness", "operation_records", "verification_records", "coverage_records", "diagnostics", "module_outcomes", "operation_failures", "conditions", "inventory", "comparison_records", "plan"],
+        "tool": ["homebrew", "other"],
+        "probe": ["version", "prefix", "inventory", "metadata", "capability", "read"],
+        "primitive": ["payload", "metadata", "historical_metadata", "lifecycle", "requirements", "rosetta", "replacement", "launchctl", "login_item", "pkgutil"],
+        "condition": ["provider_conflict", "ownership_unproven", "unsupported_capability", "observation_failed", "malformed_observation", "observation_limit", "ownership_ambiguous", "foreign_target", "conflicting_plist", "live_ownership_unproven", "identity_ambiguous", "authorization_required", "authorization_denied", "application_unavailable", "installation_required", "preparation_required"],
+        "section": ["observation_diagnostics", "summary", "verification", "verification_details", "comparison", "records", "readiness", "operation_records", "verification_records", "coverage_records", "diagnostics", "module_outcomes", "operation_failures", "conditions", "inventory", "comparison_records", "plan"],
     ]
-    static let reasons: Set<String> = ["cancelled", "secure_cancelled", "internal_error", "invalid_request", "unsupported_operation", "unsupported_protocol",
+    static let reasons: Set<String> = ["external_observation_process", "external_observation_launch", "external_observation_failed", "external_observation_deadline", "external_observation_limit", "external_observation_worker", "external_observation_unquiescent", "external_observation_native", "cancelled", "secure_cancelled", "internal_error", "invalid_request", "unsupported_operation", "unsupported_protocol",
         "bundle_invalid", "bundle_unavailable", "unsupported_bundle", "recovery_required", "invalid_selection", "preview_failed", "stale_plan", "stale_prepared_capture",
         "publication_failed", "bootstrap_failed", "process_observation_unavailable", "privileged_lifecycle_unknown", "item_stalled_timeout", "item_install_failed",
         "progress_observation_failed", "observation_failed", "observation_error", "prerequisite_unmet", "unsupported_predicate", "confirmed_mismatch", "unknown_difference",
@@ -46,9 +50,9 @@ enum DiagnosticReportPrivacy {
         "git_required", "git_unavailable", "repository_target_conflict", "mas_required", "mas_unavailable", "age_required", "homebrew_installation_requires_interaction",
         "homebrew_capability_unavailable", "homebrew_metadata_incompatible", "cask_launchctl_observation_failed", "missing_required_dependency", "secure_bridge_required",
         "invalid_selected_input", "cask_metadata_unavailable", "cask_repair_not_supported", "internet_required", "command_line_tools_required"]
-    static let countKeys: Set<String> = ["warning_count", "error_count", "verified_count", "mismatch_count", "unverified_count", "unsupported_count", "unresolved_count",
+    static let countKeys: Set<String> = ["duration_ms", "native_exit_code", "native_signal", "warning_count", "error_count", "verified_count", "mismatch_count", "unverified_count", "unsupported_count", "unresolved_count",
         "selected_count", "selected_domains", "selected_items", "secure_identity_count", "matching", "missing", "differing", "unverified", "unsupported", "unresolved", "extra", "unknown_difference"]
-    static let flagKeys: Set<String> = ["read_only", "publication_occurred", "target_mutation_may_have_started", "unknown_consequences", "independent_work_completed", "also_incomplete", "ready", "authorization_required"]
+    static let flagKeys: Set<String> = ["quiescent", "read_only", "publication_occurred", "target_mutation_may_have_started", "unknown_consequences", "independent_work_completed", "also_incomplete", "ready", "authorization_required"]
 
     static let runtimeReasons: Set<String> = ["runtime_unavailable", "invalid_runtime_configuration", "python_unavailable", "writable_core_required", "request_too_large", "launch_failed", "io_failed", "malformed_event", "incompatible_protocol", "operation_mismatch", "sequence_order", "invalid_lifecycle", "event_too_large", "incomplete_stream", "missing_terminal", "exit_mismatch", "interrupted"]
     static func code(_ value: String?, key: String) -> String? {

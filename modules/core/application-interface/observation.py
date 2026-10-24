@@ -9,6 +9,7 @@ import time
 
 sys.dont_write_bytecode = True
 from item_execution import ProcessTree, process_table, pipe_eof
+from reporting import observation_failure
 
 LOCAL_SECONDS = 30
 INVENTORY_SECONDS = 120
@@ -44,19 +45,30 @@ def retain_unknown():
 
 def read(command, timeout=LOCAL_SECONDS, *, env=None, cwd=None, progress=None, merge_stderr=False):
     """Return only complete, quiescent output; root exit is not pipe completion."""
+    if Path(command[0]).name == 'brew':
+        # Ruby-backed reads can detach an analytics curl after successful exit.
+        # Keep reads self-contained without weakening owned-worker observation or
+        # changing the user's persistent Homebrew preferences.
+        env = dict(os.environ if env is None else env, HOMEBREW_NO_ANALYTICS='1',
+                   HOMEBREW_NO_AUTO_UPDATE='1')
     if Path(command[0]).name == 'git':
         env = dict(os.environ if env is None else env, GIT_OPTIONAL_LOCKS='0',
                    GIT_NO_LAZY_FETCH='1', GIT_TERMINAL_PROMPT='0')
     process = tree = None
+    started = time.monotonic()
+    layer = 'external_observation_process'
     data = bytearray()
     reason, confirmed = None, True
     try:
         process_table()
+        layer = 'external_observation_launch'
         process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                    stderr=subprocess.STDOUT if merge_stderr else subprocess.DEVNULL, start_new_session=True,
                                    env=env, cwd=cwd)
         confirmed = False
+        layer = 'external_observation_process'
         tree = ProcessTree(process.pid)
+        layer = 'external_observation_failed'
         os.set_blocking(process.stdout.fileno(), False)
         now = time.monotonic()
         deadline, scan_at, eof = now + timeout, now + .25, False
@@ -94,7 +106,7 @@ def read(command, timeout=LOCAL_SECONDS, *, env=None, cwd=None, progress=None, m
                     confirmed = True
                     break
     except ERRORS:
-        reason = reason or 'external_observation_failed'
+        reason = reason or layer
     finally:
         if process is not None:
             try:
@@ -109,6 +121,13 @@ def read(command, timeout=LOCAL_SECONDS, *, env=None, cwd=None, progress=None, m
             process.stdout.close()
         if not confirmed:
             retain_unknown()
+    # A wrapper's warning/absence exit can be valid by its caller's contract.
+    # Homebrew read commands, however, require native success.
+    failure = ('external_observation_unquiescent' if not confirmed else reason
+               or ('external_observation_native' if process.returncode and Path(command[0]).name == 'brew' else None))
+    if failure:
+        observation_failure(command, failure, time.monotonic() - started,
+                            process.returncode if process is not None else None, confirmed)
     if not confirmed:
         raise ObservationError('external_observation_unquiescent', False)
     if reason:

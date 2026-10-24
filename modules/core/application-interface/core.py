@@ -27,7 +27,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from performance_trace import timed, add, ENABLED
 from time import monotonic
 from external_tool import diagnostic_valid
-from reporting import opaque
+from reporting import opaque, observation_reporting, observation_failures
 from homebrew_stop import Controller, StopAccepted
 import restore_selection
 from secure import launch_channel, import_secure, SecureError
@@ -63,6 +63,10 @@ class ExecuteFailed(Exception):
 
 
 def emit(sequence, kind, operation_id, data=None):
+    if kind in {'result', 'failed', 'cancelled'}:
+        failures = observation_failures()
+        if failures:
+            data = dict(data or {}, observation_diagnostics=failures)
     record = {
         "protocol_version": PROTOCOL_VERSION,
         "operation_id": operation_id,
@@ -940,6 +944,11 @@ def environment_compare(operation_id, parameters):
 
 
 def main(version, channel=None):
+    with observation_reporting():
+        return dispatch(version, channel)
+
+
+def dispatch(version, channel=None):
     # Python providers called before shell Preview are also application reads.
     # This flag confers no mutation or Restore lifecycle authority.
     os.environ['MACSEED_APPLICATION_OBSERVATION'] = 'true'

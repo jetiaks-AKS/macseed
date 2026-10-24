@@ -116,9 +116,13 @@ struct OperationLogSanitizer {
         "comparison_kind": ["matching", "missing", "differing", "unverified", "unsupported", "unresolved", "extra", "unknown_difference"],
         "predicate": ["exists", "installed", "configured", "matching", "repository", "branch", "remote", "identity", "settings", "folder_exists", "package_installed", "configuration_matches", "identity_pair_matches_package", "directory", "file_content", "stored_preference", "direct_global_value", "supported_config_match", "worktree", "origin", "revision"],
         "scope": ["operation", "item"],
-        "section": ["summary", "verification", "verification_details", "comparison", "records", "readiness", "operation_records", "verification_records", "coverage_records", "diagnostics", "module_outcomes", "operation_failures", "conditions", "inventory", "comparison_records", "plan"],
+        "tool": ["homebrew", "other"],
+        "probe": ["version", "prefix", "inventory", "metadata", "capability", "read"],
+        "primitive": ["payload", "metadata", "historical_metadata", "lifecycle", "requirements", "rosetta", "replacement", "launchctl", "login_item", "pkgutil"],
+        "condition": ["provider_conflict", "ownership_unproven", "unsupported_capability", "observation_failed", "malformed_observation", "observation_limit", "ownership_ambiguous", "foreign_target", "conflicting_plist", "live_ownership_unproven", "identity_ambiguous", "authorization_required", "authorization_denied", "application_unavailable", "installation_required", "preparation_required"],
+        "section": ["observation_diagnostics", "summary", "verification", "verification_details", "comparison", "records", "readiness", "operation_records", "verification_records", "coverage_records", "diagnostics", "module_outcomes", "operation_failures", "conditions", "inventory", "comparison_records", "plan"],
     ]
-    static let reasons: Set<String> = ["cancelled", "secure_cancelled", "internal_error", "invalid_request", "unsupported_operation", "unsupported_protocol",
+    static let reasons: Set<String> = ["external_observation_process", "external_observation_launch", "external_observation_failed", "external_observation_deadline", "external_observation_limit", "external_observation_worker", "external_observation_unquiescent", "external_observation_native", "cancelled", "secure_cancelled", "internal_error", "invalid_request", "unsupported_operation", "unsupported_protocol",
         "bundle_invalid", "bundle_unavailable", "unsupported_bundle", "recovery_required", "invalid_selection", "preview_failed", "stale_plan", "stale_prepared_capture",
         "publication_failed", "bootstrap_failed", "process_observation_unavailable", "privileged_lifecycle_unknown", "item_stalled_timeout", "item_install_failed",
         "progress_observation_failed", "observation_failed", "observation_error", "prerequisite_unmet", "unsupported_predicate", "confirmed_mismatch", "unknown_difference",
@@ -135,9 +139,9 @@ struct OperationLogSanitizer {
         "git_required", "git_unavailable", "repository_target_conflict", "mas_required", "mas_unavailable", "age_required", "homebrew_installation_requires_interaction",
         "homebrew_capability_unavailable", "homebrew_metadata_incompatible", "cask_launchctl_observation_failed", "missing_required_dependency", "secure_bridge_required",
         "invalid_selected_input", "cask_metadata_unavailable", "cask_repair_not_supported", "internet_required", "command_line_tools_required"]
-    static let countKeys: Set<String> = ["warning_count", "error_count", "verified_count", "mismatch_count", "unverified_count", "unsupported_count", "unresolved_count",
+    static let countKeys: Set<String> = ["duration_ms", "native_exit_code", "native_signal", "warning_count", "error_count", "verified_count", "mismatch_count", "unverified_count", "unsupported_count", "unresolved_count",
         "selected_count", "selected_domains", "selected_items", "secure_identity_count", "matching", "missing", "differing", "unverified", "unsupported", "unresolved", "extra", "unknown_difference"]
-    static let flagKeys: Set<String> = ["read_only", "publication_occurred", "target_mutation_may_have_started", "unknown_consequences", "independent_work_completed", "also_incomplete", "ready", "authorization_required"]
+    static let flagKeys: Set<String> = ["quiescent", "read_only", "publication_occurred", "target_mutation_may_have_started", "unknown_consequences", "independent_work_completed", "also_incomplete", "ready", "authorization_required"]
 
     static func version(_ value: String?) -> String? {
         guard let value, value.utf8.count <= 32,
@@ -189,6 +193,18 @@ struct OperationLogSanitizer {
         if data["phase"] == nil { data["phase"] = event.fields["phase"] }
         record.facts = project(data, omitted: &omitted)
         var evidence: [OperationLogFacts] = []
+        // Preserve the first failing layer even when a large item inventory fills
+        // the existing bounded result projection. No raw process text is read.
+        if case .array(let rows) = data["observation_diagnostics"] {
+            for row in rows.prefix(8) {
+                if let object = row.object {
+                    var facts = project(object, omitted: &omitted)
+                    facts.codes["section"] = "observation_diagnostics"
+                    evidence.append(facts)
+                } else { omitted = true }
+            }
+            if rows.count > 8 { omitted = true }
+        }
         if event.type == "verification_record" {
             verificationStatus = verificationStatus ?? "partial"; detailStatus = detailStatus ?? "partial"
         }
@@ -218,7 +234,12 @@ struct OperationLogSanitizer {
                 let available = max(0, 20 - evidence.count)
                 for row in rows.prefix(available) {
                     if let object = row.object {
-                        var facts = project(object, omitted: &omitted); facts.codes["section"] = key; evidence.append(facts)
+                        var facts = project(object, omitted: &omitted)
+                        if let diagnostic = object["diagnostic"]?.object {
+                            let detail = project(diagnostic, omitted: &omitted)
+                            for field in ["primitive", "condition"] { facts.codes[field] = detail.codes[field] }
+                        }
+                        facts.codes["section"] = key; evidence.append(facts)
                     } else { omitted = true }
                 }
                 if rows.count > available { omitted = true }

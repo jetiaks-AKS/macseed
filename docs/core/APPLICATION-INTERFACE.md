@@ -503,6 +503,17 @@ Progress uses `phase_started` / `phase_completed`, `capture_category`,
 `execution_event` where applicable. Restore also emits `operation_record`,
 `verification_record`, `coverage_record`, `diagnostic_record`.
 
+Application `result`/`failed`/`cancelled` payloads may include bounded
+`observation_diagnostics`: tool (`homebrew`/`other`), probe class, typed failure
+reason, `phase: observation`, `duration_ms`, `quiescent` and an optional
+`native_exit_code` or `native_signal`. This separates launch/process observation,
+native Homebrew failure, deadline, output limit, surviving worker and unconfirmed
+quiescence. Private operation scratch transports at most 64 failure records to
+the existing Protocol projection; it is not a persistent log. No arguments,
+paths, environment, exception text or process output are included. Desktop retains
+a bounded allowlisted projection in its existing Operation Log/Diagnostic Report;
+this does not change workflow statuses or imply complete raw diagnostics.
+
 A handled operation has exactly one terminal event. Capture/Restore cancellation
 uses `failed` with `cancelled` or `secure_cancelled`; Compare uses `cancelled`.
 Process exits are `0` for completion, `2` for failure, `130` for handled cancellation.
@@ -622,6 +633,10 @@ Stop still acts at item checkpoints; Force Cancel terminates owned work.
 Unconfirmed process observation/termination or state publication leaves unknown
 consequences and blocks later modules and fresh Execute, even with Git unselected.
 There is no journal-clear, rollback, cleanup or automatic retry command.
+
+Homebrew application reads set `HOMEBREW_NO_ANALYTICS=1` and
+`HOMEBREW_NO_AUTO_UPDATE=1` per process. This prevents detached analytics workers
+without changing global Homebrew preferences or accepting live workers as success.
 
 Read-only calls use bounded nonblocking output collection and confirm owned-tree
 termination plus pipe EOF. A reaped root, EOF and a final empty owned-tree scan

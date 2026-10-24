@@ -21,6 +21,7 @@ import clone_execution as clone
 import observation
 import item_execution
 import external_state
+import reporting
 spec = importlib.util.spec_from_file_location('restore_fixture', ROOT / 'scripts/test-restore-prepare.py')
 fixture = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(fixture)
@@ -195,6 +196,50 @@ class ReliabilityTests(unittest.TestCase):
         self.assertNotIn(int(pidfile.read_text()), item_execution.process_table())
         self.assertEqual(before, self.snapshot())
         self.assertFalse((self.items / 'external-tool-active.json').exists())
+
+    def test_homebrew_observation_disables_detached_analytics_per_read(self):
+        brew = self.root / 'brew'
+        brew.write_text('#!' + sys.executable + ' -B\n'
+            'import os,subprocess,sys\n'
+            'if os.environ.get("HOMEBREW_NO_ANALYTICS") != "1":\n'
+            ' subprocess.Popen([sys.executable,"-B","-c","import time;time.sleep(10)"])\n'
+            'assert os.environ.get("HOMEBREW_NO_AUTO_UPDATE") == "1"\n'
+            'print("fixture-formula")\n')
+        brew.chmod(0o700)
+        env = dict(os.environ, HOMEBREW_NO_ANALYTICS='0', HOMEBREW_NO_AUTO_UPDATE='0')
+        before = self.snapshot()
+        with reporting.observation_reporting():
+            value = observation.read([str(brew), 'list', '--formula'], env=env)
+            self.assertEqual((value.returncode, value.stdout), (0, b'fixture-formula\n'))
+            self.assertEqual(reporting.observation_failures(), [])
+        self.assertEqual(env['HOMEBREW_NO_ANALYTICS'], '0')
+        self.assertEqual(env['HOMEBREW_NO_AUTO_UPDATE'], '0')
+        self.assertEqual(before, self.snapshot())
+
+    def test_observation_failure_projection_preserves_layer_not_private_output(self):
+        brew = self.root / 'brew'
+        brew.write_text('#!' + sys.executable + ' -B\nimport sys; print("PRIVATE_OUTPUT"); sys.exit(17)\n')
+        brew.chmod(0o700)
+        with reporting.observation_reporting():
+            # A wrapper warning is not an external observation failure.
+            observation.read(self.script('import sys; sys.exit(1)'))
+            self.assertEqual(reporting.observation_failures(), [])
+            value = observation.read([str(brew), 'info', 'PRIVATE_ITEM'])
+            self.assertEqual(value.returncode, 17)
+            with self.assertRaises(observation.ObservationError) as raised:
+                observation.read([str(self.root / 'PRIVATE_EXECUTABLE')])
+            self.assertEqual(raised.exception.reason, 'external_observation_launch')
+            with patch.object(observation, 'process_table', side_effect=OSError('PRIVATE_ERROR')):
+                with self.assertRaises(observation.ObservationError) as raised:
+                    observation.read(self.script('pass'))
+            self.assertEqual(raised.exception.reason, 'external_observation_process')
+            rows = reporting.observation_failures()
+            self.assertEqual([r['reason'] for r in rows], ['external_observation_native',
+                'external_observation_launch', 'external_observation_process'])
+            self.assertEqual(rows[0]['native_exit_code'], 17)
+            self.assertNotIn('PRIVATE', json.dumps(rows))
+            self.assertTrue(all(r['duration_ms'] >= 0 and r['quiescent'] for r in rows))
+
 
     def test_observation_failure_is_not_empty_success_or_permission_to_mutate(self):
         original = observation.ProcessTree.stop
