@@ -189,7 +189,7 @@ struct ProductionWorkspace: View {
         VStack(spacing: 0) {
             Divider()
             RestorePreviewActions(back: { restore.back() }, refresh: { restore.refreshPreview() },
-                                  rebuild: { restore.requestRebuild() }, canRebuild: restore.canRebuild, showsRebuild: restore.hasAutomaticSelection)
+                                  rebuild: { restore.requestRebuild() }, canRebuild: restore.canRebuild, showsRebuild: restore.hasAutomaticSelection, reviewModel: restore)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .modifier(WorkspaceFooterPadding())
                 .disabled(restore.busy || runtime.isActive)

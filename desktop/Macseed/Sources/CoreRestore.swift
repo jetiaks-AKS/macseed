@@ -102,7 +102,7 @@ struct CoreRestorePreparation: Decodable {
             }
             switch condition {
             case "ownership_unproven", "ownership_ambiguous", "live_ownership_unproven", "identity_ambiguous":
-                return "Macseed could not verify ownership of components that Repair may change or remove. Review the existing installation or restore it manually using the official installer, then Refresh Preview."
+                return "Repair cannot confirm ownership of the components it would change. Review the installation or use the official installer, then Refresh Preview."
             case "foreign_target", "conflicting_plist":
                 return "Existing components conflict with the expected installation. Review the conflict before restoring the application manually using the official installer."
             default: return nil
@@ -119,7 +119,7 @@ struct CoreRestorePreparation: Decodable {
         }
         var explanation: String {
             if primitive == "rosetta" && condition == "installation_required" {
-                return "Rosetta is required for this application. Install it manually in Terminal with softwareupdate --install-rosetta, follow Apple's prompts, then Refresh Preview. Macseed does not install Rosetta."
+                return "This application requires Rosetta. Install it manually with softwareupdate --install-rosetta, then Refresh Preview."
             }
             if automationRequirement {
                 return condition == "application_unavailable"
@@ -129,7 +129,7 @@ struct CoreRestorePreparation: Decodable {
                         : "Macseed cannot inspect login items without System Events permission. Choose Fix Issues… to allow access and check the current state again."
             }
             switch condition {
-            case "provider_conflict": return "An App Store receipt marker exists at this Homebrew target. Distribution ownership is uncertain, so the application is preserved. Exclude this Homebrew item in Selection or resolve the installation source before retrying."
+            case "provider_conflict": return "Homebrew and App Store ownership is uncertain for this app. Exclude this Homebrew item or resolve its installation source."
             case "preparation_required": return "Installer preparation required before this application can be restored."
             case "foreign_target": return "This " + primitiveName + " points outside the expected application. Existing state will be preserved."
             case "conflicting_plist": return "The launch service has conflicting configuration ownership. Existing state will be preserved."
@@ -147,7 +147,7 @@ struct CoreRestorePreparation: Decodable {
             case "rosetta": "Rosetta availability"
             case "payload": "application payload"
             case "historical_metadata": "installed lifecycle contract"
-            default: primitive.replacingOccurrences(of: "_", with: " ")
+            default: "application component"
             }
         }
         var technicalDescription: String {

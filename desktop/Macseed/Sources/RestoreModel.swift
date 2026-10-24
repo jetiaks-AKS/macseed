@@ -221,6 +221,7 @@ struct RestoreProgressRow {
 @MainActor final class RestoreModel: ObservableObject {
     static let shared = RestoreModel(runtime: .shared)
     @Published private(set) var state: RestoreFlowState = .choose
+    @Published private(set) var operationID: String?
     @Published private(set) var source: URL?
     @Published private(set) var inspection: CoreRestoreInspection?
     @Published private(set) var selectedCategories: Set<String> = []
@@ -393,6 +394,7 @@ struct RestoreProgressRow {
         confirmedStopRequest = nil
         executionResult = nil; dismissStopConfirmation(); state = .rebuilding
         // Start synchronously so a second activation cannot launch another operation.
+        operationID = request.operationID
         runtime.start(request, location: location)
         work = Task {
             await runtime.waitForCompletion()
@@ -467,6 +469,7 @@ struct RestoreProgressRow {
         // Review is published only after owned inspection has finished. Other
         // owned async phases and any active shared Core operation are excluded.
         work = nil
+        operationID = nil
         invalidate(); source = nil; inspection = nil; selectedCategories = []; selectedItems = [:]
         failure = nil; technicalReason = nil; prerequisiteRetryMessage = nil; retryingPrerequisites = false
         cancelRequested = false; reviewCancelConfirmation = false; reviewCancelSource = nil; stopConfirmation = false; stopOperationID = nil
@@ -488,6 +491,7 @@ struct RestoreProgressRow {
     func choose(_ url: URL) {
         guard !busy, !runtime.isActive else { return }
         keepReviewSelection()
+        operationID = nil
         cancelRequested = false
         showingAppStore = false
         source = url; inspection = nil; selectedCategories = []; selectedItems = [:]
@@ -499,7 +503,7 @@ struct RestoreProgressRow {
         work = Task {
             guard await receive(CoreRequest(.capabilities)) else { return }
             guard runtime.capabilities?.supportsRestoreSelection == true else {
-                fail("This Core runtime does not support fine Restore selection. Use a compatible development build.", code: nil); return
+                fail("Restore selection is unavailable in this build. Use a compatible Macseed version.", code: nil); return
             }
             guard await receive(CoreRequest(.bundleInspect(path: url.path))) else { return }
             do {
@@ -627,6 +631,7 @@ struct RestoreProgressRow {
         if cancelRequested {
             invalidate(); failure = "Restore preparation cancelled. No target changes were made."; state = .cancelled; return false
         }
+        operationID = request.operationID
         runtime.start(request, location: location)
         await runtime.waitForCompletion()
         guard runtime.operationID == request.operationID else { fail("Restore inspection was interrupted. Try again.", code: "operation_mismatch"); return false }
@@ -1105,7 +1110,7 @@ struct RestoreResultFindings {
         for row in records("verification_records").compactMap(\.object) {
             guard let domain = row["domain"]?.string, let item = row["item_id"]?.string,
                   let conformity = row["conformity"]?.string, conformity != "verified" else { continue }
-            if affectedItems.contains(domain + ":" + item) { continue } // Same item's final consequence remains in Technical Details.
+            if affectedItems.contains(domain + ":" + item) { continue } // Same item's final consequence remains in Operation Log evidence.
             issue(domain, item, conformity, conformity == "mismatch" ? "The final state does not match the saved environment." : "The final state could not be confirmed.", status: conformity == "mismatch" ? .attention : .unverified)
         }
         for row in records("coverage_records").compactMap(\.object) where row["disposition"]?.string == "unresolved" {

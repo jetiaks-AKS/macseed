@@ -194,7 +194,7 @@ private struct PreviewExpansionHost: View {
         precondition(!prerequisiteSummarySource.contains("Show Details"))
         precondition(prerequisiteSummarySource.contains("if !summary.manualConditions.isEmpty") && !prerequisiteSummarySource.contains("Needs Preparation"))
         precondition(prerequisiteSummarySource.contains("ForEach(summary.manualDomains"))
-        precondition(prerequisiteSummarySource.contains("showsHeading: false") && prerequisiteSummarySource.contains("technicalTitle: \"Technical Details\""))
+        precondition(prerequisiteSummarySource.contains("showsHeading: false") && !prerequisiteSummarySource.contains("technicalTitle: \"Technical Details\""))
         for areaSource in [previewSource, prerequisiteSummarySource] {
             let labelSource = areaSource == previewSource
                 ? String(areaSource.components(separatedBy: "private struct RestorePreviewAttentionAreaView:")[1])
@@ -207,7 +207,7 @@ private struct PreviewExpansionHost: View {
         precondition(blocked.affectedDomains == ["homebrew-casks"])
         precondition(RestorePrerequisiteSummaryPresentation.status([condition("authorization_required", "external_action_required")]) == "Authorization Required")
         let view = try! String(contentsOfFile: "Sources/RestoreView.swift", encoding: .utf8)
-        precondition(view.contains("DisclosureGroup(\"Technical reason\")") && view.contains("DisclosureGroup(\"Technical Details\")"))
+        precondition(!view.contains("DisclosureGroup(\"Technical reason\")") && !view.contains("DisclosureGroup(\"Technical Details\")"))
         precondition(view.contains("RestoreRebuildProgressContent(tasks:") && view.contains("RestoreResultContent(result:"))
         precondition(view.contains("TaskDomainList(domains: domains.map"))
         precondition(view.contains("Text(item.title)") && view.contains("Text(item.action)"))
@@ -221,8 +221,8 @@ private struct PreviewExpansionHost: View {
         precondition(OperationSummaryHeader.elapsed(Date(timeIntervalSince1970: 0), Date(timeIntervalSince1970: 342)) == "5m 42s")
         let components = try! String(contentsOfFile: "Sources/TaskComponents.swift", encoding: .utf8)
         precondition(!components.contains("ProgressView(value:"))
-        precondition(components.contains("Button {}") && components.contains(".disabled(true)"))
-        precondition(components.contains("Technical Details") && components.contains("ForEach(domain.items)"))
+        precondition(components.contains("Log unavailable"))
+        precondition(!components.contains("Technical Details") && components.contains("ForEach(domain.items)"))
         print("PASS: Reusable task states, elapsed metadata, metric cards and unavailable View Log")
 
         print("PASS: Compact Restore summary counts/area aggregation, collapsed details, concrete names/reasons, prerequisites and result deduplication with Unverified evidence")
@@ -240,10 +240,10 @@ private struct PreviewExpansionHost: View {
         }
         precondition(ImageRenderer(content: RestoreVerificationResult(outcome: .attention, payload: nil).frame(width: 760)).nsImage != nil)
         print("PASS: Result places confirmed summary before categories; Verification projection preserves missing counts")
-        precondition(resultSource.contains("DisclosureGroup(\"Technical Details\")"))
+        precondition(!resultSource.contains("DisclosureGroup(\"Technical Details\")"))
         precondition(!resultSource.contains("Verified selected work"))
-        precondition(resultSource.contains("result.compactTechnicalDetails") && resultSource.contains("Copy Diagnostic Details"))
-        precondition(resultSource.contains("result.diagnosticReport") && resultSource.contains("NSPasteboard.general"))
+        precondition(!resultSource.contains("result.compactTechnicalDetails") && !resultSource.contains("Copy Diagnostic Details"))
+        precondition(!resultSource.contains("result.diagnosticReport") && !resultSource.contains("NSPasteboard.general"))
 
         precondition(!resultSource.contains("DisclosureGroup(\"Needs Attention\")") && !resultSource.contains("View Details"))
         precondition(resultSource.contains("showsWarnings: false"))
@@ -343,7 +343,7 @@ private struct PreviewExpansionHost: View {
         let workspace = try! String(contentsOfFile: "Sources/ProductionWorkspace.swift", encoding: .utf8)
         precondition(workspace.contains(".modifier(WorkspaceContentGeometry())") && !workspace.contains(" : 800"))
         precondition(source.contains("TaskRowLayout.statusWidth"))
-        precondition(source.contains("TaskDisclosureStyle(minimumHeight: 22)"))
+        precondition(source.contains("TaskDisclosureStyle(includesIndicator:") && !source.contains("Technical Details"))
         precondition(source.contains("spacing: 12") && source.contains("minHeight: 52"))
         let summary = try! String(contentsOfFile: "Sources/RestoreSummary.swift", encoding: .utf8)
         let attention = summary.components(separatedBy: "// Preview owns area/count summaries only")[1]
@@ -362,7 +362,7 @@ private struct PreviewExpansionHost: View {
         precondition(window.styleMask.contains(.resizable))
         precondition(!window.collectionBehavior.contains(.fullScreenNone) && window.collectionBehavior.contains(.fullScreenPrimary))
         window.close()
-        print("PASS: Native technical disclosure, attention heading, main window bounds/fullscreen policy and responsive range renders")
+        print("PASS: Native category disclosures, attention heading, main window bounds/fullscreen policy and responsive range renders")
     }
 
     @MainActor static func renderInitialStates() {
@@ -858,15 +858,15 @@ private struct PreviewExpansionHost: View {
         precondition(preview.contains("WorkspaceSectionHeader(title: \"Manual Installation\", prominent: true)"))
         let taskComponents = try! String(contentsOfFile: "Sources/TaskComponents.swift")
         precondition(taskComponents.contains("WorkspaceSectionHeader(title: \"Automatic Restore Tasks\", prominent: true)"))
-        precondition(result.contains("DisclosureGroup(\"Technical Details\") {") && !result.contains("isExpanded:"))
-        precondition(result.contains("result.compactTechnicalDetails") && result.contains("Copy Diagnostic Details") && result.contains("result.diagnosticReport"))
+        precondition(!result.contains("DisclosureGroup(\"Technical Details\") {") && !result.contains("isExpanded:"))
+        precondition(!result.contains("result.compactTechnicalDetails") && !result.contains("Copy Diagnostic Details") && !result.contains("result.diagnosticReport"))
         let model = try! String(contentsOfFile: "Sources/RestoreModel.swift")
         precondition(model.contains("let findings: [DisplayItem]") && model.contains("findings = outcome == .clean ? [] : normalized.findings"))
         precondition(RestoreResultStatusLabel(state: .unverified).tone == .neutral && RestoreResultStatusLabel(state: .unverified).symbol == "questionmark.circle")
         for state in [TaskRowState.attention, .completed, .matching, .notRun] {
             precondition(RestoreResultStatusLabel(state: state).tone == state.tone && RestoreResultStatusLabel(state: state).symbol == state.symbol)
         }
-        print("PASS: Result findings block absent; category statuses, Summary, safety message, collapsed Technical Details and diagnostic copy retained; model findings unchanged; no renders")
+        print("PASS: Result findings block absent; category statuses, Summary, safety message, diagnostics available through Operation Log; model findings unchanged; no renders")
     }
 
     @MainActor static func operationLogChecks() {
@@ -887,7 +887,7 @@ private struct PreviewExpansionHost: View {
         }
         let captureStates: [CaptureFlowState] = [.idle, .scanning, .review, .preparing, .confirmation, .saving, .result, .failed, .cancelled]
         for state in captureStates {
-            let terminal = state == .result || state == .failed || state == .cancelled
+            let terminal = [.review, .confirmation, .result, .failed, .cancelled].contains(state)
             precondition(OperationLogVisibility.capture(state, active: false, reference: reference(.captureExecute), terminal: true) == terminal)
             precondition(!OperationLogVisibility.capture(state, active: true, reference: reference(.captureExecute), terminal: true))
             precondition(!OperationLogVisibility.capture(state, active: false, reference: nil, terminal: true))
@@ -899,7 +899,9 @@ private struct PreviewExpansionHost: View {
             precondition(OperationLogVisibility.restore(state, active: false, reference: reference(.restoreExecute), terminal: true) == (state == .result))
             precondition(!OperationLogVisibility.restore(state, active: true, reference: reference(.restoreExecute), terminal: true))
             for operation in [CoreOperation.bundleInspect, .restorePrepare] {
-                precondition(!OperationLogVisibility.restore(state, active: false, reference: reference(operation), terminal: true))
+                let visible = operation == .bundleInspect ? [.review, .failed, .cancelled].contains(state)
+                    : [.review, .preview, .confirming, .failed, .cancelled].contains(state)
+                precondition(OperationLogVisibility.restore(state, active: false, reference: reference(operation), terminal: true) == visible)
             }
         }
         for state: EnvironmentStatusState in [.choose, .running, .result, .failed, .cancelled] {
@@ -919,7 +921,7 @@ private struct PreviewExpansionHost: View {
         precondition(working.executionStatus == .working && working.executionStatusTitle == "Working · Needs Attention")
         working.activityState = nil
         precondition(working.executionStatus == .attention && working.executionStatusTitle == "Needs Attention")
-        print("PASS: shared terminal-only Capture/Restore/Status View Log matrix, exact operation references and direct Settings history")
+        print("PASS: shared completed-operation Capture/Restore/Status View Log matrix, exact operation references and direct Settings history")
         print("PASS: Settings owns shared operation history; Capture/Restore/Status retain local View Log without a duplicate footer")
     }
 
@@ -1046,7 +1048,7 @@ private struct PreviewExpansionHost: View {
         precondition(!RestoreTaskPresentation.scopeProblemExplained(reason: "another_error", hasItemProblems: true, independentProblem: false))
         precondition(RestoreResultSummary(domains: []).cards.isEmpty)
         let source = try! String(contentsOfFile: "Sources/RestoreView.swift")
-        precondition(source.contains("if !hasOperationLog && !result.technicalDetails.isEmpty"))
+        precondition(!source.contains("if !hasOperationLog && !result.technicalDetails.isEmpty"))
         let stopContent = source.components(separatedBy: "if let notice = result.stopNotice {")[1]
             .components(separatedBy: "RestoreResultSummaryView")[0]
         precondition(stopContent.contains("Label(notice, systemImage: \"stop.circle\")")
@@ -1291,8 +1293,8 @@ private struct PreviewExpansionHost: View {
         precondition(header.contains("RestoreResultColumns {"))
         precondition(header.contains("RestoreCountBadges(counts: counts)") && !header.contains("Spacer("))
         let itemSource = source.components(separatedBy: "struct RestoreResultItemRow:")[1].components(separatedBy: "struct RestoreResultStatusLabel:")[0]
-        precondition(itemSource.components(separatedBy: "Image(systemName: \"chevron.right\"").count == 2)
-        precondition(itemSource.contains("Text(\"Technical Details\")") && !itemSource.contains("Button(\"Technical Details\")"))
+        precondition(!itemSource.contains("chevron.right"))
+        precondition(!itemSource.contains("Text(\"Technical Details\")") && !itemSource.contains("Button(\"Technical Details\")"))
         precondition(!final.contains("TaskTextStatusLayout") && !final.contains("ViewThatFits") && !final.contains(".offset("))
         precondition(RestoreResultColumns.titleInset(depth: 1) == 52 && RestoreResultColumns.titleInset(depth: 1, item: true) == 88)
         print("PASS: Compact trailing groups: no reserved badge slots, shared status origins, wrapping and larger text at 420/785/985 pt")
@@ -1598,7 +1600,86 @@ private struct PreviewExpansionHost: View {
         try! bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: "build/Debug/RestorePreview-expand-placement.png"))
     }
 
+    @MainActor static func conciseWorkflowChecks() {
+        for file in ["CaptureView", "CapturePresentation", "RestoreView", "RestoreSummary", "EnvironmentStatusView", "TaskComponents", "ContentView"] {
+            let source = try! String(contentsOfFile: "Sources/\(file).swift")
+            precondition(!source.contains("Technical Details") && !source.contains("Technical reason"), file)
+            precondition(!source.contains("Text(condition.code)") && !source.contains("Text(reason)"), file)
+        }
+        func condition(_ domain: String, _ index: Int?, code: String = "homebrew_unavailable", scope: String = "operation", diagnostic: CoreRestorePreparation.Diagnostic? = nil) -> CoreRestorePreparation.Condition {
+            .init(domain: domain, code: code, status: "external_action_required", selectedItemIndex: index, scope: scope, diagnostic: diagnostic)
+        }
+        let casks = (1...16).map { condition("homebrew-casks", $0) }
+        let ssh = condition("ssh-configuration", nil, code: "ssh_configuration_not_ready")
+        let prerequisites = RestorePrerequisiteSummaryPresentation(conditions: casks + [condition("homebrew-packages", 1), ssh], ready: false)
+        precondition(prerequisites.conditions.count == 18 && prerequisites.manualConditions.count == 3)
+        precondition(Set(prerequisites.manualDomains) == ["homebrew-packages", "homebrew-casks", "ssh-configuration"])
+        precondition(!prerequisites.isTerminalReady && prerequisites.sharedReasons["homebrew-casks"] == ["homebrew_unavailable"])
+        precondition(RestorePrerequisiteView(condition: ssh, label: "SSH Configuration").message.contains("exclude SSH Configuration"))
+        let distinct = [condition("homebrew-casks", 1, scope: "item"), condition("homebrew-casks", 2, scope: "item"),
+            condition("homebrew-casks", 1, diagnostic: .init(primitive: "login_item", condition: "authorization_denied")),
+            condition("homebrew-casks", 1, diagnostic: .init(primitive: "login_item", condition: "observation_failed"))]
+        precondition(RestorePrerequisiteSummaryPresentation(conditions: distinct, ready: false).blockers.count == 4)
+        let items = (1...16).map { index in
+            TaskItemPresentation(id: "brew-\(index)", item: DisplayItem(id: "brew-\(index)", title: "Application \(index)", status: .attention,
+                action: "Couldn’t read Homebrew state.", reason: "homebrew_unavailable"), state: .attention, executionAction: "install",
+                resultLabels: ["Unverified"], sourceDomain: "homebrew-casks")
+        }
+        let domain = TaskDomainPresentation(id: "homebrew-casks", title: "Homebrew Applications", symbol: "app", items: items)
+        precondition(domain.sharedObservationReason == "homebrew_unavailable")
+        precondition(RestorePreviewMetrics.counts([domain]).attention == 16)
+        var ownProblem = items[0]; ownProblem.diagnostic = .init(primitive: "payload", condition: "foreign_target")
+        let mixed = TaskDomainPresentation(id: domain.id, title: domain.title, symbol: domain.symbol, items: [ownProblem] + items.dropFirst())
+        precondition(!mixed.sharedObservationItemIDs.contains(ownProblem.id) && mixed.sharedObservationItemIDs.count == 15,
+            "An item's own diagnosis must remain separate from the shared failure")
+        let comparisonItems = items.map { DisplayItem(id: $0.id, title: $0.item.title, status: .unverified, action: "Couldn’t read current state.", reason: "retained") }
+        let category = DisplayCategory(id: domain.id, title: domain.title, symbol: domain.symbol, items: comparisonItems)
+        var facts: [String: [ComparisonTechnicalFact]] = [:]
+        for item in comparisonItems {
+            facts[item.id] = [.init(recordID: item.id, predicate: "installed", result: "unverified", reason: "observation_failed", phase: "observation", support: "supported", diagnostics: [])]
+        }
+        precondition(EnvironmentComparisonDomain(category: category, technicalFacts: facts).sharedObservationFailure)
+        facts[comparisonItems[0].id] = [.init(recordID: "independent", predicate: "installed", result: "unverified", reason: "prerequisite_unmet", phase: "observation", support: "supported", diagnostics: [])]
+        let partial = EnvironmentComparisonDomain(category: category, technicalFacts: facts).sharedObservationItemIDs
+        precondition(partial.count == 15 && !partial.contains(comparisonItems[0].id))
+        let raw: [String: Any] = ["protocol_version": 1, "operation_id": "fixture", "sequence": 2, "type": "result", "data": [
+            "observation_diagnostics": [["tool": "homebrew", "probe": "metadata", "phase": "observation", "reason": "external_observation_worker", "native_exit_code": 0, "duration_ms": 600, "quiescent": true, "stderr": "PRIVATE_SECRET"]],
+            "inventory": (0..<30).map { _ in ["domain": "homebrew-casks", "status": "observation_error", "reason": "observation_failed"] }]]
+        var sanitizer = OperationLogSanitizer()
+        let log = sanitizer.event(try! CoreEvent(line: JSONSerialization.data(withJSONObject: raw)), at: Date())
+        precondition(OperationLogSanitizer.valid(log) && log.omitted == true)
+        let failure = log.evidence!.first!
+        precondition(failure.codes["reason"] == "external_observation_worker" && failure.counts["native_exit_code"] == 0 && failure.counts["duration_ms"] == 600)
+        let report = DiagnosticReportPrivacy.text(DiagnosticReportPrivacy.facts(failure))
+        precondition(report.contains("external_observation_worker") && report.contains("native_exit_code=0") && !report.contains("PRIVATE_SECRET"))
+        let source = try! String(contentsOfFile: "Sources/RestoreView.swift")
+        precondition(source.contains("matching: model.operationID") && source.contains("Rebuild is blocked until"))
+        precondition(source.contains("Stopping it may leave some changes already applied") && source.contains("Force Stop"))
+        #if DEBUG
+        // Reuse the existing long-error fixture, with the actual shared components.
+        let scenario = RestoreDebugScenario.issues
+        precondition(scenario.domains.flatMap(\.items).contains { ($0.item.reason?.count ?? 0) > 100 })
+        let views: [(String, AnyView)] = [
+            ("Concise-workflow-result", AnyView(TaskDomainList(domains: scenario.domains, expansion: .constant(Set(scenario.domains.map(\.id)))))),
+            ("Concise-workflow-preview", AnyView(VStack(alignment: .leading, spacing: 20) {
+                RestorePrerequisiteSummaryView(summary: prerequisites, areas: [
+                    .init(domain: "homebrew-casks", label: "Homebrew Applications", selectionMode: "items", availability: "available", reason: nil, items: []),
+                    .init(domain: "homebrew-packages", label: "Homebrew Packages", selectionMode: "items", availability: "available", reason: nil, items: []),
+                    .init(domain: "ssh-configuration", label: "SSH Configuration", selectionMode: "category", availability: "available", reason: nil, items: [])])
+                TaskDomainList(domains: [domain], restoreSettingsPreview: true, expansion: .constant([domain.id]), prerequisiteReasons: prerequisites.sharedReasons)
+            }))]
+        for (name, view) in views {
+            let render = ImageRenderer(content: view.padding(20).frame(width: 900).background(Color(nsColor: .windowBackgroundColor)))
+            guard let cg = render.cgImage else { preconditionFailure("No error fixture render") }
+            let bitmap = NSBitmapImageRep(cgImage: cg)
+            try! bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: "build/Debug/\(name).png"))
+        }
+        #endif
+        print("PASS: concise workflow disclosures, scoped prerequisites, honest item counts, independent errors, privacy and two error fixture renders")
+    }
+
     @MainActor static func main() {
+        if CommandLine.arguments.contains("--concise-workflows-only") { conciseWorkflowChecks(); operationLogChecks(); resultCleanupChecks(); restoreResultSummaryChecks(); return }
         if CommandLine.arguments.contains("--sidebar-layout-only") { sidebarLayoutChecks(); return }
         if CommandLine.arguments.contains("--preview-expansion-only") { previewExpansionPerformanceChecks(); return }
         if CommandLine.arguments.contains("--preview-appstore-layout-only") { previewColumnGeometryChecks(); resultStatusAlignmentChecks(); appStoreVisualChecks(); return }
@@ -1725,13 +1806,13 @@ private struct PreviewExpansionHost: View {
         print("PASS: DEBUG Restore scenarios use presentation fixtures, truthful Preview states and no runtime actions")
         #endif
         let components = try! String(contentsOfFile: "Sources/TaskComponents.swift", encoding: .utf8)
-        precondition(components.contains("if Self.showsTechnicalDetails(item), let reason = item.item.reason"))
+        precondition(!components.contains("DisclosureGroup(\"Technical"))
         for state in [TaskRowState.attention, .working] {
             var row = TaskItemPresentation(id: "diagnostic", item: DisplayItem(id: "diagnostic", title: "Fixture",
                 status: .attention, action: "Inspect", reason: "observation_failed"), state: state)
-            precondition(TaskDomainItems.showsTechnicalDetails(row) == (state != .working))
+            precondition(row.item.reason == "observation_failed")
             row.assistedAppStore = AssistedAppStoreItem(appID: "12345", status: .unverified)
-            precondition(!TaskDomainItems.showsTechnicalDetails(row))
+            precondition(row.item.reason == "observation_failed")
         }
         let workspaceSource = try! String(contentsOfFile: "Sources/ProductionWorkspace.swift", encoding: .utf8)
         precondition(workspaceSource.range(of: "rebuildActionArea(synthetic: true)")!.lowerBound > workspaceSource.range(of: ".modifier(WorkspaceContentGeometry())")!.lowerBound)
@@ -1804,8 +1885,8 @@ private struct PreviewExpansionHost: View {
         precondition(statusView.contains("if model.reference != nil {"))
         precondition(!statusView.contains("Text(result.summary)"))
         precondition(content.contains(".font(.system(size: prominent ? 15 : 13, weight: .semibold)).foregroundStyle(Color(nsColor: .labelColor))"))
-        precondition(statusView.contains("if let reason = item.comparisonTechnicalDetails"))
-        precondition(statusView.contains("if let explanation = item.comparisonExplanation"))
+        precondition(!statusView.contains("if let reason = item.comparisonTechnicalDetails"))
+        precondition(statusView.contains("if !suppressExplanation, let explanation = item.comparisonExplanation"))
         precondition(statusView.contains(".accessibilityLabel(\"Already Matches\")"))
         precondition(statusView.contains("Image(systemName: \"checkmark\")"))
 
@@ -1825,7 +1906,7 @@ private struct PreviewExpansionHost: View {
         precondition(statusView.contains("result.categoryCount($0, category: entry.category, children: entry.children)"))
         precondition(statusView.contains("counts[$0, default: 0] > 0") && statusView.contains("ComparisonOutcome.allCases.filter"))
         precondition(statusView.contains(".foregroundStyle(outcome.tint).background(outcome.tint.opacity(0.12), in: Capsule())"))
-        precondition(statusView.contains("Full Diagnostic Details") && statusView.contains("fact.predicateTitle"))
+        precondition(!statusView.contains("Full Diagnostic Details") && !statusView.contains("fact.predicateTitle"))
         let domainView = statusView.components(separatedBy: "struct EnvironmentComparisonDomain: View")[1].components(separatedBy: "struct EnvironmentComparisonItem: View")[0]
         precondition(domainView.contains("Capsule()") && domainView.contains("if let counts"))
         precondition(domainView.contains("WorkspaceCategoryIcon(symbol: category.symbol)") && content.contains(".fontWeight(.semibold).foregroundStyle(.blue)"))
@@ -1888,7 +1969,7 @@ private struct PreviewExpansionHost: View {
         precondition(restoreView.contains("canRebuild: model.canRebuild") && restoreView.contains(".disabled(!canRebuild || rebuild == nil)") && restoreView.contains("model.confirmRebuild()"))
         precondition(restoreView.contains("await model.checkPrerequisites()") && restoreView.contains("\"Fix Issues…\"") && restoreView.contains("checkAgain?()"))
         precondition(restoreView.contains("needsRefresh || retrying"))
-        precondition(restoreView.contains(".disclosureGroupStyle(HeaderDisclosureStyle())") && restoreView.contains("CaptureChildRowGrid.leadingInset"))
+        precondition(restoreView.contains(".disclosureGroupStyle(TaskDisclosureStyle())") && restoreView.contains("CaptureChildRowGrid.leadingInset"))
         let sections = RestorePresentationSection.project([])
         precondition(sections.map(\.id) == ["Applications & Tools", "Settings", "Git", "SSH Configuration", "Workspace", "Shell"])
         let aggregateSource = String(restoreView.components(separatedBy: "struct RestoreMacOSSelectionView:")[1].components(separatedBy: "struct RestoreMacOSAreaDetails:")[0])
@@ -1961,7 +2042,7 @@ private struct PreviewExpansionHost: View {
         precondition(prerequisiteSource.contains("case \"satisfied\": \"Ready\""))
         precondition(!prerequisiteSource.contains("This prerequisite is available for the selected plan."))
         precondition(prerequisiteSource.contains("if condition.status != \"satisfied\" {\n                Text(message)"))
-        precondition(prerequisiteSource.contains("DisclosureGroup(technicalTitle)") && prerequisiteSource.contains("Text(condition.code)"))
+        precondition(!prerequisiteSource.contains("DisclosureGroup(technicalTitle)") && !prerequisiteSource.contains("Text(condition.code)"))
         precondition(RestoreRowGrid.titleInset == RestoreRowGrid.checkboxWidth + RestoreRowGrid.disclosureWidth + RestoreRowGrid.iconWidth + RestoreRowGrid.spacing * 3)
         precondition(restoreView.contains(".disclosureGroupStyle(TaskDisclosureStyle())"))
         precondition(content.contains(".frame(width: TaskRowLayout.iconWidth)") && restoreView.contains("WorkspaceCategoryIcon(symbol: symbol)"))
@@ -1999,10 +2080,10 @@ private struct PreviewExpansionHost: View {
         precondition(!confirmation.contains("NativeSelectionCheckbox") && !confirmation.contains("source_partial"))
         precondition(captureView.contains("model.editSelection()") && captureView.contains("model.create()"))
         let capturePresentation = try! String(contentsOf: sources.appendingPathComponent("CapturePresentation.swift"), encoding: .utf8)
-        precondition(capturePresentation.contains("Technical Details") && capturePresentation.contains("TaskDisclosureStyle()"))
+        precondition(!capturePresentation.contains("Technical Details") && capturePresentation.contains("TaskDisclosureStyle()"))
         let confirmationItems = capturePresentation.components(separatedBy: "struct CaptureConfirmationItems: View")[1]
         precondition(!confirmationItems.contains("Text(\"Needs Attention\")") && !confirmationItems.contains("? domain.title"))
-        precondition(confirmationItems.contains("item.captureRole != .categoryWarning") && confirmationItems.contains("Technical Details"))
+        precondition(confirmationItems.contains("item.captureRole != .categoryWarning") && !confirmationItems.contains("Technical Details"))
 
         precondition(capturePresentation.contains("model.selectItem(category.id") && capturePresentation.contains("model.selectCategory(category.id"))
         let workspace = try! String(contentsOf: sources.appendingPathComponent("ProductionWorkspace.swift"), encoding: .utf8)
@@ -2077,7 +2158,7 @@ private struct PreviewExpansionHost: View {
         referenceModel.selectBlueprint(nil)
         precondition(try! referenceModel.reference!.command.parameters()!.object?["blueprint_path"] == .null)
         precondition(referenceModel.reference?.generatedDirectory == directory && referenceRuntime.state == .idle)
-        print("PASS: Product reference wording, technical/Blueprint UI behind collapsed disclosure, collapsed categories and optional Blueprint semantics")
+        print("PASS: Product reference wording, concise workflow explanations, collapsed categories and optional Blueprint semantics")
         if CommandLine.arguments.contains("--native-controls") {
             _ = NSApplication.shared
             let previousAppearance = NSApp.appearance

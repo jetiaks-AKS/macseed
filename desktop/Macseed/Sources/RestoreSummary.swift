@@ -85,8 +85,15 @@ struct RestorePrerequisiteSummaryPresentation {
                         "observation_failed", "malformed_observation", "observation_limit", "identity_ambiguous"]
                         .contains($0.diagnostic?.condition ?? "")
             }) { return false }
-            let identity = condition.domain + ":" + String(condition.selectedItemIndex ?? 0) + ":"
-                + (condition.diagnostic.map { $0.primitive + ":" + $0.condition } ?? condition.code)
+            // Only shared tool prerequisites lose their item index. Item-local
+            // conflicts/ownership/installer requirements keep their identity.
+            let shared = condition.scope != "item" && condition.diagnostic == nil
+                && ["homebrew_unavailable", "homebrew_installation_requires_interaction",
+                    "homebrew_capability_unavailable", "vscode_cli_required", "vscode_cli_unavailable",
+                    "git_required", "git_unavailable", "internet_required", "command_line_tools_required"].contains(condition.code)
+            let identity = [condition.domain, condition.scope ?? "", condition.status, condition.code,
+                shared ? "shared" : String(condition.selectedItemIndex ?? 0),
+                condition.diagnostic?.technicalDescription ?? ""].joined(separator: "\u{0}")
             return seen.insert(identity).inserted
         }
     }
@@ -107,6 +114,10 @@ struct RestorePrerequisiteSummaryPresentation {
     }
     var manualDomains: [String] {
         manualConditions.reduce(into: []) { if !$0.contains($1.domain) { $0.append($1.domain) } }
+    }
+    var sharedReasons: [String: Set<String>] {
+        Dictionary(grouping: manualConditions.filter { $0.scope != "item" && $0.diagnostic == nil }, by: \.domain)
+            .mapValues { Set($0.map(\.code)) }
     }
     static func status(_ conditions: [CoreRestorePreparation.Condition]) -> String {
         if conditions.contains(where: { ["authorization_required", "cask_authorization_required"].contains($0.code) }) { return "Authorization Required" }
@@ -153,7 +164,7 @@ struct RestorePrerequisiteSummaryView: View {
         if !summary.manualConditions.isEmpty {
             VStack(alignment: .leading, spacing: 6) {
                 if !summary.manualConditions.isEmpty {
-                    Text("Prerequisites — \(summary.manualConditions.count) \(summary.manualConditions.count == 1 ? "action" : "actions") required").font(.headline)
+                    Text("Prerequisites").font(.headline)
                     ForEach(summary.manualDomains, id: \.self) { domain in
                         RestoreBlockingPrerequisiteAreaView(
                             title: areas.first { $0.id == domain }?.label ?? "Selected work",
@@ -173,7 +184,7 @@ private struct RestoreBlockingPrerequisiteAreaView: View {
         DisclosureGroup(isExpanded: $expanded) {
             if expanded {
                 ForEach(Array(conditions.enumerated()), id: \.offset) { _, condition in
-                    RestorePrerequisiteView(condition: condition, label: title, showsHeading: false, technicalTitle: "Technical Details")
+                    RestorePrerequisiteView(condition: condition, label: title, showsHeading: false)
                 }
             }
         } label: {

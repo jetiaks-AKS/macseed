@@ -227,6 +227,15 @@ The format is based on the principles of **Keep a Changelog**.
 
 ### Fixed
 
+* Homebrew reads in Desktop Capture, Comparison and Restore Preview disable
+  per-process analytics, preventing detached telemetry from invalidating successful
+  observations. Worker/deadline safeguards remain enforced; failure-layer facts
+  are retained in the existing typed Operation Log/Diagnostic Report.
+
+* Capture, Restore and Environment Status show concise workflow messages, with
+  technical diagnostics in the existing operation-specific View Log. Shared
+  prerequisites are grouped without changing item counts or hiding independent issues.
+
 * Persist the shared external-process admission before application Bootstrap can
   launch. Parent crashes and unconfirmed completion retain the re-entry fence;
   only the owning, confirmed lifecycle can finalize it. Read-only routes create

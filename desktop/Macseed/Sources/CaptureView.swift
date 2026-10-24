@@ -251,10 +251,6 @@ struct CaptureView: View {
                     } else {
                         Text(failure.message)
                     }
-                    if let reason = failure.technicalReason {
-                        DisclosureGroup("Technical Details") { Text(reason).font(.caption.monospaced()).textSelection(.enabled) }
-                            .disclosureGroupStyle(TaskDisclosureStyle(minimumHeight: 22))
-                    }
                 }
                 if let destination = model.destination {
                     switch model.publicationEvidence {
@@ -296,8 +292,10 @@ struct CaptureActionsView: View {
     var body: some View {
         HStack {
             if let reference = runtime.operationLogReference(matching: model.operationID),
-               OperationLogVisibility.capture(model.state, active: runtime.isActive, reference: reference, failure: model.failure, terminal: runtime.termination != nil && runtime.operationID == model.operationID) {
+               OperationLogVisibility.capture(model.state, active: runtime.isActive, reference: reference, failure: model.failure, terminal: !runtime.isActive) {
                 OperationLogButton(runtime: runtime, reference: reference)
+            } else if [.review, .confirmation, .result, .failed, .cancelled].contains(model.state), !runtime.isActive {
+                Text("Log unavailable").font(.caption).foregroundStyle(.secondary)
             }
             switch model.state {
             case .review:

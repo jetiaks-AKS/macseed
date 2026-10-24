@@ -443,7 +443,27 @@ private struct StatusAnchorFrames: PreferenceKey {
         window.close()
     }
 
+    @MainActor static func conciseMessageChecks() throws {
+        var object = payload([row(0, "unverified", reason: "observation_failed"), row(1, "matching")],
+            verdict: "incomplete")
+        var records = object["records"] as! Object
+        records["coverage_records"] = [["record_id": "c:ssh", "domain": "ssh-configuration", "item_id": "config",
+            "disposition": "resolved", "source_status": "partial"]]
+        records["diagnostics"] = [["record_id": "c:ssh", "code": "partial_source_coverage", "severity": "warning", "phase": "scope"]]
+        object["records"] = records
+        let result = try presentation(object)
+        precondition(result.counts["matching"] == 1 && result.counts["unverified"] == 1)
+        precondition(result.message == "Some requirements could not be verified. Review the affected categories.")
+        precondition(result.categories.first { $0.id == "ssh-configuration" }?.items.first?.action.contains("only part") == true)
+        precondition(result.categories.first { $0.id == "homebrew-packages" }?.items.first?.action == "Couldn’t read the current state.")
+        precondition(StatusFailure.runtime(.pythonUnavailable).message.contains("Check the app setup"))
+        precondition(!StatusFailure.runtime(.malformedEvent).message.contains("Core"))
+        precondition(StatusFailure.runtime(.coreFailure("comparison_reporting_incomplete")).message == StatusFailure.invalidResult.message)
+        print("PASS: concise Status failures and summary, retained independent SSH warning and item counts")
+    }
+
     @MainActor static func main() async throws {
+        if CommandLine.arguments.contains("--concise-messages-only") { try conciseMessageChecks(); return }
         let finalVisual = try finalConsistencyChecks()
         let renderRuntime = CoreRuntime()
         let renderModel = EnvironmentStatusModel(runtime: renderRuntime)
@@ -658,7 +678,7 @@ private struct StatusAnchorFrames: PreferenceKey {
         precondition(mixed.message.contains("could not be verified") && mixed.categories[0].hasAttention)
         precondition(mixed.categories[0].items.contains { $0.status == .unresolved })
         let observation = try presentation(payload([row(0, "unverified", reason: "observation_failed")], verdict: "incomplete"))
-        precondition(observation.categories[0].items[0].action == "Core could not observe current state.")
+        precondition(observation.categories[0].items[0].action == "Couldn’t read the current state.")
         let empty = try presentation(payload([], verdict: "no_comparable_requirements"))
         precondition(empty.headline == "No comparable requirements" && empty.summary.isEmpty && !empty.needsAttention)
         print("PASS: Core verdicts/states, observation failure, mixed/unresolved and zero-count suppression")
@@ -716,7 +736,7 @@ private struct StatusAnchorFrames: PreferenceKey {
         precondition(ssh.categories[0].items[0].status == .attention)
         precondition(ssh.categories[0].items[0].action.contains("Matches") && ssh.categories[0].items[0].action.contains("only part"))
         precondition(ssh.categories[0].items[0].reason!.contains("partial_source_coverage"))
-        precondition(ssh.message.contains("SSH Configuration") && ssh.message.contains("only part"))
+        precondition(ssh.message.contains("Review the affected categories") && ssh.categories[0].title == "SSH Configuration")
         precondition(ssh.counts["matching"] == 1 && ComparisonOutcome.notApplicable.count(ssh) == 0)
         precondition(ssh.sections.map(\.id) == ["SSH Configuration"])
         precondition(ssh.categoryCount(.match, category: ssh.categories[0]) == 0)

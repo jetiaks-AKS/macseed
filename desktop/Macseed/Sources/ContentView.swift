@@ -318,11 +318,6 @@ struct ItemDetails: View {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(item.title)
                         Text(item.action).font(.callout).foregroundStyle(.secondary)
-                        if let reason = item.reason {
-                            DisclosureGroup("Technical reason") {
-                                Text(reason).font(.caption.monospaced()).textSelection(.enabled)
-                            }.disclosureGroupStyle(HeaderDisclosureStyle()).font(.caption)
-                        }
                     }
                     Spacer()
                     StatusLabel(status: item.status)
@@ -682,8 +677,6 @@ struct RestoreDemoView: View {
                         }
                         if instructions {
                             Text(session.prerequisite.instructions).font(.callout)
-                            DisclosureGroup("Technical reason") { Text(session.prerequisite.reason).font(.caption.monospaced()) }
-                                .disclosureGroupStyle(HeaderDisclosureStyle())
                         }
                     }.padding(.vertical, 8)
                 }

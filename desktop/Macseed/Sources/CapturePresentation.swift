@@ -157,10 +157,6 @@ struct CaptureNoticeDetails: View {
         ForEach(items) { item in
             VStack(alignment: .leading, spacing: 4) {
                 Text(item.action).font(.caption).foregroundStyle(.secondary)
-                if let reason = item.reason, !suppressedDiagnosticIDs.contains(item.id) {
-                    DisclosureGroup("Technical Details") { Text(reason).font(.caption.monospaced()).textSelection(.enabled) }
-                        .disclosureGroupStyle(TaskDisclosureStyle(minimumHeight: 22)).font(.caption)
-                }
             }.padding(.leading, 40).padding(.vertical, 4)
         }
     }
@@ -319,12 +315,6 @@ struct CaptureConfirmationItems: View {
                         }
                         if !item.item.action.isEmpty {
                             Text(item.item.action).font(.callout).foregroundStyle(.secondary)
-                        }
-                        if item.item.reason != nil || item.diagnostic != nil {
-                            DisclosureGroup("Technical Details") {
-                                if let reason = item.item.reason { Text(reason).font(.caption.monospaced()).textSelection(.enabled) }
-                                if let diagnostic = item.diagnostic { Text(diagnostic.technicalDescription).font(.caption.monospaced()).textSelection(.enabled) }
-                            }.disclosureGroupStyle(TaskDisclosureStyle(minimumHeight: 22)).font(.caption)
                         }
                     }.padding(.vertical, 3)
                 }

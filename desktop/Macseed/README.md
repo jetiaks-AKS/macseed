@@ -182,7 +182,7 @@ a production observer/planner/verification engine.
   Support journals, background append/read/retention, crash-tail handling and
   Runtime diagnostic availability. No raw Protocol or process-output archive.
 - `OperationLogView.swift`: shared native viewer/history, bounded incremental All
-  and Important projection; terminal local View Log and Settings history access.
+  and Important projection; operation-specific View Log and Settings history access.
 - `DiagnosticReport.swift`: independent export allowlist, background bounded report
   generation, immutable UTF-8 preview/copy/save and explicit refresh.
 - `ProductionWorkspace.swift`: approved shell with real capability readiness,
@@ -254,7 +254,8 @@ read-only, with no publication, Apply or secure decryption.
 The process card shows indeterminate activity with Cancel left below it. Only Result
 actions use the fixed footer; other actions remain beside their content. Results show
 Match, Different and Missing cards, with Not Applicable shown only when nonzero,
-and collapsed category/item details with Technical Details.
+and collapsed category/item lists with concise explanations. Technical evidence opens
+through the existing Operation Log.
 Compare Again creates a fresh request; choosing another Bundle clears the old
 result. Failure, cancellation, interruption and incomplete evidence cannot preserve
 a clean prior result. Competing operations and navigation remain disabled during
@@ -429,8 +430,9 @@ extensions require audit, not assumptions about current API support.
 
 Stage 16J Logging & Diagnostics is complete. Settings →
 Operation Logs opens the shared native window; local View Log selects the matching
-operation only after a terminal flow result, never during active/intermediate
-Capture/Restore/Status. Inspect/Preview remain accessible through global history.
+completed operation in Capture Review/confirmation/Result, Restore Selection/Preview/Result
+and Environment Status, including failures. No local link opens a previous Rebuild
+from Preview; active operations remain accessible through Settings history.
 Important shows compact deduplicated issues; All reaches every saved event through
 bounded pages beyond the 512-record visible window. Process Result, Verification
 and Log completeness remain independent; incomplete successful logs are neutral.

@@ -47,10 +47,6 @@ struct EnvironmentStatusView: View {
                 OperationSummaryHeader(title: model.state == .cancelled ? "Comparison Cancelled" : "Needs Attention",
                     message: model.failure?.message ?? "No complete comparison is available.",
                     state: model.state == .cancelled ? .skipped : .attention, counters: [], suppliedMetrics: [], scopeSummary: "Read-only comparison")
-                if let reason = model.failure?.technicalReason {
-                    DisclosureGroup("Technical Details") { Text(reason).font(.caption.monospaced()).textSelection(.enabled) }
-                        .disclosureGroupStyle(TaskDisclosureStyle(minimumHeight: 22))
-                }
                 if showsActions { EnvironmentStatusActions(model: model, runtime: runtime) }
                 referenceDetails
             }
@@ -77,8 +73,10 @@ struct EnvironmentStatusActions: View {
     }
     @ViewBuilder private func actions(horizontal: Bool) -> some View {
         if let reference = runtime.operationLogReference(matching: model.operationID),
-           OperationLogVisibility.status(model.state, active: runtime.isActive, reference: reference, terminal: runtime.termination != nil && runtime.operationID == model.operationID) {
+           OperationLogVisibility.status(model.state, active: runtime.isActive, reference: reference, terminal: !runtime.isActive) {
             OperationLogButton(runtime: runtime, reference: reference).fixedSize()
+        } else if [.result, .failed, .cancelled].contains(model.state), !runtime.isActive {
+            Text("Log unavailable").font(.caption).foregroundStyle(.secondary)
         }
         if model.state == .running {
             Button("Cancel") { model.cancel() }.disabled(runtime.stopping).fixedSize()
@@ -241,6 +239,7 @@ struct EnvironmentComparisonDomain: View {
     var depth = 0
     @ReferenceViewState<Bool> private var expanded = false
     var body: some View {
+        let sharedIDs = sharedObservationItemIDs
         DisclosureGroup(isExpanded: expansion ?? $expanded) {
             VStack(alignment: .leading, spacing: 0) {
                 if !children.isEmpty {
@@ -250,9 +249,13 @@ struct EnvironmentComparisonDomain: View {
                             technicalExpansion: technicalExpansion, depth: depth + 1)
                     }
                 } else {
+                    if !sharedIDs.isEmpty {
+                        Text(category.id.hasPrefix("homebrew-") ? "Couldn’t read Homebrew state." : "Couldn’t read the current state of this category.")
+                            .font(.caption).foregroundStyle(.secondary).padding(.vertical, 4)
+                    }
                     ForEach(EnvironmentComparisonView.visibleCategory(category).items) { item in
                         EnvironmentComparisonItem(item: item, facts: technicalFacts[item.id] ?? [],
-                            depth: depth + 1, technicalExpansion: technicalExpansion)
+                            depth: depth + 1, technicalExpansion: technicalExpansion, suppressExplanation: sharedIDs.contains(item.id))
                     }
                 }
             }.padding(.vertical, 4)
@@ -269,6 +272,19 @@ struct EnvironmentComparisonDomain: View {
             WorkspaceCategoryIcon(symbol: category.symbol)
             Text(category.title).font(.body.weight(.medium))
         }
+    }
+    var sharedObservationFailure: Bool { !sharedObservationItemIDs.isEmpty }
+    var sharedObservationItemIDs: Set<String> {
+        let items = EnvironmentComparisonView.visibleCategory(category).items
+        guard children.isEmpty else { return [] }
+        let candidates = items.filter { item in
+            guard item.status == .unverified, let facts = technicalFacts[item.id], facts.count == 1, let fact = facts.first else { return false }
+            return fact.result == "unverified" && fact.reason == "observation_failed"
+                && fact.phase == "observation" && fact.support == "supported" && fact.codes == ["observation_failed"]
+        }
+        guard let first = candidates.first, let predicate = technicalFacts[first.id]?.first?.predicate else { return [] }
+        let matching = candidates.filter { technicalFacts[$0.id]?.first?.predicate == predicate }
+        return matching.count > 1 ? Set(matching.map(\.id)) : []
     }
     static func visibleOutcomes(_ counts: [ComparisonOutcome: Int]) -> [ComparisonOutcome] {
         ComparisonOutcome.allCases.filter { counts[$0, default: 0] > 0 }
@@ -312,13 +328,13 @@ struct EnvironmentComparisonItem: View {
     var facts: [ComparisonTechnicalFact] = []
     var depth = 0
     var technicalExpansion: Binding<Bool>? = nil
-    @ReferenceViewState<Bool> private var technicalExpanded = false
+    var suppressExplanation = false
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             EnvironmentComparisonRowLayout(depth: depth, itemIndent: true) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(item.title)
-                    if let explanation = item.comparisonExplanation {
+                    if !suppressExplanation, let explanation = item.comparisonExplanation {
                         Text(explanation).font(.caption).foregroundStyle(.secondary)
                     }
                 }.frame(maxWidth: .infinity, alignment: .leading).fixedSize(horizontal: false, vertical: true)
@@ -327,46 +343,7 @@ struct EnvironmentComparisonItem: View {
                         .accessibilityLabel("Already Matches")
                 } else { EnvironmentComparisonStatusLabel(status: item.status) }
             }.padding(.trailing, 26)
-            if let reason = item.comparisonTechnicalDetails {
-                EnvironmentComparisonRowLayout(depth: depth, itemIndent: true, spansStatusColumn: true) {
-                    DisclosureGroup("Technical Details", isExpanded: technicalExpansion ?? $technicalExpanded) {
-                        if facts.isEmpty {
-                            Text(reason).font(.caption.monospaced()).textSelection(.enabled)
-                                .fixedSize(horizontal: false, vertical: true)
-                        } else {
-                            VStack(alignment: .leading, spacing: 6) {
-                                let phases = Set(facts.flatMap(\.phases))
-                                if phases.count == 1, let phase = phases.first { Text("Phase: " + phase).foregroundStyle(.secondary) }
-                                ForEach(facts) { fact in
-                                    ViewThatFits(in: .horizontal) {
-                                        HStack(alignment: .top, spacing: 12) {
-                                            Text(fact.predicateTitle).frame(width: 70, alignment: .leading)
-                                            Text(fact.resultTitle).frame(width: 80, alignment: .leading)
-                                            factDetails(fact, showPhases: phases.count > 1)
-                                        }
-                                        VStack(alignment: .leading, spacing: 3) {
-                                            Text(fact.predicateTitle + " · " + fact.resultTitle)
-                                            factDetails(fact, showPhases: phases.count > 1)
-                                        }
-                                    }
-                                }
-                                DisclosureGroup("Full Diagnostic Details") {
-                                    Text(reason).font(.caption.monospaced()).textSelection(.enabled)
-                                        .fixedSize(horizontal: false, vertical: true)
-                                }.disclosureGroupStyle(TaskDisclosureStyle(minimumHeight: 22))
-                            }.font(.caption).textSelection(.enabled)
-                        }
-                    }
-                        .disclosureGroupStyle(TaskDisclosureStyle(minimumHeight: 22, contentTrailingInset: 0)).font(.caption)
-                }
-            }
         }.padding(.vertical, 7).frame(minHeight: 28)
-    }
-    private func factDetails(_ fact: ComparisonTechnicalFact, showPhases: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text((fact.codes + [fact.recordID]).joined(separator: " · ")).font(.caption.monospaced())
-            if showPhases && !fact.phases.isEmpty { Text("Phase: " + fact.phases.joined(separator: " · ")).foregroundStyle(.secondary) }
-        }.frame(maxWidth: .infinity, alignment: .leading).fixedSize(horizontal: false, vertical: true)
     }
 }
 

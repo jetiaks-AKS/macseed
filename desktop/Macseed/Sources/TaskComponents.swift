@@ -213,6 +213,7 @@ struct TaskDomainList: View {
     var itemTitles: [String: String] = [:]
     var expansion: Binding<Set<String>>? = nil
     var settingsExpansion: Binding<Bool>? = nil
+    var prerequisiteReasons: [String: Set<String>] = [:]
     @TaskViewState<Set<String>> private var expanded = []
     private var expandedIDs: Set<String> { expansion?.wrappedValue ?? expanded }
     private func setExpanded(_ ids: Set<String>) {
@@ -296,7 +297,8 @@ struct TaskDomainList: View {
                     }
                 }.padding(.leading, restoreSettingsPreview ? 0 : 36).padding(.trailing, captureResultLayout ? -26 : 0).padding(.vertical, 4)
             } else {
-                TaskDomainItems(domain: domain, stateTitles: stateTitles, compactReadyItems: compactReadyItems, itemTitles: itemTitles, restorePreview: restoreSettingsPreview)
+                TaskDomainItems(domain: domain, stateTitles: stateTitles, compactReadyItems: compactReadyItems, itemTitles: itemTitles, restorePreview: restoreSettingsPreview,
+                    commonFailureInPrerequisites: prerequisiteReasons[domain.id]?.contains(domain.sharedObservationReason ?? "") == true)
             }
         } label: {
             if restoreSettingsPreview {
@@ -398,21 +400,24 @@ struct TaskDomainItems: View {
     var compactReadyItems = false
     var itemTitles: [String: String] = [:]
     var restorePreview = false
-    static func showsTechnicalDetails(_ item: TaskItemPresentation) -> Bool {
-        item.assistedAppStore == nil && item.state != .working && item.item.reason != nil
-    }
+    var commonFailureInPrerequisites = false
     var body: some View {
+        let sharedIDs = domain.sharedObservationItemIDs
         if compactReadyItems {
             CaptureConfirmationItems(domain: domain)
         } else {
             VStack(spacing: 0) {
+                if !commonFailureInPrerequisites, let message = domain.sharedObservationMessage {
+                    Text(message).font(.caption).foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 4)
+                }
                 ForEach(domain.items) { item in
                     if restorePreview {
-                        RestorePreviewRow(title: details(item),
+                        RestorePreviewRow(title: details(item, suppressExplanation: sharedIDs.contains(item.id)),
                             status: TaskStatusLabel(state: item.state, title: item.assistedAppStore?.status.rawValue ?? stateTitles[item.state]),
                             titleInset: 36).padding(.vertical, 7)
                     } else { TaskTextStatusLayout {
-                        details(item).fixedSize(horizontal: false, vertical: true)
+                        details(item, suppressExplanation: sharedIDs.contains(item.id)).fixedSize(horizontal: false, vertical: true)
                         TaskStatusLabel(state: item.state, title: item.assistedAppStore?.status.rawValue ?? stateTitles[item.state])
                             .fixedSize(horizontal: false, vertical: true)
                     }.padding(.vertical, 7) }
@@ -420,28 +425,20 @@ struct TaskDomainItems: View {
             }.padding(.leading, restorePreview ? 0 : 36).padding(.vertical, 4)
         }
     }
-    private func details(_ item: TaskItemPresentation) -> some View {
+    private func details(_ item: TaskItemPresentation, suppressExplanation: Bool) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(itemTitles[item.id] ?? item.item.title)
-            Text(item.assistedAppStore?.message ?? item.item.action).font(.caption).foregroundStyle(.secondary)
-            if let url = item.assistedAppStore?.productURL { AppStoreProductButton(url: url) }
-            if Self.showsTechnicalDetails(item), let reason = item.item.reason {
-                DisclosureGroup("Technical Details") {
-                    Text(reason).font(.caption.monospaced()).textSelection(.enabled)
-                    if let diagnostic = item.diagnostic {
-                        Text(diagnostic.technicalDescription).font(.caption.monospaced()).textSelection(.enabled)
-                    }
-                }.disclosureGroupStyle(TaskDisclosureStyle(minimumHeight: 22)).font(.caption)
+            if !suppressExplanation, !item.item.action.isEmpty, item.state != .matching {
+                Text(item.assistedAppStore?.message ?? item.item.action).font(.caption).foregroundStyle(.secondary)
             }
+            if let url = item.assistedAppStore?.productURL { AppStoreProductButton(url: url) }
         }.frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
 struct PendingOperationLogButton: View {
     var body: some View {
-        Button {} label: { Label("View Log", systemImage: "doc.text") }
-            .disabled(true).help("Persistent Desktop operation logs are not available in this build.")
-            .accessibilityHint("Persistent Desktop operation logs are not available in this build.")
+        Text("Log unavailable").font(.caption).foregroundStyle(.secondary)
     }
 }
 
@@ -513,18 +510,7 @@ struct RestoreSettingPreviewLeaf: View {
             if !compactMatch && !item.item.action.isEmpty {
                 Text(item.item.action).font(.caption).foregroundStyle(.secondary)
             }
-            if let reason = item.item.reason {
-                DisclosureGroup("Technical Details") {
-                    Text(reason).font(.caption.monospaced()).textSelection(.enabled)
-                    if let diagnostic = item.diagnostic {
-                        Text(diagnostic.technicalDescription).font(.caption.monospaced()).textSelection(.enabled)
-                    }
-                }.disclosureGroupStyle(TaskDisclosureStyle(minimumHeight: 22))
-            } else if let diagnostic = item.diagnostic {
-                DisclosureGroup("Technical Details") {
-                    Text(diagnostic.technicalDescription).font(.caption.monospaced()).textSelection(.enabled)
-                }.disclosureGroupStyle(TaskDisclosureStyle(minimumHeight: 22))
-            }
+
         }.frame(maxWidth: .infinity, alignment: .leading)
     }
     private var status: some View {

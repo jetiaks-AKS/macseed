@@ -83,7 +83,7 @@ struct RestoreAreaSelectionView: View {
         guard !area.selectable || area.reason != nil else { return [] }
         return [DisplayItem(id: area.id + ":availability", title: area.selectable ? "Needs Attention" : area.availability == "unsupported" ? "Unsupported" : "Unavailable",
             status: area.selectable ? .attention : area.availability == "unsupported" ? .unsupported : .information,
-            action: area.selectable ? "This category has a reported warning. Review its diagnostic details."
+            action: area.selectable ? "Some saved content in this category needs review."
                 : "No selectable supported content is available in this saved environment.", reason: area.reason)]
     }
 }
@@ -211,10 +211,6 @@ struct RestoreMacOSAreaDetails: View {
                 Text("No selectable supported content is available in this saved environment.")
                     .font(.callout).foregroundStyle(.secondary).padding(.leading, 36)
             }
-            if let reason = area.reason {
-                DisclosureGroup("Technical Details") { Text(reason).font(.caption.monospaced()).textSelection(.enabled) }
-                    .disclosureGroupStyle(TaskDisclosureStyle(minimumHeight: 22)).padding(.leading, 36)
-            }
         }
     }
     private var title: some View {
@@ -276,11 +272,6 @@ struct RestorePreviewItemDetails: View {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(item.title).foregroundStyle(.primary)
                         Text(item.action).font(.callout).foregroundStyle(.secondary)
-                        if let reason = item.reason {
-                            DisclosureGroup("Technical reason") {
-                                Text(reason).font(.caption.monospaced()).textSelection(.enabled)
-                            }.disclosureGroupStyle(TaskDisclosureStyle(minimumHeight: 22)).font(.caption)
-                        }
                     }
                     Spacer()
                     if item.status == .matching || item.status == .ready {
@@ -300,7 +291,6 @@ struct RestorePrerequisiteView: View {
     let condition: CoreRestorePreparation.Condition
     let label: String
     var showsHeading: Bool = true
-    var technicalTitle: String = "Technical reason"
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             if showsHeading {
@@ -315,13 +305,6 @@ struct RestorePrerequisiteView: View {
             }
             if condition.status != "satisfied" {
                 Text(message).font(.callout)
-                DisclosureGroup(technicalTitle) {
-                    Text(condition.code).font(.caption.monospaced()).textSelection(.enabled)
-                    if let diagnostic = condition.diagnostic {
-                        Text(diagnostic.technicalDescription).font(.caption.monospaced()).textSelection(.enabled)
-                    }
-                }
-                    .disclosureGroupStyle(TaskDisclosureStyle(minimumHeight: 22))
             }
         }
     }
@@ -333,11 +316,14 @@ struct RestorePrerequisiteView: View {
         default: condition.code.contains("authorization_required") ? "Authorization Required" : "Action Required"
         }
     }
-    private var message: String {
+    var message: String {
         if let diagnostic = condition.diagnostic { return diagnostic.explanation }
         return switch condition.code {
-        case "homebrew_installation_requires_interaction": "Install Homebrew outside Macseed, then Refresh Preview. Macseed will not install it during Preview."
-        case "homebrew_unavailable": "Make the existing Homebrew installation usable, then Refresh Preview."
+        case "homebrew_installation_requires_interaction": "Install Homebrew, then Refresh Preview."
+        case "homebrew_unavailable": "Couldn’t read Homebrew state. Rebuild is blocked until it can be checked."
+        case "ssh_configuration_not_ready": "The selected SSH configuration is unavailable or conflicts with this Mac. Review it or exclude SSH Configuration, then Refresh Preview."
+        case "ssh_configuration_observation_failed": "Couldn’t read SSH configuration. Rebuild is blocked until it can be checked."
+        case "privileged_lifecycle_unknown": "External work may still be running. Rebuild is blocked until it can be safely checked."
         case "vscode_cli_required", "vscode_cli_unavailable": "Make the Visual Studio Code command-line tool available, then Refresh Preview."
         case "vscode_cli_ambiguous": "Resolve the multiple Visual Studio Code installations, then Refresh Preview."
         case "git_required", "git_unavailable": "Make Git available, then Refresh Preview."
@@ -348,8 +334,8 @@ struct RestorePrerequisiteView: View {
         case "preview_observation_failed": "Current state could not be inspected reliably. Resolve the inspection issue, then Refresh Preview."
         default:
             switch condition.status {
-            case "safely_satisfiable": "Core can satisfy this condition later using its existing Rebuild behavior. Preview makes no changes."
-            case "unsupported": "This selected requirement is not supported by the current application execution path."
+            case "safely_satisfiable": "This prerequisite will be handled during Rebuild."
+            case "unsupported": "This requirement cannot be restored in this version."
             default: "Resolve this requirement outside Macseed, then Refresh Preview to inspect the current state."
             }
         }
@@ -452,7 +438,7 @@ struct RestoreView: View {
                         appStore: model.appStoreSelected ? tasks.appStore : nil, reviewAppStore: { model.reviewAppStore() },
                         showsActions: showsPreviewActions, needsRefresh: model.previewNeedsRefresh, retryMessage: model.prerequisiteRetryMessage, retrying: model.retryingPrerequisites,
                         checkAgain: { Task { await model.checkPrerequisites() } },
-                        back: { model.back() }, refresh: { model.refreshPreview() }, rebuild: { model.requestRebuild() }, canRebuild: model.canRebuild)
+                        back: { model.back() }, refresh: { model.refreshPreview() }, rebuild: { model.requestRebuild() }, canRebuild: model.canRebuild, reviewModel: model)
                 }
             case .rebuilding:
                 if let preview = model.executionPreview, let plan = model.executionPlan {
@@ -478,11 +464,8 @@ struct RestoreView: View {
             case .failed, .cancelled:
                 Label(model.state == .cancelled ? "Restore Preparation Cancelled" : "Can't Prepare Restore", systemImage: "exclamationmark.triangle").font(.title2)
                 if let failure = model.failure { Text(failure) }
-                if let reason = model.technicalReason {
-                    DisclosureGroup("Technical reason") { Text(reason).font(.caption.monospaced()).textSelection(.enabled) }
-                        .disclosureGroupStyle(HeaderDisclosureStyle())
-                }
                 HStack {
+                    RestoreReviewLogButton(model: model)
                     Button("Choose Saved Environment…", action: chooseBundle)
                     if model.canPreview { Button("Refresh Preview") { model.refreshPreview() } }
                     if model.inspection != nil { Button("Back") { model.back() } }
@@ -574,6 +557,7 @@ struct RestorePreviewContent: View {
     var refresh: (() -> Void)? = nil
     var rebuild: (() -> Void)? = nil
     var canRebuild = false
+    var reviewModel: RestoreModel? = nil
     var showsFixIssues: Bool { prerequisites.canFixIssues }
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
@@ -603,10 +587,10 @@ struct RestorePreviewContent: View {
             }) },
                 restoreSettingsPreview: true, settingsCategories: settingsCategories, itemTitles: itemTitles,
                 expansion: categoryExpansion.map { binding in Binding(get: { binding.wrappedValue ? Set(domains.map(\.id)) : [] }, set: { binding.wrappedValue = !$0.isEmpty }) },
-                settingsExpansion: categoryExpansion)
+                settingsExpansion: categoryExpansion, prerequisiteReasons: prerequisites.sharedReasons)
                 .environment(\.restoreTrailingSamples, appStore.map { [RestoreTrailingSample(title: $0.categoryStatus, disclosure: false)] } ?? [])
             if showsActions {
-                RestorePreviewActions(back: back, refresh: refresh, rebuild: rebuild, canRebuild: canRebuild, showsRebuild: appStore == nil || !domains.isEmpty)
+                RestorePreviewActions(back: back, refresh: refresh, rebuild: rebuild, canRebuild: canRebuild, showsRebuild: appStore == nil || !domains.isEmpty, reviewModel: reviewModel)
             }
         }
     }
@@ -631,11 +615,13 @@ struct RestoreSelectionActions: View {
     var body: some View {
         ViewThatFits(in: .horizontal) {
             HStack {
+                if let reviewModel { RestoreReviewLogButton(model: reviewModel) }
                 if let reviewModel { RestoreReviewCancelButton(model: reviewModel) }
                 Text(status).font(.callout).foregroundStyle(.secondary)
                 Spacer(); action
             }
             VStack(alignment: .leading, spacing: 8) {
+                if let reviewModel { RestoreReviewLogButton(model: reviewModel) }
                 if let reviewModel { RestoreReviewCancelButton(model: reviewModel) }
                 Text(status).font(.callout).foregroundStyle(.secondary); action
             }
@@ -668,12 +654,28 @@ struct RestorePreviewActions: View {
     var rebuild: (() -> Void)? = nil
     var canRebuild = false
     var showsRebuild = true
+    var reviewModel: RestoreModel? = nil
     var body: some View {
         HStack {
+            if let reviewModel { RestoreReviewLogButton(model: reviewModel) }
             Button("Back") { back?() }.disabled(back == nil)
             Button("Refresh Preview") { refresh?() }.disabled(refresh == nil)
             Spacer()
             if showsRebuild { Button("Rebuild") { rebuild?() }.buttonStyle(.borderedProminent).disabled(!canRebuild || rebuild == nil) }
+        }
+    }
+}
+
+struct RestoreReviewLogButton: View {
+    @ObservedObject var model: RestoreModel
+    var body: some View {
+        let runtime = model.runtime
+        if let reference = runtime.operationLogReference(matching: model.operationID),
+           OperationLogVisibility.restore(model.state, active: runtime.isActive, reference: reference,
+               terminal: !runtime.isActive) {
+            OperationLogButton(runtime: runtime, reference: reference)
+        } else if [.review, .preview, .failed, .cancelled].contains(model.state), !runtime.isActive {
+            Text("Log unavailable").font(.caption).foregroundStyle(.secondary)
         }
     }
 }
@@ -994,6 +996,7 @@ struct RestoreFinalDomain: View {
         }
     }
     var body: some View {
+        let sharedIDs = domain.sharedObservationItemIDs
         VStack(alignment: .leading, spacing: 0) {
             Button {
                 if let expansion { expansion.wrappedValue.toggle() } else { expanded.toggle() }
@@ -1008,7 +1011,11 @@ struct RestoreFinalDomain: View {
                         ForEach(domain.resultChildren) { child in RestoreFinalDomain(domain: child, depth: depth + 1) }
                     } else {
                         ForEach(domain.resultVisibleItems) { item in
-                            RestoreResultItemRow(item: item, notRun: domain.executionStatus == .notRun, depth: depth)
+                            RestoreResultItemRow(item: item, notRun: domain.executionStatus == .notRun, depth: depth,
+                                suppressExplanation: sharedIDs.contains(item.id))
+                        }
+                        if let message = domain.sharedObservationMessage {
+                            Text(message).font(.caption).foregroundStyle(.secondary).padding(.vertical, 4)
                         }
                     }
                     if domain.resultCategoryIssue {
@@ -1025,32 +1032,15 @@ struct RestoreResultItemRow: View {
     let item: TaskItemPresentation
     let notRun: Bool
     let depth: Int
-    @RestoreViewState private var expanded = false
-    var hasTechnicalDetails: Bool {
-        item.assistedAppStore == nil && RestoreFinalDomain.showsItemDetails(item) && (item.resultTechnicalDetails != nil || item.item.reason != nil)
-    }
+    var suppressExplanation = false
     var body: some View {
         RestoreResultColumns {
             VStack(alignment: .leading, spacing: 4) {
                 Text(item.item.title)
-                if RestoreFinalDomain.showsItemDetails(item), let explanation = item.resultExplanation {
+                if !suppressExplanation, RestoreFinalDomain.showsItemDetails(item), let explanation = item.resultExplanation {
                     Text(explanation).font(.caption).foregroundStyle(.secondary)
                 }
                 if let url = item.assistedAppStore?.productURL { AppStoreProductButton(url: url) }
-                if hasTechnicalDetails {
-                    Button { expanded.toggle() } label: {
-                        HStack(spacing: 5) {
-                            Text("Technical Details")
-                            Image(systemName: "chevron.right").rotationEffect(.degrees(expanded ? 90 : 0))
-                                .font(.caption2.weight(.semibold)).accessibilityHidden(true)
-                        }
-                    }.buttonStyle(.plain).font(.caption).accessibilityLabel("Technical Details")
-                        .accessibilityValue(expanded ? "Expanded" : "Collapsed")
-                    if expanded {
-                        Text([item.item.reason, item.resultTechnicalDetails].compactMap { $0 }.joined(separator: "\n"))
-                            .font(.caption.monospaced()).textSelection(.enabled)
-                    }
-                }
             }.padding(.leading, RestoreResultColumns.titleInset(depth: depth, item: true))
                 .frame(maxWidth: .infinity, alignment: .leading).fixedSize(horizontal: false, vertical: true)
             VStack(alignment: .leading, spacing: 4) {
@@ -1169,6 +1159,10 @@ struct RestoreResultContent: View {
         outcome == .attention && pendingManualWork && !automaticProblems ? "Rebuild Completed" : original
     }
     static func message(result: RestoreExecutionPresentation, summary: RestoreResultSummary) -> String {
+        if result.structuredEvidence?["unknown_consequences"]?.boolean == true
+            || result.structuredEvidence?["code"]?.string == "privileged_lifecycle_unknown" {
+            return "Changes may remain and external work may still be running. Rebuild is blocked until that work can be safely checked."
+        }
         var explanations: [String] = []
         if summary.issues.contains(where: { $0.id == "launcher:scope" }) {
             explanations.append("Macseed Launcher could not be configured")
@@ -1188,12 +1182,6 @@ struct RestoreResultContent: View {
         case .stoppedBeforeMutation: return "No target changes began. Refresh Preview before rebuilding again."
         case .stoppedAfterMutation: return "Completed changes remain. Refresh Preview before rebuilding again."
         }
-    }
-    private var hasOperationLog: Bool {
-        guard let logRuntime, ![OperationLogStatus.unavailable, .inactive].contains(logRuntime.operationLogStatus),
-              let reference = logRuntime.operationLogReference(matching: result.operationID) else { return false }
-        return OperationLogVisibility.restore(.result, active: logRuntime.isActive, reference: reference,
-            terminal: logRuntime.termination != nil && logRuntime.operationID == result.operationID)
     }
     var body: some View {
         let summary = RestoreResultSummary(domains: tasks?.automaticDomains ?? [], result: result, appStore: tasks?.appStore)
@@ -1215,19 +1203,6 @@ struct RestoreResultContent: View {
             if let tasks {
                 RestoreExecutionCategories(domains: tasks.automaticDomains, showsWarnings: false, resultStatuses: true,
                     appStore: tasks.appStore, reviewAppStore: reviewAppStore)
-            }
-            if !hasOperationLog && !result.technicalDetails.isEmpty {
-                DisclosureGroup("Technical Details") {
-                    ForEach(Array(result.compactTechnicalDetails.enumerated()), id: \.offset) { _, text in
-                        Text(text).font(.caption.monospaced()).textSelection(.enabled)
-                    }
-                    Button("Copy Diagnostic Details") {
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(result.diagnosticReport, forType: .string)
-                    }
-                    .padding(.top, 14)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }.disclosureGroupStyle(HeaderDisclosureStyle())
             }
             if showsActions { RestoreResultActions(result: result, refresh: refresh, done: done, logRuntime: logRuntime) }
         }
@@ -1317,8 +1292,10 @@ struct RestoreResultActions: View {
             if result.outcome != .clean { Button("Refresh Preview", action: refresh) }
             if let logRuntime,
                let reference = logRuntime.operationLogReference(matching: result.operationID),
-               OperationLogVisibility.restore(.result, active: logRuntime.isActive, reference: reference, terminal: logRuntime.termination != nil && logRuntime.operationID == result.operationID) {
+               OperationLogVisibility.restore(.result, active: logRuntime.isActive, reference: reference, terminal: !logRuntime.isActive) {
                 OperationLogButton(runtime: logRuntime, reference: reference)
+            } else {
+                Text("Log unavailable").font(.caption).foregroundStyle(.secondary)
             }
         }
     }

@@ -352,7 +352,7 @@ import SwiftUI
         precondition(repairProgress.project(events: [repairEvent]).restoreActivity == "Repairing firefox…")
         let sourceRoot = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Sources")
         let view = try String(contentsOf: sourceRoot.appendingPathComponent("RestoreView.swift"), encoding: .utf8)
-        precondition(view.contains("DisclosureGroup(\"Technical Details\")") && !view.contains("DisclosureGroup(\"View Details\")"))
+        precondition(!view.contains("DisclosureGroup(\"Technical Details\")") && !view.contains("DisclosureGroup(\"View Details\")"))
         precondition(view.contains("Macseed will apply the changes shown in this Preview. Items that already match will not be changed."))
         precondition(view.contains("Some changes may require administrator authorization."))
         precondition(!view.contains("Some Homebrew casks require administrator authorization") && !view.contains("A separate password prompt will appear."))
@@ -545,7 +545,7 @@ import SwiftUI
         let requirement = TaskItemPresentation(id: "pkg", item: DisplayItem(id: "pkg", title: "Fixture", status: .attention,
             action: "Unsupported", reason: "cask_execution_requirements_unsupported"), state: .attention, diagnostic: preparation,
             resultLabels: ["Unsupported"])
-        precondition(requirement.resultExplanation!.contains("Refresh Preview → Fix Issues… → Review → Rebuild"))
+        precondition(requirement.resultExplanation!.contains("Refresh Preview and choose Fix Issues…"))
         precondition(requirement.resultExplanation!.contains("does not guarantee installation"))
         var unsupported = requirement; unsupported.diagnostic = nil
         precondition(!unsupported.resultExplanation!.contains("Fix Issues"))
@@ -783,7 +783,7 @@ import SwiftUI
             precondition(RestoreResultSummary(domains: partition.automaticDomains).cards.isEmpty)
             precondition(before.item.title == "Blackmagic Disk Speed Test" && before.assistedAppStore?.status == expected)
             precondition((before.assistedAppStore?.productURL != nil) == (expected != .installed))
-            precondition(!TaskDomainItems.showsTechnicalDetails(before))
+            precondition(before.assistedAppStore != nil)
             precondition(before.item.reason == (reason.isEmpty ? nil : reason))
             precondition(before.diagnostic?.condition == (reason.isEmpty ? nil : "observation_failed"))
             // No final Verification means Unverified, even with a matching Preview.
@@ -797,7 +797,7 @@ import SwiftUI
                 precondition(item.assistedAppStore?.status == status)
                 precondition(item.resultTitle == status.rawValue)
                 precondition(item.resultGroup == (status == .installed ? "Success" : "Needs Attention"))
-                precondition(!RestoreResultItemRow(item: item, notRun: false, depth: 0).hasTechnicalDetails)
+                precondition(item.assistedAppStore != nil)
                 precondition(item.resultTechnicalDetails != nil)
                 precondition((item.assistedAppStore?.productURL != nil) == (status != .installed))
                 if let productURL = item.assistedAppStore?.productURL {
@@ -819,18 +819,18 @@ import SwiftUI
             let item = TaskItemPresentation(id: domain, item: DisplayItem(id: domain, title: domain, status: .attention,
                 action: "Needs inspection", reason: "observation_failed"), state: .attention,
                 resultLabels: ["Unverified"], resultTechnicalDetails: "Retained diagnostics", resultEvidenceAvailable: true)
-            precondition(TaskDomainItems.showsTechnicalDetails(item))
-            precondition(RestoreResultItemRow(item: item, notRun: false, depth: 0).hasTechnicalDetails)
+            precondition(item.item.reason == "observation_failed")
+            precondition(item.resultTechnicalDetails == "Retained diagnostics")
             let working = TaskItemPresentation(id: item.id, item: item.item, state: .working)
-            precondition(!TaskDomainItems.showsTechnicalDetails(working))
+            precondition(working.item.reason == "observation_failed")
         }
-        print("PASS: Assisted Missing/Unverified actions preserve evidence, Installed has no action, and only Assisted rows hide Technical Details")
+        print("PASS: Assisted Missing/Unverified actions preserve evidence, Installed has no action, and all workflow rows retain diagnostics in their models")
     }
     @MainActor static func main() async throws {
         try assistedAppStoreChecks()
         if CommandLine.arguments.contains("--rosetta-only") {
             try taskPresentationChecks()
-            print("PASS: Rosetta prerequisite and observation failure in Restore Preview and Technical Details")
+            print("PASS: Rosetta prerequisite and observation failure in Restore Preview and retained diagnostic evidence")
             return
         }
         if !CommandLine.arguments.contains("--preview-appstore-layout-only") && !CommandLine.arguments.contains("--selection-preview-only") && !CommandLine.arguments.contains("--independent-ownership-only") && !CommandLine.arguments.contains("--review-cancel-only") && !CommandLine.arguments.contains("--restore-macos-only") && !CommandLine.arguments.contains("--pkg-preparation-only") && !CommandLine.arguments.contains("--fix-issues-only") {

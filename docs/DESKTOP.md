@@ -68,7 +68,7 @@ implemented and checkpoint-qualified; broader completion qualification remains o
 Use one main window with three sidebar destinations: **Capture this Mac**,
 **Restore a Mac**, and **Environment Status**. An operation detail view belongs to
 the active flow. Settings → Operation Logs opens the shared native log window;
-terminal flow results offer a local View Log for the corresponding operation.
+completed scans, inspections, previews and results offer View Log for their own operation.
 Use native file dialogs, accessible controls, text plus icons for status, and
 keyboard navigation. Never rely on color alone.
 
@@ -105,8 +105,12 @@ Restore's reference hierarchy is **Domain → Items**. The top attention summary
 owns only affected areas and counts, with warning icons; it has no item-detail
 disclosure. Prerequisites separately explain execution requirements with compact,
 independently expandable rows: Ready when satisfied, visible status when blocked.
-The lower domain sections own concrete items, user-facing reasons and temporary
-nested technical diagnostics. Avoid a second item-detail representation above them.
+The lower domain sections own concrete items and short user-facing reasons. Technical
+diagnostics belong in the existing Operation Log, without workflow disclosures or copy
+fallbacks. Across Capture, Restore and Environment Status, keep one short explanation
+(and a second sentence only for a necessary action or blocking consequence). Group shared
+prerequisites only by compatible domain, scope, reason and action; preserve independent
+item problems and item counters. Repeated records are not separate user actions.
 Retain truthful Needs Attention versus Unverified evidence in all phases.
 
 ## Native appearance and Settings
@@ -207,7 +211,7 @@ These are content states, not mandatory wizard pages.
    Confirmation shows the
    destination and **Included in this capture**, without repeated aggregate counts.
    Read-only details use wrapping neutral labels followed by independent item and
-   category warnings with collapsed Technical Details. Back edits the selection.
+   category warnings. View Log opens this preparation’s diagnostics. Back edits the selection.
    Category-only domains retain whole-category scope. macOS Settings shows labels
    for selected Finder, Dock, Windows, Keyboard, Trackpad and Screenshots domains.
    VS Code Settings describes JSON configuration containing `settings.json` only;
@@ -368,8 +372,8 @@ that target state is unchanged; no intermediate phases or percentages are inferr
    unchanged. An all-unsupported plan offers no Rebuild.
    A Rosetta prerequisite stays on the affected Cask with a manual Terminal
    installation instruction and **Refresh Preview**; Fix Issues never installs
-   Rosetta. Technical Details distinguish unavailable Rosetta from observation
-   failure. Independent executable work remains available.
+   Rosetta. The concise explanation distinguishes installation required from a failed
+   check; typed diagnostics remain in View Log. Independent executable work remains available.
    Do not imply exhaustive readiness.
 5. Preview groups actions by category, showing changes, already matching items,
    conflicts, warnings and unknown observations. Call out installs, settings writes,
@@ -486,9 +490,9 @@ Tools surface. Its disclosure shows a short manual summary and Review App Store 
 never the inventory. Manual requirements remain outside automatic execution counts.
 Shared status/badge/chevron groups measure their content, with no empty badge slots;
 category and leaf statuses share a measured lane, and narrow rows stack without
-changing title indentation. Expand All / Collapse All and leaf-level Technical Details
-remain available. Result categories start collapsed. Technical diagnostics remain in View Log or the existing collapsed
-fallback disclosure; bottom actions retain the fixed footer.
+changing title indentation. Expand All / Collapse All remains available and Result
+categories start collapsed. Short item explanations retain independent problems;
+technical diagnostics open through View Log. Bottom actions retain the fixed footer.
 
 The dedicated App Store screen shows **Installed** with `N of M selected`, or
 **All Installed** when every effective requirement matches. **Needs Attention**
@@ -600,8 +604,8 @@ with one macOS Settings disclosure over participating child domains; Git Reposit
 appears in Workspace after Workspace Folders. Excluded inventory is hidden only in presentation.
 Diagnostics correlate to comparison items by their record owner and domain/item ID;
 matching evidence and independent warnings remain within one row. Matching items
-show a compact accessible checkmark without generic subtitles or Technical Details;
-problem items retain reasons and useful technical evidence. macOS child domains use
+show a compact accessible checkmark without generic subtitles; problem items retain
+short reasons, with technical evidence in Operation Logs. macOS child domains use
 independent collapsed disclosures inside macOS Settings; Expand All controls only
 main categories. Setting names reuse Capture labels.
 Category rows retain nonzero logical-item count pills. Already Matches indicates
@@ -611,7 +615,7 @@ Only Result actions use a fixed footer outside
 ScrollView; Choose/Failure actions stay with their content and Cancel sits left below
 the process card.
 App Store display names come from the validated Bundle/Restore label projection;
-missing names retain a neutral label and numeric ID in Technical Details.
+missing names retain a neutral label; numeric identities stay in Core/model evidence.
 Summary omits zero counts and identifies unsupported/unknown-difference subsets.
 Collapsed categories expose descendant attention; details preserve matching, missing,
 different, unverified, unsupported and unresolved facts, plus Coverage/diagnostics.
@@ -665,8 +669,8 @@ feature is absent or inferring an effective system default.
 Category badges count visible logical items. Each Git repository has one outcome
 from its Worktree/Origin/Branch evidence; incomplete or unsupported checks cannot
 produce Match. An absent worktree with only dependent prerequisite failures is
-Missing; independent failures retain attention. Technical Details preserve all
-predicate results, record IDs and diagnostics. Extra items and their availability
+Missing; independent failures retain attention. Core/model evidence preserves
+predicate results and record IDs; Operation Logs expose their safe typed projection. Extra items and their availability
 rows are hidden from the main window, including categories containing only extras.
 Core/model evidence, Operation Logs and Diagnostic Report retain their existing
 projections; extras contribute no Match/Different/Missing/Needs Attention counts. App Store absence
@@ -782,14 +786,11 @@ not additional cards. Missing counts remain unknown. Process Result stays indepe
 Confirmed user Stop/Force Stop intent is kept only for the current operation ID in
 memory: Stopped by User requires a matching handled stop outcome; Force Stop Requested
 never replaces an Interrupted outcome or claims that all work stopped.
-The persistent Operation Log preserves safe structured diagnostics. The lower
-collapsed Technical Details/copy fallback appears only when View Log is unavailable.
-**Copy Diagnostic Details** copies the available
-allowlisted terminal, execution, Verification, coverage and diagnostic fields,
-including successful evidence. Raw process output, arbitrary payload fields and
-secrets are excluded; this is not a raw Core log. Categories convey verified work
-without a repeated successful-area summary. Clean Result also offers diagnostic copying;
-actions remain in the fixed footer. This does not close packaged-runtime qualification.
+The persistent Operation Log preserves safe structured diagnostics; its Diagnostic
+Report owns preview, copy and save. Workflow screens have no technical disclosure
+or copy fallback. If the matching log is unavailable, say so without a dead link.
+Categories convey verified work without a repeated successful-area summary; actions
+remain in the fixed footer. This does not close packaged-runtime qualification.
 
 User-confirmed real-Mac GUI validation covered Preview → Rebuild → Verification,
 the running **Waiting**, **Working** and **Awaiting Verification** states, and
@@ -927,8 +928,8 @@ to Workspace. Domain IDs, selection granularity, Core execution and Verification
 remain authoritative and unchanged.
 
 Restore Result follows the [Restore result contract](#restore-result-contract),
-including conditional plan-row cards, neutral category Unverified and fallback
-Technical Details. Logging & Diagnostics was completed separately in Stage 16J;
+including conditional plan-row cards, neutral category Unverified and operation-specific
+View Log. Logging & Diagnostics was completed separately in Stage 16J;
 terminal Restore categories now reuse Environment Status's disclosure style,
 functional sections, shared category icons/surfaces and compact colored counters.
 Running categories remain compact and non-expandable. Terminal rows expose safe
@@ -940,8 +941,8 @@ evidence takes precedence over Applied in the item label and Successful breakdow
 Applied/Already Matches without that evidence is explicitly not verified. Independent
 Verification problems remain visible. The running
 category list has no lower warning banner. Final categories support Expand All /
-Collapse All and start collapsed. Successful items omit local Technical Details;
-problem evidence remains local and in the shared log. Current failed/blocked/conflict
+Collapse All and start collapsed. Items retain concise explanations when needed;
+technical problem evidence stays in the shared log. Current failed/blocked/conflict
 evidence takes priority over earlier Applied evidence without discarding that action.
 Unreported auxiliary macOS restart rows are hidden when no specific or unexplained
 scope failure requires them; they contribute no outcome count and never imply Apply
@@ -956,7 +957,7 @@ Unknown item outcomes show Outcome Unknown; confirmed absence of execution shows
 Not Run. Neither creates a numeric result. Preview blocked/conflict reasons retain
 their own meaning rather than becoming Verification failures. Positive counters count evidenced plan
 items, not Verification predicates. Category-only coverage and incomplete evidence
-remain visible through category status and View Log or fallback Technical Details. No new
+remain visible through category status and View Log. No new
 operations run when expanding results. Functional categories/disclosures and real
 stopped-result presentation are manually accepted. Unexercised accessibility,
 window-size and completion edge cases remain bounded qualification work.
@@ -1206,8 +1207,10 @@ functional development without constructing the full catalog first.
 Desktop does not parse `latest.log`, CLI messages or raw stdout/stderr, merge these
 levels, add a third logger or extend Protocol V1 for correlation. The Desktop
 request ID identifies the operation; it does not prove linkage to a particular Core
-technical-log file. Existing flow Technical Details / Copy Diagnostic Details
-remain separate presentations, not access to arbitrary Core logs.
+technical-log file. Workflow screens use short messages and the existing log viewer,
+never access to arbitrary Core logs. Application observation failures add a bounded
+typed projection of tool/probe, failure layer, duration, native exit or signal and
+confirmed quiescence. Raw output, argv, environment and file contents are excluded.
 
 ### Storage and completeness
 
@@ -1238,11 +1241,12 @@ solve the separate packaged Core writable-workspace requirement.
 ### Viewer and history
 
 **Settings → Operation Logs** opens one shared native window with compact Previous
-Operations history. A local **View Log** appears only after an established terminal
-result in Capture, Restore and Environment Status, including failed, needs-attention
-and stopped results. It is absent during active work and intermediate stages;
-Inspect/Preview logs remain accessible through Settings history. A local entry
-initially selects its corresponding operation. Selection switches summary, timeline,
+Operations history. Local **View Log** opens Capture Prepare in Review/confirmation,
+Capture Execute in Result, Bundle inspection in Restore Selection, Restore Prepare
+in Preview, Restore Execute in Result, and Environment Compare in Status. Failed and
+cancelled screens retain their own operation reference. It is absent during active
+work; an unavailable log is labelled honestly. A local entry initially selects its
+corresponding operation, including when another flow ran more recently. Selection switches summary, timeline,
 reader cursor and disclosure state together; obsolete asynchronous reads cannot
 repopulate a different operation.
 

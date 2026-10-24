@@ -34,11 +34,11 @@ enum StatusFailure: Error, Equatable {
     var message: String {
         switch self {
         case .noReference: "Choose a Saved Environment (.mbt) to compare with this Mac."
-        case .unsupportedCapability: "Core has not confirmed support for Saved Environment comparison. Check Core availability or update Macseed."
+        case .unsupportedCapability: "Comparison is unavailable in this build. Check the app setup or update Macseed."
         case .referenceUnavailable: "The selected Saved Environment is unavailable. Choose an accessible file or restore access."
-        case .invalidResult: "Core returned incomplete or invalid comparison evidence. No status conclusion is available."
+        case .invalidResult: "Comparison results are incomplete. Compare again to check the current state."
         case .cancelled: "Comparison cancelled. Check again to inspect current state."
-        case .interrupted: "Comparison interrupted. No complete status conclusion is available. Check again to inspect current state."
+        case .interrupted: "Comparison was interrupted. Compare again to check the current state."
         case .runtime(.coreFailure(let code)):
             switch code {
             case "bundle_unavailable": "The selected Saved Environment is unavailable. Choose an accessible file."
@@ -47,12 +47,14 @@ enum StatusFailure: Error, Equatable {
             case "reference_unavailable": "The selected reference is unavailable. Choose an accessible saved configuration or Blueprint."
             case "reference_invalid": "The selected configuration or Blueprint is invalid. Choose a valid reference."
             case "reference_changed": "The reference changed during comparison. Check again to compare its current contents."
-            case "comparison_reporting_incomplete": "Core could not provide complete comparison evidence. No status conclusion is available."
-            case "comparison_unavailable": "Comparison could not finish. No complete status conclusion is available. Check again to inspect current state."
-            case "comparison_failed": "Core could not complete the comparison. Check the reference and try again."
-            default: "Core could not compare this Mac with the selected reference."
+            case "comparison_reporting_incomplete": "Comparison results are incomplete. Compare again to check the current state."
+            case "comparison_unavailable": "Comparison could not finish. Compare again to check the current state."
+            case "comparison_failed": "Comparison failed. Check the saved environment and try again."
+            default: "Couldn’t compare this Mac with the selected saved environment."
             }
-        case .runtime(let error): error.message
+        case .runtime(.runtimeUnavailable), .runtime(.pythonUnavailable), .runtime(.invalidRuntimeConfiguration), .runtime(.writableCoreRequired), .runtime(.incompatibleProtocol):
+            "Comparison is unavailable in this build. Check the app setup or update Macseed."
+        case .runtime: "Comparison was interrupted. Compare again to check the current state."
         }
     }
     var technicalReason: String? {
@@ -173,9 +175,9 @@ struct EnvironmentStatusPresentation {
             default:
                 status = row.support == "unsupported" ? .unsupported : .unverified
                 switch row.reason {
-                case "unknown_difference": action = "Core could not determine the kind of difference."
-                case "observation_failed": action = "Core could not observe current state."
-                default: action = row.support == "unsupported" ? "This requirement is unverified because its predicate is not supported." : "Core could not verify this requirement."
+                case "unknown_difference": action = "Couldn’t determine how this requirement differs."
+                case "observation_failed": action = "Couldn’t read the current state."
+                default: action = row.support == "unsupported" ? "This requirement cannot be checked in this version." : "Couldn’t verify this requirement."
                 }
             }
             add(row.domain, DisplayItem(id: logicalID(row.domain, row.itemID), title: title(row.itemID, domain: row.domain), status: status,
@@ -260,7 +262,7 @@ struct EnvironmentStatusPresentation {
             if !complete || facts.contains(where: { $0.result == "unverified" || $0.support == "unsupported" })
                 || [.attention, .unresolved].contains(previous.status) {
                 status = facts.contains(where: { $0.support == "unsupported" }) ? .unsupported : .unverified
-                explanation = "Repository checks are incomplete. Review Worktree, Origin and Branch in Technical Details."
+                explanation = "Couldn’t fully check this repository. View Log for the failed checks."
                 if !complete { incompleteRepositoryEvidence = true }
             } else if facts.contains(where: { $0.predicate == "worktree" && $0.result == "missing" && $0.reason == "confirmed_mismatch" }) {
                 status = .missing
@@ -323,11 +325,7 @@ struct EnvironmentStatusPresentation {
             && independentDiagnostics.allSatisfy { attentionIDs.contains($0.recordID) } ? attentionIDs.count : nil)
         if needsAttention {
             headline = "Needs Attention"
-            message = independentDiagnostics.isEmpty ? "Some requirements could not be verified completely." : independentDiagnostics.map { diagnostic in
-                let domain = owners.first { $0.recordID == diagnostic.recordID }?.domain
-                    ?? result.records.coverageRecords.first { $0.recordID == diagnostic.recordID }?.domain ?? "comparison"
-                return (names[domain]?.0 ?? domain) + ": " + diagnosticMessage(diagnostic.code)
-            }.reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }.joined(separator: " ")
+            message = "Some requirements could not be verified. Review the affected categories."
         } else if result.comparison.verdict == "differences_detected" {
             headline = "Differences Found"
             message = "Differences were found in the selected scope."

@@ -150,7 +150,7 @@ struct RestoreDebugScenarioView: View {
                     areas: [CoreRestoreInspection.Area(domain: "homebrew-packages", label: "Homebrew Packages", selectionMode: "items", availability: "available", reason: nil, items: [])])
             } else {
                 OperationSummaryHeader(title: scenario == .rebuilding ? "Rebuilding Your Mac" : scenario == .done ? "All Done" : "Rebuild Completed with Issues",
-                    message: scenario == .done ? "Your environment is ready. Everything was restored successfully." : "Synthetic scenario for manual visual review. Expand domains and Technical Details to inspect sample evidence.",
+                    message: scenario == .done ? "Your environment is ready. Everything was restored successfully." : "Sample result for visual review. Expand categories to review affected items.",
                     state: scenario == .rebuilding ? .working : scenario == .done ? .completed : .attention,
                     counters: scenario.counters, startedAt: finished.addingTimeInterval(-342),
                     finishedAt: scenario == .rebuilding ? nil : finished)

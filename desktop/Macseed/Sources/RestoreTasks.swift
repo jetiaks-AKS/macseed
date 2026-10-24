@@ -66,6 +66,23 @@ struct TaskDomainPresentation: Identifiable {
     var resultCategoryMessage: String? = nil
     var resultProblemMessages: [String: String] = [:]
     var confirmedFinalState: TaskRowState? = nil
+    var sharedObservationItemIDs: Set<String> {
+        let candidates = items.filter { $0.diagnostic == nil && $0.assistedAppStore == nil
+            && [.attention, .unverified, .failed].contains($0.state)
+            && ["homebrew_unavailable", "observation_failed", "inspection_unavailable"].contains($0.item.reason ?? "") }
+        guard let first = candidates.first else { return [] }
+        let same = candidates.filter { $0.item.reason == first.item.reason && $0.state == first.state
+            && $0.executionAction == first.executionAction && $0.sourceDomain == first.sourceDomain }
+        return same.count > 1 ? Set(same.map(\.id)) : []
+    }
+    var sharedObservationReason: String? {
+        let ids = sharedObservationItemIDs
+        return items.first { ids.contains($0.id) }?.item.reason
+    }
+    var sharedObservationMessage: String? {
+        guard sharedObservationReason != nil else { return nil }
+        return id.hasPrefix("homebrew-") ? "Couldn’t read Homebrew state." : "Couldn’t read the current state of this category."
+    }
     var executionStatusTitle: String {
         if activityState == .working && (RestoreOperationSummary(domains: [self]).attention > 0 || confirmedFinalState == .attention) { return "Working · Needs Attention" }
         return executionStatus.rawValue
@@ -593,7 +610,7 @@ extension TaskItemPresentation {
         if let assistedAppStore { return assistedAppStore.message }
         let reason = previewProblem ?? item.reason
         if diagnostic?.primitive == "pkgutil" && diagnostic?.condition == "preparation_required" {
-            return "Installer preparation is required. Refresh Preview → Fix Issues… → Review → Rebuild. Preparation requires approval and does not guarantee installation."
+            return "Installer preparation needs your approval and does not guarantee installation. Refresh Preview and choose Fix Issues…"
         }
         if reason == "cask_execution_requirements_unsupported" || resultLabels.contains("Unsupported") { return "This requirement's installation conditions are not supported." }
         if reason == "target_conflict" || reason == "conflict" { return "Existing state conflicts with the selected requirement and is preserved." }

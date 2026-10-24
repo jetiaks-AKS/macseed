@@ -11,7 +11,7 @@ enum CaptureFailure: Error, Equatable {
     case runtime(CoreRuntimeError)
     var message: String {
         switch self {
-        case .invalidEvidence: "Capture did not provide complete, consistent evidence. Scan this Mac again before creating a saved environment."
+        case .invalidEvidence: "The scan results are incomplete. Scan this Mac again before saving."
         case .invalidDestination: "Choose a new .mbt file in an accessible folder. Existing saved environments require explicit Replace confirmation."
         case .emptySelection: "Choose supported state to capture."
         case .cancelled: "Capture cancelled. Scan this Mac again before another attempt."
@@ -21,7 +21,7 @@ enum CaptureFailure: Error, Equatable {
             case "stale_prepared_capture", "capture_source_unavailable", "invalid_selection":
                 "The Mac or selected state changed. Scan this Mac again, review the new selection and confirm it."
             case "invalid_destination": "The destination is unavailable or changed since Replace was confirmed. Scan again and choose a new file."
-            case "capture_discovery_failed", "capture_inventory_invalid": "The Mac could not be scanned reliably. No complete selection is available. Scan again."
+            case "capture_discovery_failed", "capture_inventory_invalid": "Couldn’t finish scanning this Mac. Scan again before saving."
             case "capture_validation_failed": "The selected environment could not be validated for saving. Scan again and review the selection."
             default: "Capture could not complete. Scan this Mac again before another attempt."
             }
@@ -79,7 +79,7 @@ struct CaptureCategory: Identifiable {
         } else {
             let status: DisplayStatus = row.status == "observation_error" ? .unverified : (row.status == "unsupported" || !["category", "items"].contains(row.selectionMode) ? .unsupported : (selectable ? .ready : .information))
             let action: String = selectable ? "Included as a whole category. Individual settings are not separately selectable."
-                : (row.status == "observation_error" ? "This state could not be observed and cannot be selected."
+                : (row.status == "observation_error" ? "Couldn’t read this category. It cannot be selected."
                     : (row.status == "unsupported" ? "This state is not supported for capture." : "No selectable state is available for this category."))
             items = [DisplayItem(id: "category-state:" + id, title: title, status: status, action: action, reason: row.reason)]
         }
