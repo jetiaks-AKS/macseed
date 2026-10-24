@@ -636,6 +636,9 @@ Stop still acts at item checkpoints; Force Cancel terminates owned work.
 Unconfirmed process observation/termination or state publication leaves unknown
 consequences and blocks later modules and fresh Execute, even with Git unselected.
 There is no journal-clear, rollback, cleanup or automatic retry command.
+The global external-process fence is checked before recomputing Execute preparation:
+an existing unknown lifecycle retains `privileged_lifecycle_unknown` even when
+the interrupted work also changed Preview. Publication checks remain fresh.
 
 Clone failures carry bounded typed authentication, host-key, branch/source,
 configuration, observation or lifecycle reasons. When available, the native exit

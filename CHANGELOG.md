@@ -230,6 +230,9 @@ The format is based on the principles of **Keep a Changelog**.
 * Restore Git authentication with existing custom SSH identities through bounded
   local configuration, retaining typed clone causes and native exit codes in Log.
 
+* Unknown external lifecycle now blocks Execute before a changed Preview can mask
+  the safety reason.
+
 * Homebrew reads in Desktop Capture, Comparison and Restore Preview disable
   per-process analytics, preventing detached telemetry from invalidating successful
   observations. Worker/deadline safeguards remain enforced; failure-layer facts

@@ -352,9 +352,14 @@ class ReliabilityTests(unittest.TestCase):
         self.assertEqual(events[-1]['data']['external_lifecycle_cause'], 'external_execution_deadline')
         fence = f.home / 'Library/Application Support/Macseed/ExternalProcesses/active.json'
         self.assertEqual(json.loads(fence.read_text())['state'], 'unknown_consequences')
+        # The child may create a selected folder before the parent observes its
+        # deadline. Re-entry must report the durable fence even if Preview changed.
+        (f.home / 'Projects').mkdir(exist_ok=True)
+        retained_fence = fence.read_bytes()
         result, events = f.execute(plan['prepared_plan_id'])
         self.assertEqual(events[-1]['data']['code'], 'privileged_lifecycle_unknown', events)
         self.assertFalse(events[-1]['data']['publication_started'])
+        self.assertEqual(fence.read_bytes(), retained_fence)
 
     def test_unknown_blocks_execute_even_without_git_selection(self):
         f = self.restore()

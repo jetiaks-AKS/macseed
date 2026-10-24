@@ -29,6 +29,7 @@ from time import monotonic
 from external_tool import diagnostic_valid
 from reporting import opaque, observation_reporting, observation_failures
 from homebrew_stop import Controller, StopAccepted
+from external_state import pending as external_pending
 import restore_selection
 from secure import launch_channel, import_secure, SecureError
 
@@ -602,6 +603,11 @@ def restore_execute(operation_id, path, disabled_groups, include_secure, expecte
             control = Controller(control_directory.name, int(os.environ['MACSEED_GRACEFUL_FD']))
         with restore_signals():
             checkpoint()
+            # Unknown execution consequences take precedence over a changed
+            # Preview. Re-entry must retain the original durable safety reason.
+            if external_pending():
+                state['unknown_consequences'] = True
+                raise ExecuteFailed('privileged_lifecycle_unknown')
             event("phase_started", {"phase": "preparation"})
             with prepared_restore(path, disabled_groups, include_secure, selection) as (plan, stage, source_id, stage_id):
                 event("phase_completed", {"phase": "preparation"})
