@@ -565,8 +565,10 @@ not qualify real macOS 27 visual effects or remaining native Restore gates.
 
 ### External process waiting and Git clone (R5)
 
-Application process bounds are implemented and covered by disposable fixtures;
-they are not native lifecycle qualification. Existing ProcessTree birth identities,
+Application process bounds and the shared durable-admission fence are implemented;
+the [D1–D4/R5 repair queue is accepted](../../ROADMAP.md#current-practical-execution-order)
+within its documented implementation and automated integration boundaries.
+This is not native lifecycle qualification. Existing ProcessTree birth identities,
 private sessions, private directory checks and atomic/fsynced journal publication
 remain authoritative. No second execution engine or Protocol V2 is introduced.
 
@@ -654,7 +656,14 @@ Confirmed ordinary failure is not success, but does not leave a false global
 block. Hard cancellation, abnormal exit and unconfirmed completion retain blocking
 active/unknown state, even when owned processes were stopped. A valid quiescent
 record permits later admission; existing unknown or foreign records are never
-automatically cleared. Preview/Prepare, Comparison and secure verify-only create
+automatically cleared. Force Cancel with retained uncertainty returns
+`privileged_lifecycle_unknown`, exit `2`, with `unknown_consequences=true` and the
+existing mutation/publication facts. Observed child termination alone cannot turn
+it into `cancelled` / `130`. An accepted Graceful Stop finishes the current
+indivisible work and reaches a confirmed safe boundary; without uncertainty its
+handled result remains `cancelled` / `130`.
+
+Preview/Prepare, Comparison and secure verify-only create
 no such journal or lock. Disposable fault injection covers admission write failure,
 parent exit after mutation before collection, blocked retry, owner protection and
 normal completion/re-entry; it is not real-Mac or power-loss qualification. There

@@ -125,7 +125,8 @@ The format is based on the principles of **Keep a Changelog**.
   work and reports partial results through final Verification.
 
 * Native SwiftUI Desktop foundation with Capture, Restore and Environment Status
-  navigation, plus structured Protocol V1 runtime/transport using bundled Core.
+  navigation, plus structured Protocol V1 runtime/transport using an explicit
+  development Core runtime. Packaged Core remains a distribution gate.
 * Real read-only Environment Status comparison against an explicit saved reference.
 * Real Desktop Capture: scan, review, destination selection, fresh preparation,
   compact confirmation, `.mbt` publication, completion and Reveal in Finder.
@@ -230,6 +231,13 @@ The format is based on the principles of **Keep a Changelog**.
   launch. Parent crashes and unconfirmed completion retain the re-entry fence;
   only the owning, confirmed lifecycle can finalize it. Read-only routes create
   no mutation journal, and existing unknown records remain blocked.
+  Force Cancel during an unconfirmed mutation retains unknown consequences even
+  after owned child termination. The Cask repair cancellation fixture now checks
+  exit `2`, the durable fence and blocked fresh Execute without weakening Graceful
+  Stop or process-ownership checks. The D1–D4/R5 repair queue is accepted within
+  its documented implementation and automated integration scope; the
+  [accepted baseline and CI](ROADMAP.md#current-practical-execution-order) do not
+  qualify native lifecycles or recovery.
 
 * Reap the optional performance clock before Bootstrap exits, preventing a late
   diagnostic helper from producing an unknown Restore lifecycle result. Regression

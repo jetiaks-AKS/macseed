@@ -124,6 +124,14 @@ reserved for interaction/selection; borders use semantic system colors. Light
 and Dark share the same spatial hierarchy, with minimal cards and no decorative
 gradients or heavy shadows.
 
+The historical `Hidden sidebar must release its width to detail` assertion did
+not reproduce in the completed focused sidebar probe. The existing measurement
+subtracts left/right safe-area insets from detail bounds to measure usable width;
+raw frame width alone does not establish how much space the sidebar occupies.
+The original failure's cause remains unestablished; no defect fix is claimed.
+Retain the assertion and existing evidence, and investigate further only if a new
+failure occurs. This does not reopen the accepted sidebar design.
+
 General Settings includes a native segmented Appearance control: System (default),
 Light and Dark. Only this enum value persists in Desktop UserDefaults. System
 removes the appearance override and follows macOS automatically; Light/Dark set
@@ -832,6 +840,19 @@ indentation still indicates hierarchy. Text wraps within its column as width or
 text size changes. Status classification and Preview/Capture layouts are unchanged.
 
 ## Recent Restore qualification and performance
+
+The user confirmed that a real Restore successfully installed previously missing
+VS Code extensions. This is user-reported installation evidence; no operation date,
+build version, retained log or independent measurement is established by that
+confirmation. Reinstallation is not an outstanding gate. Independent inventory /
+fresh-Preview evidence and complete Extension Pack dependency closure remain
+separate [qualification work](../TODO.md#vs-code-restore-requalification).
+
+The [D1–D4/R5 repair queue](../ROADMAP.md#current-practical-execution-order) is
+accepted within its documented implementation and automated integration boundaries.
+This does not close native installer/process lifecycle, recovery or clean-Mac
+qualification, or reopen accepted Environment Status, Restore Result, Visual
+Unification, Logging & Diagnostics and Assisted App Store flows.
 
 On 2026-10-21, a controlled current-Mac Rebuild from the existing `Test_1.mbt`
 completed successfully for its selected scope. The Launcher was already configured

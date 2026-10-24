@@ -17,9 +17,17 @@ through Core after explicit confirmation. Secure migration remains unavailable u
 From the repository root, with Apple Command Line Tools and the macOS SDK:
 
 ```bash
-./desktop/Macseed/build.sh Debug --test
-open desktop/Macseed/build/Debug/Macseed.app
+./desktop/Macseed/build.sh Debug
+open "$PWD/desktop/Macseed/build/Debug/Macseed.app"
 ```
+
+This ordinary development build does not compile or run test executables. Use
+`Debug --test` only for separately requested Desktop validation, as described below.
+Before rebuilding, ensure this output app has no active operation; do not interrupt
+Restore or overwrite an installed `/Applications` copy. Open the exact built path
+without starting a second instance over active work. Normal launch performs only
+the Core capabilities check; **Ready · Macseed Core** confirms that check, not any
+Capture/Restore/Compare workflow.
 
 For the approved sample UX, explicitly opt in on a new DEBUG instance:
 
@@ -193,6 +201,10 @@ build resource `CoreRuntime.plist` with Version=1, Mode=development and explicit
 absolute CoreRoot/PythonExecutable. Python is resolved by Apple's developer tools
 at build time; launching the app does not invoke Homebrew or install anything.
 Development builds need that checkout/runtime to remain available.
+After a build, check `Macseed.app/Contents/Info.plist`, its executable and
+`Contents/Resources/CoreRuntime.plist`: Mode must be `development`, CoreRoot must
+be the selected checkout, and PythonExecutable must exist and be executable.
+Core is referenced from that checkout, not embedded in the development app.
 
 A future packaged resource descriptor uses Mode=bundled with relative CorePath
 and PythonPath, confined to the resource directory including symlink resolution.
@@ -440,9 +452,12 @@ CI success is claimed. Final Restore Result categories/disclosures and confirmed
 Successful / Needs Attention / Skipped cards are implemented and manually accepted;
 Verified evidence is distinct from Applied, and Process Result from Verification.
 Controlled Early Cancelled/Partial Stopped checks are accepted. These do not close
-all 16I/16K qualification, Stage 3C or native installer quiescence. Remaining work
-continues supported-domain Restore/Homebrew qualification and Secure SSH gaps in
-the authoritative Roadmap order. Assisted App Store Restore is an accepted
+all 16I/16K qualification, Stage 3C or native installer quiescence. The accepted
+D1–D4/R5 baseline and next checkpoints are recorded in the authoritative
+[Roadmap](../../ROADMAP.md#current-practical-execution-order): closure documentation
+and the current development build/launch are complete; Desktop CI comes next,
+before Workspace/Worktrees, Secure SSH and remaining Restore qualification.
+Assisted App Store Restore is an accepted
 development milestone, with manual installation and fresh Core verification;
 automatic MAS development is archived on `archive/mas-automatic-restore-v4`.
 

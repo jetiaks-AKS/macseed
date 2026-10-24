@@ -6,6 +6,9 @@ Logging & Diagnostics and Assisted App Store Restore are implemented. Assisted
 Restore is an accepted development milestone, not Macseed 1.0 completion.
 Automatic MAS development is archived on `archive/mas-automatic-restore-v4`.
 The remaining qualification gates below do not reopen completed UI work.
+D1–D4/R5 is accepted within its documented implementation and automated integration
+boundaries; [Roadmap](ROADMAP.md#current-practical-execution-order) records the
+baseline and successful CI. The general Restore audit is complete.
 Stage 16 as a whole remains open; follow the single
 [Current Execution Order](ROADMAP.md#current-practical-execution-order).
 
@@ -19,10 +22,12 @@ Stage 16 as a whole remains open; follow the single
   temporary-state isolation is explicitly proven; use disposable fixtures only.
 - [ ] Observe a successful hosted run after implementation and qualify failure
   reporting without publishing private configuration or real operation logs.
-- [ ] Investigate the existing baseline FAIL at
-  `desktop/Macseed/Tests/PresentationTests.swift:72`: measure detail-width growth
-  after manual Sidebar Toggle, including bounds and safe-area insets, to distinguish
-  a test-measurement issue from a real layout defect.
+
+The historical sidebar assertion did not reproduce in the completed focused probe;
+usable detail width includes safe-area insets. Its cause remains unestablished,
+so it is not a claimed defect fix or a pending investigation without a new failure.
+Preserve the existing assertion in the hosted gate; see
+[Desktop evidence](docs/DESKTOP.md#native-appearance-and-settings).
 
 ## Complete Workspace & Git Worktree Restoration
 
@@ -32,6 +37,9 @@ remain in force until a reviewed contract is implemented.
 
 - [ ] Review topology/identity, Capture/Bundle compatibility and Restore ordering
   contracts before coding; decide discovery roots and branch/path conflict policy.
+- [ ] Decide supported clone SSH profiles, identity and proxy routing in the
+  future Git/SSH contract. Keep current exclusions until qualified; filters/LFS
+  require a separate scope decision, not automatic implementation.
 - [ ] Implement the agreed Discovery → Selection → Capture → Preview → Restore
   → Verification path, including Workspace folders and VS Code workspace relations.
 - [ ] Qualify file preservation, occupied branches, conflicting paths, observation
@@ -100,9 +108,15 @@ Capture remains open.
 
 ### VS Code Restore requalification
 
-- [ ] Run a targeted real Restore for `ms-azuretools.vscode-containers`,
-  `ms-azuretools.vscode-docker` and `usernamehw.errorlens`; then independently check
-  the installed-extension inventory and a fresh Preview.
+The user confirmed that real Restore installed previously missing VS Code
+extensions. This installation is accepted user evidence, not a pending reinstall;
+[Desktop](docs/DESKTOP.md#recent-restore-qualification-and-performance) records
+its evidence limits.
+
+- [ ] Record independent installed-inventory and fresh-Preview evidence for the
+  user-confirmed installation, retaining the targeted checks for
+  `ms-azuretools.vscode-containers`, `ms-azuretools.vscode-docker` and
+  `usernamehw.errorlens`; repeat installation is not required.
 - [ ] Separately qualify VS Code Extension Pack dependency closure; installed-ID
   presence alone does not establish that every required dependency is installed.
 
@@ -120,12 +134,15 @@ Operation-wide checkpoint Graceful Stop is implemented and has controlled real-M
 acceptance; [Desktop](docs/DESKTOP.md#restore-cancellation-safety) records its scope.
 Diagnostic records do not establish durable recovery or installer quiescence.
 
-D1–D4 failure-isolation fixes have focused fixture coverage within their documented
-contracts. Real lifecycle, broader Git and macOS 27 qualification remain open.
+D1–D4/R5 implementation and automated integration are accepted. The real lifecycle,
+broader Git and macOS 27 gates below remain separate from that completed repair queue.
 
 - [ ] **Stage 3C:** implement durable ordinary-Cask journal/reconciliation and safe
   re-entry, including operation-owned DMG evidence. Do not delete user data or
   detach unrelated volumes.
+- [ ] Define and qualify the user route after unknown consequences: inspect retained
+  evidence, reconcile only with sufficient authority, then allow fresh preparation
+  and explicit execution when safe. No automatic journal clearing or whole-Mac rollback.
 - [ ] Qualify native installer Stop timing and detached/privileged process
   quiescence; controlled real-Mac Stop cases and the historical Firefox smoke
   test do not prove universal safety.
@@ -142,11 +159,9 @@ contracts. Real lifecycle, broader Git and macOS 27 qualification remain open.
 - [ ] Qualify implemented application observer/aggregate deadlines and unknown
   re-entry fences against real tools. Existing checkout and local mutations have
   an aggregate execution bound, not new per-command lifecycle qualification.
+  Calibrate large clone, installer and aggregate deadlines from real measurements;
+  absolute deadlines are not evidence of progress or a universal stall detector.
   See the [R5 process map](docs/core/APPLICATION-INTERFACE.md#external-process-waiting-and-git-clone-r5).
-- [ ] Review the first weighted four-runner CI timings and refresh provisional
-  weights from complete reports. Qualify the hosted Quick five-minute and full
-  regression 15–20-minute targets; local timings and the estimated plan are not
-  hosted acceptance. See [testing instructions](CONTRIBUTING.md#focused-feedback-and-ci).
 - [ ] Qualify numeric Git clone phase progress on real repositories and define
   reliable evidence for remaining external commands/unreported phases; absolute
   deadlines alone do not establish a stall.
@@ -188,6 +203,11 @@ contracts. Real lifecycle, broader Git and macOS 27 qualification remain open.
 
 ## Deferred tooling and maintenance
 
+- [ ] Maintain CI weights from complete safe reports and measure the hosted Quick
+  five-minute/full regression 15–20-minute targets. Quick, targeted execution,
+  RestorePrepare partitioning and diagnostics are implemented and accepted;
+  further tuning is maintenance, not an R5 closure condition. See
+  [testing instructions](CONTRIBUTING.md#focused-feedback-and-ci).
 - [ ] Reconcile scoped ShellCheck SC2034 diagnostics in `bootstrap.sh` and macOS
   Discovery with their cross-file consumers before adding annotations. The R5
   scoped run reproduces 10 baseline warnings; it introduces no new diagnostics.

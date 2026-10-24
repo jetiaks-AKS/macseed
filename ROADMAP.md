@@ -95,25 +95,58 @@ The VS Code Restore Reliability checkpoint completed on 2026-10-22 adds safe typ
 confirmed network reset and a fresh, valid, unchanged inventory with the failed
 requirement still absent. Unknown errors and safety violations still stop further
 installs. The checkpoint's Core regression gate passed **40/40** suites. Real
-[VS Code Restore requalification](TODO.md#vs-code-restore-requalification) and a
-read-only resilience audit across all Restore modules remain open.
+[VS Code qualification](TODO.md#vs-code-restore-requalification) retains the
+user-confirmed installation of previously missing extensions; dependency closure
+and independent follow-up evidence remain separate.
 
+**D1–D4/R5 repair queue: accepted and closed within the documented implementation
+and automated integration boundaries.** The accepted baseline is
+[03198a2010d554c5f87f73c3260ef2f34af0fc89](https://github.com/jetiaks-AKS/macseed/commit/03198a2010d554c5f87f73c3260ef2f34af0fc89),
+with [CI #96 / 40069974279](https://github.com/jetiaks-AKS/macseed/actions/runs/40069974279)
+completed successfully, including lint, all four regression shards and `validate`.
+The shared durable-admission gap was closed in `b196a660`; the baseline aligns
+Force Cancel fixtures with retained unknown consequences and blocked re-entry.
+The general Restore resilience audit and this repair queue are not pending reruns.
+The [Core reference](docs/core/APPLICATION-INTERFACE.md#external-process-waiting-and-git-clone-r5)
+retains the exact limits: native lifecycle gates, universal no-progress detection,
+recovery and release readiness are not closed by this acceptance.
+
+Quick, suite/case selection, weighted RestorePrepare case distribution and safe
+diagnostic reports are implemented (`1b0d10c`), using the canonical inventory.
+Further CI weight/target calibration is maintenance, not a new R5 closure gate;
+[Contributing](CONTRIBUTING.md#focused-feedback-and-ci) owns runner usage and timing evidence.
+
+0. **Documentation and current development app — completed:** the accepted baseline
+   and retained work are reconciled; the ordinary Debug build and launch from
+   `macseed-develop` are confirmed, with **Ready · Macseed Core 3.4.0** observed.
+   The development descriptor references this checkout; Core is not embedded.
+   This closes the organizational checkpoint, not additional Restore qualification.
 1. **[Desktop CI validation](#desktop-ci-validation):** add hosted native-client
-   validation through existing build/test entrypoints and qualify the hosted gate.
+   validation through existing build/test entrypoints; complete after an actual
+   hosted pass with useful, privacy-safe failure reporting.
 2. **[Complete Workspace & Git Worktree Restoration](#complete-workspace--git-worktree-restoration):**
-   review architecture/data contracts before implementation and qualification.
+   review architecture/data contracts, then qualify the agreed end-to-end path,
+   file preservation, conflicts and repeat/no-op convergence.
 3. **Secure SSH Desktop (16H):** implement and qualify the inherited secret-channel
-   interaction, encryption/unlock/import confirmation and secure privacy coverage.
+   interaction, encryption/unlock/import confirmation and secure privacy coverage
+   through representative Capture/Restore gates.
 4. **Remaining supported-domain Restore qualification:** continue Homebrew
-   compatibility gates and the Desktop Zsh, configuration and other supported-domain
-   checks tracked in TODO. Preserve the accepted Assisted Restore flow.
-5. **Reliability / security and remaining 16I/16K qualification:** Stage 3C durable
-   Cask reconciliation, installer/privileged-process quiescence, watchdog, partial
-   and interrupted Verification, stale inputs, transport, accessibility and lifecycle
-   ownership. Diagnostic logs do not provide recovery authority.
-6. **Stage 17 — Distribution & Clean-Mac Qualification.**
-7. **Early Access / Alpha.**
-8. **Macseed 1.0.** Release Readiness is not the current checkpoint.
+   compatibility, real Zsh, macOS visual effects, Extension Pack dependencies and
+   the remaining [TODO matrix](TODO.md#remaining-supported-domain-restore-qualification).
+   Close each supported scope with real Verify and repeat/no-op evidence;
+   preserve the accepted Assisted Restore flow and prior user confirmations.
+5. **Recovery / Stage 3C and remaining 16I/16K qualification:** establish a safe
+   route after unknown consequences, durable reconciliation and re-entry; qualify
+   native quiescence, measured budgets/progress, incomplete Verification, stale
+   inputs, transport, accessibility and lifecycle ownership. Complete against
+   representative failure/re-entry gates; diagnostic logs alone grant no recovery authority.
+6. **[Stage 17 — Distribution & Clean-Mac Qualification](#stage-17--distribution--clean-mac-e2e):**
+   qualify a checkout-independent packaged runtime, signing/notarization and full
+   clean-Mac workflows on each claimed platform.
+7. **[Early Access / Alpha](#early-access--alpha):** validate with external technical
+   users and resolve observed compatibility/UX failures before public launch.
+8. **[Macseed 1.0](#macseed-10):** close mandatory product gates, document supported
+   scope/limits and complete Early Access qualification before release.
 
 Real-Mac performance observations and their differing-run limitations are recorded
 in [Desktop qualification](docs/DESKTOP.md#recent-restore-qualification-and-performance),
@@ -154,9 +187,14 @@ records the current Discovery/Capture and Restore limitations.
 - Establish idempotency, fresh-inspection retry and representative real-world
   gates, including repeat/no-op convergence.
 
+Supported SSH profiles, identity selection and proxies for clone require a separate
+Git/SSH-stage decision. Current bounded clone exclusions remain in force; filters
+and Git LFS are neither supported nor automatically approved for implementation.
+
 Any transfer of unique Workspace data requires a separate bounded secure migration
-contract. Current Folders restores structure only; unrestricted project-content
-copying and general backup remain outside scope.
+contract; preserving existing files does not implement that transfer. Current
+Folders restores structure only; unrestricted project-content copying and general
+backup remain outside scope.
 
 ## Stage 17 — Distribution & Clean-Mac E2E
 
@@ -200,6 +238,7 @@ Investigate bounded Workspace/local unique-data transfer only through a separate
 value, provenance and safety contract; current Folders reconstructs structure only.
 Direct/vendor restoration, additional secure migration and application adapters
 require independent value/security/maintenance assessment. No plugin framework is
-planned. Full cloning, general backup, arbitrary user-data migration and automatic
-removal remain outside scope. Revalidate version-dependent settings when migration
-to macOS 27 actually occurs; it is not the next functional checkpoint.
+planned. Full cloning, general backup, arbitrary user-data migration, automatic
+removal and unconditional whole-Mac rollback remain outside scope. Revalidate
+version-dependent settings when migration to macOS 27 actually occurs; it is not
+the next functional checkpoint.
