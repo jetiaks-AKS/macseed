@@ -40,6 +40,8 @@ cp "$PROJECT_ROOT/modules/discovery/homebrew.sh" \
 for dependency in modules/core/application-interface/observation.sh \
     modules/core/application-interface/observation.py \
     modules/core/application-interface/item_execution.py \
+    modules/core/application-interface/reporting.py \
+    modules/core/performance_trace.py \
     modules/apps/adapters/homebrew_lifecycle.py; do
     mkdir -p "$FIXTURE_ROOT/$(dirname "$dependency")"
     cp "$PROJECT_ROOT/$dependency" "$FIXTURE_ROOT/$dependency" || exit 2

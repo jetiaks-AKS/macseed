@@ -11,6 +11,24 @@ DEFAULTS_PREVIEW_CHANGED=false
 
 source modules/settings/macos/records.sh
 
+# Never inherit a snapshot. Each read-only category owns one private batch;
+# Apply's per-record pre-check and post-check continue to read fresh state.
+MACOS_OBSERVED_RECORDS=''
+macos_observe_config() {
+    MACOS_OBSERVED_RECORDS=''
+    [[ "${MACSEED_APPLICATION_EXECUTION:-false}" == true ]] || return 0
+    case "$2" in finder|dock|windows|keyboard|trackpad) ;; *) return 0 ;; esac
+    local output result
+    output="$(mktemp)" || return 2
+    application_observe local bash modules/settings/macos/defaults.sh --observe-config "$1" "$2" "$output" >/dev/null
+    result=$?
+    if [[ $result -eq 0 ]]; then
+        MACOS_OBSERVED_RECORDS="$(cat "$output")" || result=2
+    fi
+    rm -f "$output" || return 2
+    return "$result"
+}
+
 defaults_native_type() {
     case "$1" in
         bool) echo "Type is boolean" ;;
@@ -99,6 +117,24 @@ check_defaults_record() {
     DEFAULTS_OBSERVED_VALUE=""
     DEFAULTS_OBSERVATION_KIND=unknown
 
+    if [[ -n "${MACOS_OBSERVED_RECORDS:-}" ]]; then
+        local observed_domain observed_key observed_type observed_expected observed_result observed_kind observed_present observed_value
+        while IFS='|' read -r observed_domain observed_key observed_type observed_expected observed_result observed_kind observed_present observed_value; do
+            if [[ "$observed_domain" == "$domain" && "$observed_key" == "$key" &&
+                  "$observed_type" == "$type" && "$observed_expected" == "$expected" ]]; then
+                [[ "$observed_result" == 0 || "$observed_result" == 1 || "$observed_result" == 2 ]] || return 2
+                case "$observed_kind" in unknown|absent|different|matching) ;; *) return 2 ;; esac
+                [[ "$observed_present" == true || "$observed_present" == false ]] || return 2
+                [[ "$observed_value" != *'|'* ]] || return 2
+                DEFAULTS_OBSERVED_PRESENT="$observed_present"
+                DEFAULTS_OBSERVED_VALUE="$observed_value"
+                DEFAULTS_OBSERVATION_KIND="$observed_kind"
+                return "$observed_result"
+            fi
+        done <<< "$MACOS_OBSERVED_RECORDS"
+        return 2
+    fi
+
     expected_native_type="$(defaults_native_type "$type")" || return 2
 
     native_type="$(application_observe local-diagnostic defaults read-type "$domain" "$key" 2>&1)"
@@ -182,11 +218,13 @@ defaults_preview_display_value() {
 
 preview_defaults_config() {
     local config_file="$1"
+    local MACOS_OBSERVED_RECORDS=''
     local domain key type desired
     local record_result
     local current_display desired_display
 
     validate_defaults_config "$config_file" "${2:-}" || return 2
+    macos_observe_config "$config_file" "${2:-}" || return 2
     DEFAULTS_PREVIEW_CHANGED=false
 
     while IFS='|' read -r domain key type desired || [[ -n "$domain$key$type$desired" ]]; do
@@ -237,11 +275,13 @@ preview_defaults_config() {
 
 check_defaults_config() {
     local config_file="$1"
+    local MACOS_OBSERVED_RECORDS=''
     local configured=true
     local record_result
     local domain key type expected
 
     validate_defaults_config "$config_file" "${2:-}" || return 2
+    macos_observe_config "$config_file" "${2:-}" || return 2
 
     while IFS='|' read -r domain key type expected || [[ -n "$domain$key$type$expected" ]]; do
         [[ -z "${domain// /}" ]] && continue
@@ -308,8 +348,13 @@ apply_defaults_config() {
 # Only generated records in a selected category, never the entire allowlist.
 verify_macos_scalar_category() {
     local category="$1" config_file="$2" domain key type expected result any=false
+    local MACOS_OBSERVED_RECORDS=''
     verification_category_selected "macos-$category" || return 0
     if ! validate_defaults_config "$config_file" "$category"; then
+        verification_input_error "macos-$category"
+        return 0
+    fi
+    if ! macos_observe_config "$config_file" "$category"; then
         verification_input_error "macos-$category"
         return 0
     fi
@@ -326,3 +371,29 @@ verify_macos_scalar_category() {
     [[ "$any" == true ]] || verification_coverage "macos-$category" scope no_requirement unknown
     return 0
 }
+
+# As in Capture, this child admits only native defaults reads inside the owned
+# observer. It reuses the production comparison and byte-validation helpers.
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    [[ $# -eq 4 && "$1" == --observe-config && "${MACSEED_APPLICATION_EXECUTION:-false}" == true ]] || exit 2
+    case "$3" in finder|dock|windows|keyboard|trackpad) ;; *) exit 2 ;; esac
+    [[ -f "$4" && ! -L "$4" && -w "$4" ]] || exit 2
+    source modules/core/common/common.sh || exit 2
+    source modules/core/logger/logger.sh || exit 2
+    VERBOSE=false
+    application_observe() {
+        [[ $# -eq 5 && "$2" == defaults ]] || return 2
+        case "$1:$3" in local:read|local-diagnostic:read-type) ;; *) return 2 ;; esac
+        shift
+        "$@"
+    }
+    validate_defaults_config "$2" "$3" || exit 2
+    while IFS='|' read -r domain key type expected || [[ -n "$domain$key$type$expected" ]]; do
+        [[ -n "${domain// /}" ]] || continue
+        check_defaults_record "$domain" "$key" "$type" "$expected"
+        result=$?
+        printf '%s|%s|%s|%s|%s|%s|%s|%s\n' "$domain" "$key" "$type" "$expected" \
+            "$result" "$DEFAULTS_OBSERVATION_KIND" "$DEFAULTS_OBSERVED_PRESENT" "$DEFAULTS_OBSERVED_VALUE" >> "$4" || exit 2
+    done < "$2"
+    exit 0
+fi

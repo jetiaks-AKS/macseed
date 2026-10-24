@@ -11,10 +11,7 @@ import stat
 import sys
 import time
 
-ENABLED = (os.environ.get('MACSEED_PERFORMANCE_TRACE') == '1'
-           and '--capture' not in sys.argv and '--record' not in sys.argv
-           and os.environ.get('MACSEED_APPLICATION_CAPTURE') != 'true'
-           and os.environ.get('MACSEED_APPLICATION_COMPARE') != 'true')
+ENABLED = os.environ.get('MACSEED_PERFORMANCE_TRACE') == '1'
 DIRECTORY = os.environ.get('MACSEED_PERFORMANCE_TRACE_DIR', '')
 SCOPE = os.environ.get('MACSEED_PERFORMANCE_SCOPE', 'core')
 if SCOPE not in ('core', 'preview', 'requirements', 'publication', 'bootstrap', 'verification'):

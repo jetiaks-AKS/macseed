@@ -9,6 +9,10 @@ import signal
 import subprocess
 import time
 import tempfile
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from performance_trace import timed
 
 STALL_SECONDS = 180
 STALLED, BLOCKED, UNOBSERVABLE, OBSERVATION_FAILED, CANCELLED = 124, 125, 126, 127, 130
@@ -55,6 +59,7 @@ def kernel_read(command, timeout=2):
                 child.wait(timeout=1)
 
 
+@timed('observer.process_table')
 def process_table():
     # Kernel process fields only; never arguments, environment or tool diagnostics.
     result = kernel_read(['/bin/ps', '-axo', 'pid=,ppid=,lstart=,time=,stat=,comm='])

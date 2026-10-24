@@ -233,6 +233,10 @@ The format is based on the principles of **Keep a Changelog**.
 * Unknown external lifecycle now blocks Execute before a changed Preview can mask
   the safety reason.
 
+* Batch macOS scalar observations within each read-only category to reduce Restore
+  preparation and Verification overhead without reusing stale state across Apply
+  or operations.
+
 * Homebrew reads in Desktop Capture, Comparison and Restore Preview disable
   per-process analytics, preventing detached telemetry from invalidating successful
   observations. Worker/deadline safeguards remain enforced; failure-layer facts

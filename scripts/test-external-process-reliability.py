@@ -135,6 +135,53 @@ class ReliabilityTests(unittest.TestCase):
             self.assertEqual(record['native_exit_code'], 128)
             self.assertEqual(record['reason'], reason)
 
+    def test_macos_read_batch_matches_scalar_and_refreshes_before_apply(self):
+        mock_bin = self.root / 'bin'
+        mock_bin.mkdir()
+        config = self.root / 'finder.conf'
+        config.write_text('NSGlobalDomain|AppleShowAllExtensions|bool|true\n')
+        state = self.root / 'preference'
+        tool = mock_bin / 'defaults'
+        tool.write_text('''#!/bin/bash
+value="$(cat "$TEST_PREFERENCE")"
+case "$value:$1" in
+ absent:*) echo 'does not exist' >&2; exit 1 ;;
+ error:*) exit 2 ;;
+ wrong:read-type) echo 'Type is string'; exit 0 ;;
+ *:read-type) echo 'Type is boolean'; exit 0 ;;
+ *:read) printf '%s\\n' "$value"; exit 0 ;;
+ *:write) printf '%s\\n' "$5" > "$TEST_PREFERENCE"; exit 0 ;;
+esac
+exit 99
+''')
+        tool.chmod(0o700)
+        environment = dict(os.environ, PATH=str(mock_bin) + os.pathsep + os.environ['PATH'],
+                           TEST_PREFERENCE=str(state), TEST_CONFIG=str(config))
+        script = '''source modules/core/common/common.sh
+source modules/core/logger/logger.sh
+source modules/settings/macos/defaults.sh
+check_defaults_config "$TEST_CONFIG" finder >/dev/null
+printf 'result:%s\\n' "$?"
+[[ -z "$MACOS_OBSERVED_RECORDS" ]] || exit 91
+'''
+        for value, expected in (('true', 0), ('false', 1), ('absent', 1), ('wrong', 2), ('error', 2), ('invalid', 2)):
+            state.write_text(value + '\n')
+            results = []
+            for application in ('false', 'true'):
+                result = subprocess.run(['bash', '-c', script], cwd=ROOT,
+                    env=dict(environment, MACSEED_APPLICATION_EXECUTION=application), capture_output=True, timeout=15)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                results.append(result.stdout)
+            self.assertEqual(results, [f'result:{expected}\n'.encode()] * 2)
+        state.write_text('true\n')
+        result = subprocess.run(['bash', '-c', script + '''printf 'false\\n' > "$TEST_PREFERENCE"
+apply_defaults_record NSGlobalDomain AppleShowAllExtensions bool true >/dev/null || exit 92
+[[ "$DEFAULTS_RECORD_CHANGED" == true ]] || exit 93
+[[ "$(cat "$TEST_PREFERENCE")" == true ]] || exit 94
+check_defaults_config "$TEST_CONFIG" finder >/dev/null || exit 95
+'''], cwd=ROOT, env=environment, capture_output=True, timeout=15)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_deadline_partial_clone_and_no_progress_are_distinct(self):
         body = 'import pathlib,sys,time; pathlib.Path(sys.argv[1]).mkdir(); time.sleep(10)'
         status, reason, safe = self.run_clone(body, deadline=.3)

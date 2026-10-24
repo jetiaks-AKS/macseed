@@ -10,6 +10,7 @@ import time
 sys.dont_write_bytecode = True
 from item_execution import ProcessTree, process_table, pipe_eof
 from reporting import observation_failure
+from performance_trace import timed
 
 LOCAL_SECONDS = 30
 INVENTORY_SECONDS = 120
@@ -43,6 +44,7 @@ def retain_unknown():
         os.close(descriptor)
 
 
+@timed('observation.read')
 def read(command, timeout=LOCAL_SECONDS, *, env=None, cwd=None, progress=None, merge_stderr=False):
     """Return only complete, quiescent output; root exit is not pipe completion."""
     if Path(command[0]).name == 'brew':

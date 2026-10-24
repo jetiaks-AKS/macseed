@@ -28,6 +28,7 @@ class RunnerTests(unittest.TestCase):
         dependency = self.root / 'modules/core/application-interface'
         dependency.mkdir(parents=True)
         shutil.copy2(ROOT / 'modules/core/application-interface/item_execution.py', dependency)
+        shutil.copy2(ROOT / 'modules/core/performance_trace.py', dependency.parent)
         for name in ('test_runner.py', 'test_unittest.py'):
             shutil.copy2(ROOT / 'scripts' / name, self.root / 'scripts' / name)
         self.inventory = []

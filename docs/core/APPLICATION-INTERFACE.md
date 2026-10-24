@@ -856,8 +856,8 @@ Desktop forwards only `MACSEED_PERFORMANCE_TRACE=1` and a nonempty
 `MACSEED_PERFORMANCE_TRACE_DIR` from its parent environment; it neither creates
 the directory nor inherits arbitrary diagnostic variables. Core retains ownership,
 permission and symlink checks. Quit the diagnostic instance and launch normally
-to disable it. Unset/`0` starts no clock helpers and writes no trace. Capture and Environment Status are not
-instrumented by this Restore trace.
+to disable it. Unset/`0` starts no clock helpers and writes no trace. The same
+explicit opt-in also measures Capture Prepare and Environment Status reads.
 
 `totals.json` is a private `0600` aggregate in a user-owned `0700` directory. It
 contains fixed metric names and `count`, `seconds`, `max_seconds` only; no item
@@ -868,7 +868,8 @@ validation/unpack and fingerprints, readiness passes, startup validation, Bootst
 launch-to-first-lifecycle delivery and the shell interval before the Launcher module, Cask metadata/prefix/inventory commands and external observer
 commands. The explicit PKG inspector retains a download timer, but state
 classification no longer invokes that download. Timings also include unsupported
-classification and Verification domains.
+classification and Verification domains, plus `observation.read` and
+`observer.process_table` call counts and durations.
 
 Python uses `time.monotonic()`. Bash uses one persistent opt-in clock helper per
 Bootstrap process, with acknowledged begin/end messages; no Python is launched
@@ -898,6 +899,12 @@ independent. These shell-local snapshots never survive into Apply or a later
 pass. Capture and ordinary CLI Preview retain their existing observation path.
 Failed or malformed inventories remain observation errors, not absence.
 Inventory-based Verification records use the snapshot's observation timestamp.
+Application macOS scalar Preview, category Check and Verification batch native
+`defaults read-type`/`read` calls inside one owned observer per selected category,
+reusing the authoritative comparison and byte validation. The private snapshot is
+local to that call; Apply's per-record pre-check and post-check read fresh state.
+Batch failure remains an inspection error. Capture already uses category batches;
+ordinary CLI reads retain their existing path. No snapshot crosses operations.
 Readiness reports validate their private inputs once while retaining live-state
 checks per domain and mandatory fresh readiness before publication/execution.
 

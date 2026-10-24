@@ -842,6 +842,52 @@ text size changes. Status classification and Preview/Capture layouts are unchang
 
 ## Recent Restore qualification and performance
 
+On 2026-10-24, inspection of the failed Git Restore established that the application
+clone discarded local SSH configuration, losing a custom identity. Historical
+native stderr/exit had not been retained; a controlled read with the old command
+reproduced authentication exit `128`. The corrected owned clone completed with
+exit `0`, the selected branch and original remote in a new disposable destination.
+No user destination, SSH/known-hosts/global config or original safety journal was
+changed. Short typed causes now reach the existing result row and Log.
+
+CI run #98 had a separate re-entry ordering defect: after an artificial execution
+deadline, a changed selected folder could produce `stale_plan` before the durable
+unknown-lifecycle fence. The existing case now forces that timing outcome and
+passes with `privileged_lifecycle_unknown`, no publication and the journal intact.
+
+Same-Mac measurements with the existing opt-in trace, after the Homebrew observation
+repair, compared identical successful Capture scope and the same Bundle:
+
+| Scenario | Before | After | Evidence |
+|---|---:|---:|---|
+| Capture Prepare, production Desktop runtime | 8.79 s | 7.18 s | Identical complete result; 22 formulas, 15 Casks |
+| Environment Status, production Desktop runtime | 34.69 s | 20.21 s | Identical result except observation timestamps; 124 matching, 6 differing, 4 missing, 2 unverified |
+| Restore Prepare, production Desktop runtime | 51.84 s | 32.90 s | Identical complete plan and readiness result |
+| Disposable Execute, 36 scalar settings + one folder | 51.01 s | 13.07 s | Identical result except timestamps/plan identity; 37/37 verified |
+| Verification domain spans within that Execute | 18.09 s | 6.36 s | Same predicates and complete coverage |
+| Five scalar macOS Verification spans | 17.35 s | 5.62 s | Same 36 stored values |
+
+The Execute fixture used the Bundle's scalar records and a disposable native-tool
+stand-in; it did not repeat the user's mutating Restore or measure installation.
+Read-only measurements used the production runtime, CoreRoot and Xcode Python/Git.
+Each number is one comparable run, not a benchmark distribution. Capture already
+batched scalar reads; its timing difference is not attributed to the new batching.
+
+Category batching removed repeated Python observers and process-table scans:
+Restore Preview reads fell from 133 to 67, scans from 508 to 240; disposable scalar
+Verification scans fell from 288 to 15. Ownership, deadlines, EOF, byte/type
+validation and fresh Apply checks remain in place. This is measured Core work;
+no separate Desktop delivery stall was established. Disposable first-event delivery
+stayed about 1.3 s, while historical real-Restore event intervals cannot by themselves
+separate shell startup, work and UI delivery.
+
+Remaining Restore Prepare cost includes the fresh readiness report (14.08 s),
+15 per-item Cask metadata calls per pass (about 4.8 s in Preview), and native startup
+checks. Bundle unpack/fingerprints were milliseconds. These nested spans are not
+additive. Inventories remain phase-local, and Homebrew analytics/auto-update remain
+disabled per application read. Full user Restore and clean-Mac qualification were
+not rerun by this repair.
+
 The user confirmed that a real Restore successfully installed previously missing
 VS Code extensions. This is user-reported installation evidence; no operation date,
 build version, retained log or independent measurement is established by that
