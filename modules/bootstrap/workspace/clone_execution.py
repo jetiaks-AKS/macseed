@@ -10,6 +10,10 @@ import subprocess
 import sys
 import time
 import uuid
+import tempfile
+import shlex
+import stat
+from contextlib import ExitStack
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'core/application-interface'))
@@ -21,6 +25,10 @@ from homebrew_lifecycle import state_directory_fd, private_file, read_state, jou
 DEADLINE_SECONDS = 7200
 NO_PROGRESS_SECONDS = 600
 ERRORS = (OSError, ValueError, RuntimeError, subprocess.SubprocessError)
+
+
+class CloneAdmissionError(ValueError):
+    reason = 'git_clone_ssh_configuration_unavailable'
 
 
 def state_directory():
@@ -157,7 +165,46 @@ class Progress:
         return self.last is not None and now - self.last >= self.interval
 
 
-def command(remote, path, branch):
+def ssh_configuration(stack):
+    """Snapshot inert client settings; native SSH still owns Host matching.
+
+    Includes, Match/exec, providers and delegated transports are not admitted.
+    This is local authentication configuration, never a migration projection.
+    """
+    source = Path.home() / '.ssh/config'
+    if not os.path.lexists(source):
+        return '/dev/null'
+    descriptor = os.open(source, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(descriptor, 'rb') as stream:
+        if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+            raise CloneAdmissionError('unsafe SSH configuration')
+        raw = stream.read(131073)
+    if len(raw) > 131072:
+        raise CloneAdmissionError('oversized SSH configuration')
+    try:
+        data = raw.decode('utf-8')
+    except UnicodeError as exc:
+        raise CloneAdmissionError('invalid SSH configuration') from exc
+    allowed = {'host', 'hostname', 'user', 'port', 'identityfile', 'certificatefile',
+               'identitiesonly', 'addkeystoagent', 'usekeychain', 'serveraliveinterval',
+               'serveralivecountmax', 'tcpkeepalive', 'connecttimeout', 'addressfamily',
+               'compression', 'loglevel'}
+    for line in data.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith('#'):
+            continue
+        key = re.split(r'[\s=]+', stripped, maxsplit=1)[0].lower()
+        if key not in allowed or any((ord(c) < 32 and c != '\t') or ord(c) == 127 for c in line):
+            raise CloneAdmissionError('unsupported SSH configuration')
+    directory = Path(stack.enter_context(tempfile.TemporaryDirectory(prefix='macseed-clone-', dir='/private/tmp')))
+    path = directory / 'ssh_config'
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(descriptor, 'w') as stream:
+        stream.write(data)
+    return str(path)
+
+
+def command(remote, path, branch, ssh_config='/dev/null'):
     # Reject config/env that can start filters, helpers, redirected work or hooks
     # outside the bounded transport contract. Do not rewrite global configuration.
     forbidden = ('GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR', 'GIT_INDEX_FILE', 'GIT_OBJECT_DIRECTORY',
@@ -178,7 +225,8 @@ def command(remote, path, branch):
             raise ValueError('unsupported clone configuration')
     environment = dict(os.environ, LC_ALL='C', GIT_TERMINAL_PROMPT='0', GIT_ASKPASS='/usr/bin/false',
                        SSH_ASKPASS='/usr/bin/false', SSH_ASKPASS_REQUIRE='never', GIT_SSH_VARIANT='ssh',
-                       GIT_SSH_COMMAND='ssh -F /dev/null -o BatchMode=yes -o StrictHostKeyChecking=yes '
+                       GIT_SSH_COMMAND='ssh -F ' + shlex.quote(ssh_config) + ' -o BatchMode=yes -o StrictHostKeyChecking=yes '
+                       '-o AddKeysToAgent=no '
                        '-o UpdateHostKeys=no -o CheckHostIP=no -o ControlMaster=no -o ControlPath=none '
                        '-o ControlPersist=no -o ProxyCommand=none -o ProxyJump=none '
                        '-o PermitLocalCommand=no -o ClearAllForwardings=yes -o ForwardAgent=no')
@@ -195,18 +243,22 @@ def command(remote, path, branch):
 class CloneExecutor:
     def __init__(self, deadline=DEADLINE_SECONDS, no_progress=NO_PROGRESS_SECONDS):
         self.deadline, self.no_progress, self.cancelled = deadline, no_progress, False
+        self.native_exit = None
 
     def cancel(self, *_):
         self.cancelled = True
 
     def run(self, remote, path, branch):
         process = tree = lifecycle = None
+        scratch = ExitStack()
         status, reason, safe = 2, 'git_clone_admission_failed', True
         try:
             if not admitted() or pending() or pending(path) or os.path.lexists(path):
                 return status, reason, False
             # Effective global config only: the caller's repository is unrelated.
-            arguments, environment = command(remote, path, branch)
+            ssh_remote = remote.startswith('ssh://') or (':' in remote and not remote.startswith(('https://', 'file://', '/')))
+            config = ssh_configuration(scratch) if ssh_remote else '/dev/null'
+            arguments, environment = command(remote, path, branch, config)
             process_table()
             lifecycle = Lifecycle(path)
             lifecycle.__enter__()
@@ -220,6 +272,7 @@ class CloneExecutor:
                 tree = ProcessTree(process.pid)
                 os.set_blocking(process.stderr.fileno(), False)
                 progress = Progress(self.no_progress)
+                diagnostics = b''
                 deadline, scan_at = time.monotonic() + self.deadline, 0
                 while True:
                     now = time.monotonic()
@@ -237,11 +290,32 @@ class CloneExecutor:
                     if ready:
                         chunk = os.read(process.stderr.fileno(), 65536)
                         progress.feed(chunk, now)
+                        diagnostics = (diagnostics + chunk)[-8192:]
                         if not chunk:
                             time.sleep(.05)
                     if process.poll() is not None:
+                        # Collect the bounded diagnostic tail already in the pipe.
+                        # EOF/quiescence is still independently required below.
+                        for _ in range(8):
+                            try:
+                                chunk = os.read(process.stderr.fileno(), 65536)
+                            except BlockingIOError:
+                                break
+                            if not chunk:
+                                break
+                            diagnostics = (diagnostics + chunk)[-8192:]
                         status = process.returncode
+                        self.native_exit = status
                         reason = 'git_clone_failed' if status else 'none'
+                        if status:
+                            if b'Permission denied (publickey' in diagnostics or b'Authentication failed' in diagnostics:
+                                reason = 'git_clone_authentication_failed'
+                            elif b'Host key verification failed' in diagnostics:
+                                reason = 'git_clone_host_key_failed'
+                            elif b'Remote branch ' in diagnostics and b'not found' in diagnostics:
+                                reason = 'git_clone_branch_unavailable'
+                            elif b'Repository not found' in diagnostics or b'does not appear to be a git repository' in diagnostics:
+                                reason = 'git_clone_remote_unavailable'
                         if tree.scan():
                             status, reason = 2, 'git_clone_worker_interrupted'
                         break
@@ -249,8 +323,8 @@ class CloneExecutor:
                 # tree bounds writes to this new destination, not repository validity.
                 safe = tree.stop()
                 process.wait(timeout=1)
-        except ERRORS:
-            reason = 'git_clone_observation_failed' if process is not None else 'git_clone_admission_failed'
+        except ERRORS as exc:
+            reason = 'git_clone_observation_failed' if process is not None else getattr(exc, 'reason', 'git_clone_admission_failed')
             status, safe = 2, process is None
         finally:
             if process is not None:
@@ -273,6 +347,7 @@ class CloneExecutor:
                     status, reason, safe = 129, 'git_clone_state_failed', False
                 finally:
                     lifecycle.__exit__(None, None, None)
+            scratch.close()
         return status if status >= 0 else 128 - status, reason, safe
 
 
@@ -296,6 +371,8 @@ def main():
     signal.signal(signal.SIGINT, executor.cancel)
     status, reason, safe = executor.run(*sys.argv[1:])
     print(f'exit:{status}\nreason:{reason}\nsafe:{str(safe).lower()}')
+    if executor.native_exit is not None and 0 <= executor.native_exit <= 255:
+        print(f'native_exit:{executor.native_exit}')
     return 0
 
 

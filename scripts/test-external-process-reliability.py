@@ -11,6 +11,7 @@ import sys
 import tempfile
 import time
 import unittest
+from contextlib import ExitStack
 from unittest.mock import patch
 
 sys.dont_write_bytecode = True
@@ -98,6 +99,41 @@ class ReliabilityTests(unittest.TestCase):
         started = time.monotonic()
         self.assertEqual(self.run_clone('import time; time.sleep(.5)', deadline=3)[0], 0)
         self.assertGreater(time.monotonic() - started, .4)
+
+    def test_clone_ssh_identity_admission_and_typed_native_failure(self):
+        ssh = self.home / '.ssh'
+        ssh.mkdir(mode=0o700)
+        config = ssh / 'config'
+        data = 'Host example.test\n IdentityFile ~/.ssh/custom_identity\n IdentitiesOnly yes\n AddKeysToAgent yes\n'
+        config.write_text(data)
+        with ExitStack() as stack:
+            snapshot = clone.ssh_configuration(stack)
+            self.assertEqual(Path(snapshot).read_text(), data)
+            self.assertEqual(Path(snapshot).stat().st_mode & 0o777, 0o600)
+            _, environment = clone.command('git@example.test:repo.git', str(self.destination), 'feature/test', snapshot)
+            for flag in ('BatchMode=yes', 'AddKeysToAgent=no', 'StrictHostKeyChecking=yes', 'UpdateHostKeys=no',
+                         'ProxyCommand=none', 'PermitLocalCommand=no', 'ForwardAgent=no'):
+                self.assertIn(flag, environment['GIT_SSH_COMMAND'])
+        self.assertFalse(Path(snapshot).exists())
+        self.assertEqual(config.read_text(), data)
+        for directive in ('Include other', 'Match exec command', 'ProxyCommand command', 'IdentityAgent socket', 'LocalCommand command'):
+            config.write_text(data + directive + '\n')
+            with ExitStack() as stack, self.assertRaises(clone.CloneAdmissionError):
+                clone.ssh_configuration(stack)
+        config.write_text(data)
+        for message, reason in (
+                ('Permission denied (publickey).', 'git_clone_authentication_failed'),
+                ('Host key verification failed.', 'git_clone_host_key_failed'),
+                ('Remote branch feature/test not found', 'git_clone_branch_unavailable'),
+                ('Repository not found.', 'git_clone_remote_unavailable')):
+            executor = clone.CloneExecutor()
+            body = f'import sys; sys.stderr.write({message!r}); sys.exit(128)'
+            with patch.object(clone, 'command', return_value=(self.script(body), dict(os.environ))):
+                self.assertEqual(executor.run('https://example.invalid/repo', str(self.destination), 'main'), (128, reason, True))
+            self.assertEqual(executor.native_exit, 128)
+            record = reporting.project(['operation', 'record-1', 'git-repositories', 'fixture', 'clone', 'failure', reason, '128'])
+            self.assertEqual(record['native_exit_code'], 128)
+            self.assertEqual(record['reason'], reason)
 
     def test_deadline_partial_clone_and_no_progress_are_distinct(self):
         body = 'import pathlib,sys,time; pathlib.Path(sys.argv[1]).mkdir(); time.sleep(10)'

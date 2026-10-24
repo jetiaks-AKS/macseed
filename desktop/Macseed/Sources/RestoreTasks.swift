@@ -253,6 +253,8 @@ struct RestoreTaskPresentation {
                     message = entry!.diagnostic!.explanation
                 } else if result == nil && !executing && !operationProgress, let explanation = entry?.unsupportedRepairExplanation {
                     message = explanation
+                } else if let explanation = TaskItemPresentation.cloneFailureMessage(reason) {
+                    message = explanation
                 } else {
                     switch reason {
                     case "cask_rosetta_required": message = entry?.diagnostic?.explanation ?? "Install Rosetta manually, then Refresh Preview."
@@ -567,6 +569,20 @@ extension TaskDomainPresentation {
 
 // Shared final-result classification. Counts selected plan rows, never predicates or apps.
 extension TaskItemPresentation {
+    static func cloneFailureMessage(_ reason: String?) -> String? {
+        switch reason {
+        case "git_clone_authentication_failed": return "Git authentication failed. Check access to the repository."
+        case "git_clone_host_key_failed": return "The repository server’s SSH identity could not be confirmed."
+        case "git_clone_branch_unavailable": return "The selected branch is unavailable at the source."
+        case "git_clone_remote_unavailable": return "The source repository is unavailable."
+        case "git_clone_ssh_configuration_unavailable": return "SSH configuration could not be used safely for this repository."
+        case "git_clone_deadline", "git_clone_no_progress": return "Repository download stopped after a timeout."
+        case "git_clone_quiescence_unconfirmed", "git_clone_state_failed": return "Repository work may still be running. Check its state before retrying."
+        case "git_clone_failed", "git_clone_admission_failed", "git_clone_observation_failed", "git_clone_worker_interrupted":
+            return "The repository could not be restored. See Log for the cause."
+        default: return nil
+        }
+    }
     var resultGroup: String? {
         let labels = Set(resultLabels)
         if state == .failed || !labels.isDisjoint(with: ["Failed", "Needs Attention", "Mismatch", "Unsupported"]) { return "Needs Attention" }
@@ -609,6 +625,7 @@ extension TaskItemPresentation {
     var resultExplanation: String? {
         if let assistedAppStore { return assistedAppStore.message }
         let reason = previewProblem ?? item.reason
+        if let message = Self.cloneFailureMessage(reason) { return message }
         if diagnostic?.primitive == "pkgutil" && diagnostic?.condition == "preparation_required" {
             return "Installer preparation needs your approval and does not guarantee installation. Refresh Preview and choose Fix Issues…"
         }

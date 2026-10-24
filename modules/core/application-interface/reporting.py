@@ -171,8 +171,14 @@ def project(fields):
             return None
         result.update(disposition=disposition, source_status=source_status)
     elif kind == 'operation':
-        action, outcome, reason = values
+        action, outcome, reason, *native = values
         result.update(action=token(action), outcome=token(outcome), reason=token(reason) if reason else None)
+        if len(native) > 1:
+            raise ValueError('invalid native exit')
+        if native and native[0]:
+            if not native[0].isascii() or not native[0].isdigit() or not 0 <= int(native[0]) <= 255:
+                raise ValueError('invalid native exit')
+            result['native_exit_code'] = int(native[0])
     else:
         raise ValueError('unknown record')
     return result

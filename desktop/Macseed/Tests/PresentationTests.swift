@@ -1601,6 +1601,21 @@ private struct PreviewExpansionHost: View {
     }
 
     @MainActor static func conciseWorkflowChecks() {
+        let cloneFailure = TaskItemPresentation(id: "clone", item: DisplayItem(id: "clone", title: "Repository", status: .attention,
+            action: "Failed", reason: "git_clone_authentication_failed"), state: .failed,
+            resultLabels: ["Failed", "Mismatch", "Unverified"], sourceDomain: "git-repositories")
+        precondition(cloneFailure.resultExplanation == "Git authentication failed. Check access to the repository.")
+        precondition(TaskItemPresentation.cloneFailureMessage("private stderr") == nil)
+        var cloneSanitizer = OperationLogSanitizer()
+        let cloneEvent = try! CoreEvent(line: JSONSerialization.data(withJSONObject: ["protocol_version": 1,
+            "operation_id": "clone", "sequence": 1, "type": "operation_record", "data": ["domain": "git-repositories",
+            "action": "clone", "outcome": "failure", "reason": "git_clone_authentication_failed", "native_exit_code": 128,
+            "stderr": "PRIVATE_SSH_KEY", "remote": "PRIVATE_REMOTE"]]))
+        let cloneRecord = cloneSanitizer.event(cloneEvent, at: Date())
+        precondition(OperationLogSanitizer.valid(cloneRecord))
+        let cloneReport = DiagnosticReportPrivacy.text(DiagnosticReportPrivacy.facts(cloneRecord.facts!))
+        precondition(cloneReport.contains("git_clone_authentication_failed") && cloneReport.contains("native_exit_code=128"))
+        precondition(!cloneReport.contains("PRIVATE_"))
         for file in ["CaptureView", "CapturePresentation", "RestoreView", "RestoreSummary", "EnvironmentStatusView", "TaskComponents", "ContentView"] {
             let source = try! String(contentsOfFile: "Sources/\(file).swift")
             precondition(!source.contains("Technical Details") && !source.contains("Technical reason"), file)

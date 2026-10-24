@@ -74,7 +74,7 @@ verification_operation() {
     case "$4" in success|failure|noop|skipped|cancelled|not_run) ;; *) return 2 ;; esac
     GV_LAST_REF="o:${#GV_O[@]}"
     GV_O+=("$1" "$2" "$3" "$4" "${5:-}")
-    declare -F application_record >/dev/null && application_record operation "$GV_LAST_REF" "$1" "$2" "$3" "$4" "${5:-}"
+    declare -F application_record >/dev/null && application_record operation "$GV_LAST_REF" "$1" "$2" "$3" "$4" "${5:-}" "${6:-}"
     if [[ "$4" == failure ]]; then
         verification_diagnostic "$GV_LAST_REF" operation_failed error apply
     fi

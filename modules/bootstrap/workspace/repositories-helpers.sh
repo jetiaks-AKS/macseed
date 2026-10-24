@@ -136,6 +136,7 @@ repository_clone() {
     local branch="${3:-}" report key value status=2
     REPOSITORY_CLONE_FAILURE_SAFE=false
     REPOSITORY_CLONE_REASON=git_clone_failed
+    REPOSITORY_CLONE_NATIVE_EXIT=''
 
     if [[ "${MACSEED_APPLICATION_EXECUTION:-false}" == true ]]; then
         [[ "${BUNDLE_RESTORE_ACTIVE:-false}" == true && "${MODE:-}" == --bootstrap &&
@@ -148,6 +149,7 @@ repository_clone() {
                 exit:*) [[ "$value" =~ ^[0-9]+$ && "$value" -le 255 ]] && status="$value" ;;
                 safe:true) REPOSITORY_CLONE_FAILURE_SAFE=true ;;
                 reason:git_clone_*|reason:cancelled|reason:none) REPOSITORY_CLONE_REASON="$value" ;;
+                native_exit:*) [[ "$value" =~ ^[0-9]+$ && "$value" -le 255 ]] && REPOSITORY_CLONE_NATIVE_EXIT="$value" ;;
             esac
         done <<< "$report"
         [[ "$REPOSITORY_CLONE_FAILURE_SAFE" == true ]] || return 2
@@ -307,7 +309,8 @@ repository_verify() {
         action "Cloning repository..."
 
         if ! repository_clone "$expected_remote" "$path" "$expected_branch"; then
-            declare -F verification_operation_hook >/dev/null && verification_operation_hook git-repositories "$repository_subject" clone failure "${REPOSITORY_CLONE_REASON:-git_clone_failed}"
+            declare -F verification_operation_hook >/dev/null && verification_operation_hook git-repositories "$repository_subject" clone failure "${REPOSITORY_CLONE_REASON:-git_clone_failed}" "$REPOSITORY_CLONE_NATIVE_EXIT"
+            detail "Clone failure: ${REPOSITORY_CLONE_REASON:-git_clone_failed}${REPOSITORY_CLONE_NATIVE_EXIT:+; native exit $REPOSITORY_CLONE_NATIVE_EXIT}"
             error "Failed to clone repository"
             return 2
         fi

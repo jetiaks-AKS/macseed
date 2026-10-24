@@ -615,10 +615,13 @@ It disables prompts, credential helpers, hooks, templates, automatic maintenance
 recursive submodules and local hardlink cloning for that command. Configured filters
 (including LFS), URL rewriting/includes, global remote/upload-pack customization and
 Git routing overrides are declined before mutation. Supported transports are local
-paths/file, HTTPS and SSH. SSH uses `-F /dev/null`, strict known-host verification,
-no host-key updates, no multiplexing, proxies, forwarding or local commands. Thus
-SSH aliases, custom identity/config/proxy routing are outside this bounded clone
-contract; default keys and an existing agent remain available. No global Git/SSH
+paths/file, HTTPS and SSH. SSH uses a private, bounded snapshot of the local
+`~/.ssh/config` when present, preserving native `Host` matching, hostname/user/port,
+identity/certificate files and ordinary connection settings. Includes, Match/exec,
+providers, agent routing and delegated transports are declined before launch.
+Missing config uses `-F /dev/null`. Strict known-host verification, no host-key
+updates, no multiplexing, proxies, forwarding, local commands or agent additions
+remain mandatory command overrides. No global Git/SSH
 configuration, known_hosts, keys, shared master or agent is changed or terminated.
 See [Git clone](https://git-scm.com/docs/git-clone) and
 [OpenSSH configuration](https://man.openbsd.org/ssh_config) for command semantics.
@@ -633,6 +636,13 @@ Stop still acts at item checkpoints; Force Cancel terminates owned work.
 Unconfirmed process observation/termination or state publication leaves unknown
 consequences and blocks later modules and fresh Execute, even with Git unselected.
 There is no journal-clear, rollback, cleanup or automatic retry command.
+
+Clone failures carry bounded typed authentication, host-key, branch/source,
+configuration, observation or lifecycle reasons. When available, the native exit
+is retained separately as `native_exit_code` in the operation record and existing
+Desktop Log. Raw stderr, SSH configuration, identities and remote URLs are not
+exported. The result row shows one short explanation, retaining independent
+Verification findings without replacing the operation failure.
 
 Homebrew application reads set `HOMEBREW_NO_ANALYTICS=1` and
 `HOMEBREW_NO_AUTO_UPDATE=1` per process. This prevents detached analytics workers
@@ -898,7 +908,7 @@ contain `status`, `verification_records`, `coverage_records`, `operation_records
 |---|---|
 | Verification | `record_id`, `domain`, `item_id`, `predicate`, `conformity` (`verified`, `mismatch`, `unverified`), `support`, nullable `observed_at` |
 | Coverage | `record_id`, `domain`, `item_id`, `disposition`, `source_status`; resolved/unresolved/excluded/no_requirement remain distinct. Restore omits excluded rows; Compare retains them |
-| Operation | `record_id`, `domain`, `item_id`, `action`, `outcome`, nullable `reason` |
+| Operation | `record_id`, `domain`, `item_id`, `action`, `outcome`, nullable `reason`; application clone may add bounded `native_exit_code` |
 | Diagnostic | Record owner with `code`, `severity`, `phase` |
 
 Operation success does not prove conformity. Unsupported is part of unverified;

@@ -198,17 +198,20 @@ class OwnedBootstrap:
             return
         fields = {
             "lifecycle": {"domain", "item_id", "action", "state", "reason", "changed"},
-            "operation": {"record_id", "domain", "item_id", "action", "outcome", "reason"},
+            "operation": {"record_id", "domain", "item_id", "action", "outcome", "reason", "native_exit_code"},
             "verification": {"record_id", "domain", "item_id", "predicate", "conformity", "support", "observed_at"},
             "coverage": {"record_id", "domain", "item_id", "disposition", "source_status"},
             "diagnostic": {"record_id", "code", "severity", "phase"},
             "details_complete": set(), "truncated": set(),
         }
-        required = fields[record["kind"]] - {"changed"}
+        required = fields[record["kind"]] - {"changed", "native_exit_code"}
         if not required <= set(record) or set(record) - {"kind"} - fields[record["kind"]]:
             self.reporting_invalid = True
             return
         for key, value in record.items():
+            if key == 'native_exit_code' and (type(value) is not int or not 0 <= value <= 255):
+                self.reporting_invalid = True
+                return
             if key in {"kind", "domain", "action", "state", "outcome", "predicate", "conformity",
                        "support", "disposition", "source_status", "code", "severity", "phase", "reason"}:
                 if value is not None and (not isinstance(value, str) or not re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", value)):
