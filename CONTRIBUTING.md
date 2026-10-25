@@ -124,6 +124,22 @@ owned cleanup, never success. CI keeps lint and every regression shard mandatory
 `validate` rejects failure, cancellation or missing execution. Concurrency cancels
 stale development runs only within the same workflow and branch/PR group.
 
+Desktop CI uses only `./desktop/Macseed/build.sh Debug --test`, after lint and all
+four Core shards succeed. The required `validate` check also requires `desktop`
+success; skipped, cancelled or missing Desktop execution cannot pass the gate.
+The existing eight suites and two Restore subsets retain their fixture isolation
+and native assertions; Capture/Restore keep `--no-renders`. The runner's selected
+Xcode, SDK, Swift and Xcode-resolved Python are checked before execution. Safe GUI
+session facts help diagnose WindowServer failures; they never replace native tests.
+
+`build.sh` optionally writes `MACSEED_DESKTOP_SUMMARY`: fixed stage labels,
+passed/failed/not-run, process exit status and elapsed seconds, with compilation
+separate from execution. Assertion counts remain unknown. CI appends this to
+`GITHUB_STEP_SUMMARY` even after failure and rejects missing reports. Desktop
+uploads no artifacts or raw logs. Hosted GUI compatibility, full execution and
+job duration remain unverified until the first successful published run; see
+[the open checkpoint](TODO.md#desktop-ci-validation).
+
 For Bash changes, include syntax checks:
 
 ```bash

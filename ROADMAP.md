@@ -121,8 +121,8 @@ Further CI weight/target calibration is maintenance, not a new R5 closure gate;
    `macseed-develop` are confirmed, with **Ready · Macseed Core 3.4.0** observed.
    The development descriptor references this checkout; Core is not embedded.
    This closes the organizational checkpoint, not additional Restore qualification.
-1. **[Desktop CI validation](#desktop-ci-validation):** add hosted native-client
-   validation through existing build/test entrypoints; complete after an actual
+1. **[Desktop CI validation](#desktop-ci-validation):** integration implemented;
+   hosted validation pending publication. Complete after an actual
    hosted pass with useful, privacy-safe failure reporting.
 2. **[Complete Workspace & Git Worktree Restoration](#complete-workspace--git-worktree-restoration):**
    review architecture/data contracts, then qualify the agreed end-to-end path,
@@ -163,11 +163,12 @@ this does not close Stage 16 or the remaining supported-domain Restore gates.
 
 ## Desktop CI validation
 
-**Planned next checkpoint.** Add hosted macOS Desktop build, presentation and
-Core/runtime integration validation through existing canonical entrypoints.
-Retain the repository CI gate and run repository/Desktop validation sequentially
-unless temporary-state isolation is explicitly proven. Confirm an actual hosted
-pass before claiming Desktop CI coverage; this is not distribution qualification.
+**Implemented; hosted validation pending publication.** The canonical Desktop
+Debug build/test entrypoint runs after the unchanged Core gates; `validate`
+requires Desktop success. Native GUI execution, complete suite results and actual
+job duration still require a successful hosted run. This checkpoint remains open
+and does not establish distribution qualification. See
+[CI validation](CONTRIBUTING.md#focused-feedback-and-ci).
 
 ## Complete Workspace & Git Worktree Restoration
 

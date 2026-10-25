@@ -77,16 +77,99 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  desktop:
+    runs-on: macos-latest
+    needs: [lint, regression]
+    timeout-minutes: 45
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      MACSEED_DESKTOP_SUMMARY: ${{ runner.temp }}/macseed-desktop-summary.md
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check Desktop toolchain and GUI session
+        id: environment
+        shell: bash
+        run: |
+          stage=toolchain
+          environment_started=$SECONDS
+          environment_summary() {
+            local code=$?
+            printf 'Environment elapsed: %s s.\n\n' "$((SECONDS - environment_started))" >> "$GITHUB_STEP_SUMMARY"
+            if (( code != 0 )); then
+              printf 'Desktop environment failed at %s (exit %s). Build/tests: not-run.\n' "$stage" "$code" >> "$GITHUB_STEP_SUMMARY"
+            fi
+          }
+          trap environment_summary EXIT
+          # Use the image-selected Xcode consistently, including its Python.
+          xcodebuild -version
+          xcrun --sdk macosx --show-sdk-version
+          xcrun swiftc --version
+          desktop_python="$(xcrun --find python3)"
+          test -x "$desktop_python"
+          "$desktop_python" --version
+          "$desktop_python" -c 'import sys; assert sys.version_info >= (3, 9)'
+          stage=gui-session-diagnostics
+          {
+            printf '### Desktop environment\n\n'
+            printf 'macOS: %s; architecture: %s.\n\n' "$(sw_vers -productVersion)" "$(uname -m)"
+            if launchctl print "gui/$(id -u)" >/dev/null 2>&1; then
+              printf 'GUI bootstrap: available.\n\n'
+            else
+              printf 'GUI bootstrap: unavailable; native assertions must still run.\n\n'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          # Only allowlisted session facts, never a session/environment dump.
+          xcrun swift - >> "$GITHUB_STEP_SUMMARY" <<'SWIFT'
+          import CoreGraphics
+          if let session = CGSessionCopyCurrentDictionary() as? [String: Any] {
+              for key in ["kCGSessionOnConsoleKey", "kCGSessionLoginDoneKey"] {
+                  let value = (session[key] as? Bool).map { String($0) } ?? "unknown"
+                  print("\(key): \(value).\n")
+              }
+          } else {
+              print("WindowServer session: unavailable. Native assertions must still run.\n")
+          }
+          SWIFT
+
+      - name: Desktop Debug build and tests
+        id: build
+        shell: bash
+        run: ./desktop/Macseed/build.sh Debug --test
+
+      # The canonical entrypoint emits only stage labels, statuses and durations.
+      # No Desktop artifacts, raw output, .app, .mbt or build directory uploads.
+      - name: Desktop summary
+        if: ${{ always() }}
+        env:
+          ENVIRONMENT_RESULT: ${{ steps.environment.outcome }}
+          BUILD_RESULT: ${{ steps.build.outcome }}
+        shell: bash
+        run: |
+          printf 'Environment step: %s. Build/test step: %s.\n\n' "$ENVIRONMENT_RESULT" "$BUILD_RESULT" >> "$GITHUB_STEP_SUMMARY"
+          if test -s "$MACSEED_DESKTOP_SUMMARY"; then
+            cat "$MACSEED_DESKTOP_SUMMARY" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'Desktop stage results unavailable; build/suites: unknown or not-run. Elapsed: unknown. See the failing step; no PASS is inferred.' >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          test "$ENVIRONMENT_RESULT" = success
+          test "$BUILD_RESULT" = success
+
   # Preserve the existing combined check name for required-status consumers.
   validate:
     if: ${{ always() }}
-    needs: [lint, regression]
+    needs: [lint, regression, desktop]
     runs-on: ubuntu-latest
     steps:
-      - name: Require lint and every regression shard
+      - name: Require lint, every regression shard and Desktop
         env:
           LINT_RESULT: ${{ needs.lint.result }}
           REGRESSION_RESULT: ${{ needs.regression.result }}
+          DESKTOP_RESULT: ${{ needs.desktop.result }}
         run: |
           test "$LINT_RESULT" = success
           test "$REGRESSION_RESULT" = success
+          test "$DESKTOP_RESULT" = success

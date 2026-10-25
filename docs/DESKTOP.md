@@ -40,6 +40,13 @@ Build and review instructions are in
 [Desktop development](../desktop/Macseed/README.md). Macseed is one product with a shared Core and two official frontends: CLI (`bs`) and Desktop.
 The official CLI remains supported. **Simple by default. Detailed on demand.**
 
+Desktop CI integration is implemented, with hosted validation pending publication.
+The canonical Debug build/test entrypoint follows the Core gates and is required
+by `validate`; native assertions remain mandatory. A successful hosted build,
+complete test execution, GUI-session compatibility and job duration are still
+unverified. [Contributing](../CONTRIBUTING.md#focused-feedback-and-ci) owns CI
+execution/reporting; [TODO](../TODO.md#desktop-ci-validation) retains the open gate.
+
 This document owns Desktop presentation and interaction. The implemented
 [Protocol V1](core/APPLICATION-INTERFACE.md) owns transport, operation semantics,
 selection, prerequisites, records and secret input. Desktop consumes those facts;

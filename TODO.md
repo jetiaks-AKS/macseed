@@ -14,14 +14,17 @@ Stage 16 as a whole remains open; follow the single
 
 ## Desktop CI validation
 
-- [ ] Add hosted macOS Desktop validation using the existing
-  `./desktop/Macseed/build.sh Debug --test` entrypoint; retain its presentation,
-  Core/runtime, Capture/Restore and diagnostics coverage without a second test inventory.
-- [ ] Integrate Desktop into the required CI result while retaining lint and every
-  repository regression shard. Run repository/Desktop gates sequentially unless
-  temporary-state isolation is explicitly proven; use disposable fixtures only.
-- [ ] Observe a successful hosted run after implementation and qualify failure
-  reporting without publishing private configuration or real operation logs.
+Integration is implemented; publication and hosted validation remain pending.
+The [CI contract](CONTRIBUTING.md#focused-feedback-and-ci) retains the canonical
+entrypoint, Core gates, native assertions and disposable fixtures.
+
+- [ ] After separately authorized publication, observe successful hosted lint,
+  all four Core shards, Desktop build, all eight suites and both Restore subsets,
+  followed by successful `validate`; record the run/SHA and Desktop job duration.
+- [ ] Confirm native assertions execute in the hosted WindowServer/GUI session
+  without hidden skips; retain concrete diagnostics for any environment blocker.
+- [ ] Qualify hosted failure reporting and artifact privacy. Close this checkpoint
+  only after full hosted success, with no mandatory work failed or not-run.
 
 The historical sidebar assertion did not reproduce in the completed focused probe;
 usable detail width includes safe-area insets. Its cause remains unestablished,
