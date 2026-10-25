@@ -321,6 +321,42 @@ class RestorePrepareTests(unittest.TestCase):
         self.assertTrue(all(row['action'] == 'none' and row['disposition'] == 'satisfied' for row in rows), rows)
         self.assertFalse((self.root / 'mutations').exists())
 
+    def test_screenshot_desktop_preview_and_unqualified_target(self):
+        blueprint = self.stage / 'blueprint.conf'
+        blueprint.write_text(blueprint.read_text().replace('macos-screenshots="false"', 'macos-screenshots="true"'))
+        bundle.write_file(self.stage / 'generated/macos/screenshots.conf',
+                          b'com.apple.screencapture|location|string|~/Desktop\n')
+        (self.home / 'Desktop').mkdir()
+        (self.root / 'bin/sw_vers').write_text('#!/bin/bash\necho 26.7.1\n')
+        defaults = self.root / 'bin/defaults'
+        defaults.write_text('''#!/bin/bash
+case "$*" in
+ "read-type com.apple.screencapture location") echo 'Type is string' ;;
+ "read com.apple.screencapture location") echo "$HOME/Downloads" ;;
+ write*) echo write >> "$TEST_MUTATIONS"; exit 2 ;;
+ *) echo "The domain/default pair of ($2, $3) does not exist" >&2; exit 1 ;;
+esac
+''')
+        defaults.chmod(0o700)
+        self.pack()
+        prepared = self.plan_result()
+        rows = [row for row in prepared['plan'] if row['domain'] == 'macos-screenshots']
+        self.assertEqual({(row['item_id'], row['action'], row['disposition']) for row in rows},
+                         {('com.apple.screencapture/location', 'set_preference', 'planned'),
+                          ('SystemUIServer', 'restart_process', 'planned')})
+        self.assertTrue(prepared['readiness']['ready'])
+        defaults.write_text('#!/bin/bash\necho "The domain/default pair of ($2, $3) does not exist" >&2; exit 1\n')
+        matched = self.plan_result()
+        rows = [row for row in matched['plan'] if row['domain'] == 'macos-screenshots']
+        self.assertEqual([(row['item_id'], row['action'], row['disposition']) for row in rows],
+                         [('com.apple.screencapture/location', 'none', 'satisfied')])
+        (self.root / 'bin/sw_vers').write_text('#!/bin/bash\necho 27.0\n')
+        result, events = self.invoke()
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(events[-1]['type'], 'failed')
+        self.assertEqual(events[-1]['data']['code'], 'preview_failed')
+        self.assertFalse((self.root / 'mutations').exists())
+
     def test_screenshot_booleans_preview_is_scalar_and_read_only(self):
         blueprint = self.stage / 'blueprint.conf'
         blueprint.write_text(blueprint.read_text().replace('macos-screenshots="false"', 'macos-screenshots="true"'))

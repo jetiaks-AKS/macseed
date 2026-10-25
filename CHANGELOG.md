@@ -11,6 +11,13 @@ The format is based on the principles of **Keep a Changelog**.
 
 ### Added
 
+* Capture the standard Screenshot Desktop destination when its native preference
+  is confirmed absent on the qualified legacy macOS backend. Preserve portable
+  HOME paths and Bundle v1 compatibility; Preview, Restore and Environment Status
+  share effective-destination checks and repeat/no-op behavior. Unknown reads,
+  non-file targets, mixed Screenshot mechanisms and unqualified macOS 27 location
+  handling fail closed. Native visual/output-folder qualification remains open.
+
 * Fixed information and action areas around the scrolling Capture, Restore and
   Environment Status category lists. Unified oval count pills and rightmost
   disclosure arrows retain existing status anchors. Status category pills combine
@@ -65,8 +72,8 @@ The format is based on the principles of **Keep a Changelog**.
 
 * Expanded the existing macOS settings categories with Screenshots window shadow
   and floating thumbnail, plus wallpaper-click, edge/top tiling and tiled-window
-  margins. Only observed source preferences are captured; absent keys remain
-  unmanaged. Existing Bundle v1 configurations remain compatible.
+  margins. These boolean additions are captured only when observed; absent boolean
+  keys remain unmanaged. Existing Bundle v1 configurations remain compatible.
 
 * Homebrew Casks requiring Rosetta use a read-only availability probe and an
   item-scoped manual prerequisite instead of unconditional Unsupported. Desktop

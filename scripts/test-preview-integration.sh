@@ -62,7 +62,7 @@ rm() {
 }
 ping() { observe preflight; [[ "$TEST_CASE" != preflight-error ]]; }
 xcode-select() { return 0; }
-sw_vers() { echo 99; }
+sw_vers() { echo 26.7.1; }
 brew() {
     observe "brew $*"
     case "$*" in
@@ -109,6 +109,10 @@ git() {
 cmp() { [[ "$TEST_CASE" != vscode-error ]] || return 2; command cmp "$@"; }
 defaults() {
     observe "defaults $*"
+    case "${3:-}" in
+        location-screenshot|target-screenshot|target)
+            echo "The domain/default pair of ($2, $3) does not exist" >&2; return 1 ;;
+    esac
     case "${1:-}" in
         read-type)
             [[ "$TEST_CASE" != macos-error ]] || return 2
@@ -279,6 +283,7 @@ assert_contains() {
     fi
 }
 
+if [[ "${1:-}" != --screenshots-only ]]; then
 reset_fixture
 run_case mixed-assisted 1
 # Startup validators must not print generated records before Preview output.
@@ -567,6 +572,7 @@ for preview_status in 0 1; do
     fi
 done
 
+fi
 # A directory-only production plan must reach Workflow confirmation.
 reset_fixture
 write_blueprint
@@ -580,6 +586,11 @@ assert_contains "$TEST_ROOT/output" "Would create screenshots directory: $TEST_R
 assert_contains "$TEST_ROOT/output" 'Apply these changes'
 if grep -q 'Would change macOS setting\|Would restart process\|Mode    : Bootstrap' "$TEST_ROOT/output"; then
     echo 'FAIL: directory-only Workflow planned unrelated changes'; ((TEST_FAILURES++))
+fi
+if [[ "${1:-}" == --screenshots-only ]]; then
+    [[ $TEST_FAILURES -eq 0 ]] || exit 1
+    echo 'PASS: focused Screenshots Workflow Preview'
+    exit 0
 fi
 
 # Real CLI + selector: q/Q must never reach Preview or Bootstrap.

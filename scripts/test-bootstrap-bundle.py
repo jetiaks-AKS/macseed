@@ -161,7 +161,9 @@ class BundleTests(unittest.TestCase):
         source = self.stage / 'generated/macos/screenshots.conf'
         legacy = source.read_bytes()
         booleans = b'com.apple.screencapture|disable-shadow|bool|true\ncom.apple.screencapture|show-thumbnail|bool|false\n'
-        for index, content in enumerate((legacy, legacy + booleans, booleans, b'')):
+        desktop = b'com.apple.screencapture|location|string|~/Desktop\n'
+        for index, content in enumerate((legacy, legacy + booleans, booleans, b'',
+                                         desktop, desktop.replace(b'~/', b'/Users/source/'))):
             with self.subTest(index=index):
                 source.write_bytes(content)
                 archive = self.root / f'screenshots-{index}.mbt'

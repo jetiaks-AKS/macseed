@@ -4,6 +4,8 @@
 # Screenshots Settings
 # ==========================================
 
+source modules/settings/macos/screenshots-observation.sh
+
 SCREENSHOTS_CONFIG="${BLUEPRINT_GENERATED_DIR:-config/generated}/macos/screenshots.conf"
 SCREENSHOTS_DESTINATION=""
 SCREENSHOTS_FIRST_MISSING=""
@@ -72,10 +74,14 @@ screenshots_directory_state() {
     return 0
 }
 
-# Startup validates the path before any Bootstrap mutation, without reading prefs.
+# Startup validates the path and OS backend before Bootstrap mutation. Live
+# preference observations remain in the category's Check/Preview/Apply path.
 validate_screenshots_config() {
     local result
     screenshots_load_destination || return 2
+    if [[ -n "$SCREENSHOTS_DESTINATION" ]]; then
+        screenshots_location_backend || return 2
+    fi
     screenshots_directory_state
     result=$?
     if [[ $result -eq 2 ]]; then return 2; fi
@@ -137,7 +143,7 @@ inspect_screenshots_settings() {
             1) SCREENSHOTS_DIRECTORY_MISSING=true ;;
             *) return 2 ;;
         esac
-        check_defaults_record com.apple.screencapture location string "$SCREENSHOTS_DESTINATION"
+        screenshots_check_location
         result=$?
         case $result in
             0) ;;
@@ -166,7 +172,7 @@ preview_screenshots_settings() {
         preview_record macos-screenshots com.apple.screencapture/location set_preference planned
         preview_record macos-screenshots SystemUIServer restart_process planned
         local current=absent
-        check_defaults_record com.apple.screencapture location string "$SCREENSHOTS_DESTINATION"
+        screenshots_check_location
         [[ $? -ne 2 ]] || return 2
         [[ "$DEFAULTS_OBSERVED_PRESENT" != true ]] || current="$DEFAULTS_OBSERVED_VALUE"
         preview_action "Would change macOS setting: com.apple.screencapture/location ($current -> $SCREENSHOTS_DESTINATION)"
@@ -194,6 +200,7 @@ apply_screenshots_settings() {
         fi
     fi
     if [[ "$SCREENSHOTS_PREFERENCE_CHANGED" == true ]]; then
+        screenshots_observe_location || return 2
         apply_defaults_record com.apple.screencapture location string "$SCREENSHOTS_DESTINATION" || return 2
         [[ "$DEFAULTS_RECORD_CHANGED" != true ]] || restart=true
     fi
@@ -218,7 +225,7 @@ verify_screenshots() {
     if ! screenshots_load_destination; then verification_input_error macos-screenshots; return 0; fi
     if [[ -n "$SCREENSHOTS_DESTINATION" ]]; then
         verification_coverage macos-screenshots com.apple.screencapture/location resolved unknown
-        check_defaults_record com.apple.screencapture location string "$SCREENSHOTS_DESTINATION"
+        screenshots_check_location
         result=$?
         if [[ "${CV_ACTIVE:-false}" == true && $result -eq 2 &&
               "$DEFAULTS_OBSERVATION_KIND" == different ]]; then result=1; fi

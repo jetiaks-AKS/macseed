@@ -242,8 +242,13 @@ if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
     source modules/core/logger/logger.sh || exit 2
     VERBOSE="${VERBOSE:-false}"
     # Local to this child. No environment flag can bypass the shared observer;
-    # only defaults read/read-type are admitted, within the enclosing supervisor.
+    # Only defaults read/read-type and the OS version probe are admitted within
+    # the enclosing supervisor.
     application_observe() {
+        if [[ $# -eq 3 && "$1" == local && "$2" == sw_vers && "$3" == -productVersion ]]; then
+            sw_vers -productVersion
+            return $?
+        fi
         [[ $# -eq 5 && "$2" == defaults ]] || return 2
         case "$1:$3" in local:read|local-diagnostic:read-type) ;; *) return 2 ;; esac
         shift

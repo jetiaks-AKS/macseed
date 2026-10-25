@@ -42,6 +42,8 @@ MAS_STATE=present
 CODE_STATE=present
 DEFAULTS_STATE=match
 DEFAULTS_NUMBER=64.0
+MOCK_MACOS_VERSION=26.7.1
+sw_vers() { echo "$MOCK_MACOS_VERSION"; }
 MUTATIONS="$TEST_ROOT/mutations"
 : > "$MUTATIONS"
 mutate() { printf '%s\n' "$*" >> "$MUTATIONS"; return 99; }
@@ -106,6 +108,13 @@ command() {
 defaults() {
     case "${1:-}" in read|read-type) ;; *) mutate "defaults $*"; return 99 ;; esac
     [[ "$DEFAULTS_STATE" != error ]] || return 2
+    case "${3:-}" in
+        location-screenshot|target-screenshot|target)
+            echo "The domain/default pair of ($2, $3) does not exist" >&2; return 1 ;;
+    esac
+    if [[ "$DEFAULTS_STATE" == desktop ]]; then
+        echo "The domain/default pair of ($2, $3) does not exist" >&2; return 1
+    fi
     if [[ "$DEFAULTS_STATE" == missing ]]; then printf 'does not exist\n'; return 1; fi
     if [[ "$1" == read-type ]]; then
         if [[ "$DEFAULTS_STATE" == wrong-type ]]; then printf 'Type is array\n'
@@ -178,6 +187,61 @@ ${1:-}
 demo
 BP
 }
+screenshots_verification_checks() {
+    # shellcheck disable=SC2088
+    printf '%s\n' 'com.apple.screencapture|location|string|~/Screenshots/' > "$SCREENSHOTS_CONFIG"
+    verification_reset bootstrap
+    verify_screenshots
+    assert record_is com.apple.screencapture/location stored_preference verified
+    assert record_is destination directory mismatch
+    command mkdir "$HOME/Screenshots"
+    verification_reset bootstrap
+    verify_screenshots
+    assert record_is destination directory verified
+    DEFAULTS_STATE=error
+    verification_reset bootstrap
+    verify_screenshots
+    assert record_is com.apple.screencapture/location stored_preference unverified
+    assert record_is destination directory verified
+    DEFAULTS_STATE=match
+    command rmdir "$HOME/Screenshots"
+    command mkdir "$TEST_ROOT/outside"
+    command ln -s "$TEST_ROOT/outside" "$HOME/Screenshots"
+    verification_reset bootstrap
+    verify_screenshots
+    assert record_is com.apple.screencapture/location stored_preference verified
+    assert record_is destination directory unverified
+    assert has_code observation_failed
+    command rm "$HOME/Screenshots"
+    command mkdir "$HOME/Screenshots"
+
+    # Qualified implicit defaults and unknown versions feed the same aggregate used
+    # by Environment Status; uncertainty must remain unverified.
+    printf '%s\n' 'com.apple.screencapture|location|string|~/Desktop' > "$SCREENSHOTS_CONFIG"
+    command mkdir -p "$HOME/Desktop"
+    DEFAULTS_STATE=desktop
+    verification_reset bootstrap
+    verify_screenshots
+    verification_aggregate
+    assert record_is com.apple.screencapture/location stored_preference verified
+    assert test "$GV_MISMATCH" -eq 0
+    MOCK_MACOS_VERSION=27.0
+    verification_reset bootstrap
+    verify_screenshots
+    verification_aggregate
+    assert record_is com.apple.screencapture/location stored_preference unverified
+    assert test "$GV_UNVERIFIED" -gt 0
+    MOCK_MACOS_VERSION=26.7.1
+    DEFAULTS_STATE=match
+    printf '%s\n' 'com.apple.screencapture|location|string|~/Screenshots/' > "$SCREENSHOTS_CONFIG"
+    assert test ! -s "$MUTATIONS"
+}
+if [[ "${1:-}" == --screenshots-only ]]; then
+    screenshots_verification_checks
+    printf 'Screenshots Verification: %s assertions, %s failures\n' "$CASES" "$FAILURES"
+    exit "$FAILURES"
+fi
+
 printf 'git\n' > "$BLUEPRINT_GENERATED_DIR/brew-packages.conf"
 for state in present absent error; do
     verification_reset bootstrap
@@ -523,32 +587,7 @@ DEFAULTS_NUMBER=64.0
 printf 'NSGlobalDomain|NSCloseAlwaysConfirmsChanges|bool|true\n' > "$WINDOWS_CONFIG"
 printf 'NSGlobalDomain|ApplePressAndHoldEnabled|bool|true\n' > "$KEYBOARD_CONFIG"
 printf 'com.apple.AppleMultitouchTrackpad|Clicking|bool|true\n' > "$TRACKPAD_CONFIG"
-# shellcheck disable=SC2088
-printf '%s\n' 'com.apple.screencapture|location|string|~/Screenshots/' > "$SCREENSHOTS_CONFIG"
-verification_reset bootstrap
-verify_screenshots
-assert record_is com.apple.screencapture/location stored_preference verified
-assert record_is destination directory mismatch
-command mkdir "$HOME/Screenshots"
-verification_reset bootstrap
-verify_screenshots
-assert record_is destination directory verified
-DEFAULTS_STATE=error
-verification_reset bootstrap
-verify_screenshots
-assert record_is com.apple.screencapture/location stored_preference unverified
-assert record_is destination directory verified
-DEFAULTS_STATE=match
-command rmdir "$HOME/Screenshots"
-command mkdir "$TEST_ROOT/outside"
-command ln -s "$TEST_ROOT/outside" "$HOME/Screenshots"
-verification_reset bootstrap
-verify_screenshots
-assert record_is com.apple.screencapture/location stored_preference verified
-assert record_is destination directory unverified
-assert has_code observation_failed
-command rm "$HOME/Screenshots"
-command mkdir "$HOME/Screenshots"
+screenshots_verification_checks
 
 # All normal domains together, with independent operation history and secure gap.
 find "$HOME" -type f -exec shasum -a 256 {} \; | sort > "$TEST_ROOT/batch2-before"

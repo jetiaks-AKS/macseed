@@ -33,6 +33,7 @@ class CaptureTests(unittest.TestCase):
         self.home = self.home.resolve()
         self.environment['HOME'] = str(self.home)
         self.environment['PATH'] = str(self.root / 'bin') + ':/usr/bin:/bin:/usr/sbin:/sbin'
+        (self.root / 'bin/sw_vers').write_text('#!/bin/bash\necho 26.7.1\n')
 
 
     def fixture(self, real=False, workspace=False):
@@ -397,7 +398,7 @@ case "$*" in
  "read NSGlobalDomain AppleWindowTabbingMode") echo manual ;;
  "read NSGlobalDomain KeyRepeat") echo 6 ;;
  "read com.apple.screencapture location") echo "$HOME/PRIVATE_LOCATION" ;;
- *) echo 'does not exist' >&2; exit 1 ;;
+ *) echo "The domain/default pair of ($2, $3) does not exist" >&2; exit 1 ;;
 esac
 ''')
         defaults.chmod(0o700)
@@ -445,12 +446,28 @@ esac
                 {'id': 'disable-shadow', 'label': 'Window shadow'},
                 {'id': 'show-thumbnail', 'label': 'Floating thumbnail'}]
                 if setting['id'] not in absent_keys])
-        # No observed records means no invented metadata or selectable settings.
-        defaults.write_text('#!/bin/bash\necho "does not exist" >&2\nexit 1\n')
+        # A qualified implicit Desktop is a requirement even without native keys.
+        defaults.write_text('#!/bin/bash\necho "The domain/default pair of ($2, $3) does not exist" >&2\nexit 1\n')
         for row in self.prepare()['inventory']:
             if row['domain'] in expected:
-                self.assertEqual(row['included_settings'], [])
-                self.assertEqual(row['status'], 'unavailable')
+                if row['domain'] == 'macos-screenshots':
+                    self.assertEqual(row['included_settings'], [{'id': 'location', 'label': 'Save location'}])
+                    self.assertEqual(row['status'], 'present')
+                else:
+                    self.assertEqual(row['included_settings'], [])
+                    self.assertEqual(row['status'], 'unavailable')
+        selection = {'categories': ['macos-screenshots'], 'items': {}, 'secure_identities': []}
+        prepared = self.prepare(selection)
+        destination = self.root / 'desktop.mbt'
+        status, events = self.execute(prepared['prepared_capture_id'], selection=selection, destination=destination)
+        self.assertEqual(status.returncode, 0, events)
+        self.assertEqual(bundle.validate_archive(destination)['generated/macos/screenshots.conf'],
+                         b'com.apple.screencapture|location|string|~/Desktop\n')
+        (self.root / 'bin/sw_vers').write_text('#!/bin/bash\necho 27.0\n')
+        row = next(row for row in self.prepare()['inventory'] if row['domain'] == 'macos-screenshots')
+        self.assertEqual(row['status'], 'observation_error')
+        self.assertEqual(row['included_settings'], [])
+        (self.root / 'bin/sw_vers').write_text('#!/bin/bash\necho 26.7.1\n')
         defaults.write_text('#!/bin/bash\nexit 2\n')
         for row in self.prepare()['inventory']:
             if row['domain'] in expected:

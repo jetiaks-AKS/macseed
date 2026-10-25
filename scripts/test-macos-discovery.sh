@@ -16,6 +16,8 @@ MOCK_MODE=normal
 WINDOW_EXPANSION=false
 MOCK_TARGET=""
 MOCK_VALUE=""
+MOCK_MACOS_VERSION=26.7.1
+sw_vers() { [[ "$1" == -productVersion ]] && printf '%s\n' "$MOCK_MACOS_VERSION"; }
 SUCCESS_MESSAGES=""
 WARNING_MESSAGES=""
 ERROR_MESSAGES=""
@@ -87,6 +89,17 @@ defaults() {
     local key="$3"
     local identity="$domain|$key"
 
+    case "$key" in
+        location-screenshot|target-screenshot|target)
+            if [[ "$identity" != "$MOCK_TARGET" ]]; then
+                echo "The domain/default pair of ($domain, $key) does not exist" >&2
+                return 1
+            fi
+            if [[ "$MOCK_MODE" == raw_value ]]; then
+                if [[ "$operation" == read-type ]]; then echo 'Type is string'; else printf '%b' "$MOCK_VALUE"; fi
+                return 0
+            fi ;;
+    esac
     case "$key" in
         EnableStandardClickToShowDesktop|EnableTilingByEdgeDrag|EnableTopTilingByEdgeDrag|EnableTiledWindowMargins)
             if [[ "$WINDOW_EXPANSION" != true ]]; then echo 'does not exist' >&2; return 1; fi ;;
@@ -183,6 +196,7 @@ reset_fixture() {
     rm -rf "$TEST_ROOT/config"
     mkdir -p "$TEST_ROOT/config/generated/macos"
     MOCK_MODE=normal
+    MOCK_MACOS_VERSION=26.7.1
     MOCK_TARGET=""
     SUCCESS_MESSAGES=""
     WARNING_MESSAGES=""
@@ -260,7 +274,38 @@ screenshots_discovery_checks() {
     done
     reset_fixture; MOCK_MODE=all_absent
     export_screenshots_settings >/dev/null
-    [[ $? -eq 0 && ! -s config/generated/macos/screenshots.conf ]] || fail 'absent Screenshot keys remain unmanaged'
+    [[ $? -eq 0 && "$(cat config/generated/macos/screenshots.conf)" == 'com.apple.screencapture|location|string|~/Desktop' ]] || fail 'absent location captures Desktop'
+    [[ "$SCREENSHOTS_LOCATION_ORIGIN" == default_desktop ]] || fail 'implicit Desktop origin'
+    for value in "$HOME/Desktop" "$HOME/Pictures/Captures" /Volumes/Captures; do
+        reset_fixture; MOCK_MODE=raw_value; MOCK_TARGET='com.apple.screencapture|location'; MOCK_VALUE="$value\n"
+        export_screenshots_settings >/dev/null
+        [[ $? -eq 0 ]] || fail 'explicit destination capture'
+        # Literal HOME-relative requirements are config data.
+        # shellcheck disable=SC2088
+        case "$value" in
+            "$HOME/Desktop") mode=explicit_desktop; value='~/Desktop' ;;
+            "$HOME"/*) mode=home; value='~/Pictures/Captures' ;;
+            *) mode=external ;;
+        esac
+        grep -Fxq "com.apple.screencapture|location|string|$value" config/generated/macos/screenshots.conf || fail 'portable destination'
+        [[ "$SCREENSHOTS_LOCATION_ORIGIN" == "$mode" ]] || fail 'destination origin'
+    done
+    for mode in mixed target service value unknown_version macos27; do
+        reset_fixture
+        printf '%s\n' "$expected" > config/generated/macos/screenshots.conf
+        before_checksum="$(cksum config/generated/macos/screenshots.conf)"
+        case "$mode" in
+            mixed) MOCK_MODE=raw_value; MOCK_TARGET='com.apple.screencapture|location-screenshot'; MOCK_VALUE="$HOME/Downloads\n" ;;
+            target) MOCK_MODE=raw_value; MOCK_TARGET='com.apple.screencapture|target'; MOCK_VALUE='clipboard\n' ;;
+            service) MOCK_MODE=type_failure; MOCK_TARGET='com.apple.screencapture|location' ;;
+            value) MOCK_MODE=value_failure; MOCK_TARGET='com.apple.screencapture|location' ;;
+            unknown_version) MOCK_MACOS_VERSION=unknown ;;
+            macos27) MOCK_MACOS_VERSION=27.0 ;;
+        esac
+        export_screenshots_settings >/dev/null
+        [[ $? -eq 2 && "$before_checksum" == "$(cksum config/generated/macos/screenshots.conf)" && -z "$(temporary_files)" ]] || fail "$mode preserves snapshot"
+        [[ "$SCREENSHOTS_LOCATION_ORIGIN" == unknown ]] || fail "$mode is not Desktop"
+    done
 }
 screenshots_discovery_checks
 if [[ "${1:-}" == --screenshots-only ]]; then
@@ -851,8 +896,10 @@ for ((category_index = 0; category_index < ${#category_functions[@]}; category_i
     category_status=$?
     category_file="config/generated/macos/${category_files[$category_index]}"
 
-    if [[ $category_status -eq 0 && -f "$category_file" && ! -s "$category_file" ]]; then
-        pass "all-absent ${category_files[$category_index]} publishes a valid empty file"
+    if [[ $category_status -eq 0 && -f "$category_file" ]] &&
+       { [[ "${category_files[$category_index]}" == screenshots.conf && "$(cat "$category_file")" == 'com.apple.screencapture|location|string|~/Desktop' ]] ||
+         [[ "${category_files[$category_index]}" != screenshots.conf && ! -s "$category_file" ]]; }; then
+        pass "all-absent ${category_files[$category_index]} publishes qualified defaults or an empty file"
     else
         fail "all-absent ${category_files[$category_index]} did not publish empty success"
     fi

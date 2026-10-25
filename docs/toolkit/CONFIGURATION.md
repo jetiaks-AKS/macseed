@@ -172,8 +172,9 @@ an optionally negative integer. No unproven ranges or general float contract
 are introduced.
 
 Blank/whitespace-only lines and empty category files are valid; the final record
-without newline is processed. Absent source preference creates no record;
-absent record never removes a target setting. Empty ordinary strings differ from
+without newline is processed. Absent source preferences normally create no record;
+the qualified [Screenshot Desktop default](#screenshots) is the explicit exception.
+An absent record never removes a target setting. Empty ordinary strings differ from
 absence; empty paths/enums are invalid. Validation failure preserves the previous
 snapshot. Consumers verify stored typed values, not visible application effects.
 
@@ -267,21 +268,44 @@ it); `show-thumbnail=true` shows the floating thumbnail (false hides it). Deskto
 labels them **Window shadow** and **Floating thumbnail**. Records store the native
 boolean value; Preview explains the inverted shadow meaning.
 
+The existing `location` record is a destination requirement, independent of a
+future target OS preference key. Discovery distinguishes implicit Desktop,
+explicit Desktop, another HOME directory, an external directory and unknown
+observation; the origin is diagnostic detail, not another Bundle requirement.
+For the qualified legacy mechanism (macOS 10.14–15 and 26), confirmed absence of
+`location` with an absent or `file` target captures `~/Desktop`. A failed type/value
+read, unsupported target or split-generation Screenshot keys never imply Desktop.
+`location-last` is not the effective destination and is never migrated.
+
+The shared domain reader supplies Discovery, Preview, Apply and Verification.
+It retains the legacy `location` mechanism on macOS 26. macOS 27+ and an unknown
+OS version block location Capture/Preview/Apply and produce unverified location
+results: the reported `location-screenshot` / `target-screenshot` mechanism and
+its interaction with old keys are not yet natively qualified. No version writes
+both keys. Existing boolean-only files keep their scalar contract; this does not
+qualify their visual effects on macOS 27.
+
 Only `location` enters path validation and directory creation. Boolean-only files
-create no destination and request no process restart. Missing source keys remain
-unmanaged; observation/type errors preserve the previous Discovery snapshot.
-The whole selected file and all observations are checked before Apply changes
-anything. Matching values are skipped; writes use the shared typed scalar executor
-and require post-write reads. Global Verification observes each selected preference
-separately. This proves stored values, not a rendered screenshot or live UI effect.
-Location-only files, empty files and existing Bundles retain their behavior.
-The real visual effect of both boolean preferences on macOS 27 remains an open
-[manual qualification gate](../../TODO.md#macos-settings-manual-qualification).
+create no destination and request no process restart. Missing boolean source keys
+remain unmanaged. Observation/type errors preserve the previous Discovery
+snapshot; application Capture does not expose failed observations as selectable.
+The whole selected file and all observations are checked before category Apply
+changes anything. Matching effective destinations, including implicit Desktop,
+are skipped. Typed writes require fresh post-write reads, followed by the existing
+SystemUIServer refresh for a changed location and another complete category check.
+Global Verification checks the destination preference and directory separately.
+This establishes configuration conformity, not proof of a rendered/saved image.
 
-The sole destination source is `location` in `macos/screenshots.conf`; there is
-no static `SCREENSHOTS_DIR` fallback. An absent record creates no directory.
+Discovery serializes paths inside source HOME as `~/...`. Bundle v1 keeps the
+same four-field `screenshots.conf`; no schema or key migration is required. Old
+absolute source-HOME records are still normalized by Bundle packaging. Old empty
+or boolean-only files do not acquire a destination during Restore. An absent
+**configuration record** remains unmanaged, unlike a confirmed absent **native
+preference** during new Capture. External destinations can be observed and used
+by direct configuration, but Bundle packaging still rejects paths outside source
+HOME. No silent `/Users/old-user` rewrite or external mount creation is allowed.
 
-- Accept absolute paths and leading `~/` resolved under current HOME; compare and
+- Accept absolute paths and leading `~/` resolved under target HOME; compare and
   store the resolved absolute path.
 - Reject `$HOME`, `${HOME}`, other variable expansion, backticks, backslashes,
   relative paths, `~otheruser`, empty values, `.`/`..`, repeated `/`, control bytes
@@ -292,16 +316,43 @@ no static `SCREENSHOTS_DIR` fallback. An absent record creates no directory.
 - Existing directory symlinks inside HOME require their physical target to remain
   inside physical HOME. Outside-HOME destinations must already resolve to an
   accessible writable directory; external symlinks are allowed on those terms.
-- Missing `/Volumes/...` is an error, not permission to create a mount point.
-  No chmod/chown or silent `/Users/old-user` rewrite occurs.
 - Destination requires write/execute access. Observation failure is not absence;
   path checks are not a race-free sandbox.
 
 Preview distinguishes directory creation, preference write and restart, in that
-order. Directory-only change needs no SystemUIServer restart. Prepare/verify the
-directory before writing the preference; failure blocks the write. Restart only
-after a changed `location` write; boolean changes alone never trigger a restart.
-Verification does not take a real screenshot.
+order. Prepare/verify the directory before writing the preference; failure blocks
+the write. Directory-only and boolean-only changes do not restart SystemUIServer.
+The legacy location setting can also affect screen recording destinations on
+macOS 26. Macseed does not migrate recording-specific settings.
+
+Qualification and deliberately excluded settings:
+
+| Setting / mechanism | Evidence and current boundary |
+|---|---|
+| Desktop / save folder | Apple documents Desktop and Screenshot's Save To UI. Read-only macOS 26.7.1 observation finds `location` and a different `location-last`; only the former is used. Targeted fixtures cover default/explicit Desktop, HOME remapping, external-path rejection by Bundle, conflicts, failed reads, safe creation, old Bundles and repeat/no-op. |
+| macOS 27 split keys | Tendedero's source reports `location-screenshot`, `target-screenshot` and separate `location-screenrecording` / `target-screenrecording`. Its dual-key writes and fallback reader do not establish a safe migration/precedence contract. Native 26↔27 transfer, defaults, mixed keys and refresh remain unqualified and blocked for location. |
+| Window shadow / floating thumbnail | Existing typed `disable-shadow` / `show-thumbnail` boolean read/write/readback contract. Missing source keys stay unmanaged; native visual effects remain a separate gate. |
+| Mouse pointer | Apple documents the UI option; `showsCursor` is reported by third-party implementations. No qualified cross-version preference contract; not captured or written. |
+| Remember last selection | Apple documents the toggle. Observed `last-selection` / `last-selection-display` are geometry/device state, not a proven portable toggle; excluded. |
+| Timer | Apple documents the UI timer; no qualified persistent scalar read/write/verification contract; excluded. |
+| SDR/HDR and file format | Apple documents Capture Format on supported Macs. Storage, display dependencies and interaction with the legacy `type` preference are not qualified; excluded. |
+| Capture mode, recording audio, naming and other options | No additional validated portable contract; excluded. |
+
+Sources: Apple's [Screenshot guide for macOS 26](https://support.apple.com/guide/mac-help/take-a-screenshot-mh26782/26/mac/26),
+[default Desktop behavior](https://support.apple.com/en-us/102646), and Tendedero's
+[preference writer](https://github.com/alejandrobujan/tendedero/blob/main/Sources/Tendedero/Inbox.swift)
+and [destination reader](https://github.com/alejandrobujan/tendedero/blob/main/Sources/Tendedero/ScreenshotWatcher.swift).
+These establish documented UI behavior and implementation evidence, not Macseed
+native end-to-end acceptance. On 2026-10-25, one read-only production Screenshot
+Capture serializer run on macOS 26.7.1 produced a HOME-relative requirement and
+left preferences unchanged. The sandbox denied the directory write-access probe;
+a separate native permission inspection confirmed access. This was no mutating
+Restore or actual screenshot-output test. Independent qualification must inspect Save To in
+Screenshot, take a new screenshot with a normal system shortcut, confirm the
+actual output folder, then repeat Restore and confirm no writes/restart. An
+explicit-output `screencapture` command or `defaults write` exit alone cannot prove
+the default destination. Real mutating Restore requires separate authorization;
+remaining gates are in [TODO](../../TODO.md#macos-settings-manual-qualification).
 
 ### Controlled macOS 27 Restore qualification
 
@@ -329,7 +380,8 @@ This qualifies restoration of the **saved preference values in that Bundle**.
 It does not qualify every supported key, visual effect, mode dependency or
 cross-version combination. In particular, the already-matching Windows keys did
 not exercise Apply, and the single Screenshots record does not qualify both new
-boolean controls. Full visual-effect checks, including the new Windows switches,
+boolean controls or the effective output location on macOS 27. Full visual-effect
+checks, including the new Windows switches,
 were not performed. Remaining gates stay in [TODO](../../TODO.md#macos-settings-manual-qualification).
 The reported real run was not repeated during this UI/documentation checkpoint.
 

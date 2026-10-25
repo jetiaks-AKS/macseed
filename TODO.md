@@ -77,6 +77,13 @@ confirmed 37/37 saved values, not all visual effects or the remaining Restore ga
 
 - [ ] Qualify the real visual effect of Screenshots Window shadow and Floating
   thumbnail on macOS 27, including repeat/no-op behavior.
+- [ ] Qualify Screenshot destination restoration using the Save To UI and an
+  actual system-shortcut screenshot, then repeat/no-op on macOS 26 and 27.
+  Resolve macOS 27 split location/target keys, default Desktop, old/new-key
+  precedence, recording separation and refresh before enabling location writes
+  there. The shared reader currently blocks 27/unknown targets; fixture coverage
+  is not native 26↔27 acceptance. See the
+  [Screenshots contract](docs/toolkit/CONFIGURATION.md#screenshots).
 - [ ] Complete real Apply and visual-behavior qualification of the four new
   WindowManager preferences on macOS 27, including mode dependencies, session
   refresh and repeat/no-op. `EnableTilingByEdgeDrag` and `EnableTopTilingByEdgeDrag`

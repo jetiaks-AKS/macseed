@@ -22,10 +22,13 @@ POST_WRITE_MODE="match"
 KILLALL_STATUS=0
 FINDER_RESTART_MODE=match
 DOCK_RESTART_MODE=match
+SCREENSHOTS_RESTART_MODE=match
 MKDIR_STATUS=0
 MKDIR_NO_CREATE=false
 STAT_FAILURE=false
 TEST_FAILURES=0
+MOCK_MACOS_VERSION=26.7.1
+sw_vers() { [[ "$1" == -productVersion ]] && printf '%s\n' "$MOCK_MACOS_VERSION"; }
 
 mkdir -p "$HOME" "$TEST_ROOT/generated/macos"
 : > "$STATE_FILE"
@@ -59,6 +62,13 @@ killall() {
         case "$DOCK_RESTART_MODE" in
             mismatch) state_set com.apple.dock orientation string left ;;
             observation-error) READ_FAILURE='com.apple.dock|orientation' ;;
+        esac
+    fi
+    if [[ "$1" == SystemUIServer ]]; then
+        case "$SCREENSHOTS_RESTART_MODE" in
+            mismatch) state_set com.apple.screencapture location string "$HOME/Downloads" ;;
+            target-change) state_set com.apple.screencapture target string clipboard ;;
+            observation-error) READ_FAILURE='com.apple.screencapture|location' ;;
         esac
     fi
     return "$KILLALL_STATUS"
@@ -192,9 +202,11 @@ reset_case() {
     KILLALL_STATUS=0
     FINDER_RESTART_MODE=match
     DOCK_RESTART_MODE=match
+    SCREENSHOTS_RESTART_MODE=match
     MKDIR_STATUS=0
     MKDIR_NO_CREATE=false
     STAT_FAILURE=false
+    MOCK_MACOS_VERSION=26.7.1
 }
 
 stat() {
@@ -1673,6 +1685,86 @@ reset_case
 run apply_screenshots_settings
 expect_status 0 "$status" 'absent location is unmanaged'
 assert_no_mutation 'absent location creates no fallback'
+
+# Behavior records survive source/target user changes; absent native preferences
+# mean Desktop only on a qualified backend and a supported file target.
+for source in implicit explicit; do
+    reset_case
+    # shellcheck disable=SC2088
+    shots '~/Desktop'
+    command mkdir -p "$HOME/Desktop"
+    [[ "$source" != explicit ]] || state_set com.apple.screencapture location string "$HOME/Desktop"
+    run preview_screenshots_settings
+    expect_status 0 "$status" "$source Desktop Preview"
+    [[ "$output" != *Would* ]] || fail 'matching Desktop was planned'
+    run apply_screenshots_settings
+    expect_status 0 "$status" "$source Desktop Apply"
+    assert_no_mutation 'matching Desktop no write or restart'
+    : > "$TEST_ROOT/verification"
+    run verify_screenshots
+    grep -Fq 'result:com.apple.screencapture/location:stored_preference:0' "$TEST_ROOT/verification" || fail 'effective Desktop not verified'
+done
+reset_case
+# shellcheck disable=SC2088
+shots '~/Desktop'
+state_set com.apple.screencapture location string "$HOME/Downloads"
+run preview_screenshots_settings
+expect_status 0 "$status" 'Downloads to Desktop Preview'
+[[ "$output" == *Would*Downloads*Desktop* ]] || fail 'missing Desktop change'
+assert_no_mutation 'Desktop Preview read-only'
+run apply_screenshots_settings
+expect_status 0 "$status" 'Downloads to Desktop Apply'
+assert_count '^write:com.apple.screencapture:location:' 1 'one legacy location write'
+assert_count '^killall:SystemUIServer' 1 'one necessary location refresh'
+[[ "$(state_get com.apple.screencapture location 4)" == "$HOME/Desktop" ]] || fail 'target HOME Desktop'
+: > "$MUTATION_LOG"; MODULE_CHANGED=false
+run apply_screenshots_settings
+expect_status 0 "$status" 'Desktop repeat Apply'
+assert_no_mutation 'Desktop repeat noop'
+
+for mode in mismatch target-change observation-error; do
+    reset_case
+    # shellcheck disable=SC2088
+    shots '~/Desktop'
+    state_set com.apple.screencapture location string "$HOME/Downloads"
+    SCREENSHOTS_RESTART_MODE="$mode"
+    run apply_screenshots_settings
+    expect_status 2 "$status" "post-refresh $mode fails verification"
+    assert_no_success "$output" 'write and restart alone cannot prove destination'
+    assert_changed true 'post-refresh failure retains mutation fact'
+done
+
+for mode in mixed new_only target split_target type_error value_error macos27 future unknown; do
+    reset_case
+    # shellcheck disable=SC2088
+    shots '~/Captures'
+    case "$mode" in
+        mixed) state_set com.apple.screencapture location string "$HOME/Desktop"; state_set com.apple.screencapture location-screenshot string "$HOME/Downloads" ;;
+        new_only) state_set com.apple.screencapture location-screenshot string "$HOME/Desktop" ;;
+        target) state_set com.apple.screencapture target string clipboard ;;
+        split_target) state_set com.apple.screencapture target-screenshot string file ;;
+        type_error) READ_TYPE_FAILURE='com.apple.screencapture|location' ;;
+        value_error) state_set com.apple.screencapture location string "$HOME/Desktop"; READ_FAILURE='com.apple.screencapture|location' ;;
+        macos27) MOCK_MACOS_VERSION=27.0; state_set com.apple.screencapture location-screenshot string "$HOME/Captures" ;;
+        future) MOCK_MACOS_VERSION=28.0 ;;
+        unknown) MOCK_MACOS_VERSION=unknown ;;
+    esac
+    run validate_screenshots_config
+    case "$mode" in
+        macos27|future|unknown) expect_status 2 "$status" "$mode startup fails closed" ;;
+        *) expect_status 0 "$status" "$mode startup validates input without preferences" ;;
+    esac
+    run preview_screenshots_settings
+    expect_status 2 "$status" "$mode Preview fails closed"
+    run apply_screenshots_settings
+    expect_status 2 "$status" "$mode Apply fails closed"
+    assert_no_mutation "$mode no writes, directory or refresh"
+    [[ ! -e "$HOME/Captures" ]] || fail 'unknown observation created directory'
+    : > "$TEST_ROOT/verification"
+    run verify_screenshots
+    grep -Fq 'result:com.apple.screencapture/location:stored_preference:2' "$TEST_ROOT/verification" || fail "$mode false Verification success"
+done
+reset_case
 if [[ "${1:-}" != --screenshots-only ]]; then
 ENABLED_CATEGORIES=macos-keyboard
 record "$KEYBOARD_CONFIG" 'NSGlobalDomain|KeyRepeat|int|2'
