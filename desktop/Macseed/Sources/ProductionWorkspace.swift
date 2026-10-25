@@ -15,9 +15,17 @@ struct ProductionWorkspace: View {
     private var syntheticRestore: Bool { false }
     #endif
     private var busy: Bool { runtime.isActive || status.state == .running || capture.busy || restore.busy }
-    init(runtime: CoreRuntime) {
+    private var hasWorkflowList: Bool {
+        switch navigation.task {
+        case .capture: [.review, .confirmation, .result].contains(capture.state)
+        case .restore: !restore.showingAppStore && (syntheticRestore || [.review, .preview, .confirming, .rebuilding, .result].contains(restore.state))
+        case .status: status.state == .result
+        case nil: false
+        }
+    }
+    init(runtime: CoreRuntime, status: EnvironmentStatusModel? = nil) {
         self.runtime = runtime
-        _status = SwiftUI.StateObject(wrappedValue: EnvironmentStatusModel(runtime: runtime))
+        _status = SwiftUI.StateObject(wrappedValue: status ?? EnvironmentStatusModel(runtime: runtime))
         _capture = SwiftUI.StateObject(wrappedValue: CaptureModel(runtime: runtime))
         _restore = SwiftUI.StateObject(wrappedValue: runtime === CoreRuntime.shared ? RestoreModel.shared : RestoreModel(runtime: runtime))
     }
@@ -43,8 +51,8 @@ struct ProductionWorkspace: View {
             .modifier(MainSidebarLayout())
         } detail: {
             VStack(spacing: 0) {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 20) {
+                WorkflowContentViewport(pinned: hasWorkflowList) {
+                    VStack(alignment: .leading, spacing: hasWorkflowList ? 12 : 20) {
                         if let task = navigation.task {
                             Group {
                                 WorkspaceHeader(title: task.rawValue, subtitle: task == .status ? "Compare your Mac with a saved environment." : task.subtitle, symbol: task.symbol)
@@ -200,6 +208,28 @@ struct ProductionWorkspace: View {
             Divider()
             RestoreRebuildActions(stopping: runtime.stopping, stop: synthetic ? nil : { restore.requestStop() }, force: synthetic ? nil : { restore.requestForceStop() }, gracefulWaiting: runtime.gracefulStopRequested, logRuntime: synthetic ? nil : runtime)
                 .modifier(WorkspaceFooterPadding())
+        }
+    }
+}
+
+// A workflow owns its single list viewport. Screens without a list retain their
+// ordinary content sizing and never acquire an empty scrolling region.
+struct WorkflowContentViewport<Content: View>: View {
+    let pinned: Bool
+    @ViewBuilder let content: () -> Content
+    var body: some View {
+        if pinned {
+            // Native split views probe the minimum size with a zero-width proposal.
+            // Wrapped summaries can report a very tall minimum and enlarge the
+            // entire split view beyond the window. Supply the actual viewport
+            // before measuring the workflow; an infinite frame alone is not a bound.
+            GeometryReader { viewport in
+                content().frame(width: viewport.size.width, height: viewport.size.height, alignment: .topLeading)
+            }
+                .environment(\.workflowListViewport, true)
+                .background(Color(nsColor: .windowBackgroundColor))
+        } else {
+            ScrollView { content() }
         }
     }
 }

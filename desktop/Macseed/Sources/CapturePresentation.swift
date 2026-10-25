@@ -99,9 +99,11 @@ struct CaptureCategorySelectionView: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 12) {
                 // Checkbox and disclosure are independent native controls.
-                NativeSelectionCheckbox("", state: model.selectionState(category), accessibilityTitle: "Select " + category.title) {
-                    model.selectCategory(category.id, included: $0)
-                }.frame(width: 28, height: 28).disabled(!category.selectable)
+                if category.selectable {
+                    NativeSelectionCheckbox("", state: model.selectionState(category), accessibilityTitle: "Select " + category.title) {
+                        model.selectCategory(category.id, included: $0)
+                    }.frame(width: 28, height: 28)
+                } else { Color.clear.frame(width: 28, height: 28).accessibilityHidden(true) }
                 if Self.hasDisclosure(category) {
                     DisclosureGroup(isExpanded: expansion ?? $expanded) { EmptyView() } label: { header }
                         .disclosureGroupStyle(TaskDisclosureStyle())
@@ -362,10 +364,12 @@ struct CaptureSettingsSubcategoryView: View {
     @CapturePresentationState<Bool> private var expanded = false
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
-            if editable {
+            if editable && category.selectable {
                 NativeSelectionCheckbox("", state: model.selectionState(category), accessibilityTitle: "Select " + category.title) {
                     model.selectCategory(category.id, included: $0)
-                }.frame(width: 28, height: 48).disabled(!category.selectable)
+                }.frame(width: 28, height: 48)
+            } else if editable {
+                Color.clear.frame(width: 28, height: 48).accessibilityHidden(true)
             }
             DisclosureGroup(isExpanded: expansion ?? $expanded) {
                 VStack(alignment: .leading, spacing: 0) {
@@ -391,7 +395,7 @@ struct CaptureSettingsSubcategoryView: View {
                 TaskStatusLabel(state: category.row.status == "observation_error" ? .attention : .skipped, title: category.headerSummary)
             } else if !category.notices.isEmpty { TaskStatusLabel(state: .attention) }
             else { Text(model.selectionState(category).captureTitle).font(.callout) }
-        }
+        }.frame(width: TaskRowLayout.statusWidth, alignment: .leading)
     }
 }
 

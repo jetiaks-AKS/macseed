@@ -32,9 +32,11 @@ struct RestoreAreaSelectionView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: RestoreRowGrid.spacing) {
-                NativeSelectionCheckbox("", state: model.selectionState(area), accessibilityTitle: "Select " + area.label) {
-                    model.selectArea(area.id, included: $0)
-                }.frame(width: RestoreRowGrid.checkboxWidth, height: 28).disabled(!area.selectable)
+                if area.selectable {
+                    NativeSelectionCheckbox("", state: model.selectionState(area), accessibilityTitle: "Select " + area.label) {
+                        model.selectArea(area.id, included: $0)
+                    }.frame(width: RestoreRowGrid.checkboxWidth, height: 28)
+                } else { Color.clear.frame(width: RestoreRowGrid.checkboxWidth, height: 28).accessibilityHidden(true) }
                 if Self.hasDisclosure(area) {
                     DisclosureGroup(isExpanded: expansion ?? $expanded) { EmptyView() } label: { header.padding(.vertical, 6) }
                         .disclosureGroupStyle(TaskDisclosureStyle())
@@ -43,12 +45,12 @@ struct RestoreAreaSelectionView: View {
                 }
             }
             if Self.hasDisclosure(area) && (expansion?.wrappedValue ?? expanded) {
-                if area.selectionMode == "items" {
+                if area.selectable && area.selectionMode == "items" {
                     ForEach(area.items) { item in
                         NativeSelectionCheckbox(item.label, isOn: Binding(
                             get: { model.selectedItems[area.id]?.contains(item.id) == true },
                             set: { model.selectItem(area.id, item: item.id, included: $0) }))
-                            .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading).disabled(!area.selectable)
+                            .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
                     }.padding(.leading, CaptureChildRowGrid.leadingInset)
                 } else {
                     VStack(alignment: .leading, spacing: 7) { ForEach(area.items) { item in Text(item.label) } }
@@ -148,23 +150,27 @@ struct RestoreMacOSSelectionView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .top, spacing: 12) {
-                NativeSelectionCheckbox("", state: model.groupState(group), accessibilityTitle: "Select " + group.id) {
-                    model.selectGroup(group, included: $0)
-                }.frame(width: RestoreRowGrid.checkboxWidth, height: 48).disabled(!available)
+                if available {
+                    NativeSelectionCheckbox("", state: model.groupState(group), accessibilityTitle: "Select " + group.id) {
+                        model.selectGroup(group, included: $0)
+                    }.frame(width: RestoreRowGrid.checkboxWidth, height: 48)
+                } else { Color.clear.frame(width: RestoreRowGrid.checkboxWidth, height: 48).accessibilityHidden(true) }
                 if !detailAreas.isEmpty {
                     DisclosureGroup(isExpanded: expansion ?? $expanded) {
                         VStack(alignment: .leading, spacing: 0) {
                             ForEach(detailAreas) { area in
                                 HStack(alignment: .top, spacing: 12) {
-                                    NativeSelectionCheckbox("", state: model.selectionState(area), accessibilityTitle: "Select " + area.label) {
-                                        model.selectArea(area.id, included: $0)
-                                    }.frame(width: RestoreRowGrid.checkboxWidth, height: 48).disabled(!area.selectable)
+                                    if area.selectable {
+                                        NativeSelectionCheckbox("", state: model.selectionState(area), accessibilityTitle: "Select " + area.label) {
+                                            model.selectArea(area.id, included: $0)
+                                        }.frame(width: RestoreRowGrid.checkboxWidth, height: 48)
+                                    } else { Color.clear.frame(width: RestoreRowGrid.checkboxWidth, height: 48).accessibilityHidden(true) }
                                     RestoreMacOSAreaDetails(area: area, expansion: childExpansion)
                                 }
                             }
                         }.padding(.leading, 36).padding(.vertical, 4)
                     } label: { header }
-                        .disclosureGroupStyle(TaskDisclosureStyle())
+                        .disclosureGroupStyle(TaskDisclosureStyle(contentTrailingInset: 0))
                 } else {
                     header.padding(.trailing, 26).frame(minHeight: 48)
                 }
@@ -351,8 +357,9 @@ struct RestoreView: View {
     var showsSelectionActions = true
     var showsPreparationActions = true
     var showsResultActions = true
+    @Environment(\.workflowListViewport) private var pinnedList
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: pinnedList ? 12 : 20) {
             if model.showingAppStore {
                 AppStoreRestoreScreen(model: model)
             } else {
@@ -401,22 +408,24 @@ struct RestoreView: View {
                         Spacer()
                         Button(model.bulkState.bulkActionTitle) { model.toggleAll() }.buttonStyle(.plain).foregroundStyle(.secondary).disabled(!model.areas.contains(where: \.selectable))
                     }
-                    let includedAreas = RestorePresentationSection.includedAreas(model.areas)
-                    ForEach(RestorePresentationSection.visible(model.groups, inventory: includedAreas)) { section in
-                        WorkspaceSectionHeader(title: section.id)
-                        VStack(spacing: 0) {
-                            if let macOS = section.groups.first(where: { $0.id == "macOS Settings" }), includedAreas.contains(where: { macOS.domains.contains($0.id) }) {
-                                RestoreMacOSSelectionView(model: model, group: macOS, expansion: categoryExpansion, childExpansion: categoryExpansion)
-                                if section.areas(in: includedAreas).contains(where: { !macOS.domains.contains($0.id) }) { Divider() }
-                            }
-                            let areas = section.areas(in: includedAreas).filter { area in
-                                !section.groups.contains { $0.id == "macOS Settings" && $0.domains.contains(area.id) }
-                            }
-                            ForEach(areas) { area in
-                                RestoreAreaSelectionView(model: model, area: area, expansion: categoryExpansion)
-                                if area.id != areas.last?.id { Divider() }
-                            }
-                        }.modifier(WorkspaceCardSurface())
+                    WorkflowList {
+                        let includedAreas = RestorePresentationSection.includedAreas(model.areas)
+                        ForEach(RestorePresentationSection.visible(model.groups, inventory: includedAreas)) { section in
+                            WorkspaceSectionHeader(title: section.id)
+                            VStack(spacing: 0) {
+                                if let macOS = section.groups.first(where: { $0.id == "macOS Settings" }), includedAreas.contains(where: { macOS.domains.contains($0.id) }) {
+                                    RestoreMacOSSelectionView(model: model, group: macOS, expansion: categoryExpansion, childExpansion: categoryExpansion)
+                                    if section.areas(in: includedAreas).contains(where: { !macOS.domains.contains($0.id) }) { Divider() }
+                                }
+                                let areas = section.areas(in: includedAreas).filter { area in
+                                    !section.groups.contains { $0.id == "macOS Settings" && $0.domains.contains(area.id) }
+                                }
+                                ForEach(areas) { area in
+                                    RestoreAreaSelectionView(model: model, area: area, expansion: categoryExpansion)
+                                    if area.id != areas.last?.id { Divider() }
+                                }
+                            }.modifier(WorkspaceCardSurface())
+                        }
                     }
                     if showsSelectionActions {
                         RestoreSelectionActions(status: model.selectionSummary, canPreview: model.canPreview, preview: { model.refreshPreview() }, reviewModel: model)
@@ -471,10 +480,6 @@ struct RestoreView: View {
                     if model.inspection != nil { Button("Back") { model.back() } }
                 }
             }
-            }
-            if !model.showingAppStore && model.state != .rebuilding && model.state != .result && model.state != .inspecting && model.state != .preparing {
-                Text("Restore Preview is read-only. No packages, settings, repositories or SSH identities are changed.")
-                    .font(.callout).foregroundStyle(.secondary)
             }
         }
         .modifier(OperationLogPresenter(runtime: runtime))
@@ -559,9 +564,10 @@ struct RestorePreviewContent: View {
     var canRebuild = false
     var reviewModel: RestoreModel? = nil
     var showsFixIssues: Bool { prerequisites.canFixIssues }
+    @Environment(\.workflowListViewport) private var pinnedList
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            Text("Restore Preview").font(.title2.weight(.semibold)).accessibilityAddTraits(.isHeader)
+        VStack(alignment: .leading, spacing: pinnedList ? 12 : 20) {
+            previewHeading
             if needsRefresh {
                 Label("Selection changed. Refresh Preview to update counts and prerequisites. The current Preview shows the previous selection.", systemImage: "arrow.clockwise")
                     .font(.callout).foregroundStyle(.secondary)
@@ -570,21 +576,24 @@ struct RestorePreviewContent: View {
             RestorePreviewMetrics(domains: domains)
             ForEach(scopeWarnings, id: \.self) { Text($0).font(.callout).foregroundStyle(.orange) }
             if alreadyMatches { Text("Selected requirements already match this Mac.") }
-            RestorePrerequisiteSummaryView(summary: prerequisites, areas: areas)
-            if showsFixIssues {
-                Button(retrying ? "Checking…" : "Fix Issues…") { checkAgain?() }.disabled(checkAgain == nil || needsRefresh || retrying)
-                Text("Macseed will guide you through available fixes. Your approval may be required. No applications will be installed yet.")
-                    .font(.callout).foregroundStyle(.secondary)
+            if pinnedList {
+                if !prerequisites.manualConditions.isEmpty || showsFixIssues {
+                    prerequisiteHeader
+                }
+            } else {
+                prerequisiteDetails
+                if showsFixIssues {
+                    VStack(alignment: .leading, spacing: 6) {
+                        fixIssuesButton
+                        fixIssuesExplanation
+                    }
+                }
             }
-            if let retryMessage { Text(retryMessage).font(.callout).foregroundStyle(.secondary) }
             TaskDomainList(domains: domains.map { domain in
                 var previewDomain = domain
                 previewDomain.previewOnly = true
                 return previewDomain
-            }, leadingContent: appStore.map { summary in AnyView(VStack(alignment: .leading, spacing: 12) {
-                WorkspaceSectionHeader(title: "Manual Installation", prominent: true)
-                AppStoreRestoreCard(summary: summary, review: reviewAppStore)
-            }) },
+            }, leadingContent: listLeadingContent,
                 restoreSettingsPreview: true, settingsCategories: settingsCategories, itemTitles: itemTitles,
                 expansion: categoryExpansion.map { binding in Binding(get: { binding.wrappedValue ? Set(domains.map(\.id)) : [] }, set: { binding.wrappedValue = !$0.isEmpty }) },
                 settingsExpansion: categoryExpansion, prerequisiteReasons: prerequisites.sharedReasons)
@@ -593,6 +602,69 @@ struct RestorePreviewContent: View {
                 RestorePreviewActions(back: back, refresh: refresh, rebuild: rebuild, canRebuild: canRebuild, showsRebuild: appStore == nil || !domains.isEmpty, reviewModel: reviewModel)
             }
         }
+    }
+    private var previewHeading: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
+                previewTitle
+                readOnlyNotice
+            }
+            VStack(alignment: .leading, spacing: 4) {
+                previewTitle
+                readOnlyNotice
+            }
+        }.frame(maxWidth: .infinity, alignment: .leading)
+    }
+    private var previewTitle: some View {
+        Text("Restore Preview").font(.title2.weight(.semibold)).accessibilityAddTraits(.isHeader)
+    }
+    private var readOnlyNotice: some View {
+        Text("Read-only preview — no changes are made.")
+            .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+    }
+    private var fixIssuesButton: some View {
+        Button(retrying ? "Checking…" : "Fix Issues…") { checkAgain?() }
+            .disabled(checkAgain == nil || needsRefresh || retrying)
+    }
+    private var prerequisiteHeader: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 12) {
+                    prerequisiteStatus
+                    if showsFixIssues { fixIssuesButton }
+                }
+                VStack(alignment: .leading, spacing: 6) {
+                    prerequisiteStatus
+                    if showsFixIssues { fixIssuesButton }
+                }
+            }
+            if showsFixIssues { fixIssuesExplanation }
+        }.frame(maxWidth: .infinity, alignment: .leading)
+    }
+    private var prerequisiteStatus: some View {
+        Text(RestorePrerequisiteSummaryPresentation.status(prerequisites.displayConditions))
+            .font(.callout).foregroundStyle(RestoreStatusTone.warning.color)
+    }
+    private var fixIssuesExplanation: some View {
+        Text("Macseed will guide you through available fixes. Your approval may be required. No applications will be installed yet.")
+            .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+    }
+    private var prerequisiteDetails: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            RestorePrerequisiteSummaryView(summary: prerequisites, areas: areas)
+            if let retryMessage { Text(retryMessage).font(.callout).foregroundStyle(.secondary) }
+        }
+    }
+    private var listLeadingContent: AnyView? {
+        let hasDetails = !prerequisites.manualConditions.isEmpty || retryMessage != nil
+        guard appStore != nil || (pinnedList && hasDetails) else { return nil }
+        return AnyView(VStack(alignment: .leading, spacing: 20) {
+            if pinnedList && hasDetails { prerequisiteDetails }
+            if let appStore {
+                WorkspaceSectionHeader(title: "Manual Installation", prominent: true)
+                AppStoreRestoreCard(summary: appStore, review: reviewAppStore)
+            }
+        })
     }
 }
 
@@ -672,9 +744,9 @@ struct RestoreReviewLogButton: View {
         let runtime = model.runtime
         if let reference = runtime.operationLogReference(matching: model.operationID),
            OperationLogVisibility.restore(model.state, active: runtime.isActive, reference: reference,
-               terminal: !runtime.isActive) {
+               terminal: !runtime.isActive, failedOperation: runtime.operationID == model.operationID && [.failed, .cancelled].contains(runtime.state)) {
             OperationLogButton(runtime: runtime, reference: reference)
-        } else if [.review, .preview, .failed, .cancelled].contains(model.state), !runtime.isActive {
+        } else if [.failed, .cancelled].contains(model.state), !runtime.isActive {
             Text("Log unavailable").font(.caption).foregroundStyle(.secondary)
         }
     }
@@ -701,8 +773,9 @@ struct RestoreRebuildProgressContent: View {
     let activity: String
     let stopping: Bool
     var gracefulWaiting = false
+    @Environment(\.workflowListViewport) private var pinnedList
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: pinnedList ? 12 : 20) {
             Text("Rebuilding this Mac").font(.title.weight(.bold)).accessibilityAddTraits(.isHeader)
             HStack(spacing: 12) {
                 ProgressView()
@@ -720,8 +793,12 @@ struct RestoreExecutionCategories: View {
     var appStore: AppStoreRestorePresentation? = nil
     var reviewAppStore: (() -> Void)? = nil
     @RestoreViewState private var expandedCategories: Set<String> = []
+    static func disclosureIDs(_ domains: [TaskDomainPresentation], appStore: AppStoreRestorePresentation? = nil) -> Set<String> {
+        Set(domains.flatMap { [$0.id] + Array(disclosureIDs($0.resultChildren)) }
+            + (appStore?.items.isEmpty == false ? ["app-store"] : []))
+    }
     static func toggledCategories(_ expanded: Set<String>, ids: Set<String>) -> Set<String> {
-        ids.isSubset(of: expanded) ? [] : ids
+        WorkflowExpansion.toggled(expanded, available: ids)
     }
     // Unknown rows retain their original grouping and position; only known runs are reordered.
     static func sections(_ domains: [TaskDomainPresentation], appStore: AppStoreRestorePresentation? = nil) -> [(title: String?, rows: [TaskDomainPresentation])] {
@@ -756,16 +833,19 @@ struct RestoreExecutionCategories: View {
             else { TaskStatusLabel(state: domain.executionStatus, title: domain.executionStatusTitle) }
         }.frame(width: TaskRowLayout.statusWidth, alignment: .leading)
     }
+    @Environment(\.workflowListViewport) private var pinnedList
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: pinnedList ? 12 : 20) {
             if resultStatuses && (!domains.isEmpty || appStore != nil) {
                 HStack {
                     Text("Details by Category").font(.headline).accessibilityAddTraits(.isHeader)
                     Spacer()
-                    let ids = Set(domains.map(\.id) + (appStore == nil ? [] : ["app-store"]))
-                    Button(ids.isSubset(of: expandedCategories) ? "Collapse All" : "Expand All") {
-                        expandedCategories = Self.toggledCategories(expandedCategories, ids: ids)
-                    }.buttonStyle(.plain).foregroundStyle(.secondary)
+                    let ids = Self.disclosureIDs(domains, appStore: appStore)
+                    if !ids.isEmpty {
+                        Button(WorkflowExpansion.allExpanded(expandedCategories, available: ids) ? "Collapse All" : "Expand All") {
+                            expandedCategories = Self.toggledCategories(expandedCategories, ids: ids)
+                        }.buttonStyle(.plain).foregroundStyle(.secondary)
+                    }
                 }
             }
             if resultStatuses {
@@ -776,47 +856,51 @@ struct RestoreExecutionCategories: View {
                     }
                 }
             }
-            let sections = Self.sections(domains.filter { $0.id != "app-store" }, appStore: appStore)
-            ForEach(Array(sections.enumerated()), id: \.offset) { index, section in
-                if let title = section.title { WorkspaceSectionHeader(title: title) }
-                VStack(spacing: 0) {
-                    ForEach(section.rows) { domain in
-                        if domain.id == "app-store", let appStore {
-                            AppStoreRestoreResultRow(summary: appStore, review: reviewAppStore, expansion: Binding(
-                                get: { expandedCategories.contains("app-store") },
-                                set: { value in
-                                    if value { expandedCategories.insert("app-store") } else { expandedCategories.remove("app-store") }
-                                }))
-                        } else if resultStatuses {
-                            RestoreFinalDomain(domain: domain, expansion: Binding(
-                                get: { expandedCategories.contains(domain.id) },
-                                set: { value in
-                                    if value { expandedCategories.insert(domain.id) } else { expandedCategories.remove(domain.id) }
-                                }))
-                        } else {
-                        ViewThatFits(in: .horizontal) {
-                            HStack(spacing: 12) {
-                                categoryTitle(domain)
-                                Spacer()
-                                categoryStatus(domain)
+            if !domains.isEmpty || appStore?.items.isEmpty == false {
+                WorkflowList {
+                    let sections = Self.sections(domains.filter { $0.id != "app-store" }, appStore: appStore)
+                    ForEach(Array(sections.enumerated()), id: \.offset) { index, section in
+                        if let title = section.title { WorkspaceSectionHeader(title: title) }
+                        VStack(spacing: 0) {
+                            ForEach(section.rows) { domain in
+                                if domain.id == "app-store", let appStore {
+                                    AppStoreRestoreResultRow(summary: appStore, review: reviewAppStore, expansion: Binding(
+                                        get: { expandedCategories.contains("app-store") },
+                                        set: { value in
+                                            if value { expandedCategories.insert("app-store") } else { expandedCategories.remove("app-store") }
+                                        }))
+                                } else if resultStatuses {
+                                    RestoreFinalDomain(domain: domain, expansion: Binding(
+                                        get: { expandedCategories.contains(domain.id) },
+                                        set: { value in
+                                            if value { expandedCategories.insert(domain.id) } else { expandedCategories.remove(domain.id) }
+                                        }), treeExpansion: $expandedCategories)
+                                } else {
+                                ViewThatFits(in: .horizontal) {
+                                    HStack(spacing: 12) {
+                                        categoryTitle(domain)
+                                        Spacer()
+                                        categoryStatus(domain)
+                                    }
+                                    VStack(alignment: .leading, spacing: 8) {
+                                        categoryTitle(domain)
+                                        categoryStatus(domain).frame(maxWidth: .infinity, alignment: .trailing)
+                                    }
+                                }.padding(.vertical, 6).frame(minHeight: 48).padding(.horizontal, 16)
+                                }
+                                if domain.id != section.rows.last?.id { Divider() }
                             }
-                            VStack(alignment: .leading, spacing: 8) {
-                                categoryTitle(domain)
-                                categoryStatus(domain).frame(maxWidth: .infinity, alignment: .trailing)
-                            }
-                        }.padding(.vertical, 6).frame(minHeight: 48).padding(.horizontal, 16)
-                        }
-                        if domain.id != section.rows.last?.id { Divider() }
+                        }.modifier(WorkspaceCardSurface())
                     }
-                }.modifier(WorkspaceCardSurface())
+                }
             }
         }.environment(\.restoreTrailingSamples, RestoreTrailingSample.result(domains, appStore: appStore))
 
     }
 }
 
-// The shared lane is measured from actual visible status groups, never empty badge slots.
-// Narrow rows put the same compact group below the title instead of squeezing either.
+// Retain the accepted status lane measurement; counts and chevrons align within it.
+// Narrow rows retain the status origin below the title and use the full row width.
 struct RestoreResultColumns: Layout {
     // Preserve the previous 36pt disclosure indentation plus 16pt child inset.
     static func titleInset(depth: Int, item: Bool = false) -> CGFloat {
@@ -830,19 +914,20 @@ struct RestoreResultColumns: Layout {
         let width = proposal.width ?? 600
         let geometry = geometry(width, subviews)
         let title = subviews[0].sizeThatFits(.init(width: geometry.stacked ? width : width - geometry.lane - 12, height: nil))
-        let trailing = subviews[1].sizeThatFits(.init(width: geometry.lane, height: nil))
+        let trailing = subviews[1].sizeThatFits(.init(width: geometry.stacked ? width : geometry.lane, height: nil))
         return CGSize(width: width, height: geometry.stacked ? title.height + 8 + trailing.height : max(title.height, trailing.height))
     }
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
         let geometry = geometry(bounds.width, subviews)
         let titleWidth = geometry.stacked ? bounds.width : bounds.width - geometry.lane - 12
         let title = subviews[0].sizeThatFits(.init(width: titleWidth, height: nil))
-        let trailing = subviews[1].sizeThatFits(.init(width: geometry.lane, height: nil))
+        let trailingWidth = geometry.stacked ? bounds.width : geometry.lane
+        let trailing = subviews[1].sizeThatFits(.init(width: trailingWidth, height: nil))
         subviews[0].place(at: CGPoint(x: bounds.minX, y: bounds.minY + (geometry.stacked ? 0 : (bounds.height - title.height) / 2)),
             anchor: .topLeading, proposal: .init(width: titleWidth, height: nil))
         subviews[1].place(at: CGPoint(x: geometry.stacked ? bounds.minX : bounds.maxX - geometry.lane,
             y: bounds.minY + (geometry.stacked ? title.height + 8 : (bounds.height - trailing.height) / 2)),
-            anchor: .topLeading, proposal: .init(width: geometry.lane, height: nil))
+            anchor: .topLeading, proposal: .init(width: trailingWidth, height: nil))
         // The third child is a hidden measurement reference, not a rendered column.
     }
 }
@@ -922,10 +1007,7 @@ struct RestoreCountBadges: View {
     var body: some View {
         HStack(spacing: 6) {
             ForEach(counts.filter { $0.1 > 0 }, id: \.0) { label, count in
-                Text(String(count)).font(.caption2.weight(.semibold)).monospacedDigit().lineLimit(1).minimumScaleFactor(0.7)
-                    .padding(.horizontal, 6).frame(minWidth: 32, minHeight: 23)
-                    .foregroundStyle(Self.color(label)).background(Self.color(label).opacity(0.12), in: Capsule())
-                    .help(label).accessibilityLabel(label).accessibilityValue(String(count))
+                WorkflowCountPill(count: count, label: label, tint: Self.color(label))
             }
         }
     }
@@ -944,11 +1026,8 @@ struct RestoreResultCategoryHeader: View {
         RestoreResultColumns {
             WorkspaceCategoryTitle(id: id, title: title, fallbackSymbol: symbol)
                 .padding(.leading, RestoreResultColumns.titleInset(depth: depth)).fixedSize(horizontal: false, vertical: true)
-            HStack(spacing: 8) {
-                RestoreResultStatusLabel(state: state, title: status).fixedSize(horizontal: false, vertical: true)
-                if counts.contains(where: { $0.1 > 0 }) { RestoreCountBadges(counts: counts).fixedSize() }
-                RestoreDisclosureIndicator(expanded: expanded)
-            }.frame(maxWidth: .infinity, alignment: .leading)
+            RestoreTrailingControls(status: RestoreResultStatusLabel(state: state, title: status),
+                counts: counts, expanded: expanded).frame(maxWidth: .infinity, alignment: .leading)
             RestoreTrailingReference()
         }.padding(.vertical, 6).frame(minHeight: 48).contentShape(Rectangle())
     }
@@ -958,6 +1037,7 @@ struct RestoreResultCategoryHeader: View {
 struct RestoreFinalDomain: View {
     let domain: TaskDomainPresentation
     var expansion: Binding<Bool>? = nil
+    var treeExpansion: Binding<Set<String>>? = nil
     var depth = 0
     @RestoreViewState private var expanded = false
     static let outcomes = ["Success", "Needs Attention", "Skipped"]
@@ -1008,7 +1088,11 @@ struct RestoreFinalDomain: View {
             if expansion?.wrappedValue ?? expanded {
                 VStack(alignment: .leading, spacing: 0) {
                     if !domain.resultChildren.isEmpty {
-                        ForEach(domain.resultChildren) { child in RestoreFinalDomain(domain: child, depth: depth + 1) }
+                        ForEach(domain.resultChildren) { child in
+                            RestoreFinalDomain(domain: child,
+                                expansion: treeExpansion.map { WorkflowExpansion.binding(child.id, in: $0) },
+                                treeExpansion: treeExpansion, depth: depth + 1)
+                        }
                     } else {
                         ForEach(domain.resultVisibleItems) { item in
                             RestoreResultItemRow(item: item, notRun: domain.executionStatus == .notRun, depth: depth,
@@ -1183,9 +1267,10 @@ struct RestoreResultContent: View {
         case .stoppedAfterMutation: return "Completed changes remain. Refresh Preview before rebuilding again."
         }
     }
+    @Environment(\.workflowListViewport) private var pinnedList
     var body: some View {
         let summary = RestoreResultSummary(domains: tasks?.automaticDomains ?? [], result: result, appStore: tasks?.appStore)
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: pinnedList ? 12 : 20) {
             HStack(spacing: 10) {
                 Image(systemName: result.outcome == .clean ? "checkmark.circle" : [.stoppedBeforeMutation, .stoppedAfterMutation].contains(result.outcome) ? "stop.circle" : "exclamationmark.triangle")
                     .foregroundStyle(result.outcome == .clean ? RestoreStatusTone.success.color : .orange).accessibilityHidden(true)
@@ -1329,7 +1414,7 @@ struct AppStoreRestoreCard: View {
             RestoreResultColumns {
                 WorkspaceCategoryTitle(id: "app-store", title: "App Store Applications", fallbackSymbol: "app.badge")
                 TaskStatusLabel(state: summary.categoryState, title: summary.categoryStatus)
-                RestoreTrailingReference()
+                RestoreTrailingReference(statusWidth: TaskRowLayout.statusWidth)
             }
             Text(summary.allInstalled ? summary.resultSummary : "\(summary.installed.count) installed · " + summary.attentionBreakdown)
                 .font(.callout).foregroundStyle(.secondary)

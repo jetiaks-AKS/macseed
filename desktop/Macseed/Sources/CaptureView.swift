@@ -58,12 +58,13 @@ struct CaptureMacOSSettingsView: View {
         let group = model.macOSSettings
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 12) {
-                if editable {
+                if editable && !group.availableIDs.isEmpty {
                     NativeSelectionCheckbox("", state: group.state, accessibilityTitle: "Select macOS Settings") {
                         model.selectMacOSSettings(included: $0)
                     }
                     .frame(width: 28, height: 28)
-                    .disabled(group.availableIDs.isEmpty)
+                } else if editable {
+                    Color.clear.frame(width: 28, height: 28).accessibilityHidden(true)
                 }
                 DisclosureGroup(isExpanded: expansion ?? $expanded) { EmptyView() } label: {
                     ViewThatFits(in: .horizontal) {
@@ -108,8 +109,9 @@ struct CaptureView: View {
         default: return model.state == .scanning ? "Starting scan…" : "Preparing selected environment…"
         }
     }
+    @Environment(\.workflowListViewport) private var pinnedList
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: pinnedList ? 12 : 20) {
             switch model.state {
             case .idle:
                 WorkspacePrimaryActionCard(title: "Scan This Mac", symbol: ProductTask.capture.symbol, tint: WorkspaceIdentity.tint(.capture),
@@ -175,21 +177,23 @@ struct CaptureView: View {
                         .buttonStyle(.plain).foregroundStyle(.secondary)
                         .disabled(!model.categories.contains(where: \.selectable) || runtime.isActive)
                 }
-                ForEach(WorkspaceCategoryStyle.sections(rows), id: \.title) { section in
-                    WorkspaceSectionHeader(title: section.title)
-                    VStack(spacing: 0) {
-                        ForEach(section.rows) { row in
-                            if row.id == "macos-settings" {
-                                CaptureMacOSSettingsView(model: model, expansion: categoryExpansion, childExpansion: categoryExpansion)
-                            } else if let category = row.categories.first {
-                                CaptureCategorySelectionView(model: model, category: category, expansion: categoryExpansion)
+                WorkflowList {
+                    ForEach(WorkspaceCategoryStyle.sections(rows), id: \.title) { section in
+                        WorkspaceSectionHeader(title: section.title)
+                        VStack(spacing: 0) {
+                            ForEach(section.rows) { row in
+                                if row.id == "macos-settings" {
+                                    CaptureMacOSSettingsView(model: model, expansion: categoryExpansion, childExpansion: categoryExpansion)
+                                } else if let category = row.categories.first {
+                                    CaptureCategorySelectionView(model: model, category: category, expansion: categoryExpansion)
+                                }
+                                if row.id != section.rows.last?.id { Divider() }
                             }
-                            if row.id != section.rows.last?.id { Divider() }
-                        }
-                    }.modifier(WorkspaceCardSurface())
-                }.id(model.operationID)
-                CaptureSecureTransferView()
-                if !model.canCreate { Text("Choose supported state to capture.").foregroundStyle(.secondary) }
+                        }.modifier(WorkspaceCardSurface())
+                    }.id(model.operationID)
+                    CaptureSecureTransferView()
+                    if !model.canCreate { Text("Choose supported state to capture.").foregroundStyle(.secondary) }
+                }
             case .confirmation:
                 if let prepared = model.preparation, let selection = prepared.publicationSelection {
                     Text("Save this environment?").font(.title2.weight(.semibold)).accessibilityAddTraits(.isHeader)
@@ -294,7 +298,7 @@ struct CaptureActionsView: View {
             if let reference = runtime.operationLogReference(matching: model.operationID),
                OperationLogVisibility.capture(model.state, active: runtime.isActive, reference: reference, failure: model.failure, terminal: !runtime.isActive) {
                 OperationLogButton(runtime: runtime, reference: reference)
-            } else if [.review, .confirmation, .result, .failed, .cancelled].contains(model.state), !runtime.isActive {
+            } else if [.result, .failed, .cancelled].contains(model.state), !runtime.isActive {
                 Text("Log unavailable").font(.caption).foregroundStyle(.secondary)
             }
             switch model.state {

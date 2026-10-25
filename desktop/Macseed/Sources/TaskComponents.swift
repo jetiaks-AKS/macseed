@@ -2,6 +2,140 @@ import SwiftUI
 
 private typealias TaskViewState<Value> = SwiftUI.State<Value>
 
+private struct WorkflowListViewportKey: EnvironmentKey {
+    static let defaultValue = false
+}
+extension EnvironmentValues {
+    var workflowListViewport: Bool {
+        get { self[WorkflowListViewportKey.self] }
+        set { self[WorkflowListViewportKey.self] = newValue }
+    }
+}
+
+// The workspace supplies a bounded height. Standalone presentation renders keep
+// their intrinsic size; only the list scrolls in a workflow window.
+struct WorkflowList<Content: View>: View {
+    @Environment(\.workflowListViewport) private var bounded
+    @ViewBuilder let content: () -> Content
+    var body: some View {
+        if bounded {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20, content: content)
+                    .frame(maxWidth: .infinity, alignment: .leading).padding(.bottom, 1)
+            }.frame(minHeight: 96, maxHeight: .infinity)
+        } else {
+            VStack(alignment: .leading, spacing: 20, content: content)
+        }
+    }
+}
+
+enum WorkflowExpansion {
+    static func allExpanded(_ expanded: Set<String>, available: Set<String>) -> Bool {
+        !available.isEmpty && available.isSubset(of: expanded)
+    }
+    static func toggled(_ expanded: Set<String>, available: Set<String>) -> Set<String> {
+        allExpanded(expanded, available: available) ? [] : available
+    }
+    static func binding(_ id: String, in tree: Binding<Set<String>>) -> Binding<Bool> {
+        Binding(get: { tree.wrappedValue.contains(id) }, set: { value in
+            if value { tree.wrappedValue.insert(id) } else { tree.wrappedValue.remove(id) }
+        })
+    }
+}
+
+// Retain the accepted Restore pill's dimensions, including a single-digit oval.
+struct WorkflowCountPill: View {
+    let count: Int
+    let label: String
+    let tint: Color
+    var body: some View {
+        Text(String(count)).font(.caption2.weight(.semibold)).monospacedDigit().lineLimit(1)
+            .padding(.horizontal, 6).frame(minWidth: 32, minHeight: 23).fixedSize()
+            .foregroundStyle(tint).background(tint.opacity(0.12), in: Capsule())
+            .help(label).accessibilityLabel(label).accessibilityValue(String(count))
+    }
+}
+
+// At most four measuring pills, independent of inventory size. Monospaced digits
+// let the largest value in each visible position reserve that position's width.
+struct WorkflowCountRailReference: View {
+    let groups: [[Int]]
+    private var values: [Int] {
+        groups.reduce(into: [Int]()) { values, group in
+            for (index, count) in group.enumerated() {
+                if index == values.count { values.append(count) }
+                else { values[index] = max(values[index], count) }
+            }
+        }
+    }
+    var body: some View {
+        HStack(spacing: 6) {
+            ForEach(Array(values.enumerated()), id: \.offset) { _, count in
+                WorkflowCountPill(count: count, label: "", tint: .clear)
+            }
+        }.hidden().accessibilityHidden(true)
+    }
+}
+
+// The existing outer layouts still own the status origin. This layout changes
+// only the count rail and chevron, using the widest count group in this tree.
+// If the rail cannot fit beside a status, counts wrap below without moving it.
+struct WorkflowTrailingLayout: Layout {
+    var showsCounts: Bool
+    var showsChevron: Bool
+    var statusWidth: CGFloat? = nil
+    private func geometry(_ proposal: ProposedViewSize, _ views: Subviews) -> (width: CGFloat, status: CGSize, counts: CGSize, countX: CGFloat, stacked: Bool) {
+        let idealStatus = views[0].sizeThatFits(.unspecified)
+        let counts = views[1].sizeThatFits(.unspecified)
+        let rail = max(counts.width, views[3].sizeThatFits(.unspecified).width)
+        let arrow: CGFloat = showsChevron ? 20 : 0
+        let ideal = (statusWidth ?? idealStatus.width) + (showsCounts ? 8 + counts.width : 0) + arrow
+        let width = max(0, proposal.width ?? ideal)
+        let countX = max(0, width - arrow - rail)
+        let stacked = showsCounts && countX < (statusWidth ?? idealStatus.width) + 8
+        let status = views[0].sizeThatFits(.init(width: stacked || !showsCounts ? max(0, width - arrow) : max(0, countX - 8), height: nil))
+        return (width, status, counts, countX, stacked)
+    }
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let g = geometry(proposal, subviews)
+        let height = g.stacked ? g.status.height + 4 + g.counts.height : max(g.status.height, showsCounts ? g.counts.height : 0)
+        return CGSize(width: g.width, height: max(height, showsChevron ? 12 : 0))
+    }
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let g = geometry(.init(width: bounds.width, height: nil), subviews)
+        let rowHeight = g.stacked ? g.status.height : bounds.height
+        subviews[0].place(at: CGPoint(x: bounds.minX, y: bounds.minY + (rowHeight - g.status.height) / 2),
+            anchor: .topLeading, proposal: .init(g.status))
+        if showsCounts {
+            subviews[1].place(at: CGPoint(x: bounds.minX + g.countX,
+                y: bounds.minY + (g.stacked ? g.status.height + 4 : (rowHeight - g.counts.height) / 2)),
+                anchor: .topLeading, proposal: .init(g.counts))
+        }
+        if showsChevron {
+            subviews[2].place(at: CGPoint(x: bounds.maxX - 12, y: bounds.minY + rowHeight / 2),
+                anchor: .leading, proposal: .init(width: 12, height: nil))
+        }
+        // Fourth child measures the rail only; it is never placed or accessible.
+    }
+}
+
+struct RestoreTrailingControls<Status: View>: View {
+    let status: Status
+    let counts: [(String, Int)]
+    var expanded: Bool? = nil
+    var statusWidth: CGFloat? = nil
+    @Environment(\.restoreTrailingSamples) private var samples
+    var body: some View {
+        WorkflowTrailingLayout(showsCounts: counts.contains { $0.1 > 0 }, showsChevron: expanded != nil, statusWidth: statusWidth) {
+            status.fixedSize(horizontal: false, vertical: true)
+            RestoreCountBadges(counts: counts)
+            if let expanded { RestoreDisclosureIndicator(expanded: expanded) }
+            else { Color.clear.frame(width: 0, height: 0).accessibilityHidden(true) }
+            WorkflowCountRailReference(groups: counts.isEmpty ? [] : [counts.map(\.1)] + samples.map { $0.counts.filter { $0.1 > 0 }.map(\.1) })
+        }
+    }
+}
+
 extension TaskRowState {
     var tone: RestoreStatusTone {
         switch self {
@@ -16,6 +150,10 @@ extension TaskRowState {
 enum TaskRowLayout {
     static let statusWidth: CGFloat = 200
     static let iconWidth: CGFloat = 22
+    static let columnSpacing: CGFloat = 12
+    // Disclosure content ends at the header label's trailing edge. Reserve
+    // the same status column and gap when wrapping Capture Result chips.
+    static let contentStatusInset = statusWidth + columnSpacing
 }
 
 // Two bounded columns keep each status beside its own title at every row height.
@@ -64,17 +202,30 @@ struct TaskDisclosureStyle: DisclosureGroupStyle {
     }
 }
 
+// Preserve the existing Environment Status leaf appearance across workflows.
+struct MatchedLeafIndicator: View {
+    var body: some View {
+        Image(systemName: "checkmark").foregroundStyle(RestoreStatusTone.success.color)
+            .accessibilityLabel("Already Matches")
+    }
+}
+
 struct TaskStatusLabel: View {
     let state: TaskRowState
     var title: String? = nil
     var tint: Color? = nil
+    var showsTitle = true
     var body: some View {
-        HStack(spacing: 7) {
-            if state == .working { ProgressView().controlSize(.small).frame(width: TaskRowLayout.iconWidth).accessibilityHidden(true) }
-            else { Image(systemName: state.symbol).frame(width: TaskRowLayout.iconWidth).accessibilityHidden(true) }
-            Text(title ?? state.rawValue)
-        }.font(.callout).foregroundStyle(tint ?? (state == .planned ? Color.primary : state.tone.color))
-            .accessibilityElement(children: .ignore).accessibilityLabel(title ?? state.rawValue)
+        if state == .matching && !showsTitle {
+            MatchedLeafIndicator().frame(width: TaskRowLayout.iconWidth)
+        } else {
+            HStack(spacing: 7) {
+                if state == .working { ProgressView().controlSize(.small).frame(width: TaskRowLayout.iconWidth).accessibilityHidden(true) }
+                else { Image(systemName: state.symbol).frame(width: TaskRowLayout.iconWidth).accessibilityHidden(true) }
+                if showsTitle { Text(title ?? state.rawValue) }
+            }.font(.callout).foregroundStyle(tint ?? (state == .planned ? Color.primary : state.tone.color))
+                .accessibilityElement(children: .ignore).accessibilityLabel(title ?? state.rawValue)
+        }
     }
 }
 
@@ -215,6 +366,11 @@ struct TaskDomainList: View {
     var settingsExpansion: Binding<Bool>? = nil
     var prerequisiteReasons: [String: Set<String>] = [:]
     @TaskViewState<Set<String>> private var expanded = []
+    static func disclosureIDs(_ domains: [TaskDomainPresentation], settings: [TaskDomainPresentation]) -> Set<String> {
+        Set(domains.map(\.id) + (domains.contains { ["macos-settings", "macOS Settings"].contains($0.id) } ? settings.map(\.id) : []))
+    }
+    private var availableIDs: Set<String> { Self.disclosureIDs(domains, settings: settingsCategories) }
+    private var treeExpansion: Binding<Set<String>> { Binding(get: { expandedIDs }, set: setExpanded) }
     private var expandedIDs: Set<String> { expansion?.wrappedValue ?? expanded }
     private func setExpanded(_ ids: Set<String>) {
         if let expansion { expansion.wrappedValue = ids } else { expanded = ids }
@@ -224,30 +380,33 @@ struct TaskDomainList: View {
             HStack {
                 Text(title).font(.headline).accessibilityAddTraits(.isHeader)
                 Spacer()
-                if !restoreSettingsPreview { expandAllButton }
+                expandAllButton
             }
-            if let leadingContent { leadingContent }
-            if restoreSettingsPreview && !domains.isEmpty {
-                HStack(alignment: .firstTextBaseline, spacing: 12) {
-                    WorkspaceSectionHeader(title: "Automatic Restore Tasks", prominent: true)
-                    expandAllButton.fixedSize()
-                }
-            }
-            ForEach(WorkspaceCategoryStyle.sections(domains), id: \.title) { section in
-                WorkspaceSectionHeader(title: section.title)
-                VStack(spacing: 0) {
-                    ForEach(section.rows) { domain in
-                        if let selectDomain, let selection = selectionStates[domain.id] {
-                            HStack(alignment: .top, spacing: 0) {
-                                NativeSelectionCheckbox("", state: selection, accessibilityTitle: "Select " + domain.title) {
-                                    selectDomain(domain.id, $0)
-                                }.frame(width: 28, height: 48).padding(.leading, 12)
-                                domainRow(domain)
-                            }
-                        } else { domainRow(domain) }
-                        if domain.id != section.rows.last?.id { Divider() }
+            if !domains.isEmpty || leadingContent != nil {
+                WorkflowList {
+                    if let leadingContent { leadingContent }
+                    if restoreSettingsPreview && !domains.isEmpty {
+                        HStack(alignment: .firstTextBaseline, spacing: 12) {
+                            WorkspaceSectionHeader(title: "Automatic Restore Tasks", prominent: true)
+                        }
                     }
-                }.modifier(WorkspaceCardSurface())
+                    ForEach(WorkspaceCategoryStyle.sections(domains), id: \.title) { section in
+                        WorkspaceSectionHeader(title: section.title)
+                        VStack(spacing: 0) {
+                            ForEach(section.rows) { domain in
+                                if let selectDomain, let selection = selectionStates[domain.id] {
+                                    HStack(alignment: .top, spacing: 0) {
+                                        NativeSelectionCheckbox("", state: selection, accessibilityTitle: "Select " + domain.title) {
+                                            selectDomain(domain.id, $0)
+                                        }.frame(width: 28, height: 48).padding(.leading, 12)
+                                        domainRow(domain)
+                                    }
+                                } else { domainRow(domain) }
+                                if domain.id != section.rows.last?.id { Divider() }
+                            }
+                        }.modifier(WorkspaceCardSurface())
+                    }
+                }
             }
         }.transformEnvironment(\.restoreTrailingSamples) { samples in
             if restoreSettingsPreview {
@@ -270,10 +429,12 @@ struct TaskDomainList: View {
         }
     }
 
-    private var expandAllButton: some View {
-        Button(expandedIDs.count == domains.count ? "Collapse All" : "Expand All") {
-            setExpanded(expandedIDs.count == domains.count ? [] : Set(domains.map(\.id)))
-        }.buttonStyle(.plain).foregroundStyle(.secondary)
+    @ViewBuilder private var expandAllButton: some View {
+        if !availableIDs.isEmpty {
+            Button(WorkflowExpansion.allExpanded(expandedIDs, available: availableIDs) ? "Collapse All" : "Expand All") {
+                setExpanded(WorkflowExpansion.toggled(expandedIDs, available: availableIDs))
+            }.buttonStyle(.plain).foregroundStyle(.secondary)
+        }
     }
 
     private func domainRow(_ domain: TaskDomainPresentation) -> some View {
@@ -286,18 +447,21 @@ struct TaskDomainList: View {
                 VStack(spacing: 0) {
                     ForEach(settingsCategories) { child in
                         TaskSettingsCategoryDetails(domain: child, stateTitles: stateTitles, compactReadyItems: compactReadyItems,
-                            settingLabels: settingLabels[child.id] ?? [], itemTitles: itemTitles, expansion: settingsExpansion,
+                            settingLabels: settingLabels[child.id] ?? [], itemTitles: itemTitles,
+                            expansion: settingsExpansion ?? WorkflowExpansion.binding(child.id, in: treeExpansion),
                             restorePreview: restoreSettingsPreview, captureResultLayout: captureResultLayout)
                     }
                     let known = Set(settingsCategories.flatMap(\.items).map(\.id))
                     let remaining = domain.items.filter { !known.contains($0.id) }
                     if !remaining.isEmpty {
                         TaskDomainItems(domain: TaskDomainPresentation(id: domain.id, title: domain.title, symbol: domain.symbol, items: remaining),
-                            stateTitles: stateTitles, compactReadyItems: compactReadyItems, itemTitles: itemTitles, restorePreview: restoreSettingsPreview)
+                            stateTitles: stateTitles, compactReadyItems: compactReadyItems, itemTitles: itemTitles, restorePreview: restoreSettingsPreview,
+                            captureResultLayout: captureResultLayout)
                     }
-                }.padding(.leading, restoreSettingsPreview ? 0 : 36).padding(.trailing, captureResultLayout ? -26 : 0).padding(.vertical, 4)
+                }.padding(.leading, restoreSettingsPreview ? 0 : 36).padding(.trailing, restoreSettingsPreview ? 0 : -26).padding(.vertical, 4)
             } else {
                 TaskDomainItems(domain: domain, stateTitles: stateTitles, compactReadyItems: compactReadyItems, itemTitles: itemTitles, restorePreview: restoreSettingsPreview,
+                    captureResultLayout: captureResultLayout,
                     commonFailureInPrerequisites: prerequisiteReasons[domain.id]?.contains(domain.sharedObservationReason ?? "") == true)
             }
         } label: {
@@ -307,7 +471,7 @@ struct TaskDomainList: View {
                     counts: RestorePreviewMetrics.badges(domain),
                     expanded: expandedIDs.contains(domain.id)).padding(.vertical, 6)
             } else { ViewThatFits(in: .horizontal) {
-                HStack(spacing: 12) { domainTitle(domain); Spacer(); domainStatus(domain) }
+                HStack(spacing: TaskRowLayout.columnSpacing) { domainTitle(domain); Spacer(); domainStatus(domain) }
                 VStack(alignment: .leading, spacing: 8) { domainTitle(domain); domainStatus(domain).frame(maxWidth: .infinity, alignment: restoreSettingsPreview || captureResultLayout ? .trailing : .leading) }
             }.padding(.vertical, 6) }
         }.disclosureGroupStyle(TaskDisclosureStyle(includesIndicator: !restoreSettingsPreview, contentTrailingInset: restoreSettingsPreview ? 0 : 26)).padding(.horizontal, 16)
@@ -366,29 +530,8 @@ struct RestorePreviewRow<Title: View, Status: View>: View {
     var body: some View {
         RestoreResultColumns {
             title.padding(.leading, titleInset).fixedSize(horizontal: false, vertical: true)
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: 8) {
-                    status.frame(width: TaskRowLayout.statusWidth, alignment: .leading)
-                        .fixedSize(horizontal: false, vertical: true)
-                    if !counts.isEmpty { RestoreCountBadges(counts: counts).fixedSize() }
-                    if let expanded {
-                        HStack(spacing: 0) {
-                            Spacer(minLength: 0)
-                            RestoreDisclosureIndicator(expanded: expanded)
-                        }
-                    }
-                }
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 8) {
-                        status.fixedSize(horizontal: false, vertical: true)
-                        if let expanded {
-                            Spacer(minLength: 0)
-                            RestoreDisclosureIndicator(expanded: expanded)
-                        }
-                    }
-                    if !counts.isEmpty { RestoreCountBadges(counts: counts).fixedSize() }
-                }
-            }.frame(maxWidth: .infinity, alignment: .leading)
+            RestoreTrailingControls(status: status, counts: counts, expanded: expanded, statusWidth: TaskRowLayout.statusWidth)
+                .frame(maxWidth: .infinity, alignment: .leading)
             RestoreTrailingReference(statusWidth: TaskRowLayout.statusWidth)
         }
     }
@@ -400,11 +543,13 @@ struct TaskDomainItems: View {
     var compactReadyItems = false
     var itemTitles: [String: String] = [:]
     var restorePreview = false
+    var captureResultLayout = false
     var commonFailureInPrerequisites = false
     var body: some View {
         let sharedIDs = domain.sharedObservationItemIDs
         if compactReadyItems {
             CaptureConfirmationItems(domain: domain)
+                .padding(.trailing, captureResultLayout ? TaskRowLayout.contentStatusInset : 0)
         } else {
             VStack(spacing: 0) {
                 if !commonFailureInPrerequisites, let message = domain.sharedObservationMessage {
@@ -414,7 +559,8 @@ struct TaskDomainItems: View {
                 ForEach(domain.items) { item in
                     if restorePreview {
                         RestorePreviewRow(title: details(item, suppressExplanation: sharedIDs.contains(item.id)),
-                            status: TaskStatusLabel(state: item.state, title: item.assistedAppStore?.status.rawValue ?? stateTitles[item.state]),
+                            status: TaskStatusLabel(state: item.state, title: item.assistedAppStore?.status.rawValue ?? stateTitles[item.state],
+                                showsTitle: item.state != .matching),
                             titleInset: 36).padding(.vertical, 7)
                     } else { TaskTextStatusLayout {
                         details(item, suppressExplanation: sharedIDs.contains(item.id)).fixedSize(horizontal: false, vertical: true)
@@ -465,11 +611,13 @@ struct TaskSettingsCategoryDetails: View {
                 $0.captureRole != .selectedSubdomain || ![.planned, .completed].contains($0.state)
                     || $0.item.reason != nil || $0.diagnostic != nil
             }) {
-                TaskDomainItems(domain: domain, stateTitles: stateTitles, compactReadyItems: compactReadyItems, itemTitles: itemTitles)
+                TaskDomainItems(domain: domain, stateTitles: stateTitles, compactReadyItems: compactReadyItems, itemTitles: itemTitles,
+                    captureResultLayout: captureResultLayout)
             }
             if !settingLabels.isEmpty {
                 if compactReadyItems {
                     CaptureIncludedSettingsList(labels: settingLabels)
+                        .padding(.trailing, captureResultLayout ? TaskRowLayout.contentStatusInset : 0)
                 } else {
                     VStack(alignment: .leading, spacing: 0) {
                         ForEach(Array(settingLabels.enumerated()), id: \.offset) { _, label in
@@ -484,12 +632,17 @@ struct TaskSettingsCategoryDetails: View {
                     counts: RestorePreviewMetrics.badges(domain),
                     titleInset: 36, expanded: expansion?.wrappedValue ?? expanded).padding(.vertical, 6)
             } else { ViewThatFits(in: .horizontal) {
-                HStack(spacing: 12) { title; Spacer(); TaskStatusLabel(state: domain.state, title: stateTitles[domain.state]).frame(width: restorePreview || captureResultLayout ? TaskRowLayout.statusWidth : nil, alignment: .leading) }
-                VStack(alignment: .leading, spacing: 8) { title; TaskStatusLabel(state: domain.state, title: stateTitles[domain.state]).frame(width: restorePreview || captureResultLayout ? TaskRowLayout.statusWidth : nil, alignment: .leading).frame(maxWidth: .infinity, alignment: restorePreview || captureResultLayout ? .trailing : .leading) }
+                HStack(spacing: TaskRowLayout.columnSpacing) { title; Spacer(); status }
+                VStack(alignment: .leading, spacing: 8) { title; status.frame(maxWidth: .infinity, alignment: .trailing) }
             }.padding(.vertical, 6) }
-        }.disclosureGroupStyle(TaskDisclosureStyle(includesIndicator: !restorePreview, contentTrailingInset: restorePreview ? 0 : 26))
+        }.disclosureGroupStyle(TaskDisclosureStyle(includesIndicator: !restorePreview,
+            contentTrailingInset: restorePreview ? 0 : 26))
     }
     private var title: some View { WorkspaceCategoryTitle(id: domain.id, title: domain.title, fallbackSymbol: domain.symbol) }
+    private var status: some View {
+        TaskStatusLabel(state: domain.state, title: stateTitles[domain.state])
+            .frame(width: TaskRowLayout.statusWidth, alignment: .leading)
+    }
 }
 
 // Restore-only compact leaves retain typed task diagnostics and nonmatching statuses.
@@ -514,12 +667,7 @@ struct RestoreSettingPreviewLeaf: View {
         }.frame(maxWidth: .infinity, alignment: .leading)
     }
     private var status: some View {
-        Group {
-            if compactMatch {
-                Image(systemName: "checkmark").foregroundStyle(RestoreStatusTone.success.color)
-                    .frame(width: TaskRowLayout.iconWidth).accessibilityLabel("Already Matches")
-            } else { TaskStatusLabel(state: item.state, title: stateTitles[item.state]) }
-        }
+        TaskStatusLabel(state: item.state, title: stateTitles[item.state], showsTitle: item.state != .matching)
     }
 }
 

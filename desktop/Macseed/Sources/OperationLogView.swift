@@ -72,19 +72,21 @@ enum OperationLogVisibility {
     static func capture(_ state: CaptureFlowState, active: Bool, reference: OperationLogReference?, failure: CaptureFailure? = nil, terminal: Bool = false) -> Bool {
         // A local destination failure did not launch a new Core operation.
         if !terminal || failure == .invalidDestination { return false }
-        return final([.review, .confirmation, .result, .failed, .cancelled].contains(state), active: active, reference: reference,
+        return final([.result, .failed, .cancelled].contains(state), active: active, reference: reference,
               allowed: [.capturePrepare, .captureExecute])
     }
     static func status(_ state: EnvironmentStatusState, active: Bool, reference: OperationLogReference?, terminal: Bool = false) -> Bool {
         guard terminal else { return false }
         return visible(final: state == .result || state == .failed || state == .cancelled, active: active, reference: reference, operation: .environmentCompare)
     }
-    static func restore(_ state: RestoreFlowState, active: Bool, reference: OperationLogReference?, terminal: Bool = false) -> Bool {
+    static func restore(_ state: RestoreFlowState, active: Bool, reference: OperationLogReference?, terminal: Bool = false, failedOperation: Bool = false) -> Bool {
         guard terminal else { return false }
         if state == .result { return visible(final: true, active: active, reference: reference, operation: .restoreExecute) }
         let allowed: Set<CoreOperation> = [.review, .failed, .cancelled].contains(state)
             ? [.bundleInspect, .restorePrepare] : [.restorePrepare]
-        return final([.review, .preview, .confirming, .failed, .cancelled].contains(state),
+        let failure = [.failed, .cancelled].contains(state)
+            || (failedOperation && [.review, .preview, .confirming].contains(state))
+        return final(failure,
             active: active, reference: reference, allowed: allowed)
     }
     private static func final(_ terminal: Bool, active: Bool, reference: OperationLogReference?, allowed: Set<CoreOperation>) -> Bool {

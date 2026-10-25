@@ -12,6 +12,13 @@ private struct PreviewExpansionHost: View {
     var body: some View { content(Binding(get: { state.ids }, set: { state.ids = $0 })) }
 }
 
+private struct WorkflowAnchorFrames: PreferenceKey {
+    static var defaultValue: [String: CGRect] = [:]
+    static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) {
+        value.merge(nextValue(), uniquingKeysWith: { _, new in new })
+    }
+}
+
 @main struct PresentationTests {
     @MainActor static func sidebarLayoutChecks() {
         _ = NSApplication.shared
@@ -624,8 +631,9 @@ private struct PreviewExpansionHost: View {
         print("PASS: Addressed SSH diagnostics, compact Capture settings, meaningful Restore disclosures and Review-only Cancel wiring; two native renders")
     }
 
-    @MainActor static func restoreMacOSChecks() {
+    @MainActor static func restoreMacOSChecks() async {
         _ = NSApplication.shared
+        NSApp.setActivationPolicy(.accessory)
         NSApp.appearance = NSAppearance(named: .aqua)
         let match = TaskItemPresentation(id: "match", item: DisplayItem(id: "match", title: "Show extensions", status: .matching, action: "Already Matches"), state: .matching)
         precondition(RestoreSettingPreviewLeaf(item: match, title: match.item.title).compactMatch)
@@ -634,14 +642,93 @@ private struct PreviewExpansionHost: View {
             precondition(!RestoreSettingPreviewLeaf(item: issue, title: issue.item.title).compactMatch)
         }
         let issue = TaskItemPresentation(id: "issue", item: DisplayItem(id: "issue", title: "Show hidden files", status: .attention, action: "Inspection unavailable", reason: "Observation failed"), state: .unverified)
-        let finder = TaskDomainPresentation(id: "macos-finder", title: "Finder", symbol: "finder", items: [match, issue], previewOnly: true)
-        let parent = TaskDomainPresentation(id: "macOS Settings", title: "macOS Settings", symbol: "slider.horizontal.3", items: [match, issue], previewOnly: true)
-        let content = TaskDomainList(domains: [parent], restoreSettingsPreview: true, settingsCategories: [finder], expansion: .constant([parent.id]), settingsExpansion: .constant(true))
-            .padding(28).frame(width: 785).background(Color(nsColor: .windowBackgroundColor))
-        let renderer = ImageRenderer(content: content); renderer.scale = 1
-        let bitmap = NSBitmapImageRep(data: renderer.nsImage!.tiffRepresentation!)!
-        try! bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: "build/Debug/Restore-macOS-Preview.png"))
-        print("PASS: Restore compact matching leaves, nonmatching statuses/reasons, native expanded Finder Preview")
+        let planned = TaskItemPresentation(id: "planned", item: DisplayItem(id: "planned", title: "Install or update", status: .ready, action: ""), state: .planned)
+        let finder = TaskDomainPresentation(id: "macos-finder", title: "Finder", symbol: "finder", items: [match, planned, issue], previewOnly: true)
+        let dock = TaskDomainPresentation(id: "macos-dock", title: "Dock", symbol: "dock.rectangle", items: [match], previewOnly: true)
+        let parent = TaskDomainPresentation(id: "macos-settings", title: "macOS Settings", symbol: "slider.horizontal.3", items: finder.items + dock.items, previewOnly: true)
+        let applicationDomains = ["homebrew-casks", "homebrew-packages", "vscode-extensions", "git-configuration", "workspace-folders"].map { id in
+            TaskDomainPresentation(id: id, title: CaptureCategory.title(for: id), symbol: WorkspaceCategoryStyle.symbol(id),
+                items: id == "homebrew-casks" ? [match, planned] : [match], previewOnly: true)
+        }
+        let samples = [RestoreTrailingSample(title: "Already Matches", counts: [("Match", 1)]), RestoreTrailingSample(title: "Changes Planned")]
+        func bitmap<V: View>(_ view: V, width: CGFloat) -> NSBitmapImageRep {
+            let renderer = ImageRenderer(content: view.frame(width: width).environment(\.restoreTrailingSamples, samples))
+            renderer.scale = 1
+            return NSBitmapImageRep(cgImage: renderer.cgImage!)
+        }
+        func greenBounds(_ bitmap: NSBitmapImageRep) -> CGRect {
+            var points: [CGPoint] = []
+            for y in 0..<bitmap.pixelsHigh {
+                for x in 0..<bitmap.pixelsWide {
+                    guard let c = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.sRGB), c.alphaComponent > 0.5 else { continue }
+                    if c.greenComponent > c.redComponent * 1.3 && c.greenComponent > c.blueComponent * 1.2 {
+                        points.append(CGPoint(x: x, y: y))
+                    }
+                }
+            }
+            precondition(!points.isEmpty)
+            return CGRect(x: points.map(\.x).min()!, y: points.map(\.y).min()!,
+                width: points.map(\.x).max()! - points.map(\.x).min()! + 1,
+                height: points.map(\.y).max()! - points.map(\.y).min()! + 1)
+        }
+        for width: CGFloat in [721, 921] {
+            let leaves = applicationDomains.map { domain in
+                greenBounds(bitmap(TaskDomainItems(domain: TaskDomainPresentation(id: domain.id, title: domain.title,
+                    symbol: domain.symbol, items: [match]), restorePreview: true), width: width))
+            } + [finder, dock].map { _ in
+                greenBounds(bitmap(RestoreSettingPreviewLeaf(item: match, title: match.item.title), width: width))
+            }
+            precondition(leaves.allSatisfy { $0.width <= TaskRowLayout.iconWidth && $0.height <= TaskRowLayout.iconWidth },
+                "Every matching leaf must show only the Status checkmark, without green status text")
+            precondition(leaves.allSatisfy { $0.minX == leaves[0].minX && $0.size == leaves[0].size },
+                "Applications and Finder/Dock must share the icon geometry and status column")
+            let statusMatch = greenBounds(bitmap(EnvironmentComparisonItem(item: match.item), width: width))
+            precondition(leaves.allSatisfy { $0.size == statusMatch.size }, "Preview must retain the existing Status checkmark size")
+            let category = greenBounds(bitmap(RestorePreviewRow(title: Text("Category"),
+                status: RestorePreviewCategoryStatus(domain: dock, stateTitles: [:])), width: width))
+            precondition(abs(category.minX - leaves[0].minX) <= 2 && category.width > 60, "Category Already Matches remains textual")
+            let content = TaskDomainList(domains: applicationDomains + [parent], restoreSettingsPreview: true,
+                settingsCategories: [finder, dock], expansion: .constant(Set(applicationDomains.map(\.id) + [parent.id, finder.id, dock.id])))
+            let image = bitmap(content.padding(16).background(Color(nsColor: .windowBackgroundColor)), width: width)
+            try! image.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: "build/Debug/Restore-Compact-Matches-\(Int(width)).png"))
+            let controller = NSHostingController(rootView: content.environment(\.workflowListViewport, true))
+            controller.sizingOptions = []
+            let host = controller.view
+            let window = NSWindow(contentViewController: controller)
+            window.isReleasedWhenClosed = false; window.setContentSize(CGSize(width: width, height: 300)); window.makeKeyAndOrderFront(nil)
+            func settle() async { try? await Task.sleep(for: .milliseconds(40)); host.layoutSubtreeIfNeeded() }
+            func scrollViews(_ view: NSView) -> [NSScrollView] { (view as? NSScrollView).map { [$0] } ?? view.subviews.flatMap(scrollViews) }
+            await settle()
+            let scrolls = scrollViews(host)
+            precondition(scrolls.count == 1)
+            let scroll = scrolls[0]
+            let end = scroll.documentView!.frame.height - scroll.contentView.bounds.height
+            precondition(end > 0)
+            // This presentation check verifies scroll range without requiring
+            // input delivery to a key window (unavailable under the system shield).
+            for y in [end, CGFloat(0)] {
+                scroll.contentView.scroll(to: CGPoint(x: 0, y: y))
+                scroll.reflectScrolledClipView(scroll.contentView)
+                await settle()
+                precondition(abs(scroll.contentView.bounds.minY - y) < 2, "Preview scroll range must remain accessible")
+            }
+            window.close()
+        }
+        let statusSource = try! String(contentsOfFile: "Sources/TaskComponents.swift").components(separatedBy: "struct TaskStatusLabel: View")[1].components(separatedBy: "struct OperationMetric:")[0]
+        precondition(statusSource.contains(".accessibilityLabel(title ?? state.rawValue)"))
+        let sharedSource = try! String(contentsOfFile: "Sources/TaskComponents.swift").components(separatedBy: "struct MatchedLeafIndicator: View")[1].components(separatedBy: "struct TaskStatusLabel:")[0]
+        precondition(sharedSource.contains("Image(systemName: \"checkmark\")") && sharedSource.contains(".accessibilityLabel(\"Already Matches\")"))
+        let reference = Image(systemName: "checkmark").foregroundStyle(EnvironmentComparisonPalette.color(for: .matching))
+            .accessibilityLabel("Already Matches")
+        precondition(bitmap(MatchedLeafIndicator(), width: 40).representation(using: .png, properties: [:])
+            == bitmap(reference, width: 40).representation(using: .png, properties: [:]), "The shared glyph must preserve the original Status appearance")
+        let statusCategory = DisplayCategory(id: "homebrew-packages", title: "Homebrew Packages", symbol: "shippingbox", items: [match.item])
+        let statusImage = bitmap(EnvironmentComparisonDomain(category: statusCategory, counts: [.match: 1], expansion: .constant(true))
+            .padding(16).background(Color(nsColor: .windowBackgroundColor)), width: 721)
+        try! statusImage.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: "build/Debug/Status-Matched-Leaves.png"))
+        precondition(TaskRowState.matching.rawValue == "Already Matches" && TaskRowState.matching.symbol == "checkmark.circle.fill")
+        precondition(ImageRenderer(content: TaskStatusLabel(state: .planned)).cgImage!.width > 80)
+        print("PASS: Status-style matched leaves across Preview apps/packages/extensions/Finder/Dock/Git/Workspace; textual category/planned states, accessibility and native scroll range at 721/921pt")
     }
 
     @MainActor static func finalUIAlignmentChecks() {
@@ -887,7 +974,7 @@ private struct PreviewExpansionHost: View {
         }
         let captureStates: [CaptureFlowState] = [.idle, .scanning, .review, .preparing, .confirmation, .saving, .result, .failed, .cancelled]
         for state in captureStates {
-            let terminal = [.review, .confirmation, .result, .failed, .cancelled].contains(state)
+            let terminal = [.result, .failed, .cancelled].contains(state)
             precondition(OperationLogVisibility.capture(state, active: false, reference: reference(.captureExecute), terminal: true) == terminal)
             precondition(!OperationLogVisibility.capture(state, active: true, reference: reference(.captureExecute), terminal: true))
             precondition(!OperationLogVisibility.capture(state, active: false, reference: nil, terminal: true))
@@ -899,10 +986,14 @@ private struct PreviewExpansionHost: View {
             precondition(OperationLogVisibility.restore(state, active: false, reference: reference(.restoreExecute), terminal: true) == (state == .result))
             precondition(!OperationLogVisibility.restore(state, active: true, reference: reference(.restoreExecute), terminal: true))
             for operation in [CoreOperation.bundleInspect, .restorePrepare] {
-                let visible = operation == .bundleInspect ? [.review, .failed, .cancelled].contains(state)
-                    : [.review, .preview, .confirming, .failed, .cancelled].contains(state)
+                let visible = [.failed, .cancelled].contains(state)
                 precondition(OperationLogVisibility.restore(state, active: false, reference: reference(operation), terminal: true) == visible)
             }
+        }
+        for state: RestoreFlowState in [.review, .preview, .confirming] {
+            precondition(OperationLogVisibility.restore(state, active: false, reference: reference(.restorePrepare), terminal: true, failedOperation: true))
+            precondition(!OperationLogVisibility.restore(state, active: false, reference: reference(.restoreExecute), terminal: true, failedOperation: true))
+            precondition(!OperationLogVisibility.restore(state, active: true, reference: reference(.restorePrepare), terminal: true, failedOperation: true))
         }
         for state: EnvironmentStatusState in [.choose, .running, .result, .failed, .cancelled] {
             let terminal = state == .result || state == .failed || state == .cancelled
@@ -1240,12 +1331,15 @@ private struct PreviewExpansionHost: View {
                         RestoreResultColumns {
                             Text(row % 2 == 0 ? "Short" : String(repeating: "Long category title ", count: 4))
                                 .padding(.leading, RestoreResultColumns.titleInset(depth: row % 2, item: row > 3))
-                            HStack(spacing: 8) {
+                            WorkflowTrailingLayout(showsCounts: row % 3 > 0, showsChevron: true) {
                                 Color.red.frame(width: 40, height: 8)
-                                if row % 3 > 0 { Color.blue.frame(width: 32, height: 8) }
-                                if row % 3 > 1 { Color.blue.frame(width: 32, height: 8) }
+                                HStack(spacing: 6) {
+                                    if row % 3 > 0 { Color.blue.frame(width: 32, height: 8) }
+                                    if row % 3 > 1 { Color.blue.frame(width: 32, height: 8) }
+                                }.fixedSize()
                                 Color(red: 0, green: 1, blue: 0).frame(width: 12, height: 8)
-                            }.frame(maxWidth: .infinity, alignment: .leading)
+                                Color.clear.frame(width: 70, height: 0)
+                            }
                             Color.clear.frame(width: 148, height: 0)
                         }
                     }
@@ -1264,11 +1358,11 @@ private struct PreviewExpansionHost: View {
                     }
                     if found { rows += 1 }
                 }
-                precondition(starts.count == 1 && countStarts.count == 1 && chevronStarts.count == 3 && rows >= 48,
+                precondition(starts.count == 1 && countStarts.count == 1 && chevronStarts.count == 1 && rows >= 48,
                     "Column origins: status=\(starts), count=\(countStarts), chevron=\(chevronStarts), rows=\(rows)")
-                precondition(countStarts.first! - starts.first! == 48)
-                precondition(chevronStarts.sorted() == [48, 88, 128].map { starts.first! + $0 },
-                    "Absent badges reserve no slot; every adjacent control has only 8 pt spacing")
+                // 148pt legacy lane - 12pt arrow - 8pt gap - 70pt count rail.
+                precondition(countStarts.first! - starts.first! == 58)
+                precondition(chevronStarts == [Int(width) - 12], "Badge count cannot move the chevron")
                 for (index, label) in labels.enumerated() {
                     let item = TaskItemPresentation(id: "item", item: DisplayItem(id: "item", title: String(repeating: "Long item name ", count: 5), status: .ready,
                         action: ""), state: .completed, resultLabels: [label])
@@ -1291,13 +1385,13 @@ private struct PreviewExpansionHost: View {
         precondition(final.contains("RestoreResultCategoryHeader(id: domain.id"))
         let header = source.components(separatedBy: "struct RestoreResultCategoryHeader:")[1].components(separatedBy: "struct RestoreFinalDomain:")[0]
         precondition(header.contains("RestoreResultColumns {"))
-        precondition(header.contains("RestoreCountBadges(counts: counts)") && !header.contains("Spacer("))
+        precondition(header.contains("RestoreTrailingControls(status:") && !header.contains("Spacer("))
         let itemSource = source.components(separatedBy: "struct RestoreResultItemRow:")[1].components(separatedBy: "struct RestoreResultStatusLabel:")[0]
         precondition(!itemSource.contains("chevron.right"))
         precondition(!itemSource.contains("Text(\"Technical Details\")") && !itemSource.contains("Button(\"Technical Details\")"))
         precondition(!final.contains("TaskTextStatusLayout") && !final.contains("ViewThatFits") && !final.contains(".offset("))
         precondition(RestoreResultColumns.titleInset(depth: 1) == 52 && RestoreResultColumns.titleInset(depth: 1, item: true) == 88)
-        print("PASS: Compact trailing groups: no reserved badge slots, shared status origins, wrapping and larger text at 420/785/985 pt")
+        print("PASS: Stable count and chevron rails, preserved status origins, wrapping and larger text at 420/785/985 pt")
     }
 
     @MainActor static func resultStatusAlignmentChecks() {
@@ -1328,12 +1422,27 @@ private struct PreviewExpansionHost: View {
                 origin(AppStoreRestoreResultRow(summary: summary, review: {}, expansion: .constant(false)), width: width)]
             precondition(positions.max()! - positions.min()! <= 3, "Category/nested/item/App Store status origins: \(positions)")
             let previewDomain = TaskDomainPresentation(id: "homebrew-casks", title: "Homebrew Applications", symbol: "app", items: [app])
-            let previewSamples = [RestoreTrailingSample(title: previewDomain.state.rawValue),
-                RestoreTrailingSample(title: summary.categoryStatus, disclosure: false)]
-            let manual = origin(AppStoreRestoreCard(summary: summary, review: {}).environment(\.restoreTrailingSamples, previewSamples), width: width)
-            let automatic = origin(TaskDomainList(domains: [previewDomain], restoreSettingsPreview: true)
-                .environment(\.restoreTrailingSamples, previewSamples), width: width)
-            precondition(abs(manual - automatic) <= 3, "Preview manual and automatic status origins: \(manual), \(automatic)")
+            // Exercise the actual shared Preview list: its environment supplies
+            // identical status/count measurements to manual and automatic rows.
+            let preview = TaskDomainList(domains: [previewDomain],
+                leadingContent: AnyView(AppStoreRestoreCard(summary: summary, review: {})), restoreSettingsPreview: true)
+                .environment(\.restoreTrailingSamples, [RestoreTrailingSample(title: summary.categoryStatus, disclosure: false)])
+            let bitmap = NSBitmapImageRep(cgImage: ImageRenderer(content: preview.frame(width: width)).cgImage!)
+            var origins: [Int] = []
+            var lastY = -100
+            for y in 0..<bitmap.pixelsHigh {
+                let first = (0..<bitmap.pixelsWide).first { x in
+                    guard let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.sRGB), color.alphaComponent > 0.9 else { return false }
+                    return color.greenComponent > 0.2 && color.greenComponent > color.redComponent * 1.3 && color.greenComponent > color.blueComponent * 1.2
+                }
+                if let first {
+                    if y - lastY > 8 { origins.append(first) }
+                    else { origins[origins.count - 1] = min(origins.last!, first) }
+                    lastY = y
+                }
+            }
+            precondition(origins.count == 2 && abs(origins[0] - origins[1]) <= 3,
+                "Real Preview manual and automatic status origins: \(origins)")
         }
         print("PASS: Real category, nested, leaf and App Store status origins align at 420/785/985 pt")
     }
@@ -1693,7 +1802,701 @@ private struct PreviewExpansionHost: View {
         print("PASS: concise workflow disclosures, scoped prerequisites, honest item counts, independent errors, privacy and two error fixture renders")
     }
 
-    @MainActor static func main() {
+    @MainActor static func workflowDescendantChecks() {
+        _ = NSApplication.shared
+        let children = CaptureMacOSSettingsGroup.domainIDs.map { id in
+            TaskDomainPresentation(id: id, title: CaptureCategory.title(for: id), symbol: WorkspaceCategoryStyle.symbol(id),
+                items: (0..<3).map { index in
+                    let key = id + ":" + String(index)
+                    return TaskItemPresentation(id: key, item: DisplayItem(id: key, title: "Preference", status: .matching, action: ""),
+                        state: .completed, resultLabels: ["Verified"], sourceDomain: id)
+                })
+        }
+        let parent = TaskDomainPresentation(id: "macos-settings", title: "macOS Settings", symbol: "slider.horizontal.3", items: children.flatMap(\.items))
+        let state = PreviewExpansionState()
+        let ids = RestoreExecutionCategories.disclosureIDs([parent])
+        let content = PreviewExpansionHost(state: state) { tree in
+            AnyView(HStack {
+                ScrollView {
+                    RestoreFinalDomain(domain: parent, expansion: WorkflowExpansion.binding(parent.id, in: tree), treeExpansion: tree)
+                }
+                ScrollView {
+                    TaskDomainList(domains: [parent], restoreSettingsPreview: true, settingsCategories: children, expansion: tree)
+                }
+            }.frame(width: 1458, height: 100))
+        }
+        let host = NSHostingView(rootView: content)
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1458, height: 100), styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
+        defer { window.close() }
+        func scrollers(_ view: NSView) -> [NSScrollView] {
+            (view as? NSScrollView).map { [$0] } ?? view.subviews.flatMap(scrollers)
+        }
+        func heights() -> [Int] {
+            RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.05))
+            host.layoutSubtreeIfNeeded(); host.displayIfNeeded()
+            return scrollers(host).map { Int($0.documentView!.frame.height) }
+        }
+        let closed = heights()
+        // Children do not exist in either rendered hierarchy yet.
+        state.ids = WorkflowExpansion.toggled(state.ids, available: ids)
+        let opened = heights()
+        state.ids = WorkflowExpansion.toggled(state.ids, available: ids)
+        precondition(heights() == closed)
+        WorkflowExpansion.binding(parent.id, in: Binding(get: { state.ids }, set: { state.ids = $0 })).wrappedValue = true
+        let parentOnly = heights()
+        for index in 0..<2 {
+            precondition(parentOnly[index] > closed[index] + 200)
+            precondition(opened[index] > parentOnly[index] + 250, "Expand All must render every macOS leaf: closed=\(closed), open=\(opened), parent=\(parentOnly)")
+        }
+        precondition(!WorkflowExpansion.allExpanded(state.ids, available: ids))
+        print("PASS: native Result/Preview hidden descendants, recursive collapse and manual parent reopen")
+    }
+
+    @MainActor static func workflowStatusScrollChecks() async throws {
+        setbuf(stdout, nil)
+        _ = NSApplication.shared; NSApp.setActivationPolicy(.accessory); NSApp.appearance = NSAppearance(named: .aqua)
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("macseed-scroll-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir.appendingPathComponent("modules/core/application-interface"), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: dir.appendingPathComponent("config"), withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        for path in ["modules/core/application-interface/core.py", "config/toolkit.conf", "bootstrap.sh", "Fixture.mbt"] { try Data().write(to: dir.appendingPathComponent(path)) }
+        try "#!/bin/bash\nexec /usr/bin/python3 -B fixture.py\n".write(to: dir.appendingPathComponent("modules/core/application-interface/core.sh"), atomically: false, encoding: .utf8)
+        try """
+        import json, sys, pathlib, time
+        request = json.loads(sys.stdin.buffer.read())
+        assert request['operation'] in ('environment_compare', 'capabilities')
+        sequence = 0
+        def emit(kind, data=None):
+            global sequence
+            sequence += 1
+            event = dict(protocol_version=1, operation_id=request['operation_id'], sequence=sequence, type=kind)
+            if data is not None: event['data'] = data
+            print(json.dumps(event), flush=True)
+        emit('started')
+        if request['operation'] == 'capabilities':
+            emit('result', dict(protocol_version=1, product_version='fixture', operations=['environment_compare'], features={'bundle_comparison': {'version': 1}}))
+        else:
+            time.sleep(.15)
+            emit('result', json.loads(pathlib.Path('response.json').read_text()))
+        emit('completed')
+        """.write(to: dir.appendingPathComponent("fixture.py"), atomically: false, encoding: .utf8)
+        var records: [[String: Any]] = []
+        var counts = ["matching": 0, "differing": 0, "missing": 0, "unverified": 0, "unsupported": 0, "unresolved": 0, "extra": 0, "unknown_difference": 0]
+        for domain in ["homebrew-casks", "homebrew-packages", "vscode-extensions", "app-store", "vscode-settings", "git-configuration"] + CaptureMacOSSettingsGroup.domainIDs + ["workspace-folders", "git-repositories"] {
+            for index in 0..<6 {
+                let kind = ["matching", "differing", "missing", "unverified"][index % 4]
+                counts[kind, default: 0] += 1
+                records.append(["record_id": "v:\(domain):\(index)", "domain": domain, "item_id": "setting-\(index)", "comparison_kind": kind, "support": "supported"])
+            }
+        }
+        var payload: [String: Any] = ["read_only": true, "publication_occurred": false, "target_mutation_may_have_started": false,
+         "comparison": ["status": "complete", "verdict": "differences_detected", "also_incomplete": true, "counts": counts], "comparison_records": records,
+         "verification": ["status": "complete"], "extra": ["domains": [], "items": []], "records": ["status": "complete", "verification_records": [], "coverage_records": [["record_id": "c:empty", "domain": "shell-zsh", "item_id": "scope", "disposition": "no_requirement", "source_status": "absent"]], "operation_records": [], "diagnostics": []]]
+        payload["reference_presentation"] = ["groups": [
+          ["id": "Applications", "domains": ["homebrew-casks", "app-store", "vscode-extensions"]],
+          ["id": "Homebrew", "domains": ["homebrew-packages"]],
+          ["id": "macOS Settings", "domains": CaptureMacOSSettingsGroup.domainIDs],
+          ["id": "VS Code Settings", "domains": ["vscode-settings"]],
+          ["id": "Git", "domains": ["git-configuration"]],
+          ["id": "Workspace", "domains": ["workspace-folders", "git-repositories"]]], "app_store_names": [:]] as [String: Any]
+        try JSONSerialization.data(withJSONObject: payload).write(to: dir.appendingPathComponent("response.json"))
+        let location = CoreLocation(root: dir, python: URL(fileURLWithPath: "/usr/bin/python3"), home: dir, temporaryBase: dir, toolDirectories: [])
+        let runtime = CoreRuntime(operationLogs: nil)
+        runtime.start(CoreRequest(.capabilities), location: location); await runtime.waitForCompletion()
+        precondition(runtime.bundleComparisonSupported == true)
+        let model = EnvironmentStatusModel(runtime: runtime, location: location)
+        model.selectBundle(dir.appendingPathComponent("Fixture.mbt"))
+        let host = NSHostingController(rootView: ProductionWorkspace(runtime: runtime, status: model))
+        host.sizingOptions = []
+        let window = NSWindow(contentViewController: host); window.isReleasedWhenClosed = false
+        MainWindowPolicy.apply(to: window); window.setContentSize(MainWindowPolicy.minimum); window.makeKeyAndOrderFront(nil)
+        defer { window.close() }
+        func settle() { RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.03)); host.view.layoutSubtreeIfNeeded(); host.view.displayIfNeeded() }
+        func descendants<T: NSView>(_ view: NSView, _: T.Type) -> [T] { (view as? T).map { [$0] } ?? view.subviews.flatMap { descendants($0, T.self) } }
+        settle()
+        let table = descendants(host.view, NSTableView.self).first!
+        table.selectRowIndexes(IndexSet(integer: ProductTask.allCases.firstIndex(of: .status)! + 2), byExtendingSelection: false)
+        settle()
+        model.compare(); await model.waitForCompletion(); settle()
+        precondition(model.state == .result, "\(String(describing: model.failure))")
+        func scrollView() -> NSScrollView {
+            let lists = descendants(host.view, NSScrollView.self).filter { $0.convert($0.bounds, to: host.view).minX > 220 }
+            precondition(lists.count == 1, "Status must own exactly one detail scroll view")
+            return lists[0]
+        }
+        func click(_ point: NSPoint) {
+            for type: NSEvent.EventType in [.leftMouseDown, .leftMouseUp] {
+                let event = NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                    windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 1)!
+                window.sendEvent(event)
+            }
+            settle()
+        }
+        func toggleAll(_ scroll: NSScrollView) {
+            // The real button is immediately above the list, at its trailing edge.
+            click(scroll.convert(NSPoint(x: scroll.bounds.width - 30, y: -20), to: nil))
+        }
+        func wheelTo(_ scroll: NSScrollView, bottom: Bool) {
+            let target = bottom ? max(0, scroll.documentView!.frame.height - scroll.contentView.bounds.height) : 0
+            let start = scroll.contentView.bounds.minY
+            var steps = 0
+            while abs(scroll.contentView.bounds.minY - target) > 1 && steps < 100 {
+                let event = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1,
+                    wheel1: bottom ? -180 : 180, wheel2: 0, wheel3: 0)!
+                // Deliver a native wheel event, never scroll(to:) or a scroll-position binding.
+                scroll.scrollWheel(with: NSEvent(cgEvent: event)!)
+                settle(); steps += 1
+            }
+            precondition(abs(scroll.contentView.bounds.minY - target) <= 1, "Wheel must reach \(target), got \(scroll.contentView.bounds.minY)")
+            precondition(abs(start - target) < 1 || steps > 0)
+        }
+        func snapshot(_ size: CGSize) {
+            let bitmap = host.view.bitmapImageRepForCachingDisplay(in: host.view.bounds)!
+            host.view.cacheDisplay(in: host.view.bounds, to: bitmap)
+            try! bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: "build/Debug/Workflow-Native-Status-\(Int(size.width)).png"))
+        }
+        for size in [MainWindowPolicy.minimum, MainWindowPolicy.preferred] {
+            window.setContentSize(size); settle()
+            if model.state == .result { model.compare(); await model.waitForCompletion(); settle() }
+            precondition(model.state == .result)
+            let scroll = scrollView()
+            let frame = scroll.convert(scroll.bounds, to: host.view)
+            precondition(frame.minY > 150 && frame.maxY < size.height - 70 && frame.height >= 95,
+                "The actual split-view viewport must fit between summary and footer: \(frame)")
+            precondition(abs(scroll.contentView.bounds.minY) < 1, "New result starts at the top")
+            let collapsed = scroll.documentView!.frame.height
+            wheelTo(scroll, bottom: true); wheelTo(scroll, bottom: false)
+            toggleAll(scroll)
+            let expanded = scroll.documentView!.frame.height
+            precondition(expanded > collapsed + 3000, "Expand All must render nested settings and every domain's items")
+            wheelTo(scroll, bottom: true)
+            precondition(abs(scroll.documentView!.frame.height - scroll.contentView.bounds.maxY) < 2, "Last row must be visible above footer")
+            wheelTo(scroll, bottom: false)
+            precondition(scroll.convert(scroll.bounds, to: host.view) == frame, "Summary and footer remain fixed while scrolling")
+            toggleAll(scroll)
+            precondition(abs(scroll.documentView!.frame.height - collapsed) < 2, "Collapse All must remove every descendant")
+            // Reopen only the first domain; other domains and macOS descendants stay closed.
+            click(scroll.convert(NSPoint(x: 200, y: 65), to: nil))
+            precondition(scroll.documentView!.frame.height > collapsed + 100 && scroll.documentView!.frame.height < collapsed + 800)
+            toggleAll(scroll); wheelTo(scroll, bottom: true)
+            let previousID = model.operationID
+            counts["matching", default: 0] += 1
+            records.append(["record_id": "v:new:\(Int(size.width))", "domain": "homebrew-casks", "item_id": "new-\(Int(size.width))", "comparison_kind": "matching", "support": "supported"])
+            payload["comparison_records"] = records
+            payload["comparison"] = ["status": "complete", "verdict": "differences_detected", "also_incomplete": true, "counts": counts]
+            try JSONSerialization.data(withJSONObject: payload).write(to: dir.appendingPathComponent("response.json"))
+            // Use the actual fixed footer's Compare Again button, with the list at the bottom.
+            click(host.view.convert(NSPoint(x: size.width - 90, y: size.height - 62), to: nil))
+            await model.waitForCompletion(); settle()
+            precondition(model.operationID != previousID && model.state == .result, "Compare Again must execute the fixture request")
+            precondition(model.presentation?.counts["matching"] == counts["matching"], "The new result must contain the changed fixture data")
+            let fresh = scrollView()
+            precondition(abs(fresh.contentView.bounds.minY) < 1 && abs(fresh.documentView!.frame.height - collapsed) < 2,
+                "Fresh Comparison resets scroll and disclosure state")
+            wheelTo(fresh, bottom: true); wheelTo(fresh, bottom: false)
+            snapshot(size)
+            print("PASS: native ProductionWorkspace Status \(Int(size.width))x\(Int(size.height)), viewport \(Int(frame.height))pt; wheel top-bottom-top, recursive buttons, last row and fresh Compare Again")
+        }
+    }
+
+
+    @MainActor static func workflowInteractiveControlsChecks() {
+        _ = NSApplication.shared
+        // With no status/count pixels, any visible pixel would be a phantom arrow.
+        for expanded: Bool? in [nil, false, true] {
+            let view = RestoreTrailingControls(status: Color.clear.frame(width: 10, height: 20), counts: [], expanded: expanded)
+                .frame(width: 200)
+            let bitmap = NSBitmapImageRep(cgImage: ImageRenderer(content: view).cgImage!)
+            let hasInk = (0..<bitmap.pixelsHigh).contains { y in
+                (0..<bitmap.pixelsWide).contains { x in (bitmap.colorAt(x: x, y: y)?.alphaComponent ?? 0) > 0.1 }
+            }
+            precondition(hasInk == (expanded != nil), "A leaf must render no disclosure indicator")
+        }
+        let runtime = CoreRuntime(operationLogs: nil)
+        let capture = CaptureModel(runtime: runtime)
+        let restore = RestoreModel(runtime: runtime)
+        func check<V: View>(_ view: V, boxes: Int) {
+            let host = NSHostingView(rootView: view.frame(width: 720))
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 720, height: 400), styleMask: [.titled], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
+            defer { window.close() }
+            RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.05)); host.layoutSubtreeIfNeeded()
+            func buttons(_ view: NSView) -> [NSButton] { (view as? NSButton).map { [$0] } ?? view.subviews.flatMap(buttons) }
+            let actual = buttons(host).filter { $0.target is NativeSelectionCheckbox.Coordinator }
+            precondition(actual.count == boxes, "Expected \(boxes) real checkboxes, got \(actual.count)")
+            precondition(actual.allSatisfy { $0.isEnabled && $0.target != nil && $0.action != nil })
+        }
+        for selectable in [true, false] {
+            let row = try! JSONDecoder().decode(CoreCaptureInventoryRow.self, from: JSONSerialization.data(withJSONObject: [
+                "domain": "macos-screenshots", "status": selectable ? "present" : "unavailable", "selection_mode": "category",
+                "items": [], "included_settings": selectable ? [["id": "location", "label": "Save location"]] : []]))
+            let category = CaptureCategory(row: row)
+            check(CaptureSettingsSubcategoryView(model: capture, category: category, expansion: .constant(true)), boxes: selectable ? 1 : 0)
+            check(CaptureSettingsSubcategoryView(model: capture, category: category, editable: false, expansion: .constant(true)), boxes: 0)
+            for mode in ["category", "items"] {
+                let area = CoreRestoreInspection.Area(domain: "macos-screenshots", label: "Screenshots", selectionMode: mode,
+                    availability: selectable ? "available" : "unavailable", reason: nil, items: [.init(itemID: "location", label: "Save location")])
+                check(RestoreAreaSelectionView(model: restore, area: area, expansion: .constant(true)), boxes: selectable ? (mode == "items" ? 2 : 1) : 0)
+                let captureRow = try! JSONDecoder().decode(CoreCaptureInventoryRow.self, from: JSONSerialization.data(withJSONObject: [
+                    "domain": "homebrew-casks", "status": selectable ? "present" : "unavailable", "selection_mode": mode,
+                    "items": [["item_id": "fixture", "label": "Fixture"]]]))
+                check(CaptureCategorySelectionView(model: capture, category: CaptureCategory(row: captureRow), expansion: .constant(true)), boxes: selectable ? (mode == "items" ? 2 : 1) : 0)
+            }
+        }
+        check(CaptureMacOSSettingsView(model: capture, expansion: .constant(true)), boxes: 0)
+        precondition(runtime.state == .idle && capture.selectedItems.isEmpty && restore.selectedItems.isEmpty)
+        print("PASS: leaf arrows absent; only supported selection creates enabled native checkboxes; category-only settings retain category selection")
+    }
+
+    @MainActor static func workflowLayoutChecks() {
+        setbuf(stdout, nil)
+        _ = NSApplication.shared
+        NSApp.setActivationPolicy(.accessory)
+        NSApp.appearance = NSAppearance(named: .aqua)
+        let runtime = CoreRuntime()
+        var selection: Set<String> = ["selected"]
+        var selectionCalls = 0
+        func item(_ domain: String, _ index: Int) -> TaskItemPresentation {
+            let id = domain + ":" + String(index)
+            let state: TaskRowState = index == 0 ? .planned : index == 1 ? .attention : .matching
+            return TaskItemPresentation(id: id, item: DisplayItem(id: id, title: "Supported preference \(index)",
+                status: state == .matching ? .matching : .attention, action: ""), state: state,
+                resultLabels: state == .attention ? ["Failed"] : ["Verified"], sourceDomain: domain)
+        }
+        let children = CaptureMacOSSettingsGroup.domainIDs.map { id in
+            TaskDomainPresentation(id: id, title: CaptureCategory.title(for: id), symbol: WorkspaceCategoryStyle.symbol(id),
+                items: (0..<6).map { item(id, $0) })
+        }
+        let domains = [TaskDomainPresentation(id: "macos-settings", title: "macOS Settings", symbol: "slider.horizontal.3", items: children.flatMap(\.items)),
+            TaskDomainPresentation(id: "vscode-extensions", title: "VS Code Extensions", symbol: "puzzlepiece", items: (0..<24).map { item("vscode-extensions", $0) })]
+        let captureDomains = domains.map { domain in
+            TaskDomainPresentation(id: domain.id, title: domain.title, symbol: domain.symbol, items: domain.items.map {
+                TaskItemPresentation(id: $0.id, item: $0.item, state: .completed, sourceDomain: $0.sourceDomain)
+            })
+        }
+        let captureChildren = captureDomains[0].resultChildren
+        let ids = TaskDomainList.disclosureIDs(domains, settings: children)
+        precondition(ids.count == 8 && Set(children.map(\.id)).isSubset(of: ids))
+        precondition(RestoreExecutionCategories.disclosureIDs(domains) == ids)
+        precondition(!WorkflowExpansion.allExpanded([], available: []) && WorkflowExpansion.toggled([], available: []).isEmpty)
+        precondition(!WorkflowExpansion.allExpanded(Set(domains.map(\.id)), available: ids), "Open parents alone must still say Expand All")
+        let expansion = PreviewExpansionState()
+        let binding = Binding(get: { expansion.ids }, set: { expansion.ids = $0 })
+        expansion.ids = WorkflowExpansion.toggled([], available: ids)
+        precondition(children.allSatisfy { WorkflowExpansion.binding($0.id, in: binding).wrappedValue }, "Children must expand before their views exist")
+        WorkflowExpansion.binding(children[0].id, in: binding).wrappedValue = false
+        precondition(!WorkflowExpansion.allExpanded(expansion.ids, available: ids))
+        expansion.ids = WorkflowExpansion.toggled(expansion.ids, available: ids)
+        precondition(WorkflowExpansion.allExpanded(expansion.ids, available: ids))
+        expansion.ids = WorkflowExpansion.toggled(expansion.ids, available: ids)
+        WorkflowExpansion.binding("macos-settings", in: binding).wrappedValue = true
+        precondition(children.allSatisfy { !WorkflowExpansion.binding($0.id, in: binding).wrappedValue })
+
+        // The presentation consumes the existing logical counters; raw records and
+        // precise leaf statuses remain separate, including unsupported attention.
+        let finderCounts: [ComparisonOutcome: Int] = [.match: 10, .different: 1, .missing: 1]
+        let macCounts: [ComparisonOutcome: Int] = [.match: 31, .different: 6, .missing: 1, .needsAttention: 2]
+        precondition(EnvironmentComparisonDomain.badgeCounts(finderCounts).map { $0.1 } == [10, 2])
+        precondition(EnvironmentComparisonDomain.badgeCounts(macCounts).map { $0.1 } == [31, 7, 2])
+        precondition(EnvironmentComparisonDomain.badgeCounts([.missing: 2]).first?.0 == "Differences Found")
+        precondition(EnvironmentComparisonDomain.badgeCounts([:]).isEmpty)
+        precondition(finderCounts[.different] == 1 && finderCounts[.missing] == 1)
+        var records: [[String: Any]] = []
+        var counts = ["matching": 0, "differing": 0, "missing": 0, "unverified": 0, "unsupported": 0, "unresolved": 0, "extra": 0, "unknown_difference": 0]
+        for domain in CaptureMacOSSettingsGroup.domainIDs {
+            for index in 0..<6 {
+                let kind = index == 0 ? "differing" : index == 1 ? "missing" : "matching"
+                counts[kind, default: 0] += 1
+                records.append(["record_id": "v:\(domain):\(index)", "domain": domain, "item_id": "setting-\(index)", "comparison_kind": kind, "support": "supported"])
+            }
+        }
+        let payload: [String: Any] = ["read_only": true, "publication_occurred": false, "target_mutation_may_have_started": false,
+            "comparison": ["status": "complete", "verdict": "differences_detected", "also_incomplete": false, "counts": counts],
+            "comparison_records": records, "verification": ["status": "complete"], "extra": ["domains": [], "items": []],
+            "records": ["status": "complete", "verification_records": [], "coverage_records": [], "operation_records": [], "diagnostics": []]]
+        let result = try! EnvironmentStatusPresentation(JSONDecoder().decode(CoreComparisonResult.self, from: JSONSerialization.data(withJSONObject: payload)))
+        let statusIDs = EnvironmentComparisonView.disclosureIDs(result)
+        precondition(statusIDs == Set(["macos-settings"] + children.map(\.id)))
+        precondition(result.categories.flatMap(\.items).filter { $0.status == .different }.count == 6)
+        precondition(result.categories.flatMap(\.items).filter { $0.status == .missing }.count == 6)
+        precondition(ComparisonSummaryOutcome.differences.explanation(result) == "6 Different · 6 Missing")
+        precondition(ComparisonSummaryOutcome.differences.count(result) == 12)
+        let selectable = TaskDomainList(domains: domains, selectionStates: ["vscode-extensions": .all], selectDomain: { id, included in
+            selectionCalls += 1
+            if included { selection.insert(id) } else { selection.remove(id) }
+        }, settingsCategories: children, expansion: binding)
+        _ = ImageRenderer(content: selectable.frame(width: 729)).cgImage
+        expansion.ids = WorkflowExpansion.toggled(expansion.ids, available: ids)
+        _ = ImageRenderer(content: selectable.frame(width: 729)).cgImage
+        precondition(selection == ["selected"] && selectionCalls == 0)
+        print("PASS: logical Status aggregation, precise leaves and recursive all/partial/collapse state")
+
+        // Real pills, one to three digits, retain their original oval dimensions.
+        for count in [1, 10, 100] {
+            let image = ImageRenderer(content: WorkflowCountPill(count: count, label: "Match", tint: .green)).cgImage!
+            precondition(image.height == 23 && image.width >= 32 && image.width > image.height)
+        }
+        for width: CGFloat in [420, 729, 929] {
+            let probe = VStack(spacing: 10) {
+                ForEach(0..<3) { row in
+                    RestoreResultColumns {
+                        Text("Category").padding(.leading, CGFloat(row) * 16)
+                        WorkflowTrailingLayout(showsCounts: true, showsChevron: true) {
+                            Color(red: 1, green: 0, blue: 0).frame(width: CGFloat(60 + row * 40), height: 8)
+                            Color(red: 0, green: 0, blue: 1).frame(width: CGFloat(32 + row * 38), height: 8)
+                            Color(red: 0, green: 1, blue: 0).frame(width: 12, height: 8)
+                            Color.clear.frame(width: 108, height: 0)
+                        }
+                        Color.clear.frame(width: 280, height: 0)
+                    }
+                }
+            }.frame(width: width)
+            let bitmap = NSBitmapImageRep(cgImage: ImageRenderer(content: probe).cgImage!)
+            var starts = [Set<Int>(), Set<Int>(), Set<Int>()]
+            for y in 0..<bitmap.pixelsHigh {
+                var found = Set<Int>()
+                for x in 0..<bitmap.pixelsWide {
+                    guard let c = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.sRGB), c.alphaComponent > 0.9 else { continue }
+                    let kind: Int? = c.redComponent > 0.8 && c.greenComponent < 0.2 ? 0
+                        : c.blueComponent > 0.8 && c.redComponent < 0.2 ? 1
+                        : c.greenComponent > 0.4 && c.redComponent < 0.2 && c.blueComponent < 0.4 ? 2 : nil
+                    if let kind, found.insert(kind).inserted { starts[kind].insert(x) }
+                }
+            }
+            precondition(starts.allSatisfy { $0.count == 1 }, "Stable status/count/arrow origins: \(starts)")
+            precondition(starts[2].first! == Int(width) - 12, "Chevron stays at the right edge")
+        }
+        print("PASS: oval 1/10/100 counts and shared count/arrow rails at narrow and normal widths")
+
+        let manualItem = TaskItemPresentation(id: "manual", item: DisplayItem(id: "manual", title: "Manual application", status: .matching, action: ""), state: .matching,
+            assistedAppStore: AssistedAppStoreItem(appID: "123", status: .installed))
+        let manual = AppStoreRestorePresentation(domains: [.init(id: "app-store", title: "App Store Applications", symbol: "app", items: [manualItem])])
+        let prerequisites = RestorePrerequisiteSummaryPresentation(conditions: [
+            .init(domain: "homebrew-packages", code: "homebrew_unavailable", status: "external_action_required", selectedItemIndex: nil, scope: "operation")], ready: false, hasInstallerPreparations: true)
+        func scrollViews(_ view: NSView) -> [NSScrollView] {
+            (view as? NSScrollView).map { [$0] } ?? view.subviews.flatMap(scrollViews)
+        }
+        func flush(_ host: NSView) {
+            RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.05))
+            host.layoutSubtreeIfNeeded(); host.displayIfNeeded()
+        }
+        for (task, name) in [(ProductTask.capture, "Capture"), (.restore, "Restore-Preview"), (.status, "Status")] {
+            for size in [MainWindowPolicy.preferred, MainWindowPolicy.minimum] {
+                var anchors: [String: CGRect] = [:]
+                expansion.ids = []
+                let content = PreviewExpansionHost(state: expansion) { binding in
+                    AnyView(HStack(spacing: 0) {
+                        Color(nsColor: .controlBackgroundColor).frame(width: 223)
+                        VStack(spacing: 0) {
+                            WorkflowContentViewport(pinned: true) {
+                                VStack(alignment: .leading, spacing: 12) {
+                                    WorkspaceHeader(title: task.rawValue, subtitle: task.subtitle, symbol: task.symbol)
+                                        .background(GeometryReader { proxy in Color.clear.preference(key: WorkflowAnchorFrames.self, value: ["header": proxy.frame(in: .named("workflow"))]) })
+                                    if task == .capture {
+                                        Text("Environment Saved").font(.title2.weight(.semibold))
+                                        WorkspaceThreeMetrics {
+                                            CaptureMetricCard(title: "Domains Saved", count: 7, symbol: "square.stack")
+                                            CaptureMetricCard(title: "Items Saved", count: 60, symbol: "checklist")
+                                        }
+                                        CaptureBundleLocationView(destination: URL(fileURLWithPath: "/Users/Example/Environments/My Mac.mbt"), showsReveal: true)
+                                        TaskDomainList(domains: captureDomains, compactReadyItems: true, title: "Captured Environment", captureResultLayout: true,
+                                            settingsCategories: captureChildren, expansion: binding)
+                                    } else if task == .restore {
+                                        Label("My Mac.mbt", systemImage: "shippingbox").font(.headline)
+                                        RestorePreviewContent(title: "Needs Attention", state: .attention, domains: domains,
+                                            alreadyMatches: false, prerequisites: prerequisites,
+                                            areas: [.init(domain: "homebrew-packages", label: "Homebrew Packages", selectionMode: "items", availability: "available", reason: nil, items: [])],
+                                            settingsCategories: children, appStore: manual, reviewAppStore: {}, showsActions: false,
+                                            retryMessage: "Review the prerequisites before rebuilding.", checkAgain: {})
+                                    } else {
+                                        Label("My Mac.mbt", systemImage: "shippingbox").font(.headline)
+                                        Text(result.headline).font(.title2.weight(.semibold))
+                                        EnvironmentComparisonView(result: result, categoryExpansion: binding)
+                                    }
+                                }.modifier(WorkspaceContentGeometry())
+                            }
+                            Divider()
+                            HStack { if task != .restore { Text("View Log") }; Spacer(); Button(task == .capture ? "Done" : task == .restore ? "Rebuild" : "Compare Again") {} }
+                                .modifier(WorkspaceFooterPadding())
+                                .background(GeometryReader { proxy in Color.clear.preference(key: WorkflowAnchorFrames.self, value: ["footer": proxy.frame(in: .named("workflow"))]) })
+                            Divider()
+                            Text("Macseed").font(.caption).padding(12).frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }.frame(width: size.width, height: size.height).background(Color(nsColor: .windowBackgroundColor))
+                        .coordinateSpace(name: "workflow").onPreferenceChange(WorkflowAnchorFrames.self) { anchors = $0 })
+                }
+                let host = NSHostingView(rootView: content)
+                let window = NSWindow(contentRect: CGRect(origin: .zero, size: size), styleMask: [.titled], backing: .buffered, defer: false)
+                window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
+                flush(host)
+                let scrollers = scrollViews(host)
+                precondition(scrollers.count == 1, "\(name) must have one list viewport, got \(scrollers.count)")
+                let scroll = scrollers[0]
+                precondition(scroll.contentView.bounds.height >= 95, "\(name) list collapsed at \(size): \(scroll.contentView.bounds)")
+                let collapsedHeight = scroll.documentView!.frame.height
+                let fixed = anchors
+                precondition(fixed.count == 2)
+                precondition(fixed["header"]!.minY >= 0 && fixed["footer"]!.maxY <= size.height - 30,
+                    "All fixed content must remain inside the window: \(name) \(size) \(fixed)")
+                if task != .restore { expansion.ids = WorkflowExpansion.toggled([], available: task == .status ? statusIDs : ids) }
+                flush(host)
+                if task != .restore { precondition(scroll.documentView!.frame.height > collapsedHeight + 200, "Hidden descendants must render after Expand All") }
+                let bottom = max(0, scroll.documentView!.frame.height - scroll.contentView.bounds.height)
+                scroll.contentView.scroll(to: CGPoint(x: 0, y: bottom)); scroll.reflectScrolledClipView(scroll.contentView); flush(host)
+                precondition(abs(scroll.contentView.bounds.minY - bottom) < 2, "Last row must be reachable")
+                precondition(anchors == fixed, "Header/footer must not scroll")
+                let expandedBeforeRefresh = expansion.ids
+                expansion.objectWillChange.send(); flush(host)
+                precondition(expansion.ids == expandedBeforeRefresh && abs(scroll.contentView.bounds.minY - bottom) < 2,
+                    "Ordinary view refresh must preserve disclosure and scroll position")
+                let viewport = scroll.convert(scroll.bounds, to: host)
+                precondition(viewport.minX >= 223 && viewport.minY >= 0 && viewport.maxY <= host.bounds.height)
+                print("WORKFLOW \(name) \(Int(size.width))x\(Int(size.height)): list=\(Int(scroll.contentView.bounds.height)), document=\(Int(scroll.documentView!.frame.height)), fixed header/footer, bottom reached")
+                // Show the top of the tree for visual review; no screenshot matrix.
+                scroll.contentView.scroll(to: .zero); scroll.reflectScrolledClipView(scroll.contentView); flush(host)
+                let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds)!
+                host.cacheDisplay(in: host.bounds, to: bitmap)
+                try! bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: "build/Debug/Workflow-\(name)-\(Int(size.width)).png"))
+                window.close()
+            }
+        }
+        precondition(selection == ["selected"] && selectionCalls == 0)
+        precondition(runtime.state == .idle && runtime.operation == nil && runtime.events.isEmpty)
+        print("PASS: bounded native Capture/Preview/Status viewports at preferred/minimum sizes, fixed chrome, selection and Core inactivity")
+    }
+
+    @MainActor static func finalCapturePreviewAlignmentChecks() async throws {
+        setbuf(stdout, nil)
+        _ = NSApplication.shared; NSApp.setActivationPolicy(.accessory); NSApp.appearance = NSAppearance(named: .aqua)
+        // Only a disposable protocol fixture supplies the selection model. No
+        // real discovery, capture, restore or system inspection is performed.
+        let root = URL(fileURLWithPath: "/private/tmp").appendingPathComponent("macseed-alignment-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: root.appendingPathComponent("modules/core/application-interface"), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: root.appendingPathComponent("config"), withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        for path in ["modules/core/application-interface/core.py", "config/toolkit.conf", "bootstrap.sh"] { try Data().write(to: root.appendingPathComponent(path)) }
+        try "#!/bin/bash\nexec /usr/bin/python3 -B fixture.py\n".write(to: root.appendingPathComponent("modules/core/application-interface/core.sh"), atomically: false, encoding: .utf8)
+        try """
+        import json, sys
+        request = json.loads(sys.stdin.buffer.read())
+        assert request['operation'] == 'capture_prepare' and request['parameters']['selection'] is None
+        rows = [dict(domain='macos-' + name, status='present', selection_mode='category', items=[],
+                     included_settings=[dict(id='preference', label='Supported preference')])
+                for name in ['finder', 'dock', 'windows', 'keyboard', 'trackpad', 'screenshots']]
+        result = dict(prepared_capture_id='a'*64, inventory=rows, selection=None,
+                      summary=dict(selected_domains=0, selected_items=0, secure_identity_count=0),
+                      secure_identities=dict(status='unavailable', items=[]))
+        for sequence, (kind, data) in enumerate([('started', {}), ('result', result), ('completed', {})], 1):
+            print(json.dumps(dict(protocol_version=1, operation_id=request['operation_id'], sequence=sequence, type=kind, data=data)), flush=True)
+        """.write(to: root.appendingPathComponent("fixture.py"), atomically: false, encoding: .utf8)
+        let runtime = CoreRuntime()
+        let model = CaptureModel(runtime: runtime, location: CoreLocation(root: root, python: URL(fileURLWithPath: "/usr/bin/python3"),
+            home: root, temporaryBase: root, toolDirectories: []))
+        model.scan(); await model.waitForCompletion()
+        precondition(model.state == .review && model.macOSSettings.state == .all)
+        let selection = model.selection
+        func item(_ id: String, _ title: String, state: TaskRowState, role: CaptureItemRole? = nil) -> TaskItemPresentation {
+            TaskItemPresentation(id: id, item: DisplayItem(id: id, title: title, status: .ready, action: ""),
+                state: state, captureRole: role)
+        }
+        func settings(_ state: TaskRowState) -> [TaskDomainPresentation] {
+            CaptureMacOSSettingsGroup.domainIDs.map { id in
+                .init(id: id, title: CaptureCategory.title(for: id), symbol: WorkspaceCategoryStyle.symbol(id),
+                      items: [item(id + ":saved", "Supported configuration", state: state, role: .selectedSubdomain)])
+            }
+        }
+        let ready = settings(.planned)
+        let confirmation = [
+            TaskDomainPresentation(id: "macos-settings", title: "macOS Settings", symbol: "slider.horizontal.3", items: ready.flatMap(\.items)),
+            TaskDomainPresentation(id: "vscode-settings", title: "VS Code Settings", symbol: "curlybraces",
+                items: [item("json", "JSON configuration", state: .planned, role: .configuration)])]
+        let saved = ["homebrew-casks", "app-store", "homebrew-packages", "vscode-extensions"].map { id in
+            TaskDomainPresentation(id: id, title: CaptureCategory.title(for: id), symbol: WorkspaceCategoryStyle.symbol(id),
+                items: (1...12).map { item(id + String($0), "Application \($0) with a longer name", state: .completed) })
+        }
+        func flush(_ host: NSView) {
+            RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.05))
+            host.layoutSubtreeIfNeeded(); host.displayIfNeeded()
+        }
+        func snapshot(_ host: NSView, _ name: String) throws {
+            let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds)!
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            try bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: "build/Debug/Alignment-" + name + ".png"))
+        }
+        for width: CGFloat in [721, 921] {
+            let content = HStack(alignment: .top, spacing: 20) {
+                VStack(alignment: .leading, spacing: 20) {
+                    Text("Capture Selection").font(.title2)
+                    CaptureMacOSSettingsView(model: model, expansion: .constant(true), childExpansion: .constant(false))
+                        .modifier(WorkspaceCardSurface())
+                }.frame(width: width)
+                VStack(alignment: .leading, spacing: 20) {
+                    Text("Save this environment?").font(.title2)
+                    TaskDomainList(domains: confirmation, stateTitles: [.planned: "Ready to Save"], compactReadyItems: true,
+                        settingsCategories: ready, expansion: .constant(["macos-settings"]), settingsExpansion: .constant(false))
+                }.frame(width: width)
+                VStack(alignment: .leading, spacing: 20) {
+                    Text("Environment Saved").font(.title2)
+                    TaskDomainList(domains: saved, compactReadyItems: true, captureResultLayout: true,
+                        expansion: .constant(Set(saved.map(\.id))))
+                }.frame(width: width)
+            }.padding(20).frame(height: 1350, alignment: .top).background(Color(nsColor: .windowBackgroundColor))
+            let host = NSHostingView(rootView: content)
+            let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: width * 3 + 80, height: 1350),
+                styleMask: [.borderless], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil); flush(host)
+            try snapshot(host, "Capture-\(Int(width))")
+            window.close()
+        }
+        precondition(model.selection == selection, "Rendering must preserve selection")
+        model.toggleAll(); precondition(model.macOSSettings.state == .none)
+        model.toggleAll(); precondition(model.selection == selection)
+        model.selectCategory("macos-finder", included: false); precondition(model.macOSSettings.state == .mixed)
+        model.selectCategory("macos-finder", included: true); precondition(model.selection == selection)
+        print("PASS: Selection, Confirmation and wrapping Result fixtures at 721/921pt; selection/bulk controls preserved")
+
+        let prerequisites = RestorePrerequisiteSummaryPresentation(conditions: [
+            .init(domain: "homebrew-casks", code: "cask_execution_requirements_unsupported", status: "unsupported",
+                selectedItemIndex: 1, scope: "item", diagnostic: .init(primitive: "pkgutil", condition: "preparation_required")),
+            .init(domain: "ssh-configuration", code: "ssh_configuration_not_ready", status: "external_action_required", selectedItemIndex: nil, scope: "operation")
+        ], ready: false, hasInstallerPreparations: true)
+        precondition(prerequisites.canFixIssues && prerequisites.manualDomains == ["ssh-configuration"])
+        let previewDomains = saved.filter { $0.id != "app-store" }.map { domain in
+            TaskDomainPresentation(id: domain.id, title: domain.title, symbol: domain.symbol, items: domain.items.enumerated().map { index, saved in
+                let state: TaskRowState = index == 0 ? .attention : index == 1 ? .matching : .planned
+                return TaskItemPresentation(id: saved.id, item: DisplayItem(id: saved.id, title: saved.item.title,
+                    status: state == .matching ? .matching : state == .planned ? .missing : .attention, action: ""), state: state)
+            })
+        }
+        func scrollViews(_ view: NSView) -> [NSScrollView] {
+            (view as? NSScrollView).map { [$0] } ?? view.subviews.flatMap(scrollViews)
+        }
+        for size in [MainWindowPolicy.minimum, MainWindowPolicy.preferred] {
+            var anchors: [String: CGRect] = [:]
+            let content = HStack(spacing: 0) {
+                Color(nsColor: .controlBackgroundColor).frame(width: 223)
+                VStack(spacing: 0) {
+                    WorkflowContentViewport(pinned: true) {
+                        VStack(alignment: .leading, spacing: 12) {
+                            WorkspaceHeader(title: "Restore", subtitle: ProductTask.restore.subtitle, symbol: ProductTask.restore.symbol)
+                            RestorePreviewContent(title: "Needs Attention", state: .attention, domains: previewDomains, alreadyMatches: false,
+                                prerequisites: prerequisites,
+                                areas: [.init(domain: "ssh-configuration", label: "SSH Configuration", selectionMode: "category",
+                                    availability: "available", reason: nil, items: [])],
+                                categoryExpansion: .constant(true), showsActions: false, checkAgain: {})
+                        }.modifier(WorkspaceContentGeometry())
+                    }
+                    Divider()
+                    HStack { Button("Back") {}; Spacer(); Button("Rebuild") {}.disabled(true) }
+                        .modifier(WorkspaceFooterPadding())
+                        .background(GeometryReader { proxy in Color.clear.preference(key: WorkflowAnchorFrames.self, value: ["footer": proxy.frame(in: .named("alignment"))]) })
+                }
+            }.frame(width: size.width, height: size.height).background(Color(nsColor: .windowBackgroundColor))
+                .coordinateSpace(name: "alignment").onPreferenceChange(WorkflowAnchorFrames.self) { anchors = $0 }
+            let host = NSHostingView(rootView: content)
+            let window = NSWindow(contentRect: CGRect(origin: .zero, size: size), styleMask: [.titled], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil); flush(host)
+            let scrollers = scrollViews(host)
+            precondition(scrollers.count == 1 && scrollers[0].contentView.bounds.height >= 96)
+            let scroll = scrollers[0], fixed = anchors
+            let bottom = max(0, scroll.documentView!.frame.height - scroll.contentView.bounds.height)
+            precondition(bottom > 0)
+            scroll.contentView.scroll(to: CGPoint(x: 0, y: bottom)); scroll.reflectScrolledClipView(scroll.contentView); flush(host)
+            precondition(abs(scroll.contentView.bounds.minY - bottom) < 2 && anchors == fixed)
+            scroll.contentView.scroll(to: .zero); scroll.reflectScrolledClipView(scroll.contentView); flush(host)
+            try snapshot(host, "Restore-\(Int(size.width))")
+            print("PASS: Preview \(Int(size.width))x\(Int(size.height)), viewport \(Int(scroll.contentView.bounds.height))pt, bottom reachable, footer fixed")
+            window.close()
+        }
+    }
+
+    @MainActor static func restorePreviewNoticesChecks() {
+        setbuf(stdout, nil)
+        _ = NSApplication.shared; NSApp.setActivationPolicy(.accessory); NSApp.appearance = NSAppearance(named: .aqua)
+        let pkg = CoreRestorePreparation.Condition(domain: "homebrew-casks", code: "cask_execution_requirements_unsupported",
+            status: "unsupported", selectedItemIndex: 1, scope: "item", diagnostic: .init(primitive: "pkgutil", condition: "preparation_required"))
+        let ssh = CoreRestorePreparation.Condition(domain: "ssh-configuration", code: "ssh_configuration_not_ready",
+            status: "external_action_required", selectedItemIndex: nil, scope: "operation")
+        let brew = CoreRestorePreparation.Condition(domain: "homebrew-packages", code: "homebrew_unavailable",
+            status: "external_action_required", selectedItemIndex: nil, scope: "operation")
+        let areas = [("ssh-configuration", "SSH Configuration"), ("homebrew-packages", "Homebrew Packages")].map {
+            CoreRestoreInspection.Area(domain: $0.0, label: $0.1, selectionMode: "category", availability: "available", reason: nil, items: [])
+        }
+        let domain = TaskDomainPresentation(id: "homebrew-casks", title: "Homebrew Applications", symbol: "app",
+            items: (1...16).map { index in
+                TaskItemPresentation(id: String(index), item: DisplayItem(id: String(index), title: "Application \(index)",
+                    status: .missing, action: ""), state: .planned)
+            })
+        let scenarios: [(String, [CoreRestorePreparation.Condition], Bool, CGSize)] = [
+            ("Ready", [], false, MainWindowPolicy.minimum),
+            ("One-Manual", [ssh], false, MainWindowPolicy.minimum),
+            ("Preparation-Only", [pkg], true, MainWindowPolicy.minimum),
+            ("Multiple", [pkg, ssh, brew], true, MainWindowPolicy.minimum),
+            ("Multiple-Wide", [pkg, ssh, brew], true, MainWindowPolicy.preferred)]
+        func scrollViews(_ view: NSView) -> [NSScrollView] {
+            (view as? NSScrollView).map { [$0] } ?? view.subviews.flatMap(scrollViews)
+        }
+        func flush(_ host: NSView) {
+            RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.05))
+            host.layoutSubtreeIfNeeded(); host.displayIfNeeded()
+        }
+        for (name, conditions, canFix, size) in scenarios {
+            let summary = RestorePrerequisiteSummaryPresentation(conditions: conditions, ready: conditions.isEmpty, hasInstallerPreparations: canFix)
+            let preview = RestorePreviewContent(title: "", state: .planned, domains: [domain], alreadyMatches: false,
+                prerequisites: summary, areas: areas, categoryExpansion: .constant(true), showsActions: false, checkAgain: {})
+            precondition(preview.showsFixIssues == canFix)
+            var anchors: [String: CGRect] = [:]
+            let content = HStack(spacing: 0) {
+                Color(nsColor: .controlBackgroundColor).frame(width: 223)
+                VStack(spacing: 0) {
+                    WorkflowContentViewport(pinned: true) {
+                        VStack(alignment: .leading, spacing: 12) {
+                            WorkspaceHeader(title: "Restore", subtitle: ProductTask.restore.subtitle, symbol: ProductTask.restore.symbol)
+                            preview
+                        }.modifier(WorkspaceContentGeometry())
+                    }
+                    Divider()
+                    HStack { Button("Back") {}; Spacer(); Button("Rebuild") {}.disabled(!conditions.isEmpty) }
+                        .modifier(WorkspaceFooterPadding())
+                        .background(GeometryReader { proxy in Color.clear.preference(key: WorkflowAnchorFrames.self,
+                            value: ["footer": proxy.frame(in: .named("notices"))]) })
+                }
+            }.frame(width: size.width, height: size.height).background(Color(nsColor: .windowBackgroundColor))
+                .coordinateSpace(name: "notices").onPreferenceChange(WorkflowAnchorFrames.self) { anchors = $0 }
+            let host = NSHostingView(rootView: content)
+            let window = NSWindow(contentRect: CGRect(origin: .zero, size: size), styleMask: [.titled], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil); flush(host)
+            let scrollers = scrollViews(host)
+            precondition(scrollers.count == 1 && scrollers[0].contentView.bounds.height >= 96)
+            let scroll = scrollers[0], fixed = anchors
+            let viewport = scroll.convert(scroll.bounds, to: host)
+            precondition(viewport.minY >= 0 && viewport.maxY <= fixed["footer"]!.minY && fixed["footer"]!.maxY <= size.height)
+            let bottom = max(0, scroll.documentView!.frame.height - scroll.contentView.bounds.height)
+            scroll.contentView.scroll(to: CGPoint(x: 0, y: bottom)); scroll.reflectScrolledClipView(scroll.contentView); flush(host)
+            precondition(abs(scroll.contentView.bounds.minY - bottom) < 2 && anchors == fixed)
+            scroll.contentView.scroll(to: .zero); scroll.reflectScrolledClipView(scroll.contentView); flush(host)
+            // Five bounded cases, without the Capture/Status render matrix.
+            let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds)!
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            try! bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: "build/Debug/Preview-Notices-\(name).png"))
+            print("PASS: \(name), \(Int(size.width))x\(Int(size.height)), Fix Issues=\(canFix), viewport=\(Int(scroll.contentView.bounds.height)), footer fixed, bottom reachable")
+            window.close()
+        }
+    }
+
+    @MainActor static func main() async {
+        if CommandLine.arguments.contains("--preview-notices-only") { restorePreviewNoticesChecks(); return }
+        if CommandLine.arguments.contains("--final-alignment-only") { try! await finalCapturePreviewAlignmentChecks(); return }
+        if CommandLine.arguments.contains("--restore-macos-only") { await restoreMacOSChecks(); return }
+        if CommandLine.arguments.contains("--workflow-scroll-only") { try! await workflowStatusScrollChecks(); return }
+        runChecks()
+    }
+
+    @MainActor static func runChecks() {
+        if CommandLine.arguments.contains("--workflow-descendants-only") { workflowDescendantChecks(); return }
+        if CommandLine.arguments.contains("--workflow-controls-only") { workflowInteractiveControlsChecks(); operationLogChecks(); resultStatusAlignmentChecks(); screenshotsIncludedSettingsChecks(); workflowDescendantChecks(); return }
+        if CommandLine.arguments.contains("--workflow-layout-only") { workflowDescendantChecks(); workflowLayoutChecks(); return }
         if CommandLine.arguments.contains("--concise-workflows-only") { conciseWorkflowChecks(); operationLogChecks(); resultCleanupChecks(); restoreResultSummaryChecks(); return }
         if CommandLine.arguments.contains("--sidebar-layout-only") { sidebarLayoutChecks(); return }
         if CommandLine.arguments.contains("--preview-expansion-only") { previewExpansionPerformanceChecks(); return }
@@ -1774,7 +2577,6 @@ private struct PreviewExpansionHost: View {
         if CommandLine.arguments.contains("--neutral-unverified-only") { neutralUnverifiedChecks(); return }
         if CommandLine.arguments.contains("--execution-visual-only") { executionVisualChecks(); return }
         if CommandLine.arguments.contains("--final-ui-only") { finalUIAlignmentChecks(); return }
-        if CommandLine.arguments.contains("--restore-macos-only") { restoreMacOSChecks(); return }
         if CommandLine.arguments.contains("--final-corrections") { finalCorrectionChecks(); return }
         if CommandLine.arguments.contains("--restore-only") { renderRestoreV2(); return }
         let finalItem = TaskItemPresentation(id: "result-item", item: DisplayItem(id: "result-item", title: "Example", status: .information, action: "Confirmed outcome"), state: .completed, resultLabels: ["Applied", "Verified"])
@@ -1902,8 +2704,7 @@ private struct PreviewExpansionHost: View {
         precondition(content.contains(".font(.system(size: prominent ? 15 : 13, weight: .semibold)).foregroundStyle(Color(nsColor: .labelColor))"))
         precondition(!statusView.contains("if let reason = item.comparisonTechnicalDetails"))
         precondition(statusView.contains("if !suppressExplanation, let explanation = item.comparisonExplanation"))
-        precondition(statusView.contains(".accessibilityLabel(\"Already Matches\")"))
-        precondition(statusView.contains("Image(systemName: \"checkmark\")"))
+        precondition(statusView.contains("MatchedLeafIndicator()"))
 
         for technical in ["Choose Blueprint…", "Generated Configuration", "blueprint.path"] {
             precondition(!statusView.contains(technical), "Status uses a Bundle, not internal reference controls")
@@ -2062,7 +2863,7 @@ private struct PreviewExpansionHost: View {
         precondition(restoreView.contains(".disclosureGroupStyle(TaskDisclosureStyle())"))
         precondition(content.contains(".frame(width: TaskRowLayout.iconWidth)") && restoreView.contains("WorkspaceCategoryIcon(symbol: symbol)"))
         precondition(restoreView.contains("ItemDetails(items: notices).padding(.leading, RestoreRowGrid.titleInset)"))
-        precondition(restoreView.contains("Secure Transfer is not available") && restoreView.contains("Restore Preview is read-only"))
+        precondition(restoreView.contains("Secure Transfer is not available") && restoreView.contains("Read-only preview — no changes are made."))
         // Views may reference the operation type for logs, but only the model
         // constructs Execute requests and starts the Core operation.
         precondition(!restoreView.contains(".restoreExecute(") && !restoreView.contains("runtime.start("))

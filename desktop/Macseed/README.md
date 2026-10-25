@@ -92,6 +92,30 @@ Operation Logs/Diagnostic Report consume persisted Runtime records, not demo
 fixtures. No log-folder shortcut, updater or telemetry is implemented.
 Normal macOS About is supplied by the application lifecycle.
 
+## Workflow presentation
+
+Capture, Restore and Status lists use a fixed information/control area, one list
+viewport and the existing action footer. `TaskComponents.swift` owns the shared
+oval count pill, count/chevron rails and stable-ID expansion helpers. Status
+category pills combine Different + Missing as Differences Found without changing
+records, leaf statuses or the summary breakdown. Expand/Collapse covers the whole
+category tree, including hidden macOS descendants, independently of selection.
+The presentation contract is in [Desktop](../../docs/DESKTOP.md#workflow-layout-and-disclosure).
+
+The bounded `PresentationTests --workflow-layout-only` selector checks aggregation,
+recursive disclosure, count geometry and native viewports at normal/minimum window
+sizes using fixtures; it never starts a Core workflow. Its six representative PNGs
+remain under ignored `build/Debug/`. User visual acceptance of the current UI
+checkpoint is complete.
+
+`PresentationTests --workflow-scroll-only` exercises the actual `ProductionWorkspace`
+with a disposable Protocol fixture: result arrival, native wheel events to the bottom
+and back, recursive disclosure buttons and Compare Again with changed data at
+1000 × 700 and 1200 × 800. Run it in a logged-in macOS GUI session; a sandbox without
+WindowServer access cannot establish wheel behavior. `--workflow-controls-only`
+checks leaf indicators, native selection controls, log visibility, status alignment
+and recursive macOS disclosure without running real Core workflows.
+
 ## Structure and validation
 
 For scoped development slices, run affected focused tests, the relevant Debug
@@ -253,7 +277,7 @@ read-only, with no publication, Apply or secure decryption.
 
 The process card shows indeterminate activity with Cancel left below it. Only Result
 actions use the fixed footer; other actions remain beside their content. Results show
-Match, Different and Missing cards, with Not Applicable shown only when nonzero,
+Match, Differences Found and Needs Attention cards, with Not Applicable shown only when nonzero,
 and collapsed category/item lists with concise explanations. Technical evidence opens
 through the existing Operation Log.
 Compare Again creates a fresh request; choosing another Bundle clears the old
@@ -430,9 +454,10 @@ extensions require audit, not assumptions about current API support.
 
 Stage 16J Logging & Diagnostics is complete. Settings →
 Operation Logs opens the shared native window; local View Log selects the matching
-completed operation in Capture Review/confirmation/Result, Restore Selection/Preview/Result
-and Environment Status, including failures. No local link opens a previous Rebuild
-from Preview; active operations remain accessible through Settings history.
+completed result or terminal failure/cancellation in Capture, Restore and Environment
+Status. Ordinary selection, confirmation and Preview hide the local link; a failed
+Prepare can expose its own matching journal. No local link opens a previous Rebuild
+from Preview; history remains accessible through Settings.
 Important shows compact deduplicated issues; All reaches every saved event through
 bounded pages beyond the 512-record visible window. Process Result, Verification
 and Log completeness remain independent; incomplete successful logs are neutral.

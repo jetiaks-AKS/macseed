@@ -68,7 +68,10 @@ implemented and checkpoint-qualified; broader completion qualification remains o
 Use one main window with three sidebar destinations: **Capture this Mac**,
 **Restore a Mac**, and **Environment Status**. An operation detail view belongs to
 the active flow. Settings → Operation Logs opens the shared native log window;
-completed scans, inspections, previews and results offer View Log for their own operation.
+results and terminal failures/cancellations offer View Log for their own operation
+when its journal exists. Ordinary Capture Review/confirmation and Restore
+Selection/Preview omit the local link. A failed Prepare retained on an intermediate
+screen may expose only its matching operation's journal; Settings history remains available.
 Use native file dialogs, accessible controls, text plus icons for status, and
 keyboard navigation. Never rely on color alone.
 
@@ -211,7 +214,8 @@ These are content states, not mandatory wizard pages.
    Confirmation shows the
    destination and **Included in this capture**, without repeated aggregate counts.
    Read-only details use wrapping neutral labels followed by independent item and
-   category warnings. View Log opens this preparation’s diagnostics. Back edits the selection.
+   category warnings. Preparation diagnostics remain in Settings → Operation Logs.
+   Back edits the selection.
    Category-only domains retain whole-category scope. macOS Settings shows labels
    for selected Finder, Dock, Windows, Keyboard, Trackpad and Screenshots domains.
    VS Code Settings describes JSON configuration containing `settings.json` only;
@@ -294,6 +298,43 @@ these manual scenarios are not a full automated regression.
 Secure SSH remains part of Capture, not a top-level Credentials area or general
 password vault. Selecting none still allows an ordinary Bundle. Passphrase input
 uses a focused native secure sheet when required.
+
+## Workflow layout and disclosure
+
+User visual acceptance of Capture, Restore and Environment Status was completed
+on 25 October 2026. This UI checkpoint is closed. After successful repository CI,
+the next checkpoint is Desktop CI in the existing
+[Roadmap execution order](../ROADMAP.md#current-practical-execution-order).
+
+Capture Review, Confirmation and Result; Restore Selection, Preview, Rebuild and
+Result; and Environment Status results keep three regions: fixed information and
+list controls, one scrolling category tree, and the existing fixed action footer.
+Manual Installation and Automatic Restore Tasks share Preview's list viewport.
+Preview keeps a brief prerequisite status, the available Fix Issues action and its
+approval guidance above the list. The list contains the single Prerequisites heading
+and specific issues when present. A compact read-only notice sits beside the
+Restore Preview heading; Selection has no duplicate read-only notice.
+Headers and progress remain live while the list scrolls. Screens without a list
+retain their ordinary content layout. The supported minimum window stays 1000 × 700.
+
+Existing count pills share Restore's oval shape (minimum 32 × 23 pt, 6 pt horizontal
+insets and monospaced caption digits). Each tree reserves a common count rail and
+an independent rightmost disclosure position. Category status text, icons, colors and
+horizontal anchors remain unchanged; counts wrap below if space is limited.
+Manual Installation uses the same Preview status column as Automatic Restore Tasks.
+Matching Preview and Status leaves share a plain green checkmark with the accessible
+name Already Matches; category statuses retain their text. Capture Result labels
+wrap before the status column, and nested Capture selection/confirmation statuses
+align with their parent status.
+Leaf rows have no disclosure indicator without an expansion action. Selection
+checkboxes appear only for supported selection; verified status checks remain distinct.
+Capture's textual item summaries remain text, and zero counts remain hidden.
+
+Expand All / Collapse All operates on stable IDs for the whole available tree,
+including Finder, Dock, Windows, Keyboard, Trackpad and Screenshots before their
+views are created. A partially open tree offers Expand All. Collapse All clears
+child disclosure state too. Selection, prerequisites, dialogs and Core operations
+are independent of these local presentation actions.
 
 ## Restore a Mac
 
@@ -449,13 +490,13 @@ precedence. This preserves the selected IDs when returning to Selection or refre
 Preview places one
 compact App Store card under **Manual Installation** directly below **Tasks**,
 followed by **Automatic Restore Tasks** and automatic categories;
-**Expand All / Collapse All** is aligned with that subsection heading and changes
-only local disclosure state. Each Preview width reference contains only distinct
+**Expand All / Collapse All** stays in the fixed Tasks control row above both
+sections and changes only local disclosure state. Each Preview width reference contains only distinct
 status/disclosure combinations, rather than repeating the entire item inventory
 in every row.
 Automatic Restore metrics and relevant prerequisites stay above Tasks. Preview
-category headers show only status and disclosure on the right; verbose count
-summaries remain in the underlying model and are represented by metrics and items.
+category headers show concise status, nonzero count pills and disclosure on the
+right; verbose prose summaries remain in the underlying model.
 Category and leaf rows share the parent-provided status geometry; indentation is
 confined to titles, including nested settings. Zero-valued
 metrics are hidden, and manual requirements never inflate automatic counts.
@@ -488,9 +529,9 @@ completeness contracts. **Details by Category** retains automatic categories
 and adds App Store Applications once, as the last row in the same Applications &
 Tools surface. Its disclosure shows a short manual summary and Review App Store Apps,
 never the inventory. Manual requirements remain outside automatic execution counts.
-Shared status/badge/chevron groups measure their content, with no empty badge slots;
-category and leaf statuses share a measured lane, and narrow rows stack without
-changing title indentation. Expand All / Collapse All remains available and Result
+Status groups retain their existing measured lane. Counts start on a shared rail
+and chevrons stay at the right edge, including nested rows; narrow rows wrap
+counts without changing status anchors or title indentation. Expand All / Collapse All remains available and Result
 categories start collapsed. Short item explanations retain independent problems;
 technical diagnostics open through View Log. Bottom actions retain the fixed footer.
 
@@ -606,8 +647,8 @@ Diagnostics correlate to comparison items by their record owner and domain/item 
 matching evidence and independent warnings remain within one row. Matching items
 show a compact accessible checkmark without generic subtitles; problem items retain
 short reasons, with technical evidence in Operation Logs. macOS child domains use
-independent collapsed disclosures inside macOS Settings; Expand All controls only
-main categories. Setting names reuse Capture labels.
+independent collapsed disclosures inside macOS Settings; Expand All includes
+all participating child domains. Setting names reuse Capture labels.
 Category rows retain nonzero logical-item count pills. Already Matches indicates
 confirmed conformity; independent verification or coverage problems show Needs
 Attention. Confirmed differences alone produce Differences Found overall.
@@ -655,14 +696,16 @@ once, and excludes confirmed differences and dependent checks blocked by a prove
 absent repository. Uncountable independent diagnostics show the card without a
 number, with the explanation **Unsupported or incomplete checks**. One Status palette
 colors Different, Missing and Differences Found red across summary, category/leaf
-statuses and count pills. Separate Different/Missing badges, labels and leaf icons remain;
-matching stays green and attention/unsupported/unverified states stay amber.
+statuses and count pills. Category/subcategory pills combine Different + Missing once as **Differences Found**,
+using their existing logical counts. Separate source counts, precise leaf labels
+and icons remain; matching stays green and attention/unsupported/unverified states
+stay amber. Attention and Unsupported never enter the red total.
 Technical Core totals remain intact.
 
 Categories/subcategories use **Differences Found** for any confirmed Different or
 Missing, with **Needs Attention** taking priority for independent verification gaps
 or warnings. Leaf statuses retain their precise Missing/Different classification;
-category badges keep their counts separate. A Missing macOS `stored_preference`
+category badges combine only their Different and Missing counts. A Missing macOS `stored_preference`
 explains that the saved preference is not explicitly set, without claiming the
 feature is absent or inferring an effective system default.
 
@@ -838,7 +881,8 @@ Restore Result's **Details by Category** uses one result-only row layout with
 reserved **Status | Count | Chevron** columns across categories, nested settings
 and individual items. Missing counts or chevrons retain their cells; left title
 indentation still indicates hierarchy. Text wraps within its column as width or
-text size changes. Status classification and Preview/Capture layouts are unchanged.
+text size changes. Status classification is unchanged; Preview and Capture use the shared workflow
+layout described above while retaining their own status and summary semantics.
 
 ## Recent Restore qualification and performance
 
@@ -1365,11 +1409,12 @@ solve the separate packaged Core writable-workspace requirement.
 ### Viewer and history
 
 **Settings → Operation Logs** opens one shared native window with compact Previous
-Operations history. Local **View Log** opens Capture Prepare in Review/confirmation,
-Capture Execute in Result, Bundle inspection in Restore Selection, Restore Prepare
-in Preview, Restore Execute in Result, and Environment Compare in Status. Failed and
-cancelled screens retain their own operation reference. It is absent during active
-work; an unavailable log is labelled honestly. A local entry initially selects its
+Operations history. Local **View Log** opens Capture Execute and Restore Execute in
+their Result screens, and Environment Compare in Status results. Failed and cancelled
+screens retain their own operation reference. A failed Prepare on an intermediate
+screen can expose its matching journal. Ordinary Review, Selection, confirmation
+and Preview omit local log links and unavailable-log placeholders, as does active
+work. A local entry initially selects its
 corresponding operation, including when another flow ran more recently. Selection switches summary, timeline,
 reader cursor and disclosure state together; obsolete asynchronous reads cannot
 repopulate a different operation.

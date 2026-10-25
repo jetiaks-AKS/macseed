@@ -11,6 +11,16 @@ The format is based on the principles of **Keep a Changelog**.
 
 ### Added
 
+* Fixed information and action areas around the scrolling Capture, Restore and
+  Environment Status category lists. Unified oval count pills and rightmost
+  disclosure arrows retain existing status anchors. Status category pills combine
+  Different and Missing; Expand/Collapse now includes every macOS subcategory.
+  Leaf rows omit inactive selection/disclosure controls; ordinary selection and
+  Preview screens keep operation history in Settings. Manual Installation aligns
+  with the Automatic Restore status column. Matching leaves use a compact accessible
+  checkmark; Capture labels wrap before the status column. Visual acceptance of
+  Capture, Restore and Environment Status is complete.
+
 * Bounded application Git clone with owned transport termination, durable unknown
   re-entry protection and retained partial-destination fences. Confirmed local
   clone failure can continue independent repositories without hiding the failure.
@@ -26,7 +36,7 @@ The format is based on the principles of **Keep a Changelog**.
   work visible without repeated attention sections. Preview statuses align across
   expanded categories and items; the dedicated App Store list is visible immediately.
   Preview expansion avoids repeated hidden status measurements, with Expand All
-  beside Automatic Restore Tasks.
+  in the fixed Tasks control row.
 
 * Automatically retain Homebrew Cask for confirmed duplicate Cask/App Store
   requirements during Capture and Restore. Effective selection, manual App Store

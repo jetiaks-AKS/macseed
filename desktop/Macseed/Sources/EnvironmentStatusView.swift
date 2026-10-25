@@ -10,8 +10,9 @@ struct EnvironmentStatusView: View {
     var showsActions = true
     private var busy: Bool { runtime.isActive || model.state == .running }
 
+    @Environment(\.workflowListViewport) private var pinnedList
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: pinnedList ? 12 : 20) {
             switch model.state {
             case .choose:
                 WorkspacePrimaryActionCard(title: "Choose Saved Environment", symbol: ProductTask.status.symbol, tint: WorkspaceIdentity.tint(.status),
@@ -120,7 +121,15 @@ struct EnvironmentComparisonView: View {
     var technicalExpansion: Binding<Bool>? = nil
     @ReferenceViewState<Set<String>> private var expandedCategories = []
     private var expandedIDs: Set<String> { categoryExpansion?.wrappedValue ?? expandedCategories }
-    private var categoryIDs: Set<String> { Set(Self.visibleSections(result).flatMap(\.entries).map(\.id)) }
+    static func disclosureIDs(_ result: EnvironmentStatusPresentation) -> Set<String> {
+        Set(visibleSections(result).flatMap(\.entries).flatMap { [$0.id] + $0.children.map(\.id) })
+    }
+    private var categoryIDs: Set<String> { Self.disclosureIDs(result) }
+    private var treeExpansion: Binding<Set<String>> {
+        Binding(get: { expandedIDs }, set: { ids in
+            if let categoryExpansion { categoryExpansion.wrappedValue = ids } else { expandedCategories = ids }
+        })
+    }
     private var categoryCounts: [String: [ComparisonOutcome: Int]] {
         Dictionary(uniqueKeysWithValues: result.categories.map { category in
             (category.id, Dictionary(uniqueKeysWithValues: ComparisonOutcome.allCases.map {
@@ -144,13 +153,14 @@ struct EnvironmentComparisonView: View {
         }
     }
     static func toggledCategories(_ expanded: Set<String>, ids: Set<String>) -> Set<String> {
-        ids.isSubset(of: expanded) ? [] : ids
+        WorkflowExpansion.toggled(expanded, available: ids)
     }
     static func summaryOutcomes(_ result: EnvironmentStatusPresentation) -> [ComparisonSummaryOutcome] {
         ComparisonSummaryOutcome.allCases.filter { $0 == .needsAttention ? result.needsAttention : ($0.count(result) ?? 0) > 0 }
     }
+    @Environment(\.workflowListViewport) private var pinnedList
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: pinnedList ? 12 : 20) {
             EnvironmentComparisonMetricsLayout {
                 ForEach(Self.summaryOutcomes(result)) { outcome in
                     ComparisonMetricCard(outcome: outcome, count: outcome.count(result), explanation: outcome.explanation(result))
@@ -169,23 +179,30 @@ struct EnvironmentComparisonView: View {
                     }.buttonStyle(.plain).foregroundStyle(.secondary)
                 }
             }
-            ForEach(Self.visibleSections(result)) { section in
-                WorkspaceSectionHeader(title: section.id)
-                VStack(spacing: 0) {
-                    ForEach(section.entries) { entry in
-                        EnvironmentComparisonDomain(category: entry.category, children: entry.children, technicalFacts: result.technicalFacts, counts: Dictionary(uniqueKeysWithValues: ComparisonOutcome.allCases.map { ($0, result.categoryCount($0, category: entry.category, children: entry.children)) }), expansion: Binding(
-                            get: { expandedIDs.contains(entry.id) },
-                            set: { value in
-                                var ids = expandedIDs
-                                if value { ids.insert(entry.id) } else { ids.remove(entry.id) }
-                                if let categoryExpansion { categoryExpansion.wrappedValue = ids } else { expandedCategories = ids }
-                            }), childExpansion: settingsExpansion, categoryCounts: categoryCounts, technicalExpansion: technicalExpansion)
-                        if entry.id != section.entries.last?.id { Divider() }
-                    }
-                }.modifier(WorkspaceCardSurface())
+            WorkflowList {
+                ForEach(Self.visibleSections(result)) { section in
+                    WorkspaceSectionHeader(title: section.id)
+                    VStack(spacing: 0) {
+                        ForEach(section.entries) { entry in
+                            EnvironmentComparisonDomain(category: entry.category, children: entry.children, technicalFacts: result.technicalFacts, counts: Dictionary(uniqueKeysWithValues: ComparisonOutcome.allCases.map { ($0, result.categoryCount($0, category: entry.category, children: entry.children)) }), expansion: Binding(
+                                get: { expandedIDs.contains(entry.id) },
+                                set: { value in
+                                    var ids = expandedIDs
+                                    if value { ids.insert(entry.id) } else { ids.remove(entry.id) }
+                                    if let categoryExpansion { categoryExpansion.wrappedValue = ids } else { expandedCategories = ids }
+                                }), childExpansion: settingsExpansion, treeExpansion: treeExpansion,
+                                categoryCounts: categoryCounts, technicalExpansion: technicalExpansion)
+                            if entry.id != section.entries.last?.id { Divider() }
+                        }
+                    }.modifier(WorkspaceCardSurface())
+                }
+                Text("Nothing will be removed or changed.").font(.callout).foregroundStyle(.secondary)
             }
-            Text("Nothing will be removed or changed.").font(.callout).foregroundStyle(.secondary)
         }
+        .environment(\.comparisonCountSamples, Self.visibleSections(result).flatMap(\.entries).flatMap { entry in
+            [Dictionary(uniqueKeysWithValues: ComparisonOutcome.allCases.map { ($0, result.categoryCount($0, category: entry.category, children: entry.children)) })]
+                + entry.children.map { categoryCounts[$0.id] ?? [:] }
+        })
     }
 }
 
@@ -234,6 +251,7 @@ struct EnvironmentComparisonDomain: View {
     var counts: [ComparisonOutcome: Int]? = nil
     var expansion: Binding<Bool>? = nil
     var childExpansion: Binding<Bool>? = nil
+    var treeExpansion: Binding<Set<String>>? = nil
     var categoryCounts: [String: [ComparisonOutcome: Int]] = [:]
     var technicalExpansion: Binding<Bool>? = nil
     var depth = 0
@@ -245,7 +263,9 @@ struct EnvironmentComparisonDomain: View {
                 if !children.isEmpty {
                     ForEach(children) { child in
                         EnvironmentComparisonDomain(category: child, technicalFacts: technicalFacts,
-                            counts: categoryCounts[child.id], expansion: childExpansion, categoryCounts: categoryCounts,
+                            counts: categoryCounts[child.id],
+                            expansion: childExpansion ?? treeExpansion.map { WorkflowExpansion.binding(child.id, in: $0) },
+                            treeExpansion: treeExpansion, categoryCounts: categoryCounts,
                             technicalExpansion: technicalExpansion, depth: depth + 1)
                     }
                 } else {
@@ -289,37 +309,48 @@ struct EnvironmentComparisonDomain: View {
     static func visibleOutcomes(_ counts: [ComparisonOutcome: Int]) -> [ComparisonOutcome] {
         ComparisonOutcome.allCases.filter { counts[$0, default: 0] > 0 }
     }
+    static func badgeCounts(_ counts: [ComparisonOutcome: Int]) -> [(String, Int, Color)] {
+        [("Match", counts[.match, default: 0], ComparisonOutcome.match.tint),
+         ("Differences Found", counts[.different, default: 0] + counts[.missing, default: 0], ComparisonOutcome.different.tint),
+         ("Not Applicable", counts[.notApplicable, default: 0], ComparisonOutcome.notApplicable.tint),
+         ("Needs Attention", counts[.needsAttention, default: 0], ComparisonOutcome.needsAttention.tint)]
+            .filter { $0.1 > 0 }
+    }
     static func summaryStatus(_ category: DisplayCategory) -> DisplayStatus {
         return EnvironmentComparisonView.visibleCategory(category).comparisonStatus
     }
     private var status: DisplayStatus { Self.summaryStatus(category) }
+    @Environment(\.comparisonCountSamples) private var countSamples
     @ViewBuilder private var domainStatus: some View {
         if let counts {
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: 6) {
-                    statusLabel.frame(width: 152, alignment: .leading)
-                    badges(counts)
-                }.fixedSize()
-                VStack(alignment: .leading, spacing: 4) {
-                    statusLabel
-                    badges(counts)
-                }
+            WorkflowTrailingLayout(showsCounts: !Self.badgeCounts(counts).isEmpty, showsChevron: false, statusWidth: 152) {
+                statusLabel
+                badges(counts)
+                Color.clear.frame(width: 0, height: 0)
+                WorkflowCountRailReference(groups: ([counts] + countSamples).map { Self.badgeCounts($0).map(\.1) })
             }
         } else { statusLabel }
     }
     private func badges(_ counts: [ComparisonOutcome: Int]) -> some View {
-        HStack(spacing: 4) {
-            ForEach(Self.visibleOutcomes(counts)) { outcome in
-                Text(String(counts[outcome, default: 0])).font(.caption2.weight(.semibold)).monospacedDigit()
-                    .padding(.horizontal, 6).frame(minWidth: 24, minHeight: 23)
-                    .foregroundStyle(outcome.tint).background(outcome.tint.opacity(0.12), in: Capsule())
-                    .help(outcome.title).accessibilityLabel(outcome.title).accessibilityValue(String(counts[outcome, default: 0]))
+        HStack(spacing: 6) {
+            ForEach(Self.badgeCounts(counts), id: \.0) { label, count, tint in
+                WorkflowCountPill(count: count, label: label, tint: tint)
             }
         }
     }
     private var statusLabel: some View {
         EnvironmentComparisonStatusLabel(status: status,
             title: EnvironmentComparisonView.visibleCategory(category).comparisonStatusText)
+    }
+}
+
+private struct ComparisonCountSamplesKey: EnvironmentKey {
+    static let defaultValue: [[ComparisonOutcome: Int]] = []
+}
+extension EnvironmentValues {
+    var comparisonCountSamples: [[ComparisonOutcome: Int]] {
+        get { self[ComparisonCountSamplesKey.self] }
+        set { self[ComparisonCountSamplesKey.self] = newValue }
     }
 }
 
@@ -339,8 +370,7 @@ struct EnvironmentComparisonItem: View {
                     }
                 }.frame(maxWidth: .infinity, alignment: .leading).fixedSize(horizontal: false, vertical: true)
                 if item.isNormalComparisonMatch {
-                    Image(systemName: "checkmark").foregroundStyle(EnvironmentComparisonPalette.color(for: .matching))
-                        .accessibilityLabel("Already Matches")
+                    MatchedLeafIndicator()
                 } else { EnvironmentComparisonStatusLabel(status: item.status) }
             }.padding(.trailing, 26)
         }.padding(.vertical, 7).frame(minHeight: 28)
