@@ -83,7 +83,6 @@ jobs:
     timeout-minutes: 45
     env:
       PYTHONDONTWRITEBYTECODE: '1'
-      MACSEED_DESKTOP_SUMMARY: ${{ runner.temp }}/macseed-desktop-summary.md
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -136,6 +135,8 @@ jobs:
 
       - name: Desktop Debug build and tests
         id: build
+        env:
+          MACSEED_DESKTOP_SUMMARY: ${{ runner.temp }}/macseed-desktop-summary.md
         shell: bash
         run: ./desktop/Macseed/build.sh Debug --test
 
@@ -144,6 +145,7 @@ jobs:
       - name: Desktop summary
         if: ${{ always() }}
         env:
+          MACSEED_DESKTOP_SUMMARY: ${{ runner.temp }}/macseed-desktop-summary.md
           ENVIRONMENT_RESULT: ${{ steps.environment.outcome }}
           BUILD_RESULT: ${{ steps.build.outcome }}
         shell: bash
