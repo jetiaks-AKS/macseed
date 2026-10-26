@@ -645,7 +645,7 @@ for `.git` directories. It currently ignores `.git` files, so linked worktrees
 are absent from Capture inventory. Capture Prepare rescans into private staging;
 refreshing a saved Discovery snapshot does not remove this limitation.
 
-Bundle repository records do not encode a common Git directory or relationships
+Legacy Bundle repository records do not encode a common Git directory or relationships
 between worktrees. Restore can inspect an existing linked worktree, but ordinary
 planning still handles individual records: an absent path plans a clone, and branch
 mismatch can plan checkout without detecting occupancy in another worktree. This
@@ -653,10 +653,99 @@ does not provide topology restoration or justify treating an absent linked workt
 independent clone. The bounded refusal-continuation gate above rejects linked or
 shared topology. Adding `.git` file detection alone is not a complete solution.
 
-Topology-aware Discovery, Capture and Restore require the separate
+Topology-aware Discovery, Capture and Restore remain unimplemented. The
 [Workspace/Git checkpoint](../../ROADMAP.md#complete-workspace--git-worktree-restoration)
-and its architecture/data-contract review. No independent-clone fallback has been
-selected; current Protocol V1 and Bundle v1 contracts remain unchanged.
+has the schema-only Phase 1 contract below. Independent-clone fallback is forbidden;
+the current Protocol V1 runtime and Desktop UI do not advertise this capability.
+
+### Workspace topology schema — Phase 1
+
+**Implemented: private metadata validation and Bundle v1 extension handling only.**
+The existing Bundle helper can pack and validate schema fixtures. Runtime Bundle
+inspection/unpack, narrowing and local publication reject the extension as
+unsupported before publication; the Workspace grouped publisher also rejects it.
+Discovery/Capture do not produce this format yet. No clone, fetch, branch creation,
+checkout, worktree mutation or workspace-file creation is enabled by this phase.
+
+`workspace/repositories.conf` retains the existing required fields and sectional
+Config Engine. New records additionally require `TOPOLOGY_VERSION="1"` in every
+section. Section IDs are `checkout-<sha256>`: SHA-256 of UTF-8
+`checkout + NUL + NFC(HOME-relative path)`, without `~/` in the hashed path.
+`NAME` is a display label; duplicate basenames are valid. IDs survive source/target
+HOME changes and inventory reordering; moving a checkout changes its ID.
+The legacy validator/consumer remains strict and rejects the new marker.
+
+`workspace/topology.json` is a strict JSON object with these required fields:
+
+| Field | Contract |
+| --- | --- |
+| `contract` | Integer `1` |
+| `roots` | Nonempty list of HOME-relative discovery roots: existing Workspace roots plus explicit roots; at most 64 |
+| `groups` | Nonempty list of repository groups |
+| Group `id` | `repository-<sha256>` using the same identity rule with kind `repository` and the base path |
+| Group `base_item_id` | Existing checkout section ID, also present in this group's members |
+| Group `object_format` | `sha1` or `sha256` |
+| Group `members` | Nonempty list of `{item_id, head_kind, head_oid}` |
+| Member `head_kind` | `branch` or `detached` |
+| Member `head_oid` | Nonzero lowercase hex OID, 40 or 64 characters according to `object_format` |
+
+Every repository section belongs to exactly one group. All members have the same
+recorded origin; equal origins alone never merge independent groups. `PATH`,
+`REMOTE` and `CURRENT_BRANCH` remain authoritative in the sectional file. Named
+HEAD requires a valid nonempty branch; its source OID is diagnostic, not a promise
+of identical history. Detached HEAD requires an empty `CURRENT_BRANCH` and exact
+OID. Only the new schema validator admits that combination; it cannot enter the
+old consumer through a placeholder branch or a flat-record fallback.
+
+All checkout paths must lie under a declared HOME-relative root. Bundle paths use
+`~/...`; packing converts sectional source-HOME absolute paths through the existing
+portability path. External destinations, traversal, controls, `.git` components,
+duplicate destinations and case/Unicode aliases are rejected. Nested checkouts
+add parent dependencies; cycles between nesting and base dependencies are invalid.
+Optional target inspection rejects symlink/filesystem aliases and access/type
+errors without creating paths. Physical identities are transient validation data.
+
+Each selected linked member requires its explicitly selected base; selected nested
+checkouts/folders also require their parent checkout. Selection never adds a base
+or other hidden dependency. Validate the full inventory before reducing it to the
+selected Bundle projection; records and topology members must then match exactly.
+Unknown fields, duplicate JSON keys and mixed legacy/topology records are invalid.
+Absolute common-dir paths, Git objects, filesystem identities, credentials and
+project contents have no schema fields. HTTP(S) userinfo/passwords/query/fragment
+are rejected; local/file origins are not portable topology inputs in Phase 1.
+
+The optional Blueprint item section `[vscode-workspaces]` is reserved for a
+separately selected capability; an absent or empty section means no selection.
+Packing and unpacking omit an empty section to preserve legacy Blueprint syntax.
+`workspace/vscode-workspaces.json` contains `{contract: 1, items: [...]}`. Each item
+has `item_id`, portable `path` ending in `.code-workspace`, and ordered `folders`.
+Its ID uses kind `workspace` and the descriptor's HOME-relative path. Each folder
+has `domain` (`git-repositories` or `workspace-folders`), `item_id`, `subpath` (empty
+for the root, otherwise safe relative components), and optional `name` (160 UTF-8
+bytes maximum). References must resolve; selected descriptors require explicitly
+selected dependencies. Arbitrary settings, tasks, launch data and file bytes are
+not accepted. JSONC extraction and descriptor restoration remain future work.
+
+Bundle format/version stay `mac-bootstrap-bundle` / `1`. The new allowlisted
+members require manifest `required_features` entries `workspace-topology: 1`
+and/or `vscode-workspaces: 1`, exactly matching the payload. Existing size/checksum
+validation applies; each metadata/sectional topology input is limited to 1 MiB,
+lists to 2,048 entries, while the archive retains its 48 MiB / 32-member limits.
+Missing sidecars/markers, unsupported versions or capabilities fail closed.
+Old Core rejects the new archive members through its existing strict allowlist.
+Old `.mbt` and Blueprints retain their IDs and flat-record semantics; no topology
+is inferred or automatically migrated. Future migration of a saved Selection must
+use an unambiguous observed path mapping, never basename matching alone.
+
+Static branch metadata validation does not invoke or require Git. Future Git
+operations must additionally pass native `check-ref-format --branch` and readiness
+checks. Git version alone is not a worktree parser capability. The read-only Phase 1 probe
+checks `git --version` before/after `git worktree list -h`, requiring both
+`--porcelain` and `-z` in the advertised options. Git 2.24.x lacks `-z`; unsupported
+options, missing Git or changing version evidence never fall back to line parsing.
+Even a successful option probe returns `worktree_parser_unqualified`: no native
+worktree output parser is qualified in Phase 1. Phase 2 must qualify that parser,
+bounded observations and grouped publication before enabling Discovery/Capture.
 
 ## VS Code settings lifecycle
 

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Fixed Bootstrap Bundle v1 format and local publication. No code is loaded from a bundle."""
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -24,6 +25,13 @@ ITEMS = {
     "git-repositories": "workspace/repositories.conf",
     "git-configuration": "git.conf",
 }
+# Schema-only domains are intentionally absent from runtime/UI inventories.
+EXTENSION_ITEMS = {"vscode-workspaces": "workspace/vscode-workspaces.json"}
+WORKSPACE_EXTENSIONS = {
+    "generated/workspace/topology.json": "workspace-topology",
+    "generated/workspace/vscode-workspaces.json": "vscode-workspaces",
+}
+_workspace_contract = None
 CATEGORIES = {
     "ssh-configuration": "ssh/config.snapshot",
     "vscode-settings": "vscode/settings.json",
@@ -64,6 +72,60 @@ class Unsupported(Invalid):
     pass
 
 
+def workspace_contract():
+    global _workspace_contract
+    if _workspace_contract is None:
+        spec = importlib.util.spec_from_file_location(
+            'workspace_topology', ROOT / 'modules/bootstrap/workspace/topology.py')
+        _workspace_contract = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(_workspace_contract)
+    return _workspace_contract
+
+
+def workspace_extension_present(files):
+    return (any(name in files for name in WORKSPACE_EXTENSIONS) or
+            re.search(rb'^TOPOLOGY_VERSION=', files.get('generated/workspace/repositories.conf', b''), re.M) is not None)
+
+
+def validate_workspace(files, *, home=None, exact=False, inspect_home=False):
+    sections, _ = parse_blueprint(files['blueprint.conf'])
+    if not workspace_extension_present(files) and not sections.get('vscode-workspaces'):
+        return {}
+    contract = workspace_contract()
+    try:
+        return contract.validate(files, sections, home=home, exact=exact, inspect_home=inspect_home)
+    except contract.Unsupported as exc:
+        raise Unsupported(str(exc)) from exc
+    except (contract.Invalid, OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError) as exc:
+        raise Invalid('invalid Workspace topology: ' + str(exc) if isinstance(exc, contract.Invalid)
+                      else 'Workspace topology validation failed') from exc
+
+
+def require_runtime_workspace(files):
+    # No narrowing, fallback, publication or UI interpretation of Phase 1 data.
+    blueprint = files.get('blueprint.conf', b'')
+    selected = (parse_blueprint(blueprint)[0].get('vscode-workspaces', [])
+                if b'[vscode-workspaces]' in blueprint else [])
+    if workspace_extension_present(files) or selected:
+        raise Unsupported('Workspace topology runtime is not enabled')
+
+
+def workspace_stage_files(stage):
+    names = (*WORKSPACE_EXTENSIONS, 'generated/workspace/repositories.conf', 'blueprint.conf')
+    return {name: checked_file(stage / name) for name in names
+            if (stage / name).exists() or (stage / name).is_symlink()}
+
+
+def staged_payload(stage, blueprint):
+    files = {path: checked_file(stage / path) for path in required_paths(blueprint)}
+    files['blueprint.conf'] = blueprint
+    sections, _ = parse_blueprint(blueprint)
+    topology = 'generated/workspace/topology.json'
+    if sections['git-repositories'] and ((stage / topology).exists() or (stage / topology).is_symlink()):
+        files[topology] = checked_file(stage / topology)
+    return files
+
+
 def checked_file(path, limit=MAX_MEMBER):
     if path.is_symlink() or not path.is_file() or path.stat().st_size > limit:
         raise Invalid("unsafe or oversized input file")
@@ -86,14 +148,14 @@ def parse_blueprint(data):
             continue
         if line.startswith("[") and line.endswith("]"):
             current = line[1:-1]
-            if current in sections or current not in ("categories", *ITEMS):
+            if current in sections or current not in ("categories", *ITEMS, *EXTENSION_ITEMS):
                 raise Invalid("invalid Blueprint section")
             sections[current] = []
         elif current is None:
             raise Invalid("Blueprint data outside section")
         else:
             sections[current].append(line)
-    if set(sections) != {"categories", *ITEMS}:
+    if set(sections) - set(EXTENSION_ITEMS) != {"categories", *ITEMS}:
         raise Invalid("incomplete Blueprint")
     categories = {}
     for line in sections["categories"]:
@@ -114,10 +176,28 @@ def required_paths(blueprint):
     for section, relative in ITEMS.items():
         if sections[section]:
             result.add("generated/" + relative)
+    for section, relative in EXTENSION_ITEMS.items():
+        if sections.get(section):
+            result.add("generated/" + relative)
     for category, relative in CATEGORIES.items():
         if categories.get(category, False):
             result.add("generated/" + relative)
     return result
+
+
+def without_empty_workspace_selection(blueprint):
+    """An empty optional selection carries no capability; keep legacy syntax."""
+    sections, _ = parse_blueprint(blueprint)
+    if 'vscode-workspaces' not in sections or sections['vscode-workspaces']:
+        return blueprint
+    current = None
+    output = []
+    for line in blueprint.decode('utf-8').splitlines(keepends=True):
+        if line.startswith('[') and line.rstrip('\r\n').endswith(']'):
+            current = line.rstrip('\r\n')[1:-1]
+        if current != 'vscode-workspaces':
+            output.append(line)
+    return ''.join(output).encode('utf-8')
 
 
 def completeness_files(stage):
@@ -180,8 +260,12 @@ def portable_paths(files, home):
         files[screenshot] = "".join(lines).encode()
 
 
-def selected_payload(files, blueprint):
+def selected_payload(files, blueprint, *, home=None):
     sections, _ = parse_blueprint(blueprint)
+    topology = 'generated/workspace/topology.json' in files
+    if workspace_extension_present(files):
+        validate_workspace(dict(files, **{'blueprint.conf': blueprint}), home=home)
+        workspace_contract().selected_payload(files, sections)
     for section in ("homebrew-packages", "homebrew-casks", "app-store",
                     "vscode-extensions", "workspace-folders"):
         if "generated/provenance/" + section + ".sha256" in files:
@@ -195,7 +279,7 @@ def selected_payload(files, blueprint):
                                if (line.split("|", 1)[0] if section in
                                    ("app-store", "workspace-folders") else line) in selected)).encode()
     name = "generated/workspace/repositories.conf"
-    if name in files:
+    if name in files and not topology:
         selected = set(sections["git-repositories"])
         current = None
         output = []
@@ -381,27 +465,26 @@ def deduplicate_applications(stage):
 
 
 def pack(stage, output, home, replacement_sha256=None, *, apply_precedence=True):
-    blueprint = checked_file(stage / "blueprint.conf", 65536)
+    blueprint = without_empty_workspace_selection(checked_file(stage / "blueprint.conf", 65536))
     capabilities = stage / 'generated/homebrew-casks.json'
     data = cask_capabilities(json.loads(checked_file(capabilities))) if capabilities.exists() or capabilities.is_symlink() else {'contract': 1, 'casks': {}}
     # Discovery remains domain-local. Resolve overlaps only after its complete
     # staged observations and the Capture selection exist, before atomic packing.
     if apply_precedence:
         blueprint, _, _ = application_precedence(blueprint, data)
-    paths = required_paths(blueprint)
-    files = {path: checked_file(stage / path) for path in paths}
-    files['blueprint.conf'] = blueprint
+    files = staged_payload(stage, blueprint)
     files.update(completeness_files(stage))
     if capabilities.exists() or capabilities.is_symlink():
         selected, _ = parse_blueprint(blueprint)
         data['casks'] = {token: row for token, row in data['casks'].items() if token in selected['homebrew-casks']}
         if data['casks']:
             files['generated/homebrew-casks.json'] = (json.dumps(data, sort_keys=True) + '\n').encode()
-    selected_payload(files, blueprint)
+    selected_payload(files, blueprint, home=home)
     zsh = files.get("generated/shell/zshrc.snapshot")
     if zsh is not None and not zsh.startswith(b"MBT-ZSHRC-1\nstatus=eligible\n"):
         raise Invalid("selected Zsh snapshot is not eligible")
     portable_paths(files, home)
+    features = validate_workspace(files, exact=True)
     secure = stage / "secure.age"
     if secure.exists() or secure.is_symlink():
         files["secure.age"] = checked_file(secure, 33 * 1024 * 1024)
@@ -411,6 +494,8 @@ def pack(stage, output, home, replacement_sha256=None, *, apply_precedence=True)
         "files": {name: {"size": len(data), "sha256": digest(data)}
                   for name, data in sorted(files.items())},
     }
+    if features:
+        manifest['required_features'] = features
     provenance = stage / 'generated/provenance/homebrew.json'
     if provenance.exists() or provenance.is_symlink():
         try:
@@ -500,7 +585,7 @@ def validate_archive(path, with_provenance=False):
                 member.pax_headers or member.size > MAX_MEMBER or
                 name in files or name.startswith("/") or
                 any(part in ("", ".", "..") for part in name.split("/")) or
-                name not in {"manifest.json", "blueprint.conf", "secure.age", "generated/homebrew-casks.json",
+                name not in {"manifest.json", "blueprint.conf", "secure.age", "generated/homebrew-casks.json", *WORKSPACE_EXTENSIONS,
                              *("generated/" + item for item in (*ITEMS.values(), *CATEGORIES.values())),
                              *("generated/provenance/" + item + ".sha256"
                                for item in COMPLETE_INVENTORIES)}):
@@ -516,6 +601,13 @@ def validate_archive(path, with_provenance=False):
         raise Unsupported("unsupported Bundle version")
     provenance = external_tools_provenance(manifest.get('external_tools', {}))
     expected = required_paths(files["blueprint.conf"])
+    if 'generated/workspace/topology.json' in files:
+        expected.add('generated/workspace/topology.json')
+    required_features = manifest.get('required_features', {})
+    if (not isinstance(required_features, dict) or
+            any(key not in WORKSPACE_EXTENSIONS.values() or type(value) is not int or value != 1
+                for key, value in required_features.items())):
+        raise Unsupported('unsupported Bundle capabilities')
     if 'generated/homebrew-casks.json' in files:
         capabilities = cask_capabilities(json.loads(files['generated/homebrew-casks.json']))
         selected, _ = parse_blueprint(files['blueprint.conf'])
@@ -541,12 +633,16 @@ def validate_archive(path, with_provenance=False):
         record = manifest["files"][name]
         if record != {"size": len(data), "sha256": digest(data)}:
             raise Invalid("Bundle integrity mismatch")
+    if required_features != validate_workspace(files, exact=True):
+        raise Invalid('Bundle Workspace capabilities do not match payload')
     return (files, provenance) if with_provenance else files
 
 
 def unpack(bundle, stage, home):
     files, provenance = validate_archive(bundle, with_provenance=True)
+    require_runtime_workspace(files)
     target_paths(files, home)
+    files['blueprint.conf'] = without_empty_workspace_selection(files['blueprint.conf'])
     (stage / "generated").mkdir(mode=0o700, exist_ok=True)
     for name, data in files.items():
         write_file(stage / name, data)
@@ -558,6 +654,7 @@ def unpack(bundle, stage, home):
 def inspect_bundle(bundle, home):
     """Validate as Restore does, then return only UI-safe selection metadata."""
     files, provenance = validate_archive(bundle, with_provenance=True)
+    require_runtime_workspace(files)
     target_paths(files, home)
     sections, categories = parse_blueprint(files["blueprint.conf"])
     return {
@@ -570,6 +667,7 @@ def inspect_bundle(bundle, home):
 
 
 def narrow(stage, groups):
+    require_runtime_workspace(workspace_stage_files(stage))
     path = stage / "blueprint.conf"
     original = checked_file(path, 65536).decode()
     disabled = {item for group in groups for item in GROUPS[group]}
@@ -776,6 +874,7 @@ def recover():
 
 
 def publish(stage):
+    require_runtime_workspace(workspace_stage_files(stage))
     recover()
     source_generated = stage / "generated"
     source_blueprint = stage / "blueprint.conf"
@@ -846,13 +945,13 @@ def main():
         pack(Path(args[0]), Path(args[1]), args[2])
     elif command == "check-portability" and len(args) == 2:
         blueprint = checked_file(Path(args[0]) / "blueprint.conf", 65536)
-        files = {path: checked_file(Path(args[0]) / path)
-                 for path in required_paths(blueprint)}
-        selected_payload(files, blueprint)
+        files = staged_payload(Path(args[0]), blueprint)
+        selected_payload(files, blueprint, home=args[1])
         zsh = files.get("generated/shell/zshrc.snapshot")
         if zsh is not None and not zsh.startswith(b"MBT-ZSHRC-1\nstatus=eligible\n"):
             raise Invalid("selected Zsh snapshot is not eligible")
         portable_paths(files, args[1])
+        validate_workspace(files, exact=True)
     elif command == "unpack" and len(args) == 3:
         unpack(Path(args[0]), Path(args[1]), args[2])
     elif command == "narrow" and len(args) >= 1 and set(args[1:]) <= set(GROUPS):

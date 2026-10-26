@@ -39,8 +39,10 @@ workspace_validate_folders() {
 workspace_validate_repositories() {
 
     local repositories_file="$1"
+    local schema="${2:-legacy}"
+    case "$schema" in legacy|topology) ;; *) return 2 ;; esac
 
-    awk '
+    awk -v schema="$schema" '
         BEGIN {
             keys["NAME"] = 1
             keys["PATH"] = 1
@@ -53,6 +55,7 @@ workspace_validate_repositories() {
             keys["HAS_TASKS"] = 1
             keys["HAS_LAUNCH"] = 1
             keys["HAS_EXTENSIONS"] = 1
+            if (schema == "topology") keys["TOPOLOGY_VERSION"] = 1
 
             boolean_keys["HAS_UNCOMMITTED_CHANGES"] = 1
             boolean_keys["HAS_VSCODE_FOLDER"] = 1
@@ -88,6 +91,7 @@ workspace_validate_repositories() {
             if ((key in boolean_keys) && value != "\"true\"" && value != "\"false\"") {
                 exit 2
             }
+            if (key == "TOPOLOGY_VERSION" && value != "\"1\"") exit 2
         }
 
         END {
@@ -111,6 +115,16 @@ workspace_publish_snapshot() {
 
     local staging_dir="$1"
     local output_dir="$2"
+    # Phase 1 validates the extension privately; Discovery publication is not
+    # enabled until the topology producer and all grouped members are qualified.
+    if [[ -e "$staging_dir/topology.json" || -L "$staging_dir/topology.json" ||
+          -e "$staging_dir/vscode-workspaces.json" || -L "$staging_dir/vscode-workspaces.json" ||
+          -e "$output_dir/topology.json" || -L "$output_dir/topology.json" ||
+          -e "$output_dir/vscode-workspaces.json" || -L "$output_dir/vscode-workspaces.json" ]] ||
+       grep -q '^TOPOLOGY_VERSION=' "$staging_dir/repositories.conf"; then
+        error "Workspace topology publication is not supported yet"
+        return 2
+    fi
     local backup_dir
     local file
     local index

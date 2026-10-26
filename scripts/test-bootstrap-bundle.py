@@ -826,5 +826,479 @@ class BundleTests(unittest.TestCase):
         self.assertIn("ERROR: Homebrew is not installed", result.stdout)
 
 
+class TopologyTests(unittest.TestCase):
+    """Phase 1 contracts: inert metadata fixtures, no Git repositories/mutations."""
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name).resolve()
+        self.stage = self.root / 'stage'
+        self.stage.mkdir(mode=0o700)
+        self.archive = self.root / 'topology.mbt'
+        self.contract = bundle.workspace_contract()
+        self.paths = ['Projects/base', 'Projects/team/demo', 'Projects/other/demo']
+        self.ids = [self.contract.identity('checkout', path) for path in self.paths]
+        self.topology = dict(contract=1, roots=['Projects'], groups=[dict(
+            id=self.contract.identity('repository', self.paths[0]), base_item_id=self.ids[0],
+            object_format='sha1', members=[dict(item_id=item, head_kind=kind, head_oid='a' * 40)
+                for item, kind in zip(self.ids, ['branch', 'branch', 'detached'])])])
+        self.records = self.repository_data()
+        self.blueprint = self.selection(self.ids)
+        self.files = {'blueprint.conf': self.blueprint,
+                      self.contract.REPOSITORIES: self.records,
+                      'generated/workspace/folders.conf': b'Projects|workspace\n'}
+        self.sync_topology()
+
+    def selection(self, ids, workspaces=None):
+        result = ('[categories]\n' + ''.join(f'{key}="false"\n' for key in bundle.CATEGORY_FLAGS) +
+                  ''.join(f'\n[{key}]\n' + ('\n'.join(ids) + '\n' if key == 'git-repositories' else
+                           'Projects\n' if key == 'workspace-folders' else '') for key in bundle.ITEMS))
+        if workspaces is not None:
+            result += '\n[vscode-workspaces]\n' + '\n'.join(workspaces) + '\n'
+        return result.encode()
+
+    def repository_data(self):
+        output = ''
+        for index, (item, path) in enumerate(zip(self.ids, self.paths)):
+            branch = ('main', 'feature/test', '')[index]
+            output += (f'[{item}]\nNAME="{Path(path).name}"\nPATH="~/{path}"\n'
+                       f'REMOTE="https://example.invalid/team/repo.git"\n'
+                       f'CURRENT_BRANCH="{branch}"\nDEFAULT_BRANCH="main"\nTOPOLOGY_VERSION="1"\n')
+            output += ''.join(f'{key}="false"\n' for key in ('HAS_UNCOMMITTED_CHANGES',
+                'HAS_VSCODE_FOLDER', 'HAS_SETTINGS', 'HAS_TASKS', 'HAS_LAUNCH', 'HAS_EXTENSIONS')) + '\n'
+        return output.encode()
+
+    def sync_topology(self):
+        self.files[self.contract.TOPOLOGY] = (json.dumps(self.topology) + '\n').encode()
+
+    def stage_files(self):
+        for name, content in self.files.items():
+            path = self.stage / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(content.replace(b'PATH="~/', b'PATH="/Users/source/')
+                             if name == self.contract.REPOSITORIES else content)
+
+    def pack(self):
+        self.stage_files()
+        bundle.pack(self.stage, self.archive, '/Users/source', apply_precedence=False)
+
+    def rewrite_archive(self, update):
+        with tarfile.open(self.archive) as source:
+            files = {member.name: source.extractfile(member).read() for member in source.getmembers()}
+        update(files)
+        with tarfile.open(self.archive, 'w', format=tarfile.USTAR_FORMAT) as target:
+            for name, data in sorted(files.items()):
+                member = tarfile.TarInfo(name)
+                member.size, member.mode = len(data), 0o600
+                target.addfile(member, io.BytesIO(data))
+
+    def test_schema_multiple_worktrees_duplicate_basenames_and_stable_ids(self):
+        self.assertEqual(bundle.validate_workspace(self.files, exact=True), {'workspace-topology': 1})
+        records = self.contract.repository_records(self.records)
+        self.assertEqual([records[item]['name'] for item in self.ids], ['base', 'demo', 'demo'])
+        self.assertEqual(len(set(self.ids)), 3)
+        absolute = dict(self.files, **{self.contract.REPOSITORIES:
+                        self.records.replace(b'PATH="~/', b'PATH="/Users/another/')})
+        self.assertEqual(bundle.validate_workspace(absolute, home='/Users/another'), {'workspace-topology': 1})
+        self.assertEqual(self.ids, [self.contract.identity('checkout', path) for path in self.paths])
+        reversed_topology = json.loads(self.files[self.contract.TOPOLOGY])
+        reversed_topology['groups'][0]['members'].reverse()
+        reversed_files = dict(self.files, **{self.contract.TOPOLOGY: json.dumps(reversed_topology).encode()})
+        self.assertEqual(bundle.validate_workspace(reversed_files), {'workspace-topology': 1})
+        self.assertEqual(self.contract.identity('checkout', 'Projects/café'),
+                         self.contract.identity('checkout', 'Projects/cafe\u0301'))
+
+    def test_named_and_detached_heads_do_not_relax_legacy_consumer(self):
+        self.stage_files()
+        path = self.stage / self.contract.REPOSITORIES
+        command = 'source modules/discovery/workspace.sh; workspace_validate_repositories "$1"'
+        result = subprocess.run(['bash', '-c', command, 'test', str(path)], cwd=MODULE.parents[2], capture_output=True)
+        self.assertEqual(result.returncode, 2)
+        for kind, oid, branch in [('branch', 'a' * 40, ''), ('detached', '', ''),
+                                  ('detached', 'a' * 40, 'main'), ('detached', '0' * 40, ''),
+                                  ('branch', 'a' * 40, '@{-1}')]:
+            with self.subTest(kind=kind, oid=oid, branch=branch):
+                variant = json.loads(self.files[self.contract.TOPOLOGY])
+                variant['groups'][0]['members'][2].update(head_kind=kind, head_oid=oid)
+                files = dict(self.files, **{self.contract.TOPOLOGY: json.dumps(variant).encode(),
+                    self.contract.REPOSITORIES: self.records.replace(b'CURRENT_BRANCH=""', f'CURRENT_BRANCH="{branch}"'.encode())})
+                with self.assertRaises(bundle.Invalid):
+                    bundle.validate_workspace(files)
+        self.topology['groups'][0]['object_format'] = 'sha256'
+        for member in self.topology['groups'][0]['members']:
+            member['head_oid'] = 'b' * 64
+        self.sync_topology()
+        self.assertTrue(bundle.validate_workspace(self.files))
+
+    def test_missing_unselected_base_and_selection_narrowing(self):
+        for selection in (self.ids[1:], [self.ids[1]], self.ids + ['absent'], self.ids + [self.ids[0]]):
+            with self.subTest(selection=selection), self.assertRaises(bundle.Invalid):
+                bundle.validate_workspace(dict(self.files, **{'blueprint.conf': self.selection(selection)}))
+        self.files['blueprint.conf'] = self.selection(self.ids[:2])
+        self.files[self.contract.REPOSITORIES] = self.records.replace(
+            b'HAS_UNCOMMITTED_CHANGES="false"', b'HAS_UNCOMMITTED_CHANGES="true"', 1)
+        bundle.validate_workspace(self.files)
+        narrowed = dict(self.files)
+        sections, _ = bundle.parse_blueprint(narrowed['blueprint.conf'])
+        self.contract.selected_payload(narrowed, sections)
+        self.assertTrue(bundle.validate_workspace(narrowed, exact=True))
+        original_records = self.contract.repository_records(self.files[self.contract.REPOSITORIES])
+        self.assertEqual(self.contract.repository_records(narrowed[self.contract.REPOSITORIES]),
+                         {item: original_records[item] for item in self.ids[:2]})
+        self.assertIn(b'HAS_UNCOMMITTED_CHANGES="true"', narrowed[self.contract.REPOSITORIES])
+        # Pack the full three-checkout inventory, not the already narrowed copy.
+        self.pack()
+        # validate_archive always enforces validate_workspace(exact=True).
+        archived = bundle.validate_archive(self.archive)
+        self.assertTrue(bundle.validate_workspace(archived, exact=True))
+        self.assertEqual(archived[self.contract.REPOSITORIES], narrowed[self.contract.REPOSITORIES])
+        for files in (narrowed, archived):
+            self.assertNotIn(self.ids[2].encode(), b''.join(files.values()))
+            self.assertNotIn(self.paths[2].encode(), b''.join(files.values()))
+        rejected = dict(self.files)
+        with self.assertRaises(self.contract.Invalid):
+            self.contract.selected_payload(rejected, dict(sections, **{'git-repositories': self.ids[1:]}))
+        self.assertEqual(rejected, self.files)
+        self.topology['groups'][0]['base_item_id'] = 'absent'
+        self.sync_topology()
+        with self.assertRaises(bundle.Invalid):
+            bundle.validate_workspace(self.files)
+
+    def test_paths_roots_nested_dependencies_and_aliases(self):
+        for path in ('/outside/demo', '~/../demo', '~/Projects//demo', '~/Projects/.git/demo',
+                     '~/Elsewhere/demo', '~/Projects/BASE'):
+            with self.subTest(path=path), self.assertRaises(bundle.Invalid):
+                files = dict(self.files, **{self.contract.REPOSITORIES:
+                    self.records.replace(b'~/Projects/team/demo', path.encode())})
+                bundle.validate_workspace(files)
+        with self.assertRaises(self.contract.Invalid):
+            self.contract.aliases(['Projects/demo', 'Projects/DEMO'])
+        with self.assertRaises(self.contract.Invalid):
+            self.contract.aliases(['Projects/café', 'Projects/cafe\u0301'])
+        # Legitimate nested linked destination has an explicit base dependency.
+        self.paths[1] = 'Projects/base/trees/demo'
+        self.ids[1] = self.contract.identity('checkout', self.paths[1])
+        self.topology['groups'][0]['members'][1]['item_id'] = self.ids[1]
+        self.files[self.contract.REPOSITORIES] = self.repository_data()
+        self.files['blueprint.conf'] = self.selection(self.ids)
+        self.sync_topology()
+        self.assertTrue(bundle.validate_workspace(self.files))
+        # Making the child the base creates a path/common-repository cycle.
+        self.topology['groups'][0].update(base_item_id=self.ids[1],
+            id=self.contract.identity('repository', self.paths[1]))
+        self.sync_topology()
+        with self.assertRaises(bundle.Invalid):
+            bundle.validate_workspace(self.files)
+
+    def test_target_filesystem_aliases_errors_and_no_mutation(self):
+        home = self.root / 'home'
+        (home / 'Projects/real').mkdir(parents=True)
+        (home / 'Projects/link').symlink_to(home / 'Projects/real')
+        sentinel = home / 'Projects/real/user-file'
+        sentinel.write_bytes(b'preserve tracked staged untracked ignored')
+        def snapshot():
+            return [(str(path.relative_to(home)), path.lstat().st_mode, path.lstat().st_ino,
+                     os.readlink(path) if path.is_symlink() else path.read_bytes() if path.is_file() else None)
+                    for path in sorted(home.rglob('*'))]
+        before = snapshot()
+        for path in ('Projects/link/demo', 'Projects/real/user-file/nested'):
+            with self.assertRaises(self.contract.Invalid):
+                self.contract.target_paths([path], home)
+        with patch.object(self.contract.os, 'access', return_value=False), self.assertRaises(self.contract.Invalid):
+            self.contract.target_paths(['Projects/missing'], home)
+        with patch.object(self.contract.Path, 'lstat', side_effect=PermissionError()), self.assertRaises(OSError):
+            self.contract.target_paths(['Projects/missing'], home)
+        self.assertEqual(snapshot(), before)
+
+    def test_malformed_topology_no_secret_or_machine_fields(self):
+        changes = [lambda t: t.update(common_dir='/private/git'),
+                   lambda t: t.update(contract=2), lambda t: t.update(contract=True),
+                   lambda t: t['groups'][0].update(ino=123),
+                   lambda t: t['groups'][0]['members'].append(t['groups'][0]['members'][0]),
+                   lambda t: t['groups'][0]['members'].pop(),
+                   lambda t: t['groups'].append(t['groups'][0])]
+        for index, change in enumerate(changes):
+            with self.subTest(index=index):
+                topology = json.loads(self.files[self.contract.TOPOLOGY])
+                change(topology)
+                with self.assertRaises(bundle.Invalid):
+                    bundle.validate_workspace(dict(self.files, **{self.contract.TOPOLOGY: json.dumps(topology).encode()}))
+        for data in (b'{', b'{"contract":1,"contract":1}', b'[]', b'x' * (self.contract.MAX_BYTES + 1)):
+            with self.assertRaises(bundle.Invalid):
+                bundle.validate_workspace(dict(self.files, **{self.contract.TOPOLOGY: data}))
+        for remote in ('https://token@example.invalid/repo', 'https://example.invalid/repo?token=private',
+                       'ssh://user:private@example.invalid/repo', '/Users/source/private.git'):
+            with self.assertRaises(bundle.Invalid):
+                bundle.validate_workspace(dict(self.files, **{self.contract.REPOSITORIES:
+                    self.records.replace(b'https://example.invalid/team/repo.git', remote.encode())}))
+
+    def test_sectional_values_are_data_and_missing_git_cannot_prompt(self):
+        sentinel = self.root / 'must-not-exist'
+        files = dict(self.files, **{self.contract.REPOSITORIES:
+            self.records.replace(b'NAME="base"', ('NAME="$(touch ' + str(sentinel) + ')"').encode())})
+        self.assertTrue(bundle.validate_workspace(files))
+        self.assertFalse(sentinel.exists())
+        # A real PATH containing only the Config Engine tools: no Git or xcode-select.
+        bin_dir = self.root / 'bin'
+        bin_dir.mkdir()
+        for command in ('dirname', 'awk', 'grep', 'sed', 'cat'):
+            (bin_dir / command).symlink_to(shutil.which(command))
+        with patch.dict(os.environ, PATH=str(bin_dir)), \
+                patch.object(self.contract, 'git_executable', side_effect=AssertionError('native Git probe')) as probe, \
+                patch.object(self.contract.subprocess, 'run', wraps=subprocess.run) as run:
+            self.assertIsNone(shutil.which('git'))
+            self.pack()
+            self.assertEqual(bundle.validate_workspace(bundle.validate_archive(self.archive), exact=True),
+                             {'workspace-topology': 1})
+            probe.assert_not_called()
+            self.assertTrue(run.call_args_list)
+            self.assertTrue(all(call.args[0][:2] == ['/bin/bash', str(self.contract.BRIDGE)]
+                                for call in run.call_args_list))
+        with patch.dict(os.environ, PATH=str(bin_dir)), self.assertRaises(self.contract.Unsupported):
+            self.contract.branch_valid('main')
+        for branch in ('feature/topic', 'release/v1.2', 'ветка', 'refs/heads/topic'):
+            self.contract.branch_metadata_valid(branch)
+        for branch in ('', 'HEAD', '@', '@{-1}', '-option', 'a..b', 'a@{b', '.hidden', 'a/.b',
+                       'a.lock', 'a.lock/b', '/a', 'a/', 'a//b', 'a.', 'a b', 'a\tb', 'a\x7fb',
+                       'a~b', 'a^b', 'a:b', 'a?b', 'a*b', 'a[b', 'a\\b', 'a"b'):
+            with self.subTest(branch=branch), self.assertRaises(self.contract.Invalid):
+                self.contract.branch_metadata_valid(branch)
+        # Native readiness still rejects a syntactically valid name if Git does.
+        with patch.object(self.contract, 'git_executable', return_value='/qualified/git'), \
+                patch.object(self.contract.subprocess, 'run', return_value=
+                    subprocess.CompletedProcess([], 1, b'', b'')) as run, \
+                self.assertRaises(self.contract.Invalid):
+            self.contract.branch_valid('main')
+        run.assert_called_once_with(['/qualified/git', 'check-ref-format', '--branch', 'main'],
+                                    capture_output=True, timeout=10)
+        with patch.object(self.contract.shutil, 'which', return_value='/usr/bin/git'), \
+                patch.object(self.contract.subprocess, 'run', return_value=
+                    subprocess.CompletedProcess([], 1, b'', b'')) as run:
+            with self.assertRaises(self.contract.Unsupported):
+                self.contract.git_executable()
+            self.assertEqual([call.args[0] for call in run.call_args_list], [['xcode-select', '-p']])
+
+    def test_topology_markers_cannot_downgrade_to_legacy(self):
+        files = dict(self.files)
+        files.pop(self.contract.TOPOLOGY)
+        with self.assertRaises(bundle.Invalid):
+            bundle.validate_workspace(files)
+        files = dict(self.files, **{self.contract.REPOSITORIES: self.records.replace(b'TOPOLOGY_VERSION="1"\n', b'')})
+        with self.assertRaises(bundle.Invalid):
+            bundle.validate_workspace(files)
+        files = dict(self.files, **{self.contract.REPOSITORIES: self.records.replace(b'TOPOLOGY_VERSION="1"', b'TOPOLOGY_VERSION="2"')})
+        with self.assertRaises(bundle.Invalid):
+            bundle.validate_workspace(files)
+
+    def test_bundle_v1_extension_checksums_capabilities_and_old_allowlist(self):
+        self.pack()
+        files = bundle.validate_archive(self.archive)
+        self.assertEqual(bundle.validate_workspace(files, exact=True), {'workspace-topology': 1})
+        with tarfile.open(self.archive) as archive:
+            manifest = json.load(archive.extractfile('manifest.json'))
+        self.assertEqual(manifest['version'], 1)
+        self.assertEqual(manifest['required_features'], {'workspace-topology': 1})
+        self.assertNotIn(b'/Users/source', b''.join(files.values()))
+        with patch.object(bundle, 'WORKSPACE_EXTENSIONS', {}), self.assertRaisesRegex(bundle.Invalid, 'unexpected Bundle entry'):
+            bundle.validate_archive(self.archive)
+        def corrupt(files):
+            files[self.contract.TOPOLOGY] += b' '
+        self.rewrite_archive(corrupt)
+        with self.assertRaisesRegex(bundle.Invalid, 'integrity'):
+            bundle.validate_archive(self.archive)
+
+    def test_required_capabilities_and_limits_are_enforced(self):
+        self.pack()
+        original = self.archive.read_bytes()
+        for features in ({}, {'workspace-topology': 2}, {'unknown': 1}, {'workspace-topology': True}):
+            self.archive.write_bytes(original)
+            def update(files):
+                manifest = json.loads(files['manifest.json'])
+                manifest['required_features'] = features
+                files['manifest.json'] = json.dumps(manifest).encode()
+            self.rewrite_archive(update)
+            with self.subTest(features=features), self.assertRaises(bundle.Invalid):
+                bundle.validate_archive(self.archive)
+        self.archive.write_bytes(original)
+        with patch.object(bundle, 'MAX_ENTRIES', 2), self.assertRaises(bundle.Invalid):
+            bundle.validate_archive(self.archive)
+        with patch.object(self.contract, 'MAX_ITEMS', 2), self.assertRaises(bundle.Invalid):
+            bundle.validate_archive(self.archive)
+
+    def test_runtime_unpack_inspect_publish_and_grouped_publication_remain_closed(self):
+        self.pack()
+        target = self.root / 'target'
+        target.mkdir()
+        before = bundle.fingerprint(target)
+        with self.assertRaises(bundle.Unsupported):
+            bundle.unpack(self.archive, target, '/Users/target')
+        with self.assertRaises(bundle.Unsupported):
+            bundle.inspect_bundle(self.archive, '/Users/target')
+        self.assertEqual(bundle.fingerprint(target), before)
+        with patch.object(bundle, 'recover') as recover, self.assertRaises(bundle.Unsupported):
+            bundle.publish(self.stage)
+        recover.assert_not_called()
+        before_stage = bundle.fingerprint(self.stage)
+        with self.assertRaises(bundle.Unsupported):
+            bundle.narrow(self.stage, ['Workspace'])
+        self.assertEqual(bundle.fingerprint(self.stage), before_stage)
+        command = ('source modules/discovery/workspace.sh; error() { :; }; '
+                   'workspace_publish_snapshot "$1" "$2"')
+        result = subprocess.run(['bash', '-c', command, 'test',
+                                 str(self.stage / 'generated/workspace'), str(target)],
+                                cwd=MODULE.parents[2], capture_output=True)
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(bundle.fingerprint(target), before)
+
+    def test_protocol_rejects_extension_before_preview_and_target_mutation(self):
+        self.pack()
+        spec = importlib.util.spec_from_file_location('topology_restore_fixture',
+            MODULE.parents[2] / 'scripts/test-restore-prepare.py')
+        fixtures = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(fixtures)
+        fixture = fixtures.RestorePrepareTests()
+        fixture.setUp()
+        self.addCleanup(fixture.doCleanups)
+        before = bundle.fingerprint(fixture.home)
+        config_before = bundle.fingerprint(fixture.project / 'config')
+        result, events = fixture.invoke(path=self.archive)
+        self.assertEqual(result.returncode, 2, events)
+        self.assertEqual(events[-1]['data']['code'], 'unsupported_bundle')
+        result, events = fixture.execute('0' * 64, path=self.archive)
+        self.assertEqual(result.returncode, 2, events)
+        self.assertEqual(events[-1]['data']['code'], 'unsupported_bundle')
+        self.assertFalse(events[-1]['data']['publication_started'])
+        self.assertFalse(events[-1]['data']['target_mutation_may_have_started'])
+        self.assertFalse((fixture.root / 'mutations').exists())
+        self.assertEqual(bundle.fingerprint(fixture.home), before)
+        self.assertEqual(bundle.fingerprint(fixture.project / 'config'), config_before)
+
+    def test_invalid_pack_preserves_output_and_existing_state(self):
+        self.pack()
+        old = self.archive.read_bytes()
+        self.topology['groups'][0]['base_item_id'] = 'missing'
+        self.sync_topology()
+        self.stage_files()
+        before = bundle.fingerprint(self.stage)
+        with self.assertRaises(bundle.Invalid):
+            bundle.pack(self.stage, self.archive, '/Users/source', bundle.digest(old), apply_precedence=False)
+        self.assertEqual(self.archive.read_bytes(), old)
+        self.assertEqual(bundle.fingerprint(self.stage), before)
+        self.assertFalse(list(self.root.glob('.bundle-*')))
+
+    def test_vscode_relationships_are_separately_selected_and_metadata_only(self):
+        path = 'Projects/team.code-workspace'
+        item = self.contract.identity('workspace', path)
+        workspace = dict(contract=1, items=[dict(item_id=item, path='~/' + path, folders=[
+            dict(domain='git-repositories', item_id=self.ids[0], subpath='', name='Base'),
+            dict(domain='git-repositories', item_id=self.ids[1], subpath='src', name='Feature')])])
+        self.files[self.contract.VSCODE] = json.dumps(workspace).encode()
+        self.files['blueprint.conf'] = self.selection(self.ids, [item])
+        self.assertEqual(bundle.validate_workspace(self.files), {'workspace-topology': 1, 'vscode-workspaces': 1})
+        self.pack()
+        self.assertIn(self.contract.VSCODE, bundle.validate_archive(self.archive))
+        for change in (lambda w: w['items'][0].update(tasks={'command': 'private'}),
+                       lambda w: w['items'][0]['folders'][0].update(subpath='../private'),
+                       lambda w: w['items'][0]['folders'][0].update(item_id='missing')):
+            value = json.loads(self.files[self.contract.VSCODE])
+            change(value)
+            with self.assertRaises(bundle.Invalid):
+                bundle.validate_workspace(dict(self.files, **{self.contract.VSCODE: json.dumps(value).encode()}))
+        with self.assertRaises(bundle.Invalid):
+            bundle.validate_workspace(dict(self.files, **{'blueprint.conf': self.selection([self.ids[0]], [item])}))
+
+    def test_vscode_folder_only_capability_and_no_implicit_selection(self):
+        item = self.contract.identity('workspace', 'Projects/folders.code-workspace')
+        files = {'blueprint.conf': self.selection([], [item]),
+                 'generated/workspace/folders.conf': b'Projects|workspace\n',
+                 self.contract.VSCODE: json.dumps(dict(contract=1, items=[dict(item_id=item,
+                    path='~/Projects/folders.code-workspace', folders=[dict(
+                        domain='workspace-folders', item_id='Projects', subpath='', name='Projects')])])).encode()}
+        self.assertEqual(bundle.validate_workspace(files, exact=True), {'vscode-workspaces': 1})
+        self.files = dict(files)
+        self.pack()
+        self.assertIn(self.contract.VSCODE, bundle.validate_archive(self.archive))
+        with self.assertRaises(bundle.Unsupported):
+            bundle.inspect_bundle(self.archive, '/Users/target')
+        files['blueprint.conf'] = self.selection([])
+        bundle.selected_payload(files, files['blueprint.conf'])
+        self.assertNotIn(self.contract.VSCODE, files)
+        self.assertEqual(bundle.validate_workspace(files, exact=True), {})
+        # No optional section and an empty section both produce usable legacy Bundles.
+        (self.stage / self.contract.VSCODE).unlink()
+        for index, selection in enumerate((None, [])):
+            with self.subTest(selection=selection):
+                self.archive = self.root / f'empty-{index}.mbt'
+                self.files = dict(files, **{'blueprint.conf': self.selection([], selection)})
+                self.pack()
+                archived = bundle.validate_archive(self.archive)
+                sections, _ = bundle.parse_blueprint(archived['blueprint.conf'])
+                self.assertNotIn('vscode-workspaces', sections)
+                self.assertNotIn(self.contract.VSCODE, archived)
+                if selection is None:
+                    self.assertEqual(archived['blueprint.conf'], self.files['blueprint.conf'])
+                self.assertEqual((self.stage / 'blueprint.conf').read_bytes(), self.files['blueprint.conf'])
+                self.assertEqual(bundle.inspect_bundle(self.archive, '/Users/target')['format_version'], 1)
+        # Already packed empty sections are accepted after integrity verification,
+        # then omitted from unpacked Blueprint syntax for the legacy consumer.
+        def empty_section(archived):
+            archived['blueprint.conf'] += b'\n[vscode-workspaces]\n# no selected descriptors\n'
+            manifest = json.loads(archived['manifest.json'])
+            data = archived['blueprint.conf']
+            manifest['files']['blueprint.conf'] = dict(size=len(data), sha256=bundle.digest(data))
+            archived['manifest.json'] = json.dumps(manifest).encode()
+        self.rewrite_archive(empty_section)
+        self.assertEqual(bundle.inspect_bundle(self.archive, '/Users/target')['format_version'], 1)
+        restored = self.root / 'restored'
+        restored.mkdir()
+        bundle.unpack(self.archive, restored, '/Users/target')
+        self.assertNotIn(b'[vscode-workspaces]', (restored / 'blueprint.conf').read_bytes())
+        # A nonempty selection without its sidecar fails before publication.
+        self.files['blueprint.conf'] = self.selection([], [item])
+        self.archive = self.root / 'missing-sidecar.mbt'
+        self.stage_files()
+        before = bundle.fingerprint(self.stage)
+        with self.assertRaises(bundle.Invalid):
+            bundle.pack(self.stage, self.archive, '/Users/source', apply_precedence=False)
+        self.assertFalse(self.archive.exists())
+        self.assertEqual(bundle.fingerprint(self.stage), before)
+
+    def test_legacy_blueprint_and_sectional_selection_are_unchanged(self):
+        sections, _ = bundle.parse_blueprint(blueprint())
+        self.assertNotIn('vscode-workspaces', sections)
+        self.assertEqual(sections['git-repositories'], ['demo'])
+        legacy = dict(self.files)
+        legacy.pop(self.contract.TOPOLOGY)
+        legacy[self.contract.REPOSITORIES] = self.records.replace(b'TOPOLOGY_VERSION="1"\n', b'')
+        self.assertEqual(bundle.validate_workspace(legacy), {})
+        selection_file = self.root / 'selection.conf'
+        selection_file.write_bytes(self.blueprint)
+        command = ('source modules/blueprint/blueprint.sh; error() { :; }; '
+                   'blueprint_validate_syntax "$1" || exit $?; blueprint_selected_items git-repositories "$1"')
+        result = subprocess.run(['bash', '-c', command, 'test', str(selection_file)],
+                                cwd=MODULE.parents[2], capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.decode().splitlines(), self.ids)
+
+    def test_git_capability_detection_never_guesses_support_from_version(self):
+        def result(output=b'', status=0):
+            return subprocess.CompletedProcess([], status, output, b'')
+        old, new = b'git version 2.24.4\n', b'git version 2.50.1 (Apple Git-155)\n'
+        cases = [(old, old, b'    --porcelain\n', 'worktree_porcelain_z_unavailable'),
+                 (new, new, b'    --porcelain\n', 'worktree_porcelain_z_unavailable'),
+                 (old, new, b'    --porcelain\n    -z  NUL termination\n', 'git_version_changed'),
+                 (new, new, b'    --porcelain\n    -z  NUL termination\n', 'worktree_parser_unqualified'),
+                 (b'unknown', b'unknown', b'', 'git_version_unavailable')]
+        for before, after, help_output, reason in cases:
+            with patch.object(self.contract.shutil, 'which', return_value='/qualified/git'), \
+                    patch.object(self.contract.subprocess, 'run', side_effect=[
+                    result(before), result(help_output, 129), result(after)]) as run:
+                self.assertEqual(self.contract.detect_worktree_capability(), dict(status='unsupported', reason=reason))
+                self.assertEqual([call.args[0][1:] for call in run.call_args_list],
+                                 [['--version'], ['worktree', 'list', '-h'], ['--version']])
+        with patch.object(self.contract.subprocess, 'run', side_effect=FileNotFoundError()):
+            self.assertEqual(self.contract.detect_worktree_capability()['reason'], 'git_observation_failed')
+
+
 if __name__ == "__main__":
     unittest.main()
