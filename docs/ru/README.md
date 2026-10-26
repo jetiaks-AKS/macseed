@@ -1,5 +1,5 @@
 > English documentation is authoritative: [canonical document](../../README.md).
-> This Russian convenience copy may lag behind and describes an earlier snapshot.
+> Краткое русское введение не заменяет актуальные английские технические контракты.
 
 # Macseed
 
@@ -7,11 +7,11 @@
 
 [English](../../README.md) | Русский
 
-Сегодня Macseed — инструмент на Bash; планируемый продукт — нативное приложение
-macOS на основе существующего Core для захвата, восстановления и проверки
-рабочего окружения.
+Macseed объединяет Core на Bash/Python, официальный CLI и разрабатываемый
+нативный SwiftUI Desktop. Capture, Restore и Environment Status уже работают
+через общий Core; Desktop пока не готов к распространению как самостоятельное приложение.
 
-**Текущая версия: 3.4.0 Stable**
+**Текущая версия Core/CLI: 3.4.0. Desktop Stage 16 — в разработке.**
 
 ## Назначение
 
@@ -49,7 +49,7 @@ Global Verification сообщает о выбранных требования�
 ## Возможности
 
 - формулы и cask-пакеты Homebrew;
-- приложения App Store;
+- требования App Store: ручная установка через Apple App Store и свежая проверка;
 - глобальная конфигурация Git;
 - ограниченное восстановление конфигурации SSH client;
 - расширения и настройки VS Code;
@@ -97,11 +97,13 @@ working trees и пользовательские файлы не копирую
 
 ## Статус проекта
 
-Версия 3.3.0 включает Stage 12 Bootstrap Bundle Capture & Restore и защищённый
-перенос SSH identities. Текущая разработка также включает Global Verification
-и публичную команду `bs compare`.
-
-Текущее направление развития описано в [ROADMAP.md](../../ROADMAP.md).
+Core/CLI 3.4.0 включает Bundle Capture/Restore, Secure Migration, Global
+Verification, `bs compare` и завершённый Protocol V1. В Desktop реализованы
+основные потоки, Result UI и приватная диагностика; Secure SSH bridge, оставшаяся
+проверка recovery/runtime и подписанной поставки на чистом Mac ещё открыты.
+App Store Restore использует assisted flow; Automatic MAS выведен из активной
+разработки. Desktop CI завершён; следующий этап — Workspace & Git Worktree
+Restoration. Актуальный порядок — в [ROADMAP.md](../../ROADMAP.md).
 
 ## Поддержка
 

@@ -345,9 +345,8 @@ and [destination reader](https://github.com/alejandrobujan/tendedero/blob/main/S
 These establish documented UI behavior and implementation evidence, not Macseed
 native end-to-end acceptance. On 2026-10-25, one read-only production Screenshot
 Capture serializer run on macOS 26.7.1 produced a HOME-relative requirement and
-left preferences unchanged. The sandbox denied the directory write-access probe;
-a separate native permission inspection confirmed access. This was no mutating
-Restore or actual screenshot-output test. Independent qualification must inspect Save To in
+left preferences unchanged. This was not a mutating Restore or actual screenshot-output
+test. Independent qualification must inspect Save To in
 Screenshot, take a new screenshot with a normal system shortcut, confirm the
 actual output folder, then repeat Restore and confirm no writes/restart. An
 explicit-output `screencapture` command or `defaults write` exit alone cannot prove
@@ -383,7 +382,6 @@ not exercise Apply, and the single Screenshots record does not qualify both new
 boolean controls or the effective output location on macOS 27. Full visual-effect
 checks, including the new Windows switches,
 were not performed. Remaining gates stay in [TODO](../../TODO.md#macos-settings-manual-qualification).
-The reported real run was not repeated during this UI/documentation checkpoint.
 
 ## Homebrew formula generated state
 
@@ -620,9 +618,12 @@ deadline-only. Ordinary CLI clone/checkout behavior is unchanged.
 Clone requires durable private safety state before launch. It disables interactive
 prompts, credential helpers, hooks/templates, recursive submodules and shared SSH
 connections for that invocation. Filters/LFS, config includes/URL rewrites and
-custom Git routing are unsupported. SSH ignores custom config for this child;
-default identities/agent and strict known-host verification remain available, while
-SSH aliases, custom key routing and proxies require separate qualification.
+custom Git routing are unsupported. SSH uses a bounded private snapshot of eligible
+local configuration, preserving native Host matching and identity/certificate routing.
+Unsupported includes, Match/exec, providers and delegated transport are declined;
+strict host checks and no multiplexing/proxies/forwarding remain mandatory. This
+local authentication snapshot is not SSH migration. Exact admission/override rules
+belong to the [Core clone contract](../core/APPLICATION-INTERFACE.md#external-process-waiting-and-git-clone-r5).
 
 A failed, confirmed stopped clone preserves its destination and records a private
 path-digest fence. Even a `.git` left there is not treated as a ready repository.

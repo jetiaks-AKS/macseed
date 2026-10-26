@@ -1,7 +1,8 @@
 # Macseed CLI Quick Start
 
 Use the current CLI to configure this Mac or move supported state between Macs.
-Native Desktop is planned and is not needed for these workflows.
+Native [Desktop](../DESKTOP.md) is in development with real Capture, Restore and
+Environment Status. This guide covers the supported CLI; Desktop is not required.
 
 ## Prepare
 

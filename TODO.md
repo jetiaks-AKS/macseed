@@ -1,29 +1,8 @@
 # TODO
 
-Concrete unfinished actions only. Functional Restore Result/Visual Unification,
-operation-wide Graceful Stop implementation, performance optimization, Stage 16J
-Logging & Diagnostics and Assisted App Store Restore are implemented. Assisted
-Restore is an accepted development milestone, not Macseed 1.0 completion.
-Automatic MAS development is archived on `archive/mas-automatic-restore-v4`.
-The remaining qualification gates below do not reopen completed UI work.
-D1–D4/R5 is accepted within its documented implementation and automated integration
-boundaries; [Roadmap](ROADMAP.md#current-practical-execution-order) records the
-baseline and successful CI. The general Restore audit is complete.
-Stage 16 as a whole remains open; follow the single
-[Current Execution Order](ROADMAP.md#current-practical-execution-order).
-
-## CI scheduling maintenance
-
-Desktop CI validation is **COMPLETE** at `411cd712` / CI #108; the
-[closed checkpoint](ROADMAP.md#desktop-ci-validation) records full hosted coverage
-and duration. The next implementation checkpoint is Workspace & Git Worktree
-Restoration below. Remaining CI scheduling verification is maintenance only.
-
-- [ ] Confirm hosted Desktop starts after lint while Core shards are still running;
-  require successful lint, all four Core shards, Desktop and `validate`, then
-  compare total elapsed time with the **38 min 12 s** serial baseline. Preserve
-  the [CI contract](CONTRIBUTING.md#focused-feedback-and-ci), native assertions
-  and artifact privacy; the expected speedup is not measured yet.
+Concrete unfinished actions only; follow the [Current Execution Order](ROADMAP.md#current-practical-execution-order).
+Completed milestones, including Desktop CI, belong to Roadmap; qualification
+below does not reopen accepted UI or the completed D1–D4/R5 implementation audit.
 
 ## Complete Workspace & Git Worktree Restoration
 
@@ -33,9 +12,9 @@ remain in force until a reviewed contract is implemented.
 
 - [ ] Review topology/identity, Capture/Bundle compatibility and Restore ordering
   contracts before coding; decide discovery roots and branch/path conflict policy.
-- [ ] Decide supported clone SSH profiles, identity and proxy routing in the
-  future Git/SSH contract. Keep current exclusions until qualified; filters/LFS
-  require a separate scope decision, not automatic implementation.
+- [ ] Decide any expansion of current bounded local clone SSH profiles/identity
+  routing and additional migration/proxy support in the Git/SSH contract. Keep
+  exclusions until qualified; filters/LFS require a separate scope decision.
 - [ ] Implement the agreed Discovery → Selection → Capture → Preview → Restore
   → Verification path, including Workspace folders and VS Code workspace relations.
 - [ ] Qualify file preservation, occupied branches, conflicting paths, observation
@@ -67,9 +46,8 @@ Unsupported (`ownership_unproven`); in-place Repair is not implemented.
 
 ### macOS settings manual qualification
 
-Focused fixtures and the Desktop Debug build cover the settings/Capture UX
-checkpoint. The [2026-10-17 real Restore](docs/toolkit/CONFIGURATION.md#controlled-macos-27-restore-qualification)
-confirmed 37/37 saved values, not all visual effects or the remaining Restore gates.
+Preserve the [stored-value qualification boundary](docs/toolkit/CONFIGURATION.md#controlled-macos-27-restore-qualification);
+these tasks require native effects or unexercised writes, not another fixture pass.
 
 - [ ] Qualify the real visual effect of Screenshots Window shadow and Floating
   thumbnail on macOS 27, including repeat/no-op behavior.
@@ -90,11 +68,6 @@ confirmed 37/37 saved values, not all visual effects or the remaining Restore ga
 
 ### Mandatory Restore capability gaps
 
-The completed Assisted Restore milestone's Stage 5 Core/Desktop regression gate
-passed. The [2026-10-21 existing-Bundle Rebuild](docs/DESKTOP.md#recent-restore-qualification-and-performance)
-qualified Launcher and selected Global Verification; a fresh full cycle from a new
-Capture remains open.
-
 - [ ] Complete a fresh full Capture → Rebuild → Verification gate from a newly
   captured Bundle on the current Mac after explicit scope approval and fresh
   Preview. Preserve archive/worktree state, resolve or explicitly exclude conflicts
@@ -111,10 +84,8 @@ Capture remains open.
 
 ### VS Code Restore requalification
 
-The user confirmed that real Restore installed previously missing VS Code
-extensions. This installation is accepted user evidence, not a pending reinstall;
-[Desktop](docs/DESKTOP.md#recent-restore-qualification-and-performance) records
-its evidence limits.
+[Accepted installation evidence](docs/DESKTOP.md#recent-restore-qualification-and-performance)
+does not require reinstalling extensions; only the checks below remain.
 
 - [ ] Record independent installed-inventory and fresh-Preview evidence for the
   user-confirmed installation, retaining the targeted checks for
@@ -157,8 +128,9 @@ broader Git and macOS 27 gates below remain separate from that completed repair 
   fail-closed even after observed tree termination. Fixtures do not qualify detached workers or
   external services.
 - [ ] Real-Mac qualify implemented application clone budgets, SSH transport,
-  partial-destination fencing and owned termination. Filters/LFS, custom SSH
-  config/proxies and detached/delegated work remain outside the bounded contract.
+  partial-destination fencing and owned termination, including the implemented
+  bounded local SSH snapshot. Filters/LFS, unsupported SSH directives/proxies and
+  detached/delegated work remain outside the contract.
 - [ ] Qualify implemented application observer/aggregate deadlines and unknown
   re-entry fences against real tools. Existing checkout and local mutations have
   an aggregate execution bound, not new per-command lifecycle qualification.
@@ -173,12 +145,12 @@ broader Git and macOS 27 gates below remain separate from that completed repair 
 - [ ] **16K:** qualify unexercised stale-input/plan and transport/terminal failures,
   close/reopen/quit ownership, plus remaining accessibility and flow/security
   hardening. Retain the accepted real stale_plan/re-preview gate and keep
-  unavailable outcomes unknown. Confirmed Environment Status
-  Cancel/reference retention and corrected `bundle_unavailable` classification
-  are implemented, not outstanding fixes.
-- [ ] Keep the controlled Restore safety backup at
-  `~/Desktop/macseed-full-restore-gate-20261005-124533` until remaining controlled
-  qualification is complete; it is not Runtime input.
+  unavailable outcomes unknown.
+- [ ] Locate and confirm the controlled-Restore safety backup last recorded at
+  `~/Desktop/macseed-full-restore-gate-20261005-124533`. The read-only check on
+  26 October 2026 found no copy at that path or reliable private location record.
+  Preserve any retained copy until controlled Restore qualification is complete;
+  do not delete it. The backup is not Runtime input.
 
 ## Distribution prerequisites and packaged runtime (16K / Stage 17)
 
@@ -212,8 +184,8 @@ broader Git and macOS 27 gates below remain separate from that completed repair 
   further tuning is maintenance, not an R5 closure condition. See
   [testing instructions](CONTRIBUTING.md#focused-feedback-and-ci).
 - [ ] Reconcile scoped ShellCheck SC2034 diagnostics in `bootstrap.sh` and macOS
-  Discovery with their cross-file consumers before adding annotations. The R5
-  scoped run reproduces 10 baseline warnings; it introduces no new diagnostics.
+  Discovery with their cross-file consumers before adding annotations, if still
+  present in the affected scope; do not suppress diagnostics without evidence.
 - [ ] Consider Unified UI Scenario Catalog / Lite after functional priorities:
   a small Debug-only set of applicable Ready, Working, Already Matches,
   Needs Attention, Error, Cancelled and Interrupted states using production/shared

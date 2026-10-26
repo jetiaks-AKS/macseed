@@ -150,9 +150,14 @@ all four Core shards, the Desktop Debug build, all eight Desktop suites, both
 Restore subsets and `validate`, including native PresentationTests assertions.
 The Desktop job took **13 min 15 s**; total CI elapsed was **38 min 12 s**, with
 Desktop still waiting for Core. The slowest Core shard took **24 min 44 s**.
-Starting Desktop after lint targets roughly 25 minutes overall, subject to runner
-availability and workload. This is an estimate; overlap and actual elapsed time
-require a successful hosted run of the parallel workflow.
+[CI #109](https://github.com/jetiaks-AKS/macseed/actions/runs/40322214728), at
+`e2d6e77`, confirmed the parallel schedule with every required job successful,
+the same eight suites/two subsets and native PresentationTests executed. Lint
+finished at 12:25:36 UTC; Desktop started at 12:25:40 while all four Core shards
+were running. Total CI elapsed was **24 min 45 s**, **13 min 27 s (35.2%) less**
+than #108; Desktop itself took **19 min 29 s** and the slowest Core shard
+**24 min 35 s**. Elapsed totals use run creation through final update. These are
+two observed hosted runs, not a benchmark distribution or a future duration guarantee.
 
 For Bash changes, include syntax checks:
 

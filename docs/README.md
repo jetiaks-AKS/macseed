@@ -17,6 +17,7 @@ English is authoritative. Read from product purpose toward technical contracts:
 | [Configuration](toolkit/CONFIGURATION.md) | Generated, Blueprint, Bundle and domain data contracts |
 | [Secure SSH Identity Migration](toolkit/SSH-IDENTITY-MIGRATION.md) | Secure package and standalone identity commands |
 | [Desktop](DESKTOP.md) | Native client presentation, flows and runtime integration |
+| [Desktop development](../desktop/Macseed/README.md) | Toolchain, builds, launch, runtime preparation and focused tests |
 | [Distribution](DISTRIBUTION.md) | Planned packaging and clean-Mac qualification |
 | [Roadmap](../ROADMAP.md) | Major stages, status and product outcomes |
 | [TODO](../TODO.md) | Concrete unfinished work |

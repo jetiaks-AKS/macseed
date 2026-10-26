@@ -73,105 +73,55 @@ Complete one bounded checkpoint at a time. Functional Restore Result/Visual
 Unification, operation-wide Graceful Stop implementation and Stage 16J are already
 implemented; remaining qualifications do not reopen those UI implementations.
 
-Tailscale 1.104.1 passed PKG Preparation → Clean Install → Verification → fresh
-matching Preview. Receipt-backed PKG Repair provenance is implemented; unsafe
-Tailscale Repair remains Unsupported (`ownership_unproven`), with no in-place
-Repair. Independent Restore continues safe work around item-local Cask conflicts;
-a real Partial Restore reported 105 Verified and one Tailscale Mismatch with
-**Rebuild Needs Attention**. These bounded gates do not close Stage 16.
+Assisted App Store Restore, supported UI flows and the current development app
+are accepted milestones. [Desktop qualification](docs/DESKTOP.md#recent-restore-qualification-and-performance)
+owns representative real-Mac results and their limits; [Configuration](docs/toolkit/CONFIGURATION.md)
+owns domain capability boundaries. A fresh full Capture → Rebuild → Verification
+cycle, remaining supported-domain gates and packaged qualification remain open.
 
-Assisted App Store Restore now captures requirements, supports selection/Preview,
-manual installation in Apple App Store and fresh Core verification. Confirmed
-identity overlap follows Cask-first precedence. Automatic MAS development is
-preserved on `archive/mas-automatic-restore-v4` and is outside the active path.
-The Assisted Restore milestone's Stage 5 Core/Desktop regression gate passed.
-A [controlled Rebuild from the existing `Test_1.mbt` on 2026-10-21](docs/DESKTOP.md#recent-restore-qualification-and-performance)
-passed Launcher and Global Verification. A fresh full Capture → Rebuild →
-Verification gate from a new Bundle remains outstanding. This completed development
-milestone does not complete Stage 16 or make Macseed 1.0 release-ready.
+**D1–D4/R5 is accepted within its implementation and automated integration scope**
+at [03198a2](https://github.com/jetiaks-AKS/macseed/commit/03198a2010d554c5f87f73c3260ef2f34af0fc89),
+with successful [CI #96](https://github.com/jetiaks-AKS/macseed/actions/runs/40069974279).
+Its general Restore resilience audit is closed. Native lifecycle, universal progress
+qualification and recovery remain open under the [Core process contract](docs/core/APPLICATION-INTERFACE.md#external-process-waiting-and-git-clone-r5).
+CI tuning is maintenance; [Contributing](CONTRIBUTING.md#focused-feedback-and-ci)
+owns canonical test execution and timing evidence.
 
-The VS Code Restore Reliability checkpoint completed on 2026-10-22 adds safe typed
-`network_reset` diagnostics. Independent extension installs continue only after a
-confirmed network reset and a fresh, valid, unchanged inventory with the failed
-requirement still absent. Unknown errors and safety violations still stop further
-installs. The checkpoint's Core regression gate passed **40/40** suites. Real
-[VS Code qualification](TODO.md#vs-code-restore-requalification) retains the
-user-confirmed installation of previously missing extensions; dependency closure
-and independent follow-up evidence remain separate.
+Desktop CI is [complete](#desktop-ci-validation). Continue in this order:
 
-**D1–D4/R5 repair queue: accepted and closed within the documented implementation
-and automated integration boundaries.** The accepted baseline is
-[03198a2010d554c5f87f73c3260ef2f34af0fc89](https://github.com/jetiaks-AKS/macseed/commit/03198a2010d554c5f87f73c3260ef2f34af0fc89),
-with [CI #96 / 40069974279](https://github.com/jetiaks-AKS/macseed/actions/runs/40069974279)
-completed successfully, including lint, all four regression shards and `validate`.
-The shared durable-admission gap was closed in `b196a660`; the baseline aligns
-Force Cancel fixtures with retained unknown consequences and blocked re-entry.
-The general Restore resilience audit and this repair queue are not pending reruns.
-The [Core reference](docs/core/APPLICATION-INTERFACE.md#external-process-waiting-and-git-clone-r5)
-retains the exact limits: native lifecycle gates, universal no-progress detection,
-recovery and release readiness are not closed by this acceptance.
-
-Quick, suite/case selection, weighted RestorePrepare case distribution and safe
-diagnostic reports are implemented (`1b0d10c`), using the canonical inventory.
-Further CI weight/target calibration is maintenance, not a new R5 closure gate;
-[Contributing](CONTRIBUTING.md#focused-feedback-and-ci) owns runner usage and timing evidence.
-
-0. **Documentation and current development app — completed:** the accepted baseline
-   and retained work are reconciled; the ordinary Debug build and launch from
-   `macseed-develop` are confirmed, with **Ready · Macseed Core 3.4.0** observed.
-   The development descriptor references this checkout; Core is not embedded.
-   This closes the organizational checkpoint, not additional Restore qualification.
-1. **[Desktop CI validation](#desktop-ci-validation) — COMPLETE:** CI #108 at
-   `411cd712` passed the full hosted Core/Desktop gate, including native assertions.
-2. **[Complete Workspace & Git Worktree Restoration](#complete-workspace--git-worktree-restoration):**
+1. **[Complete Workspace & Git Worktree Restoration](#complete-workspace--git-worktree-restoration):**
    next implementation checkpoint. Review architecture/data contracts, then qualify
    the agreed end-to-end path, file preservation, conflicts and repeat/no-op convergence.
-3. **Secure SSH Desktop (16H):** implement and qualify the inherited secret-channel
+2. **Secure SSH Desktop (16H):** implement and qualify the inherited secret-channel
    interaction, encryption/unlock/import confirmation and secure privacy coverage
    through representative Capture/Restore gates.
-4. **Remaining supported-domain Restore qualification:** continue Homebrew
+3. **Remaining supported-domain Restore qualification:** continue Homebrew
    compatibility, real Zsh, macOS visual effects, Extension Pack dependencies and
    the remaining [TODO matrix](TODO.md#remaining-supported-domain-restore-qualification).
    Close each supported scope with real Verify and repeat/no-op evidence;
    preserve the accepted Assisted Restore flow and prior user confirmations.
-5. **Recovery / Stage 3C and remaining 16I/16K qualification:** establish a safe
+4. **Recovery / Stage 3C and remaining 16I/16K qualification:** establish a safe
    route after unknown consequences, durable reconciliation and re-entry; qualify
    native quiescence, measured budgets/progress, incomplete Verification, stale
    inputs, transport, accessibility and lifecycle ownership. Complete against
    representative failure/re-entry gates; diagnostic logs alone grant no recovery authority.
-6. **[Stage 17 — Distribution & Clean-Mac Qualification](#stage-17--distribution--clean-mac-e2e):**
+5. **[Stage 17 — Distribution & Clean-Mac Qualification](#stage-17--distribution--clean-mac-e2e):**
    qualify a checkout-independent packaged runtime, signing/notarization and full
    clean-Mac workflows on each claimed platform.
-7. **[Early Access / Alpha](#early-access--alpha):** validate with external technical
+6. **[Early Access / Alpha](#early-access--alpha):** validate with external technical
    users and resolve observed compatibility/UX failures before public launch.
-8. **[Macseed 1.0](#macseed-10):** close mandatory product gates, document supported
+7. **[Macseed 1.0](#macseed-10):** close mandatory product gates, document supported
    scope/limits and complete Early Access qualification before release.
-
-Real-Mac performance observations and their differing-run limitations are recorded
-in [Desktop qualification](docs/DESKTOP.md#recent-restore-qualification-and-performance),
-not a performance guarantee or closure of Homebrew capability qualification.
-
-A [controlled macOS 27 Restore](docs/toolkit/CONFIGURATION.md#controlled-macos-27-restore-qualification)
-confirmed 37/37 saved preference values with zero differences. This bounded result
-does not close visual-effect or remaining settings qualification gates.
-
-The bounded macOS settings expansion and Capture Result refinements are
-implemented with focused automated coverage. Their remaining macOS 27 manual
-qualification is tracked in [TODO](TODO.md#macos-settings-manual-qualification);
-this does not close Stage 16 or the remaining supported-domain Restore gates.
 
 ## Desktop CI validation
 
 **COMPLETE — [CI #108](https://github.com/jetiaks-AKS/macseed/actions/runs/40287367098),
 published commit `411cd712`.** The hosted Debug build, all eight Desktop suites,
-both Restore subsets and native assertions passed, together with lint, every Core
-shard and `validate`. Desktop took **13 min 15 s**. This closes Desktop CI
-validation, not distribution or remaining Stage 16 qualification.
-
-CI scheduling maintenance now allows Desktop after lint, alongside Core regression;
-the mandatory Core + Desktop + `validate` gate is unchanged. Parallel overlap and
-wall-clock improvement still need hosted confirmation; the serial baseline and
-unmeasured target are recorded in [CI validation](CONTRIBUTING.md#focused-feedback-and-ci).
+both Restore subsets and native assertions passed with lint, all four Core shards
+and `validate`. This closes hosted Desktop validation, not distribution or remaining
+Stage 16 qualification. CI #109 subsequently confirmed Desktop after lint running
+alongside Core with the same mandatory gate. [Contributing](CONTRIBUTING.md#focused-feedback-and-ci)
+owns the run links, Desktop duration and measured serial/parallel comparison.
 
 ## Complete Workspace & Git Worktree Restoration
 
@@ -191,9 +141,10 @@ records the current Discovery/Capture and Restore limitations.
 - Establish idempotency, fresh-inspection retry and representative real-world
   gates, including repeat/no-op convergence.
 
-Supported SSH profiles, identity selection and proxies for clone require a separate
-Git/SSH-stage decision. Current bounded clone exclusions remain in force; filters
-and Git LFS are neither supported nor automatically approved for implementation.
+Expanding the bounded local clone SSH profile/identity support, adding proxies or
+migrating additional SSH configuration requires a separate Git/SSH-stage decision.
+Current exclusions remain in force; filters and Git LFS are neither supported nor
+automatically approved for implementation.
 
 Any transfer of unique Workspace data requires a separate bounded secure migration
 contract; preserving existing files does not implement that transfer. Current
@@ -243,6 +194,6 @@ value, provenance and safety contract; current Folders reconstructs structure on
 Direct/vendor restoration, additional secure migration and application adapters
 require independent value/security/maintenance assessment. No plugin framework is
 planned. Full cloning, general backup, arbitrary user-data migration, automatic
-removal and unconditional whole-Mac rollback remain outside scope. Revalidate
-version-dependent settings when migration to macOS 27 actually occurs; it is not
-the next functional checkpoint.
+removal and unconditional whole-Mac rollback remain outside scope. Remaining
+macOS 27 visual/cross-version qualification is tracked in TODO, not the next
+functional checkpoint.

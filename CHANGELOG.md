@@ -11,387 +11,137 @@ The format is based on the principles of **Keep a Changelog**.
 
 ### Added
 
-* Capture the standard Screenshot Desktop destination when its native preference
-  is confirmed absent on the qualified legacy macOS backend. Preserve portable
-  HOME paths and Bundle v1 compatibility; Preview, Restore and Environment Status
-  share effective-destination checks and repeat/no-op behavior. Unknown reads,
-  non-file targets, mixed Screenshot mechanisms and unqualified macOS 27 location
-  handling fail closed. Native visual/output-folder qualification remains open.
-
-* Fixed information and action areas around the scrolling Capture, Restore and
-  Environment Status category lists. Unified oval count pills and rightmost
-  disclosure arrows retain existing status anchors. Status category pills combine
-  Different and Missing; Expand/Collapse now includes every macOS subcategory.
-  Leaf rows omit inactive selection/disclosure controls; ordinary selection and
-  Preview screens keep operation history in Settings. Manual Installation aligns
-  with the Automatic Restore status column. Matching leaves use a compact accessible
-  checkmark; Capture labels wrap before the status column. Visual acceptance of
-  Capture, Restore and Environment Status is complete.
-
-* Bounded application Git clone with owned transport termination, durable unknown
-  re-entry protection and retained partial-destination fences. Confirmed local
-  clone failure can continue independent repositories without hiding the failure.
-  Added separate deadlines for application observations and aggregate phases,
-  numeric Git phase progress detection and bounded watchdog/output cleanup.
-  Native lifecycle qualification and unsupported delegation remain open.
-
-* Consolidated Restore Selection, Preview and Result: consistent App Store placement,
-  one summary of verified automatic work and outstanding issues, concise actions,
-  and category details using existing execution evidence. Verification diagnostics
-  remain in Operation Logs and Diagnostic Report. Compact
-  status groups and a shared Applications & Tools Result group keep manual App Store
-  work visible without repeated attention sections. Preview statuses align across
-  expanded categories and items; the dedicated App Store list is visible immediately.
-  Preview expansion avoids repeated hidden status measurements, with Expand All
-  in the fixed Tasks control row.
-
-* Automatically retain Homebrew Cask for confirmed duplicate Cask/App Store
-  requirements during Capture and Restore. Effective selection, manual App Store
-  counts and Verification agree, while explicit App Store-only selection and
-  protected App Store targets remain respected. Confirmed catalog identities persist
-  across Prepare and Result refresh for 30 days, preventing transient lookup failure
-  from restoring a duplicate requirement. Legacy identity lookup is optional;
-  unresolved records stay selected.
-
-* Assisted App Store Restore: open missing applications in App Store, install
-  manually and refresh Core inspection. Missing or uncertain App Store items no
-  longer block other Restore categories. Automatic MAS development and its
-  privileged fallback are archived on `archive/mas-automatic-restore-v4`, outside
-  the active runtime; existing Bundle application records remain compatible.
-
-* Separated automatic Restore warnings and results from manual App Store work,
-  hid empty Preview metrics, and exposed independent launcher failures with
-  current operation evidence. Protected Homebrew targets with App Store receipt
-  markers and clarified provider-specific absence without assuming application
-  identity or distribution equivalence.
-
-* Recorded the controlled macOS 27 settings Restore on 2026-10-17: 127/127
-  Successful in Macseed and 37/37 saved preferences matched independently with
-  zero differences. This qualifies the tested stored values; full visual effects
-  and writes to already-matching Windows keys remain unqualified.
-
-* Expanded the existing macOS settings categories with Screenshots window shadow
-  and floating thumbnail, plus wallpaper-click, edge/top tiling and tiled-window
-  margins. These boolean additions are captured only when observed; absent boolean
-  keys remain unmanaged. Existing Bundle v1 configurations remain compatible.
-
-* Homebrew Casks requiring Rosetta use a read-only availability probe and an
-  item-scoped manual prerequisite instead of unconditional Unsupported. Desktop
-  explains manual preparation and Refresh Preview; Macseed never installs Rosetta.
-
-* Receipt-backed PKG Cask Repair qualification with private ownership provenance
-  and stale-component checks. Unproven legacy cleanup remains blocked.
-
-* Explicit, consent-bound preparation of supported native PKG casks from older
-  Bundles missing payload requirements. Fix Issues… lists installers before inert
-  inspection; short-lived identity-bound evidence enables a fresh Preview without
-  automatic downloads. Installation still requires separate Rebuild confirmation.
-  Tailscale 1.104.1 passed PKG Preparation → Clean Install → Verification → fresh
-  matching Preview. Unsafe Repair remains Unsupported (`ownership_unproven`);
-  in-place Repair is not implemented.
-
-* Restore Graceful Stop now latches operation-wide and applies at safe checkpoints,
-  preserving active operations/post-checks and Homebrew launch atomicity. Desktop
-  distinguishes delivery, acceptance and refusal; unreported benign restart rows
-  and explained aggregate category warnings no longer repeat in results. Force Stop
-  and unknown-consequence safeguards remain separate. Controlled real-Mac Early
-  Cancelled and Partial Stopped checks passed; broader native-installer and
-  detached/privileged-process qualification remains open.
-
-* Restore terminal results reuse Environment Status category disclosures, local
-  item details and evidence-based counters, keeping execution compact and operation
-  completion separate from Verification. A compact three-card plan-row summary
-  distinguishes verified and not-yet-verified positive outcomes, and operation-bound
-  Stop/Force Stop notices retain uncertainty about final consequences.
-
-* Desktop Operation Logs persist private typed events with bounded retention,
-  restart history, terminal View Log and Settings access, Important/All viewing
-  and safe clearing of inactive logs. Process Result, Verification and diagnostic
-  completeness remain independent.
-* Diagnostic Report adds an independent privacy allowlist and immutable UTF-8
-  preview/copy/save snapshot, explicit refresh and honest partial/truncated/
-  unavailable evidence; Core/CLI technical logs remain separate.
-
-* Clean native package Install with checksum-bound root-app payload inspection,
-  separate installer authorization and conservative Repair qualification.
-
-* External Tool Compatibility Layer established with Homebrew as the first
-  domain-owned provider; public capabilities drive compatibility and observed
-  versions remain diagnostic provenance.
-* Generic Homebrew Cask capability model with nonempty independent payload
-  verification, package receipt-plus-filesystem evidence, action-specific metadata
-  evolution, captured requirements and final prepared-plan requalification.
-* Qualified Homebrew-generated shell completions participate in Capture, payload
-  verification and native lifecycle repair, with protection for existing edited outputs.
-* Qualified native Cask Install/Repair supports authorized Homebrew lifecycle
-  operations under the managing user, with masked credential handling and durable
-  overlap protection when privileged consequences cannot be established.
-* Restore preserves separate Homebrew Applications and Packages domains, repair
-  actions and authoritative item progress through final Verification.
-
-* Restore keeps unsupported independent Homebrew casks visible and skips them while
-  supported work continues, including item-local `cask_target_conflict` and
-  `cask_execution_requirements_unsupported`, retaining operation-wide safety gates
-  and final Verification.
-* Desktop uses Fix Issues… for available preparation and Refresh Preview for
-  reinspection, removes the duplicate Needs Preparation block, prevents text/status
-  overlap and explains Unsupported outcomes.
-
-* Application Restore detects stalled Homebrew items after three minutes without
-  observable progress, terminates their owned processes, continues independent
-  work and reports partial results through final Verification.
-
-* Native SwiftUI Desktop foundation with Capture, Restore and Environment Status
-  navigation, plus structured Protocol V1 runtime/transport using an explicit
-  development Core runtime. Packaged Core remains a distribution gate.
-* Real read-only Environment Status comparison against an explicit saved reference.
-* Real Desktop Capture: scan, review, destination selection, fresh preparation,
-  compact confirmation, `.mbt` publication, completion and Reveal in Finder.
-* Additive Protocol V1 Restore selection inventory and domain/item narrowing,
-  with stable item identities and prepared-plan binding over existing consumers.
-* Real Desktop Restore preparation: Saved Environment inspection, fine selection,
-  read-only Preview, prerequisite rechecks and retained prepared-plan identity.
-* Native Desktop Restore execution with explicit confirmation, structured activity,
-  Safe Stop, Verification-aware results and fresh Preview after interruption.
-* Persistent native Appearance preference: System, Light and Dark.
+* Native SwiftUI Desktop over Core Protocol V1: real Capture, Restore
+  Prepare/Execute and read-only Saved Environment Status, with explicit selection,
+  confirmation, structured progress, Verification-aware results and fresh-plan
+  re-entry. The development runtime references a checkout; packaged distribution
+  and Desktop Secure SSH integration remain open.
+* Desktop Capture scans/selects supported state, prepares the chosen destination,
+  publishes a `.mbt` Saved Environment and offers Reveal in Finder. Confirmed
+  replacement validates the new Bundle before atomic publication, preserving the
+  old file on failure. Stale preparation requires a fresh Scan.
+* Assisted App Store Restore: select/preview requirements, open apps in Apple App
+  Store, install manually and refresh Core inspection. Manual missing/unverified
+  requirements do not block independent automatic work. Automatic MAS and its
+  privileged fallback are retired to `archive/mas-automatic-restore-v4`; existing
+  Bundle application records remain compatible.
+* Confirmed Cask/App Store identity overlap uses Cask-first precedence consistently
+  in effective Capture scope, Restore Preview and Verification. Explicit App
+  Store-only selection remains valid; unresolved identity retains both requirements.
+  Private confirmed catalog bindings last 30 days; optional lookup failure never
+  silently removes requirements. Protected App Store targets remain conflicts.
+* External Tool Compatibility Layer with a domain-owned Homebrew provider and
+  capability-based Install/Repair qualification. Nonempty typed app/link/package
+  payloads, receipt-plus-filesystem evidence and captured requirements establish
+  observed state independently of registration. Qualified generated completions
+  participate in Capture, verification and protected native repair.
+* Explicit consent-bound PKG installer preparation for older Bundles missing payload
+  requirements; a fresh Preview and separate Rebuild confirmation follow inspection.
+  Native Install/Repair uses Homebrew authorization and conservative ownership
+  provenance. Rosetta remains an item-scoped manual prerequisite; Macseed does not
+  install it. Unsafe Tailscale Repair remains unsupported, with no in-place Repair.
+* Operation-wide Graceful Stop finishes active indivisible work/post-checks and
+  stops subsequent admission at safe checkpoints. Desktop distinguishes request
+  delivery, acceptance, refusal and handled stop; Force Stop is a separate confirmed
+  emergency action. Controlled Early Cancelled/Partial Stopped cases are accepted;
+  broader installer quiescence and ordinary-Cask durable recovery remain open.
+* Private Desktop Operation Logs with bounded retention, restart history,
+  Important/All viewing and safe inactive-log clearing. Diagnostic Report supplies
+  an independent privacy allowlist and immutable UTF-8 preview/copy/save snapshot,
+  explicit refresh and honest incomplete/unavailable evidence. Core logs stay separate.
+* Windows wallpaper-click, edge/top tiling and tiled-window margins, plus Screenshot
+  window shadow and floating thumbnail, through the existing typed settings contract.
+  Absent boolean source keys stay unmanaged; older Bundle v1 files remain compatible.
+* Screenshot default Desktop capture on the qualified legacy backend when native
+  preference absence is confirmed, with portable HOME paths and shared effective
+  destination/no-op checks. Unknown reads, non-file targets, mixed mechanisms and
+  unqualified macOS 27 location handling fail closed; native output qualification
+  remains open.
 
 ### Changed
 
-* Balanced the four regression runners using recorded durations and discovered
-  RestorePrepare case IDs, retaining the full mandatory inventory. Added Quick
-  and suite/case selection, phase timings, safe per-suite diagnostics and exact
-  failure reproduction. CI collects isolated assertion failures, stops on unsafe
-  cleanup and cancels stale development runs. Removed a redundant Prepare call
-  from a stale-plan fixture; hosted performance targets remain unqualified.
-
-* Reduce repeated inventories and input validation in Restore Preview/readiness and
-  Global Verification, reuse immutable Homebrew result serialization, and avoid duplicate
-  Bundle validation during preparation while retaining integrity and stale-plan gates.
-  Opt-in aggregate Performance Trace is off by default and outside Protocol V1;
-  Desktop forwards only its explicitly enabled diagnostic variables. Individual
-  [real-Mac measurements](docs/DESKTOP.md#recent-restore-qualification-and-performance)
-  improved after the PKG fallback fix, without a cross-machine performance guarantee.
-
-* Desktop Capture and Restore adopt Environment Status's visual groups, category
-  icons, row surfaces, summary cards and nested macOS Settings presentation while
-  preserving selection granularity and explicit Prepare/Rebuild controls.
-  Visual Unification is complete across Selection, Preview, Execution and Result;
-  final Result uses disjoint positive-count Successful / Needs Attention / Skipped
-  plan-row cards, preserves unknown outcomes and keeps technical details on demand.
-  Verified evidence takes precedence over Applied without inferring Verification
-  from process completion.
-* Restore cancellation preserves unknown consequences when process termination or
-  observation cannot be confirmed (Cancellation Safety Stage 1–2).
-* Homebrew Cask and Formula support Graceful Stop: the current native installation
-  and post-checks finish before further items or Bootstrap modules can start.
-  Force Stop remains a separate emergency action. Operation-wide safe-checkpoint
-  coverage is recorded above; native lifecycle qualification remains separate.
-  Historical Homebrew validation included 25 mock tests, related checks and
-  a Debug build. The 2026-10-14 Firefox smoke test passed, without event-log proof of
-  Stop timing during installation; full installer-interruption qualification remains open.
-* Retain the 2026-10-13 Firefox busy-DMG incident and remaining Cancellation Safety
-  limits. Stage 3C durable ordinary-Cask journal/reconciliation is not implemented;
-  Stage 16J diagnostics is implemented separately and provides no recovery authority.
-
-* Restore freshness failures include safe plan/component fingerprints in Desktop
-  diagnostic copying. A denied process observer is reported separately from an
-  unavailable Bundle, preserving the original publication and mutation facts.
-
-* Desktop Restore keeps category progress compact, separates execution from final
-  conformity, and finalizes categories independently from Verification evidence.
-  Supported partial outcomes retain Core failures in collapsed technical diagnostics
-  while presenting concrete user issues and semantic Result cards.
-
-* Restore selection shows category inclusion counts and keeps Preview Restore in a
-  fixed footer; Preview preparation uses honest indeterminate activity. Stop Rebuild
-  always confirms with a safe Continue default and operation identity guards.
-
-* Homebrew Repair qualifies bounded installed-lifecycle launch-service/login-item
-  orphans generically, preserves structured ownership diagnostics, and checks
-  Automation without prompting during Preview. Desktop offers explicit consent
-  and restores compact Preview scope cards.
-
-* Capture, Restore and Status share initial action cards with functional colors;
-  Macseed uses a working three-color Orbit app icon.
-
-* All Tasks uses responsive native action cards; Environment Status shares Desktop
-  summaries, metric cards and domain disclosures over read-only Core comparison.
-
-* Restore Selection now respects both source presence and captured Blueprint
-  selection, hiding absent/excluded inventory-only domains while preserving
-  selected limitations and unknown evidence. Preview summary cards put Already
-  Match first; detailed Preview and Restore execution are unchanged.
-
-* Finalized Home/branding: centered shared Hero/tile width, stable tile spacing,
-  bottom-pinned Settings, and a larger system leaf icon applied from the bundle.
-
-* Introduced the blue/lilac Macseed leaf identity and matching app/Dock icon,
-  consistent colored task navigation, and a premium Home hero with three action
-  tiles. Capture/Restore workflow behavior is unchanged.
-
-* Finalized Desktop Capture UI: live Review selection cards, compact read-only
-  Confirmation/Result labels and independent warnings, selected macOS subdomains
-  and bounded VS Code JSON settings details, compact Core-phase progress, and
-  publication-backed saved counts/states. Stale preparation now asks for a fresh
-  Scan with specific guidance; cancellation retains cautious publication evidence.
-
-* Unified native sidebar, neutral workspace and restrained header surfaces with
-  progressive disclosure and semantic Light/Dark presentation.
-* Production Desktop uses structured Core data rather than human CLI output.
-* Capture groups the six macOS settings domains under one expandable selection
-  group, with independent domain checkboxes, all/none/mixed selection and wrapping
-  informational labels for the settings included in the current preparation.
+* Unified Desktop Capture/Restore/Status around shared domain rows, nested macOS
+  settings, fixed information/actions, one scrolling tree, recursive disclosure and
+  aligned status/count columns. Selection, Preview and Result retain distinct scope
+  and evidence semantics. Quiet native Light/Dark/System appearance and the finalized
+  blue/lilac leaf identity replace intermediate branding; Home/sidebar/settings and
+  the current functional UI are manually accepted.
+* Restore Selection respects source presence and Blueprint exclusions while retaining
+  selected limitations. Preview uses explicit Refresh, Already Match / Changes
+  Planned / Need Attention metrics and consent-bound Fix Issues. Result consolidates
+  manual/automatic issues, counts each evidenced requirement once and keeps technical
+  details in operation-specific logs. Verified remains distinct from Applied;
+  operation completion remains distinct from conformity.
+* Environment Status uses explicit Bundle references and an inspection-only Review
+  in Restore handoff. Differences Found combines Different/Missing without changing
+  precise leaf evidence; repository category counts represent logical repositories.
+  Extra applications stay in diagnostic evidence and never imply removal.
+* Reduced Capture/Preview/readiness/Verification overhead with bounded category
+  observations, per-pass Cask metadata and validated formula/VS Code noop inventories.
+  Removed repeated input/Bundle validation within safe boundaries; fresh Apply,
+  post-Apply and final Verification checks remain. Optional aggregate Performance
+  Trace is off by default and outside Protocol V1/Diagnostic Report; timings are
+  [bounded observations](docs/DESKTOP.md#recent-restore-qualification-and-performance).
+* Balanced four Core regression shards using the complete canonical inventory;
+  Quick and suite/case selectors provide focused feedback, safe timings/diagnostics
+  and failure reproduction. Mandatory Desktop CI runs its canonical build/test
+  entrypoint after lint alongside Core; `validate` requires every dependency.
+  Native assertions remain mandatory and private Desktop artifacts are not uploaded.
 
 ### Fixed
 
-* Reduce Restore preparation and Already Matches overhead with per-pass Cask
-  metadata batches and validated formula/VS Code inventories for consecutive
-  noops. Fresh Apply admission, post-Apply checks, final Verification and all
-  item records remain intact; see the comparable [measurements](docs/DESKTOP.md#recent-restore-qualification-and-performance).
+* Restore Git clone now preserves bounded local SSH identity configuration and
+  reports typed clone causes/native exit codes. Preview correlates repository Bundle
+  identities with target paths even when ordering differs. Checkout preserves
+  conflicting ignored/untracked files. Selected differing scalar Git settings in
+  Bundle Restore are written, verified and converge to no-op without changing
+  ordinary Bootstrap conflict behavior.
+* Independent Restore retains failures/partial changes while continuing only where
+  safe evidence permits: local Workspace folder failures, proven unchanged checkout
+  refusals in disjoint ordinary repositories, confirmed terminated partial clones,
+  macOS category failures and item-local unsupported/conflicting Casks. Folder errors
+  still block repositories; unknown state and Stop still block further mutation.
+* VS Code extension failures retain typed diagnostics without raw command output.
+  Independent installs continue only for confirmed `network_reset` with fresh,
+  unchanged inventory and the failed requirement still absent. Unknown errors and
+  Verify failures stop; installed-ID evidence does not prove Extension Pack closure.
+* Capture confirmation/publication use the same effective Cask-first scope and reject
+  changed decisions. Malformed optional identity metadata remains unresolved without
+  aborting unrelated work. Workspace observations remain selectable, filenames get
+  exactly one `.mbt` suffix and result counts require publication evidence.
+* Environment Status Cancel retains its reference; internal reporting/staging I/O
+  failures no longer masquerade as an unavailable Bundle. Returning Appearance to
+  System removes conflicting overrides. Native row/disclosure/checkbox geometry
+  and result wrapping retain their assertions and accessibility semantics.
+* SSH readiness catches selected configuration conflicts/observation failures before
+  publication. Cask state classification no longer downloads PKG installers to infer
+  payloads: insufficient local evidence stays unsupported/unverified.
+* Homebrew application reads disable analytics/auto-update per process, avoiding
+  detached telemetry without changing global preferences. Module-relative observers
+  preserve configuration-path behavior; complete fixture dependencies and deterministic
+  cancellation checks retain the production contracts.
 
-* Restore Git authentication with existing custom SSH identities through bounded
-  local configuration, retaining typed clone causes and native exit codes in Log.
+### Security / Reliability
 
-* Unknown external lifecycle now blocks Execute before a changed Preview can mask
-  the safety reason.
-
-* Batch macOS scalar observations within each read-only category to reduce Restore
-  preparation and Verification overhead without reusing stale state across Apply
-  or operations.
-
-* Homebrew reads in Desktop Capture, Comparison and Restore Preview disable
-  per-process analytics, preventing detached telemetry from invalidating successful
-  observations. Worker/deadline safeguards remain enforced; failure-layer facts
-  are retained in the existing typed Operation Log/Diagnostic Report.
-
-* Capture, Restore and Environment Status show concise workflow messages, with
-  technical diagnostics in the existing operation-specific View Log. Shared
-  prerequisites are grouped without changing item counts or hiding independent issues.
-
-* Persist the shared external-process admission before application Bootstrap can
-  launch. Parent crashes and unconfirmed completion retain the re-entry fence;
-  only the owning, confirmed lifecycle can finalize it. Read-only routes create
-  no mutation journal, and existing unknown records remain blocked.
-  Force Cancel during an unconfirmed mutation retains unknown consequences even
-  after owned child termination. The Cask repair cancellation fixture now checks
-  exit `2`, the durable fence and blocked fresh Execute without weakening Graceful
-  Stop or process-ownership checks. The D1–D4/R5 repair queue is accepted within
-  its documented implementation and automated integration scope; the
-  [accepted baseline and CI](ROADMAP.md#current-practical-execution-order) do not
-  qualify native lifecycles or recovery.
-
-* Reap the optional performance clock before Bootstrap exits, preventing a late
-  diagnostic helper from producing an unknown Restore lifecycle result. Regression
-  diagnostics retain the assertion's relative file and line without exception data.
-
-* Restored complete module-relative dependencies in Homebrew activation and
-  Dry-run CLI fixtures. Comparison cancellation now exercises actual owned-stop
-  kill denial and confirms the injection with runtime evidence.
-
-* Reduced repeated process-table scans during application Capture while retaining
-  observation deadlines, owned-process quiescence and EOF checks. Comparison again
-  resolves the external App Store inventory command with auto-indexing disabled,
-  preserving Extra counts and malformed-inventory detection.
-
-* Capture observes macOS settings under one bounded serializer per category,
-  avoiding a Python supervisor for every scalar read. Shared observation libraries
-  resolve relative to their module, preserving Git operations from other working
-  directories and the meaning of relative configuration paths.
-
-* Application Restore Execute bounds VS Code extension inventory and installation
-  CLI waits with separate absolute budgets and owned-process termination. Durable
-  safety state blocks further mutation and fresh Restore after interrupted or unconfirmed
-  operations; confirmed `network_reset` continuation and private diagnostics are
-  preserved. Native CLI keeps its diagnostic pipeline; Preview, Prepare/readiness,
-  Comparison and secure verify-only preserve existing lifecycle state. Supervised
-  Execute requires valid operation-state through final Verification and never
-  falls back to native execution when that state is missing or invalid. These
-  limits do not claim no-progress or real lifecycle qualification.
-
-* Application Restore can continue independent existing Git repositories after a
-  checkout refusal only with unchanged HEAD/index/files and proven separate Git
-  metadata. The original failure, partial changes and failed result remain;
-  unknown state, shared topology, clone/post-Verify failures and Stop still block
-  continuation. Ordinary CLI behavior and the Workspace Folders gate are unchanged.
-
-* Workspace Folders continues safe independent creation after confirmed local
-  `mkdir` failures, retaining partial changes and a failed result. Related paths
-  are skipped, unsafe or uncertain state stops creation, and any folder failure
-  continues to block Git Repositories.
-
-* Application Restore continues independent macOS settings categories after a
-  local Check, Apply or Verify failure, retaining a failed aggregate and partial
-  changes. All selected inputs are validated before mutation; Stop and unknown
-  consequences still block continuation. Ordinary CLI behavior is unchanged.
-
-* Homebrew Formula Restore retains detected process uncertainty across nested
-  executors, including metadata observers. Durable write-ahead state is required
-  before affected subprocesses launch; supervisor crashes and failed uncertainty
-  updates retain the re-entry block. Unconfirmed quiescence blocks further mutations
-  even after a zero exit; confirmed safe item failures retain independent continuation.
-
-* Environment Status aligns nested statuses, hides zero summary metrics and keeps
-  additional applications in diagnostic evidence. Category match labels, compact
-  leaf checkmarks and a shared red difference palette improve readability.
-  The Differences Found summary combines Different/Missing with a nonzero
-  breakdown; individual statuses and diagnostic records remain separate.
-  Categories consistently report Differences Found with separate Missing/Different
-  counts; preference-key absence uses a precise explanation.
-  Repository category counts now reflect one
-  logical item per repository, with consistent explanations and full predicate
-  diagnostics; Core comparison totals and provider-specific App Store scope remain
-  unchanged.
-
-* Capture Review/Result hide zero Needs Attention cards and fill the remaining
-  width. Restore Preview category and macOS subcategory rows add nonzero green
-  Match, blue Planned and amber Attention item badges on the shared row geometry.
-
-* Capture confirmation and strict Desktop publication validation use the same
-  effective Cask-first scope. Changed identity decisions require fresh preparation;
-  unresolved identity preserves both requirements.
-* Malformed optional application identity metadata, including unexpected JSON types
-  and excessive nesting, leaves identity unresolved without aborting the workflow.
-* Git branch restoration preserves conflicting ignored files as well as untracked
-  files, while allowing nonconflicting local files.
-
-* Restore Result aligns categories, nested domains and individual items with
-  reserved Status, Count and Chevron columns while retaining title indentation
-  and wrapping long text.
-
-* Capture Result places Reveal in Finder beside the saved file and keeps View Log
-  left, Capture Again / Done right. Done returns to the initial Capture state
-  without scanning. Parent and nested macOS settings statuses share a column with
-  other Capture Result categories, with disclosure arrows kept separate.
-
-* Environment Status Cancel retains the selected reference and returns to selection;
-  internal comparison I/O failures no longer masquerade as an unavailable source Bundle.
-* Cask readiness and Verification no longer download PKG installers to infer
-  payload requirements; insufficient local evidence remains unsupported/unverified.
-
-* SSH Restore readiness now catches selected configuration conflicts and
-  observation failures before publication, fixing the bug found during the real
-  Homebrew acceptance gate.
-* Desktop Capture honors explicitly confirmed Save Panel replacement, validates
-  the new Bundle before atomic publication and preserves the old file on failure.
-
-* Restore Preview correlates Git repositories by their bundle identity and target
-  path even when configuration and selection orders differ.
-* Bundle Restore now restores selected differing scalar global Git settings,
-  verifies saved values and converges to a no-op; ambiguous/error states stay protected.
-* Normalized Desktop Capture destinations to exactly one `.mbt` extension.
-* Corrected Capture status forwarding so successful Workspace Folders and Git
-  Repositories observations remain selectable.
-* Unified application appearance ownership so switching back to System does not
-  retain a conflicting Dark override in SwiftUI windows.
-
-### Qualification
-
-* Real Repair → Verify → fresh no-op gates passed for Keka, Termius and VLC;
-  generated completions support was validated through the Codex cask.
-* Homebrew closure remains open: broader representative gates are still required.
-  Clean Tailscale Install and subsequent matching observation passed through
-  `08e2b469`; universal Repair is not qualified, and ambiguous/damaged privileged
-  Repair states remain fail-closed.
+* Durable owner-bound external-process admission is persisted before mutating
+  Bootstrap launch. Parent crashes, interrupted mutations and unconfirmed completion
+  retain the global re-entry fence, checked before stale-plan recomputation. Owned
+  child termination alone cannot clear unknown consequences or report cancellation
+  as safe success. Read-only paths neither create mutation journals nor clear them.
+* Application clone, VS Code CLI and read-only observations use bounded owned-process
+  waits/output cleanup. Clone numeric phase progress and Homebrew's three-minute
+  no-progress watchdog retain distinct policies; absolute deadlines are not universal
+  stall detection. Partial clone destinations are preserved and fenced, never cleaned.
+* Formula/Cask lifecycle uncertainty remains durable across nested executors and
+  failed observations. Privileged overlap protection, fresh ownership/admission and
+  final Verification stay mandatory. The optional trace helper is reaped before
+  Bootstrap exit and cannot manufacture a successful Restore outcome.
+* The D1–D4/R5 implementation/integration queue is accepted. Representative
+  Homebrew Repair → Verify → no-op and Tailscale 1.104.1 Clean Install gates passed;
+  controlled macOS 27 Restore matched 37/37 saved values. These do not qualify
+  universal Repair, visual effects, detached/privileged quiescence or recovery.
+  [Qualification boundaries](docs/DESKTOP.md#recent-restore-qualification-and-performance)
+  and [open tasks](TODO.md) remain explicit.
 
 ## [3.4.0] - 2026-10-02
 

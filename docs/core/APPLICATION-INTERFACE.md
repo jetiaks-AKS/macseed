@@ -299,9 +299,10 @@ On a freshness refusal, Execute adds `plan_validation` with allowlisted `check`
 (`prepared_plan_id` or `input_recheck`), `expected_id`, `recomputed_id` and the
 recomputed `components`. Input rechecks also report Boolean
 `bundle_changed_after_prepare` / `stage_changed_after_prepare`.
-Desktop compares against the retained Prepare fingerprints in **Copy Diagnostic
-Details**, without sending a baseline back to Core. Missing evidence is unknown;
-a changed planning fingerprint alone does not establish actual target-state drift.
+Clients can compare against retained Prepare fingerprints without sending a baseline
+back to Core. Missing evidence is unknown; a changed planning fingerprint alone does
+not establish actual target-state drift. [Desktop](../DESKTOP.md#rebuild-and-result-navigation)
+owns current presentation and diagnostic access.
 No paths, settings values, Bundle contents, free-form diagnostics or secrets enter
 these fields. Older clients can ignore them and older Core responses remain usable.
 

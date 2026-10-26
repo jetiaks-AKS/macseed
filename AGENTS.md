@@ -27,9 +27,9 @@ Stage 17 owns packaging and clean-Mac qualification.
 The D1–D4/R5 repair queue is accepted within documented implementation and
 automated integration boundaries; Roadmap records the baseline and successful CI.
 Do not reopen its completed general Restore audit. CI weight tuning is maintenance;
-native lifecycle, progress/recovery and remaining real gates stay open. The next
-implementation checkpoint after closure documentation/current development app is
-Desktop CI, followed by Workspace/Worktrees and Secure SSH in the Roadmap order.
+native lifecycle, progress/recovery and remaining real gates stay open. Desktop CI
+validation is complete. The next implementation checkpoint is Workspace/Worktrees,
+followed by Secure SSH in the Roadmap order.
 
 Read existing code and consumers before proposing changes. Prefer minimal safe
 changes and existing helpers over replacements or new abstractions. Follow

@@ -1,26 +1,11 @@
 # Capture / Restore
 
 Macseed reconstructs selected supported environment state:
-**Capture → Rebuild → Verify**. The CLI implements this workflow today. Desktop
-Capture uses the same production Core; its Stage 16E end-to-end manual gate is approved.
-Desktop Restore preparation/execution uses the same Core. Its historical broad
-manual gate advanced through Restore/Homebrew checkpoint `08e2b469`, with real convergence
-to a fresh Everything Already Matches Preview. Checkpoint `778b816` adds
-receipt-backed PKG Repair provenance and restores Independent Restore for local
-Cask conflicts. Subsequent Tailscale 1.104.1 PKG Preparation → Clean Install →
-Verification → fresh matching Preview passed; unsafe Repair remains Unsupported
-(`ownership_unproven`), and in-place Repair is not implemented. A real Partial
-Restore reported 105 Verified and one Tailscale Mismatch with Rebuild Needs Attention.
-Tailscale removal through Homebrew was separate from Macseed. Current results and
-qualification
-limits are recorded in [Desktop](DESKTOP.md#recent-restore-qualification-and-performance);
-continuing compatibility and remaining Desktop qualification are tracked in
-[TODO](../TODO.md#restorehomebrew-checkpoint--08e2b469).
-
-A controlled macOS 27 Restore on 2026-10-17 passed independent stored-preference
-comparison for all 37 records in its source Bundle, with zero differences.
-[Configuration](toolkit/CONFIGURATION.md#controlled-macos-27-restore-qualification)
-records the exact scope and counts; full visual-effect qualification remains open.
+**Capture → Rebuild → Verify**. CLI and development Desktop use the same production
+Core. This document owns the workflow; [Desktop qualification](DESKTOP.md#recent-restore-qualification-and-performance)
+records bounded real-Mac evidence, and [TODO](../TODO.md#remaining-supported-domain-restore-qualification)
+tracks remaining supported-domain gates. Accepted flows do not establish universal
+Install/Repair, complete visual effects or packaged clean-Mac readiness.
 
 ## What travels
 
@@ -34,8 +19,8 @@ builds a Blueprint from the confirmed selection.
 Desktop calls the captured `.mbt` a **Saved Environment**: scan, choose supported
 categories/items, choose a new destination, confirm freshly prepared scope and
 save. Category-only domains stay whole; private SSH identities remain outside
-Stage 16E. See [Desktop](DESKTOP.md#capture-this-mac) for presentation and the
-deferred final product reference requirement for Environment Status.
+Stage 16E. See [Desktop](DESKTOP.md#capture-this-mac) for presentation and
+[Environment Status](DESKTOP.md#environment-status) for implemented Bundle comparison.
 
 Restore installs tools/applications, clones repositories from recorded remotes,
 creates folders and restores selected settings. Working trees, `.git`, documents,
@@ -62,14 +47,10 @@ ordinary Generated Configuration or Blueprint. It creates one private `.mbt`
 using Bootstrap Bundle v1. Normal configuration is **not encrypted**; only
 explicitly selected SSH key pairs are encrypted in `secure.age`.
 
-The existing Windows and Screenshots categories include the additional scalar
-preferences documented in [Configuration](toolkit/CONFIGURATION.md#window-management)
-and [Screenshots](toolkit/CONFIGURATION.md#screenshots). Only observed source keys
-are included; absence is unmanaged and is never replaced with a system default.
-Bundle v1 remains unchanged, including older Windows, location-only Screenshots
-and empty configurations. Successful Desktop Capture offers file-local Reveal in
-Finder and a Done action that returns to the initial Capture state without scanning;
-[Desktop](DESKTOP.md#capture-this-mac) owns the result UI and validation evidence.
+Settings inclusion, supported keys, unmanaged absence and the qualified Screenshot
+Desktop-default exception belong to [Configuration](toolkit/CONFIGURATION.md#macos-settings).
+Bundle v1 retains compatibility with older settings files; Capture result actions
+and publication-backed counts belong to [Desktop](DESKTOP.md#capture-this-mac).
 
 Review the Bundle and transfer it privately. Macseed does not provide transport
 or synchronization. Checksums detect damage, not source authenticity.
