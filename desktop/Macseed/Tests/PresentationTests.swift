@@ -72,12 +72,17 @@ private struct WorkflowAnchorFrames: PreferenceKey {
                     precondition(detailWidth(split) > width - 240, "Detail must retain the remaining width")
                 }
                 let visibleDetailWidth = detailWidth(split)
+                let visibleBounds = split.splitViewItems.last!.viewController.view.bounds
+                let visibleInsets = split.splitViewItems.last!.viewController.view.safeAreaInsets
                 let selectedRows = navigationList(in: sidebar.viewController.view)?.selectedRowIndexes
                 split.toggleSidebar(nil)
                 settle(window, duration: 0.4)
                 precondition(sidebar.isCollapsed, "Existing sidebar toggle must hide the sidebar")
                 precondition(detailWidth(split) > visibleDetailWidth + 200,
-                             "Hidden sidebar must release its width to detail")
+                    "Hidden sidebar must release its width to detail: \(name), \(String(describing: task)), "
+                    + "before=\(visibleDetailWidth), bounds=\(visibleBounds), insets=\(visibleInsets), "
+                    + "after=\(detailWidth(split)), bounds=\(split.splitViewItems.last!.viewController.view.bounds), "
+                    + "insets=\(split.splitViewItems.last!.viewController.view.safeAreaInsets)")
                 for width in [1600.0, 1200, 1000] {
                     window.setContentSize(NSSize(width: width, height: 800))
                     settle(window)
@@ -1456,6 +1461,7 @@ private struct WorkflowAnchorFrames: PreferenceKey {
     }
 
     @MainActor static func previewColumnGeometryChecks() {
+        _ = NSApplication.shared; NSApp.appearance = NSAppearance(named: .aqua)
         func item(_ id: String, _ state: TaskRowState) -> TaskItemPresentation {
             TaskItemPresentation(id: id, item: DisplayItem(id: id, title: "Requirement " + id,
                 status: state == .matching ? .matching : .attention,
@@ -1473,29 +1479,119 @@ private struct WorkflowAnchorFrames: PreferenceKey {
             + ["vscode-settings", "git-configuration", "workspace-folders", "git-repositories"].map {
                 TaskDomainPresentation(id: $0, title: CaptureCategory.title(for: $0), symbol: WorkspaceCategoryStyle.symbol($0), items: [item($0, .matching)])
             }
+        // Measure the status view supplied to the production row, not its tint:
+        // Match count pills are green too, including in a nonmatching category.
+        let markerColor = Color(red: 1, green: 0, blue: 1)
+        // Match the renderer's color conversion, not assumed raw RGB components.
+        let markerBitmap = NSBitmapImageRep(cgImage: ImageRenderer(content: markerColor.frame(width: 8, height: 8)).cgImage!)
+        let marker = markerBitmap.colorAt(x: 4, y: 4)!.usingColorSpace(.sRGB)!
+        func marked<V: View>(_ status: V) -> some View {
+            status.overlay(alignment: .leading) {
+                markerColor.frame(width: 2, height: 8)
+            }
+        }
+        func rows(expanded: Bool, nested: Bool) -> [(id: String, view: AnyView)] {
+            var result: [(id: String, view: AnyView)] = []
+            func header(_ domain: TaskDomainPresentation, inset: CGFloat, open: Bool) {
+                result.append(("category:" + domain.id, AnyView(RestorePreviewRow(
+                    title: WorkspaceCategoryTitle(id: domain.id, title: domain.title, fallbackSymbol: domain.symbol),
+                    status: marked(RestorePreviewCategoryStatus(domain: domain, stateTitles: [:])),
+                    counts: RestorePreviewMetrics.badges(domain), titleInset: inset, expanded: open)
+                    .padding(.vertical, 6))))
+            }
+            func leaves(_ domain: TaskDomainPresentation, inset: CGFloat) {
+                for item in domain.items {
+                    result.append(("item:" + item.id, AnyView(RestorePreviewRow(
+                        title: VStack(alignment: .leading, spacing: 4) {
+                            Text(item.item.title)
+                            if !item.item.action.isEmpty {
+                                Text(item.item.action).font(.caption).foregroundStyle(.secondary)
+                            }
+                        }.frame(maxWidth: .infinity, alignment: .leading),
+                        status: marked(TaskStatusLabel(state: item.state, showsTitle: item.state != .matching)),
+                        titleInset: inset).padding(.vertical, 7))))
+                }
+            }
+            for domain in domains {
+                header(domain, inset: 0, open: expanded)
+                guard expanded else { continue }
+                if domain.id == "macos-settings" {
+                    for child in settings {
+                        header(child, inset: 36, open: nested)
+                        if nested { leaves(child, inset: 72) }
+                    }
+                } else { leaves(domain, inset: 36) }
+            }
+            return result
+        }
+        let referenceDomains = domains + settings
+        let references = referenceDomains.map {
+            RestoreTrailingSample(title: RestorePreviewCategoryStatus.title($0, stateTitles: [:]),
+                counts: RestorePreviewMetrics.badges($0))
+        } + Set(referenceDomains.flatMap(\.items).map { $0.state.rawValue }).sorted().map {
+            RestoreTrailingSample(title: $0, disclosure: false)
+        }
         for width: CGFloat in [420, 785, 985] {
+            var previous: [String: Int] = [:]
+            for (expanded, nested, expected) in [(false, false, 8), (true, false, 75), (true, true, 77)] {
+                let entries = rows(expanded: expanded, nested: nested)
+                precondition(entries.count == expected && Set(entries.map(\.id)).count == expected)
+                let markedRows = VStack(spacing: 0) {
+                    ForEach(entries, id: \.id) { $0.view }
+                }.padding(.horizontal, 32).frame(width: width)
+                    .environment(\.restoreTrailingSamples, references)
+                let bitmap = NSBitmapImageRep(cgImage: ImageRenderer(content: markedRows).cgImage!)
+                try! bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: "build/Debug/Preview-markers-\(Int(width))-\(expected).png"))
+                var origins: [Int] = [], lastY = -100
+                for y in 0..<bitmap.pixelsHigh {
+                    let left = (0..<bitmap.pixelsWide).first { x in
+                        guard let c = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.sRGB) else { return false }
+                        return c.alphaComponent > 0.9 && abs(c.redComponent - marker.redComponent) < 1 / 255
+                            && abs(c.greenComponent - marker.greenComponent) < 1 / 255
+                            && abs(c.blueComponent - marker.blueComponent) < 1 / 255
+                    }
+                    if let left {
+                        if y - lastY > 1 { origins.append(left) }
+                        else { origins[origins.count - 1] = min(origins.last!, left) }
+                        lastY = y
+                    }
+                }
+                precondition(origins.count == expected && origins.max()! - origins.min()! <= 3,
+                    "Preview status-view markers at \(width), expanded=\(expanded), nested=\(nested): \(origins)")
+                let current = Dictionary(uniqueKeysWithValues: zip(entries.map(\.id), origins))
+                for (id, origin) in previous {
+                    precondition(abs(current[id]! - origin) <= 3, "Expanding Preview moved status \(id) at \(width)")
+                }
+                previous = current
+            }
+            // The mixed category's only green element is its Match badge. Test
+            // that rail separately so it can never masquerade as a status origin.
+            let badgeProbe = RestorePreviewRow(title: Text(casks.title),
+                status: marked(RestorePreviewCategoryStatus(domain: casks, stateTitles: [:])),
+                counts: RestorePreviewMetrics.badges(casks), expanded: true)
+                .padding(.horizontal, 32).frame(width: width)
+                .environment(\.restoreTrailingSamples, references)
+            let badgeBitmap = NSBitmapImageRep(cgImage: ImageRenderer(content: badgeProbe).cgImage!)
+            var badgeOrigins: [Int] = []
+            for y in 0..<badgeBitmap.pixelsHigh {
+                for x in 0..<badgeBitmap.pixelsWide {
+                    guard let c = badgeBitmap.colorAt(x: x, y: y)?.usingColorSpace(.sRGB), c.alphaComponent > 0.9 else { continue }
+                    if c.greenComponent > 0.2 && c.greenComponent > c.redComponent * 1.3 && c.greenComponent > c.blueComponent * 1.2 {
+                        badgeOrigins.append(x)
+                    }
+                }
+            }
+            precondition(!badgeOrigins.isEmpty && CGFloat(badgeOrigins.min()! - previous["category:" + casks.id]!) > TaskRowLayout.iconWidth,
+                "Match badge must occupy its own rail, outside the status indicator at \(width)")
+            // Keep rendering the complete production hierarchy as well as the
+            // instrumented rows; markers above do not alter production views.
             let probe = TaskDomainList(domains: domains, restoreSettingsPreview: true, settingsCategories: settings,
                 expansion: .constant(Set(domains.map(\.id))), settingsExpansion: .constant(true))
                 .padding(16).frame(width: width).background(Color(nsColor: .windowBackgroundColor))
             let renderer = ImageRenderer(content: probe)
             let bitmap = NSBitmapImageRep(cgImage: renderer.cgImage!)
-            var origins: [Int] = []
-            var lastY = -100
-            for y in 0..<bitmap.pixelsHigh {
-                var left: Int? = nil
-                for x in 0..<bitmap.pixelsWide {
-                    guard let c = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.sRGB), c.alphaComponent > 0.9 else { continue }
-                    if c.greenComponent > 0.2 && c.greenComponent > c.redComponent * 1.3 && c.greenComponent > c.blueComponent * 1.2 { left = x; break }
-                }
-                if let left {
-                    if y - lastY > 8 { origins.append(left) }
-                    else { origins[origins.count - 1] = min(origins.last!, left) }
-                    lastY = y
-                }
-            }
-            precondition(origins.count >= 65 && origins.max()! - origins.min()! <= 3,
-                "Preview category/leaf/nested settings status origins at \(width): \(origins)")
             try! bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: "build/Debug/RestorePreview-status-grid-\(Int(width)).png"))
+            print("PASS: Preview \(width) pt: 8/75/77 status markers align through expansion; Match badge is measured separately")
         }
         let source = try! String(contentsOfFile: "Sources/TaskComponents.swift")
         let previewHeader = source.components(separatedBy: "if restoreSettingsPreview {\n                RestorePreviewRow")[1].components(separatedBy: "} else { ViewThatFits")[0]
@@ -2729,15 +2825,17 @@ private struct WorkflowAnchorFrames: PreferenceKey {
 
         precondition(statusView.contains("result.categoryCount($0, category: entry.category, children: entry.children)"))
         precondition(statusView.contains("counts[$0, default: 0] > 0") && statusView.contains("ComparisonOutcome.allCases.filter"))
-        precondition(statusView.contains(".foregroundStyle(outcome.tint).background(outcome.tint.opacity(0.12), in: Capsule())"))
+        let countPill = components.components(separatedBy: "struct WorkflowCountPill: View {")[1]
+            .components(separatedBy: "\nstruct ")[0]
+        precondition(countPill.contains(".foregroundStyle(tint).background(tint.opacity(0.12), in: Capsule())"))
         precondition(!statusView.contains("Full Diagnostic Details") && !statusView.contains("fact.predicateTitle"))
         let domainView = statusView.components(separatedBy: "struct EnvironmentComparisonDomain: View")[1].components(separatedBy: "struct EnvironmentComparisonItem: View")[0]
-        precondition(domainView.contains("Capsule()") && domainView.contains("if let counts"))
+        precondition(domainView.contains("WorkflowCountPill(count: count, label: label, tint: tint)") && domainView.contains("if let counts"))
         precondition(domainView.contains("WorkspaceCategoryIcon(symbol: category.symbol)") && content.contains(".fontWeight(.semibold).foregroundStyle(.blue)"))
-        precondition(domainView.contains(".padding(.horizontal, 6).frame(minWidth: 24, minHeight: 23)"))
+        precondition(countPill.contains(".padding(.horizontal, 6).frame(minWidth: 32, minHeight: 23)"))
         precondition(content.contains("Rectangle().fill(Color.primary.opacity(0.22)).frame(height: 1.5)"))
 
-        precondition(domainView.contains("statusLabel.frame(width: 152, alignment: .leading)"))
+        precondition(domainView.contains("WorkflowTrailingLayout(showsCounts: !Self.badgeCounts(counts).isEmpty, showsChevron: false, statusWidth: 152)"))
         precondition(domainView.contains("title: EnvironmentComparisonView.visibleCategory(category).comparisonStatusText)"))
         precondition(!domainView.contains("warningCompanion") && !domainView.contains("warning && outcomes"))
 
@@ -2807,7 +2905,9 @@ private struct WorkflowAnchorFrames: PreferenceKey {
         precondition(restoreView.components(separatedBy: "Button(\"Preview Restore\"").count == 2)
         precondition(workspaceSource.contains("showsSelectionActions: false"))
         precondition(workspaceSource.contains("else if restore.state == .review { selectionActionArea }"))
-        precondition(workspaceSource.range(of: "selectionActionArea: some View")!.lowerBound > workspaceSource.range(of: "ScrollView {")!.lowerBound)
+        precondition(workspaceSource.range(of: "else if restore.state == .review { selectionActionArea }")!.lowerBound
+            > workspaceSource.range(of: ".modifier(WorkspaceContentGeometry())")!.lowerBound,
+            "Selection actions must be placed after the workflow content viewport")
         precondition(restoreView.contains("Preparing Restore Preview") && restoreView.contains("Stopping Preview…"))
         precondition(restoreView.contains("Read-only inspection — no changes will be made to this Mac."))
         let stopConfirmation = restoreView.components(separatedBy: ".sheet(isPresented: Binding(get: { model.stopConfirmation")[1]
@@ -2888,7 +2988,14 @@ private struct WorkflowAnchorFrames: PreferenceKey {
         let taskSource = try! String(contentsOf: sources.appendingPathComponent("TaskComponents.swift"), encoding: .utf8)
         precondition(taskSource.contains("private var expanded = []") && taskSource.contains("ForEach(domain.items)"))
         let previewContent = restoreView.components(separatedBy: "struct RestorePreviewContent: View")[1]
-        precondition(previewContent.range(of: "RestorePrerequisiteSummaryView(summary:")!.lowerBound < previewContent.range(of: "TaskDomainList(domains: domains.map")!.lowerBound)
+        let previewBody = previewContent.components(separatedBy: "private var previewHeading:")[0]
+        let taskListStart = previewBody.range(of: "TaskDomainList(domains: domains.map")!.lowerBound
+        precondition(previewBody.range(of: "prerequisiteHeader")!.lowerBound < taskListStart
+            && previewBody.range(of: "prerequisiteDetails")!.lowerBound < taskListStart,
+            "Preview prerequisites precede the task list in both viewport modes")
+        precondition(previewBody.contains("leadingContent: listLeadingContent")
+            && previewContent.contains("if pinnedList && hasDetails { prerequisiteDetails }"),
+            "Pinned Preview retains prerequisite details at the start of the list")
         precondition(restoreView.contains("Rebuild this Mac?") && restoreView.contains("Stop rebuilding?") && restoreView.contains("Stopping it may leave some changes already applied to this Mac."))
         precondition(restoreView.contains("model.confirmStop()") && restoreView.contains("model.checkCurrentState()"))
         precondition(restoreModel.contains("plan.preparedPlanID, selection: selection") && restoreModel.contains("invalidate(); state = .result"))
