@@ -118,7 +118,8 @@ final class CoreTransport: @unchecked Sendable {
         actionsResult = posix_spawn_file_actions_addchdir_np(&actions, location.root.path)
         if actionsResult != 0 { setupError = actionsResult }
         guard setupError == 0 else { return failure(.launchFailed(setupError)) }
-        let arguments = ["/bin/bash", location.launcher.path].map { strdup($0) }
+        let argumentStrings: [String] = ["/bin/bash", location.launcher.path]
+        let arguments = argumentStrings.map { $0.withCString { strdup($0) } }
         var childEnvironment = location.environment(temporary: temporary)
         if control != nil { childEnvironment["MACSEED_GRACEFUL_FD"] = "3" }
         let environment = childEnvironment.sorted { $0.key < $1.key }

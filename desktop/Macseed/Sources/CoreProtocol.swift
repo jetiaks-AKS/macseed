@@ -224,6 +224,9 @@ struct CoreEventStream {
     private(set) var receivedResult = false
     private var started = false
     private var buffer = Data()
+    init(operationID: String) {
+        self.operationID = operationID
+    }
     mutating func append(_ bytes: Data, receive: (CoreEvent) throws -> Void) throws {
         receivedBytes += bytes.count
         guard receivedBytes <= 256 * 1024 * 1024 else { throw CoreRuntimeError.eventTooLarge }
