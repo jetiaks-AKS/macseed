@@ -397,30 +397,84 @@ class ExtensionRestoreTests(unittest.TestCase):
         request = {'protocol_version': 1, 'operation_id': 'cancel-vscode', 'operation': 'restore_execute',
                    'parameters': {'path': str(self.fixture.archive), 'disabled_groups': [],
                                   'include_secure': False, 'expected_prepared_plan_id': plan}}
-        process = subprocess.Popen(['bash', str(self.fixture.project / 'modules/core/application-interface/core.sh')],
-            cwd=self.fixture.project, env=self.fixture.environment, stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        try:
-            process.stdin.write(json.dumps(request).encode()); process.stdin.close(); process.stdin = None
-            deadline = time.monotonic() + 15
-            while not (self.root / 'active').exists():
-                self.assertIsNone(process.poll())
-                self.assertLess(time.monotonic(), deadline)
-                time.sleep(0.05)
-            process.send_signal(signal.SIGTERM)
-            output, errors = process.communicate(timeout=15)
-            self.assertEqual(process.returncode, 2, errors)
-            events = [json.loads(line) for line in output.splitlines()]
-            self.assertEqual((events[-1]['type'], events[-1]['data']['code']), ('failed', 'privileged_lifecycle_unknown'))
-            self.assertTrue(events[-1]['data']['unknown_consequences'])
-            self.assertTrue((self.fixture.home / 'Library/Application Support/Macseed/VSCode/active.json').exists())
-            self.assertEqual((self.root / 'attempts').read_text().splitlines(), ['publisher.success', 'publisher.failed'])
-            cli_pid = (self.root / 'active').read_text()
-            child = subprocess.run(['/bin/ps', '-p', cli_pid, '-o', 'stat='], capture_output=True)
-            self.assertTrue(not child.stdout.strip() or child.stdout.strip().startswith(b'Z'))
-        finally:
-            if process.poll() is None:
-                process.kill(); process.communicate()
+        # Core repeats preparation/readiness before reaching the active CLI. Allow
+        # hosted startup variance separately from the strict cancellation budget.
+        # Private files cannot backpressure Core while we wait for the marker.
+        with tempfile.TemporaryFile(dir=self.root) as request_input, \
+                tempfile.TemporaryFile(dir=self.root) as output, \
+                tempfile.TemporaryFile(dir=self.root) as errors:
+            request_input.write(json.dumps(request).encode()); request_input.seek(0)
+            process = subprocess.Popen(['bash', str(self.fixture.project / 'modules/core/application-interface/core.sh')],
+                cwd=self.fixture.project, env=self.fixture.environment, stdin=request_input,
+                stdout=output, stderr=errors, start_new_session=True)
+            tree = EXECUTION.ProcessTree(process.pid, initialize=False)
+            started = time.monotonic()
+
+            def diagnostic(reason):
+                # Only fixed stage names and counts, never raw JSONL/stderr,
+                # paths, arguments, environment or extension identifiers.
+                stage = 'core_startup'
+                for line in os.pread(output.fileno(), 65536, 0).splitlines():
+                    try:
+                        event = json.loads(line)
+                    except (ValueError, UnicodeError):
+                        continue
+                    if isinstance(event, dict) and event.get('type') == 'phase_started':
+                        data = event.get('data')
+                        phase = data.get('phase') if isinstance(data, dict) else None
+                        if phase in ('preparation', 'publication', 'bootstrap'):
+                            stage = phase
+                attempts = self.root / 'attempts'
+                count = len(attempts.read_text().splitlines()) if attempts.exists() else 0
+                if count:
+                    stage = 'extension_install'
+                return (f'{reason}: stage={stage}, elapsed={time.monotonic() - started:.1f}s, '
+                        f'core_exit={process.poll()}, install_attempts={count}, '
+                        f'stdout_bytes={os.fstat(output.fileno()).st_size}, '
+                        f'stderr_bytes={os.fstat(errors.fileno()).st_size}')
+
+            try:
+                deadline = started + 45
+                while True:
+                    tree.scan()  # Remember children even if they later become reparented.
+                    self.assertIsNone(process.poll(), diagnostic('Core exited before active CLI'))
+                    active = self.root / 'active'
+                    cli_pid = active.read_text() if active.exists() else ''
+                    if cli_pid.isdigit():
+                        break
+                    self.assertLess(time.monotonic(), deadline, diagnostic('Active CLI startup deadline'))
+                    time.sleep(0.05)
+                tree.scan()  # The CLI may have started just after the preceding scan.
+                self.assertIn(int(cli_pid), tree.known, 'Active CLI must belong to the fixture')
+                process.send_signal(signal.SIGTERM)
+                try:
+                    process.wait(timeout=15)
+                except subprocess.TimeoutExpired:
+                    self.fail(diagnostic('Core cancellation deadline'))
+                self.assertEqual(process.returncode, 2, diagnostic('Unexpected terminal exit'))
+                self.assertLessEqual(os.fstat(output.fileno()).st_size, 1024 * 1024,
+                                     'Fixture protocol output exceeded its read bound')
+                output.seek(0)
+                events = [json.loads(line) for line in output.read().splitlines()]
+                self.assertEqual(sum(e['type'] in ('completed', 'failed') for e in events), 1)
+                self.assertEqual((events[-1]['type'], events[-1]['data']['code']), ('failed', 'privileged_lifecycle_unknown'))
+                self.assertTrue(events[-1]['data']['unknown_consequences'])
+                self.assertTrue((self.fixture.home / 'Library/Application Support/Macseed/VSCode/active.json').exists())
+                self.assertEqual((self.root / 'attempts').read_text().splitlines(), ['publisher.success', 'publisher.failed'])
+                child = subprocess.run(['/bin/ps', '-p', cli_pid, '-o', 'stat='], capture_output=True, timeout=2)
+                self.assertIn(child.returncode, (0, 1), 'Fixture CLI observation failed')
+                self.assertTrue(not child.stdout.strip() or child.stdout.strip().startswith(b'Z'),
+                                'Fixture CLI survived production cancellation')
+                self.assertFalse(tree.scan(), 'Owned fixture processes survived production cancellation')
+            finally:
+                # Cleanup must cover descendants on startup/assertion failures too;
+                # killing Core alone can strand its separately grouped workers.
+                try:
+                    self.assertTrue(tree.stop(), 'Fixture process cleanup was not confirmed')
+                finally:
+                    if process.poll() is None:
+                        process.kill()
+                    process.wait(timeout=5)
 
 
 class CLIWatchdogTests(unittest.TestCase):
