@@ -133,15 +133,19 @@ old_snapshot_preserved() {
 }
 
 prepare_simple_home() {
-    mkdir -p "$HOME/Projects/repo/.git" "$HOME/Desktop"
-    printf '{}\n' > "$HOME/Projects/project.code-workspace"
+    PYTHONPATH="$PROJECT_ROOT/scripts" python3 -B - <<'PYFIXTURE'
+import os
+from pathlib import Path
+from workspace_fixture import repository
+home = Path(os.environ['HOME'])
+repository(home, 'Projects/repo')
+(home / 'Desktop').mkdir()
+(home / 'Projects/project.code-workspace').write_text('{"folders":[{"path":"repo"}]}')
+PYFIXTURE
 }
 
 mock_repository_metadata() {
-    get_repository_remote() { printf 'git@example.invalid/repo.git\n'; }
-    get_repository_current_branch() { printf 'develop\n'; }
-    get_repository_default_branch() { printf 'main\n'; }
-    get_repository_status() { printf 'false\n'; }
+    : # Metadata now comes from native read-only Git fixtures above.
 }
 
 write_valid_repository_config() {
@@ -178,9 +182,9 @@ full_status=$?
 if [[ $full_status -eq 0 ]] &&
    grep -Fxq 'Desktop|user' config/generated/workspace/folders.conf &&
    grep -Fxq 'Projects|workspace' config/generated/workspace/folders.conf &&
-   grep -Fxq '[repo]' config/generated/workspace/repositories.conf &&
-   grep -Fxq 'CURRENT_BRANCH="develop"' config/generated/workspace/repositories.conf &&
-   grep -Fxq '[project]' config/generated/workspace/vscode-workspaces.conf &&
+   grep -Fxq 'NAME="repo"' config/generated/workspace/repositories.conf &&
+   grep -Fxq 'CURRENT_BRANCH="main"' config/generated/workspace/repositories.conf &&
+   grep -Fxq 'PATH="~/Projects/project.code-workspace"' config/generated/workspace/vscode-workspaces.conf &&
    grep -Fxq 'TOTAL_FOLDERS=2' config/generated/workspace/inventory.conf &&
    grep -Fxq 'WORKSPACE_FOLDERS=1' config/generated/workspace/inventory.conf &&
    grep -Fxq 'TOTAL_REPOSITORIES=1' config/generated/workspace/inventory.conf &&
@@ -221,9 +225,9 @@ fi
 reset_case
 export_workspace() { error "injected workspace failure"; return 2; }
 export_workspace_snapshot() { return 0; }
-MODULES_CHECKED=0
-INSTALLED_COUNT=0
-SKIPPED_COUNT=0
+# Shared counters consumed by the sourced lifecycle helper.
+# shellcheck disable=SC2034
+MODULES_CHECKED=0 INSTALLED_COUNT=0 SKIPPED_COUNT=0
 WARNING_COUNT=0
 ERROR_COUNT=0
 run_module "Workspace Discovery" discover_workspace >/dev/null
@@ -240,9 +244,9 @@ fi
 reset_case
 export_workspace() { warning "injected workspace warning"; return 1; }
 export_workspace_snapshot() { return 0; }
-MODULES_CHECKED=0
-INSTALLED_COUNT=0
-SKIPPED_COUNT=0
+# Shared counters consumed by the sourced lifecycle helper.
+# shellcheck disable=SC2034
+MODULES_CHECKED=0 INSTALLED_COUNT=0 SKIPPED_COUNT=0
 WARNING_COUNT=0
 ERROR_COUNT=0
 run_module "Workspace Discovery" discover_workspace >/dev/null
@@ -350,239 +354,9 @@ else
     fail "repository failure replaced the previous inventory"
 fi
 
-# ==========================================
-# Repository traversal and metadata semantics
-# ==========================================
-
-reset_case
-prepare_simple_home
-mock_repository_metadata
-get_repository_remote() {
-    printf 'https://fixture-user:fixture-token@example.invalid/org/repo.git\n'
-}
-VERBOSE=true
-discover_workspace >/dev/null
-credential_status=$?
-VERBOSE=false
-if [[ $credential_status -eq 1 &&
-      "$(grep -F 'REMOTE=' config/generated/workspace/repositories.conf)" == 'REMOTE="https://example.invalid/org/repo.git"' &&
-      "$WARNING_MESSAGES$DETAIL_MESSAGES$ERROR_MESSAGES" != *fixture-token* &&
-      "$WARNING_MESSAGES" == *'userinfo omitted'* ]] &&
-   ! grep -R -q 'fixture-token' config/generated/workspace; then
-    pass "HTTP URL credentials are removed before snapshot and verbose detail"
-else
-    fail "HTTP URL credentials reached generated state or output"
-fi
-
-reset_case
-prepare_simple_home
-mock_repository_metadata
-get_repository_remote() {
-    printf 'https://fixture-token@example.invalid/org/repo.git\n'
-}
-export_workspace_snapshot >/dev/null
-token_status=$?
-if [[ $token_status -eq 1 ]] &&
-   grep -Fxq 'REMOTE="https://example.invalid/org/repo.git"' \
-       config/generated/workspace/repositories.conf &&
-   ! grep -R -q 'fixture-token' config/generated/workspace; then
-    pass "token-only HTTP userinfo is removed without losing repository URL"
-else
-    fail "token-only HTTP userinfo was not removed"
-fi
-
-reset_case
-prepare_simple_home
-mock_repository_metadata
-get_repository_remote() {
-    printf 'ssh://git@example.invalid/org/repo.git\n'
-}
-export_workspace_snapshot >/dev/null
-ssh_remote_status=$?
-if [[ $ssh_remote_status -eq 0 ]] &&
-   grep -Fxq 'REMOTE="ssh://git@example.invalid/org/repo.git"' \
-       config/generated/workspace/repositories.conf; then
-    pass "ordinary SSH URL username remains usable"
-else
-    fail "ordinary SSH URL was excluded or rewritten"
-fi
-
-reset_case
-prepare_simple_home
-mock_repository_metadata
-get_repository_remote() {
-    printf 'ssh://fixture-user:fixture-secret@example.invalid/org/repo.git\n'
-}
-export_workspace_snapshot >/dev/null
-unsupported_status=$?
-if [[ $unsupported_status -eq 1 &&
-      ! -s config/generated/workspace/repositories.conf &&
-      "$WARNING_MESSAGES$DETAIL_MESSAGES$ERROR_MESSAGES" != *fixture-secret* ]] &&
-   ! grep -R -q 'fixture-secret' config/generated/workspace; then
-    pass "unsupported credential-bearing SSH URL is excluded"
-else
-    fail "unsupported credential-bearing SSH URL reached snapshot or output"
-fi
-
-reset_case
-prepare_simple_home
-mock_repository_metadata
-get_repository_remote() {
-    printf 'https://example.invalid/org/repo.git?token=fixture-secret\n'
-}
-export_workspace_snapshot >/dev/null
-query_status=$?
-if [[ $query_status -eq 1 &&
-      ! -s config/generated/workspace/repositories.conf ]] &&
-   ! grep -R -q 'fixture-secret' config/generated/workspace; then
-    pass "query-bearing URL is excluded without publishing its value"
-else
-    fail "query-bearing URL reached generated state"
-fi
-
-reset_case
-mkdir -p "$HOME/Projects/keep/.git" "$HOME/Projects/skip/.git"
-mock_repository_metadata
-get_repository_remote() {
-    case "$1" in
-        */keep) printf 'git@example.invalid:org/keep.git\n' ;;
-        *) printf 'https://example.invalid/org/skip.git?token=fixture-secret\n' ;;
-    esac
-}
-export_workspace_snapshot >/dev/null
-mixed_status=$?
-if [[ $mixed_status -eq 1 ]] &&
-   grep -Fxq '[keep]' config/generated/workspace/repositories.conf &&
-   ! grep -Fq '[skip]' config/generated/workspace/repositories.conf &&
-   grep -Fxq 'TOTAL_REPOSITORIES=1' config/generated/workspace/inventory.conf &&
-   ! grep -R -q 'fixture-secret' config/generated/workspace; then
-    pass "unsafe remote exclusion preserves independent safe repositories"
-else
-    fail "unsafe remote exclusion lost safe repository or leaked credential"
-fi
-
-reset_case
-mkdir -p "$HOME/Projects"
-printf 'Projects|workspace\n' > "$TEST_ROOT/case/folders.conf"
-find() { return 2; }
-export_workspace_repositories \
-    "$TEST_ROOT/case/repositories.conf" "$TEST_ROOT/case/folders.conf" "$TEST_ROOT/case" >/dev/null
-repository_status=$?
-
-if [[ $repository_status -eq 2 && "$ERROR_MESSAGES" == *'Failed to scan Git repositories'* ]]; then
-    pass "repository traversal failure before records returns 2"
-else
-    fail "repository traversal failure before records was masked"
-fi
-
-reset_case
-mkdir -p "$HOME/Projects/one/.git"
-printf 'Projects|workspace\n' > "$TEST_ROOT/case/folders.conf"
-find() {
-    printf '%s\n' "$HOME/Projects/one/.git"
-    return 2
-}
-mock_repository_metadata
-export_workspace_repositories \
-    "$TEST_ROOT/case/repositories.conf" "$TEST_ROOT/case/folders.conf" "$TEST_ROOT/case" >/dev/null
-repository_status=$?
-
-if [[ $repository_status -eq 2 && ! -s "$TEST_ROOT/case/repositories.conf" ]]; then
-    pass "repository traversal failure after partial discovery does not serialize partial records"
-else
-    fail "partial repository traversal was treated as success"
-fi
-
-reset_case
-mkdir -p "$HOME/Projects/one/.git"
-printf 'Projects|workspace\n' > "$TEST_ROOT/case/folders.conf"
-mock_repository_metadata
-get_repository_status() { return 2; }
-export_workspace_repositories \
-    "$TEST_ROOT/case/repositories.conf" "$TEST_ROOT/case/folders.conf" "$TEST_ROOT/case" >/dev/null
-repository_status=$?
-
-if [[ $repository_status -eq 2 &&
-      "$ERROR_MESSAGES" == *'Failed to read Git repository status: one'* ]] &&
-   ! grep -q 'HAS_UNCOMMITTED_CHANGES="false"' "$TEST_ROOT/case/repositories.conf"; then
-    pass "failed Git status aborts instead of claiming a clean repository"
-else
-    fail "failed Git status was converted into clean state"
-fi
-
-reset_case
-mkdir -p "$HOME/Projects/one/.git"
-printf 'Projects|workspace\n' > "$TEST_ROOT/case/folders.conf"
-get_repository_remote() { return 1; }
-get_repository_current_branch() { return 1; }
-get_repository_default_branch() { return 1; }
-get_repository_status() { printf 'false\n'; }
-export_workspace_repositories \
-    "$TEST_ROOT/case/repositories.conf" "$TEST_ROOT/case/folders.conf" "$TEST_ROOT/case" >/dev/null
-repository_status=$?
-
-if [[ $repository_status -eq 0 ]] &&
-   grep -Fxq 'REMOTE=""' "$TEST_ROOT/case/repositories.conf" &&
-   grep -Fxq 'CURRENT_BRANCH=""' "$TEST_ROOT/case/repositories.conf" &&
-   grep -Fxq 'DEFAULT_BRANCH=""' "$TEST_ROOT/case/repositories.conf"; then
-    pass "no origin, detached HEAD, and missing origin/HEAD remain legitimate empty metadata"
-else
-    fail "legitimate absent repository metadata became an error"
-fi
-
-reset_case
-mkdir -p "$HOME/Projects/actual"
-git -C "$HOME/Projects/actual" init -q
-git -C "$HOME/Projects/actual" config user.name Tester
-git -C "$HOME/Projects/actual" config user.email tester@example.invalid
-printf 'tracked\n' > "$HOME/Projects/actual/tracked.txt"
-git -C "$HOME/Projects/actual" add tracked.txt
-git -C "$HOME/Projects/actual" commit -qm initial
-
-get_repository_remote "$HOME/Projects/actual" >/dev/null
-no_origin_status=$?
-git -C "$HOME/Projects/actual" checkout -q --detach
-get_repository_current_branch "$HOME/Projects/actual" >/dev/null
-detached_status=$?
-git -C "$HOME/Projects/actual" remote add origin https://example.invalid/actual.git
-get_repository_default_branch "$HOME/Projects/actual" >/dev/null
-no_remote_head_status=$?
-
-if [[ $no_origin_status -eq 1 && $detached_status -eq 1 && $no_remote_head_status -eq 1 ]]; then
-    pass "real Git absence statuses distinguish no origin, detached HEAD, and no origin/HEAD"
-else
-    fail "real Git absence statuses are not interpreted deliberately"
-fi
-
-reset_case
-mkdir -p "$HOME/Projects/one/.git"
-printf 'Projects|workspace\n' > "$TEST_ROOT/case/folders.conf"
-mock_repository_metadata
-get_repository_remote() { return 2; }
-export_workspace_repositories \
-    "$TEST_ROOT/case/repositories.conf" "$TEST_ROOT/case/folders.conf" "$TEST_ROOT/case" >/dev/null
-repository_status=$?
-
-if [[ $repository_status -eq 2 && "$ERROR_MESSAGES" == *'Failed to read Git repository origin: one'* ]]; then
-    pass "unexpected Git metadata failure aborts repository collection"
-else
-    fail "unexpected Git metadata failure was masked"
-fi
-
-reset_case
-mkdir -p "$HOME/First/shared/.git" "$HOME/Second/shared/.git"
-printf 'First|workspace\nSecond|workspace\n' > "$TEST_ROOT/case/folders.conf"
-mock_repository_metadata
-export_workspace_repositories \
-    "$TEST_ROOT/case/repositories.conf" "$TEST_ROOT/case/folders.conf" "$TEST_ROOT/case" >/dev/null
-repository_status=$?
-
-if [[ $repository_status -eq 2 &&
-      "$ERROR_MESSAGES" == *'Duplicate Workspace repository identifier: shared'* ]]; then
-    pass "duplicate repository basename aborts the ambiguous snapshot"
-else
-    fail "duplicate repository identifier reached generated state"
-fi
+# Native topology traversal, origins, HEAD, aliases and observation failures are
+# covered by WorkspaceDiscoveryTests in test-bootstrap-bundle.py using the same
+# production observer. These shell cases retain publication/lifecycle coverage.
 
 # ==========================================
 # VS Code Workspace traversal semantics
@@ -797,9 +571,9 @@ rm() {
     fi
     command rm "$@"
 }
-MODULES_CHECKED=0
-INSTALLED_COUNT=0
-SKIPPED_COUNT=0
+# Shared counters consumed by the sourced lifecycle helper.
+# shellcheck disable=SC2034
+MODULES_CHECKED=0 INSTALLED_COUNT=0 SKIPPED_COUNT=0
 WARNING_COUNT=0
 ERROR_COUNT=0
 

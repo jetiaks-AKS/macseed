@@ -25,7 +25,7 @@ capture_observe() {
             app-store) validator=read_appstore_configuration ;;
             vscode-extensions) validator=read_vscode_extensions_configuration ;;
             workspace-folders) validator=workspace_validate_folders ;;
-            git-repositories) validator=workspace_validate_repositories ;;
+            git-repositories) validator=capture_validate_repositories ;;
         esac
         if [[ -n "$validator" ]] && ! "$validator" "$file" >/dev/null; then
             status=observation_error; reason=inventory_invalid
@@ -37,6 +37,11 @@ capture_observe() {
             items=("${BLUEPRINT_SELECTOR_ITEMS[@]}")
             labels=("${BLUEPRINT_SELECTOR_LABELS[@]}")
             [[ ${#items[@]} -gt 0 ]] || { status=unavailable; reason=no_supported_items; }
+            if [[ "$domain" == git-repositories && "$status" == unavailable ]] &&
+               grep -Eq '^(UNSUPPORTED_REPOSITORIES|GIT_CAPABILITY_UNSUPPORTED)=[1-9][0-9]*$' \
+                   "$BLUEPRINT_GENERATED_DIR/workspace/inventory.conf"; then
+                status=unsupported; reason=workspace_topology_unsupported
+            fi
         elif [[ "$domain" == shell-zsh ]]; then
             zsh_snapshot_validate "$file" || { status=observation_error; reason=inventory_invalid; }
             case "$ZSH_SNAPSHOT_STATUS" in
@@ -62,6 +67,14 @@ capture_observe() {
         for index in "${!items[@]}"; do printf '%s\0' "${items[$index]}" "${labels[$index]}"; done
     } | python3 -B modules/core/application-interface/capture.py --row "$MACSEED_CAPTURE_INVENTORY" || return 2
     return 0
+}
+
+capture_validate_repositories() {
+    if [[ -f "${1%/*}/topology.json" ]]; then
+        workspace_validate_repositories "$1" topology
+    else
+        workspace_validate_repositories "$1"
+    fi
 }
 
 capture_discovery() {

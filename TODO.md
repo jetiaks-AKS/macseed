@@ -6,17 +6,18 @@ below does not reopen accepted UI or the completed D1–D4/R5 implementation aud
 
 ## Complete Workspace & Git Worktree Restoration
 
-Follow the [planned capability checkpoint](ROADMAP.md#complete-workspace--git-worktree-restoration);
+Follow the [capability checkpoint](ROADMAP.md#complete-workspace--git-worktree-restoration);
 the [current limits](docs/toolkit/CONFIGURATION.md#linked-git-worktree-capability-limits)
-remain in force until a reviewed contract is implemented.
+separate implemented Discovery/Capture from unsupported restoration.
 
-- [ ] Review topology/identity, Capture/Bundle compatibility and Restore ordering
-  contracts before coding; decide discovery roots and branch/path conflict policy.
+- [ ] Review Phase 2 Discovery/Capture and qualify representative real-Mac observations.
 - [ ] Decide any expansion of current bounded local clone SSH profiles/identity
   routing and additional migration/proxy support in the Git/SSH contract. Keep
   exclusions until qualified; filters/LFS require a separate scope decision.
-- [ ] Implement the agreed Discovery → Selection → Capture → Preview → Restore
-  → Verification path, including Workspace folders and VS Code workspace relations.
+- [ ] Phase 3: implement topology-aware Restore Preview, explicit dependencies and
+  branch/path conflict statuses without enabling Git mutation.
+- [ ] Implement later Restore/Verification and VS Code descriptor/Desktop phases
+  after their respective reviews.
 - [ ] Qualify file preservation, occupied branches, conflicting paths, observation
   failure, retry and repeat/no-op with disposable fixtures and representative real gates.
 - [ ] Define any unique Workspace-data transfer through a separate bounded secure

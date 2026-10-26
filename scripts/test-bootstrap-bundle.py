@@ -1132,8 +1132,7 @@ class TopologyTests(unittest.TestCase):
         before = bundle.fingerprint(target)
         with self.assertRaises(bundle.Unsupported):
             bundle.unpack(self.archive, target, '/Users/target')
-        with self.assertRaises(bundle.Unsupported):
-            bundle.inspect_bundle(self.archive, '/Users/target')
+        self.assertEqual(bundle.inspect_bundle(self.archive, '/Users/target')['selected_item_counts']['git-repositories'], 3)
         self.assertEqual(bundle.fingerprint(target), before)
         with patch.object(bundle, 'recover') as recover, self.assertRaises(bundle.Unsupported):
             bundle.publish(self.stage)
@@ -1218,8 +1217,7 @@ class TopologyTests(unittest.TestCase):
         self.files = dict(files)
         self.pack()
         self.assertIn(self.contract.VSCODE, bundle.validate_archive(self.archive))
-        with self.assertRaises(bundle.Unsupported):
-            bundle.inspect_bundle(self.archive, '/Users/target')
+        self.assertEqual(bundle.inspect_bundle(self.archive, '/Users/target')['format_version'], 1)
         files['blueprint.conf'] = self.selection([])
         bundle.selected_payload(files, files['blueprint.conf'])
         self.assertNotIn(self.contract.VSCODE, files)
@@ -1287,17 +1285,506 @@ class TopologyTests(unittest.TestCase):
         cases = [(old, old, b'    --porcelain\n', 'worktree_porcelain_z_unavailable'),
                  (new, new, b'    --porcelain\n', 'worktree_porcelain_z_unavailable'),
                  (old, new, b'    --porcelain\n    -z  NUL termination\n', 'git_version_changed'),
-                 (new, new, b'    --porcelain\n    -z  NUL termination\n', 'worktree_parser_unqualified'),
+                 (new, new, b'    --porcelain\n    -z  NUL termination\n', 'worktree_porcelain_z'),
                  (b'unknown', b'unknown', b'', 'git_version_unavailable')]
         for before, after, help_output, reason in cases:
             with patch.object(self.contract.shutil, 'which', return_value='/qualified/git'), \
                     patch.object(self.contract.subprocess, 'run', side_effect=[
                     result(before), result(help_output, 129), result(after)]) as run:
-                self.assertEqual(self.contract.detect_worktree_capability(), dict(status='unsupported', reason=reason))
+                self.assertEqual(self.contract.detect_worktree_capability(),
+                                 dict(status='supported' if reason == 'worktree_porcelain_z' else 'unsupported', reason=reason))
                 self.assertEqual([call.args[0][1:] for call in run.call_args_list],
                                  [['--version'], ['worktree', 'list', '-h'], ['--version']])
         with patch.object(self.contract.subprocess, 'run', side_effect=FileNotFoundError()):
             self.assertEqual(self.contract.detect_worktree_capability()['reason'], 'git_observation_failed')
+
+
+class WorkspaceDiscoveryTests(unittest.TestCase):
+    """Native read-only Git observations in a disposable HOME."""
+    def setUp(self):
+        from workspace_fixture import repository, linked
+        self.repository, self.linked = repository, linked
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name).resolve()
+        self.home = self.root / 'home'
+        self.home.mkdir()
+        self.stage = self.root / 'stage'
+        self.stage.mkdir()
+        self.workspace = self.stage / 'generated/workspace'
+        self.workspace.mkdir(parents=True)
+        self.base, self.oid = repository(self.home)
+        spec = importlib.util.spec_from_file_location('workspace_observer',
+            MODULE.parents[2] / 'modules/discovery/workspace/topology.py')
+        self.observer = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.observer)
+        environment = patch.dict(os.environ, HOME=str(self.home), MACSEED_WORKSPACE_ROOTS='')
+        environment.start()
+        self.addCleanup(environment.stop)
+
+    def collect(self):
+        (self.workspace / 'folders.conf').write_text('Projects|workspace\n')
+        counts = self.observer.collect(self.home, self.workspace)
+        self.observer.validate_stage(self.workspace)
+        return counts
+
+    def metadata(self):
+        return json.loads((self.workspace / 'topology.json').read_text())
+
+    def selection(self, ids):
+        raw = ('[categories]\n' + ''.join(f'{name}="false"\n' for name in bundle.CATEGORY_FLAGS) +
+               ''.join(f'\n[{name}]\n' + ('\n'.join(ids) + '\n' if name == 'git-repositories' else '')
+                       for name in bundle.ITEMS))
+        (self.stage / 'blueprint.conf').write_text(raw)
+
+    def cli_fixture(self):
+        # Satisfy unrelated read-only CLI prerequisites with inert fixture files.
+        (self.home / '.ssh').mkdir(mode=0o700)
+        (self.home / '.ssh/id_fixture.pub').write_text('fixture only\n')
+        (self.home / '.ssh/config').write_text('')
+        (self.home / '.zshrc').write_text('')
+        project = self.root / 'project'
+        project.mkdir()
+        shutil.copytree(MODULE.parents[2] / 'modules', project / 'modules')
+        shutil.copy2(MODULE.parents[2] / 'bootstrap.sh', project / 'bootstrap.sh')
+        (project / 'config').mkdir()
+        shutil.copy2(MODULE.parents[2] / 'config/toolkit.conf', project / 'config/toolkit.conf')
+        binaries = self.root / 'bin'
+        binaries.mkdir()
+        native_git = self.observer.contract.git_executable()
+        for name, body in (
+                ('sw_vers', 'echo 26.7.1'), ('xcode-select', 'exit 0'), ('curl', 'exit 0'),
+                ('brew', 'case "$*" in --prefix) echo /opt/homebrew ;; *) exit 0 ;; esac'),
+                ('sudo', 'echo sudo >> "$TEST_MUTATIONS"; exit 99'),
+                ('git', 'for arg in "$@"; do\ncase "$arg" in clone|fetch|checkout|switch|reset|clean|add|remove|prune|commit|update-ref) '
+                 'echo git-mutation >> "$TEST_MUTATIONS"; exit 99 ;; esac\ndone\nexec "' + native_git + '" "$@"')):
+            path = binaries / name
+            path.write_text('#!/bin/bash\n' + body + '\n')
+            path.chmod(0o700)
+        env = dict(os.environ, HOME=str(self.home), SHELL='/bin/zsh', BLUEPRINT_GENERATED_DIR=str(self.stage / 'generated'),
+                   BLUEPRINT_FILE=str(self.stage / 'blueprint.conf'), VERBOSE='false',
+                   PATH=str(binaries) + os.pathsep + os.environ['PATH'], GIT_OPTIONAL_LOCKS='0',
+                   TEST_MUTATIONS=str(self.root / 'mutations'))
+        for name in ('BUNDLE_RESTORE_ACTIVE', 'BUNDLE_RESTORE_PREVIEW', 'MACSEED_APPLICATION_EXECUTION', 'BASH_ENV'):
+            env.pop(name, None)
+        return project, env
+
+    def snapshot(self, project, env):
+        return subprocess.run(['/bin/bash', '-c', '''source modules/discovery/workspace.sh
+action() { :; }; success() { :; }; warning() { :; }; error() { echo "$*" >&2; }
+export_workspace_snapshot
+'''], cwd=project, env=env, capture_output=True)
+
+    def test_discovery_blueprint_cli_preview_preserves_ordinary_repository_actions(self):
+        project, env = self.cli_fixture()
+        result = self.snapshot(project, env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        item = self.observer.contract.identity('checkout', 'Projects/base')
+        self.selection([item])
+        selected = subprocess.run(['/bin/bash', '-c', '''source modules/core/common/common.sh
+source modules/core/config/config.sh
+source modules/blueprint/blueprint.sh
+source modules/blueprint/selector.sh
+blueprint_validate || exit $?
+blueprint_selector_load_items git-repositories || exit $?
+blueprint_selected_items git-repositories
+'''], cwd=project, env=env, capture_output=True)
+        self.assertEqual(selected.returncode, 0, selected.stderr)
+        self.assertIn(item.encode(), selected.stdout)
+        before = bundle.fingerprint(self.home)
+        workflow = subprocess.run(['./bootstrap.sh', '--workflow'], input=b'n\nq\n',
+                                  cwd=project, env=env, capture_output=True)
+        self.assertEqual(workflow.returncode, 0, workflow.stdout + workflow.stderr)
+        self.assertIn(b'Refresh generated configuration', workflow.stdout)
+        self.assertNotIn(b'Discovery is required', workflow.stdout)
+        self.assertEqual(bundle.fingerprint(self.home), before)
+        preview = subprocess.run(['./bootstrap.sh', '--dry-run'], cwd=project, env=env, capture_output=True)
+        self.assertEqual(preview.returncode, 0, preview.stdout + preview.stderr)
+        self.assertNotIn(b'Would clone', preview.stdout)
+        self.assertNotIn(b'Would switch', preview.stdout)
+        self.assertEqual(bundle.fingerprint(self.home), before)
+        # Exercise the existing Apply consumer only in its already-matching no-op case.
+        apply = subprocess.run(['/bin/bash', '-c', '''source modules/core/common/common.sh
+source modules/core/config/config.sh
+source modules/blueprint/blueprint.sh
+source modules/discovery/workspace.sh
+source modules/bootstrap/workspace/workspace.sh
+MODULE_CHANGED=false
+bootstrap_workspace || exit $?
+[[ "$MODULE_CHANGED" == false ]]
+'''], cwd=project, env=env, capture_output=True)
+        self.assertEqual(apply.returncode, 0, apply.stdout + apply.stderr)
+        self.assertEqual(bundle.fingerprint(self.home), before)
+        # Fixture-only metadata changes; Preview must preserve legacy planned actions.
+        (self.base / '.git/refs/heads/feature').write_text(self.oid + '\n')
+        (self.base / '.git/HEAD').write_text('ref: refs/heads/feature\n')
+        before = bundle.fingerprint(self.home)
+        preview = subprocess.run(['./bootstrap.sh', '--dry-run'], cwd=project, env=env, capture_output=True)
+        self.assertEqual(preview.returncode, 0, preview.stdout + preview.stderr)
+        self.assertIn(b'Would switch repository branch:', preview.stdout)
+        self.assertEqual(bundle.fingerprint(self.home), before)
+        self.base.rename(self.root / 'saved-fixture-checkout')
+        before = bundle.fingerprint(self.home)
+        preview = subprocess.run(['./bootstrap.sh', '--dry-run'], cwd=project, env=env, capture_output=True)
+        self.assertEqual(preview.returncode, 0, preview.stdout + preview.stderr)
+        self.assertIn(b'Would clone repository:', preview.stdout)
+        self.assertEqual(bundle.fingerprint(self.home), before)
+        self.assertFalse((self.root / 'mutations').exists())
+
+    def test_cli_linked_topology_refuses_before_any_workspace_mutation(self):
+        self.linked(self.base, self.home / 'Projects/feature', self.oid)
+        self.repository(self.home, 'Projects/independent')
+        project, env = self.cli_fixture()
+        self.assertEqual(self.snapshot(project, env).returncode, 0)
+        identity = self.observer.contract.identity
+        base, linked, independent = [identity('checkout', 'Projects/' + name)
+                                     for name in ('base', 'feature', 'independent')]
+        # An unselected linked group must not disable an independent ordinary group.
+        self.selection([independent])
+        result = subprocess.run(['./bootstrap.sh', '--dry-run'], cwd=project, env=env, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        with (self.workspace / 'folders.conf').open('a') as output:
+            output.write('MustNotCreate|user\n')
+        for selected in ([base, linked], [base], [linked]):
+            with self.subTest(selected=selected):
+                self.selection(selected)
+                # Even a valid planned folder action must not run before repository admission.
+                blueprint_file = self.stage / 'blueprint.conf'
+                blueprint_file.write_text(blueprint_file.read_text().replace(
+                    '[workspace-folders]\n', '[workspace-folders]\nMustNotCreate\n'))
+                before = bundle.fingerprint(self.home)
+                preview = subprocess.run(['./bootstrap.sh', '--dry-run'], cwd=project, env=env, capture_output=True)
+                self.assertEqual(preview.returncode, 2, preview.stdout + preview.stderr)
+                if base in selected:
+                    self.assertIn(b'linked/shared worktrees', preview.stderr)
+                else:
+                    self.assertIn(b'Workspace topology validation failed', preview.stderr)
+                apply = subprocess.run(['/bin/bash', '-c', '''source modules/core/common/common.sh
+source modules/core/config/config.sh
+source modules/blueprint/blueprint.sh
+source modules/discovery/workspace.sh
+source modules/bootstrap/workspace/workspace.sh
+MODULE_CHANGED=false
+bootstrap_workspace
+result=$?
+[[ "$MODULE_CHANGED" == false ]] || exit 99
+exit "$result"
+'''], cwd=project, env=env, capture_output=True)
+                self.assertEqual(apply.returncode, 2, apply.stdout + apply.stderr)
+                self.assertEqual(bundle.fingerprint(self.home), before)
+        self.assertFalse((self.root / 'mutations').exists())
+
+    def test_cli_topology_admission_keeps_schema_and_target_guards(self):
+        project, env = self.cli_fixture()
+        self.assertEqual(self.snapshot(project, env).returncode, 0)
+        self.selection([self.observer.contract.identity('checkout', 'Projects/base')])
+        topology_file = self.workspace / 'topology.json'
+        records_file = self.workspace / 'repositories.conf'
+        topology, records = topology_file.read_bytes(), records_file.read_bytes()
+        for invalid in ('version', 'missing', 'detached', 'shared-target', 'linked-target'):
+            with self.subTest(invalid=invalid):
+                topology_file.write_bytes(topology)
+                records_file.write_bytes(records)
+                if invalid == 'version':
+                    records_file.write_bytes(records.replace(b'TOPOLOGY_VERSION="1"', b'TOPOLOGY_VERSION="2"'))
+                elif invalid == 'missing':
+                    topology_file.unlink()
+                elif invalid == 'detached':
+                    value = json.loads(topology)
+                    value['groups'][0]['members'][0]['head_kind'] = 'detached'
+                    topology_file.write_text(json.dumps(value))
+                    records_file.write_bytes(records.replace(b'CURRENT_BRANCH="main"', b'CURRENT_BRANCH=""'))
+                elif invalid == 'shared-target':
+                    self.linked(self.base, self.home / 'Projects/new-link', self.oid)
+                else:
+                    shutil.rmtree(self.base / '.git/worktrees')
+                    (self.base / '.git').rename(self.root / 'saved-git')
+                    (self.base / '.git').write_text('gitdir: ' + str(self.root / 'saved-git') + '\n')
+                before = bundle.fingerprint(self.home)
+                result = subprocess.run(['./bootstrap.sh', '--dry-run'], cwd=project, env=env, capture_output=True)
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertNotIn(b'Would clone', result.stdout)
+                self.assertNotIn(b'Would switch', result.stdout)
+                self.assertEqual(bundle.fingerprint(self.home), before)
+        self.assertFalse((self.root / 'mutations').exists())
+
+    def test_descriptor_missing_folder_preserves_valid_independent_metadata(self):
+        (self.home / 'Projects/good.code-workspace').write_text('{"folders":[{"path":"base","name":"Base"}]}')
+        (self.home / 'Projects/bad.code-workspace').write_text('{"folders":[{"path":"confirmed-missing"}]}')
+        project, env = self.cli_fixture()
+        before = bundle.fingerprint(self.home)
+        result = self.snapshot(project, env)
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertEqual(len(self.metadata()['groups']), 1)
+        items = json.loads((self.workspace / 'vscode-workspaces.json').read_bytes())['items']
+        self.assertEqual([item['path'] for item in items], ['~/Projects/good.code-workspace'])
+        self.assertIn(b'UNSUPPORTED_WORKSPACES=1', (self.workspace / 'inventory.conf').read_bytes())
+        self.assertNotIn(b'confirmed-missing', b''.join(p.read_bytes() for p in self.workspace.iterdir()))
+        self.assertEqual(bundle.fingerprint(self.home), before)
+
+    def test_descriptor_access_failure_preserves_previous_grouped_snapshot(self):
+        (self.home / 'Projects/good.code-workspace').write_text('{"folders":[{"path":"base"}]}')
+        project, env = self.cli_fixture()
+        self.assertEqual(self.snapshot(project, env).returncode, 0)
+        before = bundle.fingerprint(self.workspace)
+        blocked = self.home / 'private-folder'
+        (blocked / 'target').mkdir(parents=True)
+        (self.home / 'Projects/blocked.code-workspace').write_text(
+            '{"folders":[{"path":"../private-folder/target"}]}')
+        blocked.chmod(0)
+        try:
+            with self.assertRaises(PermissionError):
+                (blocked / 'target').lstat()
+            result = self.snapshot(project, env)
+            self.assertEqual(result.returncode, 2, result.stderr)
+            self.assertEqual(bundle.fingerprint(self.workspace), before)
+            self.assertNotIn(b'private-folder', result.stdout + result.stderr)
+        finally:
+            blocked.chmod(0o700)
+        (self.home / 'Projects/blocked.code-workspace').unlink()
+        head = self.base / '.git/HEAD'
+        for corrupt in (None, 'invalid mandatory Git metadata\n'):
+            with self.subTest(head=corrupt):
+                if corrupt is None:
+                    head.unlink()
+                else:
+                    head.write_text(corrupt)
+                result = self.snapshot(project, env)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertEqual(bundle.fingerprint(self.workspace), before)
+
+    def test_descriptor_unstable_or_lost_observation_is_not_missing_folder(self):
+        path = self.home / 'Projects/project.code-workspace'
+        path.write_text('{"folders":[{"path":"base"}]}')
+        self.collect()
+        before = bundle.fingerprint(self.workspace)
+        native = self.observer.inside
+        observations = []
+        def unstable(target, home):
+            if target == self.base:
+                observations.append(target)
+                if len(observations) == 1:
+                    raise FileNotFoundError(2, 'fixture disappeared', str(target))
+            return native(target, home)
+        observer = self.observer.Observer(self.home, ['Projects'])
+        with patch.object(self.observer, 'inside', side_effect=unstable):
+            with self.assertRaises(self.observer.ObservationError):
+                observer.workspaces([path], {})
+        self.assertEqual(observer.counts['UNSUPPORTED_WORKSPACES'], 0)
+        path.unlink()
+        with self.assertRaises(FileNotFoundError):
+            observer.workspaces([path], {})
+        self.assertEqual(bundle.fingerprint(self.workspace), before)
+
+    def test_native_topology_duplicate_nested_detached_and_no_mutation(self):
+        from workspace_fixture import object_file, write_index
+        self.linked(self.base, self.home / 'Projects/base/nested/demo', self.oid)
+        self.linked(self.base, self.home / 'Projects/team/demo', self.oid, branch=None)
+        staged = object_file(self.base / '.git', 'blob', b'staged content\n')
+        write_index(self.base / '.git', staged)
+        (self.base / 'tracked.txt').write_bytes(b'working tree content\n')
+        (self.base / 'untracked').write_text('preserve')
+        (self.base / '.gitignore').write_text('ignored\n')
+        (self.base / 'ignored').write_text('preserve ignored')
+        before = bundle.fingerprint(self.home)
+        self.assertFalse(any(self.collect().values()))
+        topology = self.metadata()
+        self.assertEqual(len(topology['groups']), 1)
+        self.assertEqual(len(topology['groups'][0]['members']), 3)
+        self.assertEqual([m['head_kind'] for m in topology['groups'][0]['members']].count('detached'), 1)
+        self.assertEqual(bundle.fingerprint(self.home), before)
+        captured = bundle.fingerprint(self.workspace)
+        self.collect()
+        self.assertEqual(bundle.fingerprint(self.workspace), captured)
+
+    def test_unsafe_origins_filters_and_unborn_repositories_are_excluded(self):
+        config = self.base / '.git/config'
+        original = config.read_text()
+        for origin in ('ssh://user:secret@example.invalid/repo', 'https://example.invalid/repo?secret=token',
+                       '/external/repository', ''):
+            config.write_text(original.replace('https://example.invalid/team/repo.git', origin))
+            self.assertGreater(self.collect()['UNSUPPORTED_REPOSITORIES'], 0)
+            self.assertEqual((self.workspace / 'repositories.conf').read_bytes(), b'')
+        config.write_text(original + '[filter "unsafe"]\nclean = touch ' + str(self.root / 'mutated') + '\n')
+        (self.base / '.gitattributes').write_text('tracked.txt filter=unsafe\n')
+        self.assertGreater(self.collect()['UNSUPPORTED_REPOSITORIES'], 0)
+        self.assertFalse((self.root / 'mutated').exists())
+        config.write_text(original)
+        (self.base / '.git/refs/heads/main').unlink()
+        self.assertGreater(self.collect()['UNSUPPORTED_REPOSITORIES'], 0)
+
+    def test_ssh_origin_and_observation_errors_are_distinct_from_absence(self):
+        config = self.base / '.git/config'
+        config.write_text(config.read_text().replace('https://example.invalid/team/repo.git',
+                                                   'ssh://git@example.invalid/team/repo.git'))
+        self.assertFalse(any(self.collect().values()))
+        self.assertIn(b'ssh://git@example.invalid', (self.workspace / 'repositories.conf').read_bytes())
+        before = bundle.fingerprint(self.workspace)
+        native = self.observer.Observer.run
+        def failed_status(observer, path, *args, **kwargs):
+            if args[0] == 'status':
+                raise self.observer.ObservationError('status_failed')
+            return native(observer, path, *args, **kwargs)
+        with patch.object(self.observer.Observer, 'run', failed_status), self.assertRaises(self.observer.ObservationError):
+            self.collect()
+        self.assertEqual(bundle.fingerprint(self.workspace), before)
+
+    def test_independent_equal_origins_full_and_partial_bundle_roundtrip(self):
+        self.linked(self.base, self.home / 'Projects/team/demo', self.oid)
+        self.repository(self.home, 'Projects/other/demo')
+        self.collect()
+        topology = self.metadata()
+        self.assertEqual(len(topology['groups']), 2)
+        linked = next(g for g in topology['groups'] if len(g['members']) == 2)
+        ids = [member['item_id'] for group in topology['groups'] for member in group['members']]
+        for selected in (ids, [m['item_id'] for m in linked['members']]):
+            self.selection(selected)
+            preview = bundle.capture_preview(self.stage, str(self.home))
+            self.assertEqual(bundle.parse_blueprint(preview)[0]['git-repositories'], [])
+            output = self.root / f'{len(selected)}.mbt'
+            bundle.pack(self.stage, output, str(self.home), apply_precedence=False)
+            files = bundle.validate_archive(output)
+            self.assertEqual(len(bundle.workspace_contract().repository_records(
+                files['generated/workspace/repositories.conf'])), len(selected))
+            self.assertEqual(bundle.inspect_bundle(output, str(self.home))['selected_item_counts']['git-repositories'], len(selected))
+            self.assertNotIn(str(self.home).encode(), b''.join(files.values()))
+            target = self.root / f'restore-{len(selected)}'
+            target.mkdir()
+            with self.assertRaises(bundle.Unsupported):
+                bundle.unpack(output, target, str(self.home))
+            self.assertEqual(list(target.iterdir()), [])
+        self.selection([m['item_id'] for m in linked['members'] if m['item_id'] != linked['base_item_id']])
+        with self.assertRaises(bundle.Invalid):
+            bundle.capture_preview(self.stage, str(self.home))
+
+    def test_locked_missing_prunable_and_external_groups_are_not_flattened(self):
+        self.linked(self.base, self.home / 'Projects/locked', self.oid, locked=True)
+        self.linked(self.base, self.home / 'Projects/missing', self.oid, branch='missing', missing=True)
+        self.linked(self.base, self.root / 'external', self.oid, branch='external')
+        self.repository(self.home, 'Projects/independent')
+        before = bundle.fingerprint(self.home)
+        counts = self.collect()
+        for key in ('LOCKED_WORKTREES', 'MISSING_WORKTREES', 'PRUNABLE_WORKTREES', 'EXTERNAL_WORKTREES'):
+            self.assertGreater(counts[key], 0, key)
+        self.assertGreater(counts['UNSUPPORTED_REPOSITORIES'], 0)
+        self.assertEqual(len(self.metadata()['groups']), 1)
+        records = (self.workspace / 'repositories.conf').read_text()
+        self.assertIn('Projects/independent', records)
+        self.assertNotIn('Projects/base', records)
+        self.assertEqual(bundle.fingerprint(self.home), before)
+        self.assertNotIn(b'private reason', b''.join(p.read_bytes() for p in self.workspace.iterdir()))
+
+    def test_missing_base_and_gitfile_external_are_unsupported(self):
+        self.linked(self.base, self.home / 'Projects/feature', self.oid)
+        # A linked marker can remain after its base has disappeared.
+        shutil.rmtree(self.base)
+        with self.assertRaises((FileNotFoundError, self.observer.contract.Unsupported)):
+            self.collect()
+        marker = self.home / 'Projects/feature/.git'
+        marker.write_text('gitdir: ' + str(self.root / 'outside') + '\n')
+        counts = self.collect()
+        self.assertEqual(counts['UNSUPPORTED_REPOSITORIES'], 1)
+        self.assertEqual((self.workspace / 'repositories.conf').read_bytes(), b'')
+
+    def test_capabilities_and_malformed_porcelain_fail_closed(self):
+        with patch.object(self.observer.contract, 'detect_worktree_capability', return_value={
+                'status': 'unsupported', 'reason': 'worktree_porcelain_z_unavailable'}):
+            counts = self.collect()
+        self.assertEqual(counts['GIT_CAPABILITY_UNSUPPORTED'], 1)
+        self.assertFalse((self.workspace / 'topology.json').exists())
+        valid = b'worktree /home/base\0HEAD ' + b'a' * 40 + b'\0branch refs/heads/main\0\0'
+        self.assertEqual(len(self.observer.porcelain(valid)), 1)
+        for data in (valid.replace(b'\0', b'\n'), valid[:-1], valid + valid,
+                     valid.replace(b'branch refs/heads/main', b'branch refs/tags/main'),
+                     valid.replace(b'\0\0', b'\0unknown unsafe\0\0')):
+            with self.subTest(data=data), self.assertRaises(self.observer.contract.Invalid):
+                self.observer.porcelain(data)
+
+    def test_safe_roots_symlinks_and_observation_failure(self):
+        outside = self.root / 'outside'
+        outside.mkdir()
+        (self.home / 'Projects/external').symlink_to(outside)
+        self.repository(self.home, 'Documents/Code/extra')
+        with patch.dict(os.environ, MACSEED_WORKSPACE_ROOTS='Documents/Code'):
+            self.collect()
+        self.assertEqual(len(self.metadata()['groups']), 2)
+        (self.base / 'src').mkdir()
+        with patch.dict(os.environ, MACSEED_WORKSPACE_ROOTS='Projects/base/src'):
+            self.collect()
+        self.selection([])
+        blueprint = self.stage / 'blueprint.conf'
+        blueprint.write_bytes(blueprint.read_bytes().replace(b'[workspace-folders]\n',
+                             b'[workspace-folders]\nProjects/base/src\n'))
+        with self.assertRaises(bundle.Invalid):
+            bundle.capture_preview(self.stage, str(self.home))
+        blueprint.write_bytes(blueprint.read_bytes().replace(b'Projects/base/src\n', b'Projects\n'))
+        output = self.root / 'folders-only.mbt'
+        bundle.pack(self.stage, output, str(self.home), apply_precedence=False)
+        self.assertNotIn('generated/workspace/topology.json', bundle.validate_archive(output))
+        self.assertNotIn('generated/workspace/repositories.conf', bundle.validate_archive(output))
+        with patch.dict(os.environ, MACSEED_WORKSPACE_ROOTS='../outside'), self.assertRaises(self.observer.contract.Invalid):
+            self.collect()
+        with patch.object(self.observer.os, 'walk', side_effect=PermissionError()), self.assertRaises(PermissionError):
+            self.collect()
+        with patch.object(self.observer.Observer, 'run', side_effect=self.observer.ObservationError()), \
+                self.assertRaises(self.observer.ObservationError):
+            self.collect()
+
+    def test_remote_privacy_and_jsonc_folder_relationships_only(self):
+        config = self.base / '.git/config'
+        config.write_text(config.read_text().replace('https://', 'https://private-user:private-token@'))
+        (self.home / 'Projects/project.code-workspace').write_text('''{
+            // Metadata only; arbitrary settings must never leave this file.
+            "folders": [{"path":"base", "name":"Base display",},],
+            "settings": {"secret":"private-project-content"},
+        }''')
+        before = bundle.fingerprint(self.home)
+        counts = self.collect()
+        self.assertEqual(counts['REMOTE_REDACTED'], 1)
+        raw = b''.join(path.read_bytes() for path in self.workspace.iterdir())
+        for secret in (b'private-user', b'private-token', b'private-project-content', str(self.home).encode()):
+            self.assertNotIn(secret, raw)
+        workspace = json.loads((self.workspace / 'vscode-workspaces.json').read_bytes())['items'][0]
+        self.assertEqual(workspace['folders'][0]['name'], 'Base display')
+        self.assertEqual(workspace['folders'][0]['domain'], 'git-repositories')
+        self.assertEqual(bundle.fingerprint(self.home), before)
+
+    def test_group_publication_rollback_and_optional_sidecar_retirement(self):
+        (self.home / 'Projects/project.code-workspace').write_text('{"folders":[{"path":"base"}]}')
+        output = self.root / 'generated/workspace'
+        output.mkdir(parents=True)
+        names = ('folders.conf', 'repositories.conf', 'vscode-workspaces.conf', 'inventory.conf',
+                 'topology.json', 'vscode-workspaces.json')
+        for name in names:
+            (output / name).write_text('old ' + name)
+        before = bundle.fingerprint(output)
+        command = '''source modules/discovery/workspace.sh
+action() { :; }; success() { :; }; warning() { :; }; error() { :; }
+position=0
+workspace_publish_member() {
+    position=$((position + 1))
+    [[ $position != "$FAIL_POSITION" ]] || return 2
+    if [[ -f "$1" ]]; then mv "$1" "$2"; else rm -f "$2"; fi
+}
+export_workspace_snapshot
+'''
+        env = dict(os.environ, HOME=str(self.home), BLUEPRINT_GENERATED_DIR=str(output.parent), VERBOSE='false')
+        for position in range(1, 7):
+            result = subprocess.run(['/bin/bash', '-c', command], cwd=MODULE.parents[2],
+                                    env=dict(env, FAIL_POSITION=str(position)), capture_output=True)
+            self.assertEqual(result.returncode, 2, result.stderr)
+            self.assertEqual(bundle.fingerprint(output), before, position)
+        result = subprocess.run(['/bin/bash', '-c', command], cwd=MODULE.parents[2],
+                                env=dict(env, FAIL_POSITION='0'), capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue((output / 'topology.json').is_file())
+        shutil.rmtree(self.base)
+        (self.home / 'Projects/project.code-workspace').unlink()
+        result = subprocess.run(['/bin/bash', '-c', command], cwd=MODULE.parents[2],
+                                env=dict(env, FAIL_POSITION='0'), capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse((output / 'topology.json').exists())
+        self.assertFalse((output / 'vscode-workspaces.json').exists())
 
 
 if __name__ == "__main__":

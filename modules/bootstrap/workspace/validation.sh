@@ -45,9 +45,22 @@ workspace_read_bootstrap_folders() {
 
 workspace_read_bootstrap_repositories() {
     local config_file="$1" repositories repository name path remote branch checked_branch
+    local schema=legacy selected topology_helper
     [[ -f "$config_file" && -r "$config_file" ]] || return 2
     LC_ALL=C awk '/[[:cntrl:]]/ { exit 2 }' "$config_file" || return 2
-    workspace_validate_repositories "$config_file" || return 2
+    if [[ -e "${config_file%/*}/topology.json" || -L "${config_file%/*}/topology.json" ]] ||
+       grep -q '^TOPOLOGY_VERSION=' "$config_file"; then
+        schema=topology
+        if blueprint_exists; then
+            selected="$(blueprint_selected_items git-repositories)" || return 2
+        else
+            selected="$(config_sections "$config_file")" || return 2
+        fi
+        topology_helper="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/topology.py"
+        printf '%s' "${selected:+$selected$'\n'}" |
+            python3 -B "$topology_helper" --legacy-cli "$config_file" "$HOME" || return 2
+    fi
+    workspace_validate_repositories "$config_file" "$schema" || return 2
     repositories="$(config_sections "$config_file")" || return 2
     while IFS= read -r repository; do
         [[ -n "$repository" ]] || continue
@@ -55,6 +68,9 @@ workspace_read_bootstrap_repositories() {
         blueprint_item_selected git-repositories "$repository" || continue
         name="$(config_get "$config_file" "$repository" NAME)" || return 2
         path="$(config_get "$config_file" "$repository" PATH)" || return 2
+        if [[ "$schema" == topology && "$path" == \~/* ]]; then
+            path="$HOME/${path#'~/'}"
+        fi
         remote="$(config_get "$config_file" "$repository" REMOTE)" || return 2
         branch="$(config_get "$config_file" "$repository" CURRENT_BRANCH)" || return 2
         [[ -n "$name" && -n "$remote" && -n "$branch" ]] || return 2

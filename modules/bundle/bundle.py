@@ -117,12 +117,14 @@ def workspace_stage_files(stage):
 
 
 def staged_payload(stage, blueprint):
-    files = {path: checked_file(stage / path) for path in required_paths(blueprint)}
+    files = {path: checked_file(stage / path) for path in required_paths(blueprint) if path != 'blueprint.conf'}
     files['blueprint.conf'] = blueprint
-    sections, _ = parse_blueprint(blueprint)
     topology = 'generated/workspace/topology.json'
-    if sections['git-repositories'] and ((stage / topology).exists() or (stage / topology).is_symlink()):
+    if (stage / topology).exists() or (stage / topology).is_symlink():
         files[topology] = checked_file(stage / topology)
+        # Unselected parents still constrain selected nested folders/descriptors.
+        name = 'generated/workspace/repositories.conf'
+        files[name] = checked_file(stage / name)
     return files
 
 
@@ -238,7 +240,11 @@ def portable_paths(files, home):
         for line in content.splitlines(keepends=True):
             if line.startswith('PATH="') and line.endswith('"\n'):
                 value = line[6:-2]
-                line = 'PATH="' + safe_relative_home(value, home) + '"\n'
+                if 'generated/workspace/topology.json' in files:
+                    value = '~/' + workspace_contract().portable(value, home)
+                else:
+                    value = safe_relative_home(value, home)
+                line = 'PATH="' + value + '"\n'
             lines.append(line)
         files[repo] = "".join(lines).encode()
     screenshot = "generated/macos/screenshots.conf"
@@ -654,7 +660,6 @@ def unpack(bundle, stage, home):
 def inspect_bundle(bundle, home):
     """Validate as Restore does, then return only UI-safe selection metadata."""
     files, provenance = validate_archive(bundle, with_provenance=True)
-    require_runtime_workspace(files)
     target_paths(files, home)
     sections, categories = parse_blueprint(files["blueprint.conf"])
     return {
@@ -664,6 +669,31 @@ def inspect_bundle(bundle, home):
         "secure_component": "secure.age" in files,
         "external_tools": provenance,
     }
+
+
+def capture_preview(stage, home):
+    """Validate Capture metadata, then leave legacy Preview its supported domains.
+
+    This private Preview-only Blueprint is never the saved Bundle selection.
+    New topology has no Restore planner or Apply path yet.
+    """
+    blueprint = checked_file(stage / 'blueprint.conf', 65536)
+    files = staged_payload(stage, blueprint)
+    selected_payload(files, blueprint, home=home)
+    portable_paths(files, home)
+    validate_workspace(files, exact=True)
+    excluded = {'vscode-workspaces'}
+    if 'generated/workspace/topology.json' in files:
+        excluded.add('git-repositories')
+    current, output = None, []
+    for line in blueprint.decode().splitlines(keepends=True):
+        if line.startswith('[') and line.rstrip().endswith(']'):
+            current = line.strip()[1:-1]
+            if current != 'vscode-workspaces':
+                output.append(line)
+        elif current not in excluded:
+            output.append(line)
+    return ''.join(output).encode()
 
 
 def narrow(stage, groups):
@@ -952,6 +982,9 @@ def main():
             raise Invalid("selected Zsh snapshot is not eligible")
         portable_paths(files, args[1])
         validate_workspace(files, exact=True)
+    elif command == 'capture-preview' and len(args) == 2:
+        stage = Path(args[0])
+        write_file(stage / '.capture-preview.conf', capture_preview(stage, args[1]))
     elif command == "unpack" and len(args) == 3:
         unpack(Path(args[0]), Path(args[1]), args[2])
     elif command == "narrow" and len(args) >= 1 and set(args[1:]) <= set(GROUPS):

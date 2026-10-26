@@ -191,6 +191,12 @@ def included_settings(stage, row):
 def prepared(stage, rows, secure, selection):
     chosen, identities, canonical = selection_for(selection, rows, secure) if selection is not None else ({}, [], None)
     chosen, effective, duplicates = application_scope(stage, chosen, rows, canonical)
+    if selection is not None:
+        try:
+            raw = blueprint_data(chosen)
+            bundle.validate_workspace(bundle.staged_payload(stage, raw), home=os.environ['HOME'])
+        except (bundle.Invalid, OSError) as exc:
+            raise CaptureError('invalid_workspace_selection') from exc
     # Hash private staged inputs; neither input values nor their per-file hashes are public.
     fingerprints = {}
     for path in sorted((stage / 'generated').rglob('*')):
@@ -240,11 +246,10 @@ def capture(root, operation, parameters, channel, event):
                 raise CaptureError('age_unavailable')
             blueprint(stage, chosen)
             # The selected Blueprint/input validators and portability checks remain production-owned.
-            if run(root, ['./bootstrap.sh', '--dry-run'], environment) > 1:
+            preview = stage / '.capture-preview.conf'
+            bundle.write_file(preview, bundle.capture_preview(stage, os.environ['HOME']))
+            if run(root, ['./bootstrap.sh', '--dry-run'], dict(environment, BLUEPRINT_FILE=str(preview))) > 1:
                 raise CaptureError('capture_validation_failed')
-            files = {name: bundle.checked_file(stage / name) for name in bundle.required_paths(bundle.checked_file(stage / 'blueprint.conf'))}
-            bundle.selected_payload(files, bundle.checked_file(stage / 'blueprint.conf'))
-            bundle.portable_paths(files, os.environ['HOME'])
             event('phase_completed', {'phase': 'validation'})
             if identities:
                 selected = stage / 'secure-selection.json'
@@ -294,9 +299,12 @@ def row(destination_path):
         raise ValueError('oversized or duplicate inventory')
     entries = []
     for index, source in enumerate(sources, 1):
-        identity = item(domain, source)
+        topology = domain == 'git-repositories' and re.fullmatch(r'checkout-[0-9a-f]{64}', source)
+        identity = source if topology else item(domain, source)
         # Repository names and private paths remain index-addressable, without remote URLs.
         label = (source if re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_. -]{0,79}', source) else f'Repository {index}') if domain == 'git-repositories' else identity
+        if topology:
+            label = labels[index - 1] if re.fullmatch(r'[\w .+-]{1,80}', labels[index - 1]) else f'Repository {index}'
         if domain == 'app-store' and re.fullmatch(r'[\w .+()&-]{1,160}', labels[index - 1]):
             label = labels[index - 1]
         entries.append({'item_id': identity, 'label': label, '_source': source})

@@ -215,15 +215,13 @@ esac
         self.assertEqual(store_only['summary']['selected_items'], 1)
 
     def workspace_fixture(self, duplicate=False):
+        from workspace_fixture import repository
         self.fixture(workspace=True)
         paths = ['Projects/fixture-repo']
         if duplicate:
             paths.append('Other/fixture-repo')
         for path in paths:
-            repository = self.home / path
-            repository.mkdir(parents=True)
-            subprocess.run(['git', 'init', '-q', str(repository)], env=self.environment,
-                           stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+            repository(self.home, path)
 
     def test_workspace_folders_success_is_selectable(self):
         self.workspace_fixture()
@@ -248,9 +246,9 @@ esac
         self.assertEqual(self.prepare(selection)['selection'], selection)
 
     def test_workspace_observation_failure_remains_non_selectable(self):
-        # Duplicate identifiers trigger a real production Workspace snapshot
-        # failure; neither domain may expose a partial selectable inventory.
-        self.workspace_fixture(duplicate=True)
+        # Malformed Git configuration is an observation error, not absence.
+        self.workspace_fixture()
+        (self.home / 'Projects/fixture-repo/.git/config').write_text('[broken\n')
         prepared = self.prepare()
         for domain in ('workspace-folders', 'git-repositories'):
             row = next(row for row in prepared['inventory'] if row['domain'] == domain)
@@ -261,6 +259,71 @@ esac
                 'categories': [domain], 'items': {}, 'secure_identities': []})
             self.assertEqual(result.returncode, 2)
             self.assertEqual(events[-1]['data']['code'], 'capture_source_unavailable')
+
+    def test_topology_capture_full_partial_dependencies_and_restore_block(self):
+        from workspace_fixture import linked
+        self.workspace_fixture(duplicate=True)
+        base = self.home / 'Projects/fixture-repo'
+        oid = (base / '.git/refs/heads/main').read_text().strip()
+        linked(base, self.home / 'Projects/feature', oid)
+        (base / 'nested-folder').mkdir()
+        self.environment['MACSEED_WORKSPACE_ROOTS'] = 'Projects/fixture-repo/nested-folder'
+        before = bundle.fingerprint(self.home)
+        inventory = self.prepare()
+        row = next(row for row in inventory['inventory'] if row['domain'] == 'git-repositories')
+        self.assertEqual(row['status'], 'present')
+        self.assertEqual(len(row['items']), 3)
+        contract = bundle.workspace_contract()
+        base_id = contract.identity('checkout', 'Projects/fixture-repo')
+        linked_id = contract.identity('checkout', 'Projects/feature')
+        self.assertIn(linked_id, [item['item_id'] for item in row['items']])
+        invalid = {'categories': [], 'items': {'git-repositories': [linked_id]}, 'secure_identities': []}
+        result, events = self.invoke_capture(selection=invalid)
+        self.assertEqual(result.returncode, 2, events)
+        self.assertEqual(events[-1]['data']['code'], 'invalid_workspace_selection')
+        nested = {'categories': [], 'items': {'workspace-folders': ['Projects/fixture-repo/nested-folder']},
+                  'secure_identities': []}
+        result, events = self.invoke_capture(selection=nested)
+        self.assertEqual(result.returncode, 2, events)
+        self.assertEqual(events[-1]['data']['code'], 'invalid_workspace_selection')
+        partial = {'categories': [], 'items': {'git-repositories': [base_id, linked_id]}, 'secure_identities': []}
+        full = {'categories': ['git-repositories'], 'items': {}, 'secure_identities': []}
+        for count, selection in ((2, partial), (3, full)):
+            prepared = self.prepare(selection)
+            destination = self.root / f'topology-{count}.mbt'
+            result, events = self.execute(prepared['prepared_capture_id'], selection, destination)
+            self.assertEqual(result.returncode, 0, events)
+            self.assertTrue(events[-2]['data']['publication_occurred'])
+            files = bundle.validate_archive(destination)
+            sections, _ = bundle.parse_blueprint(files['blueprint.conf'])
+            self.assertEqual(len(sections['git-repositories']), count)
+            self.assertEqual(bundle.validate_workspace(files, exact=True), {'workspace-topology': 1})
+            self.assertNotIn(str(self.home).encode(), b''.join(files.values()))
+            if count == 2:
+                self.assertNotIn(b'Other/fixture-repo', b''.join(files.values()))
+            target = self.root / f'restore-{count}'
+            target.mkdir()
+            with self.assertRaises(bundle.Unsupported):
+                bundle.unpack(destination, target, str(self.home))
+            self.assertFalse(list(target.iterdir()))
+        self.assertEqual(bundle.fingerprint(self.home), before)
+        self.assertFalse(Path(self.environment['TEST_MUTATIONS']).exists())
+
+    def test_topology_git_capability_is_explicitly_unsupported(self):
+        self.workspace_fixture()
+        # Old Git advertises --porcelain but no -z. No line-parser fallback.
+        git = self.root / 'bin/git'
+        native_git = shutil.which('git')
+        git.write_text('#!/bin/bash\ncase "$*" in\n'
+                       ' --version) echo "git version 2.24.3" ;;\n'
+                       ' "worktree list -h") echo "    --porcelain"; exit 129 ;;\n'
+                       ' *) exec "' + native_git + '" "$@" ;;\nesac\n')
+        git.chmod(0o700)
+        prepared = self.prepare()
+        row = next(row for row in prepared['inventory'] if row['domain'] == 'git-repositories')
+        self.assertEqual(row['status'], 'unsupported')
+        self.assertEqual(row['reason'], 'workspace_topology_unsupported')
+        self.assertEqual(row['items'], [])
 
     def test_invalid_selection_and_unavailable_rejection(self):
         self.fixture()

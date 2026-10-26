@@ -9,6 +9,7 @@ source modules/discovery/workspace/folders.sh
 source modules/discovery/workspace/repositories.sh
 source modules/discovery/workspace/vscode.sh
 source modules/discovery/workspace/inventory.sh
+WORKSPACE_TOPOLOGY_HELPER="$(cd "$(dirname "${BASH_SOURCE[0]}")/workspace" && pwd)/topology.py"
 
 workspace_prepare_generated_dir() {
 
@@ -106,8 +107,11 @@ workspace_validate_repositories() {
 # ==========================================
 
 workspace_publish_member() {
-
-    mv "$1" "$2"
+    if [[ -f "$1" ]]; then
+        mv "$1" "$2"
+    else
+        rm -f "$2" # Retire an optional generated sidecar in the same rollback group.
+    fi
 
 }
 
@@ -115,14 +119,9 @@ workspace_publish_snapshot() {
 
     local staging_dir="$1"
     local output_dir="$2"
-    # Phase 1 validates the extension privately; Discovery publication is not
-    # enabled until the topology producer and all grouped members are qualified.
-    if [[ -e "$staging_dir/topology.json" || -L "$staging_dir/topology.json" ||
-          -e "$staging_dir/vscode-workspaces.json" || -L "$staging_dir/vscode-workspaces.json" ||
-          -e "$output_dir/topology.json" || -L "$output_dir/topology.json" ||
-          -e "$output_dir/vscode-workspaces.json" || -L "$output_dir/vscode-workspaces.json" ]] ||
-       grep -q '^TOPOLOGY_VERSION=' "$staging_dir/repositories.conf"; then
-        error "Workspace topology publication is not supported yet"
+    if ! python3 -B "$WORKSPACE_TOPOLOGY_HELPER" --validate "$staging_dir"; then
+        error "Workspace topology snapshot is invalid"
+        rm -rf "$staging_dir"
         return 2
     fi
     local backup_dir
@@ -134,8 +133,19 @@ workspace_publish_snapshot() {
         repositories.conf
         vscode-workspaces.conf
         inventory.conf
+        topology.json
+        vscode-workspaces.json
     )
     local -a existed_before=()
+
+    for file in "${snapshot_files[@]}"; do
+        if [[ -L "$staging_dir/$file" || -L "$output_dir/$file" ||
+              ( -e "$output_dir/$file" && ! -f "$output_dir/$file" ) ]]; then
+            error "Unsafe Workspace snapshot member"
+            rm -rf "$staging_dir"
+            return 2
+        fi
+    done
 
     if ! workspace_prepare_generated_dir "$output_dir"; then
         rm -rf "$staging_dir"
@@ -143,6 +153,9 @@ workspace_publish_snapshot() {
     fi
 
     for file in "${snapshot_files[@]}"; do
+        if [[ "$file" == *.json && ! -e "$staging_dir/$file" && ! -L "$staging_dir/$file" ]]; then
+            continue
+        fi
         if ! chmod 600 "$staging_dir/$file"; then
             rm -rf "$staging_dir"
             return 2
@@ -168,6 +181,7 @@ workspace_publish_snapshot() {
     done
 
     for file in "${snapshot_files[@]}"; do
+        [[ -e "$staging_dir/$file" || -e "$output_dir/$file" ]] || continue
         if ! workspace_publish_member "$staging_dir/$file" "$output_dir/$file"; then
             for ((index = 0; index < ${#snapshot_files[@]}; index++)); do
                 file="${snapshot_files[$index]}"
@@ -240,7 +254,7 @@ workspace_export_snapshot_private() {
 
     if ! export_workspace_repositories \
         "$staging_dir/repositories.conf" "$staging_dir/folders.conf" "$staging_dir" ||
-       ! workspace_validate_repositories "$staging_dir/repositories.conf"; then
+       ! workspace_validate_repositories "$staging_dir/repositories.conf" topology; then
         error "Failed to prepare Git Repositories snapshot"
         rm -rf "$staging_dir"
         return 2
@@ -256,7 +270,7 @@ workspace_export_snapshot_private() {
     if ! export_workspace_inventory \
         "$staging_dir/inventory.conf" \
         "$staging_dir/folders.conf" \
-        "$staging_dir/repositories.conf"; then
+        "$staging_dir/repositories.conf" topology; then
         error "Failed to prepare Workspace Inventory snapshot"
         rm -rf "$staging_dir"
         return 2

@@ -11,6 +11,7 @@ import re
 import shutil
 import stat
 import subprocess
+import sys
 import tempfile
 import unicodedata
 from urllib.parse import urlsplit
@@ -412,19 +413,59 @@ def selected_payload(files, sections):
             files.pop(VSCODE)
 
 
-def detect_worktree_capability(git='git'):
-    """Read-only feature probe. Phase 1 deliberately has no qualified parser.
+def validate_legacy_cli(config_file, home, selected):
+    """Admit the existing ordinary-repository consumer, never plan topology Apply."""
+    if any(os.environ.get(key) == 'true' for key in
+           ('BUNDLE_RESTORE_ACTIVE', 'BUNDLE_RESTORE_PREVIEW', 'MACSEED_APPLICATION_EXECUTION')):
+        raise Unsupported('topology Restore is not enabled')
+    config_file = Path(config_file)
+    files = {}
+    for name, path in ((REPOSITORIES, config_file), (TOPOLOGY, config_file.with_name('topology.json'))):
+        info = path.lstat()
+        if not stat.S_ISREG(info.st_mode) or info.st_size > MAX_BYTES:
+            raise Invalid('unsafe topology input')
+        files[name] = path.read_bytes()
+    validate(files, {'git-repositories': selected}, home=home)
+    chosen = selection(selected)
+    for group in objects(files[TOPOLOGY])['groups']:
+        if not chosen.intersection(member['item_id'] for member in group['members']):
+            continue
+        if len(group['members']) != 1 or group['members'][0]['head_kind'] != 'branch':
+            raise Unsupported('linked/shared worktrees and detached HEAD require topology Restore')
+    records = repository_records(files[REPOSITORIES])
+    paths = [portable(records[item]['path'], home) for item in chosen]
+    target_paths(paths, home)
+    for relative_path in paths:
+        marker = Path(home) / relative_path / '.git'
+        try:
+            info = marker.lstat()
+        except FileNotFoundError:
+            continue  # Existing legacy inspection distinguishes missing and non-Git destinations.
+        if not stat.S_ISDIR(info.st_mode):
+            raise Unsupported('linked or indirect Git directory requires topology Restore')
+        # Reject a checkout that became shared since Discovery, without invoking Git mutation.
+        for name in ('commondir', 'worktrees'):
+            path = marker / name
+            try:
+                info = path.lstat()
+            except FileNotFoundError:
+                continue
+            if name == 'commondir' or not stat.S_ISDIR(info.st_mode) or any(path.iterdir()):
+                raise Unsupported('shared Git directory requires topology Restore')
 
-    Version text alone never admits -z, including vendor backports. Phase 2
-    must qualify a bounded porcelain-z parser before this can return supported.
-    """
-    environment = dict(os.environ, LC_ALL='C', GIT_OPTIONAL_LOCKS='0')
+
+def detect_worktree_capability(git='git', *, cwd=None):
+    """Read-only option probe; the Discovery parser validates the actual bytes."""
+    environment = {k: v for k, v in os.environ.items() if not k.startswith('GIT_')}
+    environment.update(LC_ALL='C', GIT_OPTIONAL_LOCKS='0', GIT_CONFIG_NOSYSTEM='1',
+                       GIT_CONFIG_GLOBAL='/dev/null', GIT_CONFIG_SYSTEM='/dev/null')
     try:
         git = git_executable(git)
-        before = subprocess.run([git, '--version'], capture_output=True, timeout=10, env=environment)
+        location = {} if cwd is None else {'cwd': cwd}
+        before = subprocess.run([git, '--version'], capture_output=True, timeout=10, env=environment, **location)
         help_result = subprocess.run([git, 'worktree', 'list', '-h'], capture_output=True,
-                                     timeout=10, env=environment)
-        after = subprocess.run([git, '--version'], capture_output=True, timeout=10, env=environment)
+                                     timeout=10, env=environment, **location)
+        after = subprocess.run([git, '--version'], capture_output=True, timeout=10, env=environment, **location)
         if before.returncode or after.returncode or not re.fullmatch(rb'git version [0-9]+\.[0-9]+[^\r\n]*\n?', before.stdout):
             reason = 'git_version_unavailable'
         elif before.stdout != after.stdout:
@@ -434,7 +475,23 @@ def detect_worktree_capability(git='git'):
               not re.search(rb'(?m)^\s+-z(?:[ ,]|$)', help_result.stdout + help_result.stderr)):
             reason = 'worktree_porcelain_z_unavailable'
         else:
-            reason = 'worktree_parser_unqualified'
+            return {'status': 'supported', 'reason': 'worktree_porcelain_z'}
     except (Unsupported, OSError, subprocess.SubprocessError):
         reason = 'git_observation_failed'
     return {'status': 'unsupported', 'reason': reason}
+
+
+if __name__ == '__main__':
+    try:
+        if len(sys.argv) != 4 or sys.argv[1] != '--legacy-cli':
+            raise Invalid('invalid topology validation command')
+        selected = sys.stdin.buffer.read(MAX_BYTES + 1)
+        if len(selected) > MAX_BYTES:
+            raise Invalid('oversized selection')
+        validate_legacy_cli(sys.argv[2], sys.argv[3], selected.decode().splitlines())
+    except Unsupported as exc:
+        print('Unsupported Workspace topology in legacy CLI: ' + str(exc), file=sys.stderr)
+        sys.exit(2)
+    except (Invalid, OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError):
+        print('Workspace topology validation failed; no actions permitted', file=sys.stderr)
+        sys.exit(2)

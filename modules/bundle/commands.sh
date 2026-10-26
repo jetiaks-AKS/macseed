@@ -57,7 +57,8 @@ bundle_capture() (
         info "Capture cancelled before selection was saved."
         return 0
     fi
-    BLUEPRINT_FILE="$stage/blueprint.conf" BLUEPRINT_GENERATED_DIR="$stage/generated" \
+    python3 -B "$BUNDLE_HELPER" capture-preview "$stage" "$HOME" || return 2
+    BLUEPRINT_FILE="$stage/.capture-preview.conf" BLUEPRINT_GENERATED_DIR="$stage/generated" \
         ./bootstrap.sh --dry-run
     result=$?
     [[ $result -le 1 ]] || return "$result"

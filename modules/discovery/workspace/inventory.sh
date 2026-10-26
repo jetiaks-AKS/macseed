@@ -19,7 +19,7 @@ export_workspace_inventory() {
     fi
 
     if ! workspace_validate_folders "$folders_file" ||
-       ! workspace_validate_repositories "$repositories_file"; then
+       ! workspace_validate_repositories "$repositories_file" "${4:-legacy}"; then
         error "Workspace inventory prerequisites are malformed"
         return 2
     fi
@@ -76,6 +76,10 @@ EOF
     then
         error "Failed to serialize Workspace Inventory"
         return 2
+    fi
+
+    if [[ -f "${output_file%/*}/inventory.extra" ]]; then
+        cat "${output_file%/*}/inventory.extra" >> "$output_file" || return 2
     fi
 
     if [[ "$VERBOSE" == true ]]; then

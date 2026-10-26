@@ -79,8 +79,9 @@ Exporters use **Collect → Validate → Serialize → Safe Publication**. A gen
 file is replaced only after preparing valid new state. Handled collection,
 serialization or publication failure preserves the previous valid file.
 Most files publish independently. Workspace metadata `workspace.conf` is
-independent; `folders.conf`, `repositories.conf`, `vscode-workspaces.conf` and
-`inventory.conf` are a grouped snapshot published together.
+independent; `folders.conf`, `repositories.conf`, `vscode-workspaces.conf`,
+`inventory.conf` and optional `topology.json` / `vscode-workspaces.json` form one
+rollback group, including retirement of obsolete optional sidecars.
 
 Configuration is data, never shell code: generated content is never `source`d or
 `eval`uated. Use the domain's existing reader, including the Configuration Engine
@@ -640,10 +641,27 @@ ownership limits and remaining real-Mac qualification belong to the
 
 ### Linked Git worktree capability limits
 
-Repository Discovery recursively scans HOME folders classified as `workspace`
-for `.git` directories. It currently ignores `.git` files, so linked worktrees
-are absent from Capture inventory. Capture Prepare rescans into private staging;
-refreshing a saved Discovery snapshot does not remove this limitation.
+Repository Discovery scans HOME folders classified as `workspace` for `.git`
+directories and files, without following directory symlinks. Explicit additional
+roots use `MACSEED_WORKSPACE_ROOTS`: newline-separated HOME-relative directories
+(for example `Documents/Code`), subject to the same path/alias checks. Roots must
+exist; external paths, traversal and symlink roots are rejected. A pass is bounded
+to 50,000 filesystem entries and the metadata limits below.
+
+Discovery groups main/linked checkouts by native common-directory observations,
+cross-checks registration, branch and OID, and retains independent groups even
+with equal origins. Duplicate basenames, nested paths and detached HEAD are
+supported. Missing, locked, prunable, external or otherwise unsupported registered
+members exclude their whole group and dependent nested checkouts. Aggregate
+counts in `inventory.conf` record these conditions without private paths/reasons;
+they are not Bundle members. Unreadable or inconsistent observations fail with
+`2` and preserve the previous snapshot. Exclusions return `1`; Capture exposes
+an entirely excluded Git inventory as `unsupported`, and read failures as
+`observation_error`, never selectable absence or independent clones.
+
+Git reads disable optional index writes and fsmonitor. Repository includes,
+filters, partial-clone configuration and alternates remain unsupported; Discovery
+does not run fetch, clone, checkout, worktree mutation or external filters.
 
 Legacy Bundle repository records do not encode a common Git directory or relationships
 between worktrees. Restore can inspect an existing linked worktree, but ordinary
@@ -653,19 +671,20 @@ does not provide topology restoration or justify treating an absent linked workt
 independent clone. The bounded refusal-continuation gate above rejects linked or
 shared topology. Adding `.git` file detection alone is not a complete solution.
 
-Topology-aware Discovery, Capture and Restore remain unimplemented. The
+Topology-aware Discovery and Capture implement Phase 2 of the
 [Workspace/Git checkpoint](../../ROADMAP.md#complete-workspace--git-worktree-restoration)
-has the schema-only Phase 1 contract below. Independent-clone fallback is forbidden;
-the current Protocol V1 runtime and Desktop UI do not advertise this capability.
+using the Phase 1 schema below. Restore planning and execution remain unsupported;
+independent-clone fallback is forbidden. Protocol V1 and Desktop presentation are
+unchanged. Capture inventories use stable checkout IDs and display names.
 
 ### Workspace topology schema — Phase 1
 
-**Implemented: private metadata validation and Bundle v1 extension handling only.**
-The existing Bundle helper can pack and validate schema fixtures. Runtime Bundle
-inspection/unpack, narrowing and local publication reject the extension as
-unsupported before publication; the Workspace grouped publisher also rejects it.
-Discovery/Capture do not produce this format yet. No clone, fetch, branch creation,
-checkout, worktree mutation or workspace-file creation is enabled by this phase.
+**Implemented: schema, Discovery, selected Capture and read-only Bundle inspection.**
+Capture validates new relationships/dependencies before using the existing Preview
+for other selected domains. Its temporary Preview Blueprint omits new topology;
+the saved Bundle retains the original explicit selection. Runtime Restore unpack,
+narrowing and local Restore publication reject topology before any target mutation.
+Discovery publishes the complete Workspace group through the existing rollback path.
 
 `workspace/repositories.conf` retains the existing required fields and sectional
 Config Engine. New records additionally require `TOPOLOGY_VERSION="1"` in every
@@ -673,7 +692,10 @@ section. Section IDs are `checkout-<sha256>`: SHA-256 of UTF-8
 `checkout + NUL + NFC(HOME-relative path)`, without `~/` in the hashed path.
 `NAME` is a display label; duplicate basenames are valid. IDs survive source/target
 HOME changes and inventory reordering; moving a checkout changes its ID.
-The legacy validator/consumer remains strict and rejects the new marker.
+The legacy validator remains strict in legacy mode. Ordinary CLI Workflow,
+Preview and Bootstrap validate topology v1 and admit only selected singleton
+named-branch groups to existing repository actions. Linked/shared or detached
+groups are refused before mutation; topology Bundle Restore remains blocked.
 
 `workspace/topology.json` is a strict JSON object with these required fields:
 
@@ -724,7 +746,11 @@ has `domain` (`git-repositories` or `workspace-folders`), `item_id`, `subpath` (
 for the root, otherwise safe relative components), and optional `name` (160 UTF-8
 bytes maximum). References must resolve; selected descriptors require explicitly
 selected dependencies. Arbitrary settings, tasks, launch data and file bytes are
-not accepted. JSONC extraction and descriptor restoration remain future work.
+not accepted. Discovery accepts bounded JSON/JSONC folder relationships and names;
+other descriptor content is discarded. Descriptor selection UI and restoration
+remain Phase 5 work; Capture does not implicitly select discovered descriptors.
+Confirmed missing folder references exclude only that descriptor as unsupported.
+Access errors or changing observations fail the snapshot and preserve prior state.
 
 Bundle format/version stay `mac-bootstrap-bundle` / `1`. The new allowlisted
 members require manifest `required_features` entries `workspace-topology: 1`
@@ -739,13 +765,13 @@ use an unambiguous observed path mapping, never basename matching alone.
 
 Static branch metadata validation does not invoke or require Git. Future Git
 operations must additionally pass native `check-ref-format --branch` and readiness
-checks. Git version alone is not a worktree parser capability. The read-only Phase 1 probe
-checks `git --version` before/after `git worktree list -h`, requiring both
+checks. Git version alone is not a worktree parser capability. The read-only probe
+checks `git --version` before/after `git worktree list -h` in an observed checkout, requiring both
 `--porcelain` and `-z` in the advertised options. Git 2.24.x lacks `-z`; unsupported
 options, missing Git or changing version evidence never fall back to line parsing.
-Even a successful option probe returns `worktree_parser_unqualified`: no native
-worktree output parser is qualified in Phase 1. Phase 2 must qualify that parser,
-bounded observations and grouped publication before enabling Discovery/Capture.
+The producer then validates actual NUL-delimited records with a bounded strict
+parser; unknown/duplicate fields, ambiguous paths and malformed records fail closed.
+Git 2.24.3 therefore reports Unsupported; no alternative line parser is qualified.
 
 ## VS Code settings lifecycle
 

@@ -76,7 +76,8 @@ blueprint_selector_load_items() {
         git-repositories)
             while IFS= read -r first; do
                 BLUEPRINT_SELECTOR_ITEMS+=("$first")
-                BLUEPRINT_SELECTOR_LABELS+=("$first")
+                second="$(config_get "$file" "$first" NAME)" || return 2
+                BLUEPRINT_SELECTOR_LABELS+=("${second:-$first}")
             done < <(config_sections "$file")
             ;;
         git-configuration)

@@ -125,10 +125,11 @@ owns the run links, Desktop duration and measured serial/parallel comparison.
 
 ## Complete Workspace & Git Worktree Restoration
 
-**Planned capability checkpoint.** Requires its own architecture and data-contract
-review before implementation; no partial support or independent-clone fallback is
-approved. [Configuration](docs/toolkit/CONFIGURATION.md#linked-git-worktree-capability-limits)
-records the current Discovery/Capture and Restore limitations.
+**In progress.** Phase 1 contracts are reviewed and published. Phase 2 implements
+bounded Discovery, explicit Capture selection and Bundle inspection; Restore
+Preview/Execute and representative real-Mac qualification remain open.
+[Configuration](docs/toolkit/CONFIGURATION.md#linked-git-worktree-capability-limits)
+owns the contracts and compatibility limits. Independent-clone fallback is forbidden.
 
 - Discover repositories and linked worktrees, identify common Git directories
   and capture their topology and checkout relationships.

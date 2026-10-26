@@ -46,7 +46,7 @@ export_workspace_folders() {
 
     for folder in "$HOME"/*; do
 
-        [[ ! -d "$folder" ]] && continue
+        [[ ! -d "$folder" || -L "$folder" ]] && continue
 
         local name
         local type

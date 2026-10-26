@@ -12,6 +12,9 @@ export_vscode_workspaces() {
     local folders_file="$2"
     local working_dir="$3"
 
+    # Topology observation already prepared this member and its bounded sidecar.
+    [[ ! -f "$working_dir/inventory.extra" ]] || return 0
+
     if [[ ! -f "$folders_file" || ! -r "$folders_file" ]]; then
         error "Workspace Folders are unavailable for VS Code Workspace discovery"
         return 2
