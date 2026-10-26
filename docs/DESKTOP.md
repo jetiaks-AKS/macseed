@@ -40,12 +40,16 @@ Build and review instructions are in
 [Desktop development](../desktop/Macseed/README.md). Macseed is one product with a shared Core and two official frontends: CLI (`bs`) and Desktop.
 The official CLI remains supported. **Simple by default. Detailed on demand.**
 
-Desktop CI integration is implemented, with hosted validation pending publication.
-The canonical Debug build/test entrypoint follows the Core gates and is required
-by `validate`; native assertions remain mandatory. A successful hosted build,
-complete test execution, GUI-session compatibility and job duration are still
-unverified. [Contributing](../CONTRIBUTING.md#focused-feedback-and-ci) owns CI
-execution/reporting; [TODO](../TODO.md#desktop-ci-validation) retains the open gate.
+**Desktop CI validation is complete** at published commit `411cd712`:
+[CI #108](https://github.com/jetiaks-AKS/macseed/actions/runs/40287367098) passed
+the Debug build, all eight Desktop suites, both Restore subsets and native
+PresentationTests assertions, together with lint, all four Core shards and
+`validate`. The Desktop job took **13 min 15 s**. Desktop now depends on lint
+and can run alongside Core; `validate` still requires both to succeed. Hosted
+overlap and speedup for this scheduling change remain unverified.
+[Contributing](../CONTRIBUTING.md#focused-feedback-and-ci) owns CI execution,
+isolation and timing evidence. The next checkpoint is
+[Complete Workspace & Git Worktree Restoration](../ROADMAP.md#complete-workspace--git-worktree-restoration).
 
 This document owns Desktop presentation and interaction. The implemented
 [Protocol V1](core/APPLICATION-INTERFACE.md) owns transport, operation semantics,
@@ -309,8 +313,8 @@ uses a focused native secure sheet when required.
 ## Workflow layout and disclosure
 
 User visual acceptance of Capture, Restore and Environment Status was completed
-on 25 October 2026. This UI checkpoint is closed. After successful repository CI,
-the next checkpoint is Desktop CI in the existing
+on 25 October 2026. This UI checkpoint is closed. Desktop CI was subsequently
+validated by CI #108; subsequent work follows the existing
 [Roadmap execution order](../ROADMAP.md#current-practical-execution-order).
 
 Capture Review, Confirmation and Result; Restore Selection, Preview, Rebuild and

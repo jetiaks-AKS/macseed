@@ -124,9 +124,15 @@ owned cleanup, never success. CI keeps lint and every regression shard mandatory
 `validate` rejects failure, cancellation or missing execution. Concurrency cancels
 stale development runs only within the same workflow and branch/PR group.
 
-Desktop CI uses only `./desktop/Macseed/build.sh Debug --test`, after lint and all
-four Core shards succeed. The required `validate` check also requires `desktop`
-success; skipped, cancelled or missing Desktop execution cannot pass the gate.
+Desktop CI uses only `./desktop/Macseed/build.sh Debug --test`, after lint succeeds,
+in parallel with the four Core shards. Each job has its own GitHub-hosted VM,
+checkout, working directory and temporary state; fixture HOME/tools remain local
+to that job. No shared cache, artifact input or external mutable fixture state
+connects Core and Desktop. This does not relax sequential Core/Desktop validation
+on a single local machine, where temporary-directory observations can overlap.
+The required `validate` check retains `if: always()` and dependencies
+`[lint, regression, desktop]`; all three must report `success`. Failure,
+cancellation, skipped or missing execution cannot pass the gate.
 The existing eight suites and two Restore subsets retain their fixture isolation
 and native assertions; Capture/Restore keep `--no-renders`. The runner's selected
 Xcode, SDK, Swift and Xcode-resolved Python are checked before execution. Safe GUI
@@ -136,9 +142,17 @@ session facts help diagnose WindowServer failures; they never replace native tes
 passed/failed/not-run, process exit status and elapsed seconds, with compilation
 separate from execution. Assertion counts remain unknown. CI appends this to
 `GITHUB_STEP_SUMMARY` even after failure and rejects missing reports. Desktop
-uploads no artifacts or raw logs. Hosted GUI compatibility, full execution and
-job duration remain unverified until the first successful published run; see
-[the open checkpoint](TODO.md#desktop-ci-validation).
+uploads no artifacts or raw logs.
+
+[CI #108](https://github.com/jetiaks-AKS/macseed/actions/runs/40287367098), at
+`411cd712a1091d67da28b13b6982901259dc00c9` on 26 October 2026, completed lint,
+all four Core shards, the Desktop Debug build, all eight Desktop suites, both
+Restore subsets and `validate`, including native PresentationTests assertions.
+The Desktop job took **13 min 15 s**; total CI elapsed was **38 min 12 s**, with
+Desktop still waiting for Core. The slowest Core shard took **24 min 44 s**.
+Starting Desktop after lint targets roughly 25 minutes overall, subject to runner
+availability and workload. This is an estimate; overlap and actual elapsed time
+require a successful hosted run of the parallel workflow.
 
 For Bash changes, include syntax checks:
 

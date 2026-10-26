@@ -79,7 +79,7 @@ jobs:
 
   desktop:
     runs-on: macos-latest
-    needs: [lint, regression]
+    needs: [lint]
     timeout-minutes: 45
     env:
       PYTHONDONTWRITEBYTECODE: '1'

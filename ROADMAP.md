@@ -121,12 +121,11 @@ Further CI weight/target calibration is maintenance, not a new R5 closure gate;
    `macseed-develop` are confirmed, with **Ready · Macseed Core 3.4.0** observed.
    The development descriptor references this checkout; Core is not embedded.
    This closes the organizational checkpoint, not additional Restore qualification.
-1. **[Desktop CI validation](#desktop-ci-validation):** integration implemented;
-   hosted validation pending publication. Complete after an actual
-   hosted pass with useful, privacy-safe failure reporting.
+1. **[Desktop CI validation](#desktop-ci-validation) — COMPLETE:** CI #108 at
+   `411cd712` passed the full hosted Core/Desktop gate, including native assertions.
 2. **[Complete Workspace & Git Worktree Restoration](#complete-workspace--git-worktree-restoration):**
-   review architecture/data contracts, then qualify the agreed end-to-end path,
-   file preservation, conflicts and repeat/no-op convergence.
+   next implementation checkpoint. Review architecture/data contracts, then qualify
+   the agreed end-to-end path, file preservation, conflicts and repeat/no-op convergence.
 3. **Secure SSH Desktop (16H):** implement and qualify the inherited secret-channel
    interaction, encryption/unlock/import confirmation and secure privacy coverage
    through representative Capture/Restore gates.
@@ -163,12 +162,16 @@ this does not close Stage 16 or the remaining supported-domain Restore gates.
 
 ## Desktop CI validation
 
-**Implemented; hosted validation pending publication.** The canonical Desktop
-Debug build/test entrypoint runs after the unchanged Core gates; `validate`
-requires Desktop success. Native GUI execution, complete suite results and actual
-job duration still require a successful hosted run. This checkpoint remains open
-and does not establish distribution qualification. See
-[CI validation](CONTRIBUTING.md#focused-feedback-and-ci).
+**COMPLETE — [CI #108](https://github.com/jetiaks-AKS/macseed/actions/runs/40287367098),
+published commit `411cd712`.** The hosted Debug build, all eight Desktop suites,
+both Restore subsets and native assertions passed, together with lint, every Core
+shard and `validate`. Desktop took **13 min 15 s**. This closes Desktop CI
+validation, not distribution or remaining Stage 16 qualification.
+
+CI scheduling maintenance now allows Desktop after lint, alongside Core regression;
+the mandatory Core + Desktop + `validate` gate is unchanged. Parallel overlap and
+wall-clock improvement still need hosted confirmation; the serial baseline and
+unmeasured target are recorded in [CI validation](CONTRIBUTING.md#focused-feedback-and-ci).
 
 ## Complete Workspace & Git Worktree Restoration
 

@@ -12,25 +12,18 @@ baseline and successful CI. The general Restore audit is complete.
 Stage 16 as a whole remains open; follow the single
 [Current Execution Order](ROADMAP.md#current-practical-execution-order).
 
-## Desktop CI validation
+## CI scheduling maintenance
 
-Integration is implemented; publication and hosted validation remain pending.
-The [CI contract](CONTRIBUTING.md#focused-feedback-and-ci) retains the canonical
-entrypoint, Core gates, native assertions and disposable fixtures.
+Desktop CI validation is **COMPLETE** at `411cd712` / CI #108; the
+[closed checkpoint](ROADMAP.md#desktop-ci-validation) records full hosted coverage
+and duration. The next implementation checkpoint is Workspace & Git Worktree
+Restoration below. Remaining CI scheduling verification is maintenance only.
 
-- [ ] After separately authorized publication, observe successful hosted lint,
-  all four Core shards, Desktop build, all eight suites and both Restore subsets,
-  followed by successful `validate`; record the run/SHA and Desktop job duration.
-- [ ] Confirm native assertions execute in the hosted WindowServer/GUI session
-  without hidden skips; retain concrete diagnostics for any environment blocker.
-- [ ] Qualify hosted failure reporting and artifact privacy. Close this checkpoint
-  only after full hosted success, with no mandatory work failed or not-run.
-
-The historical sidebar assertion did not reproduce in the completed focused probe;
-usable detail width includes safe-area insets. Its cause remains unestablished,
-so it is not a claimed defect fix or a pending investigation without a new failure.
-Preserve the existing assertion in the hosted gate; see
-[Desktop evidence](docs/DESKTOP.md#native-appearance-and-settings).
+- [ ] Confirm hosted Desktop starts after lint while Core shards are still running;
+  require successful lint, all four Core shards, Desktop and `validate`, then
+  compare total elapsed time with the **38 min 12 s** serial baseline. Preserve
+  the [CI contract](CONTRIBUTING.md#focused-feedback-and-ci), native assertions
+  and artifact privacy; the expected speedup is not measured yet.
 
 ## Complete Workspace & Git Worktree Restoration
 
