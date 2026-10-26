@@ -1145,7 +1145,15 @@ private struct WorkflowAnchorFrames: PreferenceKey {
         precondition(stopContent.contains("Label(notice, systemImage: \"stop.circle\")")
             && stopContent.contains("if let explanation = result.stopRequestExplanation {")
             && stopContent.contains("Text(explanation)"))
-        precondition(source.contains("Text(String(count))") && !source.contains("Text(label + \" \" + String(count))"))
+        let restoreBadges = source.components(separatedBy: "struct RestoreCountBadges: View {")[1]
+            .components(separatedBy: "\nstruct ")[0]
+        precondition(restoreBadges.contains("WorkflowCountPill(count: count, label: label, tint: Self.color(label))")
+            && !restoreBadges.contains("Text(label + \" \" + String(count))"))
+        let components = try! String(contentsOfFile: "Sources/TaskComponents.swift")
+        let countPill = components.components(separatedBy: "struct WorkflowCountPill: View {")[1]
+            .components(separatedBy: "\nstruct ")[0]
+        precondition(countPill.contains("Text(String(count))") && !countPill.contains("Text(label"))
+        precondition(countPill.contains(".accessibilityLabel(label)") && countPill.contains(".accessibilityValue(String(count))"))
         precondition(!source.contains("No item-level completion or Verification was reported.") && !source.contains("Finishing Current Installation"))
         precondition(source.contains("ForEach(domain.resultChildren)") && source.contains("Stopping Rebuild…"))
         print("PASS: shared plan-row summary, disjoint breakdowns, unknown scope, Apply without Verification and operation-bound Stop notices")
