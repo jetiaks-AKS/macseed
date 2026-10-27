@@ -34,6 +34,10 @@ def inventory(files):
     if sections['workspace-folders']:
         folders = dict(line.split('|') for line in files['generated/workspace/folders.conf'].decode().splitlines() if line)
     app_names = dict(line.split('|', 1) for line in files.get('generated/appstore.conf', b'').decode().splitlines() if '|' in line)
+    repository_names = {}
+    if 'generated/workspace/topology.json' in files:
+        repository_names = {item: row['name'] for item, row in bundle.workspace_contract().repository_records(
+            files['generated/workspace/repositories.conf']).items()}
     rows = []
     sources = {}
     for domain in (*bundle.ITEMS, *bundle.CATEGORIES):
@@ -50,7 +54,8 @@ def inventory(files):
                      'capture_selected': bool(categories.get(domain, False) or sections.get(domain, [])),
                      'source_present': 'generated/' + (bundle.ITEMS.get(domain) or bundle.CATEGORIES[domain]) in files,
                      'reason': None if available else 'no_selectable_content',
-                     'items': [{'item_id': key, 'label': label(app_names.get(value, value) if domain == 'app-store' else value)} for key, value in sources[domain].items()]})
+                     'items': [{'item_id': key, 'label': label(app_names.get(value, value) if domain == 'app-store' else
+                                repository_names.get(value, value) if domain == 'git-repositories' else value)} for key, value in sources[domain].items()]})
     return {'groups': [{'id': group, 'domains': list(domains)} for group, domains in bundle.GROUPS.items()],
             'inventory': rows}, sources
 

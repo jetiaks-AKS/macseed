@@ -653,9 +653,12 @@ def validate_archive(path, with_provenance=False):
     return (files, provenance) if with_provenance else files
 
 
-def unpack(bundle, stage, home):
+def unpack(bundle, stage, home, *, workspace_preview=False):
     files, provenance = validate_archive(bundle, with_provenance=True)
-    require_runtime_workspace(files)
+    if workspace_preview:
+        require_workspace_preview(files)
+    else:
+        require_runtime_workspace(files)
     target_paths(files, home)
     files['blueprint.conf'] = without_empty_workspace_selection(files['blueprint.conf'])
     (stage / "generated").mkdir(mode=0o700, exist_ok=True)
@@ -680,11 +683,17 @@ def inspect_bundle(bundle, home):
     }
 
 
-def capture_preview(stage, home):
-    """Validate Capture metadata, then leave legacy Preview its supported domains.
+def require_workspace_preview(files):
+    # Phase 3 admits topology reads only. Descriptor restoration is still absent.
+    if 'generated/workspace/vscode-workspaces.json' in files:
+        raise Unsupported('VS Code workspace restoration is not enabled')
+
+
+def capture_preview(stage, home, *, topology_folders=False):
+    """Validate selected metadata, then project domains for legacy Preview.
 
     This private Preview-only Blueprint is never the saved Bundle selection.
-    New topology has no Restore planner or Apply path yet.
+    Capture retains folder checks; Restore's topology inspector handles both roles.
     """
     blueprint = checked_file(stage / 'blueprint.conf', 65536)
     files = staged_payload(stage, blueprint)
@@ -694,6 +703,8 @@ def capture_preview(stage, home):
     excluded = {'vscode-workspaces'}
     if 'generated/workspace/topology.json' in files:
         excluded.add('git-repositories')
+        if topology_folders:
+            excluded.add('workspace-folders')
     current, output = None, []
     for line in blueprint.decode().splitlines(keepends=True):
         if line.startswith('[') and line.rstrip().endswith(']'):
@@ -705,8 +716,12 @@ def capture_preview(stage, home):
     return ''.join(output).encode()
 
 
-def narrow(stage, groups):
-    require_runtime_workspace(workspace_stage_files(stage))
+def narrow(stage, groups, *, workspace_preview=False):
+    files = workspace_stage_files(stage)
+    if workspace_preview:
+        require_workspace_preview(files)
+    else:
+        require_runtime_workspace(files)
     path = stage / "blueprint.conf"
     original = checked_file(path, 65536).decode()
     disabled = {item for group in groups for item in GROUPS[group]}

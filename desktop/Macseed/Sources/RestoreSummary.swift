@@ -67,6 +67,13 @@ struct RestorePrerequisiteSummaryPresentation {
     let conditions: [CoreRestorePreparation.Condition]
     let ready: Bool
     var hasInstallerPreparations = false
+    var operationAvailabilityMessage: String? {
+        conditions.contains(where: { $0.isPreviewOnlyLimitation })
+            ? CoreRestorePreparation.workspacePreviewReasons["workspace_restore_not_enabled"] : nil
+    }
+    var needsAttention: Bool {
+        (!ready && operationAvailabilityMessage == nil) || !blockers.isEmpty || hasInstallerPreparations
+    }
     var canFixIssues: Bool { hasInstallerPreparations || blockers.contains { $0.diagnostic?.automationPreparationAvailable == true } }
     var isVisible: Bool { !isTerminalReady || hasInstallerPreparations }
     var displayConditions: [CoreRestorePreparation.Condition] {
@@ -74,7 +81,8 @@ struct RestorePrerequisiteSummaryPresentation {
             && $0.diagnostic?.primitive == "pkgutil" && $0.diagnostic?.condition == "preparation_required" }
     }
     var blockers: [CoreRestorePreparation.Condition] {
-        let actionable = conditions.filter { ["external_action_required", "unsupported"].contains($0.status) && !$0.isItemLocal }
+        let actionable = conditions.filter { ["external_action_required", "unsupported"].contains($0.status)
+            && !$0.isItemLocal && !$0.isPreviewOnlyLimitation }
         var seen = Set<String>()
         return actionable.filter { condition in
             // An aggregate inspection consequence is not another root cause.
@@ -126,7 +134,10 @@ struct RestorePrerequisiteSummaryPresentation {
         return "Action Required"
     }
     var isTerminalReady: Bool { ready && blockers.isEmpty }
-    var title: String { canFixIssues ? "Needs Preparation" : isTerminalReady ? "Ready" : "Needs Attention" }
+    var title: String {
+        canFixIssues ? "Needs Preparation" : needsAttention ? "Needs Attention"
+            : operationAvailabilityMessage != nil ? "Preview completed" : "Ready"
+    }
     var detailsInitiallyExpanded: Bool { false }
 }
 

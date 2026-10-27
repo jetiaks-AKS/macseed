@@ -463,7 +463,7 @@ def validate_legacy_cli(config_file, home, selected):
                 raise Unsupported('shared Git directory requires topology Restore')
 
 
-def detect_worktree_capability(git='git', *, cwd=None):
+def detect_worktree_capability(git='git', *, cwd=None, repository_independent=False):
     """Read-only option probe; the Discovery parser validates the actual bytes."""
     environment = {k: v for k, v in os.environ.items() if not k.startswith('GIT_')}
     environment.update(LC_ALL='C', GIT_OPTIONAL_LOCKS='0', GIT_CONFIG_NOSYSTEM='1',
@@ -472,7 +472,10 @@ def detect_worktree_capability(git='git', *, cwd=None):
         git = git_executable(git)
         location = {} if cwd is None else {'cwd': cwd}
         before = subprocess.run([git, '--version'], capture_output=True, timeout=10, env=environment, **location)
-        help_result = subprocess.run([git, 'worktree', 'list', '-h'], capture_output=True,
+        # Top-level builtin usage does not require an existing target repository.
+        # Qualify only an explicit list --porcelain [-z] synopsis, never a version guess.
+        arguments = ['worktree', '-h'] if repository_independent else ['worktree', 'list', '-h']
+        help_result = subprocess.run([git, *arguments], capture_output=True,
                                      timeout=10, env=environment, **location)
         after = subprocess.run([git, '--version'], capture_output=True, timeout=10, env=environment, **location)
         if before.returncode or after.returncode or not re.fullmatch(rb'git version [0-9]+\.[0-9]+[^\r\n]*\n?', before.stdout):
@@ -481,7 +484,8 @@ def detect_worktree_capability(git='git', *, cwd=None):
             reason = 'git_version_changed'
         elif (help_result.returncode not in (0, 129) or
               b'--porcelain' not in help_result.stdout + help_result.stderr or
-              not re.search(rb'(?m)^\s+-z(?:[ ,]|$)', help_result.stdout + help_result.stderr)):
+              not re.search(rb'(?m)worktree list[^\r\n]*--porcelain[^\r\n]*\[-z\]' if repository_independent else
+                            rb'(?m)^\s+-z(?:[ ,]|$)', help_result.stdout + help_result.stderr)):
             reason = 'worktree_porcelain_z_unavailable'
         else:
             return {'status': 'supported', 'reason': 'worktree_porcelain_z'}

@@ -113,7 +113,7 @@ def restore_signals():
 
 
 def restore_prepare(path, disabled_groups, include_secure, selection=None, installer_preparations=None):
-    with restore_signals(), prepared_restore(path, disabled_groups, include_secure, selection, installer_preparations) as (summary, _stage, _source, _staged):
+    with restore_signals(), prepared_restore(path, disabled_groups, include_secure, selection, installer_preparations, workspace_preview=True) as (summary, _stage, _source, _staged):
         return summary
 
 
@@ -123,12 +123,12 @@ def restore_fingerprint(path):
 
 
 @timed("bundle.unpack")
-def restore_unpack(*args):
-    return bundle.unpack(*args)
+def restore_unpack(*args, **kwargs):
+    return bundle.unpack(*args, **kwargs)
 
 
 @contextmanager
-def prepared_restore(path, disabled_groups, include_secure, selection=None, installer_preparations=None):
+def prepared_restore(path, disabled_groups, include_secure, selection=None, installer_preparations=None, *, workspace_preview=False):
     if bundle.RECOVERY.exists() or bundle.RECOVERY.is_symlink():
         raise RecoveryRequired()
     input_path = Path(path)
@@ -142,7 +142,7 @@ def prepared_restore(path, disabled_groups, include_secure, selection=None, inst
         private = Path(temporary)
         stage = private / "stage"
         stage.mkdir(mode=0o700)
-        restore_unpack(input_path, stage, os.environ["HOME"])
+        restore_unpack(input_path, stage, os.environ["HOME"], workspace_preview=workspace_preview)
         if restore_fingerprint(input_path) != source_identity:
             raise bundle.Invalid("Bundle changed during preparation")
         if include_secure and not (stage / "secure.age").is_file():
@@ -151,7 +151,17 @@ def prepared_restore(path, disabled_groups, include_secure, selection=None, inst
             restore_selection.narrow(stage, selection, disabled_groups)
         except restore_selection.InvalidSelection:
             raise InvalidSelection() from None
-        bundle.narrow(stage, disabled_groups)
+        bundle.narrow(stage, disabled_groups, workspace_preview=workspace_preview)
+        topology_preview = None
+        topology_files = None
+        preview_blueprint = stage / 'blueprint.conf'
+        if (stage / 'generated/workspace/topology.json').exists():
+            files = restore_selection.staged_files(stage)
+            bundle.validate_workspace(files, home=os.environ['HOME'])
+            sys.path.insert(0, str(ROOT / 'modules/bootstrap/workspace'))
+            from topology_preview import inspect as inspect_topology
+            topology_files = files
+            preview_blueprint = private / 'preview.blueprint'
         requested_selection = restore_selection.canonical(stage)
         duplicates = bundle.deduplicate_applications(stage)
         stage_identity = restore_fingerprint(stage)
@@ -177,12 +187,15 @@ def prepared_restore(path, disabled_groups, include_secure, selection=None, inst
                         os.environ[name] = value
             if restore_fingerprint(input_path) != source_identity:
                 raise ExecuteFailed('stale_plan')
+        if topology_files is not None:
+            topology_files = restore_selection.staged_files(stage)
+            bundle.write_file(preview_blueprint, bundle.capture_preview(stage, os.environ['HOME'], topology_folders=True))
         summary_file = private / "preview.summary"
         descriptor = os.open(summary_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         os.close(descriptor)
         plan_file = private / "preview.plan"
         plan_file.touch(mode=0o600)
-        environment = dict(os.environ, MACSEED_PKG_PREPARATION_CONTEXT=preparation_context, BLUEPRINT_FILE=str(stage / "blueprint.conf"),
+        environment = dict(os.environ, MACSEED_PKG_PREPARATION_CONTEXT=preparation_context, BLUEPRINT_FILE=str(preview_blueprint),
                            BLUEPRINT_GENERATED_DIR=str(stage / "generated"),
                            BUNDLE_RESTORE_PREVIEW="true", MACSEED_PERFORMANCE_SCOPE="preview", PREVIEW_SUMMARY_FILE=str(summary_file),
                            MACSEED_APPLICATION_EXECUTION="true", PREVIEW_PLAN_FILE=str(plan_file))
@@ -210,7 +223,12 @@ def prepared_restore(path, disabled_groups, include_secure, selection=None, inst
                               for item in modules):
             raise PreviewFailed()
         sections, categories = bundle.parse_blueprint((stage / "blueprint.conf").read_bytes())
-        requirements = prepared_requirements(stage, include_secure, preparation_context)
+        requirements = prepared_requirements(stage, include_secure, preparation_context, blueprint=preview_blueprint)
+        if topology_files is not None:
+            try:
+                topology_preview = inspect_topology(topology_files, os.environ['HOME'], bounded_read)
+            except ObservationError:
+                raise PreviewFailed() from None
         records = []
         domains = set(bundle.ITEMS) | set(bundle.CATEGORIES) | {"secure-ssh-identities"}
         for line in plan_file.read_text().splitlines():
@@ -254,6 +272,14 @@ def prepared_restore(path, disabled_groups, include_secure, selection=None, inst
             records.append({"domain": domain, "item_id": item, "action": action,
                             "disposition": disposition, "reason": None if reason == "none" else reason,
                             **capability})
+        if topology_preview is not None:
+            records.extend(topology_preview['plan'])
+            # The operation gate is added after item readiness projection so
+            # read-only planned actions retain their meaning in Phase 3.
+            modules.append({'module': 'preview_workspace_topology',
+                            'status': 'warning' if any(row['disposition'] not in ('satisfied', 'planned')
+                                                       for row in topology_preview['plan']) else 'success',
+                            'planned': any(row['disposition'] == 'planned' for row in topology_preview['plan'])})
         # Selected inventory is read by the existing validated Bundle parser.
         # Fill unobservable items, never invent an Apply decision from missing inspection.
         for domain in bundle.ITEMS:
@@ -276,7 +302,7 @@ def prepared_restore(path, disabled_groups, include_secure, selection=None, inst
             if row["domain"] == "git-repositories":
                 label = sections["git-repositories"][int(row["item_id"]) - 1]
                 if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_. -]{0,127}", label, re.ASCII):
-                    row["display_name"] = label
+                    row.setdefault("display_name", label)
         # A terminal item-local Preview decision takes precedence over a later
         # inspection prerequisite for that same item. Keep unrelated/global gates.
         for condition in requirements['conditions']:
@@ -327,7 +353,7 @@ def prepared_restore(path, disabled_groups, include_secure, selection=None, inst
                           "preview_git_configuration": "git-configuration", "preview_vscode_settings": "vscode-settings",
                           "preview_zsh": "shell-zsh", "preview_ssh_configuration": "ssh-configuration",
                           "preview_workspace_folders": "workspace-folders", "preview_workspace_repositories": "git-repositories",
-                          "preview_macos_settings": "macOS Settings"}
+                          "preview_macos_settings": "macOS Settings", "preview_workspace_topology": "Workspace"}
         for module in modules:
             if module["status"] == "error":
                 domain = module_domains[module["module"]]
@@ -336,6 +362,10 @@ def prepared_restore(path, disabled_groups, include_secure, selection=None, inst
                 requirements["ready"] = False
                 requirements["conditions"].append({"domain": domain,
                     "code": "preview_observation_failed", "status": "external_action_required"})
+        if topology_preview is not None:
+            requirements['ready'] = False
+            requirements['conditions'].append({'domain': 'Workspace', 'code': 'workspace_restore_not_enabled',
+                                                'status': 'unsupported', 'scope': 'operation'})
         summary = {
             "selected_groups": [name for name, members in bundle.GROUPS.items()
                                 if any(categories.get(member, False) or sections.get(member) for member in members)],
@@ -366,6 +396,8 @@ def prepared_restore(path, disabled_groups, include_secure, selection=None, inst
                                         if key != 'external_tools'}
         identity = {"bundle": source_identity, "stage": stage_identity,
                     "disabled_groups": sorted(disabled_groups), "summary": identity_summary}
+        if topology_preview is not None:
+            identity['workspace_observation'] = topology_preview['fingerprint']
         if duplicates:
             identity["requested_selection"] = requested_selection
             identity["application_duplicates"] = duplicates
@@ -380,6 +412,8 @@ def prepared_restore(path, disabled_groups, include_secure, selection=None, inst
                       "parameters": {"disabled_groups": sorted(disabled_groups), "include_secure": include_secure},
                       "plan": identity_summary["plan"], "readiness": identity_summary["readiness"],
                       "modules": identity_summary["modules"]}
+        if topology_preview is not None:
+            components['workspace_observation'] = topology_preview['fingerprint']
         summary["plan_diagnostics"] = {key: hashlib.sha256(json.dumps(value, sort_keys=True,
             separators=(",", ":")).encode()).hexdigest() for key, value in components.items()}
         # This identifies observed inputs and this module summary, never authorizes Apply.
@@ -414,8 +448,8 @@ READINESS_CODES = {
 
 
 @timed("readiness.requirements")
-def prepared_requirements(stage, include_secure, preparation_context=""):
-    environment = dict(os.environ, MACSEED_PKG_PREPARATION_CONTEXT=preparation_context, BLUEPRINT_FILE=str(stage / "blueprint.conf"),
+def prepared_requirements(stage, include_secure, preparation_context="", *, blueprint=None):
+    environment = dict(os.environ, MACSEED_PKG_PREPARATION_CONTEXT=preparation_context, BLUEPRINT_FILE=str(blueprint or stage / "blueprint.conf"),
                        BLUEPRINT_GENERATED_DIR=str(stage / "generated"),
                        BUNDLE_RESTORE_ACTIVE="true", BUNDLE_RESTORE_SECURE_FILE="",
                        MACSEED_APPLICATION_EXECUTION="true",
@@ -1104,6 +1138,9 @@ def dispatch(version, channel=None):
             return 2
         except InvalidSelection:
             emit(2, "failed", operation_id, {"code": "invalid_selection"})
+            return 2
+        except bundle.WorkspaceSelectionInvalid as exc:
+            emit(2, "failed", operation_id, {"code": exc.code})
             return 2
         except PreviewFailed:
             emit(2, "failed", operation_id, {"code": "preview_failed"})

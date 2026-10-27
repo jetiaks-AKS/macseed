@@ -3335,5 +3335,613 @@ esac
             process.stderr.close()
 
 
+
+class TopologyPreviewTests(unittest.TestCase):
+    """Native Git reads on disposable HOME, fixtures built without Git mutations."""
+    invoke = RestorePrepareTests.invoke
+    execute = RestorePrepareTests.execute
+    pack = RestorePrepareTests.pack
+
+    def setUp(self):
+        RestorePrepareTests.setUp(self)
+        self.home = self.home.resolve()
+        self.environment['HOME'] = str(self.home)
+        self.environment['XDG_CONFIG_HOME'] = str(self.home / '.config')
+        sys.path.insert(0, str(ROOT / 'scripts'))
+        import workspace_fixture
+        self.fixture = workspace_fixture
+        self.contract = bundle.workspace_contract()
+        self.paths = ['Projects/base', 'Projects/team/demo', 'Projects/other/demo']
+        self.base, self.oid = workspace_fixture.repository(self.home)
+        workspace_fixture.linked(self.base, self.home / self.paths[1], self.oid, 'feature')
+        workspace_fixture.linked(self.base, self.home / self.paths[2], self.oid, '')
+        self.branches = ['main', 'feature', '']
+        self.parents = [0, 0, 0]
+        self.git = shutil.which('git')
+        self.assertIsNotNone(self.git, 'native Git is required for this acceptance gate')
+        wrapper = self.root / 'bin/git'
+        wrapper.write_text('#!/bin/bash\nfor word in "$@"; do\n'
+            'case "$word" in clone|fetch|checkout|prune|remove|reset|clean|switch|add) '
+            'printf mutation >> "$TEST_MUTATIONS"; exit 99;; esac\ndone\n'
+            'exec "' + self.git + '" "$@"\n')
+        wrapper.chmod(0o700)
+        self.configure()
+
+    def configure(self, *, folders=None):
+        shutil.rmtree(self.stage)
+        self.stage.mkdir(mode=0o700)
+        self.ids = [self.contract.identity('checkout', path) for path in self.paths]
+        self.topology = dict(contract=1, roots=['Projects'], groups=[])
+        for base in sorted(set(self.parents)):
+            self.topology['groups'].append(dict(id=self.contract.identity('repository', self.paths[base]),
+                base_item_id=self.ids[base], object_format='sha1', members=[
+                    dict(item_id=item, head_kind='branch' if self.branches[i] else 'detached', head_oid=self.oid)
+                    for i, item in enumerate(self.ids) if self.parents[i] == base]))
+        folders = folders if folders is not None else ['Projects', self.paths[0]]
+        self.folders = folders
+        blueprint = '[categories]\n' + ''.join(f'{key}="false"\n' for key in sorted(bundle.CATEGORY_FLAGS))
+        for domain in bundle.ITEMS:
+            values = self.ids if domain == 'git-repositories' else folders if domain == 'workspace-folders' else []
+            blueprint += '\n[' + domain + ']\n' + ''.join(value + '\n' for value in values)
+        bundle.write_file(self.stage / 'blueprint.conf', blueprint.encode())
+        bundle.write_file(self.stage / 'generated/workspace/folders.conf',
+                          ''.join(path + '|workspace\n' for path in folders).encode())
+        records = ''
+        for item, path, branch in zip(self.ids, self.paths, self.branches):
+            records += (f'[{item}]\nNAME="{Path(path).name}"\nPATH="/Users/source/{path}"\n'
+                        f'REMOTE="https://example.invalid/team/repo.git"\nCURRENT_BRANCH="{branch}"\n'
+                        'DEFAULT_BRANCH="main"\nTOPOLOGY_VERSION="1"\n')
+            records += ''.join(key + '="false"\n' for key in ('HAS_UNCOMMITTED_CHANGES',
+                'HAS_VSCODE_FOLDER', 'HAS_SETTINGS', 'HAS_TASKS', 'HAS_LAUNCH', 'HAS_EXTENSIONS'))
+        bundle.write_file(self.stage / self.contract.REPOSITORIES, records.encode())
+        bundle.write_file(self.stage / self.contract.TOPOLOGY, json.dumps(self.topology).encode())
+        if self.archive.exists():
+            self.archive.unlink()
+        self.pack()
+
+    def selection(self, indices, folders=()):
+        def identity(domain, value):
+            return 'restore:' + hashlib.sha256((domain + '\0' + value).encode()).hexdigest()
+        items = {}
+        if indices:
+            items['git-repositories'] = sorted(identity('git-repositories', self.ids[i]) for i in indices)
+        if folders:
+            items['workspace-folders'] = sorted(identity('workspace-folders', value) for value in folders)
+        return dict(categories=[], items=items)
+
+    def preview(self, **kwargs):
+        before = bundle.fingerprint(self.home), bundle.fingerprint(self.project / 'config')
+        result, events = self.invoke(**kwargs)
+        self.assertEqual(result.returncode, 0, events)
+        plan = events[1]['data']
+        self.assertFalse(plan['readiness']['ready'])
+        self.assertIn('workspace_restore_not_enabled', [row['code'] for row in plan['readiness']['conditions']])
+        self.assertEqual(before, (bundle.fingerprint(self.home), bundle.fingerprint(self.project / 'config')))
+        self.assertFalse((self.root / 'mutations').exists())
+        public = json.dumps(events)
+        for private in (str(self.home), 'https://example.invalid', self.oid):
+            self.assertNotIn(private, public)
+        return plan
+
+    def git_rows(self, plan):
+        return [row for row in plan['plan'] if row['domain'] == 'git-repositories']
+
+    def test_full_multiple_linked_repeat_identity_and_execute_fence(self):
+        first = self.preview()
+        self.assertEqual((first['warning_count'], first['error_count'], first['scope_warnings']), (0, 0, []))
+        self.assertEqual(next(row['status'] for row in first['modules']
+                              if row['module'] == 'preview_workspace_topology'), 'success')
+        rows = self.git_rows(first)
+        self.assertEqual([row['disposition'] for row in rows], ['satisfied'] * 3)
+        self.assertEqual({row['checkout_id'] for row in rows}, set(self.ids))
+        self.assertEqual({row['head_kind'] for row in rows}, {'branch', 'detached'})
+        self.assertTrue(all(row.get('selection_item_id') for row in rows))
+        self.assertEqual(first['prepared_plan_id'], self.preview()['prepared_plan_id'])
+        before = bundle.fingerprint(self.home), bundle.fingerprint(self.project / 'config')
+        result, events = self.execute(first['prepared_plan_id'])
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(events[-1]['data']['code'], 'unsupported_bundle')
+        self.assertFalse(events[-1]['data']['publication_started'])
+        self.assertFalse(events[-1]['data']['target_mutation_may_have_started'])
+        self.assertEqual(before, (bundle.fingerprint(self.home), bundle.fingerprint(self.project / 'config')))
+        self.assertFalse((self.root / 'mutations').exists())
+
+    def test_ordinary_missing_clone_and_shared_folder_destination(self):
+        self.paths, self.branches, self.parents = self.paths[:1], ['main'], [0]
+        self.configure()
+        shutil.rmtree(self.home / 'Projects')
+        plan = self.preview()
+        self.assertEqual((plan['warning_count'], plan['scope_warnings']), (0, []))
+        self.assertEqual(self.git_rows(plan)[0]['action'], 'clone')
+        folder = next(row for row in plan['plan'] if row['item_id'] == self.paths[0])
+        self.assertEqual((folder['action'], folder['reason']), ('none', 'workspace_checkout_destination'))
+        self.assertEqual(self.git_rows(plan)[0]['disposition'], 'planned')
+
+    def test_matching_linked_group_does_not_audit_project_contents(self):
+        # Real-world repro: a base with tracked symlinks and a linked checkout
+        # with ignored build products. No HEAD change requires those contents.
+        git = self.base / '.git'
+        target = 'private-link-target'
+        blob = self.fixture.object_file(git, 'blob', target.encode())
+        tree = self.fixture.object_file(git, 'tree', b'120000 tracked.txt\0' + bytes.fromhex(blob))
+        commit = self.fixture.object_file(git, 'commit', (f'tree {tree}\n'
+            'author Fixture <test@example.invalid> 1 +0000\ncommitter Fixture <test@example.invalid> 1 +0000\n\nsymlink\n').encode())
+        (git / 'refs/heads/main').write_text(commit + '\n')
+        self.fixture.write_index(git, blob)
+        index = bytearray((git / 'index').read_bytes())
+        index[36:40] = (0o120000).to_bytes(4, 'big')
+        index[-20:] = hashlib.sha1(index[:-20]).digest()
+        (git / 'index').write_bytes(index)
+        (self.base / 'tracked.txt').unlink()
+        (self.base / 'tracked.txt').symlink_to(target)
+        (git / 'info').mkdir(); (git / 'info/exclude').write_text('build-output\n')
+        with (self.home / self.paths[1] / 'build-output').open('wb') as stream:
+            stream.truncate(17 * 1024 * 1024)
+        def snapshot():
+            # Bundle fingerprints reject links; this fixture intentionally has one.
+            return [(str(path.relative_to(self.home)), path.lstat().st_mode,
+                     os.readlink(path) if path.is_symlink() else
+                     hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else None)
+                    for path in sorted(self.home.rglob('*'))], bundle.fingerprint(self.project / 'config')
+        before = snapshot()
+        result, events = self.invoke()
+        self.assertEqual(result.returncode, 0)
+        plan = events[1]['data']
+        self.assertFalse(plan['readiness']['ready'])
+        self.assertEqual(before, snapshot())
+        self.assertFalse((self.root / 'mutations').exists())
+        self.assertTrue(all(row['disposition'] == 'satisfied' for row in self.git_rows(plan)))
+        folder = next(row for row in plan['plan'] if row['item_id'] == self.paths[0])
+        self.assertEqual((folder['action'], folder['disposition']), ('none', 'satisfied'))
+        result, events = self.invoke()
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(plan['prepared_plan_id'], events[1]['data']['prepared_plan_id'])
+        self.assertEqual(before, snapshot())
+        # The same content symlink still blocks a real HEAD change.
+        (git / 'refs/heads/alternate').write_text(commit + '\n')
+        self.branches[0] = 'alternate'; self.configure()
+        before = snapshot()
+        result, events = self.invoke()
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(self.git_rows(events[1]['data'])[0]['reason'], 'workspace_symlink_unsupported')
+        self.assertEqual(before, snapshot())
+        self.assertFalse((self.root / 'mutations').exists())
+
+    def test_matching_checkout_skips_file_budgets_but_switch_retains_them(self):
+        self.paths, self.branches, self.parents = self.paths[:1], ['main'], [0]
+        self.configure()
+        git = self.base / '.git'
+        (git / 'refs/heads/alternate').write_text(self.oid + '\n')
+        (git / 'info').mkdir(); (git / 'info/exclude').write_text('build-output/\n')
+        output = self.base / 'build-output'; output.mkdir()
+        for kind, expected in [('bytes', 'workspace_file_bytes_limit'), ('names', 'workspace_file_count_limit')]:
+            with self.subTest(limit=kind):
+                if kind == 'bytes':
+                    with (output / 'artifact').open('wb') as stream: stream.truncate(17 * 1024 * 1024)
+                else:
+                    for index in range(4097): (output / str(index)).touch()
+                (git / 'HEAD').write_text('ref: refs/heads/main\n')
+                self.assertEqual(self.git_rows(self.preview())[0]['disposition'], 'satisfied')
+                (git / 'HEAD').write_text('ref: refs/heads/alternate\n')
+                plan = self.preview()
+                row = self.git_rows(plan)[0]
+                self.assertEqual((row['disposition'], row['reason']), ('blocked', expected))
+                folder = next(row for row in plan['plan'] if row['item_id'] == self.paths[0])
+                self.assertEqual((folder['action'], folder['disposition']), ('none', 'satisfied'))
+                shutil.rmtree(output); output.mkdir()
+
+    def test_shared_existing_folder_does_not_inherit_git_blocker(self):
+        self.paths, self.branches, self.parents = self.paths[:1], ['main'], [0]
+        self.configure()
+        hooks = self.base / '.git/hooks'; hooks.mkdir()
+        (hooks / 'post-checkout').write_text('#!/bin/sh\nexit 99\n')
+        (hooks / 'post-checkout').chmod(0o700)
+        (self.base / '.git/refs/heads/alternate').write_text(self.oid + '\n')
+        (self.base / '.git/HEAD').write_text('ref: refs/heads/alternate\n')
+        plan = self.preview()
+        self.assertEqual(self.git_rows(plan)[0]['disposition'], 'blocked')
+        folder = next(row for row in plan['plan'] if row['item_id'] == self.paths[0])
+        self.assertEqual((folder['action'], folder['disposition'], folder['reason']),
+                         ('none', 'satisfied', 'workspace_checkout_destination'))
+        moved = self.home / 'moved'
+        self.base.rename(moved); self.base.symlink_to(moved)
+        before = bundle.fingerprint(moved), bundle.fingerprint(self.project / 'config')
+        result, events = self.invoke()
+        self.assertEqual(result.returncode, 0)
+        folder = next(row for row in events[1]['data']['plan'] if row['item_id'] == self.paths[0])
+        self.assertEqual((folder['disposition'], folder['reason']), ('conflict', 'workspace_destination_conflict'))
+        self.assertEqual(before, (bundle.fingerprint(moved), bundle.fingerprint(self.project / 'config')))
+        self.assertFalse((self.root / 'mutations').exists())
+
+    def test_noop_skips_file_observation_and_unsupported_reasons_are_allowlisted(self):
+        spec = importlib.util.spec_from_file_location('reason_preview',
+            ROOT / 'modules/bootstrap/workspace/topology_preview.py')
+        preview = importlib.util.module_from_spec(spec); spec.loader.exec_module(preview)
+        def reader(command, timeout, *, env):
+            return subprocess.run(command, timeout=timeout, env=env, capture_output=True)
+        files = bundle.validate_archive(self.archive)
+        before = bundle.fingerprint(self.home), bundle.fingerprint(self.project / 'config')
+        with patch.dict(os.environ, self.environment, clear=True):
+            with patch.object(preview.Inspector, 'files', side_effect=AssertionError('no-op audited content')):
+                result = preview.inspect(files, str(self.home), reader)
+                self.assertTrue(all(row['disposition'] == 'satisfied' for row in result['plan']))
+                self.assertTrue(all('protected_files' not in row for row in result['plan']))
+            for internal, public in [('git_external_configuration', 'workspace_configuration_unsupported'),
+                                     ('git_metadata_symlink', 'workspace_git_metadata_unsupported'),
+                                     ('worktree_format_unsupported', 'workspace_worktree_unsupported'),
+                                     ('private-unqualified-exception', 'workspace_git_unsupported')]:
+                with self.subTest(reason=public), patch.object(preview.Inspector, 'checkout',
+                        side_effect=preview.contract.Unsupported(internal)):
+                    result = preview.inspect(files, str(self.home), reader)
+                    row = next(row for row in result['plan'] if row['domain'] == 'git-repositories')
+                    self.assertEqual((row['disposition'], row['reason']), ('blocked', public))
+                    self.assertNotIn('private-unqualified-exception', json.dumps(result))
+        self.assertEqual(before, (bundle.fingerprint(self.home), bundle.fingerprint(self.project / 'config')))
+        self.assertFalse((self.root / 'mutations').exists())
+
+    def test_absent_linked_local_branch_and_detached_object(self):
+        shutil.rmtree(self.base / '.git/worktrees')
+        shutil.rmtree(self.home / self.paths[1])
+        shutil.rmtree(self.home / self.paths[2])
+        rows = self.git_rows(self.preview())
+        self.assertEqual([row['action'] for row in rows].count('add_worktree'), 2)
+        self.assertTrue(all(row['disposition'] in ('satisfied', 'planned') for row in rows))
+
+    def test_partial_selection_and_all_four_folder_git_combinations(self):
+        for folders, git in ((True, True), (True, False), (False, True), (False, False)):
+            with self.subTest(folders=folders, git=git):
+                plan = self.preview(selection=self.selection([0] if git else [], [self.paths[0]] if folders else []))
+                self.assertEqual(len(self.git_rows(plan)), int(git))
+                self.assertEqual(plan['selected_item_counts']['workspace-folders'], int(folders))
+        plan = self.preview(selection=self.selection([0, 1]))
+        self.assertEqual(len(self.git_rows(plan)), 2)
+        result, events = self.invoke(selection=self.selection([1]))
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(events[-1]['data']['code'], 'workspace_dependency_missing')
+
+    def test_nested_repositories_parent_dependency_and_duplicate_basenames(self):
+        self.paths.append('Projects/base/nested')
+        self.branches.append('main'); self.parents.append(3)
+        self.fixture.repository(self.home, self.paths[3])
+        self.configure()
+        plan = self.preview()
+        nested = next(row for row in self.git_rows(plan) if row['checkout_id'] == self.ids[3])
+        self.assertEqual(nested['disposition'], 'satisfied')
+        self.assertEqual(nested['dependency_ids'], [self.ids[0]])
+        result, events = self.invoke(selection=self.selection([3]))
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(events[-1]['data']['code'], 'workspace_dependency_missing')
+
+    def test_branch_switch_and_dirty_preservation(self):
+        (self.base / '.git/refs/heads/alternate').write_text(self.oid + '\n')
+        (self.base / '.git/HEAD').write_text('ref: refs/heads/alternate\n')
+        plan = self.preview()
+        self.assertEqual(self.git_rows(plan)[0]['action'], 'switch_branch')
+        (self.base / 'tracked.txt').write_text('private local edits\n')
+        dirty = self.preview()
+        self.assertEqual(self.git_rows(dirty)[0]['reason'], 'workspace_local_changes')
+        self.assertNotEqual(plan['prepared_plan_id'], dirty['prepared_plan_id'])
+        (self.base / 'tracked.txt').write_text('different private local edits\n')
+        self.assertNotEqual(dirty['prepared_plan_id'], self.preview()['prepared_plan_id'])
+        (self.base / '.git/HEAD').write_text('ref: refs/heads/main\n')
+        self.assertEqual(self.git_rows(self.preview())[0]['reason'], 'workspace_local_changes_preserved')
+
+    def test_staged_changes_and_protected_ignored_untracked_files(self):
+        blob = self.fixture.object_file(self.base / '.git', 'blob', b'staged\n')
+        self.fixture.write_index(self.base / '.git', blob)
+        (self.base / '.git/refs/heads/alternate').write_text(self.oid + '\n')
+        (self.base / '.git/HEAD').write_text('ref: refs/heads/alternate\n')
+        self.assertEqual(self.git_rows(self.preview())[0]['reason'], 'workspace_local_changes')
+        (self.base / '.git/HEAD').write_text('ref: refs/heads/main\n')
+        (self.base / '.git/info').mkdir(exist_ok=True)
+        (self.base / '.git/info/exclude').write_text('private-ignored\n')
+        (self.base / 'private-ignored').write_text('ignored secret')
+        (self.base / 'private-untracked').write_text('untracked secret')
+        row = self.git_rows(self.preview())[0]
+        self.assertTrue(row['local_changes'])
+        self.assertNotIn('protected_files', row)  # No content audit is needed for a no-op.
+        self.assertEqual(row['disposition'], 'satisfied')
+
+    def test_protected_file_blocks_branch_switch(self):
+        git = self.base / '.git'
+        blob = self.fixture.object_file(git, 'blob', b'target\n')
+        tree = self.fixture.object_file(git, 'tree', b'100644 protected\0' + bytes.fromhex(blob))
+        target = self.fixture.object_file(git, 'commit', (f'tree {tree}\n'
+            'author Fixture <test@example.invalid> 1 +0000\ncommitter Fixture <test@example.invalid> 1 +0000\n\ntarget\n').encode())
+        (git / 'refs/heads/target').write_text(target + '\n')
+        self.branches[0] = 'target'; self.configure()
+        (self.base / 'protected').write_text('retain')
+        for ignored in (False, True):
+            with self.subTest(ignored=ignored):
+                if ignored:
+                    (git / 'info').mkdir(); (git / 'info/exclude').write_text('protected\n')
+                self.assertEqual(self.git_rows(self.preview())[0]['reason'], 'workspace_protected_files')
+
+    def test_occupied_branch_origin_and_independent_clone_conflicts(self):
+        self.branches[0] = 'occupied'; self.configure()
+        self.fixture.linked(self.base, self.home / 'Projects/extra', self.oid, 'occupied')
+        plan = self.preview()
+        self.assertEqual(self.git_rows(plan)[0]['reason'], 'workspace_branch_occupied')
+        self.assertGreater(plan['warning_count'], 0)
+        self.assertEqual(next(row['status'] for row in plan['modules']
+                              if row['module'] == 'preview_workspace_topology'), 'warning')
+        self.branches[0] = 'main'; self.configure()
+        config = self.base / '.git/config'; config.write_text(config.read_text().replace('team/repo', 'other/repo'))
+        self.assertEqual(self.git_rows(self.preview())[0]['reason'], 'workspace_origin_conflict')
+        config.write_text(config.read_text().replace('other/repo', 'team/repo'))
+        shutil.rmtree(self.home / self.paths[1]); self.fixture.repository(self.home, self.paths[1])
+        row = next(row for row in self.git_rows(self.preview()) if row['checkout_id'] == self.ids[1])
+        self.assertEqual(row['reason'], 'workspace_topology_conflict')
+
+    def test_detached_unavailable_and_missing_local_branch(self):
+        self.topology['groups'][0]['members'][2]['head_oid'] = 'f' * 40
+        (self.stage / self.contract.TOPOLOGY).write_bytes(json.dumps(self.topology).encode())
+        self.archive.unlink(); self.pack()
+        row = next(row for row in self.git_rows(self.preview()) if row['checkout_id'] == self.ids[2])
+        self.assertEqual(row['reason'], 'workspace_commit_unavailable')
+        self.branches[0] = 'not-yet-created'; self.configure()
+        self.assertEqual(self.git_rows(self.preview())[0]['reason'], 'workspace_branch_unavailable')
+
+    def test_missing_base_blocks_dependents_without_clone_fallback(self):
+        shutil.rmtree(self.home / 'Projects')
+        rows = self.git_rows(self.preview())
+        self.assertEqual(sum(row['action'] == 'clone' for row in rows), 1)
+        self.assertEqual(sum(row['reason'] == 'workspace_dependency_pending' for row in rows), 2)
+
+    def test_registered_missing_destination_and_nested_folder_dependency(self):
+        shutil.rmtree(self.home / self.paths[1])
+        self.branches[1] = 'available'
+        (self.base / '.git/refs/heads/available').write_text(self.oid + '\n')
+        self.configure()
+        row = next(row for row in self.git_rows(self.preview()) if row['checkout_id'] == self.ids[1])
+        self.assertEqual(row['reason'], 'workspace_topology_conflict')
+        self.configure(folders=[self.paths[0] + '/new-folder'])
+        shutil.rmtree(self.home / 'Projects')
+        folder = next(row for row in self.preview()['plan'] if row['domain'] == 'workspace-folders')
+        self.assertEqual((folder['disposition'], folder['reason']), ('blocked', 'workspace_dependency_pending'))
+        self.assertEqual(folder['dependency_ids'], [self.ids[0]])
+
+    def test_destination_conflict_symlink_and_access_errors(self):
+        shutil.rmtree(self.home / self.paths[1]); (self.home / self.paths[1]).write_text('retain')
+        row = next(row for row in self.git_rows(self.preview()) if row['checkout_id'] == self.ids[1])
+        self.assertEqual(row['reason'], 'workspace_destination_conflict')
+        (self.home / self.paths[1]).unlink(); (self.home / self.paths[1]).symlink_to(self.base)
+        before = bundle.fingerprint(self.base), bundle.fingerprint(self.project / 'config')
+        result, events = self.invoke()
+        self.assertEqual(result.returncode, 0)
+        row = next(row for row in self.git_rows(events[1]['data']) if row['checkout_id'] == self.ids[1])
+        self.assertEqual(row['disposition'], 'conflict')
+        self.assertEqual(os.readlink(self.home / self.paths[1]), str(self.base))
+        self.assertEqual(before, (bundle.fingerprint(self.base), bundle.fingerprint(self.project / 'config')))
+        (self.home / self.paths[1]).unlink(); (self.home / self.paths[1]).mkdir(); (self.home / self.paths[1]).chmod(0)
+        self.addCleanup((self.home / self.paths[1]).chmod, 0o700)
+        # fingerprint cannot enumerate inaccessible fixture content; invoke directly.
+        result, events = self.invoke()
+        self.assertEqual(result.returncode, 0)
+        row = next(row for row in self.git_rows(events[1]['data']) if row['checkout_id'] == self.ids[1])
+        self.assertEqual(row['disposition'], 'unknown')
+
+    def test_git_capability_and_observation_failure_are_not_absence(self):
+        wrapper = self.root / 'bin/git'
+        wrapper.write_text('#!/bin/bash\nexit 99\n')
+        plan = self.preview()
+        self.assertTrue(all(row['reason'] == 'workspace_git_unsupported' for row in self.git_rows(plan)))
+        self.assertGreater(plan['warning_count'], 0)
+        wrapper.write_text('#!/bin/bash\ncase " $* " in *" worktree -h "*) echo "--porcelain"; exit 129;; esac\n'
+                          'exec "' + self.git + '" "$@"\n')
+        self.assertTrue(all(row['disposition'] == 'blocked' for row in self.git_rows(self.preview())))
+        wrapper.write_text('#!/bin/bash\ncase " $* " in *" status "*) exit 99;; esac\n'
+                          'exec "' + self.git + '" "$@"\n')
+        plan = self.preview()
+        self.assertEqual(self.git_rows(plan)[0]['reason'], 'workspace_observation_failed')
+        self.assertGreater(plan['warning_count'], 0)
+
+    def test_corrupt_required_git_metadata_is_unverified(self):
+        (self.base / '.git/HEAD').write_text('corrupt metadata\n')
+        row = self.git_rows(self.preview())[0]
+        self.assertEqual((row['disposition'], row['reason']), ('unknown', 'workspace_observation_failed'))
+
+    def test_index_flags_cannot_hide_tracked_changes(self):
+        index = self.base / '.git/index'
+        data = bytearray(index.read_bytes())
+        data[72] |= 0x80  # CE_VALID / assume-unchanged in the native v2 fixture.
+        data[-20:] = hashlib.sha1(data[:-20]).digest()
+        index.write_bytes(data)
+        (self.base / 'tracked.txt').write_text('must be preserved')
+        row = self.git_rows(self.preview())[0]
+        self.assertEqual((row['disposition'], row['reason']), ('blocked', 'workspace_index_unsupported'))
+
+    def test_file_open_races_are_bounded_and_never_read_replacements(self):
+        # The alarm bounds the regression itself; subprocess.run kills/reaps the
+        # isolated child on its independent five-second deadline as a backstop.
+        program = r'''
+import errno, importlib.util, os, signal, sys, time
+from pathlib import Path
+from unittest.mock import patch
+sys.path.insert(0, str(Path(sys.argv[1]) / 'modules/bundle'))
+spec = importlib.util.spec_from_file_location('preview', Path(sys.argv[1]) / 'modules/bootstrap/workspace/topology_preview.py')
+preview = importlib.util.module_from_spec(spec); spec.loader.exec_module(preview)
+root = Path(sys.argv[2]); target = root / 'race-file'
+def expired(*_):
+    raise TimeoutError('file observation exceeded test deadline')
+signal.signal(signal.SIGALRM, expired)
+for kind in ('fifo', 'regular', 'symlink'):
+    target.write_bytes(b'original')
+    replacement = root / 'replacement'
+    replacement.write_bytes(b'unrelated data')
+    native_open = os.open
+    opened = []
+    def raced_open(path, flags, *args, **kwargs):
+        if Path(path) == target:
+            target.unlink()
+            if kind == 'fifo': os.mkfifo(target)
+            elif kind == 'symlink': target.symlink_to(replacement)
+            else: replacement.rename(target)
+        fd = native_open(path, flags, *args, **kwargs)
+        opened.append(fd)
+        return fd
+    reader = preview.Inspector(root, None, time.monotonic() + .5)
+    signal.setitimer(signal.ITIMER_REAL, 1)
+    try:
+        with patch.object(preview.os, 'open', side_effect=raced_open), patch.object(
+                preview.os, 'read', side_effect=AssertionError('replacement must not be read')):
+            try: reader.files(root, b'race-file\0')
+            except (preview.contract.Unsupported, preview.discovery.ObservationError, OSError) as exc:
+                assert not isinstance(exc, TimeoutError)
+            else: raise AssertionError('replacement was accepted')
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+    for fd in opened:
+        try: os.fstat(fd)
+        except OSError as exc: assert exc.errno == errno.EBADF
+        else: raise AssertionError('descriptor leaked')
+    target.unlink()
+    if replacement.exists(): replacement.unlink()
+print('PASS: FIFO, regular-file and symlink races rejected before reading')
+'''
+        result = subprocess.run([sys.executable, '-B', '-c', program, str(ROOT), str(self.home)],
+                                env=self.environment, capture_output=True, timeout=5)
+        self.assertEqual(result.returncode, 0, result.stderr.decode())
+        self.assertIn(b'FIFO, regular-file and symlink races rejected', result.stdout)
+
+    def test_executable_checkout_hooks_block_switch_but_preserve_match(self):
+        self.paths, self.branches, self.parents = self.paths[:1], ['main'], [0]
+        self.configure()
+        hooks = self.base / '.git/hooks'; hooks.mkdir()
+        (self.base / '.git/refs/heads/alternate').write_text(self.oid + '\n')
+        for name in ('post-checkout', 'post-index-change', 'reference-transaction'):
+            with self.subTest(hook=name):
+                hook = hooks / name
+                hook.write_text('#!/bin/sh\nprintf hook >> "$TEST_MUTATIONS"\n')
+                hook.chmod(0o700)
+                row = self.git_rows(self.preview())[0]
+                self.assertEqual(row['disposition'], 'satisfied')
+                (self.base / '.git/HEAD').write_text('ref: refs/heads/alternate\n')
+                row = self.git_rows(self.preview())[0]
+                self.assertEqual((row['disposition'], row['reason']), ('blocked', 'workspace_hooks_unsupported'))
+                (self.base / '.git/HEAD').write_text('ref: refs/heads/main\n')
+                hook.unlink()
+
+    def test_file_observation_deadline_and_volume_remain_bounded(self):
+        spec = importlib.util.spec_from_file_location('bounded_preview',
+            ROOT / 'modules/bootstrap/workspace/topology_preview.py')
+        preview = importlib.util.module_from_spec(spec); spec.loader.exec_module(preview)
+        observer = preview.Inspector(self.home, None, time.monotonic() - 1)
+        with patch.object(preview.os, 'open', side_effect=AssertionError('expired inspection opened a file')):
+            with self.assertRaises(preview.discovery.ObservationError):
+                observer.files(self.base, b'tracked.txt\0')
+        observer.deadline = time.monotonic() + 10
+        observer.bytes_read = 16 * 1024 * 1024
+        with patch.object(preview.os, 'open', side_effect=AssertionError('over-budget file opened')):
+            with self.assertRaises(preview.contract.Unsupported):
+                observer.files(self.base, b'tracked.txt\0')
+        (self.base / 'tracked.txt').write_bytes(b'x' * 131072)
+        observer.bytes_read = 0
+        descriptors = []
+        native_read = os.read
+        def deadline_during_read(fd, count):
+            descriptors.append(fd)
+            observer.deadline = 0
+            return native_read(fd, count)
+        with patch.object(preview.os, 'read', side_effect=deadline_during_read):
+            with self.assertRaises(preview.discovery.ObservationError):
+                observer.files(self.base, b'tracked.txt\0')
+        self.assertEqual(len(descriptors), 1)
+        with self.assertRaises(OSError):
+            os.fstat(descriptors[0])
+
+    def test_linked_worktrees_use_shared_hooks_and_nonexecutables_are_inert(self):
+        hooks = self.base / '.git/hooks'; hooks.mkdir()
+        hook = hooks / 'post-checkout'
+        hook.write_text('#!/bin/sh\nprintf hook >> "$TEST_MUTATIONS"\n')
+        hook.chmod(0o600)
+        self.branches[1] = 'available'
+        (self.base / '.git/refs/heads/available').write_text(self.oid + '\n')
+        self.configure()
+        row = next(row for row in self.git_rows(self.preview()) if row['checkout_id'] == self.ids[1])
+        self.assertEqual(row['action'], 'switch_branch')
+        hook.chmod(0o700)
+        row = next(row for row in self.git_rows(self.preview()) if row['checkout_id'] == self.ids[1])
+        self.assertEqual((row['disposition'], row['reason']), ('blocked', 'workspace_hooks_unsupported'))
+        hook.chmod(0o600)
+        shutil.rmtree(self.base / '.git/worktrees')
+        shutil.rmtree(self.home / self.paths[1]); shutil.rmtree(self.home / self.paths[2])
+        plan = self.preview()
+        self.assertEqual(sum(row['action'] == 'add_worktree' for row in self.git_rows(plan)), 2)
+        hook.chmod(0o700)
+        plan = self.preview()
+        self.assertEqual(self.git_rows(plan)[0]['disposition'], 'satisfied')
+        self.assertTrue(all(row['disposition'] == 'blocked' for row in self.git_rows(plan)[1:]))
+
+    def test_hooks_path_overrides_block_actions_without_following_them(self):
+        self.paths, self.branches, self.parents = self.paths[:1], ['main'], [0]
+        self.configure()
+        original = (self.base / '.git/config').read_text()
+        (self.base / '.git/refs/heads/alternate').write_text(self.oid + '\n')
+        for scope in ('local', 'global'):
+            with self.subTest(scope=scope):
+                config = self.base / '.git/config' if scope == 'local' else self.home / '.gitconfig'
+                config.write_text((original if scope == 'local' else '') + '[core]\nhooksPath = missing-hooks\n')
+                self.assertEqual(self.git_rows(self.preview())[0]['disposition'], 'satisfied')
+                (self.base / '.git/HEAD').write_text('ref: refs/heads/alternate\n')
+                row = self.git_rows(self.preview())[0]
+                self.assertEqual((row['disposition'], row['reason']), ('blocked', 'workspace_hooks_unsupported'))
+                (self.base / '.git/HEAD').write_text('ref: refs/heads/main\n')
+                if scope == 'local': config.write_text(original)
+                else: config.unlink()
+
+    def test_clone_hook_routing_and_includes_fail_closed(self):
+        self.paths, self.branches, self.parents = self.paths[:1], ['main'], [0]
+        self.configure()
+        shutil.rmtree(self.home / 'Projects')
+        for content in ('[core]\nhooksPath = missing-hooks\n',
+                        '[include]\npath = missing-config\n',
+                        '[init]\ntemplateDir = missing-template\n'):
+            (self.home / '.gitconfig').write_text(content)
+            row = self.git_rows(self.preview())[0]
+            self.assertEqual((row['disposition'], row['reason']), ('blocked', 'workspace_hooks_unsupported'))
+
+    def test_detached_switch_named_oid_diagnostic_and_operation_lock(self):
+        self.branches[0] = ''; self.configure()
+        row = self.git_rows(self.preview())[0]
+        self.assertEqual((row['action'], row['head_kind']), ('switch_branch', 'detached'))
+        (self.base / '.git/index.lock').write_text('fixture lock')
+        self.assertEqual(self.git_rows(self.preview())[0]['reason'], 'workspace_operation_in_progress')
+        (self.base / '.git/index.lock').unlink()
+        self.branches[0] = 'main'; self.configure()
+        self.topology['groups'][0]['members'][0]['head_oid'] = 'f' * 40
+        (self.stage / self.contract.TOPOLOGY).write_bytes(json.dumps(self.topology).encode())
+        self.archive.unlink(); self.pack()
+        self.assertEqual(self.git_rows(self.preview())[0]['disposition'], 'satisfied')
+
+    def test_unstable_observation_is_not_a_plan_and_status_stays_closed(self):
+        spec = importlib.util.spec_from_file_location('topology_preview_fixture',
+            ROOT / 'modules/bootstrap/workspace/topology_preview.py')
+        inspector = importlib.util.module_from_spec(spec); spec.loader.exec_module(inspector)
+        calls = 0
+        def reader(command, timeout, *, env):
+            nonlocal calls
+            result = subprocess.run(command, timeout=timeout, env=env, capture_output=True)
+            if 'status' in command:
+                calls += 1
+                if calls == 1:
+                    result.stdout = b' M tracked.txt\0'
+            return result
+        before = bundle.fingerprint(self.home)
+        with patch.dict(os.environ, self.environment, clear=True):
+            observed = inspector.inspect(bundle.validate_archive(self.archive), str(self.home), reader)
+        self.assertTrue(all(row['reason'] == 'workspace_observation_changed' for row in observed['plan']))
+        request = dict(protocol_version=1, operation_id='status-fixture', operation='environment_compare',
+                       parameters=dict(bundle_path=str(self.archive)))
+        result = subprocess.run(['bash', str(self.project / 'modules/core/application-interface/core.sh')],
+            input=json.dumps(request).encode(), cwd=self.project, env=self.environment, capture_output=True)
+        events = [json.loads(line) for line in result.stdout.splitlines()]
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(events[-1]['data']['code'], 'unsupported_bundle')
+        self.assertEqual(before, bundle.fingerprint(self.home))
+        self.assertFalse((self.project / 'config/generated').exists())
+        self.assertFalse((self.root / 'mutations').exists())
+
+
 if __name__ == "__main__":
     unittest.main()

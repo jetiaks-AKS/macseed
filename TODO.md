@@ -10,12 +10,11 @@ Follow the [capability checkpoint](ROADMAP.md#complete-workspace--git-worktree-r
 the [current limits](docs/toolkit/CONFIGURATION.md#linked-git-worktree-capability-limits)
 separate implemented Discovery/Capture from unsupported restoration.
 
-- [ ] Review Phase 2 Discovery/Capture and qualify representative real-Mac observations.
+- [ ] Extend representative real-Mac topology qualification beyond the accepted Capture and matching Preview gates.
 - [ ] Decide any expansion of current bounded local clone SSH profiles/identity
   routing and additional migration/proxy support in the Git/SSH contract. Keep
   exclusions until qualified; filters/LFS require a separate scope decision.
-- [ ] Phase 3: implement topology-aware Restore Preview, explicit dependencies and
-  branch/path conflict statuses without enabling Git mutation.
+- [ ] Confirm hosted CI for Phase 3 before separately authorizing topology Execute implementation.
 - [ ] Implement later Restore/Verification and VS Code descriptor/Desktop phases
   after their respective reviews.
 - [ ] Qualify file preservation, occupied branches, conflicting paths, observation

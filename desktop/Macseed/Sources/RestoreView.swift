@@ -333,6 +333,7 @@ struct RestorePrerequisiteView: View {
         case "vscode_cli_required", "vscode_cli_unavailable": "Make the Visual Studio Code command-line tool available, then Refresh Preview."
         case "vscode_cli_ambiguous": "Resolve the multiple Visual Studio Code installations, then Refresh Preview."
         case "git_required", "git_unavailable": "Make Git available, then Refresh Preview."
+        case "workspace_restore_not_enabled": CoreRestorePreparation.workspacePreviewReasons[condition.code]!
         case "mas_required", "mas_unavailable": "Make the App Store command-line tool available, then Refresh Preview."
         case "internet_required": "Connect this Mac to the internet, then Refresh Preview."
         case "command_line_tools_required": "Install the macOS Command Line Tools outside Macseed, then Refresh Preview."
@@ -432,9 +433,9 @@ struct RestoreView: View {
                     }
                 } else if let prepared = model.preparation, let preview = model.preview {
                     let tasks = RestoreTaskPresentation(preview: preview, plan: prepared)
-                    let needsAttention = !model.ready || tasks.automaticAttentionCount > 0 || !(prepared.scopeWarnings ?? []).isEmpty
+                    let needsAttention = model.previewNeedsRefresh || preview.needsAttention(prepared)
                     RestorePreviewContent(
-                        title: needsAttention ? "Needs Attention" : prepared.hasExecutableChanges ? "Ready to Rebuild" : model.appStoreSelected ? "No automatic changes required" : "Everything already matches",
+                        title: needsAttention ? "Needs Attention" : prepared.hasExecutableChanges ? (model.ready ? "Ready to Rebuild" : "Changes planned") : model.appStoreSelected ? "No automatic changes required" : "Everything already matches",
                         state: needsAttention ? .attention : prepared.hasExecutableChanges ? .planned : .matching,
                         domains: tasks.automaticDomains,
                         scopeWarnings: RestoreTaskPresentation.scopeWarningMessages(prepared),
@@ -576,6 +577,10 @@ struct RestorePreviewContent: View {
             RestorePreviewMetrics(domains: domains)
             ForEach(scopeWarnings, id: \.self) { Text($0).font(.callout).foregroundStyle(.orange) }
             if alreadyMatches { Text("Selected requirements already match this Mac.") }
+            if let message = prerequisites.operationAvailabilityMessage {
+                Label(message, systemImage: "info.circle")
+                    .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
             if pinnedList {
                 if !prerequisites.manualConditions.isEmpty || showsFixIssues {
                     prerequisiteHeader

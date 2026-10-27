@@ -826,7 +826,91 @@ import SwiftUI
         }
         print("PASS: Assisted Missing/Unverified actions preserve evidence, Installed has no action, and all workflow rows retain diagnostics in their models")
     }
+    @MainActor static func topologyPreviewChecks() throws {
+        let domain = "git-repositories"
+        let ids = ["base", "linked", "detached", "occupied", "unsupported", "unverified"]
+        let catalog = CoreRestoreInspection.Inventory(groups: [.init(id: "Workspace", domains: [domain])],
+            inventory: [.init(domain: domain, label: "Git Repositories", selectionMode: "items", availability: "available",
+                reason: nil, items: ids.map { .init(itemID: $0, label: $0) })])
+        let selection = CoreRestoreSelection(categories: [], items: [domain: ids])
+        let actions = ["clone", "add_worktree", "switch_branch", "inspect", "inspect", "inspect"]
+        let dispositions = ["planned", "planned", "planned", "conflict", "blocked", "unknown"]
+        let reasons = ["", "", "", "workspace_branch_occupied", "workspace_git_unsupported", "workspace_observation_failed"]
+        let rows = ids.indices.map { index in
+            ["domain": domain, "item_id": String(index + 1), "selection_item_id": ids[index],
+             "action": actions[index], "disposition": dispositions[index], "reason": reasons[index],
+             "head_kind": index == 2 ? "detached" : "branch"]
+        }
+        let raw: [String: Any] = ["prepared_plan_id": String(repeating: "a", count: 64),
+            "selection": ["categories": [], "items": [domain: ids]], "selected_groups": ["Workspace"],
+            "selected_categories": [], "selected_item_counts": [domain: ids.count], "include_secure": false,
+            "secure_restore_status": "not_selected", "plan": rows,
+            "readiness": ["ready": false, "ready_scope": "environment", "reentry": "restore_prepare", "conditions": [
+                ["domain": "Workspace", "code": "workspace_restore_not_enabled", "status": "unsupported", "scope": "operation"]]],
+            "has_planned_changes": true, "has_executable_changes": true, "warning_count": 1, "error_count": 0]
+        let plan = try JSONDecoder().decode(CoreRestorePreparation.self, from: JSONSerialization.data(withJSONObject: raw))
+        try plan.validate(expected: selection, catalog: catalog)
+        precondition(!plan.readiness.ready)
+        let items = RestorePreviewPresentation(plan, catalog: catalog).categories[0].items
+        precondition(RestorePreviewPresentation(plan, catalog: catalog).needsAttention(plan))
+        precondition(items[0].action == "Will clone repository")
+        precondition(items[1].action == "Will add linked worktree")
+        precondition(items[2].action == "Will restore detached HEAD")
+        precondition(items[3].action.contains("already used"))
+        precondition(items[4].action.hasPrefix("Unsupported:"))
+        precondition(items[5].status == .unverified)
+        for code in CoreRestorePreparation.workspacePreviewReasons.keys {
+            precondition(OperationLogSanitizer.reasons.contains(code))
+            precondition(DiagnosticReportPrivacy.reasons.contains(code))
+            if CoreRestorePreparation.workspacePreviewReasons[code]!.hasPrefix("Unsupported:") {
+                var diagnostic = raw
+                var diagnosticRows = rows
+                diagnosticRows[4]["reason"] = code
+                diagnostic["plan"] = diagnosticRows
+                let decoded = try JSONDecoder().decode(CoreRestorePreparation.self,
+                    from: JSONSerialization.data(withJSONObject: diagnostic))
+                let item = RestorePreviewPresentation(decoded, catalog: catalog).categories[0].items[4]
+                precondition(item.action == CoreRestorePreparation.workspacePreviewReasons[code])
+                precondition(item.reason == code)
+            }
+        }
+        var matching = raw
+        let matchingRows = rows.map { row -> [String: String] in
+            var value = row
+            value["action"] = "none"; value["disposition"] = "satisfied"; value["reason"] = ""
+            return value
+        }
+        matching["plan"] = matchingRows
+        matching["has_planned_changes"] = false; matching["has_executable_changes"] = false
+        matching["warning_count"] = 0; matching["scope_warnings"] = [String]()
+        let matched = try JSONDecoder().decode(CoreRestorePreparation.self, from: JSONSerialization.data(withJSONObject: matching))
+        try matched.validate(expected: selection, catalog: catalog)
+        let presentation = RestorePreviewPresentation(matched, catalog: catalog)
+        precondition(!matched.readiness.ready && !presentation.needsAttention(matched))
+        precondition(presentation.categories.flatMap(\.items).allSatisfy { $0.status == .matching })
+        precondition(RestoreTaskPresentation(preview: presentation, plan: matched).confirmationMessages(matched).isEmpty)
+        let prerequisites = RestorePrerequisiteSummaryPresentation(conditions: matched.readiness.conditions, ready: false)
+        precondition(prerequisites.manualConditions.isEmpty && prerequisites.displayConditions.isEmpty)
+        precondition(!prerequisites.isTerminalReady && !prerequisites.needsAttention)
+        precondition(prerequisites.operationAvailabilityMessage == "Restore Preview completed. Rebuild for Git worktree topology is not yet available.")
+        for (disposition, reason) in [("conflict", "workspace_origin_conflict"), ("blocked", "workspace_git_unsupported"),
+                                      ("unknown", "workspace_observation_failed")] {
+            var problem = matching
+            var problemRows = matchingRows
+            problemRows[0]["disposition"] = disposition; problemRows[0]["reason"] = reason
+            problem["plan"] = problemRows; problem["warning_count"] = 1
+            let decoded = try JSONDecoder().decode(CoreRestorePreparation.self, from: JSONSerialization.data(withJSONObject: problem))
+            precondition(RestorePreviewPresentation(decoded, catalog: catalog).needsAttention(decoded))
+        }
+        matching["readiness"] = ["ready": true, "ready_scope": "environment", "reentry": "restore_prepare", "conditions": []] as [String: Any]
+        let legacy = try JSONDecoder().decode(CoreRestorePreparation.self, from: JSONSerialization.data(withJSONObject: matching))
+        precondition(legacy.readiness.ready && !RestorePreviewPresentation(legacy, catalog: catalog).needsAttention(legacy))
+        precondition(RestorePrerequisiteSummaryPresentation(conditions: [], ready: true).operationAvailabilityMessage == nil)
+        print("PASS: topology Protocol V1 actions, detached HEAD, conflicts, Unsupported/Unverified and operation-wide Rebuild gate")
+    }
+
     @MainActor static func main() async throws {
+        if CommandLine.arguments.contains("--topology-preview-only") { try topologyPreviewChecks(); return }
         try assistedAppStoreChecks()
         if CommandLine.arguments.contains("--rosetta-only") {
             try taskPresentationChecks()
@@ -932,6 +1016,7 @@ import SwiftUI
                 if mode=='interrupted': os.kill(os.getpid(),signal.SIGKILL)
                 time.sleep(20)
             if mode=='prepare_failure': emit('failed',{'code':'preview_failed'}); sys.exit(2)
+            if mode=='workspace_dependency_missing': emit('failed',{'code':'workspace_dependency_missing'}); sys.exit(2)
             assert request['parameters']['include_secure'] is False
             assert request['parameters']['disabled_groups']==[]
             requested=request['parameters']['selection']
@@ -1241,9 +1326,13 @@ import SwiftUI
                 try render(model, runtime, state: "layout-preview")
                 model.reviewAppStore(); model.closeAppStore()
                 precondition(model.selection == selected)
+                try write("workspace_dependency_missing", core.appendingPathComponent("mode"))
+                model.refreshPreview(); await model.waitForCompletion()
+                precondition(model.state == .failed && model.technicalReason == "workspace_dependency_missing")
+                precondition(model.failure?.contains("base and parent") == true && !model.canRebuild && model.selection == selected)
                 model.back()
                 precondition(model.state == .review && model.selection == selected)
-                print("PASS: App Store first in Selection group; item selection and navigation preserved; Preview hierarchy rendered at 420/785/985 pt")
+                print("PASS: Selection/navigation preserved; explicit Workspace dependency failure explains Review Selection and blocks Rebuild")
                 return
             }
             let scenarios: [(String, [String: Any], RestoreExecutionPresentation.Outcome)] = [

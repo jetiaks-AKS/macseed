@@ -126,8 +126,11 @@ owns the run links, Desktop duration and measured serial/parallel comparison.
 ## Complete Workspace & Git Worktree Restoration
 
 **In progress.** Phase 1 contracts are reviewed and published. Phase 2 implements
-bounded Discovery, explicit Capture selection and Bundle inspection; Restore
-Preview/Execute and representative real-Mac qualification remain open.
+bounded Discovery, explicit Capture selection and Bundle inspection; the Capture
+role-overlap fix is published and its real-Mac Capture gate accepted. Phase 3
+read-only Restore Preview is implemented and locally validated, including a matching
+real-Mac Preview. Hosted CI qualification, Execute, comparison and broader
+representative real-Mac qualification remain open.
 [Configuration](docs/toolkit/CONFIGURATION.md#linked-git-worktree-capability-limits)
 owns the contracts and compatibility limits. Independent-clone fallback is forbidden.
 

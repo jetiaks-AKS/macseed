@@ -673,17 +673,18 @@ shared topology. Adding `.git` file detection alone is not a complete solution.
 
 Topology-aware Discovery and Capture implement Phase 2 of the
 [Workspace/Git checkpoint](../../ROADMAP.md#complete-workspace--git-worktree-restoration)
-using the Phase 1 schema below. Restore planning and execution remain unsupported;
-independent-clone fallback is forbidden. Protocol V1 and Desktop presentation are
-unchanged. Capture inventories use stable checkout IDs and display names.
+using the Phase 1 schema below. Phase 3 adds read-only Core Restore Preview;
+execution remains disabled and independent-clone fallback is forbidden. Protocol V1
+retains its selection/plan model. Capture inventories use stable checkout IDs and display names.
 
 ### Workspace topology schema — Phase 1
 
-**Implemented: schema, Discovery, selected Capture and read-only Bundle inspection.**
+**Implemented: schema, Discovery, selected Capture, Bundle inspection and read-only Restore Preview.**
 Capture validates new relationships/dependencies before using the existing Preview
 for other selected domains. Its temporary Preview Blueprint omits new topology;
-the saved Bundle retains the original explicit selection. Runtime Restore unpack,
-narrowing and local Restore publication reject topology before any target mutation.
+the saved Bundle retains the original explicit selection. Only Core Prepare admits topology into private staging and selection narrowing.
+Execute, ordinary runtime unpack, local Restore publication and Environment Status
+continue to reject topology before any target mutation.
 Discovery publishes the complete Workspace group through the existing rollback path.
 
 `workspace/repositories.conf` retains the existing required fields and sectional
@@ -695,7 +696,7 @@ HOME changes and inventory reordering; moving a checkout changes its ID.
 The legacy validator remains strict in legacy mode. Ordinary CLI Workflow,
 Preview and Bootstrap validate topology v1 and admit only selected singleton
 named-branch groups to existing repository actions. Linked/shared or detached
-groups are refused before mutation; topology Bundle Restore remains blocked.
+groups are refused before mutation; topology Bundle Execute remains blocked.
 
 `workspace/topology.json` is a strict JSON object with these required fields:
 
@@ -733,10 +734,10 @@ at the exact same validated path are two roles of one destination, not a conflic
 Both selected roles remain in their respective Bundle records. Folder structure
 alone does not select or require Git, including when nested inside an unselected
 checkout. Cross-role conflicts and target checks use only selected roles;
-full inventory/schema validation remains mandatory. Future topology Restore must
-plan a shared destination together: the checkout owns destination creation and
-the folder role verifies the resulting directory. Precreating that directory must
-not preempt clone admission. This adds no current Restore action or fallback.
+full inventory/schema validation remains mandatory. Topology Preview plans the
+checkout as the owner of shared destination creation; the folder row retains its
+relationship with action `none`. Future Execute must verify that resulting
+directory without precreating it ahead of clone admission. No fallback is allowed.
 Selection never adds a base or other hidden dependency. Validate the full inventory
 before reducing it to the selected Bundle projection; records and topology members
 must then match exactly.
@@ -781,6 +782,69 @@ options, missing Git or changing version evidence never fall back to line parsin
 The producer then validates actual NUL-delimited records with a bounded strict
 parser; unknown/duplicate fields, ambiguous paths and malformed records fail closed.
 Git 2.24.3 therefore reports Unsupported; no alternative line parser is qualified.
+
+### Topology Restore Preview — Phase 3
+
+Core Prepare validates the original Bundle, narrows its private Blueprint, validates
+explicit base/parent dependencies and observes only selected target paths. Existing
+Preview handles other domains using a private compatibility Blueprint. The domain
+inspector reuses Discovery's qualified porcelain parser and safe local Git readers;
+it does not publish Restore configuration or run Git mutations. When no checkout
+exists, the capability probe uses builtin `git worktree -h` and requires the explicit
+`list ... --porcelain [-z]` synopsis, with unchanged version evidence before/after.
+
+| Target evidence | Preview |
+| --- | --- |
+| Absent/empty base, named branch | `clone` / planned; remote branch/object access is not promised |
+| Absent/empty linked destination, available base and local branch/exact commit | `add_worktree` / planned |
+| Matching common repository, exact origin and desired HEAD role | satisfied; local changes retained |
+| Different HEAD, available/free local target, clean tracked/staged state, no protected-path overlap | `switch_branch` / planned |
+| Wrong destination/origin/common repository, occupied branch, protected-path overlap | conflict |
+| Missing local branch/detached commit or base/parent not yet available | blocked; no branch creation/fetch is inferred |
+| Missing qualified capability or unsupported repository configuration | blocked / Unsupported |
+| Access failure, corrupt required Git evidence or changing observation | unknown / Unverified |
+
+Named branches match by name, irrespective of the diagnostic source OID. Detached
+HEAD requires the exact available commit. Independent clones never satisfy linked
+relationships. Symlinks in destinations or Git metadata, aliases, submodules,
+external Git directories and unqualified Git configuration or index flags that can
+hide edits fail closed. Git operations/locks
+block planned HEAD changes. Registered-but-missing worktree destinations are conflicts;
+folders below an unavailable selected checkout wait for that dependency.
+Selected checkout evidence is read twice and must agree; its private digest binds
+target changes into the prepared-plan identity. Reads use no optional index locks,
+no lazy fetch, no prompts, disabled fsmonitor and bounded process/output budgets.
+Already Match uses checkout metadata and tracked/staged status, without collecting
+additional file-content evidence. Content symlinks and large ignored build products do
+not obstruct a no-op. `protected_files` is omitted when that evidence is not needed.
+Potential Git changes still hash tracked, untracked and ignored file evidence
+privately (16 MiB per pass, 4,096 names per enumeration); symlinks and exceeded bounds
+block the action. Fixed typed reasons distinguish count/byte limits, file types,
+hooks, configuration, index flags and worktree metadata without exposing private values.
+File opens use `O_NOFOLLOW | O_NONBLOCK`; `fstat` must confirm the original regular
+file identity before any bytes are read. Reads use at most 64 KiB chunks with
+deadline checks before/after each read; type/identity changes fail closed and
+descriptors always close, including a regular-file-to-FIFO race.
+An existing safe Workspace Folder is satisfied independently of a Git blocker at
+the same destination. An absent shared destination remains owned by the checkout
+plan; no separate directory creation or dependency bypass is introduced.
+
+Phase 3 does not promise hook suppression. Potential Git actions reject native
+local/global/system `core.hooksPath`, configured hooks or unresolved config includes
+without following those paths. Clone also rejects custom template overrides.
+For existing repositories, executable `post-checkout`, `post-index-change` and
+`reference-transaction` hooks in the common hooks directory block switch/add plans;
+symlinks, special files and observation failures also fail closed. Nonexecutable
+regular hooks are inert. Already Match needs no Git action and retains its no-op
+result despite hooks. Hooks are never executed, edited or disabled by Preview;
+Phase 4 must requalify hook/template inputs before any mutation. See
+[Git hook semantics](https://git-scm.com/docs/githooks).
+
+The inspector can be reused by a future comparison, but Environment Status is not
+enabled. Every topology Prepare carries an operation-wide
+`workspace_restore_not_enabled` readiness blocker. Planned rows describe potential
+actions only: Execute still rejects the archive before publication or mutation,
+including when Git items are deselected. Descriptor restoration remains Phase 5.
 
 ## VS Code settings lifecycle
 

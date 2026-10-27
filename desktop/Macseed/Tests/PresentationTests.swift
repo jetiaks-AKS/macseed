@@ -2522,6 +2522,8 @@ private struct WorkflowAnchorFrames: PreferenceKey {
     @MainActor static func restorePreviewNoticesChecks() {
         setbuf(stdout, nil)
         _ = NSApplication.shared; NSApp.setActivationPolicy(.accessory); NSApp.appearance = NSAppearance(named: .aqua)
+        let topology = CoreRestorePreparation.Condition(domain: "Workspace", code: "workspace_restore_not_enabled",
+            status: "unsupported", selectedItemIndex: nil, scope: "operation")
         let pkg = CoreRestorePreparation.Condition(domain: "homebrew-casks", code: "cask_execution_requirements_unsupported",
             status: "unsupported", selectedItemIndex: 1, scope: "item", diagnostic: .init(primitive: "pkgutil", condition: "preparation_required"))
         let ssh = CoreRestorePreparation.Condition(domain: "ssh-configuration", code: "ssh_configuration_not_ready",
@@ -2538,6 +2540,8 @@ private struct WorkflowAnchorFrames: PreferenceKey {
             })
         let scenarios: [(String, [CoreRestorePreparation.Condition], Bool, CGSize)] = [
             ("Ready", [], false, MainWindowPolicy.minimum),
+            ("Topology-Preview", [topology], false, MainWindowPolicy.minimum),
+            ("Topology-With-Manual", [topology, ssh], false, MainWindowPolicy.minimum),
             ("One-Manual", [ssh], false, MainWindowPolicy.minimum),
             ("Preparation-Only", [pkg], true, MainWindowPolicy.minimum),
             ("Multiple", [pkg, ssh, brew], true, MainWindowPolicy.minimum),
@@ -2584,7 +2588,7 @@ private struct WorkflowAnchorFrames: PreferenceKey {
             scroll.contentView.scroll(to: CGPoint(x: 0, y: bottom)); scroll.reflectScrolledClipView(scroll.contentView); flush(host)
             precondition(abs(scroll.contentView.bounds.minY - bottom) < 2 && anchors == fixed)
             scroll.contentView.scroll(to: .zero); scroll.reflectScrolledClipView(scroll.contentView); flush(host)
-            // Five bounded cases, without the Capture/Status render matrix.
+            // Bounded Preview cases, without the Capture/Status render matrix.
             let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds)!
             host.cacheDisplay(in: host.bounds, to: bitmap)
             try! bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: "build/Debug/Preview-Notices-\(name).png"))
@@ -2593,7 +2597,43 @@ private struct WorkflowAnchorFrames: PreferenceKey {
         }
     }
 
+    static func topologyPreviewChecks() {
+        precondition(RestorePreviewPresentation.readyText(action: "add_worktree") == "Ready to Create")
+        let shared = CoreRestorePreparation.workspacePreviewReasons["workspace_checkout_destination"]!
+        precondition(shared.contains("no separate folder creation"))
+        let gate = CoreRestorePreparation.Condition(domain: "Workspace", code: "workspace_restore_not_enabled",
+            status: "unsupported", selectedItemIndex: nil, scope: "operation")
+        let onlyGate = RestorePrerequisiteSummaryPresentation(conditions: [gate], ready: false)
+        precondition(!onlyGate.needsAttention && onlyGate.title == "Preview completed" && !onlyGate.isTerminalReady)
+        precondition(onlyGate.manualConditions.isEmpty && onlyGate.displayConditions.isEmpty && onlyGate.sharedReasons.isEmpty)
+        precondition(onlyGate.operationAvailabilityMessage == "Restore Preview completed. Rebuild for Git worktree topology is not yet available.")
+        let other = CoreRestorePreparation.Condition(domain: "homebrew-packages", code: "homebrew_unavailable",
+            status: "external_action_required", selectedItemIndex: nil, scope: "operation")
+        let mixed = RestorePrerequisiteSummaryPresentation(conditions: [gate, other], ready: false)
+        precondition(mixed.needsAttention && mixed.title == "Needs Attention" && mixed.manualConditions.map(\.code) == [other.code])
+        precondition(mixed.operationAvailabilityMessage == onlyGate.operationAvailabilityMessage)
+        precondition(RestorePrerequisiteSummaryPresentation(conditions: [], ready: false).needsAttention)
+        for condition in [
+            CoreRestorePreparation.Condition(domain: "Workspace", code: gate.code, status: "unsupported", selectedItemIndex: 1, scope: "item"),
+            CoreRestorePreparation.Condition(domain: "Workspace", code: "unknown_gate", status: "unsupported", selectedItemIndex: nil, scope: "operation")] {
+            let unsupported = RestorePrerequisiteSummaryPresentation(conditions: [condition], ready: false)
+            precondition(unsupported.needsAttention && unsupported.manualConditions.count == 1 && unsupported.operationAvailabilityMessage == nil)
+        }
+        for code in ["workspace_origin_conflict", "workspace_topology_conflict", "workspace_protected_files",
+                     "workspace_local_changes", "workspace_branch_unavailable", "workspace_commit_unavailable",
+                     "workspace_dependency_pending", "workspace_observation_changed",
+                     "workspace_file_count_limit", "workspace_file_bytes_limit", "workspace_symlink_unsupported",
+                     "workspace_hooks_unsupported", "workspace_index_unsupported", "workspace_configuration_unsupported"] {
+            let message = CoreRestorePreparation.workspacePreviewReasons[code]!
+            precondition(!message.isEmpty && !message.contains("/Users/") && !message.contains("https://"))
+        }
+        precondition(CoreRestorePreparation.workspacePreviewReasons["workspace_file_count_limit"]!.contains("4,096"))
+        precondition(CoreRestorePreparation.workspacePreviewReasons["workspace_file_bytes_limit"]!.contains("16 MiB"))
+        print("PASS: topology shared-destination, dependency, preservation and Preview-only explanations")
+    }
+
     @MainActor static func main() async {
+        if CommandLine.arguments.contains("--topology-preview-only") { topologyPreviewChecks(); return }
         if CommandLine.arguments.contains("--preview-notices-only") { restorePreviewNoticesChecks(); return }
         if CommandLine.arguments.contains("--final-alignment-only") { try! await finalCapturePreviewAlignmentChecks(); return }
         if CommandLine.arguments.contains("--restore-macos-only") { await restoreMacOSChecks(); return }

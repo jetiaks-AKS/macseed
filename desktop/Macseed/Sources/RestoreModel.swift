@@ -16,7 +16,7 @@ struct RestorePreviewPresentation {
         case "install": "Ready to Install"
         case "reinstall": "Ready to Repair"
         case "set_setting", "set_preference", "switch_branch": "Ready to Change"
-        case "create_directory", "create": "Ready to Create"
+        case "create_directory", "create", "add_worktree": "Ready to Create"
         default: "Ready to Restore"
         }
     }
@@ -26,6 +26,11 @@ struct RestorePreviewPresentation {
     }
     static func summary(changes: Int, matches: Int, attention: Int) -> String {
         "\(changes) \(changes == 1 ? "change" : "changes") · \(matches) already \(matches == 1 ? "matches" : "match") · \(attention) \(attention == 1 ? "needs" : "need") attention"
+    }
+    func needsAttention(_ plan: CoreRestorePreparation) -> Bool {
+        plan.errorCount > 0 || !(plan.scopeWarnings ?? []).isEmpty
+            || RestoreTaskPresentation(preview: self, plan: plan).automaticAttentionCount > 0
+            || RestorePrerequisiteSummaryPresentation(conditions: plan.readiness.conditions, ready: plan.readiness.ready).needsAttention
     }
     init(_ prepared: CoreRestorePreparation, catalog: CoreRestoreInspection.Inventory) {
         var rows: [String: [DisplayItem]] = [:]
@@ -41,7 +46,8 @@ struct RestorePreviewPresentation {
                 switch row.action {
                 case "install": message = "Will install"
                 case "clone": message = "Will clone repository"
-                case "switch_branch": message = "Will switch branch"
+                case "add_worktree": message = "Will add linked worktree"
+                case "switch_branch": message = row.headKind == "detached" ? "Will restore detached HEAD" : "Will switch branch"
                 case "restart_process": message = "Will restart affected process"
                 case "replace_with_backup": message = "Will replace with backup"
                 case "create_directory", "create": message = "Will create"
@@ -62,7 +68,7 @@ struct RestorePreviewPresentation {
             case "observation_failed": reasonMessage = "Current state could not be inspected reliably."
             case "target_conflict": reasonMessage = "Conflict: existing state differs from the saved environment and will be preserved."
             case "privileged_lifecycle_unknown": reasonMessage = "Privileged Homebrew work may still be running. Inspect it before another Rebuild."
-            default: reasonMessage = nil
+            default: reasonMessage = row.reason.flatMap { CoreRestorePreparation.workspacePreviewReasons[$0] }
             }
             let inventoryLabel = row.selectionItemID.flatMap { id in catalog.inventory.first { $0.id == row.domain }?.items.first { $0.id == id }?.label }
             let title = inventoryLabel ?? row.displayName ?? (row.itemID.hasPrefix("opaque:") ? "Private item" : (row.itemID == "scope" ? "Selected area" : row.itemID))
@@ -651,6 +657,8 @@ struct RestoreProgressRow {
             case "bundle_unavailable": message = "The saved environment is unavailable. Choose an accessible file."
             case "recovery_required": message = "An earlier Restore needs recovery through the CLI before another Preview."
             case "stale_plan": message = "The inputs changed. Refresh Preview to inspect the current state."
+            case "workspace_dependency_missing", "workspace_path_conflict":
+                message = CoreRestorePreparation.workspacePreviewReasons[code!]!
             case "pkg_preparation_failed":
                 let diagnostic = runtime.events.last(where: { $0.type == "failed" })?.data?["diagnostic"]?.object
                 if diagnostic?["reason"]?.string == "checksum_mismatch" {

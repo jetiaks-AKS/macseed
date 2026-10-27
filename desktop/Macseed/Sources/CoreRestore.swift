@@ -57,6 +57,38 @@ struct CoreRestoreInspection: Decodable {
 }
 
 struct CoreRestorePreparation: Decodable {
+    static let workspacePreviewReasons: [String: String] = [
+        "workspace_restore_not_enabled": "Restore Preview completed. Rebuild for Git worktree topology is not yet available.",
+        "workspace_git_unsupported": "Unsupported: Git is unavailable or the required inspection capability is not qualified.",
+        "workspace_file_count_limit": "Unsupported: planning a Git change exceeds the 4,096-file inspection limit. Existing files will be preserved.",
+        "workspace_file_bytes_limit": "Unsupported: planning a Git change exceeds the 16 MiB file inspection limit. Existing files will be preserved.",
+        "workspace_symlink_unsupported": "Unsupported: a symbolic link prevents safe inspection of the selected checkout. Existing files will be preserved.",
+        "workspace_file_unsupported": "Unsupported: file inspection encountered a special or replaced file. Existing files will be preserved.",
+        "workspace_configuration_unsupported": "Unsupported: this repository uses Git configuration that Preview cannot safely qualify.",
+        "workspace_index_unsupported": "Unsupported: Git index flags can hide local changes, so this checkout cannot be qualified safely.",
+        "workspace_hooks_unsupported": "Unsupported: a Git hook or hook configuration could run external code during this action.",
+        "workspace_tree_unsupported": "Unsupported: the requested Git tree contains a symbolic link or submodule that this action cannot safely restore.",
+        "workspace_submodule_unsupported": "Unsupported: the checkout contains a submodule that topology Restore does not yet support.",
+        "workspace_git_metadata_unsupported": "Unsupported: the Git directory metadata contains an unsafe link or an unqualified format.",
+        "workspace_worktree_unsupported": "Unsupported: Git worktree relationships could not be qualified from the available metadata.",
+        "workspace_path_unsupported": "Unsupported: a required Git path is outside HOME or cannot be qualified safely.",
+        "workspace_observation_failed": "Git state could not be inspected reliably. Existing files will be preserved.",
+        "workspace_observation_changed": "Workspace state changed during inspection. Refresh Preview.",
+        "workspace_destination_conflict": "The destination is occupied, aliased or unsafe. Existing files will be preserved.",
+        "workspace_topology_conflict": "The checkout belongs to a different Git repository or worktree relationship.",
+        "workspace_origin_conflict": "The existing repository origin differs from the saved environment.",
+        "workspace_branch_occupied": "The requested branch is already used by another worktree.",
+        "workspace_branch_unavailable": "The requested branch is not available locally. Preview cannot promise branch creation or remote availability.",
+        "workspace_commit_unavailable": "The exact detached commit is not available locally.",
+        "workspace_dependency_pending": "The selected base or parent repository must be available before this checkout can be planned safely.",
+        "workspace_dependency_missing": "A selected linked or nested checkout requires its base and parent repositories. Review Selection and include them, or deselect the dependent checkout.",
+        "workspace_path_conflict": "Selected Workspace destinations conflict. Review Selection before preparing Restore.",
+        "workspace_local_changes": "Tracked or staged changes prevent a safe branch switch. Existing files will be preserved.",
+        "workspace_protected_files": "Untracked or ignored files conflict with the requested branch. Existing files will be preserved.",
+        "workspace_local_changes_preserved": "The requested checkout already matches. Local changes will be preserved.",
+        "workspace_operation_in_progress": "A Git operation or lock is present. Complete it outside Macseed, then Refresh Preview.",
+        "workspace_checkout_destination": "This folder shares the repository destination; no separate folder creation is planned."
+    ]
     let preparedPlanID: String
     let planDiagnostics: [String: String]?
     let selection: CoreRestoreSelection
@@ -166,6 +198,7 @@ struct CoreRestorePreparation: Decodable {
         let reason: String?
         let displayName: String?
         let selectionItemID: String?
+        var headKind: String? = nil
         var authorizationRequired: Bool? = nil
         var diagnostic: Diagnostic? = nil
         var installerPreparationID: String? = nil
@@ -178,7 +211,7 @@ struct CoreRestorePreparation: Decodable {
             return diagnostic?.repairExplanation
                 ?? "Automatic repair is unavailable. Macseed could not verify that the operation is safe."
         }
-        enum CodingKeys: String, CodingKey { case installerPreparationID = "installer_preparation_id", diagnostic, domain, itemID = "item_id", action, disposition, reason, displayName = "display_name", selectionItemID = "selection_item_id", authorizationRequired = "authorization_required" }
+        enum CodingKeys: String, CodingKey { case headKind = "head_kind", installerPreparationID = "installer_preparation_id", diagnostic, domain, itemID = "item_id", action, disposition, reason, displayName = "display_name", selectionItemID = "selection_item_id", authorizationRequired = "authorization_required" }
     }
     struct Readiness: Decodable {
         let ready: Bool
@@ -194,6 +227,10 @@ struct CoreRestorePreparation: Decodable {
         let selectedItemIndex: Int?
         let scope: String?
         var diagnostic: Diagnostic? = nil
+        var isPreviewOnlyLimitation: Bool {
+            domain == "Workspace" && code == "workspace_restore_not_enabled"
+                && status == "unsupported" && scope == "operation" && selectedItemIndex == nil && diagnostic == nil
+        }
         var isItemLocal: Bool {
             scope == "item" && domain == "homebrew-casks" && ["cask_execution_requirements_unsupported", "cask_target_conflict", "cask_rosetta_required"].contains(code)
                 && (status == "unsupported" || (code == "cask_rosetta_required" && status == "external_action_required")) && (selectedItemIndex ?? 0) > 0

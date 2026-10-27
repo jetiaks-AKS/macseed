@@ -266,6 +266,27 @@ rejects publication. After external preparation, use **Check Again → Prepare
 → confirm the new plan**. Neither ID nor `ready` is authorization, a transaction
 or proof that target state cannot change.
 
+Topology Bundle Prepare uses the same Selection, private staging and plan records.
+Git rows retain positional `item_id` and opaque `selection_item_id`, with additive
+`checkout_id`, `checkout_role` (`base`/`linked`), `head_kind`, `dependency_ids`, and,
+when observed, `local_changes`/`protected_files` booleans. `add_worktree` is a planned
+action; `switch_branch` with `head_kind=detached` means an exact detached HEAD target.
+No origin, absolute path, OID or file content is exposed. Safe typed reasons use the
+`workspace_` prefix. Missing selected base/parent dependencies fail Prepare with
+`workspace_dependency_missing`; selection is never expanded implicitly. The domain
+contract lists the evidence boundaries in
+[Configuration](../toolkit/CONFIGURATION.md#topology-restore-preview--phase-3).
+
+Topology evidence contributes to `prepared_plan_id` and the optional diagnostic
+`workspace_observation` digest. `workspace_restore_not_enabled` is always an
+operation-wide Unsupported readiness condition, even for otherwise matching rows.
+It describes Execute availability, not a failed Preview: matching or safely planned
+topology rows produce no module warning. Desktop presents this exact operation gate
+as an informational limitation; other prerequisites and item problems remain visible.
+`has_executable_changes` retains its existing planned-row meaning and cannot
+override `readiness.ready=false`. Execute and Environment Status remain unsupported
+for topology Bundles; ordinary legacy Bundle behavior is unchanged.
+
 ### Explicit PKG installer preparation
 
 For an unregistered native PKG cask without usable captured/local payload
