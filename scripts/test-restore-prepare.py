@@ -3347,6 +3347,10 @@ class TopologyPreviewTests(unittest.TestCase):
         self.home = self.home.resolve()
         self.environment['HOME'] = str(self.home)
         self.environment['XDG_CONFIG_HOME'] = str(self.home / '.config')
+        # clone_profile reads native configuration. Hosted Git's system LFS
+        # filters are outside this disposable fixture; keep its own global
+        # configuration observable for the explicit safety cases below.
+        self.environment['GIT_CONFIG_NOSYSTEM'] = '1'
         sys.path.insert(0, str(ROOT / 'scripts'))
         import workspace_fixture
         self.fixture = workspace_fixture
@@ -3445,10 +3449,20 @@ class TopologyPreviewTests(unittest.TestCase):
         shutil.rmtree(self.home / 'Projects')
         plan = self.preview()
         self.assertEqual((plan['warning_count'], plan['scope_warnings']), (0, []))
-        self.assertEqual(self.git_rows(plan)[0]['action'], 'clone')
+        row = self.git_rows(plan)[0]
+        self.assertEqual((row['action'], row['disposition'], row['reason']), ('clone', 'planned', None))
+        self.assertTrue(plan['readiness']['ready'])
         folder = next(row for row in plan['plan'] if row['item_id'] == self.paths[0])
-        self.assertEqual((folder['action'], folder['reason']), ('none', 'workspace_checkout_destination'))
-        self.assertEqual(self.git_rows(plan)[0]['disposition'], 'planned')
+        self.assertEqual((folder['action'], folder['disposition'], folder['reason']),
+                         ('none', 'planned', 'workspace_checkout_destination'))
+        # Isolating the host must not suppress unsafe configuration explicitly
+        # present in the fixture's own HOME.
+        (self.home / '.gitconfig').write_text('[filter "lfs"]\nprocess = git-lfs filter-process\nrequired = true\n')
+        blocked = self.preview()
+        row = self.git_rows(blocked)[0]
+        self.assertEqual((row['action'], row['disposition'], row['reason']),
+                         ('inspect', 'blocked', 'workspace_configuration_unsupported'))
+        self.assertTrue(blocked['readiness']['ready'])  # environmental readiness is not item admission
 
     def test_matching_linked_group_does_not_audit_project_contents(self):
         # Real-world repro: a base with tracked symlinks and a linked checkout
@@ -3678,9 +3692,14 @@ class TopologyPreviewTests(unittest.TestCase):
 
     def test_missing_base_blocks_dependents_without_clone_fallback(self):
         shutil.rmtree(self.home / 'Projects')
-        rows = self.git_rows(self.preview())
+        plan = self.preview()
+        rows = self.git_rows(plan)
         self.assertEqual(sum(row['action'] == 'clone' for row in rows), 1)
         self.assertEqual(sum(row['reason'] == 'workspace_dependency_pending' for row in rows), 2)
+        self.assertEqual((rows[0]['action'], rows[0]['disposition'], rows[0]['reason']), ('clone', 'planned', None))
+        self.assertTrue(all((row['action'], row['disposition'], row['reason']) ==
+                            ('add_worktree', 'planned', 'workspace_dependency_pending') for row in rows[1:]))
+        self.assertTrue(plan['readiness']['ready'])
 
     def test_registered_missing_destination_and_nested_folder_dependency(self):
         shutil.rmtree(self.home / self.paths[1])
@@ -3691,9 +3710,12 @@ class TopologyPreviewTests(unittest.TestCase):
         self.assertEqual(row['reason'], 'workspace_topology_conflict')
         self.configure(folders=[self.paths[0] + '/new-folder'])
         shutil.rmtree(self.home / 'Projects')
-        folder = next(row for row in self.preview()['plan'] if row['domain'] == 'workspace-folders')
-        self.assertEqual((folder['disposition'], folder['reason']), ('planned', 'workspace_dependency_pending'))
+        plan = self.preview()
+        folder = next(row for row in plan['plan'] if row['domain'] == 'workspace-folders')
+        self.assertEqual((folder['action'], folder['disposition'], folder['reason']),
+                         ('create_directory', 'planned', 'workspace_dependency_pending'))
         self.assertEqual(folder['dependency_ids'], [self.ids[0]])
+        self.assertTrue(plan['readiness']['ready'])
 
     def test_destination_conflict_symlink_and_access_errors(self):
         shutil.rmtree(self.home / self.paths[1]); (self.home / self.paths[1]).write_text('retain')

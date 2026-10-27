@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Cheap runner contract checks; no Macseed operations or full regression."""
 import json
+import io
+from contextlib import redirect_stderr, redirect_stdout
 import os
 from pathlib import Path
 import re
@@ -55,21 +57,57 @@ class RunnerTests(unittest.TestCase):
         inventory = re.findall(r'^    (scripts/test-\S+)$', (ROOT / 'scripts/test.sh').read_text(), re.M)
         weights = json.loads((ROOT / 'scripts/test-timings.json').read_text())
         parts = runner.plan(inventory, weights, 4)
-        original = list(load(ROOT / runner.HEAVY))
-        assigned = [key for part in parts for row in part if row['suite'] == runner.HEAVY for key in row['ids']]
-        self.assertEqual(set(assigned), set(original))
-        self.assertEqual(len(assigned), len(set(assigned)))
+        self.assertEqual(parts, runner.plan(inventory, weights, 4))
+        original = {suite: list(load(ROOT / suite)) for suite in runner.CASE_SHARDED}
+        units = [dict(suite=suite, ids=original.get(suite, [])) for suite in inventory]
+        runner.verify_partitions(units, parts)
+        for suite, ids in original.items():
+            assigned = [key for part in parts for row in part if row['suite'] == suite for key in row['ids']]
+            self.assertEqual(set(assigned), set(ids))
+            self.assertEqual(len(assigned), len(set(assigned)))
+            self.assertEqual(sum(any(row['suite'] == suite for row in part) for part in parts), 4)
         self.assertEqual({row['suite'] for part in parts for row in part}, set(inventory))
-        with patch.object(runner, 'load', return_value={key: None for key in original + ['new.method']}):
+        def expanded_load(path):
+            suite = path.relative_to(ROOT).as_posix()
+            return dict.fromkeys(original[suite] + ['new.method'])
+        with patch.object(runner, 'load', side_effect=expanded_load):
             expanded = runner.plan(inventory, weights, 4)
-        self.assertEqual(sum('new.method' in row['ids'] for part in expanded for row in part), 1)
-        units = [dict(suite=runner.HEAVY, ids=original + ['new.method'])]
-        runner.verify_partitions(units, [[dict(suite=runner.HEAVY, ids=original)],
-                                        [dict(suite=runner.HEAVY, ids=['new.method'])]])
-        for invalid in ([[]], [[dict(suite=runner.HEAVY, ids=original)]],
-                        [[dict(suite=runner.HEAVY, ids=original + ['new.method', original[0]])]]):
-            with self.assertRaises(ValueError):
-                runner.verify_partitions(units, invalid)
+        for suite, ids in original.items():
+            self.assertEqual(sum('new.method' in row['ids'] for part in expanded for row in part if row['suite'] == suite), 1)
+            self.assertGreaterEqual(runner.case_weights(suite, ids + ['new.method'], weights)['new.method'], 60)
+        for invalid in ([[]], parts[:-1], parts + [parts[0]]):
+            with self.assertRaises(ValueError): runner.verify_partitions(units, invalid)
+
+    def test_case_weights_preserve_budget_and_conservative_unknowns(self):
+        suite = 'fixture'
+        weights = dict(unknown_suite_seconds=180, unknown_case_seconds=60,
+                       suites={suite: 100}, cases={'a': 30, 'b': 50})
+        measured = runner.case_weights(suite, ['a', 'b'], weights)
+        self.assertEqual(sum(measured.values()), 100)
+        expanded = runner.case_weights(suite, ['a', 'b', 'new'], weights)
+        self.assertGreaterEqual(expanded['new'], 60)
+        self.assertGreaterEqual(expanded['a'], 30)
+        self.assertGreaterEqual(expanded['b'], 50)
+        self.assertTrue(all(value > 0 for value in runner.case_weights('unknown', ['one', 'two'], weights).values()))
+
+    def test_case_sharded_cli_selection_is_read_only(self):
+        inventory = re.findall(r'^    (scripts/test-\S+)$', (ROOT / 'scripts/test.sh').read_text(), re.M)
+        def listed(*args):
+            stream = io.StringIO()
+            with redirect_stdout(stream), patch.object(runner, 'execute', side_effect=AssertionError('planning executed work')):
+                self.assertEqual(runner.main(inventory, [*args, '--list']), 0)
+            return json.loads(stream.getvalue())
+        for suite in sorted(runner.CASE_SHARDED):
+            ids = list(load(ROOT / suite))
+            self.assertEqual(listed('--suite', suite)['selected'][0]['ids'], ids)
+            selected = listed('--suite', suite, '--case', ids[-1], '--case', ids[0].split('.', 1)[1], '--ci')
+            self.assertEqual(selected['selected'][0]['ids'], [ids[-1], ids[0]])
+            with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as failure:
+                listed('--suite', suite, '--case', ids[0], '--case', ids[0])
+            self.assertEqual(failure.exception.code, 2)
+        quick = listed('--quick', '--ci')['selected']
+        self.assertEqual({row['suite']: tuple(row['ids']) for row in quick}, runner.QUICK)
+        self.assertEqual(listed('--shard', '2/4')['selected'], listed('--ci', '--shard', '2/4')['selected'])
 
     def test_discovery_errors_and_empty_suites_fail_closed(self):
         path = self.root / 'scripts/bad.py'

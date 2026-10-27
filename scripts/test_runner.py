@@ -15,7 +15,11 @@ import time
 from test_unittest import load, write_json
 
 ROOT = Path(__file__).resolve().parent.parent
-HEAVY = 'scripts/test-restore-prepare.py'
+CASE_SHARDED = frozenset({
+    'scripts/test-restore-prepare.py',
+    'scripts/test-capture-api.py',
+    'scripts/test-workspace-topology-execute.py',
+})
 QUICK = {
     'scripts/test-test-runner.py': (),
     'scripts/test-dry-run-cli.sh': (),
@@ -36,6 +40,19 @@ def verify_partitions(units, partitions):
         raise ValueError('incomplete, overlapping or empty partitions')
 
 
+def case_weights(suite, ids, weights):
+    seconds = max(1, weights.get('suites', {}).get(suite, weights['unknown_suite_seconds']))
+    known = weights.get('cases', {})
+    missing = sum(key not in known for key in ids)
+    default = max(weights.get('unknown_case_seconds', 60),
+                  (seconds - sum(known.get(key, 0) for key in ids)) / max(1, missing))
+    estimates = {key: max(1, known.get(key, default)) for key in ids}
+    # Preserve measured suite startup/collection overhead when splitting a
+    # fully measured suite. New cases never dilute measured case times.
+    overhead = max(0, seconds - sum(estimates.values())) / len(ids)
+    return {key: value + overhead for key, value in estimates.items()}
+
+
 def plan(inventory, weights, total=1):
     if len(set(inventory)) != len(inventory) or not inventory:
         raise ValueError('invalid canonical inventory')
@@ -44,13 +61,10 @@ def plan(inventory, weights, total=1):
         if not (ROOT / suite).is_file():
             raise ValueError('missing mandatory suite: ' + suite)
         seconds = max(1, weights.get('suites', {}).get(suite, weights['unknown_suite_seconds']))
-        if suite == HEAVY:
+        if suite in CASE_SHARDED:
             ids = list(load(ROOT / suite))
-            known = weights.get('cases', {})
-            # Unmeasured/new methods always receive work and a nonzero weight.
-            default = max(1, (seconds - sum(known.get(key, 0) for key in ids)) /
-                          max(1, sum(key not in known for key in ids)))
-            units.extend(dict(suite=suite, ids=[key], seconds=known.get(key, default)) for key in ids)
+            estimates = case_weights(suite, ids, weights)
+            units.extend(dict(suite=suite, ids=[key], seconds=estimates[key]) for key in ids)
         else:
             units.append(dict(suite=suite, ids=[], seconds=seconds))
     bins, costs = [[] for _ in range(total)], [0] * total
@@ -314,8 +328,8 @@ def main(inventory, argv):
                         raise ValueError('unknown, ambiguous or duplicate case')
                     ids.append(matches[0])
                 selected[0]['ids'] = ids
-                selected[0]['seconds'] = sum(weights.get('cases', {}).get(key,
-                    selected[0]['seconds'] / len(tests)) for key in ids)
+                estimates = case_weights(args.suite, list(tests), weights)
+                selected[0]['seconds'] = sum(estimates[key] for key in ids)
         if args.list:
             print(json.dumps(dict(partitions=partitions, selected=selected), indent=2))
             return 0

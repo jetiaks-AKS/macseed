@@ -82,22 +82,28 @@ methods in one process; full IDs from `--list` or `Class.method` are accepted.
 
 `scripts/test.sh` owns the only suite inventory. `--list` prints the selected plan
 and all partitions as JSON without executing tests. Four CI runners use longest
-estimated work first to balance whole suites and independent RestorePrepare
-methods. IDs come from the existing unittest loader; setup, cleanup, subtests and
-conditional skips are retained. The planner checks exact ID union and disjointness,
+estimated work first to balance whole suites and independent methods from
+`test-restore-prepare.py`, `test-capture-api.py` and
+`test-workspace-topology-execute.py`. IDs come from the existing unittest loader;
+setup, cleanup, subtests and conditional skips are retained. The planner checks exact ID union and disjointness,
 missing suites, discovery errors and empty partitions before execution. Methods
-remain sequential in one interpreter per assigned suite. RestorePrepare methods
-own separate temporary projects, HOME and safety state; other suites stay whole.
+remain sequential in one interpreter per assigned suite. These three suites use
+per-case temporary projects, HOME and safety state, without shared class/module
+fixtures; other suites stay whole. Capture's global temporary-directory inventory
+checks still prohibit concurrent suites on one host. CI shards use separate VMs.
 
 `scripts/test-timings.json` contains weights, never a second test inventory. Current
-weights use completed suites from CI `39977240274`, older complete measurements
-from `39919575036` where needed, and four local case measurements. Failed/truncated
-suite durations are excluded. Unmeasured methods share the remaining measured
-suite weight; new suites receive a provisional 180 seconds. New IDs are always
-assigned. Update weights from complete safe reports, retaining their provenance.
-The initial plan estimates about 18.9 minutes per runner, excluding provisioning;
-this is not a measured hosted speedup. Historical weights, unmeasured methods and
-the new external-process suite remain sources of uncertainty.
+weights use CI #116 (`40519591952`): 42 complete passing whole suites and 177
+completed passing cases in the three split suites. The three failed case durations
+are excluded and explicitly estimated at 60 seconds each. RestorePrepare retains
+its historical suite baseline; no failed/partial partition duration is treated as
+a complete suite measurement. Unmeasured methods receive at least 60 seconds or
+their share of the remaining suite budget; new suites receive a provisional 180
+seconds. Measured suite startup overhead is retained when distributing case work.
+New IDs are always assigned. Keep measurement/estimate provenance when updating weights.
+On these same weights, the previous CI #116 assignment predicts a longest shard
+of 38 min 42 s; the new assignment predicts 31 min 34 s, excluding provisioning.
+This is a planning estimate, not a measured hosted speedup.
 
 Each run writes a private ignored `logs/regression/<run>/` directory; `--output`
 can select a new destination. `safe/summary.md` and `.json` list PASS, FAIL, ERROR,
