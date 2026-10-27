@@ -296,6 +296,13 @@ remote URLs or credentials are needed to explain actions. Homebrew Applications 
 Packages stay separate through Preview, Rebuild and Result. Qualified repairs show
 Will Repair / Ready to Repair and Repairing; finishing execution awaits Verification.
 
+Desktop supports topology-aware Restore Preview and can confirm all selected
+requirements as Already Match. Rebuild remains unavailable for topology Bundles
+until Phase 4; this Execute limitation is not a Preview error. Desktop shows
+“Restore Preview completed. Rebuild for Git worktree topology is not yet available.”
+as information, while real conflicts, Unsupported/Unverified items and other
+prerequisite problems remain visible. See the [Workspace contract](toolkit/CONFIGURATION.md#topology-restore-preview--phase-3).
+
 ### Prerequisites and consent
 
 All-satisfied prerequisites use a concise Ready summary with optional disclosure;
@@ -414,6 +421,11 @@ Expand All / Collapse All and the fixed footer remain. Short explanations preser
 independent problems; technical evidence belongs in View Log.
 
 ## Environment Status
+
+Environment Status does not yet support topology Bundles, even when Restore Preview
+fully confirms Already Match. The comparison flow below remains available for
+supported legacy Bundles; [Configuration](toolkit/CONFIGURATION.md#topology-restore-preview--phase-3)
+owns the capability limits.
 
 **Choose reference → Compare → Result** uses inline Domain → Items disclosures.
 The initial Choose Saved Environment card owns reference selection and its read-only

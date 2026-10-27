@@ -11,6 +11,13 @@ The format is based on the principles of **Keep a Changelog**.
 
 ### Added
 
+* Workspace Topology v1 discovery for ordinary Git repositories and base/linked
+  worktrees, with stable checkout IDs and relationships preserved in Bundles.
+* Topology-aware Capture selection validates explicit base/linked/parent dependencies
+  and saves portable `.mbt` metadata.
+* Read-only topology Restore Preview reports Already Match, Clone Planned, Add
+  Worktree Planned and Switch Branch Planned, conflicts and Unsupported/Unverified,
+  with stable prepared-plan identity for consistent repeated observations.
 * Native SwiftUI Desktop over Core Protocol V1: real Capture, Restore
   Prepare/Execute and read-only Saved Environment Status, with explicit selection,
   confirmation, structured progress, Verification-aware results and fresh-plan
@@ -90,6 +97,13 @@ The format is based on the principles of **Keep a Changelog**.
 
 ### Fixed
 
+* Capture accepts a Workspace Folder and Git checkout at the same validated
+  destination, preserving both selected roles and their dependencies.
+* Matching repositories with tracked symlinks or large ignored files no longer
+  report false Unsupported; bounded safety checks remain for planned Git changes.
+* Privacy-safe typed Workspace diagnostics retain specific causes. Successful
+  topology Preview no longer generates a false Workspace category warning or
+  treats unavailable Execute as a Preview failure.
 * Restore Git clone now preserves bounded local SSH identity configuration and
   reports typed clone causes/native exit codes. Preview correlates repository Bundle
   identities with target paths even when ordering differs. Checkout preserves
@@ -142,6 +156,12 @@ The format is based on the principles of **Keep a Changelog**.
   universal Repair, visual effects, detached/privileged quiescence or recovery.
   [Qualification boundaries](docs/DESKTOP.md#recent-restore-qualification-and-performance)
   and [open tasks](TODO.md) remain explicit.
+
+### Safety / Limitations
+
+* Restore Execute, local Restore publication and Environment Status remain
+  unsupported for topology Bundles. VS Code workspace relationship restoration
+  remains a future phase; see the [Workspace contract](docs/toolkit/CONFIGURATION.md#topology-restore-preview--phase-3).
 
 ## [3.4.0] - 2026-10-02
 

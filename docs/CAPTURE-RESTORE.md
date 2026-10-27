@@ -23,9 +23,10 @@ Stage 16E. See [Desktop](DESKTOP.md#capture-this-mac) for presentation and
 [Environment Status](DESKTOP.md#environment-status) for implemented Bundle comparison.
 
 Restore installs tools/applications, clones repositories from recorded remotes,
-creates folders and restores selected settings. Working trees, `.git`, documents,
-media, databases, caches and sessions are not copied. `.code-workspace` metadata
-is discovered but has no restoration consumer and is excluded from Bundles.
+creates folders and restores selected settings. Git working files, `.git`, documents,
+media, databases, caches and sessions are not copied. Only explicitly selected
+`.code-workspace` folder relationships and display names are eligible Bundle metadata;
+arbitrary descriptor content is excluded and relationship restoration remains future work.
 Current Workspace Folders restores structure only. Future bounded transfer of
 useful unique workspace/local data requires a separate explicit product and safety
 contract; it is not implemented and does not imply general file migration.
@@ -47,6 +48,11 @@ ordinary Generated Configuration or Blueprint. It creates one private `.mbt`
 using Bootstrap Bundle v1. Normal configuration is **not encrypted**; only
 explicitly selected SSH key pairs are encrypted in `secure.age`.
 
+Legacy Bundles retain supported Restore for ordinary Git repositories. New Workspace
+Topology v1 Bundles support Capture and read-only Restore Preview; Restore Execute,
+local Restore publication and Environment Status remain blocked. Technical details
+and safety limits belong to the [Workspace contract](toolkit/CONFIGURATION.md#topology-restore-preview--phase-3).
+
 Settings inclusion, supported keys, unmanaged absence and the qualified Screenshot
 Desktop-default exception belong to [Configuration](toolkit/CONFIGURATION.md#macos-settings).
 Bundle v1 retains compatibility with older settings files; Capture result actions
@@ -65,8 +71,9 @@ portable.
 
 Restore validates, narrows and previews staged state before Apply. Preview does
 not decrypt identities or change target configuration. After confirmation,
-Restore publishes ordinary local Generated Configuration and Blueprint, applies
-the selected state and reports Verification. Later Workflow uses that local state.
+supported Restore Execute publishes ordinary local Generated Configuration and
+Blueprint, applies the selected state and reports Verification. Later Workflow
+uses that local state.
 
 Publication recovery protects the previous local configuration pair at defined
 failure points. It does not roll back installs, settings or key imports. Late
