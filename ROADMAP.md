@@ -128,9 +128,10 @@ owns the run links, Desktop duration and measured serial/parallel comparison.
 **In progress.** Phase 1 contracts are reviewed and published. Phase 2 implements
 bounded Discovery, explicit Capture selection and Bundle inspection; the Capture
 role-overlap fix is published and its real-Mac Capture gate accepted. Phase 3
-read-only Restore Preview is implemented and locally validated, including a matching
-real-Mac Preview. Hosted CI qualification, Execute, comparison and broader
-representative real-Mac qualification remain open.
+Restore Preview is published and includes an accepted matching real-Mac Preview.
+Phase 4 implements Core Execute and Global Verification with disposable Git
+fixtures and Desktop integration. Hosted CI for Phase 4, representative real-Mac Execute,
+Environment Status and Phase 5 VS Code descriptor restoration remain open.
 [Configuration](docs/toolkit/CONFIGURATION.md#linked-git-worktree-capability-limits)
 owns the contracts and compatibility limits. Independent-clone fallback is forbidden.
 

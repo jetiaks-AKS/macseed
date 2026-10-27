@@ -674,17 +674,20 @@ shared topology. Adding `.git` file detection alone is not a complete solution.
 Topology-aware Discovery and Capture implement Phase 2 of the
 [Workspace/Git checkpoint](../../ROADMAP.md#complete-workspace--git-worktree-restoration)
 using the Phase 1 schema below. Phase 3 adds read-only Core Restore Preview;
-execution remains disabled and independent-clone fallback is forbidden. Protocol V1
+Phase 4 adds Core Restore Execute and Global Verification within the limits below.
+Independent-clone fallback is forbidden. Protocol V1
 retains its selection/plan model. Capture inventories use stable checkout IDs and display names.
 
 ### Workspace topology schema — Phase 1
 
-**Implemented: schema, Discovery, selected Capture, Bundle inspection and read-only Restore Preview.**
+**Implemented: schema, Discovery, selected Capture, Bundle inspection, Core Restore
+Preview/Execute and Global Verification.**
 Capture validates new relationships/dependencies before using the existing Preview
 for other selected domains. Its temporary Preview Blueprint omits new topology;
-the saved Bundle retains the original explicit selection. Only Core Prepare admits topology into private staging and selection narrowing.
-Execute, ordinary runtime unpack, local Restore publication and Environment Status
-continue to reject topology before any target mutation.
+the saved Bundle retains the original explicit selection. Core Prepare/Execute use
+private staging and explicit selection narrowing. Ordinary CLI Bundle unpack and
+Environment Status continue to reject topology; Core Execute has a separate
+validated admission to the existing publication and owned Bootstrap paths.
 Discovery publishes the complete Workspace group through the existing rollback path.
 
 `workspace/repositories.conf` retains the existing required fields and sectional
@@ -696,7 +699,8 @@ HOME changes and inventory reordering; moving a checkout changes its ID.
 The legacy validator remains strict in legacy mode. Ordinary CLI Workflow,
 Preview and Bootstrap validate topology v1 and admit only selected singleton
 named-branch groups to existing repository actions. Linked/shared or detached
-groups are refused before mutation; topology Bundle Execute remains blocked.
+groups are refused before mutation. Topology Bundle execution uses Core Restore,
+never the legacy independent-repository consumer.
 
 `workspace/topology.json` is a strict JSON object with these required fields:
 
@@ -795,12 +799,13 @@ exists, the capability probe uses builtin `git worktree -h` and requires the exp
 
 | Target evidence | Preview |
 | --- | --- |
-| Absent/empty base, named branch | `clone` / planned; remote branch/object access is not promised |
+| Absent/empty base | `clone` / planned; detached HEAD is conditional on finding the exact commit after Clone |
 | Absent/empty linked destination, available base and local branch/exact commit | `add_worktree` / planned |
 | Matching common repository, exact origin and desired HEAD role | satisfied; local changes retained |
 | Different HEAD, available/free local target, clean tracked/staged state, no protected-path overlap | `switch_branch` / planned |
 | Wrong destination/origin/common repository, occupied branch, protected-path overlap | conflict |
-| Missing local branch/detached commit or base/parent not yet available | blocked; no branch creation/fetch is inferred |
+| Missing local branch/detached commit in an available base | blocked; no branch creation/fetch is inferred |
+| Selected base/parent has a planned creation | conditional dependent action; reinspection after creation is required |
 | Missing qualified capability or unsupported repository configuration | blocked / Unsupported |
 | Access failure, corrupt required Git evidence or changing observation | unknown / Unverified |
 
@@ -829,22 +834,63 @@ An existing safe Workspace Folder is satisfied independently of a Git blocker at
 the same destination. An absent shared destination remains owned by the checkout
 plan; no separate directory creation or dependency bypass is introduced.
 
-Phase 3 does not promise hook suppression. Potential Git actions reject native
+Potential Git actions reject native
 local/global/system `core.hooksPath`, configured hooks or unresolved config includes
 without following those paths. Clone also rejects custom template overrides.
 For existing repositories, executable `post-checkout`, `post-index-change` and
 `reference-transaction` hooks in the common hooks directory block switch/add plans;
 symlinks, special files and observation failures also fail closed. Nonexecutable
 regular hooks are inert. Already Match needs no Git action and retains its no-op
-result despite hooks. Hooks are never executed, edited or disabled by Preview;
-Phase 4 must requalify hook/template inputs before any mutation. See
+result despite hooks. Hooks are never executed, edited or disabled by Preview. Execute repeats this
+qualification and also disables hooks in its owned Git command profile. See
 [Git hook semantics](https://git-scm.com/docs/githooks).
 
-The inspector can be reused by a future comparison, but Environment Status is not
-enabled. Every topology Prepare carries an operation-wide
-`workspace_restore_not_enabled` readiness blocker. Planned rows describe potential
-actions only: Execute still rejects the archive before publication or mutation,
-including when Git items are deselected. Descriptor restoration remains Phase 5.
+### Topology Restore Execute — Phase 4
+
+Core Restore reuses the same Bundle validation, Selection, prepared-plan identity,
+publication recovery, SSH prerequisites, owned Bootstrap and Global Verification.
+The Workspace domain consumes a private digest-bound execution context; legacy
+Bootstrap never receives linked records as independent Clone requests. Every
+mutation rechecks source/staged/published inputs and the confirmed scope, then
+fresh destination, Git metadata, hooks/configuration, branch occupancy, commit and
+file-preservation evidence. No new action is inferred for an unselected checkout.
+
+Execution orders selected base and nested dependencies before their children.
+Missing parent directories are created without following symlinks. Shared
+Folder/checkout destinations belong to Clone/Add Worktree; folder-only selection
+creates structure without selecting Git. Matching checkouts perform no Git mutation.
+Clone uses the existing bounded Git/SSH executor. Linked creation uses native
+`worktree add --detach` with an exact local commit; a named requirement then uses
+`checkout --no-guess --no-overwrite-ignore` after fresh inspection. This avoids
+Git's implicit remote-tracking branch creation. Existing safe HEAD changes use
+the same owned executor and qualified local branch/exact detached commit.
+
+A new Clone normally creates only its selected local branch. Other named linked
+requirements remain blocked if their local branches are absent; remote-tracking
+refs do not authorize branch creation. Detached requirements after Clone are
+conditional on exact commit availability. There is no fetch, force, reset, clean,
+prune, remote replacement or independent-clone fallback. Git/SSH, filters/LFS,
+submodules and configuration exclusions are not expanded by this phase.
+
+Each Git subprocess uses the existing timeout/output bounds, process-tree ownership
+and write-ahead journal. Native success is followed by independent topology and
+other-worktree preservation checks. A retained partial destination is fenced from
+retry; no automatic checkout/worktree deletion is performed. Unconfirmed process
+or preservation consequences retain the operation-wide ExternalProcesses fence.
+Graceful Stop completes the owned step and prevents the next launch; resume means
+fresh Preview and confirmation. Force Stop can require manual lifecycle inspection.
+Publication recovery protects configuration only, not Git state.
+
+Global Verification emits the existing coverage/conformity records with a
+`topology` predicate for each selected checkout and directory predicates for
+folders. It independently checks common repository/base/linked relationship,
+origin, required HEAD and dependencies. Partial, blocked or unobservable results
+cannot establish full verification. A successful repeat Preview reports Already
+Match. Local disposable fixtures qualify this implementation; hosted CI and
+representative real-Mac Execute qualification remain separate gates.
+
+Environment Status is still unsupported for topology Bundles. VS Code descriptor
+restoration remains Phase 5.
 
 ## VS Code settings lifecycle
 

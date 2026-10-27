@@ -570,6 +570,7 @@ extension TaskDomainPresentation {
 // Shared final-result classification. Counts selected plan rows, never predicates or apps.
 extension TaskItemPresentation {
     static func cloneFailureMessage(_ reason: String?) -> String? {
+        if let reason, let message = CoreRestorePreparation.workspacePreviewReasons[reason] { return message }
         switch reason {
         case "git_clone_authentication_failed": return "Git authentication failed. Check access to the repository."
         case "git_clone_host_key_failed": return "The repository server’s SSH identity could not be confirmed."

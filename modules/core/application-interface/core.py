@@ -223,12 +223,15 @@ def prepared_restore(path, disabled_groups, include_secure, selection=None, inst
                               for item in modules):
             raise PreviewFailed()
         sections, categories = bundle.parse_blueprint((stage / "blueprint.conf").read_bytes())
-        requirements = prepared_requirements(stage, include_secure, preparation_context, blueprint=preview_blueprint)
         if topology_files is not None:
             try:
                 topology_preview = inspect_topology(topology_files, os.environ['HOME'], bounded_read)
             except ObservationError:
                 raise PreviewFailed() from None
+        workspace_clone = bool(topology_preview and any(row['action'] == 'clone' and row['disposition'] == 'planned'
+                                                       for row in topology_preview['plan']))
+        requirements = prepared_requirements(stage, include_secure, preparation_context, blueprint=preview_blueprint,
+                                            workspace_clone=workspace_clone)
         records = []
         domains = set(bundle.ITEMS) | set(bundle.CATEGORIES) | {"secure-ssh-identities"}
         for line in plan_file.read_text().splitlines():
@@ -274,8 +277,6 @@ def prepared_restore(path, disabled_groups, include_secure, selection=None, inst
                             **capability})
         if topology_preview is not None:
             records.extend(topology_preview['plan'])
-            # The operation gate is added after item readiness projection so
-            # read-only planned actions retain their meaning in Phase 3.
             modules.append({'module': 'preview_workspace_topology',
                             'status': 'warning' if any(row['disposition'] not in ('satisfied', 'planned')
                                                        for row in topology_preview['plan']) else 'success',
@@ -362,10 +363,6 @@ def prepared_restore(path, disabled_groups, include_secure, selection=None, inst
                 requirements["ready"] = False
                 requirements["conditions"].append({"domain": domain,
                     "code": "preview_observation_failed", "status": "external_action_required"})
-        if topology_preview is not None:
-            requirements['ready'] = False
-            requirements['conditions'].append({'domain': 'Workspace', 'code': 'workspace_restore_not_enabled',
-                                                'status': 'unsupported', 'scope': 'operation'})
         summary = {
             "selected_groups": [name for name, members in bundle.GROUPS.items()
                                 if any(categories.get(member, False) or sections.get(member) for member in members)],
@@ -448,13 +445,14 @@ READINESS_CODES = {
 
 
 @timed("readiness.requirements")
-def prepared_requirements(stage, include_secure, preparation_context="", *, blueprint=None):
+def prepared_requirements(stage, include_secure, preparation_context="", *, blueprint=None, workspace_clone=False):
     environment = dict(os.environ, MACSEED_PKG_PREPARATION_CONTEXT=preparation_context, BLUEPRINT_FILE=str(blueprint or stage / "blueprint.conf"),
                        BLUEPRINT_GENERATED_DIR=str(stage / "generated"),
                        BUNDLE_RESTORE_ACTIVE="true", BUNDLE_RESTORE_SECURE_FILE="",
                        MACSEED_APPLICATION_EXECUTION="true",
                        MACSEED_APPLICATION_READINESS_REPORT="true", MACSEED_PERFORMANCE_SCOPE="requirements",
                        MACSEED_APPLICATION_ALLOW_ITEM_SKIPS="true",
+                       MACSEED_WORKSPACE_CLONE_REQUIRED=str(workspace_clone).lower(),
                        MACSEED_APPLICATION_SECURE_SELECTED=str(include_secure).lower(),
                        MACSEED_APPLICATION_SECURE_READY="true")
     try:
@@ -523,11 +521,12 @@ def prepared_requirements(stage, include_secure, preparation_context="", *, blue
 
 
 @timed("readiness.publication")
-def readiness(stage, include_secure, secure_ready=False, secure_only=False, preparation_context=""):
-    environment = dict(os.environ, MACSEED_PKG_PREPARATION_CONTEXT=preparation_context, MACSEED_PERFORMANCE_SCOPE="publication", BLUEPRINT_FILE=str(stage / "blueprint.conf"),
+def readiness(stage, include_secure, secure_ready=False, secure_only=False, preparation_context="", *, blueprint=None, workspace_clone=False):
+    environment = dict(os.environ, MACSEED_PKG_PREPARATION_CONTEXT=preparation_context, MACSEED_PERFORMANCE_SCOPE="publication", BLUEPRINT_FILE=str(blueprint or stage / "blueprint.conf"),
                        BLUEPRINT_GENERATED_DIR=str(stage / "generated"),
                        BUNDLE_RESTORE_ACTIVE="true", BUNDLE_RESTORE_SECURE_FILE="",
                        MACSEED_APPLICATION_EXECUTION="true",
+                       MACSEED_WORKSPACE_CLONE_REQUIRED=str(workspace_clone).lower(),
                        MACSEED_APPLICATION_SECURE_SELECTED=str(include_secure).lower(),
                        MACSEED_APPLICATION_SECURE_READY=str(secure_ready).lower(),
                        MACSEED_APPLICATION_SECURE_ONLY=str(secure_only).lower(),
@@ -643,7 +642,7 @@ def restore_execute(operation_id, path, disabled_groups, include_secure, expecte
                 state['unknown_consequences'] = True
                 raise ExecuteFailed('privileged_lifecycle_unknown')
             event("phase_started", {"phase": "preparation"})
-            with prepared_restore(path, disabled_groups, include_secure, selection) as (plan, stage, source_id, stage_id):
+            with prepared_restore(path, disabled_groups, include_secure, selection, workspace_preview=True) as (plan, stage, source_id, stage_id):
                 event("phase_completed", {"phase": "preparation"})
                 if plan["prepared_plan_id"] != expected_id:
                     state["plan_validation"] = {"check": "prepared_plan_id", "expected_id": expected_id,
@@ -661,8 +660,13 @@ def restore_execute(operation_id, path, disabled_groups, include_secure, expecte
                     if select.select([channel], [], [], 0)[0]:
                         raise SecureError("secure_cancelled" if not channel.recv(1, socket.MSG_PEEK)
                                           else "secure_channel_invalid")
+                topology = (stage / 'generated/workspace/topology.json').exists()
+                workspace_clone = topology and any(row['action'] == 'clone' for row in plan['plan'])
                 readiness(stage, include_secure, channel is not None, secure_only,
-                          pkg_preparation.context(source_id, stage_id))
+                          pkg_preparation.context(source_id, stage_id),
+                          **({'blueprint': stage.parent / 'preview.blueprint', 'workspace_clone': workspace_clone} if topology else {}))
+                if topology and not plan['readiness']['ready']:
+                    raise ExecuteFailed('readiness_failed')
                 if plan["error_count"]:
                     raise ExecuteFailed("preview_observation_failed")
                 current_stage = restore_fingerprint(stage)
@@ -677,13 +681,20 @@ def restore_execute(operation_id, path, disabled_groups, include_secure, expecte
                     raise ExecuteFailed("stale_plan")
                 if bundle.RECOVERY.exists() or bundle.RECOVERY.is_symlink():
                     raise RecoveryRequired()
+                workspace_environment = {}
+                if topology:
+                    from topology_execution import create_context
+                    try:
+                        workspace_environment = create_context(path, stage, source_id, stage_id, plan)
+                    except ValueError:
+                        raise ExecuteFailed('stale_plan') from None
                 checkpoint()
                 event("phase_started", {"phase": "publication"})
                 state["publication_started"] = True
                 previous_mask = signal.pthread_sigmask(signal.SIG_BLOCK,
                                                         {signal.SIGINT, signal.SIGTERM})
                 try:
-                    bundle.publish(stage)
+                    bundle.publish(stage, **({'workspace_execute': True} if topology else {}))
                     state["publication_occurred"] = True
                 finally:
                     signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
@@ -710,6 +721,8 @@ def restore_execute(operation_id, path, disabled_groups, include_secure, expecte
                 for name in ("BLUEPRINT_FILE", "BLUEPRINT_GENERATED_DIR",
                              "SSH_SNAPSHOT_FILE", "ZSH_SNAPSHOT_FILE"):
                     environment.pop(name, None)
+                environment.update(workspace_environment)
+                environment['MACSEED_WORKSPACE_CLONE_REQUIRED'] = str(workspace_clone).lower()
                 if ENABLED:
                     bootstrap_trace_start = monotonic()
                 event("phase_started", {"phase": "bootstrap"})

@@ -110,7 +110,7 @@ def validate_workspace(files, *, home=None, exact=False, inspect_home=False):
 
 
 def require_runtime_workspace(files):
-    # No narrowing, fallback, publication or UI interpretation of Phase 1 data.
+    # Legacy CLI / Environment Status must never fall through to flat consumers.
     blueprint = files.get('blueprint.conf', b'')
     selected = (parse_blueprint(blueprint)[0].get('vscode-workspaces', [])
                 if b'[vscode-workspaces]' in blueprint else [])
@@ -927,8 +927,13 @@ def recover():
         raise Invalid("publication recovery failed; manual recovery required") from exc
 
 
-def publish(stage):
-    require_runtime_workspace(workspace_stage_files(stage))
+def publish(stage, *, workspace_execute=False):
+    files = workspace_stage_files(stage)
+    if workspace_execute:
+        require_workspace_preview(files)
+        validate_workspace(staged_payload(stage, checked_file(stage / 'blueprint.conf')), home=os.environ['HOME'])
+    else:
+        require_runtime_workspace(files)
     recover()
     source_generated = stage / "generated"
     source_blueprint = stage / "blueprint.conf"

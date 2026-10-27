@@ -296,12 +296,14 @@ remote URLs or credentials are needed to explain actions. Homebrew Applications 
 Packages stay separate through Preview, Rebuild and Result. Qualified repairs show
 Will Repair / Ready to Repair and Repairing; finishing execution awaits Verification.
 
-Desktop supports topology-aware Restore Preview and can confirm all selected
-requirements as Already Match. Rebuild remains unavailable for topology Bundles
-until Phase 4; this Execute limitation is not a Preview error. Desktop shows
-“Restore Preview completed. Rebuild for Git worktree topology is not yet available.”
-as information, while real conflicts, Unsupported/Unverified items and other
-prerequisite problems remain visible. See the [Workspace contract](toolkit/CONFIGURATION.md#topology-restore-preview--phase-3).
+Desktop supports topology-aware Restore Preview and confirmed Rebuild through Core.
+Clone, Add Worktree and HEAD changes use existing progress and Verification-aware
+Result presentation. Dependent actions show Conditional until Core can inspect the
+created base; conflicts and Unsupported/Unverified requirements stay visible.
+Rebuild requires ready prerequisites and executable changes. An all-matching plan
+shows No Changes Required; it does not start Execute. Partial/unknown outcomes do
+not become full Success. Graceful Stop and fresh-plan re-entry retain the existing
+lifecycle. See the [Workspace contract](toolkit/CONFIGURATION.md#topology-restore-execute--phase-4).
 
 ### Prerequisites and consent
 

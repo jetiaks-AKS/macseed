@@ -859,6 +859,19 @@ import SwiftUI
         precondition(items[3].action.contains("already used"))
         precondition(items[4].action.hasPrefix("Unsupported:"))
         precondition(items[5].status == .unverified)
+        var executable = raw
+        executable["readiness"] = ["ready": true, "ready_scope": "environment", "reentry": "restore_prepare", "conditions": []] as [String: Any]
+        var conditionalRows = rows
+        conditionalRows[1]["reason"] = "workspace_dependency_pending"
+        executable["plan"] = conditionalRows
+        let enabled = try JSONDecoder().decode(CoreRestorePreparation.self,
+            from: JSONSerialization.data(withJSONObject: executable))
+        try enabled.validate(expected: selection, catalog: catalog)
+        let enabledPresentation = RestorePreviewPresentation(enabled, catalog: catalog)
+        precondition(enabled.readiness.ready && enabled.hasExecutableChanges)
+        precondition(enabledPresentation.categories[0].items[1].restoreReadyText == "Conditional")
+        precondition(enabledPresentation.categories[0].items[1].action.contains("recheck"))
+        precondition(!RestoreTaskPresentation(preview: enabledPresentation, plan: enabled).confirmationMessages(enabled).isEmpty)
         for code in CoreRestorePreparation.workspacePreviewReasons.keys {
             precondition(OperationLogSanitizer.reasons.contains(code))
             precondition(DiagnosticReportPrivacy.reasons.contains(code))
@@ -893,6 +906,12 @@ import SwiftUI
         precondition(prerequisites.manualConditions.isEmpty && prerequisites.displayConditions.isEmpty)
         precondition(!prerequisites.isTerminalReady && !prerequisites.needsAttention)
         precondition(prerequisites.operationAvailabilityMessage == "Restore Preview completed. Rebuild for Git worktree topology is not yet available.")
+        var currentMatching = matching
+        currentMatching["readiness"] = executable["readiness"]
+        let currentNoop = try JSONDecoder().decode(CoreRestorePreparation.self,
+            from: JSONSerialization.data(withJSONObject: currentMatching))
+        precondition(currentNoop.readiness.ready && !currentNoop.hasExecutableChanges)
+        precondition(!RestorePreviewPresentation(currentNoop, catalog: catalog).needsAttention(currentNoop))
         for (disposition, reason) in [("conflict", "workspace_origin_conflict"), ("blocked", "workspace_git_unsupported"),
                                       ("unknown", "workspace_observation_failed")] {
             var problem = matching
@@ -906,11 +925,12 @@ import SwiftUI
         let legacy = try JSONDecoder().decode(CoreRestorePreparation.self, from: JSONSerialization.data(withJSONObject: matching))
         precondition(legacy.readiness.ready && !RestorePreviewPresentation(legacy, catalog: catalog).needsAttention(legacy))
         precondition(RestorePrerequisiteSummaryPresentation(conditions: [], ready: true).operationAvailabilityMessage == nil)
-        print("PASS: topology Protocol V1 actions, detached HEAD, conflicts, Unsupported/Unverified and operation-wide Rebuild gate")
+        print("PASS: topology Protocol V1, conditional Rebuild, no-op, conflicts and compatible operation gate")
     }
 
     @MainActor static func main() async throws {
-        if CommandLine.arguments.contains("--topology-preview-only") { try topologyPreviewChecks(); return }
+        try topologyPreviewChecks()
+        if CommandLine.arguments.contains("--topology-preview-only") { return }
         try assistedAppStoreChecks()
         if CommandLine.arguments.contains("--rosetta-only") {
             try taskPresentationChecks()

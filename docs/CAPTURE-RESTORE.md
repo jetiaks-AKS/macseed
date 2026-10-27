@@ -49,9 +49,12 @@ using Bootstrap Bundle v1. Normal configuration is **not encrypted**; only
 explicitly selected SSH key pairs are encrypted in `secure.age`.
 
 Legacy Bundles retain supported Restore for ordinary Git repositories. New Workspace
-Topology v1 Bundles support Capture and read-only Restore Preview; Restore Execute,
-local Restore publication and Environment Status remain blocked. Technical details
-and safety limits belong to the [Workspace contract](toolkit/CONFIGURATION.md#topology-restore-preview--phase-3).
+Topology v1 Bundles support Capture, Restore Preview and confirmed Core Rebuild with
+Global Verification. Selected base repositories precede linked/nested checkouts;
+conditional branches/commits are checked again after Clone. Existing files are
+preserved, and a matching repeat Preview needs no Rebuild. Environment Status and
+VS Code descriptor restoration remain unsupported. Technical details and recovery
+limits belong to the [Workspace contract](toolkit/CONFIGURATION.md#topology-restore-execute--phase-4).
 
 Settings inclusion, supported keys, unmanaged absence and the qualified Screenshot
 Desktop-default exception belong to [Configuration](toolkit/CONFIGURATION.md#macos-settings).

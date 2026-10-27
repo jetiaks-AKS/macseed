@@ -2598,6 +2598,9 @@ private struct WorkflowAnchorFrames: PreferenceKey {
     }
 
     static func topologyPreviewChecks() {
+        let ready = RestorePrerequisiteSummaryPresentation(conditions: [], ready: true)
+        precondition(ready.isTerminalReady && !ready.needsAttention && ready.operationAvailabilityMessage == nil)
+        precondition(OperationLogSanitizer.vocabularies["predicate"]?.contains("topology") == true)
         precondition(RestorePreviewPresentation.readyText(action: "add_worktree") == "Ready to Create")
         let shared = CoreRestorePreparation.workspacePreviewReasons["workspace_checkout_destination"]!
         precondition(shared.contains("no separate folder creation"))
@@ -2629,11 +2632,12 @@ private struct WorkflowAnchorFrames: PreferenceKey {
         }
         precondition(CoreRestorePreparation.workspacePreviewReasons["workspace_file_count_limit"]!.contains("4,096"))
         precondition(CoreRestorePreparation.workspacePreviewReasons["workspace_file_bytes_limit"]!.contains("16 MiB"))
-        print("PASS: topology shared-destination, dependency, preservation and Preview-only explanations")
+        print("PASS: topology readiness, shared-destination, dependency and preservation explanations")
     }
 
     @MainActor static func main() async {
-        if CommandLine.arguments.contains("--topology-preview-only") { topologyPreviewChecks(); return }
+        topologyPreviewChecks()
+        if CommandLine.arguments.contains("--topology-preview-only") { return }
         if CommandLine.arguments.contains("--preview-notices-only") { restorePreviewNoticesChecks(); return }
         if CommandLine.arguments.contains("--final-alignment-only") { try! await finalCapturePreviewAlignmentChecks(); return }
         if CommandLine.arguments.contains("--restore-macos-only") { await restoreMacOSChecks(); return }

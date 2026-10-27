@@ -1246,7 +1246,7 @@ class TopologyTests(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertEqual(bundle.fingerprint(target), before)
 
-    def test_protocol_allows_preview_but_rejects_extension_before_target_mutation(self):
+    def test_protocol_allows_preview_but_rejects_stale_identity_before_target_mutation(self):
         self.pack()
         spec = importlib.util.spec_from_file_location('topology_restore_fixture',
             MODULE.parents[2] / 'scripts/test-restore-prepare.py')
@@ -1259,10 +1259,11 @@ class TopologyTests(unittest.TestCase):
         config_before = bundle.fingerprint(fixture.project / 'config')
         result, events = fixture.invoke(path=self.archive)
         self.assertEqual(result.returncode, 0, events)
-        self.assertFalse(events[1]['data']['readiness']['ready'])
+        self.assertNotIn('workspace_restore_not_enabled',
+                         [row['code'] for row in events[1]['data']['readiness']['conditions']])
         result, events = fixture.execute('0' * 64, path=self.archive)
         self.assertEqual(result.returncode, 2, events)
-        self.assertEqual(events[-1]['data']['code'], 'unsupported_bundle')
+        self.assertEqual(events[-1]['data']['code'], 'stale_plan')
         self.assertFalse(events[-1]['data']['publication_started'])
         self.assertFalse(events[-1]['data']['target_mutation_may_have_started'])
         self.assertFalse((fixture.root / 'mutations').exists())

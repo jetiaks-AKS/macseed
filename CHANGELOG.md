@@ -18,6 +18,12 @@ The format is based on the principles of **Keep a Changelog**.
 * Read-only topology Restore Preview reports Already Match, Clone Planned, Add
   Worktree Planned and Switch Branch Planned, conflicts and Unsupported/Unverified,
   with stable prepared-plan identity for consistent repeated observations.
+* Topology-aware Core Restore executes selected base Clone, native linked worktree
+  creation and safe branch/exact detached HEAD changes through the existing owned
+  lifecycle, with dependency checks, retained partials and Global Verification.
+  Desktop enables confirmed Rebuild for executable plans and labels conditional
+  dependencies; matching repeats require no changes. Topology Environment Status
+  and VS Code descriptor restoration remain separate work.
 * Native SwiftUI Desktop over Core Protocol V1: real Capture, Restore
   Prepare/Execute and read-only Saved Environment Status, with explicit selection,
   confirmation, structured progress, Verification-aware results and fresh-plan
@@ -159,9 +165,9 @@ The format is based on the principles of **Keep a Changelog**.
 
 ### Safety / Limitations
 
-* Restore Execute, local Restore publication and Environment Status remain
-  unsupported for topology Bundles. VS Code workspace relationship restoration
-  remains a future phase; see the [Workspace contract](docs/toolkit/CONFIGURATION.md#topology-restore-preview--phase-3).
+* Topology Restore requires Core's qualified execution path; ordinary CLI unpack
+  and Environment Status remain unsupported. VS Code workspace relationship
+  restoration remains Phase 5; see the [Workspace contract](docs/toolkit/CONFIGURATION.md#topology-restore-execute--phase-4).
 
 ## [3.4.0] - 2026-10-02
 

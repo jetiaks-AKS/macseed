@@ -142,6 +142,10 @@ bootstrap_workspace_repositories() {
 }
 
 verify_workspace_repositories() {
+    if [[ -n "${MACSEED_WORKSPACE_CONTEXT:-}" ]]; then
+        verify_workspace_topology
+        return $?
+    fi
     verification_items_selected git-repositories || return 0
     local file candidates records repository path remote branch result predicate kind
     file="$(blueprint_generated_file git-repositories)"

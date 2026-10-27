@@ -51,6 +51,7 @@ SUITES=(
     scripts/test-workspace-bootstrap.sh
     scripts/test-workspace-discovery.sh
     scripts/test-workspace-folders.sh
+    scripts/test-workspace-topology-execute.py
 )
 
 # The inventory above is authoritative; weights never select coverage.

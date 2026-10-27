@@ -278,14 +278,22 @@ contract lists the evidence boundaries in
 [Configuration](../toolkit/CONFIGURATION.md#topology-restore-preview--phase-3).
 
 Topology evidence contributes to `prepared_plan_id` and the optional diagnostic
-`workspace_observation` digest. `workspace_restore_not_enabled` is always an
-operation-wide Unsupported readiness condition, even for otherwise matching rows.
-It describes Execute availability, not a failed Preview: matching or safely planned
-topology rows produce no module warning. Desktop presents this exact operation gate
-as an informational limitation; other prerequisites and item problems remain visible.
-`has_executable_changes` retains its existing planned-row meaning and cannot
-override `readiness.ready=false`. Execute and Environment Status remain unsupported
-for topology Bundles; ordinary legacy Bundle behavior is unchanged.
+`workspace_observation` digest. Core Execute admits qualified topology plans through
+the existing publication and owned Bootstrap lifecycle. A private context binds the
+confirmed actions and source/staged/published identities; Workspace rechecks these
+before each action. Conditional dependent rows retain `disposition=planned` and
+`workspace_dependency_pending` (or `workspace_commit_after_clone`), without claiming
+that branch/object availability has already been established.
+
+Readiness and `has_executable_changes` control Desktop Rebuild as for other domains;
+all-matching plans require no Execute. Item conflicts/unsupported observations remain
+visible and are never converted into mutations. Operation/lifecycle records use the
+existing shapes. Global Verification reports `topology` conformity for selected Git
+checkouts and `directory` conformity for folders; Git exit 0 alone is insufficient.
+Unknown consequences retain the existing durable Execute fence. See the
+[execution and recovery limits](../toolkit/CONFIGURATION.md#topology-restore-execute--phase-4).
+Environment Status and VS Code descriptor restoration remain unsupported for topology
+Bundles. Ordinary legacy Bundle behavior is unchanged.
 
 ### Explicit PKG installer preparation
 

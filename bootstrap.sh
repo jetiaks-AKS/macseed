@@ -508,7 +508,7 @@ bootstrap_application_readiness_timed() (
             *) echo ssh_configuration_observation_failed; return 2 ;;
         esac
     fi
-    if application_scope_selected git-repositories; then
+    if application_scope_selected git-repositories && [[ -z "${MACSEED_WORKSPACE_CONTEXT:-}" ]]; then
         if ! repository_application_readiness >/dev/null 2>&1; then
             echo "$REPOSITORY_APPLICATION_CONDITION"
             return 2
@@ -520,6 +520,11 @@ bootstrap_application_readiness_timed() (
             repository_exists "$path"
             [[ $? -ne 1 ]] || needs_network=true
         done <<< "$repositories"
+    fi
+    if [[ "${MACSEED_WORKSPACE_CLONE_REQUIRED:-false}" == true &&
+          ( "$focus" == all || "$focus" == git-repositories ) ]]; then
+        repository_git_readiness >/dev/null 2>&1 || { echo "$REPOSITORY_APPLICATION_CONDITION"; return 2; }
+        needs_network=true
     fi
     if [[ "$BOOTSTRAP_READINESS_VALIDATED" != true ]] && ! bootstrap_run_startup_validation >/dev/null 2>&1; then
         echo invalid_selected_input
@@ -670,7 +675,9 @@ bootstrap_application_readiness_report_timed() {
                 ssh_configuration_scope_selected || continue
             fi
         else
-            bootstrap_item_scope_selected "$domain" || continue
+            if [[ "$domain" != git-repositories || "${MACSEED_WORKSPACE_CLONE_REQUIRED:-false}" != true ]]; then
+                bootstrap_item_scope_selected "$domain" || continue
+            fi
         fi
         # Validate private read-only inputs once, only when a domain needs this
         # report. Live-state checks still run at every readiness boundary.

@@ -4,6 +4,7 @@ Reuse the topology contract and Discovery's qualified Git readers. The caller
 owns Bundle/Selection validation and the existing Protocol V1 plan identity.
 """
 import hashlib
+from contextlib import ExitStack
 import importlib.util
 import json
 import os
@@ -11,10 +12,13 @@ from pathlib import Path
 import re
 import stat
 import subprocess
+import sys
 import time
 import unicodedata
 
 import bundle
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 _spec = importlib.util.spec_from_file_location('workspace_observation',
     Path(__file__).resolve().parents[2] / 'discovery/workspace/topology.py')
@@ -28,7 +32,7 @@ UNSUPPORTED_REASONS = {code: code for code in (
     'workspace_git_unsupported', 'workspace_file_count_limit', 'workspace_file_bytes_limit',
     'workspace_symlink_unsupported', 'workspace_file_unsupported', 'workspace_configuration_unsupported',
     'workspace_index_unsupported', 'workspace_hooks_unsupported', 'workspace_tree_unsupported',
-    'workspace_submodule_unsupported', 'workspace_path_unsupported')}
+    'workspace_submodule_unsupported', 'workspace_path_unsupported', 'workspace_git_metadata_unsupported')}
 UNSUPPORTED_REASONS.update({
     'git_external_configuration': 'workspace_configuration_unsupported',
     'git_metadata_symlink': 'workspace_git_metadata_unsupported',
@@ -177,13 +181,11 @@ class Inspector(discovery.Observer):
     def require_inert_hooks(self, path, common=None):
         # No hook suppression is promised by Phase 3. Includes/overrides are
         # unqualified; do not follow their paths or execute a hook to inspect it.
-        pattern = r'^(core\.hookspath|hook\.|include\.|includeif\.)'
-        if common is None:
-            pattern = r'^(core\.hookspath|hook\.|include\.|includeif\.|init\.templatedir)'
-            template_override = 'GIT_TEMPLATE_DIR' in os.environ
-            self.remember(template_override)
-            if template_override:
-                raise contract.Unsupported('workspace_hooks_unsupported')
+        pattern = r'^(core\.hookspath|hook\.|include\.|includeif\.|init\.templatedir)'
+        template_override = 'GIT_TEMPLATE_DIR' in os.environ
+        self.remember(template_override)
+        if template_override:
+            raise contract.Unsupported('workspace_hooks_unsupported')
         if self.run(path, 'config', '--no-includes', '--get-regexp', pattern, absent=True, hook_config=True):
             raise contract.Unsupported('workspace_hooks_unsupported')
         if common is None:
@@ -211,6 +213,44 @@ class Inspector(discovery.Observer):
             if not stat.S_ISREG(info.st_mode) or info.st_mode & 0o111 or os.access(hook, os.X_OK):
                 raise contract.Unsupported('workspace_hooks_unsupported')
 
+    def mutation_metadata(self, path, common):
+        """Qualify metadata Git may write; never follow redirected refs/logs/index."""
+        gitdir = Path(self.line(path, 'rev-parse', '--absolute-git-dir'))
+        count = 0
+        for directory in sorted({common, gitdir}):
+            for name in ('index', 'HEAD', 'config', 'packed-refs', 'shallow', 'refs', 'logs', 'worktrees'):
+                root = directory / name
+                pending = [root]
+                while pending:
+                    target = pending.pop()
+                    count += 1
+                    if count > 4096 or time.monotonic() >= self.deadline:
+                        raise contract.Unsupported('workspace_git_metadata_unsupported')
+                    try:
+                        info = target.lstat()
+                    except FileNotFoundError:
+                        self.remember([str(target), 'absent'])
+                        continue
+                    self.remember([str(target), info.st_dev, info.st_ino, info.st_mode,
+                                   info.st_size, info.st_mtime_ns, info.st_ctime_ns])
+                    if stat.S_ISDIR(info.st_mode):
+                        pending.extend(sorted(target.iterdir()))
+                    elif not stat.S_ISREG(info.st_mode):
+                        raise contract.Unsupported('workspace_git_metadata_unsupported')
+                    if target.name.endswith('.lock') or target.name == 'locked':
+                        raise Conflict('workspace_operation_in_progress')
+
+    def clone_profile(self, remote, destination, branch):
+        from clone_execution import command, ssh_configuration
+        try:
+            with ExitStack() as scratch:
+                ssh = remote.startswith('ssh://') or (':' in remote and not remote.startswith('https://'))
+                configuration = ssh_configuration(scratch) if ssh else '/dev/null'
+                command(remote, str(destination), branch, configuration,
+                        observe=lambda data: self.remember(hashlib.sha256(data).hexdigest()))
+        except (OSError, ValueError):
+            raise contract.Unsupported('workspace_configuration_unsupported') from None
+
     def checkout(self, path):
         common = self.common(path)
         unsafe = self.run(path, 'config', '--local', '--no-includes', '--name-only', '--get-regexp',
@@ -219,9 +259,10 @@ class Inspector(discovery.Observer):
             raise contract.Unsupported('workspace_configuration_unsupported')
         gitdir = Path(self.line(path, 'rev-parse', '--absolute-git-dir'))
         discovery.inside(gitdir, self.home)
-        in_progress = any(os.path.lexists(gitdir / name) for name in (
+        in_progress = any(os.path.lexists(directory / name) for directory in {gitdir, common} for name in (
             'index.lock', 'HEAD.lock', 'MERGE_HEAD', 'CHERRY_PICK_HEAD', 'REVERT_HEAD',
-            'rebase-merge', 'rebase-apply', 'sequencer'))
+            'rebase-merge', 'rebase-apply', 'sequencer', 'packed-refs.lock', 'config.lock', 'shallow.lock'))
+        in_progress |= any(common.glob('refs/**/*.lock'))
         self.remember(in_progress)
         entries = discovery.porcelain(self.run(path, 'worktree', 'list', '--porcelain', '-z'))
         origin = self.line(path, 'config', '--local', '--no-includes', '--get', 'remote.origin.url', absent=True)
@@ -255,12 +296,15 @@ class Inspector(discovery.Observer):
             matches = observed['branch'] == 'refs/heads/' + branch
         else:
             target = self.line(path, 'rev-parse', '--verify', '--quiet', member['head_oid'] + '^{commit}', absent=True)
-            if not target:
+            if target != member['head_oid']:
                 return 'inspect', 'blocked', 'workspace_commit_unavailable'
             matches = not observed['branch'] and observed['oid'] == member['head_oid']
         if matches and not creating:
             return 'none', 'satisfied', 'workspace_local_changes_preserved' if observed['dirty'] else None
+        if observed['in_progress']:
+            return 'inspect', 'blocked', 'workspace_operation_in_progress'
         self.require_inert_hooks(path, observed['common'])
+        self.mutation_metadata(path, observed['common'])
         # Matching checkout metadata implies no Git action: project contents,
         # ignored build products and content symlinks cannot obstruct that no-op.
         # Potential actions still require the complete bounded file evidence.
@@ -269,11 +313,7 @@ class Inspector(discovery.Observer):
         protected += self.files(path, self.run(path, 'ls-files', '--others', '--ignored', '--exclude-standard', '-z'))
         if not creating:
             observed['protected'] = protected
-        if creating:
-            return 'add_worktree', 'planned', None
-        if observed['in_progress']:
-            return 'inspect', 'blocked', 'workspace_operation_in_progress'
-        if observed['dirty']:
+        if observed['dirty'] and not creating:
             return 'inspect', 'conflict', 'workspace_local_changes'
         tree = self.run(path, 'ls-tree', '-r', '-z', target)
         destinations = []
@@ -284,6 +324,8 @@ class Inspector(discovery.Observer):
             if mode.startswith((b'160000 ', b'120000 ')):
                 raise contract.Unsupported('workspace_tree_unsupported')
             destinations.append(contract.relative(name.decode('utf-8')))
+        if creating:
+            return 'add_worktree', 'planned', None
         if any(related(name, destination) for name in observed['protected'] for destination in destinations):
             return 'inspect', 'conflict', 'workspace_protected_files'
         return 'switch_branch', 'planned', None
@@ -316,18 +358,24 @@ class Inspector(discovery.Observer):
                 observation = None
                 try:
                     path = self.destination(paths[item])
+                    from clone_execution import pending as partial_pending
+                    if partial_pending(self.home / paths[item]):
+                        raise Conflict('workspace_partial_checkout')
                     if capability['status'] != 'supported':
                         raise contract.Unsupported('workspace_git_unsupported')
                     if member['head_kind'] == 'branch':
                         self.run(self.home, 'check-ref-format', '--branch', row['branch'])
-                    if any(completed[parent]['disposition'] not in ('satisfied', 'planned') or
-                           completed[parent]['action'] in ('clone', 'add_worktree') for parent in dependencies[item]):
+                    if any(completed[parent]['disposition'] not in ('satisfied', 'planned') for parent in dependencies[item]):
                         action, disposition, reason = 'inspect', 'blocked', 'workspace_dependency_pending'
+                    elif ((path is None or not any(path.iterdir())) and
+                          any(completed[parent]['disposition'] == 'planned' for parent in dependencies[item])):
+                        action, disposition, reason = ('clone' if item == base else 'add_worktree'), 'planned', 'workspace_dependency_pending'
                     elif path is None or not any(path.iterdir()):
                         if item == base:
                             self.require_inert_hooks(self.home)
-                            action, disposition, reason = (('clone', 'planned', None) if member['head_kind'] == 'branch' else
-                                                          ('inspect', 'blocked', 'workspace_commit_unavailable'))
+                            self.clone_profile(row['remote'], self.home / paths[item], row['branch'])
+                            action, disposition, reason = 'clone', 'planned', (
+                                None if member['head_kind'] == 'branch' else 'workspace_commit_after_clone')
                         else:
                             base_observation = completed[base]['observation']
                             if any(entry['path'] == str(self.home / paths[item]) for entry in base_observation['entries']):
@@ -337,6 +385,8 @@ class Inspector(discovery.Observer):
                         if not os.path.lexists(path / '.git'):
                             raise Conflict('workspace_destination_conflict')
                         observation = self.checkout(path)
+                        if self.line(path, 'rev-parse', '--show-object-format') != group['object_format']:
+                            raise Conflict('workspace_topology_conflict')
                         expected_common = self.home / paths[base] / '.git'
                         if observation['common'] != expected_common or observation['entries'][0]['path'] != str(self.home / paths[base]):
                             raise Conflict('workspace_topology_conflict')
@@ -383,11 +433,12 @@ class Inspector(discovery.Observer):
             else:
                 try:
                     exists = self.destination(folder) is not None
-                    if any(completed[parent]['disposition'] not in ('satisfied', 'planned') or
-                           completed[parent]['action'] in ('clone', 'add_worktree') for parent in parents):
+                    if any(completed[parent]['disposition'] not in ('satisfied', 'planned') for parent in parents):
                         action, disposition, reason = 'inspect', 'blocked', 'workspace_dependency_pending'
                     else:
                         action, disposition, reason = ('none', 'satisfied', None) if exists else ('create_directory', 'planned', None)
+                        if not exists and any(completed[parent]['disposition'] == 'planned' for parent in parents):
+                            reason = 'workspace_dependency_pending'
                 except Conflict:
                     action, disposition, reason = 'inspect', 'conflict', 'workspace_destination_conflict'
                 except OSError:

@@ -299,6 +299,7 @@ class OwnedBootstrap:
                              'vscode_lifecycle_state_failed', 'vscode_process_interrupted',
                              'git_clone_deadline', 'git_clone_no_progress', 'git_clone_observation_failed',
                              'git_clone_quiescence_unconfirmed', 'git_clone_state_failed',
+                             'workspace_preservation_unconfirmed', 'workspace_verification_failed',
                              'external_observation_unquiescent'}:
                     self.external_lifecycle_cause = cause
             except (OSError, ValueError, TypeError, AttributeError):

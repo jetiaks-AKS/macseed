@@ -114,7 +114,7 @@ struct OperationLogSanitizer {
         "source_status": ["present", "absent", "unavailable", "observation_error", "unsupported", "valid", "invalid", "observed_present", "observed_absent", "partial", "unobserved", "unknown"],
         "severity": ["info", "warning", "error"],
         "comparison_kind": ["matching", "missing", "differing", "unverified", "unsupported", "unresolved", "extra", "unknown_difference"],
-        "predicate": ["exists", "installed", "configured", "matching", "repository", "branch", "remote", "identity", "settings", "folder_exists", "package_installed", "configuration_matches", "identity_pair_matches_package", "directory", "file_content", "stored_preference", "direct_global_value", "supported_config_match", "worktree", "origin", "revision"],
+        "predicate": ["exists", "installed", "configured", "matching", "repository", "branch", "remote", "identity", "settings", "folder_exists", "package_installed", "configuration_matches", "identity_pair_matches_package", "directory", "file_content", "stored_preference", "direct_global_value", "supported_config_match", "worktree", "origin", "revision", "topology"],
         "scope": ["operation", "item"],
         "tool": ["homebrew", "other"],
         "probe": ["version", "prefix", "inventory", "metadata", "capability", "read"],

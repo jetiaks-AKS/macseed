@@ -8,12 +8,18 @@ source modules/bootstrap/workspace/validation.sh
 source modules/bootstrap/workspace/folders.sh
 source modules/bootstrap/workspace/repositories-helpers.sh
 source modules/bootstrap/workspace/repositories.sh
+source modules/bootstrap/workspace/topology-execution.sh
 
 # ==========================================
 # Validate Workspace Bootstrap Input
 # ==========================================
 
 workspace_validate_bootstrap_inputs() {
+
+    if [[ -n "${MACSEED_WORKSPACE_CONTEXT:-}" ]]; then
+        workspace_topology_validate
+        return $?
+    fi
 
     local folders_required=true
     local repositories_required=true
@@ -57,6 +63,11 @@ workspace_validate_bootstrap_inputs() {
 }
 
 bootstrap_workspace() {
+
+    if [[ -n "${MACSEED_WORKSPACE_CONTEXT:-}" ]]; then
+        bootstrap_workspace_topology
+        return $?
+    fi
 
     local workspace_result=0
     local submodule_result

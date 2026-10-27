@@ -8,17 +8,17 @@ below does not reopen accepted UI or the completed D1–D4/R5 implementation aud
 
 Follow the [capability checkpoint](ROADMAP.md#complete-workspace--git-worktree-restoration);
 the [current limits](docs/toolkit/CONFIGURATION.md#linked-git-worktree-capability-limits)
-separate implemented Discovery/Capture from unsupported restoration.
+separate implemented Core Capture/Restore from remaining capability and real-Mac gates.
 
 - [ ] Extend representative real-Mac topology qualification beyond the accepted Capture and matching Preview gates.
 - [ ] Decide any expansion of current bounded local clone SSH profiles/identity
   routing and additional migration/proxy support in the Git/SSH contract. Keep
   exclusions until qualified; filters/LFS require a separate scope decision.
-- [ ] Confirm hosted CI for Phase 3 before separately authorizing topology Execute implementation.
-- [ ] Implement later Restore/Verification and VS Code descriptor/Desktop phases
-  after their respective reviews.
-- [ ] Qualify file preservation, occupied branches, conflicting paths, observation
-  failure, retry and repeat/no-op with disposable fixtures and representative real gates.
+- [ ] Review/publish Phase 4 and obtain its hosted CI result after local validation.
+- [ ] Qualify topology Restore Execute on representative real Macs, including file
+  preservation, branch occupancy, conflicts, interruption and repeat/no-op.
+- [ ] Integrate topology Environment Status under its own inspection/verification contract.
+- [ ] Implement Phase 5 VS Code descriptor restoration after its separate review.
 - [ ] Define any unique Workspace-data transfer through a separate bounded secure
   migration contract; keep current folder restoration structure-only.
 

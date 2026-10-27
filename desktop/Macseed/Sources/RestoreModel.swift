@@ -67,13 +67,14 @@ struct RestorePreviewPresentation {
             case "source_excluded": reasonMessage = "The captured SSH configuration is not eligible for restoration."
             case "observation_failed": reasonMessage = "Current state could not be inspected reliably."
             case "target_conflict": reasonMessage = "Conflict: existing state differs from the saved environment and will be preserved."
-            case "privileged_lifecycle_unknown": reasonMessage = "Privileged Homebrew work may still be running. Inspect it before another Rebuild."
+            case "privileged_lifecycle_unknown": reasonMessage = "External work may still be running. Inspect it before another Rebuild."
             default: reasonMessage = row.reason.flatMap { CoreRestorePreparation.workspacePreviewReasons[$0] }
             }
             let inventoryLabel = row.selectionItemID.flatMap { id in catalog.inventory.first { $0.id == row.domain }?.items.first { $0.id == id }?.label }
             let title = inventoryLabel ?? row.displayName ?? (row.itemID.hasPrefix("opaque:") ? "Private item" : (row.itemID == "scope" ? "Selected area" : row.itemID))
             let action = row.assistedAppStoreItem?.message ?? row.unsupportedRepairExplanation ?? row.diagnostic?.explanation ?? reasonMessage ?? (row.authorizationRequired == true ? message + " · Administrator authorization required" : message)
-            rows[row.domain, default: []].append(DisplayItem(id: "restore-\(index)", title: title, status: status, action: action, reason: row.reason, restoreReadyText: status == .ready ? Self.readyText(action: row.action) : nil))
+            let conditional = ["workspace_dependency_pending", "workspace_commit_after_clone"].contains(row.reason ?? "")
+            rows[row.domain, default: []].append(DisplayItem(id: "restore-\(index)", title: title, status: status, action: action, reason: row.reason, restoreReadyText: status == .ready ? (conditional ? "Conditional" : Self.readyText(action: row.action)) : nil))
         }
         categories = order.map { domain in
             DisplayCategory(id: domain, title: catalog.inventory.first { $0.id == domain }?.label ?? "Other supported state", symbol: "slider.horizontal.3", items: rows[domain] ?? [])
@@ -157,6 +158,8 @@ struct RestoreProgressRow {
                         case "set_setting", "set_preference": verb = "Restoring"
                         case "create", "create_directory": verb = "Creating"
                         case "clone": verb = "Cloning"
+                        case "add_worktree": verb = "Adding worktree"
+                        case "switch_branch": verb = "Updating HEAD for"
                         default: verb = nil
                         }
                         if let verb { active[target] = (itemID, "\(verb) \(name)…") }

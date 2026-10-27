@@ -94,6 +94,10 @@ verification_input_identity() (
             "${BUNDLE_RESTORE_SECURE_FILE:+secure-selected}" "${GV_SECURE_ATTEMPT:-}"
         local path domain
         verification_hash_input "${BLUEPRINT_FILE:-config/blueprint.conf}" || exit 2
+        if [[ -n "${MACSEED_WORKSPACE_CONTEXT:-}" ]]; then
+            verification_hash_input "$MACSEED_WORKSPACE_CONTEXT" || exit 2
+            verification_hash_input "$BLUEPRINT_GENERATED_DIR/workspace/topology.json" || exit 2
+        fi
         for domain in homebrew-packages homebrew-casks app-store vscode-extensions workspace-folders git-repositories; do
             if blueprint_exists && [[ -z "$(blueprint_selected_items "$domain")" ]]; then continue; fi
             path="$(blueprint_generated_file "$domain")" || exit 2

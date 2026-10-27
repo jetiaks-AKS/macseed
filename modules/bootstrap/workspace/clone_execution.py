@@ -37,7 +37,7 @@ def state_directory():
 
 def completed(value):
     return (type(value.get('contract')) is int and value['contract'] == 1 and
-            value.get('tool') == 'git_clone' and value.get('state') == 'quiescent' and
+            value.get('tool') in ('git_clone', 'git_workspace') and value.get('state') == 'quiescent' and
             value.get('quiescence_confirmed') is True and value.get('outcome') in ('success', 'failure') and
             isinstance(value.get('owner'), str) and re.fullmatch('[0-9a-f]{32}', value['owner']))
 
@@ -71,8 +71,9 @@ def admitted():
 
 
 class Lifecycle:
-    def __init__(self, path):
+    def __init__(self, path, *, existing=False, tool='git_clone'):
         self.path = path
+        self.existing, self.tool = existing, tool
         self.directory = self.lock = self.marker = None
 
     def __enter__(self):
@@ -97,9 +98,9 @@ class Lifecycle:
                 previous = None
             if previous is not None and not completed(previous):
                 raise ValueError('clone pending')
-            if os.path.lexists(self.path) or pending(self.path):
+            if (os.path.lexists(self.path) and not self.existing) or pending(self.path):
                 raise ValueError('existing destination')
-            self.value = dict(contract=1, tool='git_clone', state='active', owner=uuid.uuid4().hex)
+            self.value = dict(contract=1, tool=self.tool, state='active', owner=uuid.uuid4().hex)
             journal(None, self.value, self.directory)
             journal(None, self.value, self.marker, name='external-tool-active.json')
             return self
@@ -107,7 +108,7 @@ class Lifecycle:
             self.__exit__(None, None, None)
             raise
 
-    def finish(self, status, safe, reason):
+    def finish(self, status, safe, reason, *, launched=True):
         if (read_state(self.directory) != self.value or
                 read_state(self.marker, 'external-tool-active.json') != self.value):
             raise ValueError('clone state changed')
@@ -116,7 +117,7 @@ class Lifecycle:
             journal(None, value, self.directory)
             journal(None, value, self.marker, name='external-tool-active.json')
             return
-        if status != 0 and os.path.lexists(self.path):
+        if launched and status != 0 and (os.path.lexists(self.path) or self.tool == 'git_workspace'):
             journal(None, dict(contract=1, state='partial_clone'), self.directory,
                     name=partial_name(self.path))
         journal(None, dict(self.value, state='quiescent', quiescence_confirmed=True,
@@ -204,7 +205,7 @@ def ssh_configuration(stack):
     return str(path)
 
 
-def command(remote, path, branch, ssh_config='/dev/null'):
+def command(remote, path, branch, ssh_config='/dev/null', *, observe=None):
     # Reject config/env that can start filters, helpers, redirected work or hooks
     # outside the bounded transport contract. Do not rewrite global configuration.
     forbidden = ('GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR', 'GIT_INDEX_FILE', 'GIT_OBJECT_DIRECTORY',
@@ -219,6 +220,8 @@ def command(remote, path, branch, ssh_config='/dev/null'):
     config = read(['git', 'config', '--null', '--list'], cwd='/')
     if config.returncode != 0:
         raise ValueError('configuration unavailable')
+    if observe is not None:
+        observe(config.stdout)
     for record in config.stdout.split(b'\0'):
         key = record.partition(b'\n')[0].lower()
         if key.startswith((b'filter.', b'url.', b'include', b'remote.', b'uploadpack.')):
@@ -236,7 +239,7 @@ def command(remote, path, branch, ssh_config='/dev/null'):
                  '-c', 'protocol.allow=never', '-c', 'protocol.https.allow=always',
                  '-c', 'protocol.ssh.allow=always', '-c', 'protocol.file.allow=always',
                  'clone', '--progress', '--no-local', '--no-recurse-submodules', '--template=',
-                 '--branch', branch, '--', remote, path]
+                 *(['--branch', branch] if branch else []), '--', remote, path]
     return arguments, environment
 
 
@@ -248,26 +251,51 @@ class CloneExecutor:
     def cancel(self, *_):
         self.cancelled = True
 
-    def run(self, remote, path, branch):
+    def run(self, remote, path, branch, *, empty_destination=False, verify=None):
+        def prepare(scratch):
+            if empty_destination and (Path(path).is_symlink() or not Path(path).is_dir() or any(Path(path).iterdir())):
+                raise ValueError('destination changed')
+            ssh_remote = remote.startswith('ssh://') or (':' in remote and not remote.startswith(('https://', 'file://', '/')))
+            config = ssh_configuration(scratch) if ssh_remote else '/dev/null'
+            return command(remote, path, branch, config)
+        return self._run(path, prepare, existing=empty_destination, verify=verify)
+
+    def run_local(self, path, arguments, environment, *, verify=None, unchanged=None, require_unchanged=False):
+        """Same owned lifecycle for qualified worktree/HEAD operations."""
+        return self._run(path, lambda _scratch: (arguments, environment),
+                         existing=True, tool='git_workspace', verify=verify, unchanged=unchanged,
+                         require_unchanged=require_unchanged)
+
+    def _run(self, path, prepare, *, existing=False, tool='git_clone', verify=None, unchanged=None, require_unchanged=False):
+        self.native_exit = None
         process = tree = lifecycle = None
         scratch = ExitStack()
         status, reason, safe = 2, 'git_clone_admission_failed', True
         try:
-            if not admitted() or pending() or pending(path) or os.path.lexists(path):
+            if not admitted() or pending() or pending(path) or (os.path.lexists(path) and not existing):
                 return status, reason, False
-            # Effective global config only: the caller's repository is unrelated.
-            ssh_remote = remote.startswith('ssh://') or (':' in remote and not remote.startswith(('https://', 'file://', '/')))
-            config = ssh_configuration(scratch) if ssh_remote else '/dev/null'
-            arguments, environment = command(remote, path, branch, config)
+            arguments, environment = prepare(scratch)
             process_table()
-            lifecycle = Lifecycle(path)
+            lifecycle = Lifecycle(path, existing=existing, tool=tool)
             lifecycle.__enter__()
             if self.cancelled:
                 status, reason = 130, 'cancelled'
             else:
-                process = subprocess.Popen(arguments, env=environment, cwd='/',
-                                           stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                                           stderr=subprocess.PIPE, start_new_session=True)
+                def launch():
+                    return subprocess.Popen(arguments, env=environment, cwd='/',
+                                            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                            stderr=subprocess.PIPE, start_new_session=True)
+                from homebrew_stop import State, KEY, StopAccepted
+                if os.environ.get('MACSEED_WORKSPACE_CONTEXT') and os.environ.get(KEY):
+                    def launch_at_boundary(data):
+                        if data['stop']:
+                            raise StopAccepted()
+                        if data['scope'] != 'workspace':
+                            raise ValueError('workspace launch scope changed')
+                        return launch()
+                    process = State(os.environ[KEY]).locked(launch_at_boundary)
+                else:
+                    process = launch()
                 safe = False
                 tree = ProcessTree(process.pid)
                 os.set_blocking(process.stderr.fileno(), False)
@@ -340,9 +368,20 @@ class CloneExecutor:
                 process.stderr.close()
             if not safe and process is not None:
                 status, reason = 129, 'git_clone_quiescence_unconfirmed'
+            if safe and status == 0 and verify is not None:
+                try:
+                    if not verify():
+                        status, reason = 2, 'workspace_verification_failed'
+                except ERRORS:
+                    status, reason, safe = 129, 'workspace_preservation_unconfirmed', False
             if lifecycle is not None and lifecycle.directory is not None:
                 try:
-                    lifecycle.finish(status, safe, reason)
+                    retained = process is not None
+                    if safe and status != 0 and self.native_exit != 0 and unchanged is not None:
+                        retained = not unchanged()
+                        if retained and require_unchanged:
+                            status, reason, safe = 129, 'workspace_preservation_unconfirmed', False
+                    lifecycle.finish(status, safe, reason, launched=retained)
                 except ERRORS:
                     status, reason, safe = 129, 'git_clone_state_failed', False
                 finally:

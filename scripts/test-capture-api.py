@@ -293,10 +293,10 @@ esac
         self.assertEqual(inspected_events[-2]['data']['selected_item_counts']['workspace-folders'], int(folders))
         self.assertEqual(inspected_events[-2]['data']['selected_item_counts']['git-repositories'], int(git))
         if git:
-            # Exercise only the existing refusal; topology Restore stays disabled.
+            # Execute still requires the exact freshly prepared identity.
             result, events = fixtures.RestorePrepareTests.execute(self, '0' * 64, path=destination)
             self.assertEqual(result.returncode, 2)
-            self.assertEqual(events[-1]['data']['code'], 'unsupported_bundle')
+            self.assertEqual(events[-1]['data']['code'], 'stale_plan')
             self.assertFalse(events[-1]['data']['publication_started'])
             self.assertFalse(events[-1]['data']['target_mutation_may_have_started'])
         self.assertEqual(bundle.fingerprint(self.home), before)

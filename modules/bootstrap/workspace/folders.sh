@@ -227,6 +227,7 @@ bootstrap_workspace_folders() {
 }
 
 verify_workspace_folders() {
+    [[ -z "${MACSEED_WORKSPACE_CONTEXT:-}" ]] || return 0
     verification_items_selected workspace-folders || return 0
     local records folder result
     records="$(workspace_read_bootstrap_folders "$(blueprint_generated_file workspace-folders)")" || {

@@ -3414,8 +3414,7 @@ class TopologyPreviewTests(unittest.TestCase):
         result, events = self.invoke(**kwargs)
         self.assertEqual(result.returncode, 0, events)
         plan = events[1]['data']
-        self.assertFalse(plan['readiness']['ready'])
-        self.assertIn('workspace_restore_not_enabled', [row['code'] for row in plan['readiness']['conditions']])
+        self.assertNotIn('workspace_restore_not_enabled', [row['code'] for row in plan['readiness']['conditions']])
         self.assertEqual(before, (bundle.fingerprint(self.home), bundle.fingerprint(self.project / 'config')))
         self.assertFalse((self.root / 'mutations').exists())
         public = json.dumps(events)
@@ -3426,7 +3425,7 @@ class TopologyPreviewTests(unittest.TestCase):
     def git_rows(self, plan):
         return [row for row in plan['plan'] if row['domain'] == 'git-repositories']
 
-    def test_full_multiple_linked_repeat_identity_and_execute_fence(self):
+    def test_full_multiple_linked_repeat_identity(self):
         first = self.preview()
         self.assertEqual((first['warning_count'], first['error_count'], first['scope_warnings']), (0, 0, []))
         self.assertEqual(next(row['status'] for row in first['modules']
@@ -3437,14 +3436,8 @@ class TopologyPreviewTests(unittest.TestCase):
         self.assertEqual({row['head_kind'] for row in rows}, {'branch', 'detached'})
         self.assertTrue(all(row.get('selection_item_id') for row in rows))
         self.assertEqual(first['prepared_plan_id'], self.preview()['prepared_plan_id'])
-        before = bundle.fingerprint(self.home), bundle.fingerprint(self.project / 'config')
-        result, events = self.execute(first['prepared_plan_id'])
-        self.assertEqual(result.returncode, 2)
-        self.assertEqual(events[-1]['data']['code'], 'unsupported_bundle')
-        self.assertFalse(events[-1]['data']['publication_started'])
-        self.assertFalse(events[-1]['data']['target_mutation_may_have_started'])
-        self.assertEqual(before, (bundle.fingerprint(self.home), bundle.fingerprint(self.project / 'config')))
-        self.assertFalse((self.root / 'mutations').exists())
+        self.assertTrue(first['readiness']['ready'])
+        self.assertFalse(first['has_executable_changes'])
 
     def test_ordinary_missing_clone_and_shared_folder_destination(self):
         self.paths, self.branches, self.parents = self.paths[:1], ['main'], [0]
@@ -3487,7 +3480,8 @@ class TopologyPreviewTests(unittest.TestCase):
         result, events = self.invoke()
         self.assertEqual(result.returncode, 0)
         plan = events[1]['data']
-        self.assertFalse(plan['readiness']['ready'])
+        self.assertTrue(plan['readiness']['ready'])
+        self.assertFalse(plan['has_executable_changes'])
         self.assertEqual(before, snapshot())
         self.assertFalse((self.root / 'mutations').exists())
         self.assertTrue(all(row['disposition'] == 'satisfied' for row in self.git_rows(plan)))
@@ -3698,7 +3692,7 @@ class TopologyPreviewTests(unittest.TestCase):
         self.configure(folders=[self.paths[0] + '/new-folder'])
         shutil.rmtree(self.home / 'Projects')
         folder = next(row for row in self.preview()['plan'] if row['domain'] == 'workspace-folders')
-        self.assertEqual((folder['disposition'], folder['reason']), ('blocked', 'workspace_dependency_pending'))
+        self.assertEqual((folder['disposition'], folder['reason']), ('planned', 'workspace_dependency_pending'))
         self.assertEqual(folder['dependency_ids'], [self.ids[0]])
 
     def test_destination_conflict_symlink_and_access_errors(self):
