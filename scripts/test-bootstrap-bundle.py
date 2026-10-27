@@ -1010,6 +1010,103 @@ class TopologyTests(unittest.TestCase):
             self.contract.target_paths(['Projects/missing'], home)
         self.assertEqual(snapshot(), before)
 
+    def test_folder_checkout_roles_remain_in_selected_bundle(self):
+        folders = '\n'.join(self.paths) + '\n'
+        self.files['blueprint.conf'] = self.selection(self.ids).replace(b'Projects\n', folders.encode())
+        self.files['generated/workspace/folders.conf'] = ''.join(path + '|workspace\n' for path in self.paths).encode()
+        home = self.root / 'home'
+        for path in self.paths:
+            (home / path).mkdir(parents=True)
+        before = bundle.fingerprint(home)
+        # Base, linked and detached checkouts may each also be structural folders.
+        self.assertTrue(bundle.validate_workspace(self.files, home=home, exact=True, inspect_home=True))
+        missing_base = dict(self.files, **{'blueprint.conf': self.selection(self.ids[1:]).replace(b'Projects\n', folders.encode())})
+        with self.assertRaises(bundle.WorkspaceSelectionInvalid) as failure:
+            bundle.validate_workspace(missing_base)
+        self.assertEqual(failure.exception.code, 'workspace_dependency_missing')
+        self.pack()
+        archived = bundle.validate_archive(self.archive)
+        sections, _ = bundle.parse_blueprint(archived['blueprint.conf'])
+        self.assertEqual(sections['workspace-folders'], self.paths)
+        self.assertEqual(sections['git-repositories'], self.ids)
+        self.assertEqual(archived['generated/workspace/folders.conf'], self.files['generated/workspace/folders.conf'])
+        self.assertEqual(set(self.contract.repository_records(archived[self.contract.REPOSITORIES])), set(self.ids))
+        self.assertEqual(json.loads(archived[self.contract.TOPOLOGY]), self.topology)
+        self.assertEqual(bundle.inspect_bundle(self.archive, str(home))['selected_item_counts']['workspace-folders'], 3)
+        self.assertEqual(bundle.fingerprint(home), before)
+
+    def test_folder_structure_does_not_require_unselected_git_dependencies(self):
+        folders = [self.paths[1], self.paths[0] + '/structure']
+        self.files['generated/workspace/folders.conf'] = ''.join(path + '|workspace\n' for path in folders).encode()
+        for ids in ([], self.ids[:1]):
+            with self.subTest(selected_git=len(ids)):
+                self.files['blueprint.conf'] = self.selection(ids).replace(b'Projects\n', ('\n'.join(folders) + '\n').encode())
+                self.assertTrue(bundle.validate_workspace(self.files))
+                self.archive = self.root / f'folder-structure-{len(ids)}.mbt'
+                self.pack()
+                archived = bundle.validate_archive(self.archive)
+                sections, _ = bundle.parse_blueprint(archived['blueprint.conf'])
+                self.assertEqual(sections['workspace-folders'], folders)
+                self.assertEqual(sections['git-repositories'], ids)
+                self.assertEqual(self.contract.TOPOLOGY in archived, bool(ids))
+                self.assertEqual(bundle.inspect_bundle(self.archive, str(self.root))['selected_item_counts']['git-repositories'], len(ids))
+        workspace_id = self.contract.identity('workspace', 'Projects/folders.code-workspace')
+        relationship = dict(domain='workspace-folders', item_id=folders[0], subpath='')
+        descriptor = dict(contract=1, items=[dict(item_id=workspace_id, path='~/Projects/folders.code-workspace',
+                                                folders=[relationship])])
+        files = dict(self.files, **{'blueprint.conf': self.selection([], [workspace_id]).replace(
+            b'Projects\n', ('\n'.join(folders) + '\n').encode()), self.contract.VSCODE: json.dumps(descriptor).encode()})
+        self.assertTrue(bundle.validate_workspace(files))
+        # Choosing the folder role does not implicitly fulfill a Git reference.
+        relationship.update(domain='git-repositories', item_id=self.ids[1])
+        files[self.contract.VSCODE] = json.dumps(descriptor).encode()
+        with self.assertRaises(bundle.WorkspaceSelectionInvalid) as failure:
+            bundle.validate_workspace(files)
+        self.assertEqual(failure.exception.code, 'workspace_dependency_missing')
+
+    def test_role_overlap_does_not_mask_real_destination_conflicts(self):
+        for folders in (['Projects/BASE'], ['Projects/base', 'Projects/BASE']):
+            with self.subTest(folders=folders):
+                files = dict(self.files, **{
+                    'blueprint.conf': self.selection(self.ids).replace(b'Projects\n', ('\n'.join(folders) + '\n').encode()),
+                    'generated/workspace/folders.conf': ''.join(path + '|workspace\n' for path in folders).encode()})
+                with self.assertRaises(bundle.WorkspaceSelectionInvalid) as failure:
+                    bundle.validate_workspace(files)
+                self.assertEqual(failure.exception.code, 'workspace_path_conflict')
+        # Different checkout identities cannot occupy case aliases or one path.
+        for path in ('Projects/BASE', 'Projects/base'):
+            with self.subTest(checkout=path):
+                self.paths[1] = path
+                self.ids[1] = self.contract.identity('checkout', path)
+                self.topology['groups'][0]['members'][1]['item_id'] = self.ids[1]
+                self.files[self.contract.REPOSITORIES] = self.repository_data()
+                self.files['blueprint.conf'] = self.selection(self.ids)
+                self.sync_topology()
+                with self.assertRaises(bundle.Invalid):
+                    bundle.validate_workspace(self.files)
+
+    def test_role_overlap_keeps_filesystem_alias_and_symlink_guards(self):
+        self.files['blueprint.conf'] = self.selection(self.ids).replace(b'Projects\n', b'Projects/base\n')
+        self.files['generated/workspace/folders.conf'] = b'Projects/base|workspace\n'
+        home = self.root / 'home'
+        for path in self.paths:
+            (home / path).mkdir(parents=True)
+        self.assertTrue(bundle.validate_workspace(self.files, home=home, inspect_home=True))
+        before = bundle.fingerprint(home)
+        original_lstat = Path.lstat
+        base_info = (home / self.paths[0]).lstat()
+        def aliased_lstat(path):
+            return base_info if path == home / self.paths[1] else original_lstat(path)
+        with patch.object(Path, 'lstat', aliased_lstat), self.assertRaises(bundle.Invalid):
+            bundle.validate_workspace(self.files, home=home, inspect_home=True)
+        self.assertEqual(bundle.fingerprint(home), before)
+        (home / self.paths[0]).rmdir()
+        (home / self.paths[0]).symlink_to(home / self.paths[1])
+        for ids in (self.ids, []):
+            files = dict(self.files, **{'blueprint.conf': self.selection(ids).replace(b'Projects\n', b'Projects/base\n')})
+            with self.assertRaises(bundle.Invalid):
+                bundle.validate_workspace(files, home=home, inspect_home=True)
+
     def test_malformed_topology_no_secret_or_machine_fields(self):
         changes = [lambda t: t.update(common_dir='/private/git'),
                    lambda t: t.update(contract=2), lambda t: t.update(contract=True),
@@ -1715,11 +1812,13 @@ exit "$result"
         blueprint = self.stage / 'blueprint.conf'
         blueprint.write_bytes(blueprint.read_bytes().replace(b'[workspace-folders]\n',
                              b'[workspace-folders]\nProjects/base/src\n'))
-        with self.assertRaises(bundle.Invalid):
-            bundle.capture_preview(self.stage, str(self.home))
-        blueprint.write_bytes(blueprint.read_bytes().replace(b'Projects/base/src\n', b'Projects\n'))
+        preview = bundle.capture_preview(self.stage, str(self.home))
+        sections, _ = bundle.parse_blueprint(preview)
+        self.assertEqual(sections['workspace-folders'], ['Projects/base/src'])
+        self.assertEqual(sections['git-repositories'], [])
         output = self.root / 'folders-only.mbt'
         bundle.pack(self.stage, output, str(self.home), apply_precedence=False)
+        self.assertEqual(bundle.validate_archive(output)['generated/workspace/folders.conf'], b'Projects/base/src|workspace\n')
         self.assertNotIn('generated/workspace/topology.json', bundle.validate_archive(output))
         self.assertNotIn('generated/workspace/repositories.conf', bundle.validate_archive(output))
         with patch.dict(os.environ, MACSEED_WORKSPACE_ROOTS='../outside'), self.assertRaises(self.observer.contract.Invalid):

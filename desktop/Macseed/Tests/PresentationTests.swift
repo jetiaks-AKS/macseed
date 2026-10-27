@@ -118,6 +118,10 @@ private struct WorkflowAnchorFrames: PreferenceKey {
 
     @MainActor static func captureResultActionsChecks() {
         let source = try! String(contentsOfFile: "Sources/CaptureView.swift")
+        let failure = source.components(separatedBy: "            case .failed, .cancelled:")[1]
+        precondition(failure.contains("if model.savingAttempted {") && failure.contains("switch model.publicationEvidence"))
+        precondition(failure.range(of: "if model.savingAttempted {")!.lowerBound < failure.range(of: "switch model.publicationEvidence")!.lowerBound)
+        precondition(source.contains("if model.canReviewSelection {") && source.contains("Button(\"Review Selection\") { model.editSelection() }"))
         let result = source.components(separatedBy: "            case .result:")[1]
             .components(separatedBy: "            case .failed, .cancelled:")[0]
         precondition(result.contains("saved.destination), showsReveal: true"))

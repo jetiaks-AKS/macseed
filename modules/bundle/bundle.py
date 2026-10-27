@@ -72,6 +72,12 @@ class Unsupported(Invalid):
     pass
 
 
+class WorkspaceSelectionInvalid(Invalid):
+    def __init__(self, code):
+        self.code = code
+        super().__init__(code)
+
+
 def workspace_contract():
     global _workspace_contract
     if _workspace_contract is None:
@@ -94,6 +100,8 @@ def validate_workspace(files, *, home=None, exact=False, inspect_home=False):
     contract = workspace_contract()
     try:
         return contract.validate(files, sections, home=home, exact=exact, inspect_home=inspect_home)
+    except contract.SelectionInvalid as exc:
+        raise WorkspaceSelectionInvalid(exc.code) from exc
     except contract.Unsupported as exc:
         raise Unsupported(str(exc)) from exc
     except (contract.Invalid, OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError) as exc:
@@ -122,7 +130,8 @@ def staged_payload(stage, blueprint):
     topology = 'generated/workspace/topology.json'
     if (stage / topology).exists() or (stage / topology).is_symlink():
         files[topology] = checked_file(stage / topology)
-        # Unselected parents still constrain selected nested folders/descriptors.
+        # Validate the complete inventory; selected checkouts retain explicit
+        # base/parent dependencies even when those parents are unselected.
         name = 'generated/workspace/repositories.conf'
         files[name] = checked_file(stage / name)
     return files

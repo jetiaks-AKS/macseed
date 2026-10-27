@@ -257,10 +257,12 @@ struct CaptureView: View {
                     }
                 }
                 if let destination = model.destination {
-                    switch model.publicationEvidence {
-                    case .occurred: Text("Publication was reported, but Capture did not complete successfully. Check the destination before another attempt.")
-                    case .unknown: Text("Publication could not be confirmed. A file or temporary state may remain. Check the destination before another attempt.")
-                    case .notOccurred: Text("No completed publication was reported.")
+                    if model.savingAttempted {
+                        switch model.publicationEvidence {
+                        case .occurred: Text("Publication was reported, but Capture did not complete successfully. Check the destination before another attempt.")
+                        case .unknown: Text("Publication could not be confirmed. A file or temporary state may remain. Check the destination before another attempt.")
+                        case .notOccurred: Text("No completed publication was reported.")
+                        }
                     }
                     Text(destination.path).font(.callout).foregroundStyle(.secondary).textSelection(.enabled)
                 }
@@ -321,6 +323,9 @@ struct CaptureActionsView: View {
                 Button("Capture Again") { model.scan() }.disabled(runtime.isActive)
                 Button("Done") { model.done() }.disabled(runtime.isActive)
             case .failed, .cancelled:
+                if model.canReviewSelection {
+                    Button("Review Selection") { model.editSelection() }.disabled(runtime.isActive)
+                }
                 Button("Scan Again") { model.scan() }.disabled(runtime.isActive)
             case .idle: EmptyView()
             }

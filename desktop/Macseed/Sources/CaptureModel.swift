@@ -23,6 +23,13 @@ enum CaptureFailure: Error, Equatable {
             case "invalid_destination": "The destination is unavailable or changed since Replace was confirmed. Scan again and choose a new file."
             case "capture_discovery_failed", "capture_inventory_invalid": "Couldn’t finish scanning this Mac. Scan again before saving."
             case "capture_validation_failed": "The selected environment could not be validated for saving. Scan again and review the selection."
+            case "invalid_workspace_selection": "The Workspace selection could not be validated. Scan again and review the selected folders and repositories."
+            case "workspace_dependency_missing": "A linked worktree or nested item needs its base or parent repository selected. Review the selection and include that repository, or deselect the dependent item."
+            case "workspace_path_conflict": "Selected Workspace paths conflict or use ambiguous aliases. Review the selection and deselect the conflicting items before trying again."
+            case "invalid_secure_selection": "The selected SSH identities are no longer available. Scan again and review the selection."
+            case "secure_bridge_required", "secure_bridge_unavailable": "Secure Capture is unavailable in this session. Review the SSH identity selection."
+            case "age_unavailable": "Secure Capture requires age. Install it before trying again."
+            case "secure_export_failed", "secure_input_invalid", "secure_timeout": "Secure Capture could not complete. Review the SSH identity selection before trying again."
             default: "Capture could not complete. Scan this Mac again before another attempt."
             }
         case .runtime(.runtimeUnavailable), .runtime(.pythonUnavailable), .runtime(.invalidRuntimeConfiguration), .runtime(.writableCoreRequired):
@@ -34,8 +41,14 @@ enum CaptureFailure: Error, Equatable {
     }
     var technicalReason: String? {
         if case .runtime(.coreFailure(let code)) = self,
-           code.range(of: "^[a-z][a-z0-9_-]{0,63}$", options: .regularExpression) != nil { return code }
+           OperationLogSanitizer.reasons.contains(code) { return code }
         return nil
+    }
+    var isWorkspaceSelectionConflict: Bool {
+        if case .runtime(.coreFailure(let code)) = self {
+            return ["workspace_dependency_missing", "workspace_path_conflict"].contains(code)
+        }
+        return false
     }
 }
 
@@ -133,6 +146,7 @@ struct CaptureMacOSSettingsGroup {
     @Published private(set) var publication: CoreCapturePublication?
     @Published private(set) var publicationEvidence: CapturePublicationEvidence = .notOccurred
     @Published private(set) var publicationMayHaveStarted = false
+    @Published private(set) var savingAttempted = false
     @Published private(set) var failure: CaptureFailure?
     @Published private(set) var operationID: String?
     @Published private(set) var resultNotices: [DisplayCategory] = []
@@ -236,6 +250,7 @@ struct CaptureMacOSSettingsGroup {
     }
     func prepare(destination: URL, replacementConfirmed: Bool = false) {
         guard canCreate else { return }
+        savingAttempted = false
         let destination = CaptureDestination.normalized(destination)
         self.destination = destination
         replacementSHA256 = nil
@@ -254,8 +269,11 @@ struct CaptureMacOSSettingsGroup {
         run(CoreRequest(.capturePrepare(selection: expected)), state: .preparing, expected: expected)
     }
     func editSelection() {
-        guard state == .confirmation, !runtime.isActive else { return }
-        preparation = nil; state = .review
+        guard state == .confirmation || canReviewSelection, !runtime.isActive else { return }
+        preparation = nil; failure = nil; state = .review
+    }
+    var canReviewSelection: Bool {
+        state == .failed && !savingAttempted && failure?.isWorkspaceSelectionConflict == true && !runtime.isActive
     }
     func create() {
         guard state == .confirmation, !runtime.isActive, let preparation, let selection = preparation.selection, let destination else { return }
@@ -266,6 +284,7 @@ struct CaptureMacOSSettingsGroup {
         run(CoreRequest(.captureExecute(selection: selection, destination: destination.path, preparedID: preparation.preparedCaptureID, replacementSHA256: replacementSHA256)), state: .saving, expected: selection)
     }
     private func run(_ request: CoreRequest, state next: CaptureFlowState, expected: CoreCaptureSelection?) {
+        savingAttempted = next == .saving
         operationID = request.operationID; state = next
         runtime.start(request, location: location)
         work = Task {
@@ -330,6 +349,7 @@ struct CaptureMacOSSettingsGroup {
         inventory = []; selectedCategories = []; selectedItems = [:]; preparation = nil; destination = nil
         replacementSHA256 = nil; publication = nil; resultNotices = []; publicationEvidence = .notOccurred
         publicationMayHaveStarted = false; failure = nil; operationID = nil
+        savingAttempted = false
         state = .idle
     }
     func cancelReview() { guard state == .review, !runtime.isActive else { return }; state = .idle; preparation = nil; destination = nil }

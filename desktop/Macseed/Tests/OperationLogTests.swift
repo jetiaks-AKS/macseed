@@ -32,6 +32,15 @@ import Darwin
 
     static func sanitizerTests() throws {
         var sanitizer = OperationLogSanitizer()
+        for code in ["invalid_workspace_selection", "workspace_dependency_missing", "workspace_path_conflict", "capture_source_unavailable"] {
+            check(OperationLogSanitizer.runtimeCode(.coreFailure(code)) == code)
+            let record = sanitizer.event(try event(1, "failed", ["code": .string(code),
+                "publication_occurred": .bool(false), "path": .string("/Users/private/worktree"),
+                "remote": .string("https://example.invalid/private-repo"), "selection": .string("private-selection")]), at: Date())
+            check(record.facts?.codes["code"] == code && record.facts?.flags["publication_occurred"] == false)
+            let text = String(decoding: try raw(record), as: UTF8.self)
+            check(!text.contains("/Users/private") && !text.contains("private-repo") && !text.contains("private-selection"))
+        }
         for reason in ["network_reset", "unknown"] {
             let secret = "https://marketplace.invalid/private?token=PRIVATE_VSCODE_SECRET"
             let record = sanitizer.event(try event(1, "operation_record", ["domain": .string("vscode-extensions"),

@@ -245,6 +245,144 @@ esac
         selection = {'categories': [], 'items': {'git-repositories': [row['items'][0]['item_id']]}, 'secure_identities': []}
         self.assertEqual(self.prepare(selection)['selection'], selection)
 
+    def role_overlap_roundtrip(self, folders, git):
+        from workspace_fixture import repository
+        self.fixture(workspace=True)
+        repository(self.home, 'standalone')
+        before = bundle.fingerprint(self.home)
+        config_before = bundle.fingerprint(self.project / 'config')
+        scan = self.prepare()
+        selected = sorted(row['domain'] for row in scan['inventory'] if row['status'] == 'present'
+                          and row['domain'] not in ('workspace-folders', 'git-repositories'))
+        if folders:
+            selected.append('workspace-folders')
+        if git:
+            selected.append('git-repositories')
+        selection = dict(categories=sorted(selected), items={}, secure_identities=[])
+        destination = self.root / 'role-overlap.mbt'
+        confirmation = self.prepare(selection)
+        self.assertEqual(confirmation['selection'], selection)
+        self.assertFalse(destination.exists())
+        result, events = self.execute(confirmation['prepared_capture_id'], selection, destination)
+        self.assertEqual(result.returncode, 0, events[-1])
+        self.assertTrue(events[-2]['data']['publication_occurred'])
+        self.assertEqual(destination.stat().st_mode & 0o777, 0o600)
+        files = bundle.validate_archive(destination)
+        sections, _ = bundle.parse_blueprint(files['blueprint.conf'])
+        self.assertEqual(sections['workspace-folders'], ['standalone'] if folders else [])
+        contract = bundle.workspace_contract()
+        checkout = contract.identity('checkout', 'standalone')
+        self.assertEqual(sections['git-repositories'], [checkout] if git else [])
+        self.assertEqual(bundle.validate_workspace(files, exact=True), {'workspace-topology': 1} if git else {})
+        if folders:
+            self.assertEqual(files['generated/workspace/folders.conf'], b'standalone|workspace\n')
+        if git:
+            self.assertEqual(contract.repository_records(files[contract.REPOSITORIES])[checkout]['path'], '~/standalone')
+            self.assertEqual(json.loads(files[contract.TOPOLOGY])['groups'][0]['base_item_id'], checkout)
+        else:
+            self.assertNotIn(contract.REPOSITORIES, files)
+            self.assertNotIn(contract.TOPOLOGY, files)
+        request = dict(protocol_version=1, operation_id='inspect-role-overlap', operation='bundle_inspect',
+                       parameters=dict(path=str(destination)))
+        inspected = subprocess.run(['bash', str(self.project / 'modules/core/application-interface/core.sh')],
+            cwd=self.project, env=self.environment, input=json.dumps(request).encode(),
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=20)
+        self.assertEqual(inspected.returncode, 0)
+        inspected_events = [json.loads(line) for line in inspected.stdout.splitlines()]
+        self.assertEqual(inspected_events[-1]['type'], 'completed')
+        self.assertEqual(inspected_events[-2]['data']['selected_item_counts']['workspace-folders'], int(folders))
+        self.assertEqual(inspected_events[-2]['data']['selected_item_counts']['git-repositories'], int(git))
+        if git:
+            # Exercise only the existing refusal; topology Restore stays disabled.
+            result, events = fixtures.RestorePrepareTests.execute(self, '0' * 64, path=destination)
+            self.assertEqual(result.returncode, 2)
+            self.assertEqual(events[-1]['data']['code'], 'unsupported_bundle')
+            self.assertFalse(events[-1]['data']['publication_started'])
+            self.assertFalse(events[-1]['data']['target_mutation_may_have_started'])
+        self.assertEqual(bundle.fingerprint(self.home), before)
+        self.assertEqual(bundle.fingerprint(self.project / 'config'), config_before)
+        self.assertFalse(Path(self.environment['TEST_MUTATIONS']).exists())
+
+    def test_role_overlap_both_selected_publish_and_inspect(self):
+        self.role_overlap_roundtrip(True, True)
+
+    def test_role_overlap_folder_only_publish_and_inspect(self):
+        self.role_overlap_roundtrip(True, False)
+
+    def test_role_overlap_git_only_publish_and_inspect(self):
+        self.role_overlap_roundtrip(False, True)
+
+    def test_role_overlap_neither_selected_publish_and_inspect(self):
+        self.role_overlap_roundtrip(False, False)
+
+    def test_review_destination_fresh_prepare_workspace_selection_matrix(self):
+        from workspace_fixture import linked
+        self.workspace_fixture(duplicate=True)
+        base = self.home / 'Projects/fixture-repo'
+        linked(base, self.home / 'Projects/feature', (base / '.git/refs/heads/main').read_text().strip())
+        before = bundle.fingerprint(self.home)
+        scan = self.prepare()
+        whole = sorted(row['domain'] for row in scan['inventory'] if row['status'] == 'present')
+        contract = bundle.workspace_contract()
+        base_id = contract.identity('checkout', 'Projects/fixture-repo')
+        linked_id = contract.identity('checkout', 'Projects/feature')
+        selections = [
+            dict(categories=whole, items={}, secure_identities=[]),
+            dict(categories=[], items={'workspace-folders': ['Projects'],
+                 'git-repositories': [base_id, linked_id]}, secure_identities=[]),
+            dict(categories=['homebrew-packages', 'workspace-folders'], items={}, secure_identities=[]),
+        ]
+        for index, selection in enumerate(selections):
+            with self.subTest(selection=index):
+                destination = self.root / f'review-{index}.mbt'
+                result, events = self.invoke_capture(selection=selection)
+                self.assertEqual(result.returncode, 0)
+                confirmation = events[-2]['data']
+                self.assertEqual(confirmation['selection']['categories'], sorted(selection['categories']))
+                self.assertEqual(confirmation['selection']['items'],
+                                 {domain: sorted(items) for domain, items in selection['items'].items()})
+                self.assertEqual(events[-1]['type'], 'completed')
+                self.assertFalse(destination.exists())
+                self.assertFalse(any(event.get('data', {}).get('phase') == 'bundle_creation' for event in events))
+        self.assertEqual(bundle.fingerprint(self.home), before)
+        self.assertFalse(Path(self.environment['TEST_MUTATIONS']).exists())
+
+    def test_review_conflicts_are_typed_and_explicit_correction_prepares(self):
+        from workspace_fixture import linked, repository
+        self.workspace_fixture()
+        base = self.home / 'Projects/fixture-repo'
+        linked(base, self.home / 'Projects/feature', (base / '.git/refs/heads/main').read_text().strip())
+        repository(self.home, 'Projects/fixture-repo/nested')
+        before = bundle.fingerprint(self.home)
+        scan = self.prepare()
+        self.assertEqual(next(row for row in scan['inventory'] if row['domain'] == 'git-repositories')['status'], 'present')
+        linked_id = bundle.workspace_contract().identity('checkout', 'Projects/feature')
+        nested_id = bundle.workspace_contract().identity('checkout', 'Projects/fixture-repo/nested')
+        for selected in ([linked_id], [nested_id]):
+            selection = dict(categories=[], items={'git-repositories': selected}, secure_identities=[])
+            result, events = self.invoke_capture(selection=selection)
+            self.assertEqual(result.returncode, 2)
+            self.assertIn({'type': 'phase_completed', 'phase': 'discovery'},
+                          [dict(type=e['type'], phase=e.get('data', {}).get('phase')) for e in events])
+            self.assertEqual(events[-1]['data'], dict(code='workspace_dependency_missing', publication_occurred=False))
+            self.assertNotIn(str(self.home), json.dumps(events))
+            self.assertNotIn('example.invalid', json.dumps(events))
+        # Explicitly select the required base/parent; Core never adds dependencies.
+        corrected = dict(categories=['git-repositories'], items={'workspace-folders': ['Projects']}, secure_identities=[])
+        self.assertEqual(self.prepare(corrected)['selection'], corrected)
+        self.assertEqual(bundle.fingerprint(self.home), before)
+        self.assertFalse((self.root / 'captured.mbt').exists())
+
+    def test_missing_staged_input_is_not_a_workspace_selection_conflict(self):
+        sys.path.insert(0, str(ROOT / 'modules/core/application-interface'))
+        import capture
+        rows = [dict(domain='homebrew-packages', status='present',
+                     items=[dict(item_id='fixture', _source='fixture')])]
+        with self.assertRaises(capture.CaptureError) as failure:
+            capture.prepared(self.stage, rows, dict(status='unavailable', items=[]),
+                             dict(categories=['homebrew-packages'], items={}, secure_identities=[]))
+        self.assertEqual(failure.exception.code, 'capture_inventory_invalid')
+
     def test_workspace_observation_failure_remains_non_selectable(self):
         # Malformed Git configuration is an observation error, not absence.
         self.workspace_fixture()
@@ -280,12 +418,10 @@ esac
         invalid = {'categories': [], 'items': {'git-repositories': [linked_id]}, 'secure_identities': []}
         result, events = self.invoke_capture(selection=invalid)
         self.assertEqual(result.returncode, 2, events)
-        self.assertEqual(events[-1]['data']['code'], 'invalid_workspace_selection')
+        self.assertEqual(events[-1]['data']['code'], 'workspace_dependency_missing')
         nested = {'categories': [], 'items': {'workspace-folders': ['Projects/fixture-repo/nested-folder']},
                   'secure_identities': []}
-        result, events = self.invoke_capture(selection=nested)
-        self.assertEqual(result.returncode, 2, events)
-        self.assertEqual(events[-1]['data']['code'], 'invalid_workspace_selection')
+        self.assertEqual(self.prepare(nested)['selection'], nested)
         partial = {'categories': [], 'items': {'git-repositories': [base_id, linked_id]}, 'secure_identities': []}
         full = {'categories': ['git-repositories'], 'items': {}, 'secure_identities': []}
         for count, selection in ((2, partial), (3, full)):

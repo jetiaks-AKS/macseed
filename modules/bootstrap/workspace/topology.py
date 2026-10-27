@@ -33,6 +33,13 @@ class Unsupported(Invalid):
     pass
 
 
+class SelectionInvalid(Invalid):
+    """Fixed public codes only; never attach paths or repository values."""
+    def __init__(self, code):
+        self.code = code
+        super().__init__(code)
+
+
 def text(value, limit=4096, empty=False):
     if (not isinstance(value, str) or len(value.encode('utf-8')) > limit or
             (not value and not empty) or any(ord(c) < 32 or ord(c) == 127 for c in value)):
@@ -298,7 +305,7 @@ def validate(files, sections, *, home=None, exact=False, inspect_home=False):
                 raise Invalid('base is not a member of its group')
         if members != set(records) or not selected <= members or (exact and selected != members):
             raise Invalid('repository records, topology and selection disagree')
-        destinations.extend(repository_paths.values())
+        aliases(repository_paths.values())
         # Nested checkouts are representable, but both the parent checkout and
         # the common-repository base must be explicit selected dependencies.
         for item, path in repository_paths.items():
@@ -311,7 +318,9 @@ def validate(files, sections, *, home=None, exact=False, inspect_home=False):
                 raise Invalid('cyclic Workspace path/base dependencies')
             pending = {item: deps for item, deps in pending.items() if item not in ready}
         if any(not dependencies[item] <= selected for item in selected):
-            raise Invalid('base or parent checkout must be explicitly selected')
+            raise SelectionInvalid('workspace_dependency_missing')
+    selected_repository_paths = {path for item, path in repository_paths.items() if item in selected}
+    destinations.extend(selected_repository_paths)
     folder_paths = {}
     for line in files.get('generated/workspace/folders.conf', b'').decode().splitlines():
         parts = line.split('|')
@@ -325,11 +334,10 @@ def validate(files, sections, *, home=None, exact=False, inspect_home=False):
     folder_destinations = [path for path in selected_folders if folder_paths[path] == 'workspace']
     if len(folder_destinations) != len(selected_folders):
         raise Invalid('selected folder is not a Workspace folder')
-    if any(within(path, parent) and repo not in selected for path in folder_destinations
-           for repo, parent in repository_paths.items()):
-        raise Invalid('Workspace folder parent checkout must be selected')
-    # A folder may contain a checkout but must not occupy its exact destination.
-    destinations.extend(folder_destinations)
+    # Structure alone never selects a checkout. Exact path equality is two roles
+    # of one destination; keep both records, but inspect the destination once.
+    # Do not fold case/Unicode aliases or deduplicate within either role.
+    destinations.extend(path for path in folder_destinations if path not in selected_repository_paths)
     workspace_paths = []
     relationship_paths = set()
     if VSCODE in files:
@@ -359,22 +367,23 @@ def validate(files, sections, *, home=None, exact=False, inspect_home=False):
                 else:
                     raise Invalid('unresolved VS Code folder relationship')
                 if item in selected_workspaces and target not in chosen:
-                    raise Invalid('VS Code relationship dependency must be selected')
+                    raise SelectionInvalid('workspace_dependency_missing')
                 targets.append(destination + ('/' + suffix if suffix else ''))
             if item in selected_workspaces:
                 relationship_paths.update(targets)
-                if any(within(target, parent) and repo not in selected for target in targets
-                       for repo, parent in repository_paths.items()):
-                    raise Invalid('VS Code nested checkout dependency must be selected')
             aliases(targets)
             if item in selected_workspaces:
                 if any(within(path, parent) and repo not in selected for repo, parent in repository_paths.items()):
-                    raise Invalid('VS Code destination parent must be selected')
+                    raise SelectionInvalid('workspace_dependency_missing')
                 workspace_paths.append(path)
         if not selected_workspaces <= ids or (exact and selected_workspaces != ids):
             raise Invalid('VS Code workspace inventory and selection disagree')
         destinations.extend(workspace_paths)
-    aliases(destinations)
+    try:
+        aliases(folder_destinations)
+        aliases(destinations)
+    except Invalid as exc:
+        raise SelectionInvalid('workspace_path_conflict') from exc
     if any(other != path and within(other, path) for path in workspace_paths for other in destinations):
         raise Invalid('Workspace descriptor cannot be a parent directory')
     if inspect_home:

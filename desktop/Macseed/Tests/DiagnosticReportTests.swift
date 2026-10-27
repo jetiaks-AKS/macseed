@@ -74,6 +74,20 @@ private actor ReportReadGate {
         print("PASS: success / Failed Restore, independent process / Verification / log state, absent counters, partial/truncated, stop evidence and invalid terminal")
     }
     static func privacyChecks() {
+        for code in ["invalid_workspace_selection", "workspace_dependency_missing", "workspace_path_conflict", "capture_source_unavailable"] {
+            let id = UUID()
+            var sanitizer = OperationLogSanitizer()
+            let core = try! CoreEvent(line: JSONEncoder().encode(CoreJSON.object(["protocol_version": .integer(1),
+                "operation_id": .string("fixture"), "sequence": .integer(1), "type": .string("failed"),
+                "data": .object(["code": .string(code), "publication_occurred": .bool(false),
+                    "path": .string("/Users/private/worktree"), "remote": .string("https://example.invalid/private-repo")])])))
+            var failed = finish("failed", verification: nil, details: nil)
+            failed.runtimeError = OperationLogSanitizer.runtimeCode(.coreFailure(code))
+            let report = makeReport([header(id, operation: .capturePrepare), sanitizer.event(core, at: time), failed], id: id).text
+            check(report.contains("Operation: Capture / Prepare") && report.contains("Reason: " + code))
+            check(report.contains("publication_occurred: false"))
+            check(!report.contains("/Users/private") && !report.contains("private-repo") && !report.contains("redacted"))
+        }
         for reason in ["network_reset", "unknown"] {
             let secret = "https://marketplace.invalid/private?token=PRIVATE_VSCODE_SECRET"
             var sanitizer = OperationLogSanitizer()

@@ -97,6 +97,8 @@ import SwiftUI
         rows = json.loads(pathlib.Path('inventory.json').read_text())
         for row in rows: emit('capture_category', {key:row[key] for key in ('domain', 'status', 'reason')})
         emit('phase_completed', dict(phase='discovery'))
+        if selection is not None and mode in ('invalid_workspace_selection', 'workspace_dependency_missing', 'workspace_path_conflict', 'capture_source_unavailable'):
+            emit('failed', dict(code=mode, publication_occurred=False)); sys.exit(2)
         if request['operation'] == 'capture_prepare':
             summary = dict(selected_domains=0, selected_items=0, secure_identity_count=0)
             if selection:
@@ -120,7 +122,7 @@ import SwiftUI
              bundle=dict(format_version=1, selected_categories=[row['domain'] for row in rows if row['domain'] in selection['categories'] and row['selection_mode']=='category'], selected_item_counts=counts, secure_component=False)))
         emit('completed'); sys.exit(0)
         """, core.appendingPathComponent("fixture.py"))
-        let runtime = CoreRuntime()
+        let runtime = CoreRuntime(operationLogs: nil)
         let model = CaptureModel(runtime: runtime, location: CoreLocation(root: core, python: python, home: root, temporaryBase: root, toolDirectories: []))
         model.scan(); await model.waitForCompletion()
         precondition(model.state == .review && model.selectedDomainCount == 2 && model.selectedItemCount == 2)
@@ -281,6 +283,22 @@ import SwiftUI
         }
 
 
+        for code in ["invalid_workspace_selection", "workspace_dependency_missing", "workspace_path_conflict", "capture_source_unavailable"] {
+            try write("success", core.appendingPathComponent("mode"))
+            model.scan(); await model.waitForCompletion()
+            let selection = model.selection
+            try write(code, core.appendingPathComponent("mode"))
+            model.prepare(destination: root.appendingPathComponent("not-yet-saving.mbt")); await model.waitForCompletion()
+            precondition(model.state == .failed && !model.savingAttempted && model.publicationEvidence == .notOccurred)
+            precondition(model.failure?.technicalReason == code && model.selection == selection)
+            precondition(model.failure?.message != "Capture could not complete. Scan this Mac again before another attempt.")
+            if ["workspace_dependency_missing", "workspace_path_conflict"].contains(code) {
+                precondition(model.canReviewSelection)
+                model.editSelection()
+                precondition(model.state == .review && model.selection == selection)
+            }
+        }
+        precondition(CaptureFailure.runtime(.coreFailure("private_token_shaped_value")).technicalReason == nil)
         for mode in ["prepare_failure", "empty_inventory", "protocol"] {
             try write(mode, core.appendingPathComponent("mode"))
             model.scan(); await model.waitForCompletion()
@@ -304,6 +322,7 @@ import SwiftUI
             }
             await model.waitForCompletion()
             precondition(model.state != .result && model.publication == nil && model.preparation == nil)
+            precondition(model.savingAttempted && !model.canReviewSelection)
             if mode == "stale_prepared_capture" {
                 precondition(model.failure?.presentationTitle == "Capture Preparation Is Outdated")
                 precondition(model.failure?.presentationMessage == "The selected environment has changed since confirmation. Scan this Mac again to prepare an updated capture.")
@@ -440,7 +459,7 @@ import SwiftUI
         precondition(model.state == .failed && model.failure == .runtime(.requestTooLarge) && model.publication == nil)
         precondition(model.failure?.message.contains("whole categories") == true)
         print("PASS: Large Select All uses compact whole-domain V1 selection; fresh confirmation reflects refreshed scope")
-        let unresolved = CaptureModel(runtime: CoreRuntime(resolver: CoreLocationResolver(resources: root.appendingPathComponent("missing-runtime"))))
+        let unresolved = CaptureModel(runtime: CoreRuntime(resolver: CoreLocationResolver(resources: root.appendingPathComponent("missing-runtime")), operationLogs: nil))
         unresolved.scan(); await unresolved.waitForCompletion()
         precondition(unresolved.state == .failed && unresolved.inventory.isEmpty && unresolved.publication == nil)
         #if DEBUG
@@ -496,7 +515,7 @@ import SwiftUI
         try write("private ordinary state", generated.appendingPathComponent("sentinel"))
         try write("private ordinary selection", core.appendingPathComponent("config/blueprint.conf"))
         let beforeHome = try snapshot(home), beforeConfig = try snapshot(core.appendingPathComponent("config"))
-        let runtime = CoreRuntime()
+        let runtime = CoreRuntime(operationLogs: nil)
         let model = CaptureModel(runtime: runtime, location: CoreLocation(root: core, python: python, home: home, temporaryBase: root, toolDirectories: [bin]))
         model.scan(); await model.waitForCompletion()
         precondition(model.state == .review, "Real scan failed: \(String(describing: model.failure))")
@@ -600,7 +619,94 @@ import SwiftUI
         precondition(beforeHome == afterHome && beforeConfig == afterConfig)
         precondition(!FileManager.default.fileExists(atPath: marker.path) && !FileManager.default.fileExists(atPath: core.appendingPathComponent("logs").path))
         print("PASS: Swift → production Capture → private .mbt → authoritative inspection, real stale rejection and category-only save without Homebrew; HOME/config unchanged")
+        try await workspacePrepare(root: root, repository: repository, core: core, home: home, bin: bin, python: python)
         try await overlapCore(root: root, core: core, home: home, bin: bin, python: python)
+    }
+
+    @MainActor static func workspacePrepare(root: URL, repository: URL, core: URL, home: URL, bin: URL, python: URL) async throws {
+        let setup = root.appendingPathComponent("workspace-fixture.py")
+        try write("""
+        import sys
+        from pathlib import Path
+        sys.path.insert(0, sys.argv[1])
+        from workspace_fixture import repository, linked
+        home = Path(sys.argv[2])
+        if sys.argv[3] == 'initial':
+            base, oid = repository(home, 'Projects/base')
+            linked(base, home / 'Projects/feature', oid)
+            repository(home, 'Projects/ordinary')
+        else:
+            repository(home, 'standalone')
+            repository(home, 'standalone/nested')
+        """, setup)
+        func fixtures(_ mode: String) throws {
+            let process = Process(); process.executableURL = python
+            process.arguments = ["-B", setup.path, repository.appendingPathComponent("scripts").path, home.path, mode]
+            try process.run(); process.waitUntilExit(); precondition(process.terminationStatus == 0)
+        }
+        try fixtures("initial")
+        try write("#!/bin/bash\necho 26.7.1\n", bin.appendingPathComponent("sw_vers"), executable: true)
+        let before = try snapshot(home)
+        let runtime = CoreRuntime(operationLogs: OperationLogStore(directory: root.appendingPathComponent("workspace-logs")))
+        let location = CoreLocation(root: core, python: python, home: home, temporaryBase: root, toolDirectories: [bin])
+        let model = CaptureModel(runtime: runtime, location: location)
+        let destination = root.appendingPathComponent("workspace-confirmation.mbt")
+        func prepare() async {
+            model.prepare(destination: destination); await model.waitForCompletion()
+            precondition(!model.savingAttempted && model.publication == nil)
+            precondition(!FileManager.default.fileExists(atPath: destination.path))
+            precondition(runtime.operation == .capturePrepare)
+        }
+        model.scan(); await model.waitForCompletion()
+        precondition(model.state == .review && model.bulkState == .all)
+        let git = model.categories.first { $0.id == "git-repositories" }!
+        precondition(git.row.items.count == 3)
+        let base = git.row.items.first { $0.label == "base" }!.itemID
+        let ordinary = git.row.items.first { $0.label == "ordinary" }!.itemID
+        await prepare(); precondition(model.state == .confirmation)
+        precondition(model.preparation?.selection?.categories.contains("git-repositories") == true)
+        model.editSelection(); model.selectItem(git.id, item: ordinary, included: false)
+        await prepare(); precondition(model.state == .confirmation)
+        precondition(model.preparation?.selection?.items[git.id]?.count == 2)
+        model.editSelection(); model.selectItem(git.id, item: base, included: false)
+        let conflictingSelection = model.selection
+        await prepare()
+        precondition(model.state == .failed && model.failure?.technicalReason == "workspace_dependency_missing")
+        precondition(model.failure?.message.contains("base or parent") == true && model.canReviewSelection)
+        precondition(model.selection == conflictingSelection)
+        model.editSelection(); precondition(model.state == .review && model.failure == nil)
+        model.selectCategory(git.id, included: false)
+        await prepare(); precondition(model.state == .confirmation)
+        precondition(model.preparation?.selection?.categories.contains(git.id) == false && model.preparation?.selection?.items[git.id] == nil)
+        let after = try snapshot(home)
+        precondition(after == before)
+        try fixtures("overlap")
+        let beforeOverlap = try snapshot(home)
+        for (folders, repositories) in [(true, true), (true, false), (false, true), (false, false)] {
+            model.scan(); await model.waitForCompletion()
+            precondition(model.state == .review && model.bulkState == .all)
+            precondition(model.categories.first { $0.id == git.id }?.row.items.count == 5)
+            model.selectCategory("workspace-folders", included: folders)
+            model.selectCategory(git.id, included: repositories)
+            let requested = model.selection
+            let target = root.appendingPathComponent("role-\(folders)-\(repositories).mbt")
+            model.prepare(destination: target); await model.waitForCompletion()
+            precondition(model.state == .confirmation && model.preparation?.selection == requested)
+            precondition(!model.savingAttempted && !FileManager.default.fileExists(atPath: target.path))
+            model.create(); await model.waitForCompletion()
+            precondition(model.state == .result && model.publicationEvidence == .occurred)
+            precondition(FileManager.default.fileExists(atPath: target.path))
+            runtime.start(CoreRequest(.bundleInspect(path: target.path)), location: location)
+            await runtime.waitForCompletion()
+            precondition(runtime.state == .completed)
+            let counts = runtime.latestResult?.data?["selected_item_counts"]?.object
+            precondition(counts?["workspace-folders"] == .integer(folders ? 2 : 0))
+            precondition(counts?[git.id] == .integer(repositories ? 5 : 0))
+            print("PASS: Workspace/Git roles folders=\(folders), git=\(repositories): Scan → Review → Destination → Prepare → Confirmation → publication → bundle_inspect")
+        }
+        let afterOverlap = try snapshot(home)
+        precondition(afterOverlap == beforeOverlap)
+        print("PASS: Workspace/Git role matrix, ordinary/linked/nested checkouts and explicit dependencies; fixture HOME unchanged")
     }
 
     @MainActor static func overlapCore(root: URL, core: URL, home: URL, bin: URL, python: URL) async throws {
@@ -641,7 +747,7 @@ import SwiftUI
                   + String(data: JSONSerialization.data(withJSONObject: catalog.path, options: [.fragmentsAllowed, .withoutEscapingSlashes]), encoding: .utf8)!
                   + ").read_bytes())\n    return {key: value for key, value in values.items() if key in ids}\n", helper)
         let location = CoreLocation(root: core, python: python, home: home, temporaryBase: root, toolDirectories: [bin])
-        let runtime = CoreRuntime(), model = CaptureModel(runtime: CoreRuntime(), location: location)
+        let runtime = CoreRuntime(operationLogs: nil), model = CaptureModel(runtime: CoreRuntime(operationLogs: nil), location: location)
         for (name, confirmed, onlyDuplicate) in [("unresolved", false, false), ("confirmed", true, false), ("only-duplicate", true, true)] {
             try JSONSerialization.data(withJSONObject: confirmed ? ["12345": "org.example.Fixture"] : [:]).write(to: catalog)
             model.scan(); await model.waitForCompletion()

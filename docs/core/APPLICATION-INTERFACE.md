@@ -115,6 +115,16 @@ together by the existing macOS scalar contract. Older clients may ignore this
 additive V1 field; it creates no item selection and does not change the prepared
 ID binding or Execute semantics.
 
+Prepare validates explicit Workspace dependencies before confirmation. Missing
+selected checkout base/parent dependencies report `workspace_dependency_missing`;
+conflicting destinations or aliases report `workspace_path_conflict`. A folder
+and checkout at the exact same validated path are compatible roles; folder-only
+selection does not implicitly require Git. Clients may return
+to selection review and prepare again; Core never adds or removes selected items.
+Other invalid Workspace metadata reports `invalid_workspace_selection`, while
+unreadable staged input reports `capture_inventory_invalid`. These fixed codes
+contain no private values. Prepare failure precedes Bundle publication.
+
 Execute requires a non-null selection and the ID from Prepare for that selection.
 It repeats Discovery and binds the ID to staged data, candidate metadata and
 selection, including the effective scope and confirmed duplicate pairs when present,

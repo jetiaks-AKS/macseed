@@ -127,6 +127,7 @@ struct OperationLogSanitizer {
         "publication_failed", "bootstrap_failed", "process_observation_unavailable", "privileged_lifecycle_unknown", "item_stalled_timeout", "item_install_failed",
         "progress_observation_failed", "observation_failed", "observation_error", "prerequisite_unmet", "unsupported_predicate", "confirmed_mismatch", "unknown_difference",
         "reference_changed", "reference_unavailable", "comparison_unavailable", "capture_failed", "capture_discovery_failed", "capture_inventory_invalid", "capture_validation_failed",
+        "capture_source_unavailable", "invalid_workspace_selection", "workspace_dependency_missing", "workspace_path_conflict",
         "invalid_destination", "destination_exists", "destination_changed", "secure_bridge_required", "age_unavailable", "secure_bridge_unavailable", "secure_timeout",
         "secure_import_failed", "secure_export_failed", "secure_input_invalid", "invalid_secure_selection", "readiness_failed", "cask_authorization_required",
         "cask_execution_requirements_unsupported", "cask_target_conflict", "cask_rosetta_required", "rosetta", "installation_required", "cask_observation_failed", "cask_not_ready", "homebrew_unavailable", "homebrew_broken",

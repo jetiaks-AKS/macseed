@@ -192,9 +192,15 @@ def prepared(stage, rows, secure, selection):
     chosen, identities, canonical = selection_for(selection, rows, secure) if selection is not None else ({}, [], None)
     chosen, effective, duplicates = application_scope(stage, chosen, rows, canonical)
     if selection is not None:
+        raw = blueprint_data(chosen)
         try:
-            raw = blueprint_data(chosen)
-            bundle.validate_workspace(bundle.staged_payload(stage, raw), home=os.environ['HOME'])
+            files = bundle.staged_payload(stage, raw)
+        except (bundle.Invalid, OSError) as exc:
+            raise CaptureError('capture_inventory_invalid') from exc
+        try:
+            bundle.validate_workspace(files, home=os.environ['HOME'])
+        except bundle.WorkspaceSelectionInvalid as exc:
+            raise CaptureError(exc.code) from exc
         except (bundle.Invalid, OSError) as exc:
             raise CaptureError('invalid_workspace_selection') from exc
     # Hash private staged inputs; neither input values nor their per-file hashes are public.

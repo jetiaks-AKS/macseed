@@ -722,15 +722,24 @@ old consumer through a placeholder branch or a flat-record fallback.
 All checkout paths must lie under a declared HOME-relative root. Bundle paths use
 `~/...`; packing converts sectional source-HOME absolute paths through the existing
 portability path. External destinations, traversal, controls, `.git` components,
-duplicate destinations and case/Unicode aliases are rejected. Nested checkouts
-add parent dependencies; cycles between nesting and base dependencies are invalid.
+duplicate checkout destinations and case/Unicode aliases are rejected. Nested
+checkouts add parent dependencies; cycles between nesting and base dependencies are invalid.
 Optional target inspection rejects symlink/filesystem aliases and access/type
 errors without creating paths. Physical identities are transient validation data.
 
 Each selected linked member requires its explicitly selected base; selected nested
-checkouts/folders also require their parent checkout. Selection never adds a base
-or other hidden dependency. Validate the full inventory before reducing it to the
-selected Bundle projection; records and topology members must then match exactly.
+checkouts also require their parent checkout. A Workspace Folder and a checkout
+at the exact same validated path are two roles of one destination, not a conflict.
+Both selected roles remain in their respective Bundle records. Folder structure
+alone does not select or require Git, including when nested inside an unselected
+checkout. Cross-role conflicts and target checks use only selected roles;
+full inventory/schema validation remains mandatory. Future topology Restore must
+plan a shared destination together: the checkout owns destination creation and
+the folder role verifies the resulting directory. Precreating that directory must
+not preempt clone admission. This adds no current Restore action or fallback.
+Selection never adds a base or other hidden dependency. Validate the full inventory
+before reducing it to the selected Bundle projection; records and topology members
+must then match exactly.
 Unknown fields, duplicate JSON keys and mixed legacy/topology records are invalid.
 Absolute common-dir paths, Git objects, filesystem identities, credentials and
 project contents have no schema fields. HTTP(S) userinfo/passwords/query/fragment
