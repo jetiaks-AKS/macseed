@@ -93,17 +93,23 @@ fixtures; other suites stay whole. Capture's global temporary-directory inventor
 checks still prohibit concurrent suites on one host. CI shards use separate VMs.
 
 `scripts/test-timings.json` contains weights, never a second test inventory. Current
-weights use CI #116 (`40519591952`): 42 complete passing whole suites and 177
-completed passing cases in the three split suites. The three failed case durations
-are excluded and explicitly estimated at 60 seconds each. RestorePrepare retains
-its historical suite baseline; no failed/partial partition duration is treated as
-a complete suite measurement. Unmeasured methods receive at least 60 seconds or
-their share of the remaining suite budget; new suites receive a provisional 180
-seconds. Measured suite startup overhead is retained when distributing case work.
-New IDs are always assigned. Keep measurement/estimate provenance when updating weights.
-On these same weights, the previous CI #116 assignment predicts a longest shard
-of 38 min 42 s; the new assignment predicts 31 min 34 s, excluding provisioning.
-This is a planning estimate, not a measured hosted speedup.
+weights use the complete PASS measurements from
+[CI #120](https://github.com/jetiaks-AKS/macseed/actions/runs/40667524036): 43 suites
+and 185 cases in the three split suites. Split-suite budgets sum all four complete,
+disjoint partitions, retaining their startup overhead. The same 185 cases passed
+in [CI #119](https://github.com/jetiaks-AKS/macseed/actions/runs/40660635516), which
+provides a second timing sample for replaying the assignment; its failed Homebrew
+capabilities suite is excluded. No failed/partial duration is a full measurement.
+Unmeasured methods receive at least 60 seconds or their share of the remaining
+suite budget; new suites receive a provisional 180 seconds. New IDs are always
+assigned. Keep measurement/estimate provenance when updating weights.
+
+The screenshot cross-version matrix captures and packs once per source version,
+then restores that Bundle into three separate target projects/HOMEs. All nine
+macOS 15/26/27 combinations retain Prepare, Execute, verification and a fresh
+Prepare/Execute checking idempotency. Its scalar `defaults` fixture uses Bash
+builtins instead of a Python process per read; production observation and process
+supervision still run for each call.
 
 Each run writes a private ignored `logs/regression/<run>/` directory; `--output`
 can select a new destination. `safe/summary.md` and `.json` list PASS, FAIL, ERROR,

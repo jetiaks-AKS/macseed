@@ -399,93 +399,126 @@ esac
         self.assertFalse((self.root / 'mutations').exists())
 
     def test_screenshots_cross_version_matrix(self):
+        def configure(fixture):
+            fixture.environment['PATH'] = str(fixture.root / 'bin') + ':/usr/bin:/bin:/usr/sbin:/sbin'
+            state = fixture.root / 'preferences'
+            state.mkdir()
+            writes = fixture.root / 'writes'
+            refresh = fixture.root / 'refresh'
+            fixture.environment.update(TEST_STATE=str(state), TEST_WRITES=str(writes),
+                                       TEST_REFRESH=str(refresh))
+            # Each defaults call still crosses the real observation/process
+            # boundary. Shell builtins avoid a Python startup for every scalar.
+            defaults = fixture.root / 'bin/defaults'
+            defaults.write_text('''#!/bin/bash
+set -eu
+operation="$1" domain="$2" key="$3"
+[[ "$domain" == com.apple.screencapture ]] || exit 2
+[[ "$key" != */* && "$key" != .* ]] || exit 2
+case "$operation" in
+    write)
+        [[ $# -eq 5 ]] || exit 2
+        case "$key" in
+            location|location-screenshot|disable-shadow|show-thumbnail) ;;
+            *) exit 2 ;;
+        esac
+        case "$4" in -string|-bool) ;; *) exit 2 ;; esac
+        printf '%s\\n%s\\n' "${4#-}" "$5" > "$TEST_STATE/$key"
+        printf '%s\\n' "$key" >> "$TEST_WRITES"
+        ;;
+    read|read-type)
+        [[ $# -eq 3 ]] || exit 2
+        if [[ ! -f "$TEST_STATE/$key" ]]; then
+            printf "Error: Could not find key '%s' in domain '%s'.\\n" "$key" "$domain" >&2
+            exit 1
+        fi
+        { IFS= read -r kind; IFS= read -r value; } < "$TEST_STATE/$key"
+        if [[ "$operation" == read ]]; then
+            printf '%s\\n' "$value"
+        else
+            case "$kind" in
+                string) printf 'Type is string\\n' ;;
+                bool) printf 'Type is boolean\\n' ;;
+                *) exit 2 ;;
+            esac
+        fi
+        ;;
+    *) exit 2 ;;
+esac
+''')
+            defaults.chmod(0o700)
+            (fixture.root / 'bin/sw_vers').write_text('#!/bin/bash\nprintf "%s\\n" "$TEST_VERSION"\n')
+            killall = fixture.root / 'bin/killall'
+            killall.write_text('#!/bin/bash\nprintf "%s\\n" "$1" >> "$TEST_REFRESH"\n')
+            killall.chmod(0o700)
+            return state, writes, refresh
+
+        def write_state(directory, values):
+            for path in directory.iterdir():
+                path.unlink()
+            for key, (kind, value) in values.items():
+                (directory / key).write_text(kind + '\n' + value + '\n')
+
+        # Capture depends only on the source version: one immutable Bundle per
+        # source feeds three independently created target projects/HOMEs.
+        source_state, _, _ = configure(self)
+        source_home = self.root / 'source-home'
+        source_home.mkdir()
+        blueprint = self.stage / 'blueprint.conf'
+        blueprint.write_text(blueprint.read_text().replace('macos-screenshots="false"', 'macos-screenshots="true"'))
+        capture = self.stage / 'generated/macos/screenshots.conf'
+        capture.parent.mkdir(parents=True)
         for source in ('15.7', '26.7.1', '27.2'):
+            source_key = 'location-screenshot' if source.startswith('27.') else 'location'
+            source_target = 'target-screenshot' if source.startswith('27.') else 'target'
+            write_state(source_state, {source_key: ['string', str(source_home / 'Screenshots')],
+                source_target: ['string', 'file'], 'disable-shadow': ['bool', 'true'],
+                'show-thumbnail': ['bool', 'false'], 'location-screenrecording': ['string', '/recording'],
+                'target-screenrecording': ['string', 'file']})
+            environment = dict(self.environment, HOME=str(source_home), TEST_CAPTURE=str(capture),
+                               TEST_VERSION=source, MACSEED_APPLICATION_EXECUTION='false')
+            child = subprocess.run(['bash', '-c', '''source modules/core/common/common.sh
+source modules/core/logger/logger.sh
+source modules/discovery/macos/macos.sh
+serialize_screenshots_settings "$TEST_CAPTURE"
+'''], cwd=self.project, env=environment, capture_output=True)
+            self.assertEqual(child.returncode, 0, child.stderr)
+            self.archive = self.root / ('source-' + source + '.mbt')
+            self.pack()
             for target in ('15.7', '26.7.1', '27.2'):
                 with self.subTest(source=source, target=target):
                     fixture = RestorePrepareTests('runTest')
                     fixture.setUp()
                     try:
                         fixture.allow_application_bootstrap()
-                        fixture.environment['PATH'] = str(fixture.root / 'bin') + ':/usr/bin:/bin:/usr/sbin:/sbin'
-                        state = fixture.root / 'preferences.json'
-                        version = fixture.root / 'version'
-                        writes = fixture.root / 'writes'
-                        refresh = fixture.root / 'refresh'
-                        fixture.environment.update(TEST_STATE=str(state), TEST_VERSION=str(version),
-                                                   TEST_WRITES=str(writes), TEST_REFRESH=str(refresh))
-                        defaults = fixture.root / 'bin/defaults'
-                        defaults.write_text('#!' + sys.executable + '\n' + '''import json,os,sys
-from pathlib import Path
-state=Path(os.environ['TEST_STATE']); values=json.loads(state.read_text())
-operation,domain,key=sys.argv[1:4]
-assert domain == 'com.apple.screencapture'
-if operation == 'write':
-    assert key in {'location','location-screenshot','disable-shadow','show-thumbnail'}
-    values[key]=[sys.argv[4][1:],sys.argv[5]]
-    state.write_text(json.dumps(values))
-    with open(os.environ['TEST_WRITES'],'a') as out: out.write(key+'\\n')
-elif key not in values:
-    print("Error: Could not find key '%s' in domain '%s'."%(key,domain),file=sys.stderr)
-    sys.exit(1)
-elif operation == 'read-type':
-    print('Type is '+{'string':'string','bool':'boolean'}[values[key][0]])
-elif operation == 'read': print(values[key][1])
-else: sys.exit(2)
-''')
-                        defaults.chmod(0o700)
-                        (fixture.root / 'bin/sw_vers').write_text('#!/bin/bash\ncat "$TEST_VERSION"\n')
-                        killall = fixture.root / 'bin/killall'
-                        killall.write_text('#!/bin/bash\nprintf "%s\\n" "$1" >> "$TEST_REFRESH"\n')
-                        killall.chmod(0o700)
-                        source_home = fixture.root / 'source-home'
-                        source_home.mkdir()
-                        source_key = 'location-screenshot' if source.startswith('27.') else 'location'
+                        state, writes, refresh = configure(fixture)
+                        fixture.environment['TEST_VERSION'] = target
                         target_key = 'location-screenshot' if target.startswith('27.') else 'location'
-                        source_target = 'target-screenshot' if source.startswith('27.') else 'target'
                         target_target = 'target-screenshot' if target.startswith('27.') else 'target'
-                        version.write_text(source)
-                        state.write_text(json.dumps({source_key:['string',str(source_home / 'Screenshots')],
-                            source_target:['string','file'], 'disable-shadow':['bool','true'],
-                            'show-thumbnail':['bool','false'], 'location-screenrecording':['string','/recording'],
-                            'target-screenrecording':['string','file']}))
-                        blueprint = fixture.stage / 'blueprint.conf'
-                        blueprint.write_text(blueprint.read_text().replace('macos-screenshots="false"', 'macos-screenshots="true"'))
-                        capture = fixture.stage / 'generated/macos/screenshots.conf'
-                        capture.parent.mkdir(parents=True)
-                        environment = dict(fixture.environment, HOME=str(source_home), TEST_CAPTURE=str(capture),
-                                           MACSEED_APPLICATION_EXECUTION='false')
-                        child = subprocess.run(['bash','-c', '''source modules/core/common/common.sh
-source modules/core/logger/logger.sh
-source modules/discovery/macos/macos.sh
-serialize_screenshots_settings "$TEST_CAPTURE"
-'''],cwd=fixture.project,env=environment,capture_output=True)
-                        self.assertEqual(child.returncode, 0, child.stderr)
                         self.assertIn('com.apple.screencapture|location|string|~/Screenshots\n', capture.read_text())
                         self.assertNotIn('location-screenshot', capture.read_text())
-                        fixture.pack()
-                        self.assertEqual(bundle.validate_archive(fixture.archive)['generated/macos/screenshots.conf'],capture.read_bytes())
-                        version.write_text(target)
+                        self.assertEqual(bundle.validate_archive(self.archive)['generated/macos/screenshots.conf'],capture.read_bytes())
                         original={target_key:['string',str(fixture.home / 'Downloads')],target_target:['string','file'],
                             'disable-shadow':['bool','false'],'show-thumbnail':['bool','true'],
                             'location-screenrecording':['string','/recording'],'target-screenrecording':['string','clipboard']}
                         if target.startswith('27.'):
                             original.update(location=['string','/stale-legacy'],target=['string','clipboard'])
-                        state.write_text(json.dumps(original))
-                        prepared=fixture.plan_result()
+                        write_state(state, original)
+                        prepared=fixture.plan_result(path=self.archive)
                         self.assertTrue(prepared['readiness']['ready'])
-                        result,events=fixture.execute(prepared['prepared_plan_id'])
+                        result,events=fixture.execute(prepared['prepared_plan_id'], path=self.archive)
                         self.assertEqual(result.returncode,0,events)
                         self.assertEqual(events[-2]['data']['verification']['verdict'],'selected_requirements_verified')
-                        observed=json.loads(state.read_text())
+                        observed={path.name: path.read_text().splitlines() for path in state.iterdir()}
                         self.assertEqual(observed[target_key],['string',str(fixture.home / 'Screenshots')])
                         self.assertEqual(set(writes.read_text().splitlines()),{target_key,'disable-shadow','show-thumbnail'})
                         for key in original:
                             if key not in {target_key,'disable-shadow','show-thumbnail'}:
                                 self.assertEqual(observed[key],original[key])
-                        repeated=fixture.plan_result()
+                        repeated=fixture.plan_result(path=self.archive)
                         self.assertTrue(all(row['disposition']=='satisfied' for row in repeated['plan']))
                         before=(writes.read_bytes(),refresh.read_bytes())
-                        result,events=fixture.execute(repeated['prepared_plan_id'])
+                        result,events=fixture.execute(repeated['prepared_plan_id'], path=self.archive)
                         self.assertEqual(result.returncode,0,events)
                         self.assertEqual(before,(writes.read_bytes(),refresh.read_bytes()))
                         print('PASS Screenshots '+source+' -> '+target,flush=True)
