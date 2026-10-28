@@ -1098,7 +1098,7 @@ private struct StatusAnchorFrames: PreferenceKey {
         try write("""
         #!/bin/bash
         case "$1:$2:$3" in
-          read-type:NSGlobalDomain:AppleShowAllExtensions) echo 'The domain/default pair does not exist' >&2; exit 1;;
+          read-type:NSGlobalDomain:AppleShowAllExtensions) echo "The domain/default pair of ($2, $3) does not exist" >&2; exit 1;;
           read-type:com.apple.finder:FXEnableExtensionChangeWarning) echo 'Type is boolean';;
           read:com.apple.finder:FXEnableExtensionChangeWarning) echo 0;;
           *) echo attempted >> \(quote(marker.path)); exit 99;;

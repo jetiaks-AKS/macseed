@@ -427,9 +427,16 @@ inspect
                                                             str(self.app / 'Contents/MacOS/Example')]}]
 
     def captured_package(self):
+        # Fresh-target fixtures still need a real installed source at Capture.
+        created_source = not self.app.exists()
+        if created_source:
+            self.application()
         source = copy.deepcopy(self.row)
         source['installed'] = '1.0'
         value = cask.capture_rows({'casks': [source]}, self.prefix, self.observer)
+        if created_source:
+            self.assertEqual(value['casks'][source['token']]['state'], 'satisfied')
+            shutil.rmtree(self.app)
         generated = self.root / 'generated'
         generated.mkdir(exist_ok=True)
         (generated / 'homebrew-casks.json').write_text(json.dumps(value))
@@ -842,10 +849,13 @@ inspect
     def test_captured_package_fresh_install_has_payload_postconditions(self):
         self.package()
         self.row['installed'] = '1.0'
+        self.application()
         value = cask.capture_rows({'casks': [self.row]}, self.prefix, self.observer)
+        self.assertEqual(value['casks'][self.row['token']]['state'], 'satisfied')
         generated = self.root / 'generated'
         generated.mkdir()
         (generated / 'homebrew-casks.json').write_text(json.dumps(value))
+        shutil.rmtree(self.app)
         self.observer.receipts = []
         self.row['installed'] = None
         fresh = self.classify()
