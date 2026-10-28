@@ -822,7 +822,7 @@ struct RestoreExecutionCategories: View {
         if let appStore, !appStore.items.isEmpty {
             let row = TaskDomainPresentation(id: "app-store", title: "App Store Applications", symbol: "app", items: [])
             if let index = result.firstIndex(where: { $0.title == "Applications & Tools" }) {
-                result[index].rows.append(row)
+                result[index].rows.insert(row, at: 0)
             } else {
                 result.insert(("Applications & Tools", [row]), at: 0)
             }
@@ -1032,8 +1032,9 @@ struct RestoreResultCategoryHeader: View {
             WorkspaceCategoryTitle(id: id, title: title, fallbackSymbol: symbol)
                 .padding(.leading, RestoreResultColumns.titleInset(depth: depth)).fixedSize(horizontal: false, vertical: true)
             RestoreTrailingControls(status: RestoreResultStatusLabel(state: state, title: status),
-                counts: counts, expanded: expanded).frame(maxWidth: .infinity, alignment: .leading)
-            RestoreTrailingReference()
+                counts: counts, expanded: expanded, statusWidth: TaskRowLayout.statusWidth)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            RestoreTrailingReference(statusWidth: TaskRowLayout.statusWidth)
         }.padding(.vertical, 6).frame(minHeight: 48).contentShape(Rectangle())
     }
 }
@@ -1132,7 +1133,7 @@ struct RestoreResultItemRow: View {
                 if let url = item.assistedAppStore?.productURL { AppStoreProductButton(url: url) }
             }.padding(.leading, RestoreResultColumns.titleInset(depth: depth, item: true))
                 .frame(maxWidth: .infinity, alignment: .leading).fixedSize(horizontal: false, vertical: true)
-            VStack(alignment: .leading, spacing: 4) {
+            RestoreTrailingControls(status: VStack(alignment: .leading, spacing: 4) {
                 ForEach(RestoreFinalDomain.visibleLabels(item, notRun: notRun), id: \.self) { label in
                     HStack(spacing: 7) {
                         Image(systemName: label == "Verified" ? "checkmark.shield" : label == "Failed" || label == "Mismatch" ? "xmark.circle" : ["Unverified", "Outcome Unknown"].contains(label) ? "questionmark.circle" : "circle.fill")
@@ -1141,8 +1142,8 @@ struct RestoreResultItemRow: View {
                     }.font(.callout).foregroundStyle(item.resultGroup == "Success" ? RestoreStatusTone.success.color : item.resultGroup == "Needs Attention" ? .orange : .secondary)
                         .accessibilityElement(children: .combine)
                 }
-            }
-            RestoreTrailingReference()
+            }, counts: [], statusWidth: TaskRowLayout.statusWidth)
+            RestoreTrailingReference(statusWidth: TaskRowLayout.statusWidth)
         }.padding(.vertical, 7).frame(minHeight: 28)
     }
 }
