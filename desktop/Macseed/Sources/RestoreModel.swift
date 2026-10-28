@@ -267,6 +267,15 @@ struct RestoreProgressRow {
     }
 
     @Published private(set) var showingAppStore = false
+    enum AppStoreRefreshState { case idle, refreshing, cancelling, cancelled }
+    @Published private(set) var appStoreRefreshState: AppStoreRefreshState = .idle
+    private var appStoreRefreshOperationID: String?
+    var isRefreshingAppStore: Bool { state == .preparing && appStoreRefreshOperationID != nil }
+    var canCancelAppStoreRefresh: Bool {
+        showingAppStore && isRefreshingAppStore && appStoreRefreshState == .refreshing
+            && runtime.isActive && !runtime.stopping && runtime.operation == .restorePrepare
+            && runtime.operationID == appStoreRefreshOperationID
+    }
     var appStoreSelected: Bool {
         let plan = state == .result ? executionPlan : preparation
         if let plan { return (plan.selectedItemCounts["app-store"] ?? 0) > 0 }
@@ -293,7 +302,13 @@ struct RestoreProgressRow {
     func refreshAppStore() {
         guard showingAppStore, canPreview else { return }
         // Result recheck deliberately becomes a fresh Preview; never reuse pre-execution evidence.
-        if state == .result { checkCurrentState() } else { refreshPreview() }
+        if state == .result { state = .review; executionResult = nil }
+        refreshPreview(appStoreRefresh: true)
+    }
+    func cancelAppStoreRefresh() {
+        guard canCancelAppStoreRefresh else { return }
+        appStoreRefreshState = .cancelling
+        runtime.cancel()
     }
 
     var busy: Bool { retryingPrerequisites || state == .inspecting || state == .preparing || state == .confirming || state == .rebuilding }
@@ -503,6 +518,7 @@ struct RestoreProgressRow {
         operationID = nil
         cancelRequested = false
         showingAppStore = false
+        appStoreRefreshState = .idle
         source = url; inspection = nil; selectedCategories = []; selectedItems = [:]
         invalidate(); failure = nil; technicalReason = nil
         guard url.isFileURL, url.pathExtension.lowercased() == "mbt" else {
@@ -613,15 +629,41 @@ struct RestoreProgressRow {
         }
         refreshPreview(retryMessage: prerequisiteRetryMessage)
     }
-    func refreshPreview(installerPreparations: [String]? = nil, retryMessage: String? = nil) {
+    func refreshPreview(installerPreparations: [String]? = nil, retryMessage: String? = nil, appStoreRefresh: Bool = false) {
         guard canPreview, let source, let catalog = inspection?.restoreSelection else { return }
         cancelRequested = false
         prerequisiteRetryMessage = retryMessage
         let expected = canonicalSelection
         let request = CoreRequest(.restorePrepare(path: source.path, disabledGroups: [], includeSecure: false, selection: selection, installerPreparations: installerPreparations))
         invalidate(); failure = nil; technicalReason = nil; state = .preparing
+        appStoreRefreshState = .idle
+        if appStoreRefresh {
+            // Bind cancellation synchronously to this read-only operation, even
+            // when the user cancels before the completion Task starts running.
+            appStoreRefreshOperationID = request.operationID
+            appStoreRefreshState = .refreshing
+            operationID = request.operationID
+            runtime.start(request, location: location)
+        }
         work = Task {
-            guard await receive(request) else { return }
+            defer {
+                if appStoreRefresh {
+                    appStoreRefreshOperationID = nil
+                    if appStoreRefreshState != .cancelled { appStoreRefreshState = .idle }
+                }
+            }
+            guard await receive(request, alreadyStarted: appStoreRefresh) else {
+                if appStoreRefresh {
+                    if runtime.operationID == request.operationID, runtime.state == .cancelled,
+                       runtime.termination?.terminal?.isCancellation == true, runtime.termination?.error == nil {
+                        appStoreRefreshState = .cancelled
+                        failure = nil; technicalReason = nil; state = .review
+                    } else if appStoreRefreshState == .cancelling, runtime.termination?.terminal == nil {
+                        fail("Refresh was interrupted without confirmation. No current App Store status is available. Try Refresh Status again.", code: "refresh_interrupted")
+                    }
+                }
+                return
+            }
             do {
                 guard let result = runtime.latestResult else { throw CoreRuntimeError.malformedEvent }
                 let data = try result.decodeData(CoreRestorePreparation.self)
@@ -636,12 +678,14 @@ struct RestoreProgressRow {
     }
     func cancel() { if busy { cancelRequested = true; invalidate(); runtime.cancel() } }
     private func invalidate() { dismissInstallerPreparation(); preparation = nil; preview = nil }
-    private func receive(_ request: CoreRequest) async -> Bool {
-        if cancelRequested {
-            invalidate(); failure = "Restore preparation cancelled. No target changes were made."; state = .cancelled; return false
+    private func receive(_ request: CoreRequest, alreadyStarted: Bool = false) async -> Bool {
+        if !alreadyStarted {
+            if cancelRequested {
+                invalidate(); failure = "Restore preparation cancelled. No target changes were made."; state = .cancelled; return false
+            }
+            operationID = request.operationID
+            runtime.start(request, location: location)
         }
-        operationID = request.operationID
-        runtime.start(request, location: location)
         await runtime.waitForCompletion()
         guard runtime.operationID == request.operationID else { fail("Restore inspection was interrupted. Try again.", code: "operation_mismatch"); return false }
         switch runtime.state {

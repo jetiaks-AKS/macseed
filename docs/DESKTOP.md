@@ -397,7 +397,12 @@ means the provider requirement is unsatisfied, not physical absence.
 
 **Refresh Status** performs existing Core preparation with the same selection.
 From Result it starts a fresh Preview; returning without refresh preserves Result.
-Failed refresh clears stale installation claims. App Store-only plans have no
+**Cancel Refresh** is available only during that screen's read-only Prepare and
+uses CoreRuntime cancellation bound to its operation ID. Confirmed cancellation
+shows **Refresh cancelled**, retains the Bundle and selection, and enables Back
+and retry. A valid completion wins a cancellation race; missing terminal evidence
+shows an interrupted refresh instead. Failed/cancelled refresh clears stale
+installation claims; no Execute stop or confirmation is involved. App Store-only plans have no
 executable Rebuild; manual issues do not block independent automatic work. Apple
 App Store owns installation/account authorization. MASHelper/XPC and automatic MAS
 installation remain retired, including deployment/registration paths.

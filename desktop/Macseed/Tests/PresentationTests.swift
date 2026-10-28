@@ -1662,7 +1662,7 @@ private struct WorkflowAnchorFrames: PreferenceKey {
             .init(id: "homebrew-packages", title: "Packages", symbol: "app", items: []),
             .init(id: "vscode-extensions", title: "Extensions", symbol: "app", items: []),
             .init(id: "workspace-folders", title: "Workspace", symbol: "folder", items: [])], appStore: mixed)
-        precondition(withManual.first?.rows.map(\.id) == ["homebrew-casks", "homebrew-packages", "vscode-extensions", "app-store"])
+        precondition(withManual.first?.rows.map(\.id) == ["app-store", "homebrew-casks", "homebrew-packages", "vscode-extensions"])
         precondition(withManual.flatMap(\.rows).filter { $0.id == "app-store" }.count == 1)
         precondition(RestoreExecutionCategories.sections([]).isEmpty)
         let manualOnly = RestoreExecutionCategories.sections([], appStore: mixed)

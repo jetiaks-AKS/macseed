@@ -1497,7 +1497,9 @@ struct AppStoreRestoreScreen: View {
             Text("Install the remaining apps, then Refresh Status.").foregroundStyle(.secondary)
             if let source = model.source { Label(source.lastPathComponent, systemImage: "shippingbox").font(.callout) }
             if model.state == .preparing {
-                ProgressView("Refreshing status…")
+                ProgressView(model.appStoreRefreshState == .cancelling ? "Cancelling refresh…" : "Refreshing status…")
+            } else if model.appStoreRefreshState == .cancelled {
+                Text("Refresh cancelled").font(.callout).foregroundStyle(.secondary)
             } else if let failure = model.failure {
                 Label(failure, systemImage: "exclamationmark.triangle").foregroundStyle(.orange)
             } else if summary.items.isEmpty {
@@ -1520,6 +1522,10 @@ struct AppStoreRestoreActions: View {
         HStack {
             Button("Back to Restore") { model.closeAppStore() }.disabled(model.busy || model.runtime.isActive)
             Spacer()
+            if model.isRefreshingAppStore {
+                Button("Cancel Refresh") { model.cancelAppStoreRefresh() }
+                    .disabled(!model.canCancelAppStoreRefresh)
+            }
             Button(model.state == .preparing ? "Refreshing…" : "Refresh Status") { model.refreshAppStore() }
                 .disabled(!model.canPreview)
         }

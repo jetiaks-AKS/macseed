@@ -928,16 +928,121 @@ import SwiftUI
         print("PASS: topology Protocol V1, conditional Rebuild, no-op, conflicts and compatible operation gate")
     }
 
+    @MainActor static func appStoreRefreshCancellationChecks(_ model: RestoreModel, runtime: CoreRuntime, location: CoreLocation, core: URL, source: URL) async throws {
+        model.toggleAll()
+        model.selectArea("app-store", included: true)
+        model.selectItem("app-store", item: "stable-app-store-4", included: false)
+        let selection = model.selection
+        let areaIDs = model.areas.map(\.id)
+        try write("assisted_installed", core.appendingPathComponent("mode"))
+        model.refreshPreview(); await model.waitForCompletion()
+        precondition(model.appStorePresentation.allInstalled)
+        model.reviewAppStore()
+        for mode in ["refresh-cancel", "refresh-no-terminal", "refresh-complete-on-cancel"] {
+            try write(mode, core.appendingPathComponent("mode"))
+            model.refreshAppStore()
+            precondition(model.isRefreshingAppStore && model.canCancelAppStoreRefresh)
+            precondition(runtime.operation == .restorePrepare && model.preparation == nil && model.preview == nil)
+            precondition(model.appStorePresentation.items.isEmpty)
+            let operationID = runtime.operationID
+            for _ in 0..<200 {
+                if runtime.currentPhase == "preparation" && runtime.latestResult != nil { break }
+                try await Task.sleep(nanoseconds: 10_000_000)
+            }
+            precondition(runtime.currentPhase == "preparation" && runtime.latestResult != nil)
+            model.cancelAppStoreRefresh()
+            precondition(model.appStoreRefreshState == .cancelling && !model.canCancelAppStoreRefresh)
+            model.cancelAppStoreRefresh() // Repeated clicks cannot send a second cancellation.
+            await model.waitForCompletion()
+            precondition(!runtime.isActive && !model.busy && !model.isRefreshingAppStore)
+            precondition(model.source == source && model.selection == selection && model.areas.map(\.id) == areaIDs)
+            precondition(model.showingAppStore && model.canPreview && runtime.operationID == operationID)
+            switch mode {
+            case "refresh-cancel":
+                precondition(runtime.termination?.terminal?.isCancellation == true)
+                precondition(model.appStoreRefreshState == .cancelled && model.state == .review)
+                precondition(model.failure == nil && model.appStorePresentation.items.isEmpty)
+            case "refresh-no-terminal":
+                precondition(runtime.termination?.terminal == nil && runtime.error != nil)
+                precondition(model.appStoreRefreshState != .cancelled && model.state == .failed)
+                precondition(model.failure?.contains("without confirmation") == true)
+                precondition(model.preparation == nil && model.preview == nil && model.appStorePresentation.items.isEmpty)
+            default:
+                precondition(runtime.termination?.terminal?.type == "completed")
+                precondition(model.appStoreRefreshState == .idle && model.state == .preview)
+                precondition(model.appStorePresentation.allInstalled) // Valid completion wins the race.
+                let preparedID = model.preparation?.preparedPlanID
+                model.cancelAppStoreRefresh()
+                precondition(model.preparation?.preparedPlanID == preparedID && model.appStoreRefreshState == .idle)
+            }
+            model.closeAppStore()
+            precondition(!model.showingAppStore && model.source == source && model.selection == selection)
+            try write("assisted_missing", core.appendingPathComponent("mode"))
+            model.refreshPreview(); await model.waitForCompletion()
+            model.reviewAppStore()
+            precondition(model.appStorePresentation.missingCount == 3) // Retry publishes only new evidence.
+        }
+        // The same cancellation from Result retains navigation scope, not old status.
+        model.closeAppStore()
+        model.selectArea("workspace-folders", included: true)
+        try write("assisted_missing", core.appendingPathComponent("mode"))
+        model.refreshPreview(); await model.waitForCompletion()
+        model.requestRebuild(); model.confirmRebuild(); await model.waitForCompletion()
+        precondition(model.state == .result)
+        let completedExecutionID = model.executionResult!.operationID
+        let resultSelection = model.selection
+        model.reviewAppStore()
+        try write("refresh-cancel", core.appendingPathComponent("mode"))
+        model.refreshAppStore()
+        for _ in 0..<200 {
+            if runtime.currentPhase == "preparation" && runtime.latestResult != nil { break }
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        precondition(model.canCancelAppStoreRefresh && runtime.operation == .restorePrepare)
+        model.cancelAppStoreRefresh(); await model.waitForCompletion()
+        precondition(model.appStoreRefreshState == .cancelled && model.state == .review)
+        precondition(model.executionResult == nil && model.appStorePresentation.items.isEmpty)
+        precondition(model.source == source && model.selection == resultSelection && model.canPreview)
+        // This action cannot cancel another read-only Prepare or any Execute.
+        model.closeAppStore()
+        model.selectArea("workspace-folders", included: false)
+        try write("slow", core.appendingPathComponent("mode"))
+        model.refreshPreview()
+        for _ in 0..<200 {
+            if runtime.currentPhase == "preparation" && runtime.isActive { break }
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        model.cancelAppStoreRefresh()
+        precondition(!runtime.stopping && !model.isRefreshingAppStore)
+        model.cancel(); await model.waitForCompletion()
+        try write("assisted_installed", core.appendingPathComponent("mode"))
+        model.refreshPreview(); await model.waitForCompletion()
+        let execute = CoreRequest(.restoreExecute(path: source.path, disabledGroups: [], includeSecure: false,
+            preparedID: model.preparation!.preparedPlanID, selection: model.selection))
+        model.reviewAppStore()
+        runtime.start(execute, location: location)
+        model.cancelAppStoreRefresh()
+        precondition(runtime.operation == .restoreExecute && !runtime.stopping)
+        await runtime.waitForCompletion()
+        precondition(runtime.termination?.cancellationRequested == false)
+        let requests = try String(contentsOf: core.appendingPathComponent("requests.jsonl"))
+            .split(separator: "\n").map { try JSONSerialization.jsonObject(with: Data($0.utf8)) as! [String: Any] }
+        let executions = requests.filter { $0["operation"] as? String == "restore_execute" }
+        precondition(executions.compactMap { $0["operation_id"] as? String } == [completedExecutionID, execute.operationID])
+        precondition(!FileManager.default.fileExists(atPath: core.appendingPathComponent("MUTATION_ATTEMPT").path))
+        print("PASS: App Store Refresh cancellation, operation ownership, terminal evidence, completion race, selection/navigation and fresh retry")
+    }
     @MainActor static func main() async throws {
-        try topologyPreviewChecks()
+        let refreshCancellationOnly = CommandLine.arguments.contains("--appstore-refresh-cancel-only")
+        if !refreshCancellationOnly { try topologyPreviewChecks() }
         if CommandLine.arguments.contains("--topology-preview-only") { return }
-        try assistedAppStoreChecks()
+        if !refreshCancellationOnly { try assistedAppStoreChecks() }
         if CommandLine.arguments.contains("--rosetta-only") {
             try taskPresentationChecks()
             print("PASS: Rosetta prerequisite and observation failure in Restore Preview and retained diagnostic evidence")
             return
         }
-        if !CommandLine.arguments.contains("--preview-appstore-layout-only") && !CommandLine.arguments.contains("--selection-preview-only") && !CommandLine.arguments.contains("--independent-ownership-only") && !CommandLine.arguments.contains("--review-cancel-only") && !CommandLine.arguments.contains("--restore-macos-only") && !CommandLine.arguments.contains("--pkg-preparation-only") && !CommandLine.arguments.contains("--fix-issues-only") {
+        if !refreshCancellationOnly && !CommandLine.arguments.contains("--preview-appstore-layout-only") && !CommandLine.arguments.contains("--selection-preview-only") && !CommandLine.arguments.contains("--independent-ownership-only") && !CommandLine.arguments.contains("--review-cancel-only") && !CommandLine.arguments.contains("--restore-macos-only") && !CommandLine.arguments.contains("--pkg-preparation-only") && !CommandLine.arguments.contains("--fix-issues-only") {
             for id in WorkspaceCategoryStyle.groups.flatMap({ $0.1 }) {
                 let problem = TaskItemPresentation(id: "problem", item: DisplayItem(id: "problem", title: "Problem", status: .attention, action: "Needs inspection"), state: .failed, resultLabels: ["Failed", "Mismatch"])
                 var category = TaskDomainPresentation(id: id, title: id, symbol: "folder", items: [problem], activityState: .working)
@@ -979,6 +1084,7 @@ import SwiftUI
             try restoreEvidenceChecks()
         }
         if CommandLine.arguments.contains("--presentation-only") { return }
+        if !refreshCancellationOnly {
         for (status, expected, prompts) in [(Int32(0), RestoreAutomationPermission.Outcome.available, 0),
                                             (-1744, .available, 1), (-1743, .denied, 0), (-10004, .unavailable, 0)] {
             var promptCount = 0
@@ -991,6 +1097,7 @@ import SwiftUI
         precondition(unavailableThenUndetermined == .available && checks == 2)
         let deniedPrompt = await RestoreAutomationPermission.resolve(check: { -1744 }, prompt: { -1743 }, start: {})
         precondition(deniedPrompt == .denied && deniedPrompt.message != nil)
+        }
         let repo = URL(fileURLWithPath: CommandLine.arguments[1])
         let python = URL(fileURLWithPath: CommandLine.arguments[2])
         let root = URL(fileURLWithPath: "/private/tmp").appendingPathComponent("macseed-desktop-restore-" + UUID().uuidString)
@@ -1007,6 +1114,9 @@ import SwiftUI
         request=json.load(sys.stdin)
         with open('requests.jsonl','a') as out: out.write(json.dumps(request)+'\\n')
         mode=Path('mode').read_text() if Path('mode').exists() else 'clean'
+        refresh_mode=mode if mode.startswith('refresh-') else None
+        refresh_released=False
+        if refresh_mode: mode='assisted_installed'
         session=mode.startswith('session')
         session_id=__import__('hashlib').sha256(Path('session-count').read_bytes()).hexdigest() if Path('session-count').exists() else 'a'*64
         sequence=0
@@ -1017,6 +1127,9 @@ import SwiftUI
             if data is not None: row['data']=data
             print(json.dumps(row),flush=True)
         def cancelled(signum, frame):
+            global refresh_released
+            if refresh_mode=='refresh-no-terminal': sys.exit(130)
+            if refresh_mode=='refresh-complete-on-cancel': refresh_released=True; return
             emit('cancelled',{'code':'cancelled'}); sys.exit(130)
         signal.signal(signal.SIGTERM,cancelled)
         emit('started')
@@ -1258,7 +1371,13 @@ import SwiftUI
         else:
             Path('MUTATION_ATTEMPT').write_text(operation)
             emit('failed',dict(code='forbidden_operation')); sys.exit(2)
-        emit('result',result); emit('completed')
+        emit('result',result)
+        if operation=='restore_prepare' and refresh_mode:
+            emit('phase_started',{'phase':'preparation'})
+            deadline=time.monotonic()+5
+            while not refresh_released and time.monotonic()<deadline: time.sleep(0.01)
+            if not refresh_released: emit('failed',{'code':'fixture_deadline'}); sys.exit(2)
+        emit('completed')
         """, core.appendingPathComponent("fixture.py"))
         let macOS = ["finder", "dock", "windows", "keyboard", "trackpad", "screenshots"].map { "macos-" + $0 }
         let applications = ["homebrew-casks", "app-store", "vscode-extensions"]
@@ -1282,13 +1401,22 @@ import SwiftUI
         let inspection: [String: Any] = ["format_version": 1, "selected_categories": macOS + ["ssh-configuration"], "selected_item_counts": [:], "secure_component": !Self.finalUXFixtures,
                                         "restore_selection": ["groups": groups, "inventory": inventory]]
         try JSONSerialization.data(withJSONObject: inspection).write(to: core.appendingPathComponent("inspection.json"))
-        let runtime = CoreRuntime()
-        let model = RestoreModel(runtime: runtime, location: CoreLocation(root: core, python: python, home: root, temporaryBase: root, toolDirectories: []))
+        let runtime = CoreRuntime(operationLogs: refreshCancellationOnly ? nil : .shared)
+        let location = CoreLocation(root: core, python: python, home: root, temporaryBase: root, toolDirectories: [])
+        let model = RestoreModel(runtime: runtime, location: location)
         let source = root.appendingPathComponent("sample.mbt")
         model.choose(source); await model.waitForCompletion()
         precondition(model.state == .review && model.areas.count == inventory.count && model.groups.count == 5 && model.bulkState == .all)
         precondition(model.selectionSummary == "Everything selected" && model.canPreview)
         precondition(model.inspection?.secureComponent == !Self.finalUXFixtures && model.selectedAreaCount == 13)
+        if refreshCancellationOnly || CommandLine.arguments.contains("--assisted-appstore-only") {
+            try await appStoreRefreshCancellationChecks(model, runtime: runtime, location: location, core: core, source: source)
+            if refreshCancellationOnly { return }
+            try FileManager.default.moveItem(at: core.appendingPathComponent("requests.jsonl"),
+                                            to: core.appendingPathComponent("refresh-cancellation-requests.jsonl"))
+            try write("clean", core.appendingPathComponent("mode"))
+            model.choose(source); await model.waitForCompletion()
+        }
         if Self.finalUXFixtures {
             model.toggleAll()
             model.selectArea("workspace-folders", included: true)
