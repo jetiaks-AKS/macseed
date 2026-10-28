@@ -703,7 +703,8 @@ shared topology. Adding `.git` file detection alone is not a complete solution.
 Topology-aware Discovery and Capture implement Phase 2 of the
 [Workspace/Git checkpoint](../../ROADMAP.md#complete-workspace--git-worktree-restoration)
 using the Phase 1 schema below. Phase 3 adds read-only Core Restore Preview;
-Phase 4 adds Core Restore Execute and Global Verification within the limits below.
+Phase 4 adds Core Restore Execute and Global Verification; Phase 5 adds selected
+VS Code workspace descriptor restoration within the limits below.
 Independent-clone fallback is forbidden. Protocol V1
 retains its selection/plan model. Capture inventories use stable checkout IDs and display names.
 
@@ -779,7 +780,7 @@ Absolute common-dir paths, Git objects, filesystem identities, credentials and
 project contents have no schema fields. HTTP(S) userinfo/passwords/query/fragment
 are rejected; local/file origins are not portable topology inputs in Phase 1.
 
-The optional Blueprint item section `[vscode-workspaces]` is reserved for a
+The optional Blueprint item section `[vscode-workspaces]` carries a
 separately selected capability; an absent or empty section means no selection.
 Packing and unpacking omit an empty section to preserve legacy Blueprint syntax.
 `workspace/vscode-workspaces.json` contains `{contract: 1, items: [...]}`. Each item
@@ -790,8 +791,9 @@ for the root, otherwise safe relative components), and optional `name` (160 UTF-
 bytes maximum). References must resolve; selected descriptors require explicitly
 selected dependencies. Arbitrary settings, tasks, launch data and file bytes are
 not accepted. Discovery accepts bounded JSON/JSONC folder relationships and names;
-other descriptor content is discarded. Descriptor selection UI and restoration
-remain Phase 5 work; Capture does not implicitly select discovered descriptors.
+other descriptor content is discarded. Capture and Restore expose individual
+descriptors under Workspace using stable IDs and safe basenames; only confirmed
+selected descriptors enter the Bundle. An empty selection adds no extension requirement.
 Confirmed missing folder references exclude only that descriptor as unsupported.
 Access errors or changing observations fail the snapshot and preserve prior state.
 
@@ -918,8 +920,44 @@ cannot establish full verification. A successful repeat Preview reports Already
 Match. Local disposable fixtures qualify this implementation; hosted CI and
 representative real-Mac Execute qualification remain separate gates.
 
-Environment Status is still unsupported for topology Bundles. VS Code descriptor
-restoration remains Phase 5.
+Environment Status is still unsupported for topology Bundles.
+
+### VS Code workspace descriptor restoration — Phase 5
+
+Structured Core Capture/Restore and Desktop support the optional `vscode-workspaces`
+extension through the existing Selection, Preview, Execute and Verification path.
+Each descriptor requires its explicitly selected Workspace Folders and Git checkouts,
+including base/parent dependencies. Missing selection returns `workspace_dependency_missing`;
+Core never adds dependencies. Folder-only descriptors need no Git capability.
+Combining descriptors with selected legacy flat Git records requires a fresh
+topology Capture; Core refuses that unqualified mixed runtime scope.
+
+Preview inspects both the descriptor and its referenced directories. Execute orders
+selected folders/checkouts before descriptors and rechecks the prepared scope and
+source/staged/published inputs before writing. An absent descriptor is created
+exclusively, with mode `0600`, as JSON containing only ordered `folders`, relative
+paths and optional display names. Parent traversal uses HOME-anchored directory
+handles without following symlinks. No source HOME path, arbitrary settings/tasks,
+launch data, extension configuration or original file bytes are copied. VS Code
+is never launched.
+
+An existing descriptor with the same ordered relationships and names is Already
+Matches, even if it has additional unrelated settings. Different relationships,
+names or unsafe destinations are conflicts; no overwrite, merge or deletion occurs.
+An enclosing branch switch is also blocked when a selected existing descriptor is
+tracked by that checkout, protecting it from Git replacement or deletion.
+Unreadable, malformed or changing observations remain Unverified. Missing referenced
+subdirectories must be restored by the selected checkout or explicitly selected
+Workspace Folder; the descriptor action never creates them implicitly.
+
+Global Verification uses the `folder_relationships` predicate and confirms actual
+relationships, display names and dependencies. File presence alone is insufficient.
+Creation and no-op results use the existing operation/mutation records; failed writes
+retain their state for inspection. Repeated matching Restore performs no descriptor
+write. Protocol V1 and diagnostics carry IDs, safe labels and fixed reasons, never
+raw descriptor contents or private absolute paths. Legacy Bundles without this
+optional extension retain their previous schema and behavior. Disposable fixtures
+cover this implementation; representative real-Mac qualification remains open.
 
 ## VS Code settings lifecycle
 

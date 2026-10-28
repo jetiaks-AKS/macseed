@@ -292,8 +292,14 @@ existing shapes. Global Verification reports `topology` conformity for selected 
 checkouts and `directory` conformity for folders; Git exit 0 alone is insufficient.
 Unknown consequences retain the existing durable Execute fence. See the
 [execution and recovery limits](../toolkit/CONFIGURATION.md#topology-restore-execute--phase-4).
-Environment Status and VS Code descriptor restoration remain unsupported for topology
-Bundles. Ordinary legacy Bundle behavior is unchanged.
+Selected `vscode-workspaces` items retain stable `workspace-<sha256>` identities in
+Capture, Restore Selection, plan and operation records. Preview uses `create_workspace`
+for absent descriptors and the existing satisfied/conflict/unknown dispositions.
+Global Verification emits `folder_relationships`, checking ordered paths and display
+names after selected dependencies. No descriptor content or private absolute paths
+enter these records. See the [descriptor contract](../toolkit/CONFIGURATION.md#vs-code-workspace-descriptor-restoration--phase-5).
+Environment Status remains unsupported for these extensions. Ordinary legacy Bundle
+behavior is unchanged.
 
 ### Explicit PKG installer preparation
 

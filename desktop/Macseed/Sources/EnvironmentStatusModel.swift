@@ -294,7 +294,7 @@ struct EnvironmentStatusPresentation {
             "homebrew-packages": ("Homebrew Packages", "shippingbox"), "homebrew-casks": ("Homebrew Applications", "app"),
             "app-store": ("App Store Applications", "app"), "vscode-extensions": ("VS Code Extensions", "puzzlepiece.extension"),
             "vscode-settings": ("VS Code Settings", "slider.horizontal.3"), "git-configuration": ("Git Configuration", "gearshape"),
-            "git-repositories": ("Git Repositories", "folder"), "workspace-folders": ("Workspace Folders", "folder"),
+            "git-repositories": ("Git Repositories", "folder"), "vscode-workspaces": ("VS Code Workspaces", "folder"), "workspace-folders": ("Workspace Folders", "folder"),
             "ssh-configuration": ("SSH Configuration", "key"), "shell-zsh": ("Shell Configuration", "terminal"),
             "macos-finder": ("Finder", "finder"), "macos-dock": ("Dock", "dock.rectangle"),
             "macos-windows": ("Windows", "macwindow"), "macos-keyboard": ("Keyboard", "keyboard"),
@@ -377,7 +377,7 @@ struct EnvironmentStatusSection: Identifiable {
         for title in order {
             var domains = projected.first { $0.id == title }?.groups.flatMap(\.domains) ?? []
             if title == "Workspace" {
-                domains = ["workspace-folders", "git-repositories"].filter(domains.contains)
+                domains = ["workspace-folders", "git-repositories", "vscode-workspaces"].filter(domains.contains)
             }
             if title == "Applications & Tools" {
                 domains = ["homebrew-casks", "app-store", "homebrew-packages", "vscode-extensions"].filter(domains.contains)

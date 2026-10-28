@@ -16,6 +16,11 @@ capture_observe() {
     fi
     local file
     file="$BLUEPRINT_GENERATED_DIR/$(python3 -B modules/core/application-interface/capture.py --path "$domain")" || return 2
+    if [[ "$domain" == vscode-workspaces ]]; then
+        python3 -B modules/core/application-interface/capture.py --workspace-row \
+            "$MACSEED_CAPTURE_INVENTORY" "$file" "$status" "$reason"
+        return $?
+    fi
     local items=() labels=()
     if [[ "$status" != observation_error && -f "$file" ]]; then
         local validator=''
@@ -96,5 +101,6 @@ capture_discovery() {
     capture_workspace_result() { return "$capture_workspace_discovery_status"; }
     capture_observe workspace-folders capture_workspace_result || return 2
     capture_observe git-repositories capture_workspace_result || return 2
+    capture_observe vscode-workspaces capture_workspace_result || return 2
     return 0
 }

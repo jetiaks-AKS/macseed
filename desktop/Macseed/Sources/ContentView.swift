@@ -8,12 +8,12 @@ enum WorkspaceCategoryStyle {
         ("Applications & Tools", ["homebrew-casks", "app-store", "homebrew-packages", "vscode-extensions"]),
         ("Settings", ["macos-settings", "macOS Settings", "macos-finder", "macos-dock", "macos-windows", "macos-keyboard", "macos-trackpad", "macos-screenshots", "vscode-settings"]),
         ("Git", ["git-configuration"]), ("SSH Configuration", ["ssh-configuration"]),
-        ("Workspace", ["workspace-folders", "git-repositories"]), ("Shell", ["shell-zsh"])]
+        ("Workspace", ["workspace-folders", "git-repositories", "vscode-workspaces"]), ("Shell", ["shell-zsh"])]
     static func symbol(_ id: String, fallback: String = "folder") -> String {
         let symbols = ["homebrew-casks": "app", "app-store": "app", "homebrew-packages": "shippingbox",
             "vscode-extensions": "puzzlepiece.extension", "vscode-settings": "slider.horizontal.3",
             "git-configuration": "gearshape", "ssh-configuration": "key", "workspace-folders": "folder",
-            "git-repositories": "folder", "shell-zsh": "terminal", "macos-settings": "slider.horizontal.3", "macOS Settings": "slider.horizontal.3",
+            "git-repositories": "folder", "vscode-workspaces": "folder", "shell-zsh": "terminal", "macos-settings": "slider.horizontal.3", "macOS Settings": "slider.horizontal.3",
             "macos-finder": "finder", "macos-dock": "dock.rectangle", "macos-windows": "macwindow",
             "macos-keyboard": "keyboard", "macos-trackpad": "hand.draw", "macos-screenshots": "camera"]
         return symbols[id] ?? fallback

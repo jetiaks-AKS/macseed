@@ -18,7 +18,8 @@ separate implemented Core Capture/Restore from remaining capability and real-Mac
 - [ ] Qualify topology Restore Execute on representative real Macs, including file
   preservation, branch occupancy, conflicts, interruption and repeat/no-op.
 - [ ] Integrate topology Environment Status under its own inspection/verification contract.
-- [ ] Implement Phase 5 VS Code descriptor restoration after its separate review.
+- [ ] Qualify Phase 5 descriptor Restore on representative real Macs, including
+  dependency creation, conflict preservation and repeat/no-op.
 - [ ] Define any unique Workspace-data transfer through a separate bounded secure
   migration contract; keep current folder restoration structure-only.
 

@@ -139,7 +139,8 @@ Workspace reconstructs folders and repositories, not contents. Never delete or
 replace existing directories, silently change remotes, switch dirty tracked/staged
 state, remove conflicting untracked files, reset, clean, force-push or force checkout.
 Warn/stop unsafe actions; Git may refuse checkout due to untracked conflicts.
-`.code-workspace` metadata is discovered but has no restoration consumer.
+Selected `.code-workspace` folder relationships are restored through Core topology
+Execute without overwriting descriptors or copying arbitrary source content.
 
 Real Apply can install apps/packages, write global Git/macOS settings, clone
 repositories, copy VS Code settings with backup and restart affected processes.

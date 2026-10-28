@@ -157,7 +157,7 @@ uses content states in one workspace, not mandatory wizard pages.
 3. Review shows Selected Domains, Selected Items and Needs Attention. Unsupported
    state alone is not an attention warning. Categories start collapsed in shared
    order: Applications & Tools, Settings, Git, SSH Configuration, Workspace, then
-   Shell when present. Git Repositories belongs to Workspace. macOS Settings nests
+   Shell when present. Git Repositories and VS Code Workspaces belong to Workspace. macOS Settings nests
    Finder, Dock, Windows, Keyboard, Trackpad and Screenshots with independent native
    domain checkboxes. Included-setting labels are read-only, add no selection counts
    and never synthesize defaults. Secure Transfer remains a separate capability;
@@ -270,7 +270,11 @@ Sections are Applications & Tools, Settings, Shell, Git, SSH Configuration and
 Workspace. Settings has one aggregate macOS toggle over captured/available advertised
 domains, plus VS Code Settings; ordinary Restore Selection does not expose individual
 macOS children/preferences. Applications & Tools/Workspace domains remain independently
-selectable. Fully/partially/not-selected counts describe selectable Core categories,
+selectable. VS Code Workspaces supports per-descriptor selection with safe names;
+missing folder/base/parent dependencies require explicit selection correction.
+Preview and Result retain Created/Changed, Already Matches, Conflict/Needs Attention
+and Unverified states. See the [descriptor contract](toolkit/CONFIGURATION.md#vs-code-workspace-descriptor-restoration--phase-5).
+Fully/partially/not-selected counts describe selectable Core categories,
 exclude unavailable categories and do not replace Preview item metrics.
 
 Selection status and Preview Restore stay in the fixed footer. Preparation shows

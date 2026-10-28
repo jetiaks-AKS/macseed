@@ -91,6 +91,164 @@ os.execv(native, [native, *args])
         shutil.rmtree(path)
         shutil.rmtree(admin)
 
+    def descriptors(self, *, folder_only=False, count=1, folders=None, linked=False):
+        self.configure(folders=folders or ['Projects/data'])
+        sections, categories = fixture.bundle.parse_blueprint((self.stage / 'blueprint.conf').read_bytes())
+        if folder_only:
+            sections['git-repositories'] = []
+            (self.stage / self.contract.TOPOLOGY).unlink()
+            (self.stage / self.contract.REPOSITORIES).unlink()
+        relationships = [dict(domain='workspace-folders', item_id=self.folders[0], subpath='', name='Data')]
+        if not folder_only:
+            relationships += [dict(domain='git-repositories', item_id=self.ids[2 if linked else 0], subpath='', name='Code')]
+        self.descriptor_items = [dict(item_id=self.contract.identity('workspace', f'Projects/view-{i}.code-workspace'),
+            path=f'~/Projects/view-{i}.code-workspace', folders=relationships) for i in range(count)]
+        sections['vscode-workspaces'] = [row['item_id'] for row in self.descriptor_items]
+        raw = '[categories]\n' + ''.join(f'{key}="{str(value).lower()}"\n' for key, value in sorted(categories.items()))
+        raw += ''.join('\n[' + domain + ']\n' + ''.join(item + '\n' for item in values)
+                       for domain, values in sections.items() if domain != 'categories')
+        (self.stage / 'blueprint.conf').write_bytes(raw.encode())
+        fixture.bundle.write_file(self.stage / self.contract.VSCODE,
+                                  json.dumps(dict(contract=1, items=self.descriptor_items)).encode())
+        self.archive.unlink()
+        self.pack()
+        return self.home / 'Projects/view-0.code-workspace'
+
+    def test_descriptor_folder_only_create_verify_and_repeat(self):
+        path = self.descriptors(folder_only=True)
+        (self.root / 'bin/git').write_text('#!/bin/bash\nprintf git >> "$TEST_MUTATIONS"\nexit 99\n')
+        result = self.restore()
+        self.assertEqual(json.loads(path.read_bytes()), {'folders': [{'path': 'data', 'name': 'Data'}]})
+        self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+        operations = result['verification']['details']['operation_records']
+        self.assertTrue(any(row['domain'] == 'vscode-workspaces' and row['outcome'] == 'success' for row in operations))
+        before = path.read_bytes(), path.stat().st_mtime_ns, path.stat().st_ino
+        self.restore()
+        self.assertEqual(before, (path.read_bytes(), path.stat().st_mtime_ns, path.stat().st_ino))
+        self.assertFalse((self.root / 'mutations').exists())
+
+    def test_descriptor_after_clone_and_linked_checkout(self):
+        self.paths, self.branches, self.parents = [self.paths[0], self.paths[2]], ['main', ''], [0, 0]
+        path = self.descriptors()
+        # The descriptor also depends on the selected detached linked checkout.
+        value = json.loads((self.stage / self.contract.VSCODE).read_bytes())
+        value['items'][0]['folders'][1]['item_id'] = self.ids[1]
+        (self.stage / self.contract.VSCODE).write_bytes(json.dumps(value).encode())
+        self.archive.unlink(); self.pack()
+        shutil.rmtree(self.home / 'Projects')
+        plan = self.prepare()
+        self.assertEqual(next(row for row in plan['plan'] if row['domain'] == 'vscode-workspaces')['reason'], 'workspace_dependency_pending')
+        self.restore()
+        self.assertEqual(json.loads(path.read_bytes())['folders'][1], {'path': 'other/demo', 'name': 'Code'})
+        self.assertEqual((self.root / 'mutations').read_text().splitlines(), ['clone', 'add_worktree'])
+
+    def test_descriptor_partial_selection_and_missing_dependencies(self):
+        path = self.descriptors(count=2, linked=True)
+        selection = self.selection([0, 2], self.folders)
+        selection['items']['vscode-workspaces'] = [self.descriptor_items[0]['item_id']]
+        self.restore(selection=selection)
+        self.assertTrue(path.is_file())
+        self.assertFalse(path.with_name('view-1.code-workspace').exists())
+        for domain in ('workspace-folders', 'git-repositories'):
+            incomplete = json.loads(json.dumps(selection))
+            incomplete['items'].pop(domain)
+            result, events = self.invoke(selection=incomplete)
+            self.assertEqual(result.returncode, 2)
+            self.assertEqual(events[-1]['data']['code'], 'workspace_dependency_missing')
+        incomplete = self.selection([2], self.folders)
+        incomplete['items']['vscode-workspaces'] = selection['items']['vscode-workspaces']
+        result, events = self.invoke(selection=incomplete)
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(events[-1]['data']['code'], 'workspace_dependency_missing')
+
+    def test_descriptor_matching_jsonc_and_conflict_preserve_bytes(self):
+        path = self.descriptors(folder_only=True)
+        (self.home / 'Projects/data').mkdir()
+        path.write_text('{// retained settings\n"folders":[{"path":"data","name":"Data",}],"settings":{"private":"retained"}}')
+        before = path.read_bytes(), path.stat().st_mtime_ns
+        self.restore()
+        self.assertEqual(before, (path.read_bytes(), path.stat().st_mtime_ns))
+        path.write_text('{"folders":[{"path":"data","name":"Different"}],"tasks":{"secret":"retained"}}')
+        before = path.read_bytes()
+        plan = self.prepare()
+        row = next(row for row in plan['plan'] if row['domain'] == 'vscode-workspaces')
+        self.assertEqual((row['disposition'], row['reason']), ('conflict', 'workspace_descriptor_conflict'))
+        result, events = self.execute(plan['prepared_plan_id'])
+        self.assertEqual(result.returncode, 0, events)
+        data = next(event['data'] for event in events if event['type'] == 'result')
+        self.assertNotEqual(data['verification']['verdict'], 'selected_requirements_verified')
+        self.assertEqual(path.read_bytes(), before)
+        public = json.dumps(events)
+        for private in (str(self.home), 'retained', 'Different', 'secret'):
+            self.assertNotIn(private, public)
+
+    def test_descriptor_symlink_escape_and_observation_error(self):
+        path = self.descriptors(folder_only=True)
+        (self.home / 'Projects/data').mkdir()
+        outside = self.root / 'outside'
+        outside.write_text('preserved')
+        path.symlink_to(outside)
+        row = next(row for row in self.prepare()['plan'] if row['domain'] == 'vscode-workspaces')
+        self.assertEqual(row['disposition'], 'conflict')
+        path.unlink()
+        path.write_text('{"folders":[{"path":"../../outside"}]}')
+        row = next(row for row in self.prepare()['plan'] if row['domain'] == 'vscode-workspaces')
+        self.assertNotIn(row['disposition'], ('planned', 'satisfied'))
+        path.write_text('{invalid json')
+        row = next(row for row in self.prepare()['plan'] if row['domain'] == 'vscode-workspaces')
+        self.assertEqual(row['disposition'], 'unknown')
+        path.unlink()
+        (self.home / 'Projects/data').rmdir()
+        (self.home / 'Projects/data').symlink_to(self.root, target_is_directory=True)
+        row = next(row for row in self.prepare()['plan'] if row['domain'] == 'vscode-workspaces')
+        self.assertEqual(row['disposition'], 'conflict')
+        self.assertFalse(path.exists())
+        # A symlink in the descriptor parent cannot redirect creation either.
+        shutil.rmtree(self.home / 'Projects')
+        (self.home / 'Projects').symlink_to(self.root, target_is_directory=True)
+        row = next(row for row in self.prepare()['plan'] if row['domain'] == 'vscode-workspaces')
+        self.assertEqual(row['disposition'], 'conflict')
+        self.assertFalse((self.root / path.name).exists())
+        self.assertEqual(outside.read_text(), 'preserved')
+
+    def test_descriptor_target_change_rejects_before_publication(self):
+        path = self.descriptors(folder_only=True)
+        plan = self.prepare()
+        path.write_text('{"folders":[]}')
+        result, events = self.execute(plan['prepared_plan_id'])
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(events[-1]['data']['code'], 'stale_plan')
+        self.assertFalse(events[-1]['data']['publication_started'])
+        self.assertEqual(path.read_text(), '{"folders":[]}')
+
+    def test_descriptor_tracked_by_parent_is_preserved_before_branch_switch(self):
+        self.descriptors()
+        path = self.base / 'tracked.code-workspace'
+        path.write_text('{"folders":[{"path":"../data","name":"Data"},{"path":".","name":"Code"}]}')
+        subprocess.run([self.git, '-C', str(self.base), 'add', '--', path.name],
+                       env=self.environment, check=True, capture_output=True)
+        subprocess.run([self.git, '-C', str(self.base), '-c', 'user.name=Fixture',
+                        '-c', 'user.email=fixture@example.invalid', '-c', 'core.hooksPath=/dev/null',
+                        '-c', 'commit.gpgsign=false', 'commit', '-m', 'descriptor'],
+                       env=self.environment, check=True, capture_output=True)
+        (self.base / '.git/refs/heads/next').write_text(self.oid + '\n')
+        self.branches[0] = 'next'
+        self.descriptors()
+        value = json.loads((self.stage / self.contract.VSCODE).read_bytes())
+        value['items'][0].update(path='~/Projects/base/tracked.code-workspace',
+            item_id=self.contract.identity('workspace', 'Projects/base/tracked.code-workspace'))
+        blueprint = self.stage / 'blueprint.conf'
+        blueprint.write_text(blueprint.read_text().replace(self.descriptor_items[0]['item_id'], value['items'][0]['item_id']))
+        (self.stage / self.contract.VSCODE).write_bytes(json.dumps(value).encode())
+        self.archive.unlink(); self.pack()
+        before = path.read_bytes()
+        plan = self.prepare()
+        self.assertEqual(self.git_rows(plan)[0]['reason'], 'workspace_descriptor_conflict')
+        result, events = self.execute(plan['prepared_plan_id'])
+        self.assertEqual(result.returncode, 0, events)
+        self.assertEqual(path.read_bytes(), before)
+        self.assertFalse((self.root / 'mutations').exists())
+
     def test_matching_noop(self):
         self.restore()
         self.assertFalse((self.root / 'mutations').exists())

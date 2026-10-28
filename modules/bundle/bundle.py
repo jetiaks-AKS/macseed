@@ -25,8 +25,9 @@ ITEMS = {
     "git-repositories": "workspace/repositories.conf",
     "git-configuration": "git.conf",
 }
-# Schema-only domains are intentionally absent from runtime/UI inventories.
+# Optional extensions never become mandatory legacy Blueprint sections.
 EXTENSION_ITEMS = {"vscode-workspaces": "workspace/vscode-workspaces.json"}
+SELECTABLE_ITEMS = ITEMS | EXTENSION_ITEMS
 WORKSPACE_EXTENSIONS = {
     "generated/workspace/topology.json": "workspace-topology",
     "generated/workspace/vscode-workspaces.json": "vscode-workspaces",
@@ -52,7 +53,7 @@ GROUPS = {
     "Shell": ("shell-zsh",),
     "Git": ("git-configuration",),
     "SSH Configuration": ("ssh-configuration",),
-    "Workspace": ("workspace-folders", "git-repositories"),
+    "Workspace": ("workspace-folders", "git-repositories", "vscode-workspaces"),
 }
 MAX_ARCHIVE = 48 * 1024 * 1024
 MAX_MEMBER = 33 * 1024 * 1024
@@ -134,6 +135,12 @@ def staged_payload(stage, blueprint):
         # base/parent dependencies even when those parents are unselected.
         name = 'generated/workspace/repositories.conf'
         files[name] = checked_file(stage / name)
+    if 'generated/workspace/vscode-workspaces.json' in files:
+        # Validate relationships against the complete discovered folder inventory
+        # before reducing descriptors and their explicitly selected dependencies.
+        name = 'generated/workspace/folders.conf'
+        if (stage / name).exists() or (stage / name).is_symlink():
+            files[name] = checked_file(stage / name)
     return files
 
 
@@ -293,6 +300,8 @@ def selected_payload(files, blueprint, *, home=None):
         files[name] = ("".join(line + "\n" for line in lines
                                if (line.split("|", 1)[0] if section in
                                    ("app-store", "workspace-folders") else line) in selected)).encode()
+    if not sections["workspace-folders"]:
+        files.pop("generated/workspace/folders.conf", None)
     name = "generated/workspace/repositories.conf"
     if name in files and not topology:
         selected = set(sections["git-repositories"])
@@ -655,9 +664,7 @@ def validate_archive(path, with_provenance=False):
 
 def unpack(bundle, stage, home, *, workspace_preview=False):
     files, provenance = validate_archive(bundle, with_provenance=True)
-    if workspace_preview:
-        require_workspace_preview(files)
-    else:
+    if not workspace_preview:
         require_runtime_workspace(files)
     target_paths(files, home)
     files['blueprint.conf'] = without_empty_workspace_selection(files['blueprint.conf'])
@@ -677,16 +684,10 @@ def inspect_bundle(bundle, home):
     return {
         "format_version": 1,
         "selected_categories": sorted(name for name, enabled in categories.items() if enabled),
-        "selected_item_counts": {name: len(sections[name]) for name in ITEMS},
+        "selected_item_counts": {name: len(sections[name]) for name in SELECTABLE_ITEMS if name in sections},
         "secure_component": "secure.age" in files,
         "external_tools": provenance,
     }
-
-
-def require_workspace_preview(files):
-    # Phase 3 admits topology reads only. Descriptor restoration is still absent.
-    if 'generated/workspace/vscode-workspaces.json' in files:
-        raise Unsupported('VS Code workspace restoration is not enabled')
 
 
 def capture_preview(stage, home, *, topology_folders=False):
@@ -703,8 +704,8 @@ def capture_preview(stage, home, *, topology_folders=False):
     excluded = {'vscode-workspaces'}
     if 'generated/workspace/topology.json' in files:
         excluded.add('git-repositories')
-        if topology_folders:
-            excluded.add('workspace-folders')
+    if topology_folders and workspace_extension_present(files):
+        excluded.add('workspace-folders')
     current, output = None, []
     for line in blueprint.decode().splitlines(keepends=True):
         if line.startswith('[') and line.rstrip().endswith(']'):
@@ -718,9 +719,7 @@ def capture_preview(stage, home, *, topology_folders=False):
 
 def narrow(stage, groups, *, workspace_preview=False):
     files = workspace_stage_files(stage)
-    if workspace_preview:
-        require_workspace_preview(files)
-    else:
+    if not workspace_preview:
         require_runtime_workspace(files)
     path = stage / "blueprint.conf"
     original = checked_file(path, 65536).decode()
@@ -734,7 +733,7 @@ def narrow(stage, groups, *, workspace_preview=False):
             key = line.split("=", 1)[0]
             if key in disabled:
                 line = key + '="false"\n'
-        elif current in disabled and current in ITEMS and not line.startswith("["):
+        elif current in disabled and current in SELECTABLE_ITEMS and not line.startswith("["):
             if line.strip() and not line.startswith("#"):
                 continue
         output.append(line)
@@ -930,7 +929,6 @@ def recover():
 def publish(stage, *, workspace_execute=False):
     files = workspace_stage_files(stage)
     if workspace_execute:
-        require_workspace_preview(files)
         validate_workspace(staged_payload(stage, checked_file(stage / 'blueprint.conf')), home=os.environ['HOME'])
     else:
         require_runtime_workspace(files)

@@ -102,6 +102,8 @@ def opaque(subject):
 
 
 def item(domain, subject):
+    if domain == 'vscode-workspaces' and re.fullmatch(r'workspace-[0-9a-f]{64}', subject):
+        return subject
     if subject in {'scope', 'secure-selection', 'settings.json', 'config', 'zshrc', 'execute', 'bootstrap'}:
         return subject
     if domain in PUBLIC_ITEMS and re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.+@/ -]{0,255}', subject):

@@ -11,8 +11,8 @@ enum DiagnosticReportPrivacy {
         "diagnostic_record", "result", "completed", "failed", "cancelled", "secret_required", "secret_accepted"]
     static let vocabularies: [String: Set<String>] = [
         "phase": ["discovery", "preparation", "validation", "publication", "bundle_creation", "bundle_validation", "bootstrap", "verification", "comparison", "secure_export", "secure_import", "preview", "execute", "readiness", "capture", "scope", "observation", "apply", "post_apply", "orchestration"],
-        "domain": ["orchestration", "verification", "workspace", "workspace-folders", "git-repositories", "git-configuration", "homebrew-packages", "homebrew-casks", "app-store", "vscode-extensions", "vscode-settings", "shell-zsh", "ssh-configuration", "ssh-identities", "ssh-prerequisites", "secure-migration", "launcher", "macos-finder", "macos-dock", "macos-windows", "macos-keyboard", "macos-trackpad", "macos-screenshots"],
-        "action": ["execute", "inspect", "install", "reinstall", "configure", "restore", "clone", "add_worktree", "switch_branch", "checkout", "verify", "compare", "skip", "noop", "import", "export", "create"],
+        "domain": ["orchestration", "verification", "workspace", "workspace-folders", "git-repositories", "vscode-workspaces", "git-configuration", "homebrew-packages", "homebrew-casks", "app-store", "vscode-extensions", "vscode-settings", "shell-zsh", "ssh-configuration", "ssh-identities", "ssh-prerequisites", "secure-migration", "launcher", "macos-finder", "macos-dock", "macos-windows", "macos-keyboard", "macos-trackpad", "macos-screenshots"],
+        "action": ["execute", "inspect", "install", "reinstall", "configure", "restore", "clone", "create_workspace", "add_worktree", "switch_branch", "checkout", "verify", "compare", "skip", "noop", "import", "export", "create"],
         "state": ["started", "completed", "failed", "blocked", "conflict", "interrupted", "skipped", "running", "warning", "changed", "already_satisfied", "graceful_stop_accepted", "graceful_stop_unavailable"],
         "status": ["complete", "partial", "not_run", "unavailable", "invalid", "truncated", "present", "absent", "unsupported", "observation_error", "satisfied", "safely_satisfiable", "external_action_required", "not_selected", "completed", "failed", "cancelled"],
         "outcome": ["success", "failure", "warning", "skipped", "noop", "not_run", "cancelled"],
@@ -25,7 +25,7 @@ enum DiagnosticReportPrivacy {
         "source_status": ["present", "absent", "unavailable", "observation_error", "unsupported", "valid", "invalid", "observed_present", "observed_absent", "partial", "unobserved", "unknown"],
         "severity": ["info", "warning", "error"],
         "comparison_kind": ["matching", "missing", "differing", "unverified", "unsupported", "unresolved", "extra", "unknown_difference"],
-        "predicate": ["exists", "installed", "configured", "matching", "repository", "branch", "remote", "identity", "settings", "folder_exists", "package_installed", "configuration_matches", "identity_pair_matches_package", "directory", "file_content", "stored_preference", "direct_global_value", "supported_config_match", "worktree", "origin", "revision", "topology"],
+        "predicate": ["exists", "installed", "configured", "matching", "repository", "branch", "remote", "identity", "settings", "folder_exists", "package_installed", "configuration_matches", "identity_pair_matches_package", "directory", "file_content", "stored_preference", "direct_global_value", "supported_config_match", "worktree", "origin", "revision", "topology", "folder_relationships"],
         "scope": ["operation", "item"],
         "tool": ["homebrew", "other"],
         "probe": ["version", "prefix", "inventory", "metadata", "capability", "read"],

@@ -71,6 +71,11 @@ def identity(kind, path):
     return kind + '-' + hashlib.sha256((kind + '\0' + path).encode()).hexdigest()
 
 
+def workspace_label(path):
+    name = Path(portable(path)).name
+    return name if re.fullmatch(r'[\w .()+-]{1,160}', name) else 'VS Code Workspace'
+
+
 def keys(value, required, optional=()):
     if not isinstance(value, dict) or not set(required) <= set(value) or set(value) - set(required) - set(optional):
         raise Invalid('invalid Workspace metadata fields')

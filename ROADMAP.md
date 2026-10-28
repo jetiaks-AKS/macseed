@@ -130,8 +130,9 @@ bounded Discovery, explicit Capture selection and Bundle inspection; the Capture
 role-overlap fix is published and its real-Mac Capture gate accepted. Phase 3
 Restore Preview is published and includes an accepted matching real-Mac Preview.
 Phase 4 implements Core Execute and Global Verification with disposable Git
-fixtures and Desktop integration. Hosted CI for Phase 4, representative real-Mac Execute,
-Environment Status and Phase 5 VS Code descriptor restoration remain open.
+fixtures and Desktop integration. Phase 5 implements selected VS Code descriptor
+Capture/Restore and relationship verification. Hosted CI, representative real-Mac
+Execute qualification and topology Environment Status remain open.
 [Configuration](docs/toolkit/CONFIGURATION.md#linked-git-worktree-capability-limits)
 owns the contracts and compatibility limits. Independent-clone fallback is forbidden.
 

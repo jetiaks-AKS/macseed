@@ -21,7 +21,7 @@ import restore_selection
 from observation import read
 from reporting import project
 from homebrew_stop import State, KEY, StopAccepted
-from topology_preview import Inspector, inspect, contract, discovery
+from topology_preview import Inspector, inspect, contract, discovery, directory_fd, workspace_folders, dependency_id
 from clone_execution import CloneExecutor, pending
 
 KEY_CONTEXT = 'MACSEED_WORKSPACE_CONTEXT'
@@ -65,11 +65,12 @@ class Consumer:
         self.files = restore_selection.staged_files(self.stage)
         self.check_inputs()
         self.sections, _ = bundle.parse_blueprint(self.files['blueprint.conf'])
-        self.records = contract.repository_records(self.files[contract.REPOSITORIES])
+        self.records = contract.repository_records(self.files[contract.REPOSITORIES]) if contract.TOPOLOGY in self.files else {}
         self.members = {member['item_id']: (group, member)
-                        for group in contract.objects(self.files[contract.TOPOLOGY])['groups']
+                        for group in (contract.objects(self.files[contract.TOPOLOGY])['groups'] if self.records else [])
                         for member in group['members']}
         self.paths = {item: contract.portable(row['path'], self.home) for item, row in self.records.items()}
+        self.workspaces = {row['item_id']: row for row in contract.objects(self.files[contract.VSCODE])['items']} if contract.VSCODE in self.files else {}
 
     def check_inputs(self):
         value = self.context
@@ -97,7 +98,8 @@ class Consumer:
 
     def observer(self):
         observer = Inspector(self.home, read, time.monotonic() + 120)
-        observer.git = contract.git_executable()
+        if self.records:
+            observer.git = contract.git_executable()
         return observer
 
     def event(self, row, state, reason=None):
@@ -207,6 +209,47 @@ class Consumer:
     def current_row(self, rows, row):
         return next(value for value in rows if (value['domain'], value['item_id']) == (row['domain'], row['item_id']))
 
+    def create_workspace(self, row):
+        workspace = self.workspaces[row['item_id']]
+        relative = contract.portable(workspace['path'])
+        parent, _, name = relative.rpartition('/')
+        folders = workspace_folders(workspace, self.paths)
+        data = (json.dumps({'folders': [dict(folder, path=os.path.relpath(
+            self.home / folder['path'], self.home / parent)) for folder in folders]},
+            ensure_ascii=True, indent=2) + '\n').encode()
+        if len(data) > contract.MAX_BYTES:
+            self.outcome(row, 'failure', 'workspace_descriptor_write_failed')
+            return None
+        changed = False
+        try:
+            if parent:
+                self.parents(parent)
+            evidence = inspect(self.files, self.home, read)
+            current = self.current_row(evidence['plan'], row)
+            if current['action'] != 'create_workspace' or current['disposition'] != 'planned' or current['reason']:
+                raise ValueError('workspace dependencies not ready')
+            with directory_fd(self.home, parent) as directory:
+                self.checkpoint()
+                if inspect(self.files, self.home, read) != evidence:
+                    raise ValueError('workspace changed before creation')
+                descriptor = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                                     0o600, dir_fd=directory)
+                changed = True
+                print('changed', flush=True)
+                with os.fdopen(descriptor, 'wb') as output:
+                    output.write(data)
+                    output.flush()
+                    os.fsync(output.fileno())
+            self.check_inputs()
+            verified = inspect(self.files, self.home, read)
+            if self.current_row(verified['plan'], row)['disposition'] != 'satisfied':
+                raise ValueError('workspace verification failed')
+        except (OSError, ValueError):
+            self.outcome(row, 'failure', 'workspace_descriptor_write_failed', changed=changed)
+            return None
+        self.outcome(row, 'success', changed=True)
+        return verified
+
     def execute(self):
         self.checkpoint()
         previous = inspect(self.files, self.home, read)
@@ -225,16 +268,17 @@ class Consumer:
                 continue
             if authorized['disposition'] != 'planned' or row['disposition'] != 'planned':
                 self.outcome(row, 'skipped', row['reason'] or 'workspace_not_authorized')
-                failed.add(item)
+                failed.add(dependency_id(row['domain'], row.get('checkout_id', row['item_id'])))
                 status = 1
                 continue
             if row['action'] != authorized['action'] or row['action'] == 'none':
                 # A shared folder is completed only by its selected checkout.
                 self.outcome(row, 'skipped', 'workspace_dependency_pending')
-                failed.add(item)
+                failed.add(dependency_id(row['domain'], row.get('checkout_id', row['item_id'])))
                 status = 1
                 continue
-            relative = self.paths[item] if item else row['item_id']
+            relative = (self.paths[item] if item else contract.portable(self.workspaces[row['item_id']]['path'])
+                        if row['domain'] == 'vscode-workspaces' else row['item_id'])
             path = self.home / relative
             if item and pending(path):
                 self.outcome(row, 'skipped', 'workspace_partial_checkout')
@@ -245,7 +289,11 @@ class Consumer:
                 raise ValueError('workspace changed between actions')
             self.event(row, 'applying')
             verified_evidence = None
-            if row['action'] == 'create_directory':
+            if row['action'] == 'create_workspace':
+                verified_evidence = self.create_workspace(row)
+                if verified_evidence is None:
+                    return 2
+            elif row['action'] == 'create_directory':
                 self.parents(relative)
                 good = self.observer().destination(relative) is not None
                 self.outcome(row, 'success' if good else 'failure', changed=good)
@@ -353,7 +401,8 @@ class Consumer:
         self.check_inputs()
         rows = inspect(self.files, self.home, read)['plan']
         uncertain = pending()
-        satisfied = {row['checkout_id'] for row in rows if row.get('checkout_id') and row['disposition'] == 'satisfied'}
+        satisfied = {dependency_id(row['domain'], row.get('checkout_id', row['item_id']))
+                     for row in rows if row['disposition'] == 'satisfied'}
         for row in rows:
             item = row.get('checkout_id', row['item_id'])
             result = 0 if row['disposition'] == 'satisfied' else 1 if row['disposition'] in ('planned', 'conflict') else 2
@@ -367,7 +416,8 @@ class Consumer:
                 dependencies = [parent for parent in dependencies if self.paths[parent] != row['item_id']]
             if any(parent not in satisfied for parent in dependencies):
                 result = 2
-            predicate = 'topology' if row['domain'] == 'git-repositories' else 'directory'
+            predicate = ('topology' if row['domain'] == 'git-repositories' else
+                         'folder_relationships' if row['domain'] == 'vscode-workspaces' else 'directory')
             print('\t'.join((row['domain'], item, predicate, str(result))), flush=True)
 
 

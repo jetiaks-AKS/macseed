@@ -66,7 +66,7 @@ def selection_for(selection, rows, secure):
     identities = selection['secure_identities']
     if (not all(isinstance(x, str) for x in whole + identities) or
             len(whole) != len(set(whole)) or len(identities) != len(set(identities)) or
-            set(whole) - set(domains) or set(selection['items']) - set(bundle.ITEMS) or
+            set(whole) - set(domains) or set(selection['items']) - set(bundle.SELECTABLE_ITEMS) or
             set(whole) & set(selection['items'])):
         raise CaptureError('invalid_selection')
     chosen = {}
@@ -91,7 +91,7 @@ def selection_for(selection, rows, secure):
 def blueprint_data(chosen):
     flags = {name: name in chosen for name in bundle.CATEGORY_FLAGS}
     raw = '[categories]\n' + ''.join(f'{key}="{str(value).lower()}"\n' for key, value in sorted(flags.items()))
-    raw += ''.join('\n[' + key + ']\n' + ''.join(value + '\n' for value in chosen.get(key, [])) for key in bundle.ITEMS)
+    raw += ''.join('\n[' + key + ']\n' + ''.join(value + '\n' for value in chosen.get(key, [])) for key in bundle.SELECTABLE_ITEMS if key in bundle.ITEMS or chosen.get(key))
     bundle.parse_blueprint(raw.encode())
     return raw.encode()
 
@@ -155,7 +155,7 @@ def scan(root, stage, event):
     if status > 1 or not inventory.is_file() or inventory.stat().st_size > MAX_INVENTORY:
         raise CaptureError('capture_discovery_failed')
     rows = [json.loads(line) for line in inventory.read_text().splitlines()]
-    expected = set(bundle.ITEMS) | set(bundle.CATEGORIES)
+    expected = set(bundle.SELECTABLE_ITEMS) | set(bundle.CATEGORIES)
     if len(rows) != len(expected) or {row['domain'] for row in rows} != expected:
         raise CaptureError('capture_inventory_invalid')
     event('phase_completed', {'phase': 'discovery'})
@@ -295,6 +295,31 @@ def capture(root, operation, parameters, channel, event):
         return 2
 
 
+def workspace_row(destination_path, source, status, reason):
+    entries = []
+    if status == 'present':
+        try:
+            path = Path(source)
+            if not path.exists() and not path.is_symlink():
+                status, reason = 'unavailable', 'no_supported_items'
+            else:
+                contract = bundle.workspace_contract()
+                value = contract.objects(bundle.checked_file(path, contract.MAX_BYTES))
+                for row in contract.rows(value['items']):
+                    identity = contract.identity('workspace', contract.portable(row['path']))
+                    if identity != row['item_id']:
+                        raise ValueError()
+                    entries.append(dict(item_id=identity, label=contract.workspace_label(row['path']), _source=identity))
+        except (OSError, ValueError, KeyError, bundle.Invalid):
+            entries = []
+            status, reason = 'observation_error', 'inventory_invalid'
+    value = dict(domain='vscode-workspaces', status=status, reason=reason or None,
+                 selection_mode='items', items=entries)
+    with open(destination_path, 'a', encoding='utf-8') as output:
+        os.chmod(destination_path, 0o600)
+        output.write(json.dumps(value, sort_keys=True) + '\n')
+
+
 def row(destination_path):
     fields = sys.stdin.buffer.read(MAX_INVENTORY + 1).decode().split('\0')
     if fields[-1] != '' or len(fields) < 4:
@@ -315,16 +340,18 @@ def row(destination_path):
             label = labels[index - 1]
         entries.append({'item_id': identity, 'label': label, '_source': source})
     value = {'domain': domain, 'status': status, 'reason': reason or None,
-             'selection_mode': 'items' if domain in bundle.ITEMS else 'category', 'items': entries}
+             'selection_mode': 'items' if domain in bundle.SELECTABLE_ITEMS else 'category', 'items': entries}
     with open(destination_path, 'a', encoding='utf-8') as output:
         os.chmod(destination_path, 0o600)
         output.write(json.dumps(value, sort_keys=True) + '\n')
 
 
 if __name__ == '__main__':
-    if len(sys.argv) == 3 and sys.argv[1] == '--row':
+    if len(sys.argv) == 6 and sys.argv[1] == '--workspace-row':
+        workspace_row(*sys.argv[2:])
+    elif len(sys.argv) == 3 and sys.argv[1] == '--row':
         row(sys.argv[2])
     elif len(sys.argv) == 3 and sys.argv[1] == '--path':
-        print((bundle.ITEMS | bundle.CATEGORIES)[sys.argv[2]])
+        print((bundle.SELECTABLE_ITEMS | bundle.CATEGORIES)[sys.argv[2]])
     else:
         sys.exit(2)

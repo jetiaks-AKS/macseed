@@ -16,7 +16,7 @@ struct RestorePreviewPresentation {
         case "install": "Ready to Install"
         case "reinstall": "Ready to Repair"
         case "set_setting", "set_preference", "switch_branch": "Ready to Change"
-        case "create_directory", "create", "add_worktree": "Ready to Create"
+        case "create_directory", "create", "create_workspace", "add_worktree": "Ready to Create"
         default: "Ready to Restore"
         }
     }
@@ -50,7 +50,7 @@ struct RestorePreviewPresentation {
                 case "switch_branch": message = row.headKind == "detached" ? "Will restore detached HEAD" : "Will switch branch"
                 case "restart_process": message = "Will restart affected process"
                 case "replace_with_backup": message = "Will replace with backup"
-                case "create_directory", "create": message = "Will create"
+                case "create_directory", "create", "create_workspace": message = "Will create"
                 case "set_setting", "set_preference": message = "Will restore setting"
                 case "reinstall": message = "Will Repair"
                 default: message = "Will Restore"
@@ -139,7 +139,7 @@ struct RestoreProgressRow {
             guard let domain = event.data?["domain"]?.string,
                   let state = event.data?["state"]?.string ?? event.data?["outcome"]?.string else { continue }
             // Workspace's production module owns both folders and repositories.
-            let targets = domain == "workspace" ? domains.intersection(["workspace-folders", "git-repositories"]) : domains.intersection([domain])
+            let targets = domain == "workspace" ? domains.intersection(["workspace-folders", "git-repositories", "vscode-workspaces"]) : domains.intersection([domain])
             for target in targets {
                 let itemID = event.data?["item_id"]?.string
                 if event.type == "operation_record" {
@@ -156,7 +156,7 @@ struct RestoreProgressRow {
                         case "install": verb = "Installing"
                         case "reinstall": verb = "Repairing"
                         case "set_setting", "set_preference": verb = "Restoring"
-                        case "create", "create_directory": verb = "Creating"
+                        case "create", "create_directory", "create_workspace": verb = "Creating"
                         case "clone": verb = "Cloning"
                         case "add_worktree": verb = "Adding worktree"
                         case "switch_branch": verb = "Updating HEAD for"
@@ -212,7 +212,7 @@ struct RestoreProgressRow {
         guard !fallback.hasPrefix("Verifying"), let current,
               let domain = current.data?["domain"]?.string,
               let row = rows.first(where: { $0.domains.contains(domain) ||
-                  (domain == "workspace" && !$0.domains.isDisjoint(with: ["workspace-folders", "git-repositories"])) }) else { return fallback }
+                  (domain == "workspace" && !$0.domains.isDisjoint(with: ["workspace-folders", "git-repositories", "vscode-workspaces"])) }) else { return fallback }
         if let text = row.project(events: [current]).restoreActivity {
             return domain == "vscode-extensions" && current.data?["action"]?.string == "install"
                 ? text.replacingOccurrences(of: "Installing ", with: "Installing VS Code extension: ") : text

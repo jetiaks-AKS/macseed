@@ -179,7 +179,7 @@ struct RestoreTaskPresentation {
                 row.items.contains { item in category.items.contains { $0.id == item.id } }
             }.map(\.id))
             let domainActive = currentActivity.map { domainScope.contains($0.domain) ||
-                ($0.domain == "workspace" && !domainScope.isDisjoint(with: ["workspace-folders", "git-repositories"])) } ?? false
+                ($0.domain == "workspace" && !domainScope.isDisjoint(with: ["workspace-folders", "git-repositories", "vscode-workspaces"])) } ?? false
             let active = progress.first { $0.id == category.id }?.project(events: events)
             let activityState: TaskRowState? = active.flatMap {
                 if operationProgress && domainActive && !verifying { return .working }
@@ -472,7 +472,7 @@ struct RestoreTaskPresentation {
         case "homebrew-casks": "app"
         case "homebrew-packages": "shippingbox"
         case "git-configuration", "git-repositories": "point.3.connected.trianglepath.dotted"
-        case "workspace-folders": "folder"
+        case "workspace-folders", "vscode-workspaces": "folder"
         case "app-store": "app.badge"
         case "macOS Settings", "vscode-settings": "gearshape"
         case "vscode-extensions": "puzzlepiece.extension"

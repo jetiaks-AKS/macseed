@@ -175,7 +175,7 @@ blueprint_validate_syntax() {
     local validation_output
     local validation_result
 
-    validation_output="$(awk '
+    validation_output="$(awk -v workspace_context="${MACSEED_WORKSPACE_CONTEXT:+true}" '
         BEGIN {
             sections["categories"] = 1
             sections["homebrew-packages"] = 1
@@ -184,6 +184,7 @@ blueprint_validate_syntax() {
             sections["vscode-extensions"] = 1
             sections["workspace-folders"] = 1
             sections["git-repositories"] = 1
+            if (workspace_context == "true") sections["vscode-workspaces"] = 1
             sections["git-configuration"] = 1
 
             categories["git-configuration"] = 1
@@ -292,7 +293,7 @@ blueprint_validate_syntax() {
 
         END {
             for (section in sections) {
-                if (section == "git-configuration" && section_count[section] == 0) {
+                if ((section == "git-configuration" || section == "vscode-workspaces") && section_count[section] == 0) {
                     continue
                 }
                 if (section_count[section] != 1) {

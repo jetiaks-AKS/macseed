@@ -37,6 +37,7 @@ verify_workspace_topology() {
     report="$(python3 -B modules/bootstrap/workspace/topology_execution.py --verify)" || {
         verification_input_error git-repositories
         verification_input_error workspace-folders
+        verification_input_error vscode-workspaces
         return 0
     }
     while IFS=$'\t' read -r domain subject predicate result; do

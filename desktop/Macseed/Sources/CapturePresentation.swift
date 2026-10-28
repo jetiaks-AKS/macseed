@@ -201,7 +201,7 @@ struct CaptureReviewRow: Identifiable {
     }
     static func project(_ categories: [CaptureCategory]) -> [Self] {
         let order = ["homebrew-casks", "app-store", "homebrew-packages", "vscode-extensions", "macos-settings",
-                     "vscode-settings", "shell-zsh", "git-configuration", "ssh-configuration", "workspace-folders", "git-repositories"]
+                     "vscode-settings", "shell-zsh", "git-configuration", "ssh-configuration", "workspace-folders", "git-repositories", "vscode-workspaces"]
         let known = Set(order + CaptureMacOSSettingsGroup.domainIDs)
         var rows = order.compactMap { id -> Self? in
             let members = categories.filter { id == "macos-settings" ? CaptureMacOSSettingsGroup.domainIDs.contains($0.id) : $0.id == id }

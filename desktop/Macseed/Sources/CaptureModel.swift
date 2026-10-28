@@ -24,7 +24,7 @@ enum CaptureFailure: Error, Equatable {
             case "capture_discovery_failed", "capture_inventory_invalid": "Couldn’t finish scanning this Mac. Scan again before saving."
             case "capture_validation_failed": "The selected environment could not be validated for saving. Scan again and review the selection."
             case "invalid_workspace_selection": "The Workspace selection could not be validated. Scan again and review the selected folders and repositories."
-            case "workspace_dependency_missing": "A linked worktree or nested item needs its base or parent repository selected. Review the selection and include that repository, or deselect the dependent item."
+            case "workspace_dependency_missing": "A selected workspace descriptor or checkout needs its folders and base or parent repositories selected. Review Selection and include those dependencies, or deselect the dependent item."
             case "workspace_path_conflict": "Selected Workspace paths conflict or use ambiguous aliases. Review the selection and deselect the conflicting items before trying again."
             case "invalid_secure_selection": "The selected SSH identities are no longer available. Scan again and review the selection."
             case "secure_bridge_required", "secure_bridge_unavailable": "Secure Capture is unavailable in this session. Review the SSH identity selection."
@@ -61,7 +61,7 @@ struct CaptureCategory: Identifiable {
     static func title(for domain: String) -> String {
         let names = ["homebrew-packages": "Homebrew Packages", "homebrew-casks": "Homebrew Applications", "app-store": "App Store Applications",
                      "vscode-extensions": "VS Code Extensions", "vscode-settings": "VS Code Settings", "git-configuration": "Git Configuration",
-                     "git-repositories": "Git Repositories", "workspace-folders": "Workspace Folders", "ssh-configuration": "SSH Configuration",
+                     "git-repositories": "Git Repositories", "vscode-workspaces": "VS Code Workspaces", "workspace-folders": "Workspace Folders", "ssh-configuration": "SSH Configuration",
                      "shell-zsh": "Shell Configuration", "macos-finder": "Finder", "macos-dock": "Dock", "macos-windows": "Windows",
                      "macos-keyboard": "Keyboard", "macos-trackpad": "Trackpad", "macos-screenshots": "Screenshots"]
         return names[domain] ?? domain
@@ -70,7 +70,7 @@ struct CaptureCategory: Identifiable {
         switch id {
         case "homebrew-packages": "shippingbox"
         case "homebrew-casks", "app-store": "app"
-        case "workspace-folders", "git-repositories": "folder"
+        case "workspace-folders", "git-repositories", "vscode-workspaces": "folder"
         case "ssh-configuration": "key"
         case "shell-zsh": "terminal"
         default: "slider.horizontal.3"

@@ -26,7 +26,8 @@ Restore installs tools/applications, clones repositories from recorded remotes,
 creates folders and restores selected settings. Git working files, `.git`, documents,
 media, databases, caches and sessions are not copied. Only explicitly selected
 `.code-workspace` folder relationships and display names are eligible Bundle metadata;
-arbitrary descriptor content is excluded and relationship restoration remains future work.
+Restore recreates those relationships after their explicitly selected dependencies.
+Arbitrary descriptor content is excluded; existing conflicting files are preserved.
 Current Workspace Folders restores structure only. Future bounded transfer of
 useful unique workspace/local data requires a separate explicit product and safety
 contract; it is not implemented and does not imply general file migration.
@@ -52,8 +53,9 @@ Legacy Bundles retain supported Restore for ordinary Git repositories. New Works
 Topology v1 Bundles support Capture, Restore Preview and confirmed Core Rebuild with
 Global Verification. Selected base repositories precede linked/nested checkouts;
 conditional branches/commits are checked again after Clone. Existing files are
-preserved, and a matching repeat Preview needs no Rebuild. Environment Status and
-VS Code descriptor restoration remain unsupported. Technical details and recovery
+preserved, and a matching repeat Preview needs no Rebuild. Selected VS Code workspace
+descriptors are created without overwriting existing files; folder relationships and
+display names are verified. Environment Status remains unsupported for these extensions. Technical details and recovery
 limits belong to the [Workspace contract](toolkit/CONFIGURATION.md#topology-restore-execute--phase-4).
 
 Settings inclusion, supported keys, unmanaged absence and the qualified Screenshot

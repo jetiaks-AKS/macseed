@@ -23,7 +23,11 @@ The format is based on the principles of **Keep a Changelog**.
   lifecycle, with dependency checks, retained partials and Global Verification.
   Desktop enables confirmed Rebuild for executable plans and labels conditional
   dependencies; matching repeats require no changes. Topology Environment Status
-  and VS Code descriptor restoration remain separate work.
+  remains separate work.
+* Selected VS Code workspace descriptors now travel through Capture and Restore:
+  metadata-only Bundles, explicit folder/checkout dependencies, exclusive creation,
+  relationship/name verification and matching repeat no-op. Existing descriptors
+  are preserved; settings, tasks and other arbitrary source content are excluded.
 * Native SwiftUI Desktop over Core Protocol V1: real Capture, Restore
   Prepare/Execute and read-only Saved Environment Status, with explicit selection,
   confirmation, structured progress, Verification-aware results and fresh-plan
@@ -173,8 +177,8 @@ The format is based on the principles of **Keep a Changelog**.
 ### Safety / Limitations
 
 * Topology Restore requires Core's qualified execution path; ordinary CLI unpack
-  and Environment Status remain unsupported. VS Code workspace relationship
-  restoration remains Phase 5; see the [Workspace contract](docs/toolkit/CONFIGURATION.md#topology-restore-execute--phase-4).
+  and Environment Status remain unsupported. Descriptor restoration is bounded to
+  selected folder relationships; see the [Workspace contract](docs/toolkit/CONFIGURATION.md#vs-code-workspace-descriptor-restoration--phase-5).
 
 ## [3.4.0] - 2026-10-02
 

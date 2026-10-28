@@ -4,7 +4,7 @@ Reuse the topology contract and Discovery's qualified Git readers. The caller
 owns Bundle/Selection validation and the existing Protocol V1 plan identity.
 """
 import hashlib
-from contextlib import ExitStack
+from contextlib import ExitStack, contextmanager
 import importlib.util
 import json
 import os
@@ -47,6 +47,34 @@ UNSUPPORTED_REASONS.update({
 
 class Conflict(ValueError):
     pass
+
+
+@contextmanager
+def directory_fd(home, relative=''):
+    """Anchor all components to HOME; never open through a symlink."""
+    descriptor = os.open(home, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        for part in contract.relative(relative).split('/') if relative else ():
+            child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=descriptor)
+            os.close(descriptor)
+            descriptor = child
+        yield descriptor
+    finally:
+        os.close(descriptor)
+
+
+def workspace_folders(workspace, paths):
+    result = []
+    for folder in workspace['folders']:
+        parent = paths[folder['item_id']] if folder['domain'] == 'git-repositories' else folder['item_id']
+        target = parent + ('/' + folder['subpath'] if folder['subpath'] else '')
+        result.append(dict(path=target, **({'name': folder['name']} if 'name' in folder else {})))
+    return result
+
+
+def dependency_id(domain, item):
+    # Keep folder dependencies opaque and distinct from checkout identities.
+    return 'folder-' + hashlib.sha256(item.encode()).hexdigest() if domain == 'workspace-folders' else item
 
 
 def related(left, right):
@@ -109,6 +137,139 @@ class Inspector(discovery.Observer):
             raise Conflict('workspace_destination_conflict')
         self.identities[key] = relative
         return path
+
+    def workspace(self, workspace, expected):
+        def identity(info):
+            return (info.st_dev, info.st_ino, info.st_mode, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+
+        if time.monotonic() >= self.deadline:
+            raise ValueError('descriptor observation deadline')
+        relative = contract.portable(workspace['path'])
+        parent, _, name = relative.rpartition('/')
+        if parent and self.destination(parent) is None:
+            return False, False
+        with directory_fd(self.home, parent) as directory:
+            try:
+                before = os.stat(name, dir_fd=directory, follow_symlinks=False)
+            except FileNotFoundError:
+                self.remember([relative, 'absent'])
+                return False, False
+            if not stat.S_ISREG(before.st_mode):
+                raise Conflict('workspace_descriptor_conflict')
+            if before.st_size > contract.MAX_BYTES:
+                raise ValueError('descriptor observation limit')
+            descriptor = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
+            try:
+                opened = os.fstat(descriptor)
+                if not stat.S_ISREG(opened.st_mode) or identity(opened) != identity(before):
+                    raise ValueError('descriptor changed')
+                data = b''
+                while len(data) <= contract.MAX_BYTES:
+                    chunk = os.read(descriptor, min(65536, contract.MAX_BYTES + 1 - len(data)))
+                    if not chunk:
+                        break
+                    data += chunk
+                if (len(data) != before.st_size or identity(os.fstat(descriptor)) != identity(opened) or
+                        identity(os.stat(name, dir_fd=directory, follow_symlinks=False)) != identity(before)):
+                    raise ValueError('descriptor changed')
+            finally:
+                os.close(descriptor)
+        self.remember([relative, before.st_dev, before.st_ino, before.st_mode, before.st_size,
+                       before.st_mtime_ns, before.st_ctime_ns, hashlib.sha256(data).hexdigest()])
+        value = discovery.jsonc(data)
+        if not isinstance(value, dict) or not isinstance(value.get('folders'), list):
+            return True, False
+        if len(value['folders']) > contract.MAX_ITEMS:
+            raise ValueError('descriptor folder limit')
+        actual = []
+        for folder in value['folders']:
+            if time.monotonic() >= self.deadline:
+                raise ValueError('descriptor observation deadline')
+            if not isinstance(folder, dict) or set(folder) - {'path', 'name'} or 'path' not in folder:
+                return True, False
+            raw = contract.text(folder['path'])
+            # Relative ../ links are needed for siblings. Qualify every prefix
+            # before normalization so a symlink/../ cannot hide a traversal.
+            current = self.home if raw.startswith('/') else self.home / parent
+            parts = Path(raw).relative_to(self.home).parts if raw.startswith('/') else raw.split('/')
+            for part in parts:
+                if part in ('', '.'):
+                    continue
+                current = current.parent if part == '..' else current / part
+                if current != self.home:
+                    target = str(current.relative_to(self.home))
+                    contract.relative(target)
+                    self.destination(target)
+            target = str(current.relative_to(self.home))
+            contract.relative(target)
+            actual.append(dict(path=target, **({'name': folder['name']} if 'name' in folder else {})))
+        return True, actual == expected
+
+    def workspaces(self, files, paths, result):
+        sections, _ = bundle.parse_blueprint(files['blueprint.conf'])
+        selected = sections.get('vscode-workspaces', [])
+        if not selected:
+            return
+        items = {row['item_id']: row for row in contract.objects(files[contract.VSCODE])['items']}
+        completed = {dependency_id(row['domain'], row.get('checkout_id', row['item_id'])): row for row in result}
+        for item in selected:
+            workspace = items[item]
+            relative = contract.portable(workspace['path'])
+            expected = workspace_folders(workspace, paths)
+            dependencies = {dependency_id(folder['domain'], folder['item_id']) for folder in workspace['folders']}
+            dependencies.update(key for key, path in paths.items()
+                                if key in sections['git-repositories'] and contract.within(relative, path))
+            # Include base/parent dependencies already qualified by the Git plan.
+            for key in list(dependencies):
+                dependencies.update(completed[key].get('dependency_ids', []))
+            try:
+                exists, matches = self.workspace(workspace, expected)
+                targets_exist = all([self.destination(folder['path']) is not None for folder in expected])
+                pending = any(completed[key]['disposition'] != 'satisfied' for key in dependencies)
+                blocked = any(completed[key]['disposition'] not in ('planned', 'satisfied') for key in dependencies)
+                if exists and not matches:
+                    action, disposition, reason = 'inspect', 'conflict', 'workspace_descriptor_conflict'
+                elif blocked:
+                    action, disposition, reason = 'inspect', 'blocked', 'workspace_dependency_pending'
+                elif not targets_exist and not pending:
+                    action, disposition, reason = 'inspect', 'blocked', 'workspace_relationship_missing'
+                elif exists and not pending and targets_exist:
+                    action, disposition, reason = 'none', 'satisfied', None
+                else:
+                    action, disposition, reason = ('none' if exists else 'create_workspace'), 'planned', (
+                        'workspace_dependency_pending' if pending else None)
+            except Conflict as exc:
+                action, disposition, reason = 'inspect', 'conflict', str(exc)
+            except (OSError, ValueError, TypeError, RecursionError):
+                action, disposition, reason = 'inspect', 'unknown', 'workspace_observation_failed'
+            result.append(dict(domain='vscode-workspaces', item_id=item, action=action,
+                               disposition=disposition, reason=reason,
+                               display_name=contract.workspace_label(workspace['path']),
+                               dependency_ids=sorted(dependencies)))
+
+    def protect_descriptors(self, files, sections, checkout, path):
+        # A Git branch change could overwrite/delete a tracked descriptor before
+        # its own no-clobber action. Preserve selected existing descriptors too.
+        selected = sections.get('vscode-workspaces', [])
+        if not selected:
+            return
+        tracked = self.run(path, 'ls-files', '-z').split(b'\0')
+        for workspace in contract.objects(files[contract.VSCODE])['items']:
+            relative = contract.portable(workspace['path'])
+            if workspace['item_id'] not in selected or not contract.within(relative, checkout):
+                continue
+            suffix = relative[len(checkout) + 1:]
+            if suffix.encode() not in tracked:
+                continue
+            parent, _, name = relative.rpartition('/')
+            if self.destination(parent) is None:
+                continue
+            with directory_fd(self.home, parent) as directory:
+                try:
+                    os.stat(name, dir_fd=directory, follow_symlinks=False)
+                except FileNotFoundError:
+                    continue
+            raise Conflict('workspace_descriptor_conflict')
 
     def files(self, path, data):
         def check_deadline():
@@ -332,9 +493,11 @@ class Inspector(discovery.Observer):
 
     def plan(self, files):
         sections, _ = bundle.parse_blueprint(files['blueprint.conf'])
-        records = contract.repository_records(files[contract.REPOSITORIES])
-        topology = contract.objects(files[contract.TOPOLOGY])
+        records = contract.repository_records(files[contract.REPOSITORIES]) if contract.TOPOLOGY in files else {}
+        topology = contract.objects(files[contract.TOPOLOGY]) if contract.TOPOLOGY in files else {'groups': []}
         selected = sections['git-repositories']
+        if selected and contract.TOPOLOGY not in files:
+            raise bundle.Unsupported('Selected Git checkouts require topology metadata alongside descriptors')
         paths = {item: contract.portable(row['path'], self.source_home) for item, row in records.items()}
         members = {member['item_id']: (group, member) for group in topology['groups'] for member in group['members']}
         capability = contract.detect_worktree_capability(cwd=self.home, repository_independent=True) if selected else {'status': 'supported'}
@@ -393,6 +556,8 @@ class Inspector(discovery.Observer):
                         if observation['origin'] != row['remote']:
                             raise Conflict('workspace_origin_conflict')
                         action, disposition, reason = self.desired(path, row, member, observation)
+                        if action == 'switch_branch' and disposition == 'planned':
+                            self.protect_descriptors(files, sections, paths[item], path)
                 except Conflict as exc:
                     action, disposition, reason = 'inspect', 'conflict', str(exc)
                 except contract.Unsupported as exc:
@@ -445,6 +610,7 @@ class Inspector(discovery.Observer):
                     action, disposition, reason = 'inspect', 'unknown', 'workspace_observation_failed'
             result.append(dict(domain='workspace-folders', item_id=folder, action=action, disposition=disposition,
                                reason=reason, dependency_ids=sorted(parents)))
+        self.workspaces(files, paths, result)
         return result
 
 

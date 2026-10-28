@@ -328,6 +328,47 @@ if __name__ == '__main__':'''))
         selection = {'categories': [], 'items': {'git-repositories': [row['items'][0]['item_id']]}, 'secure_identities': []}
         self.assertEqual(self.prepare(selection)['selection'], selection)
 
+    def test_vscode_descriptors_selected_metadata_only_and_legacy_omission(self):
+        self.workspace_fixture()
+        contract = bundle.workspace_contract()
+        for name in ('Team', 'Second'):
+            (self.home / f'Projects/{name}.code-workspace').write_text(json.dumps({
+                'folders': [{'path': 'fixture-repo', 'name': 'Code'}],
+                'settings': {'private': 'secret-marker'}, 'tasks': {'command': 'never-run'},
+                'launch': {}, 'extensions': {'recommendations': ['private.extension']}}))
+        before = bundle.fingerprint(self.home)
+        scan = self.prepare()
+        row = next(row for row in scan['inventory'] if row['domain'] == 'vscode-workspaces')
+        self.assertEqual(row['selection_mode'], 'items')
+        self.assertEqual({item['label'] for item in row['items']}, {'Team.code-workspace', 'Second.code-workspace'})
+        ids = sorted(item['item_id'] for item in row['items'])
+        for count in (0, 1, 2):
+            selection = dict(categories=['git-repositories'], items={}, secure_identities=[])
+            if count:
+                selection['items']['vscode-workspaces'] = ids[:count]
+            prepared = self.prepare(selection)
+            destination = self.root / f'descriptors-{count}.mbt'
+            result, events = self.execute(prepared['prepared_capture_id'], selection, destination)
+            self.assertEqual(result.returncode, 0, events)
+            files = bundle.validate_archive(destination)
+            sections, _ = bundle.parse_blueprint(files['blueprint.conf'])
+            self.assertEqual(sections.get('vscode-workspaces', []), ids[:count])
+            if count:
+                values = json.loads(files[contract.VSCODE])['items']
+                self.assertEqual({value['item_id'] for value in values}, set(ids[:count]))
+                self.assertEqual(events[-2]['data']['bundle']['selected_item_counts']['vscode-workspaces'], count)
+            else:
+                self.assertNotIn('vscode-workspaces', sections)
+                self.assertNotIn(contract.VSCODE, files)
+            for private in (b'secret-marker', b'never-run', b'private.extension', str(self.home).encode()):
+                self.assertNotIn(private, b''.join(files.values()))
+                self.assertNotIn(private.decode(), json.dumps(events))
+        result, events = self.invoke_capture(selection=dict(categories=[],
+            items={'vscode-workspaces': ids[:1]}, secure_identities=[]))
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(events[-1]['data']['code'], 'workspace_dependency_missing')
+        self.assertEqual(bundle.fingerprint(self.home), before)
+
     def role_overlap_roundtrip(self, folders, git):
         from workspace_fixture import repository
         self.fixture(workspace=True)

@@ -155,7 +155,7 @@ def prepared_restore(path, disabled_groups, include_secure, selection=None, inst
         topology_preview = None
         topology_files = None
         preview_blueprint = stage / 'blueprint.conf'
-        if (stage / 'generated/workspace/topology.json').exists():
+        if bundle.workspace_extension_present(restore_selection.staged_files(stage)):
             files = restore_selection.staged_files(stage)
             bundle.validate_workspace(files, home=os.environ['HOME'])
             sys.path.insert(0, str(ROOT / 'modules/bootstrap/workspace'))
@@ -233,7 +233,7 @@ def prepared_restore(path, disabled_groups, include_secure, selection=None, inst
         requirements = prepared_requirements(stage, include_secure, preparation_context, blueprint=preview_blueprint,
                                             workspace_clone=workspace_clone)
         records = []
-        domains = set(bundle.ITEMS) | set(bundle.CATEGORIES) | {"secure-ssh-identities"}
+        domains = set(bundle.SELECTABLE_ITEMS) | set(bundle.CATEGORIES) | {"secure-ssh-identities"}
         for line in plan_file.read_text().splitlines():
             fields = line.split("\t")
             if len(fields) not in (5, 6) or fields[0] not in domains:
@@ -283,8 +283,8 @@ def prepared_restore(path, disabled_groups, include_secure, selection=None, inst
                             'planned': any(row['disposition'] == 'planned' for row in topology_preview['plan'])})
         # Selected inventory is read by the existing validated Bundle parser.
         # Fill unobservable items, never invent an Apply decision from missing inspection.
-        for domain in bundle.ITEMS:
-            items = sections[domain]
+        for domain in bundle.SELECTABLE_ITEMS:
+            items = sections.get(domain, [])
             for index, item in enumerate(items, 1):
                 identity = str(index) if domain == "git-repositories" else item
                 if any(row["domain"] == domain and row["item_id"] == identity for row in records):
@@ -376,7 +376,7 @@ def prepared_restore(path, disabled_groups, include_secure, selection=None, inst
             "selected_groups": [name for name, members in bundle.GROUPS.items()
                                 if any(categories.get(member, False) or sections.get(member) for member in members)],
             "selected_categories": sorted(domain for domain, enabled in categories.items() if enabled),
-            "selected_item_counts": {domain: len(sections[domain]) for domain in bundle.ITEMS},
+            "selected_item_counts": {domain: len(sections[domain]) for domain in bundle.SELECTABLE_ITEMS if domain in sections},
             "include_secure": include_secure,
             "secure_restore_status": "selected_pending" if include_secure else "not_selected",
             "modules": modules,
@@ -664,12 +664,12 @@ def restore_execute(operation_id, path, disabled_groups, include_secure, expecte
                     raise ExecuteFailed("no_executable_work")
                 sections, categories = bundle.parse_blueprint((stage / "blueprint.conf").read_bytes())
                 secure_only = include_secure and not any(categories.values()) and not any(
-                    sections[name] for name in bundle.ITEMS)
+                    sections.get(name) for name in bundle.SELECTABLE_ITEMS)
                 if include_secure and channel is not None:
                     if select.select([channel], [], [], 0)[0]:
                         raise SecureError("secure_cancelled" if not channel.recv(1, socket.MSG_PEEK)
                                           else "secure_channel_invalid")
-                topology = (stage / 'generated/workspace/topology.json').exists()
+                topology = bundle.workspace_extension_present(restore_selection.staged_files(stage))
                 workspace_clone = topology and any(row['action'] == 'clone' for row in plan['plan'])
                 readiness(stage, include_secure, channel is not None, secure_only,
                           pkg_preparation.context(source_id, stage_id),
