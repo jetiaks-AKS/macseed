@@ -118,6 +118,89 @@ esac
         self.assertEqual(row['status'], 'present')
         self.assertEqual(row['items'], [{'item_id': '12345', 'label': 'Public App Name'}])
 
+    def test_stale_ice_capture_with_installed_thaw(self):
+        self.fixture()
+        app = self.home / 'Applications/Thaw.app'
+        (app / 'Contents/MacOS').mkdir(parents=True)
+        (app / 'Contents/Info.plist').write_bytes(plistlib.dumps({
+            'CFBundleIdentifier': 'org.example.Thaw', 'CFBundleExecutable': 'Thaw'}))
+        executable = app / 'Contents/MacOS/Thaw'
+        executable.write_text('#!/bin/sh\n')
+        executable.chmod(0o700)
+        font = self.home / 'Library/Fonts/Fixture.ttf'
+        font.parent.mkdir(parents=True)
+        font.write_bytes(b'fixture font')
+        package_file = self.home / 'Library/fixture-payload'
+        package_file.write_bytes(b'fixture package payload')
+        rows = [
+            {'token': 'jordanbaird-ice', 'installed': '1.0',
+             'artifacts': [{'app': ['Ice.app'], 'target': str(app.with_name('Ice.app'))}]},
+            {'token': 'thaw@beta', 'installed': '1.0',
+             'artifacts': [{'app': ['Thaw.app'], 'target': str(app)}]},
+            {'token': 'font-fixture', 'installed': '1.0',
+             'artifacts': [{'font': ['Fixture.ttf'], 'target': str(font)}]},
+            {'token': 'pkg-fixture', 'installed': '1.0',
+             'artifacts': [{'pkg': ['Fixture.pkg']}, {'uninstall': [{'pkgutil': 'org.example.fixture'}]}]},
+        ]
+        metadata = self.root / 'casks.json'
+        metadata.write_text(json.dumps({'casks': rows}))
+        self.environment['CAPTURE_CASK_METADATA'] = str(metadata)
+        self.environment['CAPTURE_PKG_PAYLOAD'] = str(package_file)
+        calls = self.root / 'cask-calls'
+        self.environment['CAPTURE_CASK_CALLS'] = str(calls)
+        # Substitute only public Homebrew/receipt observations. Discovery, typed
+        # payload checks, Selection, Preview and Bundle validation remain real.
+        helper = self.project / 'modules/apps/adapters/homebrew_cask.py'
+        helper.write_text(helper.read_text().replace("if __name__ == '__main__':", '''
+def fixture_packages(self, selectors):
+    require(selectors == ['org.example.fixture'])
+    return [{'id': selectors[0], 'present': True, 'paths': [os.environ['CAPTURE_PKG_PAYLOAD']]}]
+PublicObserver.packages = fixture_packages
+
+if __name__ == '__main__':'''))
+        brew = self.root / 'bin/brew'
+        brew.write_text(brew.read_text().replace(
+            '"info --json=v2 --installed --cask") echo \'{"casks":[]}\'',
+            '''"info --json=v2 --installed --cask") cat "$CAPTURE_CASK_METADATA" ;;
+ "info --json=v2 --cask "*)
+    printf '%s\\n' "$*" >> "$CAPTURE_CASK_CALLS"
+    python3 -B -c 'import json,os,sys; rows=json.load(open(os.environ["CAPTURE_CASK_METADATA"]))["casks"]; print(json.dumps({"casks":[r for r in rows if r["token"] in sys.argv[1:]]}))' "${@:4}"'''
+        ).replace('"list --cask") exit 0',
+                  '"list --cask") printf "%s\\n" jordanbaird-ice thaw@beta font-fixture pkg-fixture'))
+        expected = ['font-fixture', 'pkg-fixture', 'thaw@beta']
+        for index, selection in enumerate((
+                {'categories': ['homebrew-casks'], 'items': {}, 'secure_identities': []},
+                {'categories': [], 'items': {'homebrew-casks': expected[:-1]}, 'secure_identities': []})):
+            with self.subTest(selection=selection):
+                prepared = self.prepare(selection)
+                inventory = next(row for row in prepared['inventory'] if row['domain'] == 'homebrew-casks')
+                self.assertEqual(inventory['status'], 'present')
+                self.assertEqual([item['item_id'] for item in inventory['items']], expected)
+                target = self.root / f'captured-{index}.mbt'
+                result, events = self.execute(prepared['prepared_capture_id'], selection, target)
+                self.assertEqual(result.returncode, 0, events)
+                files = bundle.validate_archive(target)
+                selected = expected if index == 0 else expected[:-1]
+                self.assertEqual(bundle.parse_blueprint(files['blueprint.conf'])[0]['homebrew-casks'], selected)
+                self.assertEqual(files['generated/brew-casks.conf'].decode().splitlines(), expected)
+                capabilities = json.loads(files['generated/homebrew-casks.json'])['casks']
+                self.assertEqual(sorted(capabilities), selected)
+                self.assertTrue(all(row['state'] == 'satisfied' for row in capabilities.values()))
+                self.assertEqual(files['generated/provenance/homebrew-casks.sha256'].decode(),
+                                 'complete ' + bundle.digest(files['generated/brew-casks.conf']) + '\n')
+        self.assertNotIn('jordanbaird-ice', calls.read_text())
+        # Filtering must not conceal an incomplete or duplicated metadata reply.
+        for invalid in (rows[1:], [*rows, rows[0]]):
+            metadata.write_text(json.dumps({'casks': invalid}))
+            inventory = next(row for row in self.prepare()['inventory'] if row['domain'] == 'homebrew-casks')
+            self.assertEqual(inventory['status'], 'observation_error')
+            self.assertEqual(inventory['items'], [])
+        self.assertFalse((self.project / 'config/generated').exists())
+        self.assertFalse(Path(self.environment['TEST_MUTATIONS']).exists())
+        self.assertTrue(executable.is_file())
+        self.assertTrue(font.is_file())
+        self.assertTrue(package_file.is_file())
+
     def overlap_fixture(self, confirmed=True):
         self.fixture()
         app = self.home / 'Applications/Fixture.app'
@@ -687,14 +770,16 @@ esac
                          b'com.apple.screencapture|location|string|~/Desktop\n')
         (self.root / 'bin/sw_vers').write_text('#!/bin/bash\necho 27.0\n')
         row = next(row for row in self.prepare()['inventory'] if row['domain'] == 'macos-screenshots')
-        self.assertEqual(row['status'], 'observation_error')
-        self.assertEqual(row['included_settings'], [])
-        (self.root / 'bin/sw_vers').write_text('#!/bin/bash\necho 26.7.1\n')
+        self.assertEqual(row['status'], 'present')
+        self.assertEqual(row['included_settings'], [{'id': 'location', 'label': 'Save location'}])
+        # A read failure is never the implicit Desktop on either native backend.
         defaults.write_text('#!/bin/bash\nexit 2\n')
-        for row in self.prepare()['inventory']:
-            if row['domain'] in expected:
-                self.assertEqual(row['included_settings'], [])
-                self.assertEqual(row['status'], 'observation_error')
+        for version in ('26.7.1', '27.0'):
+            (self.root / 'bin/sw_vers').write_text('#!/bin/bash\necho ' + version + '\n')
+            for row in self.prepare()['inventory']:
+                if row['domain'] in expected:
+                    self.assertEqual(row['included_settings'], [])
+                    self.assertEqual(row['status'], 'observation_error')
 
     def test_cancellation_cleanup_and_no_terminal_input(self):
         self.fixture()

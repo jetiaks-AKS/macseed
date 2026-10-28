@@ -11,6 +11,20 @@ TEST_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TEST_ROOT"' EXIT INT TERM
 export HOME="$TEST_ROOT/home"
 mkdir -p "$HOME" "$TEST_ROOT/modules/apps/adapters"
+# Normal registration fixtures represent installed payload, not deleted apps.
+python3 -B - <<'PY'
+import os
+from pathlib import Path
+import plistlib
+for name in ('Firefox', 'Visual Studio Code'):
+    app = Path(os.environ['HOME']) / 'Applications' / (name + '.app')
+    (app / 'Contents/MacOS').mkdir(parents=True)
+    (app / 'Contents/Info.plist').write_bytes(plistlib.dumps({
+        'CFBundleIdentifier': 'org.example.fixture', 'CFBundleExecutable': 'fixture'}))
+    executable = app / 'Contents/MacOS/fixture'
+    executable.write_text('#!/bin/sh\n')
+    executable.chmod(0o700)
+PY
 ln -s "$PROJECT_ROOT/modules/apps/adapters/homebrew_cask.py" "$TEST_ROOT/modules/apps/adapters/homebrew_cask.py"
 
 TEST_FAILURES=0

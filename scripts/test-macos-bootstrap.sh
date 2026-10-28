@@ -1,4 +1,7 @@
 #!/bin/bash
+# Assertion reporters deliberately use A && pass || fail; failures accumulate
+# in TEST_FAILURES and the final check sets the harness exit status.
+# shellcheck disable=SC2015
 
 set -u
 
@@ -11,6 +14,8 @@ HOME="$TEST_ROOT/home"
 STATE_FILE="$TEST_ROOT/defaults-state"
 MUTATION_LOG="$TEST_ROOT/mutations"
 OBSERVATION_LOG="$TEST_ROOT/observations"
+# Read by the sourced logging helpers.
+# shellcheck disable=SC2034
 VERBOSE=false
 MODULE_CHANGED=false
 ENABLED_CATEGORIES="all"
@@ -35,7 +40,10 @@ mkdir -p "$HOME" "$TEST_ROOT/generated/macos"
 : > "$MUTATION_LOG"
 : > "$OBSERVATION_LOG"
 
+# Production consumers are exercised at runtime, including fixture callbacks.
+# shellcheck disable=SC1091
 source modules/core/common/common.sh
+# shellcheck disable=SC1091
 source modules/settings/macos/macos.sh
 
 FINDER_CONFIG="$TEST_ROOT/generated/macos/finder.conf"
@@ -245,7 +253,10 @@ d4_setup() {
     unset MACSEED_HOMEBREW_STOP
     command mkdir -p "$MACSEED_ITEM_STATE_DIR"
     rm -f "$MACSEED_ITEM_STATE_DIR/external-tool-active.json"
+    # Consumed and updated by the sourced production reporter.
+    # shellcheck disable=SC2034
     MACSEED_REPORT_FD=3
+    # shellcheck disable=SC2034
     MACSEED_REPORT_COUNT=0
     MACSEED_REPORT_INVALID=false
     exec 3> "$TEST_ROOT/d4-records"
@@ -343,6 +354,7 @@ d4_invalid_inputs() {
 d4_boundaries() {
     local action
     # Use the production Stop checkpoint/controller and reporter, only private state.
+    # shellcheck disable=SC2329 # Called by the sourced settings executor.
     killall() {
         printf 'killall:%s\n' "$1" >> "$MUTATION_LOG"
         if [[ "$1" == Finder ]]; then
@@ -354,6 +366,7 @@ d4_boundaries() {
         fi
         return 0
     }
+    # shellcheck disable=SC2329 # Called through the run helper.
     d4_isolated_execute() ( apply_macos_settings )
     for action in stop unknown; do
         d4_setup
@@ -473,9 +486,13 @@ windows_expansion_checks() {
     done
     # Exercise the production Global Verification projection, with fixture sinks.
     (
+        # shellcheck disable=SC2329 # Callbacks used by sourced Verification.
         verification_category_selected() { return 0; }
+        # shellcheck disable=SC2329
         verification_coverage() { :; }
+        # shellcheck disable=SC2329
         verification_input_error() { echo invalid >> "$TEST_ROOT/windows-verification"; }
+        # shellcheck disable=SC2329
         verification_result() { printf '%s:%s:%s\n' "$2" "$3" "$4" >> "$TEST_ROOT/windows-verification"; }
         reset_case
         : > "$TEST_ROOT/windows-verification"
@@ -649,7 +666,11 @@ run preview_macos_settings
 READ_TYPE_FAILURE='com.apple.dock|autohide'
 run preview_macos_settings
 expect_status 2 "$status" 'Preview observation error'
-[[ "$output" != *Would* ]] || fail 'error invented plan'
+# A failed observation blocks that setting; independent records still preview.
+[[ "$output" != *'Would change macOS setting: com.apple.dock/autohide'* ]] || fail 'error invented autohide plan'
+[[ "$output" == *'Would change macOS setting: com.apple.dock/show-recents'* ]] || fail 'error hid independent Dock plan'
+[[ "$output" != *'Would restart process: Dock'* ]] || fail 'error invented Dock restart'
+assert_no_mutation 'Preview observation error never mutates'
 ENABLED_CATEGORIES=macos-finder
 run preview_macos_settings
 expect_status 0 "$status" 'disabled Dock not inspected'
@@ -1447,6 +1468,8 @@ assert_no_mutation 'matching Trackpad does not restart or write'
 
 fi
 
+# These fixtures intentionally store literal portable HOME paths.
+# shellcheck disable=SC2088
 screenshots_preflight_checks() {
     local MODE MACSEED_APPLICATION_READINESS_REPORT=true value
     for MODE in --dry-run --application-readiness; do
@@ -1469,6 +1492,7 @@ screenshots_preflight_checks() {
     MOCK_MACOS_VERSION=28.0
     shots '~/Captures'
     MODE=--application-readiness
+    # shellcheck disable=SC2034 # Read by the sourced screenshots validator.
     MACSEED_APPLICATION_READINESS_REPORT=false
     run validate_screenshots_config
     expect_status 2 "$status" 'publication readiness still rejects unsupported location'
@@ -1479,6 +1503,8 @@ screenshots_preflight_checks() {
 }
 screenshots_preflight_checks
 
+# These fixtures compare literal portable paths with native absolute paths.
+# shellcheck disable=SC2088
 screenshots_backend_representations() {
     local version key target_key value
     for version in 15.7 26.7.1 27.2; do
@@ -1486,7 +1512,7 @@ screenshots_backend_representations() {
             reset_case
             MOCK_MACOS_VERSION="$version"
             key=location; target_key=target
-            if [[ "$version" == 27.* ]]; then key=location-screenshot; target_key=target-screenshot; fi
+            if [[ "$version" == 27.* ]]; then key='location-screenshot'; target_key='target-screenshot'; fi
             command mkdir -p "$HOME/Desktop"
             shots '~/Desktop'
             case "$value" in
@@ -1609,6 +1635,7 @@ run verify_screenshots
 grep -Fq 'result:com.apple.screencapture/show-thumbnail:stored_preference:2' "$TEST_ROOT/verification" || fail 'observation failure not emitted'
 
 # Screenshot path validation: fixtures only, never real user directories.
+# shellcheck disable=SC2016 # Malformed inputs must remain literal, never execute.
 for bad in '' relative '~otheruser/Shot' '$VAR/Shot' '$HOME/Shot' '${HOME}/Shot' '$(touch sentinel)' '`touch sentinel`' "$HOME/../escape" "$HOME/./bad" "$HOME//bad" $'/tmp/a\nb' $'/tmp/a\tb'; do
     reset_case
     shots "$bad"

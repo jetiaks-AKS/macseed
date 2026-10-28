@@ -37,6 +37,31 @@ class SelectionTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, events)
         return events[-2]['data']
 
+    def test_homebrew_token_labels_from_saved_bundle_keep_identity_and_privacy(self):
+        tokens = {'homebrew-casks': ['thaw@beta'],
+                  'homebrew-packages': ['openssl@3', 'libsigc++', 'owner/tap/formula@2+extra']}
+        blueprint = self.stage / 'blueprint.conf'
+        raw = blueprint.read_text()
+        for domain, values in tokens.items():
+            raw = raw.replace('[' + domain + ']\n', '[' + domain + ']\n' + '\n'.join(values) + '\n')
+            bundle.write_file(self.stage / 'generated' / bundle.ITEMS[domain], ('\n'.join(values) + '\n').encode())
+        blueprint.write_text(raw)
+        self.fixture.pack()
+        before = self.fixture.archive.read_bytes()
+        rows = {row['domain']: row for row in self.inspect()['restore_selection']['inventory']}
+        for domain, values in tokens.items():
+            self.assertEqual(rows[domain]['items'], [
+                {'item_id': selection_api.identity(domain, value), 'label': value} for value in values])
+            for unsafe in ('https://user:SECRET@example.test/app', 'user:SECRET@host',
+                           '/Users/private/app', '~/private/app', '../private/app',
+                           'folder/app', 'owner/tap/path/app', '--option', 'app.rb', 'app\nsecret'):
+                self.assertEqual(selection_api.label(unsafe, domain), 'Private item')
+        self.assertEqual(selection_api.label('owner/tap/app', 'homebrew-casks'), 'Private item')
+        for domain in set(selection_api.LABELS) - set(tokens):
+            for value in ('thaw@beta', 'openssl@3', 'libsigc++', 'https://user:SECRET@example.test/app'):
+                self.assertEqual(selection_api.label(value, domain), 'Private item')
+        self.assertEqual(self.fixture.archive.read_bytes(), before)
+
     def test_protocol_inventory_prepare_binding_and_stale_execute(self):
         blueprint = self.stage / 'blueprint.conf'
         blueprint.write_text(blueprint.read_text().replace('[workspace-folders]\nProjects\n', '[workspace-folders]\nProjects\nOther\n'))

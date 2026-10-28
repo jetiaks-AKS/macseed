@@ -23,8 +23,14 @@ def identity(domain, source):
     return 'restore:' + hashlib.sha256((domain + '\0' + source).encode()).hexdigest()
 
 
-def label(source):
+def label(source, domain=None):
     # Values/remotes are never candidates. Unsafe identifiers get a neutral label.
+    if domain in ('homebrew-packages', 'homebrew-casks'):
+        token = r'[A-Za-z0-9][A-Za-z0-9+_.@-]*'
+        pattern = token + (rf'(?:/{token}/{token})?' if domain == 'homebrew-packages' else '')
+        suffix = r'\.rb$' if domain == 'homebrew-packages' else r'\.(rb|json|sh|bash|zsh|dmg|pkg|zip)$'
+        return source if (len(source) <= 160 and re.fullmatch(pattern, source) and
+                          not re.search(suffix, source, re.I)) else 'Private item'
     return source if re.fullmatch(r'[\w . /-]{1,160}', source, re.UNICODE) and not source.startswith('/') else 'Private item'
 
 
@@ -55,7 +61,7 @@ def inventory(files):
                      'source_present': 'generated/' + (bundle.ITEMS.get(domain) or bundle.CATEGORIES[domain]) in files,
                      'reason': None if available else 'no_selectable_content',
                      'items': [{'item_id': key, 'label': label(app_names.get(value, value) if domain == 'app-store' else
-                                repository_names.get(value, value) if domain == 'git-repositories' else value)} for key, value in sources[domain].items()]})
+                                repository_names.get(value, value) if domain == 'git-repositories' else value, domain)} for key, value in sources[domain].items()]})
     return {'groups': [{'id': group, 'domains': list(domains)} for group, domains in bundle.GROUPS.items()],
             'inventory': rows}, sources
 

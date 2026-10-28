@@ -1347,14 +1347,37 @@ def classify(row, prefix, observer=None, operation=None, observation_only=False,
         return result('homebrew', 'observation_error', 'observation_failure', OBSERVATION, selected_operation)
 
 
+def capture_payload_absent(value):
+    """Exclude only observed missing payload, never registration or uncertainty."""
+    if value['state'] != 'repairable':
+        return False
+    targets = [Path(p['path']) for p in value.get('evidence', []) if 'path' in p]
+    if not targets:
+        return False
+    for target in targets:
+        try:
+            target.lstat()
+        except FileNotFoundError:
+            continue
+        except OSError:
+            return False
+        return False  # Partial/broken payload and dangling links are not absence.
+    return True
+
+
 def capture_rows(metadata, prefix, observer=None):
     observer = observer or PublicObserver()
     require(isinstance(metadata.get('casks'), list), OBSERVATION)
     captured = {'contract': 1, 'casks': {}}
+    seen = set()
     for row in metadata['casks']:
         token = row.get('token', '')
-        require(NAME.fullmatch(token) and token not in captured['casks'], OBSERVATION)
+        require(NAME.fullmatch(token) and token not in seen and
+                not re.search(r'\.(rb|json|sh|bash|zsh|dmg|pkg|zip)$', token, re.I), OBSERVATION)
+        seen.add(token)
         value = classify(row, prefix, observer, observation_only=True, capture=True)
+        if capture_payload_absent(value):
+            continue
         for predicate in value.get('evidence', []):
             if predicate['kind'] == 'app' and Path(predicate['path']).is_dir():
                 target = Path(predicate['path'])

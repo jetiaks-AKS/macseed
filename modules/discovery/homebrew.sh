@@ -81,9 +81,12 @@ export_brew_casks() {
 
     metadata="$(HOMEBREW_NO_AUTO_UPDATE=1 application_observe inventory brew info --json=v2 --installed --cask)" || return 2
     prefix="$(HOMEBREW_NO_AUTO_UPDATE=1 application_observe inventory brew --prefix)" || return 2
+    # Check the complete registration response before excluding confirmed absent
+    # payloads. Selection, metadata and provenance then share one observed scope.
+    jq -e --arg inventory "$inventory" '(.casks | map(.token) | sort) ==
+        ($inventory | split("\n") | map(select(length > 0)) | sort)' <<< "$metadata" >/dev/null || return 2
     capabilities="$(python3 -B modules/apps/adapters/homebrew_cask.py "$prefix" --capture <<< "$metadata")" || return 2
-    jq -e --arg inventory "$inventory" '(.casks | keys | sort) ==
-        ($inventory | split("\n") | map(select(length > 0)) | sort)' <<< "$capabilities" >/dev/null || return 2
+    inventory="$(jq -r '.casks | keys[]' <<< "$capabilities")" || return 2
 
     if ! discovery_publish_file "$output_file" serialize_brew_inventory "$inventory"; then
         error "Failed to publish Homebrew Casks"

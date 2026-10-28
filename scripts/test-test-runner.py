@@ -185,15 +185,40 @@ unittest.TestResult._exc_info_to_string = truncate_then_format
     def test_deadline_reports_error_and_stops_owned_work(self):
         path = self.root / 'scripts/test_runner.py'
         source = path.read_text()
-        boundary = "max(300, row['seconds'] * 3 + 60)"
+        marker = self.root / 'started'
+        stopped = self.root / 'stopped'
+        later = self.root / 'later'
+        boundary = "deadline = started + max(300, row['seconds'] * 3 + 60)"
         self.assertEqual(source.count(boundary), 1)
-        path.write_text(source.replace(boundary, '0.05'))
-        self.fixture('a', 'time.sleep(30)')
-        self.fixture('b', 'self.assertTrue(True)')
+        # Only the disposable runner gets a short deadline. Start it after the
+        # worker report/body exists, so slow imports cannot test missing-report
+        # failure instead. Startup remains bounded and ownership stays observed.
+        ready = (f"startup_deadline = time.monotonic() + 5\n"
+                 f"            while not Path({str(marker)!r}).is_file():\n"
+                 "                if child.poll() is not None or time.monotonic() >= startup_deadline:\n"
+                 "                    raise RuntimeError('fixture startup failed')\n"
+                 "                tree.scan()\n"
+                 "                time.sleep(.01)\n"
+                 "            deadline = time.monotonic() + 0.05")
+        path.write_text(source.replace(boundary, ready))
+        # Exercise a cooperative worker exit, not platform-specific teardown of
+        # a signal-terminated interpreter. ProcessTree still observes real exit.
+        self.fixture('a', 'import signal\n'
+                     'def stop(signum, frame):\n'
+                     f'    Path({str(stopped)!r}).touch()\n'
+                     '    os._exit(0)\n'
+                     'signal.signal(signal.SIGTERM, stop)\n'
+                     f'Path({str(marker)!r}).write_text(str(os.getpid()))\ntime.sleep(30)')
+        self.fixture('b', f'Path({str(later)!r}).touch()')
         result, rows = self.run_fixture('--ci')
         self.assertEqual(result.returncode, 1)
         self.assertEqual([row['status'] for row in rows], ['ERROR', 'NOT RUN'])
         self.assertEqual(rows[0]['reason'], 'deadline')
+        self.assertEqual(rows[0]['code'], 124)
+        self.assertTrue(stopped.is_file())
+        self.assertFalse(later.exists())
+        with self.assertRaises(ProcessLookupError):
+            os.kill(int(marker.read_text()), 0)
 
     def test_shell_assertions_are_safe_but_unclassified_exit_stops(self):
         for name, body in (

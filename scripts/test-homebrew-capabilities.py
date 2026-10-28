@@ -1183,6 +1183,8 @@ inspect
 
     def test_capture_requirements_and_saved_identity_fail_closed(self):
         self.row['installed'] = '1.0'
+        self.assertEqual(cask.capture_rows({'casks': [self.row]}, self.prefix, self.observer)['casks'], {})
+        self.app.mkdir()  # Broken existing payload must not be treated as absent.
         value = cask.capture_rows({'casks': [self.row]}, self.prefix, self.observer)
         self.assertEqual(value['casks']['generic-example']['state'], 'repairable')
         generated = self.root / 'generated'
