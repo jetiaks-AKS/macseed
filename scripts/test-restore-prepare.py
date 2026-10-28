@@ -306,7 +306,7 @@ class RestorePrepareTests(unittest.TestCase):
         bundle.write_file(self.stage / 'generated/macos/windows.conf',
             ''.join('com.apple.WindowManager|' + key + '|bool|false\n' for key in keys).encode())
         defaults = self.root / 'bin/defaults'
-        defaults.write_text('#!/bin/bash\nif [[ "$1" == write ]]; then echo write >> "$TEST_MUTATIONS"; exit 2; fi\necho "does not exist" >&2; exit 1\n')
+        defaults.write_text('#!/bin/bash\nif [[ "$1" == write ]]; then echo write >> "$TEST_MUTATIONS"; exit 2; fi\necho "The domain/default pair of ($2, $3) does not exist" >&2; exit 1\n')
         defaults.chmod(0o700)
         self.pack()
         result = self.plan_result()
@@ -350,11 +350,179 @@ esac
         rows = [row for row in matched['plan'] if row['domain'] == 'macos-screenshots']
         self.assertEqual([(row['item_id'], row['action'], row['disposition']) for row in rows],
                          [('com.apple.screencapture/location', 'none', 'satisfied')])
-        (self.root / 'bin/sw_vers').write_text('#!/bin/bash\necho 27.0\n')
-        result, events = self.invoke()
-        self.assertEqual(result.returncode, 2)
-        self.assertEqual(events[-1]['type'], 'failed')
-        self.assertEqual(events[-1]['data']['code'], 'preview_failed')
+        (self.root / 'bin/sw_vers').write_text('#!/bin/bash\necho 28.0\n')
+        blocked = self.plan_result()
+        self.assertFalse(blocked['readiness']['ready'])
+        self.assertIn({'domain': 'macos-screenshots', 'item_id': 'com.apple.screencapture/location',
+                       'action': 'inspect', 'disposition': 'blocked', 'reason': 'screenshots_location_unsupported'}, blocked['plan'])
+        self.assertTrue(any(row['domain'] == 'workspace-folders' for row in blocked['plan']))
+        self.assertFalse((self.root / 'mutations').exists())
+        (self.stage / 'generated/macos/screenshots.conf').write_bytes(
+            b'com.apple.screencapture|location|string|~/Desktop\n'
+            b'com.apple.screencapture|show-thumbnail|bool|false\n')
+        self.archive.unlink()
+        self.pack()
+        mixed = self.plan_result()
+        self.assertFalse(mixed['readiness']['ready'])
+        rows = [row for row in mixed['plan'] if row['domain'] == 'macos-screenshots']
+        self.assertEqual([(row['item_id'], row['disposition']) for row in rows],
+                         [('com.apple.screencapture/location', 'blocked'),
+                          ('com.apple.screencapture/show-thumbnail', 'planned')])
+        self.assertFalse((self.root / 'mutations').exists())
+
+    def test_unsupported_screenshot_with_independent_readiness_domain(self):
+        blueprint = self.stage / 'blueprint.conf'
+        blueprint.write_text(blueprint.read_text().replace('macos-screenshots="false"', 'macos-screenshots="true"')
+                            .replace('git-configuration="false"', 'git-configuration="true"')
+                            .replace('[git-configuration]\n', '[git-configuration]\nuser.name\n'))
+        bundle.write_file(self.stage / 'generated/macos/screenshots.conf',
+                          b'com.apple.screencapture|location|string|~/Desktop\n')
+        bundle.write_file(self.stage / 'generated/git.conf', b'[user]\nname = fixture\n')
+        (self.home / '.gitconfig').write_text('[user]\nname = fixture\n')
+        (self.home / 'Desktop').mkdir()
+        (self.home / 'Projects').mkdir()
+        (self.root / 'bin/sw_vers').write_text('#!/bin/bash\necho 28.0\n')
+        self.pack()
+        prepared = self.plan_result()
+        self.assertIn('macos-screenshots', prepared['selection']['categories'])
+        self.assertFalse(prepared['readiness']['ready'])
+        self.assertIn({'domain': 'macos-screenshots', 'code': 'screenshots_location_unsupported',
+                       'status': 'unsupported', 'scope': 'operation'}, prepared['readiness']['conditions'])
+        independent = [row for row in prepared['plan'] if row['domain'] != 'macos-screenshots']
+        self.assertTrue(independent)
+        self.assertTrue(all(row['disposition'] == 'satisfied' for row in independent), independent)
+        selection = dict(prepared['selection'], categories=[domain for domain in prepared['selection']['categories']
+                                                           if domain != 'macos-screenshots'])
+        without = self.plan_result(selection=selection)
+        self.assertEqual(without['plan'], independent)
+        self.assertTrue(without['readiness']['ready'])
+        self.assertFalse((self.root / 'mutations').exists())
+
+    def test_screenshots_cross_version_matrix(self):
+        for source in ('15.7', '26.7.1', '27.2'):
+            for target in ('15.7', '26.7.1', '27.2'):
+                with self.subTest(source=source, target=target):
+                    fixture = RestorePrepareTests('runTest')
+                    fixture.setUp()
+                    try:
+                        fixture.allow_application_bootstrap()
+                        fixture.environment['PATH'] = str(fixture.root / 'bin') + ':/usr/bin:/bin:/usr/sbin:/sbin'
+                        state = fixture.root / 'preferences.json'
+                        version = fixture.root / 'version'
+                        writes = fixture.root / 'writes'
+                        refresh = fixture.root / 'refresh'
+                        fixture.environment.update(TEST_STATE=str(state), TEST_VERSION=str(version),
+                                                   TEST_WRITES=str(writes), TEST_REFRESH=str(refresh))
+                        defaults = fixture.root / 'bin/defaults'
+                        defaults.write_text('#!' + sys.executable + '\n' + '''import json,os,sys
+from pathlib import Path
+state=Path(os.environ['TEST_STATE']); values=json.loads(state.read_text())
+operation,domain,key=sys.argv[1:4]
+assert domain == 'com.apple.screencapture'
+if operation == 'write':
+    assert key in {'location','location-screenshot','disable-shadow','show-thumbnail'}
+    values[key]=[sys.argv[4][1:],sys.argv[5]]
+    state.write_text(json.dumps(values))
+    with open(os.environ['TEST_WRITES'],'a') as out: out.write(key+'\\n')
+elif key not in values:
+    print("Error: Could not find key '%s' in domain '%s'."%(key,domain),file=sys.stderr)
+    sys.exit(1)
+elif operation == 'read-type':
+    print('Type is '+{'string':'string','bool':'boolean'}[values[key][0]])
+elif operation == 'read': print(values[key][1])
+else: sys.exit(2)
+''')
+                        defaults.chmod(0o700)
+                        (fixture.root / 'bin/sw_vers').write_text('#!/bin/bash\ncat "$TEST_VERSION"\n')
+                        killall = fixture.root / 'bin/killall'
+                        killall.write_text('#!/bin/bash\nprintf "%s\\n" "$1" >> "$TEST_REFRESH"\n')
+                        killall.chmod(0o700)
+                        source_home = fixture.root / 'source-home'
+                        source_home.mkdir()
+                        source_key = 'location-screenshot' if source.startswith('27.') else 'location'
+                        target_key = 'location-screenshot' if target.startswith('27.') else 'location'
+                        source_target = 'target-screenshot' if source.startswith('27.') else 'target'
+                        target_target = 'target-screenshot' if target.startswith('27.') else 'target'
+                        version.write_text(source)
+                        state.write_text(json.dumps({source_key:['string',str(source_home / 'Screenshots')],
+                            source_target:['string','file'], 'disable-shadow':['bool','true'],
+                            'show-thumbnail':['bool','false'], 'location-screenrecording':['string','/recording'],
+                            'target-screenrecording':['string','file']}))
+                        blueprint = fixture.stage / 'blueprint.conf'
+                        blueprint.write_text(blueprint.read_text().replace('macos-screenshots="false"', 'macos-screenshots="true"'))
+                        capture = fixture.stage / 'generated/macos/screenshots.conf'
+                        capture.parent.mkdir(parents=True)
+                        environment = dict(fixture.environment, HOME=str(source_home), TEST_CAPTURE=str(capture),
+                                           MACSEED_APPLICATION_EXECUTION='false')
+                        child = subprocess.run(['bash','-c', '''source modules/core/common/common.sh
+source modules/core/logger/logger.sh
+source modules/discovery/macos/macos.sh
+serialize_screenshots_settings "$TEST_CAPTURE"
+'''],cwd=fixture.project,env=environment,capture_output=True)
+                        self.assertEqual(child.returncode, 0, child.stderr)
+                        self.assertIn('com.apple.screencapture|location|string|~/Screenshots\n', capture.read_text())
+                        self.assertNotIn('location-screenshot', capture.read_text())
+                        fixture.pack()
+                        self.assertEqual(bundle.validate_archive(fixture.archive)['generated/macos/screenshots.conf'],capture.read_bytes())
+                        version.write_text(target)
+                        original={target_key:['string',str(fixture.home / 'Downloads')],target_target:['string','file'],
+                            'disable-shadow':['bool','false'],'show-thumbnail':['bool','true'],
+                            'location-screenrecording':['string','/recording'],'target-screenrecording':['string','clipboard']}
+                        if target.startswith('27.'):
+                            original.update(location=['string','/stale-legacy'],target=['string','clipboard'])
+                        state.write_text(json.dumps(original))
+                        prepared=fixture.plan_result()
+                        self.assertTrue(prepared['readiness']['ready'])
+                        result,events=fixture.execute(prepared['prepared_plan_id'])
+                        self.assertEqual(result.returncode,0,events)
+                        self.assertEqual(events[-2]['data']['verification']['verdict'],'selected_requirements_verified')
+                        observed=json.loads(state.read_text())
+                        self.assertEqual(observed[target_key],['string',str(fixture.home / 'Screenshots')])
+                        self.assertEqual(set(writes.read_text().splitlines()),{target_key,'disable-shadow','show-thumbnail'})
+                        for key in original:
+                            if key not in {target_key,'disable-shadow','show-thumbnail'}:
+                                self.assertEqual(observed[key],original[key])
+                        repeated=fixture.plan_result()
+                        self.assertTrue(all(row['disposition']=='satisfied' for row in repeated['plan']))
+                        before=(writes.read_bytes(),refresh.read_bytes())
+                        result,events=fixture.execute(repeated['prepared_plan_id'])
+                        self.assertEqual(result.returncode,0,events)
+                        self.assertEqual(before,(writes.read_bytes(),refresh.read_bytes()))
+                        print('PASS Screenshots '+source+' -> '+target,flush=True)
+                    finally:
+                        fixture.doCleanups()
+
+    def test_macos27_optional_absence_and_independent_preview(self):
+        blueprint = self.stage / 'blueprint.conf'
+        blueprint.write_text(blueprint.read_text().replace('macos-windows="false"', 'macos-windows="true"')
+                            .replace('macos-trackpad="false"', 'macos-trackpad="true"'))
+        bundle.write_file(self.stage / 'generated/macos/windows.conf',
+                          b'NSGlobalDomain|AppleWindowTabbingMode|string|always\n'
+                          b'NSGlobalDomain|NSQuitAlwaysKeepsWindows|bool|true\n')
+        bundle.write_file(self.stage / 'generated/macos/trackpad.conf',
+                          b'com.apple.AppleMultitouchTrackpad|Clicking|bool|true\n')
+        defaults = self.root / 'bin/defaults'
+        defaults.write_text('''#!/bin/bash
+[[ "$1" != write ]] || { echo write >> "$TEST_MUTATIONS"; exit 2; }
+domain="$2"
+[[ "$domain" != NSGlobalDomain ]] || domain=kCFPreferencesAnyApplication
+echo "Error: Could not find key '$3' in domain '$domain'." >&2
+exit 1
+''')
+        defaults.chmod(0o700)
+        self.pack()
+        prepared = self.plan_result()
+        self.assertTrue(prepared['readiness']['ready'])
+        rows = [r for r in prepared['plan'] if r['domain'].startswith('macos-')]
+        self.assertEqual(len(rows), 3)
+        self.assertTrue(all(r['disposition'] == 'planned' for r in rows))
+        defaults.write_text(defaults.read_text().replace('domain="$2"',
+            '[[ "$3" != AppleWindowTabbingMode ]] || { echo "Preferences service unavailable" >&2; exit 1; }\ndomain="$2"'))
+        blocked = self.plan_result()
+        self.assertFalse(blocked['readiness']['ready'])
+        rows = [r for r in blocked['plan'] if r['domain'].startswith('macos-')]
+        self.assertEqual([r['disposition'] for r in rows], ['blocked', 'planned', 'planned'])
+        self.assertEqual(rows[0]['reason'], 'observation_failed')
         self.assertFalse((self.root / 'mutations').exists())
 
     def test_screenshot_booleans_preview_is_scalar_and_read_only(self):
@@ -363,7 +531,7 @@ esac
         bundle.write_file(self.stage / 'generated/macos/screenshots.conf',
             b'com.apple.screencapture|disable-shadow|bool|true\ncom.apple.screencapture|show-thumbnail|bool|false\n')
         defaults = self.root / 'bin/defaults'
-        defaults.write_text('#!/bin/bash\nif [[ "$1" == write ]]; then echo write >> "$TEST_MUTATIONS"; exit 2; fi\necho "does not exist" >&2\nexit 1\n')
+        defaults.write_text('#!/bin/bash\nif [[ "$1" == write ]]; then echo write >> "$TEST_MUTATIONS"; exit 2; fi\necho "The domain/default pair of ($2, $3) does not exist" >&2\nexit 1\n')
         defaults.chmod(0o700)
         self.pack()
         prepared = self.plan_result()
@@ -380,7 +548,7 @@ esac
         bundle.write_file(self.stage / "generated/macos/windows.conf",
                           b"NSGlobalDomain|AppleActionOnDoubleClick|string|Maximize\n")
         defaults = self.root / 'bin/defaults'
-        defaults.write_text('#!/bin/bash\necho "does not exist" >&2\nexit 1\n')
+        defaults.write_text('#!/bin/bash\necho "The domain/default pair of ($2, $3) does not exist" >&2\nexit 1\n')
         defaults.chmod(0o700)
         for tool in ('sudo', 'curl', 'xcode-select'):
             (self.root / 'bin' / tool).write_text('#!/bin/bash\necho ' + tool + ' >> "$TEST_MUTATIONS"\nexit 1\n')

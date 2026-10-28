@@ -7,6 +7,20 @@ MACOS_DOCK_MINEFFECT_PATTERN='^(genie|scale)$'
 MACOS_WINDOW_DOUBLE_CLICK_PATTERN='^(Minimize|Maximize|Fill|None)$'
 MACOS_WINDOW_TABBING_PATTERN='^(manual|always|fullscreen)$'
 
+# Only a native missing-key diagnostic for this exact request proves absence.
+# macOS 27 names NSGlobalDomain by its CoreFoundation identifier.
+macos_defaults_key_absent() {
+    local result="$1" diagnostic="$2" domain="$3" key="$4" native_domain="$3"
+    [[ "$result" == 1 ]] || return 1
+    [[ "$domain" != NSGlobalDomain ]] || native_domain=kCFPreferencesAnyApplication
+    [[ "$diagnostic" == "Error: Could not find key '$key' in domain '$native_domain'." ||
+       "$diagnostic" == "Error: Could not find key '$key' in domain '$domain'." ||
+       "$diagnostic" == "The domain/default pair of ($domain, $key) does not exist" ||
+       "$diagnostic" == *$'\n'"The domain/default pair of ($domain, $key) does not exist" ||
+       "$diagnostic" == "The domain/default pair of ($native_domain, $key) does not exist" ||
+       "$diagnostic" == *$'\n'"The domain/default pair of ($native_domain, $key) does not exist" ]]
+}
+
 # Support identity, native type and presentation label share one definition.
 macos_setting_definitions() {
     cat <<'MACOS_SETTINGS'

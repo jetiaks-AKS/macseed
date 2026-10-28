@@ -31,25 +31,26 @@ preview_macos_category() {
 }
 
 preview_macos_settings() {
+    local result=0
     if blueprint_category_enabled macos-finder; then
-        preview_macos_category "$FINDER_CONFIG" Finder finder || return 2
+        preview_macos_category "$FINDER_CONFIG" Finder finder || result=2
     fi
     if blueprint_category_enabled macos-dock; then
-        preview_macos_category "$DOCK_CONFIG" Dock dock || return 2
+        preview_macos_category "$DOCK_CONFIG" Dock dock || result=2
     fi
     if blueprint_category_enabled macos-windows; then
-        preview_macos_category "$WINDOWS_CONFIG" "" windows || return 2
+        preview_macos_category "$WINDOWS_CONFIG" "" windows || result=2
     fi
     if blueprint_category_enabled macos-keyboard; then
-        preview_macos_category "$KEYBOARD_CONFIG" "" keyboard || return 2
+        preview_macos_category "$KEYBOARD_CONFIG" "" keyboard || result=2
     fi
     if blueprint_category_enabled macos-trackpad; then
-        preview_macos_category "$TRACKPAD_CONFIG" "" trackpad || return 2
+        preview_macos_category "$TRACKPAD_CONFIG" "" trackpad || result=2
     fi
     if blueprint_category_enabled macos-screenshots; then
-        preview_screenshots_settings || return 2
+        preview_screenshots_settings || result=2
     fi
-    return 0
+    return "$result"
 }
 
 # ==========================================

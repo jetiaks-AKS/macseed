@@ -1447,6 +1447,73 @@ assert_no_mutation 'matching Trackpad does not restart or write'
 
 fi
 
+screenshots_preflight_checks() {
+    local MODE MACSEED_APPLICATION_READINESS_REPORT=true value
+    for MODE in --dry-run --application-readiness; do
+        reset_case
+        MOCK_MACOS_VERSION=27.2
+        shots '~/Captures'
+        run validate_screenshots_config
+        expect_status 0 "$status" "$MODE accepts safe input independently of backend support"
+        for value in relative '~/../escape'; do
+            shots "$value"
+            run validate_screenshots_config
+            expect_status 2 "$status" "$MODE rejects malformed location"
+        done
+        printf 'com.apple.screencapture|show-thumbnail|bool|invalid\n' > "$SCREENSHOTS_CONFIG"
+        run validate_screenshots_config
+        expect_status 2 "$status" "$MODE rejects malformed boolean"
+        assert_no_mutation "$MODE input validation never mutates"
+    done
+    reset_case
+    MOCK_MACOS_VERSION=28.0
+    shots '~/Captures'
+    MODE=--application-readiness
+    MACSEED_APPLICATION_READINESS_REPORT=false
+    run validate_screenshots_config
+    expect_status 2 "$status" 'publication readiness still rejects unsupported location'
+    MODE=--bootstrap
+    run validate_screenshots_config
+    expect_status 2 "$status" 'Apply startup still rejects unsupported location'
+    assert_no_mutation 'unsupported backend never mutates'
+}
+screenshots_preflight_checks
+
+screenshots_backend_representations() {
+    local version key target_key value
+    for version in 15.7 26.7.1 27.2; do
+        for value in absent explicit tilde; do
+            reset_case
+            MOCK_MACOS_VERSION="$version"
+            key=location; target_key=target
+            if [[ "$version" == 27.* ]]; then key=location-screenshot; target_key=target-screenshot; fi
+            command mkdir -p "$HOME/Desktop"
+            shots '~/Desktop'
+            case "$value" in
+                explicit) state_set com.apple.screencapture "$key" string "$HOME/Desktop/" ;;
+                tilde) state_set com.apple.screencapture "$key" string '~/Desktop' ;;
+            esac
+            run check_screenshots
+            expect_status 0 "$status" "$version $value Desktop is the same logical destination"
+            run apply_screenshots_settings
+            expect_status 0 "$status" "$version $value Desktop repeat succeeds"
+            assert_no_mutation "$version $value Desktop needs no write or refresh"
+        done
+        for value in clipboard preview; do
+            reset_case
+            MOCK_MACOS_VERSION="$version"
+            shots '~/Captures'
+            state_set com.apple.screencapture "$target_key" string "$value"
+            run preview_screenshots_settings
+            expect_status 2 "$status" "$version $value is not a file destination"
+            run apply_screenshots_settings
+            expect_status 2 "$status" "$version $value is never silently switched to file"
+            assert_no_mutation "$version non-file target remains unchanged"
+        done
+    done
+}
+screenshots_backend_representations
+
 # Screenshots booleans use the scalar executor without directory/process effects.
 for shadow in true false; do
     for thumbnail in true false; do
@@ -1734,7 +1801,7 @@ for mode in mismatch target-change observation-error; do
     assert_changed true 'post-refresh failure retains mutation fact'
 done
 
-for mode in mixed new_only target split_target type_error value_error macos27 future unknown; do
+for mode in mixed new_only target split_target type_error value_error future unknown; do
     reset_case
     # shellcheck disable=SC2088
     shots '~/Captures'
@@ -1745,13 +1812,12 @@ for mode in mixed new_only target split_target type_error value_error macos27 fu
         split_target) state_set com.apple.screencapture target-screenshot string file ;;
         type_error) READ_TYPE_FAILURE='com.apple.screencapture|location' ;;
         value_error) state_set com.apple.screencapture location string "$HOME/Desktop"; READ_FAILURE='com.apple.screencapture|location' ;;
-        macos27) MOCK_MACOS_VERSION=27.0; state_set com.apple.screencapture location-screenshot string "$HOME/Captures" ;;
         future) MOCK_MACOS_VERSION=28.0 ;;
         unknown) MOCK_MACOS_VERSION=unknown ;;
     esac
     run validate_screenshots_config
     case "$mode" in
-        macos27|future|unknown) expect_status 2 "$status" "$mode startup fails closed" ;;
+        future|unknown) expect_status 2 "$status" "$mode startup fails closed" ;;
         *) expect_status 0 "$status" "$mode startup validates input without preferences" ;;
     esac
     run preview_screenshots_settings

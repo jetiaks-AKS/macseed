@@ -2,17 +2,26 @@
 
 # Domain-owned observation shared by Discovery, Preview, Apply and Verification.
 # Bundle's location record describes a destination, not a target OS key choice.
-# macOS 27's split location/target keys still need native qualification; do not
-# infer precedence from key presence or write both generations of preferences.
+# Choose by target OS, never by Bundle origin or the presence of stale keys.
+# Bundle v1 keeps the logical location identity for every native backend.
 # Observation outputs are consumed by the sourced Discovery/Settings modules.
 # shellcheck disable=SC2034
 screenshots_location_backend() {
     local version
+    SCREENSHOTS_LOCATION_REASON=observation_failed
+    SCREENSHOTS_LOCATION_KEY=''
+    SCREENSHOTS_TARGET_KEY=''
     version="$(application_observe local sw_vers -productVersion)" || return 2
     [[ "$version" =~ ^[0-9]+(\.[0-9]+){0,2}$ ]] || return 2
     case "$version" in
-        10.14|10.14.*|10.15|10.15.*|11|11.*|12|12.*|13|13.*|14|14.*|15|15.*|26|26.*) ;;
-        *) error "Screenshots location is not qualified on this macOS version"; return 2 ;;
+        10.14|10.14.*|10.15|10.15.*|11|11.*|12|12.*|13|13.*|14|14.*|15|15.*|26|26.*)
+            SCREENSHOTS_LOCATION_KEY=location
+            SCREENSHOTS_TARGET_KEY=target ;;
+        27|27.*)
+            SCREENSHOTS_LOCATION_KEY=location-screenshot
+            SCREENSHOTS_TARGET_KEY=target-screenshot ;;
+        *) SCREENSHOTS_LOCATION_REASON=screenshots_location_unsupported
+           error "Screenshots location is not qualified on this macOS version"; return 2 ;;
     esac
 }
 
@@ -24,7 +33,7 @@ screenshots_read_optional_string() {
     native_type="$(LC_ALL=C application_observe local-diagnostic defaults read-type com.apple.screencapture "$key" 2>&1)"
     result=$?
     if [[ $result -ne 0 ]]; then
-        if [[ $result -eq 1 && "$native_type" == *"The domain/default pair of (com.apple.screencapture, $key) does not exist" ]]; then
+        if macos_defaults_key_absent "$result" "$native_type" com.apple.screencapture "$key"; then
             return 1
         fi
         error "Failed to inspect Screenshots preference: $key"
@@ -41,23 +50,28 @@ screenshots_observe_location() {
     SCREENSHOTS_LOCATION_ORIGIN=unknown
     SCREENSHOTS_LOCATION_VALUE=''
     screenshots_location_backend || return 2
-    # A mixed-generation domain on a legacy OS has no qualified precedence.
-    for key in location-screenshot target-screenshot; do
-        screenshots_read_optional_string "$key"
-        result=$?
-        if [[ $result -ne 1 ]]; then
-            error "Screenshots contains an unqualified location/target mechanism"
-            return 2
-        fi
-    done
-    screenshots_read_optional_string target
+    if [[ "$SCREENSHOTS_LOCATION_KEY" == location ]]; then
+        # Preserve the established legacy conflict policy. Split-generation keys
+        # on an older OS are not evidence that its backend has changed.
+        for key in location-screenshot target-screenshot; do
+            screenshots_read_optional_string "$key"
+            result=$?
+            if [[ $result -ne 1 ]]; then
+                error "Screenshots contains an unqualified location/target mechanism"
+                return 2
+            fi
+        done
+    fi
+    # On 27, legacy and screen-recording keys are unrelated to this observation.
+    screenshots_read_optional_string "$SCREENSHOTS_TARGET_KEY"
     result=$?
     [[ $result -ne 2 ]] || return 2
     if [[ $result -eq 0 && "$MACOS_DEFAULTS_VALUE" != file ]]; then
+        SCREENSHOTS_LOCATION_REASON=screenshots_non_file_target
         error "Screenshots destination is not a supported file target"
         return 2
     fi
-    screenshots_read_optional_string location
+    screenshots_read_optional_string "$SCREENSHOTS_LOCATION_KEY"
     result=$?
     [[ $result -ne 2 ]] || return 2
     if [[ $result -eq 1 ]]; then

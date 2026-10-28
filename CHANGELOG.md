@@ -103,6 +103,13 @@ The format is based on the principles of **Keep a Changelog**.
 
 ### Fixed
 
+* Recognize macOS 27.2 missing optional preferences without masking observation
+  errors. Screenshots retains portable Bundle v1 destination semantics across
+  macOS 15/26 legacy and macOS 27 screenshot-specific keys. Unknown backends and
+  non-file targets retain explicit blocked diagnostics without losing independent
+  Preview results. Native macOS 27.2 location Restore is accepted; real cross-platform
+  screenshot-output qualification remains open.
+
 * Capture accepts a Workspace Folder and Git checkout at the same validated
   destination, preserving both selected roles and their dependencies.
 * Matching repositories with tracked symlinks or large ignored files no longer

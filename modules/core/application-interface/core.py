@@ -349,6 +349,15 @@ def prepared_restore(path, disabled_groups, include_secure, selection=None, inst
                             row['diagnostic'] = condition['diagnostic']
                         row["disposition"] = "blocked"
                         row["reason"] = condition["code"]
+        # Keep unsupported Screenshot location selected and visible. There is no
+        # category-level Execute skip contract, so the operation stays blocked.
+        unsupported_screenshot = next((row['reason'] for row in records
+            if row['domain'] == 'macos-screenshots' and row['reason'] in {
+                'screenshots_location_unsupported', 'screenshots_non_file_target'}), None)
+        if unsupported_screenshot:
+            requirements['ready'] = False
+            requirements['conditions'].append({'domain': 'macos-screenshots',
+                'code': unsupported_screenshot, 'status': 'unsupported', 'scope': 'operation'})
         module_domains = {"preview_brew_packages": "homebrew-packages", "preview_brew_casks": "homebrew-casks",
                           "preview_appstore_apps": "app-store", "preview_vscode_extensions": "vscode-extensions",
                           "preview_git_configuration": "git-configuration", "preview_vscode_settings": "vscode-settings",

@@ -191,7 +191,7 @@ class SelectionTests(unittest.TestCase):
         bundle.write_file(self.stage / 'generated/macos/keyboard.conf', b'NSGlobalDomain|KeyRepeat|int|6\n')
         bundle.write_file(self.stage / 'generated/git.conf', b'[user]\nname = PRIVATE_NAME\nemail = PRIVATE_EMAIL\n')
         defaults = self.fixture.root / 'bin/defaults'
-        defaults.write_text('#!/bin/bash\necho "does not exist" >&2\nexit 1\n')
+        defaults.write_text('#!/bin/bash\necho "The domain/default pair of ($2, $3) does not exist" >&2\nexit 1\n')
         defaults.chmod(0o700)
         self.fixture.pack()
         chosen = {'categories': ['macos-dock'], 'items': {'git-configuration': [selection_api.identity('git-configuration', 'user.name')]}}

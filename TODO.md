@@ -52,11 +52,12 @@ these tasks require native effects or unexercised writes, not another fixture pa
 - [ ] Qualify the real visual effect of Screenshots Window shadow and Floating
   thumbnail on macOS 27, including repeat/no-op behavior.
 - [ ] Qualify Screenshot destination restoration using the Save To UI and an
-  actual system-shortcut screenshot, then repeat/no-op on macOS 26 and 27.
-  Resolve macOS 27 split location/target keys, default Desktop, old/new-key
-  precedence, recording separation and refresh before enabling location writes
-  there. The shared reader currently blocks 27/unknown targets; fixture coverage
-  is not native 26↔27 acceptance. See the
+  actual system-shortcut screenshot, then repeat/no-op across macOS 15/26/27.
+  Test Intel macOS 15 separately from Apple Silicon macOS 27, including transfers
+  in both directions, absent/default Desktop, stale keys, recording separation,
+  boolean effects and refresh. The version-aware backend and nine-direction
+  fixtures are implemented; native 27.2 location Restore was accepted on
+  2026-10-28. Broader cross-version and visual-effect gates remain open. See the
   [Screenshots contract](docs/toolkit/CONFIGURATION.md#screenshots).
 - [ ] Complete real Apply and visual-behavior qualification of the four new
   WindowManager preferences on macOS 27, including mode dependencies, session

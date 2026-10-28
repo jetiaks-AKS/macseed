@@ -137,11 +137,11 @@ check_defaults_record() {
 
     expected_native_type="$(defaults_native_type "$type")" || return 2
 
-    native_type="$(application_observe local-diagnostic defaults read-type "$domain" "$key" 2>&1)"
+    native_type="$(LC_ALL=C application_observe local-diagnostic defaults read-type "$domain" "$key" 2>&1)"
     local type_result=$?
 
     if [[ $type_result -ne 0 ]]; then
-        if [[ "$native_type" == *"does not exist"* ]]; then
+        if macos_defaults_key_absent "$type_result" "$native_type" "$domain" "$key"; then
             DEFAULTS_OBSERVATION_KIND=absent
             return 1
         fi
@@ -220,7 +220,7 @@ preview_defaults_config() {
     local config_file="$1"
     local MACOS_OBSERVED_RECORDS=''
     local domain key type desired
-    local record_result
+    local record_result preview_result=0
     local current_display desired_display
 
     validate_defaults_config "$config_file" "${2:-}" || return 2
@@ -238,7 +238,7 @@ preview_defaults_config() {
             *) preview_record "macos-${2:-settings}" "$domain/$key" set_preference blocked observation_failed ;;
         esac
 
-        [[ $record_result -ne 2 ]] || return 2
+        if [[ $record_result -eq 2 ]]; then preview_result=2; continue; fi
         [[ $record_result -ne 0 ]] || continue
 
         # Shared state is read by another sourced module.
@@ -270,7 +270,7 @@ preview_defaults_config() {
         preview_action "Would change macOS setting: $domain/$key ($current_display -> $desired_display)"
     done < "$config_file"
 
-    return 0
+    return "$preview_result"
 }
 
 check_defaults_config() {

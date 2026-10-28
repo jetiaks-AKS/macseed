@@ -529,11 +529,34 @@ esac
         self.fixture(real=True)
         (self.home / '.gitconfig').write_text('[user]\nname = PRIVATE_IDENTITY\n')
         path = self.root / 'bin/defaults'
-        path.write_text('#!/bin/bash\necho "does not exist" >&2\nexit 1\n')
+        path.write_text('#!/bin/bash\necho "The domain/default pair of ($2, $3) does not exist" >&2\nexit 1\n')
         path.chmod(0o700)
         prepared = self.prepare()
         self.assertNotIn('PRIVATE_IDENTITY', json.dumps(prepared))
         self.assertTrue(any(row['domain'] == 'git-configuration' and row['status'] == 'present' for row in prepared['inventory']))
+
+    def test_macos27_optional_preferences_capture(self):
+        self.fixture(real=True)
+        (self.root / 'bin/sw_vers').write_text('#!/bin/bash\necho 27.2\n')
+        defaults = self.root / 'bin/defaults'
+        defaults.write_text('''#!/bin/bash
+case "$3" in
+ AppleShowAllExtensions|autohide|NSCloseAlwaysConfirmsChanges|Clicking)
+  case "$1" in read-type) echo 'Type is boolean' ;; read) echo true ;; *) exit 2 ;; esac ;;
+ KeyRepeat)
+  case "$1" in read-type) echo 'Type is integer' ;; read) echo 6 ;; *) exit 2 ;; esac ;;
+ *) domain="$2"; [[ "$domain" != NSGlobalDomain ]] || domain=kCFPreferencesAnyApplication
+    echo "Error: Could not find key '$3' in domain '$domain'." >&2; exit 1 ;;
+esac
+''')
+        defaults.chmod(0o700)
+        prepared = self.prepare()
+        rows = {row['domain']: row for row in prepared['inventory']}
+        for category in ('finder', 'dock', 'windows', 'keyboard', 'trackpad'):
+            self.assertEqual(rows['macos-' + category]['status'], 'present')
+            self.assertEqual(len(rows['macos-' + category]['included_settings']), 1)
+        self.assertEqual(rows['macos-screenshots']['status'], 'present')
+        self.assertEqual(rows['macos-screenshots']['included_settings'], [{'id': 'location', 'label': 'Save location'}])
 
     def test_macos_metadata_does_not_change_prepared_identity(self):
         self.fixture()
@@ -572,13 +595,13 @@ esac
                    ' case "$3" in ' + cases + ')\n'
                    ' case "$1" in read-type) echo "Type is boolean"; exit 0 ;;'
                    ' read) echo false; exit 0 ;; esac ;; esac\nfi\n'
-                   'echo "does not exist" >&2; exit 1\n')
+                   'echo "The domain/default pair of ($2, $3) does not exist" >&2; exit 1\n')
         defaults.write_text(present)
         defaults.chmod(0o700)
         row = next(row for row in self.prepare()['inventory'] if row['domain'] == 'macos-windows')
         self.assertEqual(row['status'], 'present')
         self.assertEqual(row['included_settings'], [{'id': key, 'label': label} for key, label in settings])
-        defaults.write_text('#!/bin/bash\necho "does not exist" >&2; exit 1\n')
+        defaults.write_text('#!/bin/bash\necho "The domain/default pair of ($2, $3) does not exist" >&2; exit 1\n')
         row = next(row for row in self.prepare()['inventory'] if row['domain'] == 'macos-windows')
         self.assertEqual((row['status'], row['included_settings']), ('unavailable', []))
 
@@ -637,7 +660,7 @@ esac
         for absent_keys in [('disable-shadow',), ('show-thumbnail',), ('disable-shadow', 'show-thumbnail')]:
             cases = '|'.join('"read-type com.apple.screencapture ' + key + '"' for key in absent_keys)
             defaults.write_text(present_defaults.replace('case "$*" in',
-                'case "$*" in\n ' + cases + ') echo "does not exist" >&2; exit 1 ;;', 1))
+                'case "$*" in\n ' + cases + ') echo "The domain/default pair of ($2, $3) does not exist" >&2; exit 1 ;;', 1))
             row = next(row for row in self.prepare()['inventory'] if row['domain'] == 'macos-screenshots')
             self.assertEqual(row['status'], 'present')
             self.assertEqual(row['included_settings'], [setting for setting in [

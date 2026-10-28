@@ -145,7 +145,7 @@ class ReliabilityTests(unittest.TestCase):
         tool.write_text('''#!/bin/bash
 value="$(cat "$TEST_PREFERENCE")"
 case "$value:$1" in
- absent:*) echo 'does not exist' >&2; exit 1 ;;
+ absent:*) echo "The domain/default pair of ($2, $3) does not exist" >&2; exit 1 ;;
  error:*) exit 2 ;;
  wrong:read-type) echo 'Type is string'; exit 0 ;;
  *:read-type) echo 'Type is boolean'; exit 0 ;;

@@ -269,22 +269,41 @@ it); `show-thumbnail=true` shows the floating thumbnail (false hides it). Deskto
 labels them **Window shadow** and **Floating thumbnail**. Records store the native
 boolean value; Preview explains the inverted shadow meaning.
 
-The existing `location` record is a destination requirement, independent of a
-future target OS preference key. Discovery distinguishes implicit Desktop,
+The existing `location` record is a logical destination requirement, independent
+of the source OS and the target OS preference key. Discovery distinguishes implicit Desktop,
 explicit Desktop, another HOME directory, an external directory and unknown
 observation; the origin is diagnostic detail, not another Bundle requirement.
-For the qualified legacy mechanism (macOS 10.14–15 and 26), confirmed absence of
-`location` with an absent or `file` target captures `~/Desktop`. A failed type/value
-read, unsupported target or split-generation Screenshot keys never imply Desktop.
+For each supported backend, confirmed absence of its location key with an absent
+or `file` target captures `~/Desktop`. A failed type/value read or a non-file target
+never implies Desktop. The legacy backend also rejects mixed-generation keys.
 `location-last` is not the effective destination and is never migrated.
 
-The shared domain reader supplies Discovery, Preview, Apply and Verification.
-It retains the legacy `location` mechanism on macOS 26. macOS 27+ and an unknown
-OS version block location Capture/Preview/Apply and produce unverified location
-results: the reported `location-screenshot` / `target-screenshot` mechanism and
-its interaction with old keys are not yet natively qualified. No version writes
-both keys. Existing boolean-only files keep their scalar contract; this does not
-qualify their visual effects on macOS 27.
+One version-aware domain reader supplies Discovery, Preview, Apply and Verification.
+The target OS selects the native representation; Bundle origin never selects it.
+
+| Target OS | Location read/write | File-target observation |
+|---|---|---|
+| macOS 15 / 26 | `location` | `target` |
+| macOS 27 | `location-screenshot` | `target-screenshot` |
+
+macOS 27 ignores stale legacy location/target values rather than falling back to
+them. Only the selected native location key is written; an absent file-target key
+keeps its system-default representation. An explicit non-file target blocks Apply
+instead of being changed to `file`. No operation writes recording-specific keys.
+`disable-shadow` and `show-thumbnail` retain the existing independent scalar
+contract; absent source booleans remain unmanaged. Unknown/future OS backends fail
+closed. Existing pre-15 legacy code is retained for compatibility, not newly
+qualified by the Desktop macOS 14 deployment target.
+
+Preview reports an unknown backend or non-file target as a blocked item with
+`screenshots_location_unsupported` or `screenshots_non_file_target` and an
+operation-scoped Unsupported condition.
+Both Preview startup and its separate read-only readiness report validate input
+safety independently of OS support. Restore Prepare retains the selected scope and
+independent inspection results with readiness false; publication/Apply stays blocked.
+There is no implicit category skip. Optional preference absence requires exit 1 with a matching native
+missing-key diagnostic, including macOS 27.2's `Could not find key` format and
+the `kCFPreferencesAnyApplication` alias for `NSGlobalDomain`.
 
 Only `location` enters path validation and directory creation. Boolean-only files
 create no destination and request no process restart. Missing boolean source keys
@@ -331,7 +350,7 @@ Qualification and deliberately excluded settings:
 | Setting / mechanism | Evidence and current boundary |
 |---|---|
 | Desktop / save folder | Apple documents Desktop and Screenshot's Save To UI. Read-only macOS 26.7.1 observation finds `location` and a different `location-last`; only the former is used. Targeted fixtures cover default/explicit Desktop, HOME remapping, external-path rejection by Bundle, conflicts, failed reads, safe creation, old Bundles and repeat/no-op. |
-| macOS 27 split keys | Tendedero's source reports `location-screenshot`, `target-screenshot` and separate `location-screenrecording` / `target-screenrecording`. Its dual-key writes and fallback reader do not establish a safe migration/precedence contract. Native 26↔27 transfer, defaults, mixed keys and refresh remain unqualified and blocked for location. |
+| macOS 15 ↔ 26 ↔ 27 | All nine source/target combinations have isolated production serializer → Bundle v1 → Protocol Preview/Execute/Verification → repeat/no-op fixtures. Each uses the corresponding native keys, portable HOME paths and both optional booleans. Desktop/default representations, non-file targets and unknown backends have focused domain fixtures. This is automated contract evidence, not real Intel/Apple Silicon acceptance. |
 | Window shadow / floating thumbnail | Existing typed `disable-shadow` / `show-thumbnail` boolean read/write/readback contract. Missing source keys stay unmanaged; native visual effects remain a separate gate. |
 | Mouse pointer | Apple documents the UI option; `showsCursor` is reported by third-party implementations. No qualified cross-version preference contract; not captured or written. |
 | Remember last selection | Apple documents the toggle. Observed `last-selection` / `last-selection-display` are geometry/device state, not a proven portable toggle; excluded. |
@@ -344,7 +363,10 @@ Sources: Apple's [Screenshot guide for macOS 26](https://support.apple.com/guide
 [preference writer](https://github.com/alejandrobujan/tendedero/blob/main/Sources/Tendedero/Inbox.swift)
 and [destination reader](https://github.com/alejandrobujan/tendedero/blob/main/Sources/Tendedero/ScreenshotWatcher.swift).
 These establish documented UI behavior and implementation evidence, not Macseed
-native end-to-end acceptance. On 2026-10-25, one read-only production Screenshot
+native end-to-end acceptance. Real Intel macOS 15 and Apple Silicon macOS 27
+Capture/Restore must separately verify the actual screenshot output, defaults,
+boolean visual effects and refresh behavior in both transfer directions before
+native qualification is claimed. On 2026-10-25, one read-only production Screenshot
 Capture serializer run on macOS 26.7.1 produced a HOME-relative requirement and
 left preferences unchanged. This was not a mutating Restore or actual screenshot-output
 test. Independent qualification must inspect Save To in
@@ -355,6 +377,13 @@ the default destination. Real mutating Restore requires separate authorization;
 remaining gates are in [TODO](../../TODO.md#macos-settings-manual-qualification).
 
 ### Controlled macOS 27 Restore qualification
+
+On 2026-10-28, user-completed native macOS 27.2 acceptance reported **113 verified**
+Restore requirements, **34/34 matching macOS Settings**, **5/5 restored Homebrew
+requirements**, and a restored Screenshots location. All nine 15/26/27 fixture
+directions also passed. This accepts that native 27.2 Restore run; it does not
+replace real Intel macOS 15/cross-version qualification or the remaining visual
+effects, default-state and repeat/no-op gates.
 
 On 2026-10-17, a controlled real Restore from a Bundle without SSH exercised
 37 saved preferences after artificial drift created with `defaults write`:

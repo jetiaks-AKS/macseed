@@ -89,6 +89,18 @@ defaults() {
     local key="$3"
     local identity="$domain|$key"
 
+    if [[ "$identity" == "$MOCK_TARGET" && "$MOCK_MODE" == native_* ]]; then
+        [[ "$domain" != NSGlobalDomain ]] || domain=kCFPreferencesAnyApplication
+        case "$MOCK_MODE" in
+            native_wrong_key) key=unrelated ;;
+            native_wrong_domain) domain=unrelated ;;
+            native_service) echo 'Preferences service unavailable' >&2; return 1 ;;
+        esac
+        echo "Error: Could not find key '$key' in domain '$domain'." >&2
+        [[ "$MOCK_MODE" != native_error_status ]] || return 2
+        return 1
+    fi
+
     case "$key" in
         location-screenshot|target-screenshot|target)
             if [[ "$identity" != "$MOCK_TARGET" ]]; then
@@ -102,7 +114,7 @@ defaults() {
     esac
     case "$key" in
         EnableStandardClickToShowDesktop|EnableTilingByEdgeDrag|EnableTopTilingByEdgeDrag|EnableTiledWindowMargins)
-            if [[ "$WINDOW_EXPANSION" != true ]]; then echo 'does not exist' >&2; return 1; fi ;;
+            if [[ "$WINDOW_EXPANSION" != true ]]; then echo "The domain/default pair of ($domain, $key) does not exist" >&2; return 1; fi ;;
     esac
     if [[ "$MOCK_MODE" == all_absent ||
           ( "$MOCK_MODE" == absent && "$identity" == "$MOCK_TARGET" ) ]]; then
@@ -160,6 +172,7 @@ defaults() {
 }
 
 source "$PROJECT_ROOT/modules/discovery/macos/macos.sh"
+source "$PROJECT_ROOT/modules/settings/macos/defaults.sh"
 
 ORIGINAL_SERIALIZE_KEYBOARD="$(declare -f serialize_keyboard_settings)"
 ORIGINAL_SERIALIZE_DOCK="$(declare -f serialize_dock_settings)"
@@ -216,6 +229,62 @@ temporary_files() {
 }
 
 cd "$TEST_ROOT" || exit 1
+
+optional_preferences_checks() {
+    local domain key type mode result
+    while IFS='|' read -r domain key type; do
+        reset_fixture
+        MOCK_TARGET="$domain|$key"
+        MOCK_MODE=native_absent
+        macos_collect_preference "$TEST_ROOT/optional.conf" "$domain" "$key" "$type"
+        [[ $? -eq 0 && ! -s "$TEST_ROOT/optional.conf" ]] || fail "$key native absence omitted"
+        check_defaults_record "$domain" "$key" "$type" true
+        [[ $? -eq 1 && "$DEFAULTS_OBSERVATION_KIND" == absent ]] || fail "$key consumer absence"
+        for mode in native_wrong_key native_wrong_domain native_service native_error_status; do
+            MOCK_MODE="$mode"
+            macos_collect_preference "$TEST_ROOT/optional.conf" "$domain" "$key" "$type"
+            [[ $? -eq 2 ]] || fail "$key $mode is not absence"
+            check_defaults_record "$domain" "$key" "$type" true
+            [[ $? -eq 2 && "$DEFAULTS_OBSERVATION_KIND" == unknown ]] || fail "$key $mode consumer fails closed"
+        done
+    done <<'OPTIONAL_KEYS'
+com.apple.finder|ShowMountedServersOnDesktop|bool
+com.apple.dock|show-process-indicators|bool
+NSGlobalDomain|AppleWindowTabbingMode|string
+NSGlobalDomain|ApplePressAndHoldEnabled|bool
+NSGlobalDomain|AppleKeyboardUIMode|int
+NSGlobalDomain|NSAutomaticSpellingCorrectionEnabled|bool
+NSGlobalDomain|NSAutomaticQuoteSubstitutionEnabled|bool
+NSGlobalDomain|NSAutomaticDashSubstitutionEnabled|bool
+com.apple.screencapture|disable-shadow|bool
+com.apple.screencapture|show-thumbnail|bool
+OPTIONAL_KEYS
+    for mode in native_absent native_wrong_key native_wrong_domain native_service native_error_status; do
+        MOCK_TARGET='com.apple.screencapture|location-screenshot'; MOCK_MODE="$mode"
+        screenshots_read_optional_string location-screenshot
+        result=$?
+        if [[ "$mode" == native_absent ]]; then
+            [[ $result -eq 1 ]] || fail 'Screenshots native absence'
+        else
+            [[ $result -eq 2 ]] || fail "Screenshots $mode is not absence"
+        fi
+    done
+    reset_fixture
+    MOCK_MODE=native_absent; MOCK_TARGET='com.apple.finder|ShowMountedServersOnDesktop'
+    export_finder_settings >/dev/null
+    [[ $? -eq 0 ]] && ! grep -q '|ShowMountedServersOnDesktop|' config/generated/macos/finder.conf || fail 'native absence publishes remaining Finder records'
+    local before_checksum
+    before_checksum="$(cksum config/generated/macos/finder.conf)"
+    MOCK_MODE=native_service
+    export_finder_settings >/dev/null
+    [[ $? -eq 2 && "$before_checksum" == "$(cksum config/generated/macos/finder.conf)" ]] || fail 'native error preserves prior snapshot'
+    reset_fixture
+}
+optional_preferences_checks
+if [[ "${1:-}" == --optional-preferences-only ]]; then
+    [[ "$TEST_FAILURES" -eq 0 ]] && echo 'PASS: 107 focused optional-preference assertions'
+    exit "$TEST_FAILURES"
+fi
 
 windows_expansion_discovery_checks() {
     local key value mode before_checksum
@@ -290,7 +359,7 @@ screenshots_discovery_checks() {
         grep -Fxq "com.apple.screencapture|location|string|$value" config/generated/macos/screenshots.conf || fail 'portable destination'
         [[ "$SCREENSHOTS_LOCATION_ORIGIN" == "$mode" ]] || fail 'destination origin'
     done
-    for mode in mixed target service value unknown_version macos27; do
+    for mode in mixed target service value unknown_version future; do
         reset_fixture
         printf '%s\n' "$expected" > config/generated/macos/screenshots.conf
         before_checksum="$(cksum config/generated/macos/screenshots.conf)"
@@ -300,7 +369,7 @@ screenshots_discovery_checks() {
             service) MOCK_MODE=type_failure; MOCK_TARGET='com.apple.screencapture|location' ;;
             value) MOCK_MODE=value_failure; MOCK_TARGET='com.apple.screencapture|location' ;;
             unknown_version) MOCK_MACOS_VERSION=unknown ;;
-            macos27) MOCK_MACOS_VERSION=27.0 ;;
+            future) MOCK_MACOS_VERSION=28.0 ;;
         esac
         export_screenshots_settings >/dev/null
         [[ $? -eq 2 && "$before_checksum" == "$(cksum config/generated/macos/screenshots.conf)" && -z "$(temporary_files)" ]] || fail "$mode preserves snapshot"

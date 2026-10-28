@@ -115,7 +115,7 @@ defaults() {
     if [[ "$DEFAULTS_STATE" == desktop ]]; then
         echo "The domain/default pair of ($2, $3) does not exist" >&2; return 1
     fi
-    if [[ "$DEFAULTS_STATE" == missing ]]; then printf 'does not exist\n'; return 1; fi
+    if [[ "$DEFAULTS_STATE" == missing ]]; then echo "The domain/default pair of ($2, $3) does not exist"; return 1; fi
     if [[ "$1" == read-type ]]; then
         if [[ "$DEFAULTS_STATE" == wrong-type ]]; then printf 'Type is array\n'
         elif [[ "$3" == location ]]; then printf 'Type is string\n'
@@ -225,7 +225,7 @@ screenshots_verification_checks() {
     verification_aggregate
     assert record_is com.apple.screencapture/location stored_preference verified
     assert test "$GV_MISMATCH" -eq 0
-    MOCK_MACOS_VERSION=27.0
+    MOCK_MACOS_VERSION=28.0
     verification_reset bootstrap
     verify_screenshots
     verification_aggregate

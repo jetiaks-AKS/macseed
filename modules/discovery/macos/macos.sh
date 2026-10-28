@@ -32,11 +32,11 @@ macos_collect_preference() {
         expected_native_type="$(macos_defaults_type_name "$generated_type")" || return 2
     fi
 
-    native_type="$(application_observe local-diagnostic defaults read-type "$domain" "$key" 2>&1)"
+    native_type="$(LC_ALL=C application_observe local-diagnostic defaults read-type "$domain" "$key" 2>&1)"
     local type_result=$?
 
     if [[ $type_result -ne 0 ]]; then
-        if [[ "$native_type" == *"does not exist"* ]]; then
+        if macos_defaults_key_absent "$type_result" "$native_type" "$domain" "$key"; then
             return 0
         fi
 

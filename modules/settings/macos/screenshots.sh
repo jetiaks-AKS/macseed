@@ -74,24 +74,33 @@ screenshots_directory_state() {
     return 0
 }
 
-# Startup validates the path and OS backend before Bootstrap mutation. Live
-# preference observations remain in the category's Check/Preview/Apply path.
-validate_screenshots_config() {
+# Input safety is independent of target OS support and is mandatory in every mode.
+validate_screenshots_input() {
     local result
     screenshots_load_destination || return 2
-    if [[ -n "$SCREENSHOTS_DESTINATION" ]]; then
-        screenshots_location_backend || return 2
-    fi
     screenshots_directory_state
     result=$?
     if [[ $result -eq 2 ]]; then return 2; fi
     return 0
 }
 
+validate_screenshots_config() {
+    validate_screenshots_input || return 2
+    # Both Preview and its separate readiness report are read-only inspection.
+    # Publication/Apply readiness must still reject an unqualified backend.
+    if [[ "${MODE:-}" == --dry-run ||
+          ( "${MODE:-}" == --application-readiness &&
+            "${MACSEED_APPLICATION_READINESS_REPORT:-false}" == true ) ]]; then
+        return 0
+    fi
+    [[ -z "$SCREENSHOTS_DESTINATION" ]] || screenshots_location_backend || return 2
+    return 0
+}
+
 # Domain-owned scalar dispatch. Location never enters this loop; booleans never
 # enter directory handling. The caller validates the complete input first.
 screenshots_boolean_settings() {
-    local mode="$1" domain key type value result label enabled
+    local mode="$1" domain key type value result label enabled preview_result=0
     while IFS='|' read -r domain key type value || [[ -n "$domain$key$type$value" ]]; do
         [[ "$key" == disable-shadow || "$key" == show-thumbnail ]] || continue
         if [[ "$mode" == apply ]]; then
@@ -107,7 +116,12 @@ screenshots_boolean_settings() {
             verification_result macos-screenshots "$domain/$key" stored_preference "$result" '' "$DEFAULTS_OBSERVATION_KIND" || return 2
             continue
         fi
-        [[ $result -ne 2 ]] || return 2
+        if [[ $result -eq 2 ]]; then
+            [[ "$mode" == preview ]] || return 2
+            preview_record macos-screenshots "$domain/$key" set_preference blocked observation_failed
+            preview_result=2
+            continue
+        fi
         if [[ "$mode" == preview ]]; then
             if [[ $result -eq 0 ]]; then
                 preview_record macos-screenshots "$domain/$key" none satisfied
@@ -126,11 +140,12 @@ screenshots_boolean_settings() {
         fi
         [[ $result -ne 1 ]] || SCREENSHOTS_BOOLEAN_CHANGED=true
     done < "$SCREENSHOTS_CONFIG"
-    return 0
+    return "$preview_result"
 }
 
 inspect_screenshots_settings() {
     local result
+    SCREENSHOTS_LOCATION_REASON=observation_failed
     SCREENSHOTS_DIRECTORY_MISSING=false
     SCREENSHOTS_PREFERENCE_CHANGED=false
     SCREENSHOTS_BOOLEAN_CHANGED=false
@@ -151,6 +166,7 @@ inspect_screenshots_settings() {
             *) return 2 ;;
         esac
     fi
+    [[ "${1:-}" != preview ]] || return 0
     screenshots_boolean_settings check
 }
 
@@ -160,7 +176,12 @@ check_screenshots() {
 }
 
 preview_screenshots_settings() {
-    inspect_screenshots_settings || return 2
+    screenshots_load_destination || return 2
+    if ! inspect_screenshots_settings preview; then
+        preview_record macos-screenshots com.apple.screencapture/location inspect blocked "$SCREENSHOTS_LOCATION_REASON"
+        screenshots_boolean_settings preview
+        return 2
+    fi
     if [[ -n "$SCREENSHOTS_DESTINATION" && "$SCREENSHOTS_DIRECTORY_MISSING" != true && "$SCREENSHOTS_PREFERENCE_CHANGED" != true ]]; then
         preview_record macos-screenshots com.apple.screencapture/location none satisfied
     fi
@@ -201,7 +222,7 @@ apply_screenshots_settings() {
     fi
     if [[ "$SCREENSHOTS_PREFERENCE_CHANGED" == true ]]; then
         screenshots_observe_location || return 2
-        apply_defaults_record com.apple.screencapture location string "$SCREENSHOTS_DESTINATION" || return 2
+        apply_defaults_record com.apple.screencapture "$SCREENSHOTS_LOCATION_KEY" string "$SCREENSHOTS_DESTINATION" || return 2
         [[ "$DEFAULTS_RECORD_CHANGED" != true ]] || restart=true
     fi
     screenshots_boolean_settings apply || return 2
