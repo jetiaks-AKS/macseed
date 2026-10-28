@@ -505,7 +505,7 @@ private struct WorkflowAnchorFrames: PreferenceKey {
         let sections = WorkspaceCategoryStyle.sections(rows.reversed())
         precondition(sections.map(\.title) == ["Applications & Tools", "Settings", "Git", "SSH Configuration", "Workspace", "Shell"])
         precondition(sections.first { $0.title == "Git" }!.rows.map(\.id) == ["git-configuration"])
-        precondition(sections.first { $0.title == "Workspace" }!.rows.map(\.id) == ["workspace-folders", "git-repositories"])
+        precondition(sections.first { $0.title == "Workspace" }!.rows.map(\.id) == ["workspace-folders", "git-repositories", "vscode-workspaces"])
         precondition(Set(sections.flatMap(\.rows).map(\.id)) == Set(rows.map(\.id)))
         for id in domains {
             precondition(RestoreRowIcon.symbol(for: id) == WorkspaceCategoryStyle.symbol(id))
