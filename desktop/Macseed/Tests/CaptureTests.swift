@@ -529,8 +529,20 @@ import SwiftUI
         precondition(!FileManager.default.fileExists(atPath: root.appendingPathComponent("real-captured.mbt.mbt").path))
         precondition(model.state == .result, "Real publication failed: \(String(describing: model.failure))")
         let observed = runtime.events.filter { $0.type == "capture_category" }
-        precondition(observed.count == 16 && model.publication?.bundle.capturedDomains.count == 1)
-        precondition(Set(observed.compactMap { $0.data?["domain"]?.string }) == Set(model.inventory.map(\.domain)))
+        let inventoryDomains = Set(model.inventory.map(\.domain))
+        precondition(inventoryDomains.count == model.inventory.count, "Capture inventory domains must be unique")
+        let observedDomains = observed.map { event -> String in
+            guard let domain = event.data?["domain"]?.string, !domain.isEmpty,
+                  inventoryDomains.contains(domain) else {
+                preconditionFailure("Capture category event must name an inventory domain")
+            }
+            return domain
+        }
+        precondition(observedDomains.count == model.inventory.count, "Each inventory domain must emit one Capture category event")
+        precondition(Set(observedDomains).count == observedDomains.count, "Capture category events must not duplicate domains")
+        precondition(Set(observedDomains) == inventoryDomains, "Capture category events must cover the inventory exactly")
+        precondition(inventoryDomains.contains("vscode-workspaces"), "Capture inventory must include the optional workspace scope")
+        precondition(model.publication?.bundle.capturedDomains == Set(["homebrew-packages"]))
         precondition(observed.contains { $0.data?["status"]?.string == "unavailable" })
         precondition(observed.contains { $0.data?["domain"]?.string == "shell-zsh" })
         let file = try target.resourceValues(forKeys: [.isRegularFileKey])
