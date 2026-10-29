@@ -174,8 +174,12 @@ blueprint_validate_syntax() {
     local blueprint_file="${1:-$BLUEPRINT_FILE}"
     local validation_output
     local validation_result
+    local workspace_context="${MACSEED_WORKSPACE_CONTEXT:+true}"
+    if [[ "${MACSEED_APPLICATION_COMPARE:-false}" == true && "${MACSEED_WORKSPACE_COMPARE:-false}" == true ]]; then
+        workspace_context=true
+    fi
 
-    validation_output="$(awk -v workspace_context="${MACSEED_WORKSPACE_CONTEXT:+true}" '
+    validation_output="$(awk -v workspace_context="$workspace_context" '
         BEGIN {
             sections["categories"] = 1
             sections["homebrew-packages"] = 1

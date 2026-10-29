@@ -7,8 +7,9 @@ struct CoreComparisonResult: Decodable {
         let groups: [CoreRestoreInspection.Group]
         let appStoreNames: [String: String]
         let repositoryLabels: [String: String]?
+        let workspaceLabels: [String: String]?
         let settingLabels: [String: [String: String]]?
-        enum CodingKeys: String, CodingKey { case groups, appStoreNames = "app_store_names", settingLabels = "setting_labels", repositoryLabels = "repository_labels" }
+        enum CodingKeys: String, CodingKey { case groups, appStoreNames = "app_store_names", settingLabels = "setting_labels", repositoryLabels = "repository_labels", workspaceLabels = "workspace_labels" }
     }
     let readOnly: Bool
     let publicationOccurred: Bool

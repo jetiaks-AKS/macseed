@@ -94,8 +94,10 @@ verification_input_identity() (
             "${BUNDLE_RESTORE_SECURE_FILE:+secure-selected}" "${GV_SECURE_ATTEMPT:-}"
         local path domain
         verification_hash_input "${BLUEPRINT_FILE:-config/blueprint.conf}" || exit 2
-        if [[ -n "${MACSEED_WORKSPACE_CONTEXT:-}" ]]; then
-            verification_hash_input "$MACSEED_WORKSPACE_CONTEXT" || exit 2
+        if [[ -n "${MACSEED_WORKSPACE_CONTEXT:-}" || "${MACSEED_WORKSPACE_COMPARE:-false}" == true ]]; then
+            if [[ -n "${MACSEED_WORKSPACE_CONTEXT:-}" ]]; then
+                verification_hash_input "$MACSEED_WORKSPACE_CONTEXT" || exit 2
+            fi
             verification_hash_input "$BLUEPRINT_GENERATED_DIR/workspace/topology.json" || exit 2
             verification_hash_input "$BLUEPRINT_GENERATED_DIR/workspace/vscode-workspaces.json" || exit 2
         fi
@@ -144,13 +146,19 @@ verification_run() {
         performance_measure verification.homebrew_packages verify_brew_packages || verification_input_error homebrew-packages
         performance_measure verification.git_configuration verify_git_configuration || verification_input_error git-configuration
         performance_measure verification.ssh_configuration verify_ssh_configuration || verification_input_error ssh-configuration
-        performance_measure verification.git_repositories verify_workspace_repositories || verification_input_error git-repositories
+        if [[ "${CV_ACTIVE:-false}" == true && "${MACSEED_WORKSPACE_COMPARE:-false}" == true ]]; then
+            performance_measure verification.workspace_comparison comparison_workspace || verification_input_error workspace
+        else
+            performance_measure verification.git_repositories verify_workspace_repositories || verification_input_error git-repositories
+        fi
         performance_measure verification.homebrew_casks verify_brew_casks || verification_input_error homebrew-casks
         performance_measure verification.app_store verify_appstore_apps || verification_input_error app-store
         performance_measure verification.shell_zsh verify_zsh || verification_input_error shell-zsh
         performance_measure verification.vscode_extensions verify_vscode_extensions || verification_input_error vscode-extensions
         performance_measure verification.vscode_settings verify_vscode_settings || verification_input_error vscode-settings
-        performance_measure verification.workspace_folders verify_workspace_folders || verification_input_error workspace-folders
+        if [[ "${CV_ACTIVE:-false}" != true || "${MACSEED_WORKSPACE_COMPARE:-false}" != true ]]; then
+            performance_measure verification.workspace_folders verify_workspace_folders || verification_input_error workspace-folders
+        fi
         performance_measure verification.macos_finder verify_macos_scalar_category finder "$FINDER_CONFIG" || verification_input_error macos-finder
         performance_measure verification.macos_dock verify_macos_scalar_category dock "$DOCK_CONFIG" || verification_input_error macos-dock
         performance_measure verification.macos_windows verify_macos_scalar_category windows "$WINDOWS_CONFIG" || verification_input_error macos-windows

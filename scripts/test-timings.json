@@ -1,5 +1,5 @@
 {
-  "source": "CI #116, GitHub Actions 40519591952 at 12beaa61; 42 complete passing whole suites. Failed or partial suite durations are not full measurements.",
+  "source": "CI #116, GitHub Actions 40519591952 at 12beaa61; 42 complete passing whole suites. Failed or partial suite durations are not full measurements. Environment Compare override: completed local Phase 6 run on the a1fa2a5 working tree, 41/41 PASS in 368.499s with confirmed cleanup; logs/regression/1793285251871689000/safe/summary.json. Local measurement, not hosted qualification.",
   "unknown_suite_seconds": 180,
   "unknown_case_seconds": 60,
   "suites": {
@@ -18,7 +18,7 @@
     "scripts/test-core-lifecycle.sh": 0.409,
     "scripts/test-discovery-summary.sh": 2.107,
     "scripts/test-dry-run-cli.sh": 17.121,
-    "scripts/test-environment-compare.py": 100.673,
+    "scripts/test-environment-compare.py": 368.499,
     "scripts/test-external-process-reliability.py": 83.801,
     "scripts/test-external-tools.py": 84.668,
     "scripts/test-git-generated-state.sh": 6.676,

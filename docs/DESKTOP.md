@@ -23,9 +23,9 @@ is historical research material requiring a separate explicit decision.
 including all eight suites, both Restore subsets and native PresentationTests.
 [Contributing](../CONTRIBUTING.md#focused-feedback-and-ci) owns mandatory Core +
 Desktop + `validate` gates and measured CI timings. [Roadmap](../ROADMAP.md#current-practical-execution-order)
-owns stage status/order; Workspace Phase 6 (topology-aware Environment Status) is
-the next functional stage. The historical CI milestone does not assert current
-HEAD success; [TODO](../TODO.md#consolidated-testci-stabilization) tracks known test debt.
+owns stage status/order and Workspace Phase 6 acceptance. The historical CI milestone
+does not assert current HEAD success; [TODO](../TODO.md#consolidated-testci-stabilization)
+tracks known test debt.
 [Desktop development](../desktop/Macseed/README.md) owns build, launch and test commands.
 
 ## Implemented runtime boundary
@@ -458,17 +458,12 @@ independent problems; technical evidence belongs in View Log.
 
 ## Environment Status
 
-Environment Status does not yet support topology Bundles, even when Restore Preview
-fully confirms Already Match. The comparison flow below remains available for
-supported legacy Bundles; [Configuration](toolkit/CONFIGURATION.md#topology-restore-preview--phase-3)
-owns the capability limits.
-
-**Planned Phase 6:** extend read-only Status to supported topology and selected
-descriptor relationships using the existing Core comparison/verification facts.
-This is the [next functional checkpoint](../TODO.md#phase-6--topology-aware-environment-status-next),
-not current support. It must preserve legacy comparison, honest unsupported/unknown
-coverage and the [Bundle-only handoff](#bundle-handoff), without selecting differences
-or starting Restore automatically.
+Environment Status supports legacy Bundles and validated Workspace Topology v1
+Bundles, including selected base/linked/nested checkouts, Workspace Folder structure
+and VS Code descriptor relationships. [Configuration](toolkit/CONFIGURATION.md#topology-environment-status--phase-6)
+owns the bounded comparison contract. [Roadmap](../ROADMAP.md#complete-workspace--git-worktree-restoration)
+records Phase 6 acceptance; representative real-Mac Execute/E2E remains open.
+The existing layout and [Bundle-only handoff](#bundle-handoff) are preserved.
 
 **Choose reference → Compare → Result** uses inline Domain → Items disclosures.
 The initial Choose Saved Environment card owns reference selection and its read-only
@@ -519,9 +514,16 @@ in Core/model evidence. Absent `stored_preference` means the saved preference is
 not explicitly set, not that a feature is missing or a system default was inferred.
 
 Category pills count visible logical items; Different/Missing combine once. Each
-repository gets one outcome from Worktree/Origin/Branch evidence: an absent worktree
-with only dependent prerequisite failures is Missing; incomplete/unsupported or
+legacy repository gets one outcome from Worktree/Origin/Branch evidence: an absent
+worktree with only dependent prerequisite failures is Missing; incomplete/unsupported or
 independent failures retain attention. Core predicates/IDs remain unchanged.
+Topology checkouts use one `topology` predicate; descriptors require
+`folder_relationships`, not file presence. Technical facts correlate by exact
+record/domain/item identity. Validated repository names and descriptor basenames
+are display-only; missing or unsafe metadata uses neutral labels. A confirmed
+relationship/HEAD/origin difference is Different even when Restore cannot safely
+change it. Missing dependencies, conflicts and unsupported/failed observations
+remain Needs Attention; they never become Match or implied Restore permission.
 Excluded inventory, extras and extra-availability rows are hidden only in the main
 window, including extra-only categories. Extras affect none of the main outcome
 counts; logs/reports retain their existing projections. Unavailable evidence is not

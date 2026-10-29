@@ -4098,7 +4098,7 @@ print('PASS: FIFO, regular-file and symlink races rejected before reading')
         self.archive.unlink(); self.pack()
         self.assertEqual(self.git_rows(self.preview())[0]['disposition'], 'satisfied')
 
-    def test_unstable_observation_is_not_a_plan_and_status_stays_closed(self):
+    def test_unstable_observation_is_not_a_plan_and_status_reobserves(self):
         spec = importlib.util.spec_from_file_location('topology_preview_fixture',
             ROOT / 'modules/bootstrap/workspace/topology_preview.py')
         inspector = importlib.util.module_from_spec(spec); spec.loader.exec_module(inspector)
@@ -4120,8 +4120,15 @@ print('PASS: FIFO, regular-file and symlink races rejected before reading')
         result = subprocess.run(['bash', str(self.project / 'modules/core/application-interface/core.sh')],
             input=json.dumps(request).encode(), cwd=self.project, env=self.environment, capture_output=True)
         events = [json.loads(line) for line in result.stdout.splitlines()]
-        self.assertEqual(result.returncode, 2)
-        self.assertEqual(events[-1]['data']['code'], 'unsupported_bundle')
+        self.assertEqual(result.returncode, 0, events)
+        self.assertEqual(events[-1]['type'], 'completed')
+        compared = next(event['data'] for event in events if event['type'] == 'result')
+        self.assertEqual(compared['comparison']['verdict'], 'no_differences_detected')
+        self.assertEqual(compared['comparison']['counts']['matching'], 5)
+        self.assertEqual([row['predicate'] for row in compared['records']['verification_records']].count('topology'), 3)
+        self.assertTrue(compared['read_only'])
+        self.assertFalse(compared['publication_occurred'])
+        self.assertFalse(compared['target_mutation_may_have_started'])
         self.assertEqual(before, bundle.fingerprint(self.home))
         self.assertFalse((self.project / 'config/generated').exists())
         self.assertFalse((self.root / 'mutations').exists())

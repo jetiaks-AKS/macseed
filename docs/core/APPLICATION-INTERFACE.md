@@ -298,8 +298,10 @@ for absent descriptors and the existing satisfied/conflict/unknown dispositions.
 Global Verification emits `folder_relationships`, checking ordered paths and display
 names after selected dependencies. No descriptor content or private absolute paths
 enter these records. See the [descriptor contract](../toolkit/CONFIGURATION.md#vs-code-workspace-descriptor-restoration--phase-5).
-Environment Status remains unsupported for these extensions. Ordinary legacy Bundle
-behavior is unchanged.
+Environment Status compares these extensions read-only through the same qualified
+inspector and the existing Verification/Comparison collector; see
+[Phase 6](../toolkit/CONFIGURATION.md#topology-environment-status--phase-6).
+Ordinary legacy Bundle behavior is unchanged.
 
 ### Explicit PKG installer preparation
 
@@ -1011,9 +1013,13 @@ unresolved, extra, unknown_difference. Verdicts are `incomplete`,
 run integrity takes precedence; otherwise differences precede verification gaps,
 confirmed matching requirements or proven empty scope.
 
-These are predicate-level counts: a repository can contribute separate Worktree,
-Origin and Branch results. Desktop may aggregate its visible repository row and
-category badges by stable item identity, without replacing these Core totals.
+These are predicate-level counts: a legacy repository can contribute separate
+Worktree, Origin and Branch results. Topology Bundles contribute one `topology`
+predicate per selected checkout, `folder_relationships` per selected descriptor,
+and `directory` per selected folder; no duplicate legacy Git evidence is added.
+Desktop aggregates visible rows and category badges by stable item identity,
+without replacing these Core totals. Topology checkout identities use the existing
+opaque projection of stable checkout IDs; descriptor IDs remain `workspace-<sha256>`.
 Comparison preserves the reference Blueprint; unlike Restore Prepare, it does not
 apply Cask-first narrowing or return `effective_selection`. A legacy reference
 selecting both Telegram Cask and its App Store ID therefore retains both
@@ -1021,6 +1027,14 @@ provider-specific requirements, even when their application identity overlaps.
 A matching Cask cannot satisfy the App Store predicate. Extending Comparison to
 an effective scope requires an explicit contract decision covering records,
 counts, verdict and source-inventory provenance together.
+
+Topology comparison uses direct absence/difference evidence, not planned Restore
+actions. Failed dependencies prevent Matching. Unsafe/unobservable state is
+Unverified, unsupported predicates remain its counted subset, and confirmed
+differences retain `also_incomplete` when other requirements cannot be verified.
+Two topology observations must agree. Bundle and private-stage fingerprints are
+rechecked before results; changes return `reference_changed`. Staging is removed
+without configuration publication, Git mutation or secure decryption/import.
 
 `extra.domains` contains status/count/reason; `extra.items` exposes safe IDs.
 Extras are supported only for casks, App Store and VS Code extensions with complete
@@ -1073,10 +1087,13 @@ Git identities, setting contents, credentials, private keys, remote URLs or comm
 Private subjects use opaque IDs; Restore repositories use selection indices. Bundle-backed
 Comparison may expose optional `reference_presentation.repository_labels` only in
 successful result display metadata: exact opaque repository IDs map to safe names
-from the validated selected Blueprint. Labels reuse Restore sanitization and
-Capture's restricted repository-name character/length rules. They are local UI
+from the validated selected Blueprint or topology repository metadata. Optional
+`reference_presentation.workspace_labels` maps stable descriptor IDs to qualified
+basenames. Repository labels reuse Restore sanitization and Capture's restricted
+repository-name rules; descriptor labels reuse the Workspace basename qualification.
+Both maps belong only to successful result display metadata. They are local UI
 metadata, not diagnostic identities; diagnostic records, failure payloads and
 exported diagnostics must not include these labels. Clients must use neutral
-repository labels when trusted metadata is absent or unsafe.
+repository/workspace labels when trusted metadata is absent or unsafe.
 Public fingerprints appear only in Capture SSH candidate inventory. Capture's
 absolute `destination` result returns the necessary path supplied by the client.

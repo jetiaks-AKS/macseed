@@ -1,4 +1,4 @@
-"""Read-only target evidence for Core Prepare; no publication or Apply entrypoint.
+"""Read-only target evidence for Core Prepare/Compare; no publication or Apply.
 
 Reuse the topology contract and Discovery's qualified Git readers. The caller
 owns Bundle/Selection validation and the existing Protocol V1 plan identity.
@@ -16,6 +16,8 @@ import sys
 import time
 import unicodedata
 
+sys.dont_write_bytecode = True
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'bundle'))
 import bundle
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -32,7 +34,8 @@ UNSUPPORTED_REASONS = {code: code for code in (
     'workspace_git_unsupported', 'workspace_file_count_limit', 'workspace_file_bytes_limit',
     'workspace_symlink_unsupported', 'workspace_file_unsupported', 'workspace_configuration_unsupported',
     'workspace_index_unsupported', 'workspace_hooks_unsupported', 'workspace_tree_unsupported',
-    'workspace_submodule_unsupported', 'workspace_path_unsupported', 'workspace_git_metadata_unsupported')}
+    'workspace_submodule_unsupported', 'workspace_path_unsupported', 'workspace_git_metadata_unsupported',
+    'workspace_descriptor_unsupported')}
 UNSUPPORTED_REASONS.update({
     'git_external_configuration': 'workspace_configuration_unsupported',
     'git_metadata_symlink': 'workspace_git_metadata_unsupported',
@@ -83,7 +86,7 @@ def related(left, right):
 
 
 class Inspector(discovery.Observer):
-    def __init__(self, home, reader, deadline):
+    def __init__(self, home, reader, deadline, *, comparison=False):
         super().__init__(home, [])
         self.source_home = str(home)
         self.environment['GIT_NO_REPLACE_OBJECTS'] = '1'
@@ -92,6 +95,7 @@ class Inspector(discovery.Observer):
         self.evidence = hashlib.sha256()
         self.identities = {}
         self.bytes_read = 0
+        self.comparison = comparison
 
     def remember(self, value):
         self.evidence.update(json.dumps(value, sort_keys=True, separators=(',', ':')).encode() + b'\0')
@@ -178,6 +182,8 @@ class Inspector(discovery.Observer):
                        before.st_mtime_ns, before.st_ctime_ns, hashlib.sha256(data).hexdigest()])
         value = discovery.jsonc(data)
         if not isinstance(value, dict) or not isinstance(value.get('folders'), list):
+            if self.comparison:
+                raise contract.Unsupported('workspace_descriptor_unsupported')
             return True, False
         if len(value['folders']) > contract.MAX_ITEMS:
             raise ValueError('descriptor folder limit')
@@ -186,6 +192,8 @@ class Inspector(discovery.Observer):
             if time.monotonic() >= self.deadline:
                 raise ValueError('descriptor observation deadline')
             if not isinstance(folder, dict) or set(folder) - {'path', 'name'} or 'path' not in folder:
+                if self.comparison:
+                    raise contract.Unsupported('workspace_descriptor_unsupported')
                 return True, False
             raw = contract.text(folder['path'])
             # Relative ../ links are needed for siblings. Qualify every prefix
@@ -222,12 +230,24 @@ class Inspector(discovery.Observer):
             # Include base/parent dependencies already qualified by the Git plan.
             for key in list(dependencies):
                 dependencies.update(completed[key].get('dependency_ids', []))
+            difference = 'unknown'
             try:
                 exists, matches = self.workspace(workspace, expected)
                 targets_exist = all([self.destination(folder['path']) is not None for folder in expected])
                 pending = any(completed[key]['disposition'] != 'satisfied' for key in dependencies)
                 blocked = any(completed[key]['disposition'] not in ('planned', 'satisfied') for key in dependencies)
-                if exists and not matches:
+                if self.comparison:
+                    if pending or not targets_exist:
+                        action, disposition, reason = 'inspect', 'blocked', 'workspace_dependency_pending'
+                    elif not exists:
+                        action, disposition, reason = 'inspect', 'planned', None
+                        difference = 'absent'
+                    elif not matches:
+                        action, disposition, reason = 'inspect', 'conflict', 'workspace_descriptor_conflict'
+                        difference = 'different'
+                    else:
+                        action, disposition, reason = 'none', 'satisfied', None
+                elif exists and not matches:
                     action, disposition, reason = 'inspect', 'conflict', 'workspace_descriptor_conflict'
                 elif blocked:
                     action, disposition, reason = 'inspect', 'blocked', 'workspace_dependency_pending'
@@ -240,12 +260,15 @@ class Inspector(discovery.Observer):
                         'workspace_dependency_pending' if pending else None)
             except Conflict as exc:
                 action, disposition, reason = 'inspect', 'conflict', str(exc)
+            except contract.Unsupported:
+                action, disposition, reason = 'inspect', 'blocked', 'workspace_descriptor_unsupported'
             except (OSError, ValueError, TypeError, RecursionError):
                 action, disposition, reason = 'inspect', 'unknown', 'workspace_observation_failed'
             result.append(dict(domain='vscode-workspaces', item_id=item, action=action,
                                disposition=disposition, reason=reason,
                                display_name=contract.workspace_label(workspace['path']),
-                               dependency_ids=sorted(dependencies)))
+                               dependency_ids=sorted(dependencies),
+                               **({'difference': difference} if self.comparison else {})))
 
     def protect_descriptors(self, files, sections, checkout, path):
         # A Git branch change could overwrite/delete a tracked descriptor before
@@ -446,6 +469,16 @@ class Inspector(discovery.Observer):
                     dirty=bool(status), protected=None, in_progress=in_progress)
 
     def desired(self, path, record, member, observed, *, creating=False):
+        if self.comparison:
+            # Comparison establishes conformity, not the eligibility of a future
+            # mutation. No branch/object lookup, hooks or file-content inspection
+            # is needed to prove a different current HEAD.
+            if observed['in_progress']:
+                return 'inspect', 'blocked', 'workspace_operation_in_progress'
+            matches = (observed['branch'] == 'refs/heads/' + record['branch']
+                       if member['head_kind'] == 'branch' else
+                       not observed['branch'] and observed['oid'] == member['head_oid'])
+            return ('none', 'satisfied', None) if matches else ('inspect', 'conflict', 'workspace_head_conflict')
         if member['head_kind'] == 'branch':
             branch = record['branch']
             if any(row.get('branch') == 'refs/heads/' + branch and
@@ -519,17 +552,24 @@ class Inspector(discovery.Observer):
                 base = group['base_item_id']
                 action, disposition, reason = 'inspect', 'unknown', 'workspace_observation_failed'
                 observation = None
+                difference = 'unknown'
                 try:
                     path = self.destination(paths[item])
                     from clone_execution import pending as partial_pending
-                    if partial_pending(self.home / paths[item]):
+                    if (self.comparison and partial_pending()) or partial_pending(self.home / paths[item]):
                         raise Conflict('workspace_partial_checkout')
                     if capability['status'] != 'supported':
                         raise contract.Unsupported('workspace_git_unsupported')
                     if member['head_kind'] == 'branch':
                         self.run(self.home, 'check-ref-format', '--branch', row['branch'])
-                    if any(completed[parent]['disposition'] not in ('satisfied', 'planned') for parent in dependencies[item]):
+                    allowed = ('satisfied',) if self.comparison else ('satisfied', 'planned')
+                    if any(completed[parent]['disposition'] not in allowed for parent in dependencies[item]):
                         action, disposition, reason = 'inspect', 'blocked', 'workspace_dependency_pending'
+                    elif self.comparison and (path is None or not any(path.iterdir())):
+                        # Absence is observed directly, never inferred from a
+                        # clone/add/switch plan or an unavailable prerequisite.
+                        action, disposition, reason = 'inspect', 'planned', None
+                        difference = 'absent'
                     elif ((path is None or not any(path.iterdir())) and
                           any(completed[parent]['disposition'] == 'planned' for parent in dependencies[item])):
                         action, disposition, reason = ('clone' if item == base else 'add_worktree'), 'planned', 'workspace_dependency_pending'
@@ -548,14 +588,21 @@ class Inspector(discovery.Observer):
                         if not os.path.lexists(path / '.git'):
                             raise Conflict('workspace_destination_conflict')
                         observation = self.checkout(path)
+                        if self.comparison and observation['in_progress']:
+                            raise Conflict('workspace_operation_in_progress')
                         if self.line(path, 'rev-parse', '--show-object-format') != group['object_format']:
+                            difference = 'different'
                             raise Conflict('workspace_topology_conflict')
                         expected_common = self.home / paths[base] / '.git'
                         if observation['common'] != expected_common or observation['entries'][0]['path'] != str(self.home / paths[base]):
+                            difference = 'different'
                             raise Conflict('workspace_topology_conflict')
                         if observation['origin'] != row['remote']:
+                            difference = 'different'
                             raise Conflict('workspace_origin_conflict')
                         action, disposition, reason = self.desired(path, row, member, observation)
+                        if self.comparison and reason == 'workspace_head_conflict':
+                            difference = 'different'
                         if action == 'switch_branch' and disposition == 'planned':
                             self.protect_descriptors(files, sections, paths[item], path)
                 except Conflict as exc:
@@ -569,7 +616,8 @@ class Inspector(discovery.Observer):
                 planned = dict(domain='git-repositories', item_id=str(selected.index(item) + 1),
                                action=action, disposition=disposition, reason=reason,
                                checkout_id=item, checkout_role='base' if base == item else 'linked',
-                               head_kind=member['head_kind'], dependency_ids=sorted(dependencies[item]))
+                               head_kind=member['head_kind'], dependency_ids=sorted(dependencies[item]),
+                               **({'difference': difference} if self.comparison else {}))
                 if re.fullmatch(r'[\w .-]{1,128}', row['name']):
                     planned['display_name'] = row['name']
                 if observation is not None:
@@ -582,7 +630,23 @@ class Inspector(discovery.Observer):
         for folder in sections['workspace-folders']:
             shared = next((completed[item] for item in selected if paths[item] == folder), None)
             parents = [item for item in selected if contract.within(folder, paths[item])]
-            if shared is not None:
+            difference = 'unknown'
+            if self.comparison:
+                try:
+                    exists = self.destination(folder) is not None
+                    # The shared Git role does not govern directory existence;
+                    # enclosing selected checkouts remain required dependencies.
+                    if any(completed[parent]['disposition'] != 'satisfied'
+                           for parent in parents if paths[parent] != folder):
+                        action, disposition, reason = 'inspect', 'blocked', 'workspace_dependency_pending'
+                    else:
+                        action, disposition, reason = 'inspect', 'satisfied' if exists else 'planned', None
+                        difference = 'unknown' if exists else 'absent'
+                except Conflict:
+                    action, disposition, reason = 'inspect', 'conflict', 'workspace_destination_conflict'
+                except OSError:
+                    action, disposition, reason = 'inspect', 'unknown', 'workspace_observation_failed'
+            elif shared is not None:
                 try:
                     exists = self.destination(folder) is not None
                     # Folder structure already matches independently of any Git
@@ -609,18 +673,68 @@ class Inspector(discovery.Observer):
                 except OSError:
                     action, disposition, reason = 'inspect', 'unknown', 'workspace_observation_failed'
             result.append(dict(domain='workspace-folders', item_id=folder, action=action, disposition=disposition,
-                               reason=reason, dependency_ids=sorted(parents)))
+                               reason=reason, dependency_ids=sorted(parents),
+                               **({'difference': difference} if self.comparison else {})))
         self.workspaces(files, paths, result)
         return result
 
 
-def inspect(files, home, reader):
+def inspect(files, home, reader, *, comparison=False):
     """Two complete observations must agree; expose only typed rows and a digest."""
     deadline = time.monotonic() + 120
-    before, after = Inspector(home, reader, deadline), Inspector(home, reader, deadline)
+    before, after = (Inspector(home, reader, deadline, comparison=comparison) for _ in range(2))
     first = before.plan(files)
     second = after.plan(files)
     if first != second or before.evidence.digest() != after.evidence.digest():
         for row in second:
             row.update(action='inspect', disposition='unknown', reason='workspace_observation_changed')
+            if comparison:
+                row['difference'] = 'unknown'
     return {'plan': second, 'fingerprint': after.evidence.hexdigest()}
+
+
+def comparison_records(files, home, reader):
+    """Project qualified evidence into the existing Verification shell bridge.
+
+    No raw paths, values or new aggregation model cross the public boundary;
+    the shared collector owns identities, diagnostics, counts and verdicts.
+    """
+    bundle.validate_workspace(files, home=home, exact=True)
+    rows = inspect(files, home, reader, comparison=True)['plan']
+    for row in rows:
+        domain = row['domain']
+        predicate = ('topology' if domain == 'git-repositories' else
+                     'folder_relationships' if domain == 'vscode-workspaces' else 'directory')
+        result, support, code = 2, 'supported', 'observation_failed'
+        difference = row['difference']
+        if row['disposition'] == 'satisfied':
+            result, code = 0, 'none'
+        elif difference in ('absent', 'different'):
+            result, code = 1, 'confirmed_mismatch'
+        elif row['reason'] in set(UNSUPPORTED_REASONS.values()):
+            support, code = 'unsupported', 'unsupported_predicate'
+        elif row['disposition'] in ('blocked', 'conflict'):
+            code = 'prerequisite_unmet'
+        yield (domain, row.get('checkout_id', row['item_id']), predicate,
+               str(result), support, code, difference)
+
+
+if __name__ == '__main__':
+    try:
+        if (sys.argv[1:] != ['--compare'] or os.environ.get('MACSEED_APPLICATION_COMPARE') != 'true'
+                or os.environ.get('MACSEED_WORKSPACE_COMPARE') != 'true'):
+            sys.exit(2)
+        sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'core/application-interface'))
+        from observation import read
+        import restore_selection
+        stage = Path(os.environ['BLUEPRINT_FILE']).parent
+        if stage / 'generated' != Path(os.environ['BLUEPRINT_GENERATED_DIR']):
+            sys.exit(2)
+        files = restore_selection.staged_files(stage)
+        # Collect before printing, so a failed observation cannot publish partial
+        # shell rows. The collector keeps all selected scope unresolved on failure.
+        records = list(comparison_records(files, os.environ['HOME'], read))
+        for record in records:
+            print('\t'.join(record))
+    except (bundle.Invalid, OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
+        sys.exit(2)

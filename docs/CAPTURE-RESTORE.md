@@ -55,7 +55,10 @@ Global Verification. Selected base repositories precede linked/nested checkouts;
 conditional branches/commits are checked again after Clone. Existing files are
 preserved, and a matching repeat Preview needs no Rebuild. Selected VS Code workspace
 descriptors are created without overwriting existing files; folder relationships and
-display names are verified. Environment Status remains unsupported for these extensions. Technical details and recovery
+display names are verified. Read-only Environment Status compares supported topology
+and selected descriptor relationships against the original Bundle, preserving its
+selection. Review in Restore passes only that Bundle and requires fresh Restore
+inspection and confirmation. Technical details and recovery
 limits belong to the [Workspace contract](toolkit/CONFIGURATION.md#topology-restore-execute--phase-4).
 
 Settings inclusion, supported keys, unmanaged absence and the qualified Screenshot

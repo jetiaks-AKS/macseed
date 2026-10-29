@@ -704,19 +704,21 @@ Topology-aware Discovery and Capture implement Phase 2 of the
 [Workspace/Git checkpoint](../../ROADMAP.md#complete-workspace--git-worktree-restoration)
 using the Phase 1 schema below. Phase 3 adds read-only Core Restore Preview;
 Phase 4 adds Core Restore Execute and Global Verification; Phase 5 adds selected
-VS Code workspace descriptor restoration within the limits below.
+VS Code workspace descriptor restoration; Phase 6 adds read-only Environment Status
+within the limits below.
 Independent-clone fallback is forbidden. Protocol V1
 retains its selection/plan model. Capture inventories use stable checkout IDs and display names.
 
 ### Workspace topology schema — Phase 1
 
 **Implemented: schema, Discovery, selected Capture, Bundle inspection, Core Restore
-Preview/Execute and Global Verification.**
+Preview/Execute, Global Verification and read-only Environment Status.**
 Capture validates new relationships/dependencies before using the existing Preview
 for other selected domains. Its temporary Preview Blueprint omits new topology;
 the saved Bundle retains the original explicit selection. Core Prepare/Execute use
-private staging and explicit selection narrowing. Ordinary CLI Bundle unpack and
-Environment Status continue to reject topology; Core Execute has a separate
+private staging and explicit selection narrowing. Environment Status preserves the
+original selection in private staging and uses the same qualified topology readers.
+Ordinary CLI Bundle unpack continues to reject topology; Core Execute has a separate
 validated admission to the existing publication and owned Bootstrap paths.
 Discovery publishes the complete Workspace group through the existing rollback path.
 
@@ -920,8 +922,6 @@ cannot establish full verification. A successful repeat Preview reports Already
 Match. Local disposable fixtures qualify this implementation; hosted CI and
 representative real-Mac Execute qualification remain separate gates.
 
-Environment Status is still unsupported for topology Bundles.
-
 ### VS Code workspace descriptor restoration — Phase 5
 
 Structured Core Capture/Restore and Desktop support the optional `vscode-workspaces`
@@ -958,6 +958,48 @@ write. Protocol V1 and diagnostics carry IDs, safe labels and fixed reasons, nev
 raw descriptor contents or private absolute paths. Legacy Bundles without this
 optional extension retain their previous schema and behavior. Disposable fixtures
 cover this implementation; representative real-Mac qualification remains open.
+
+### Topology Environment Status — Phase 6
+
+Core Bundle comparison supports selected ordinary/base/linked Git checkouts,
+supported nested dependencies, Workspace Folder structure and VS Code descriptor
+relationships. It validates the optional payloads and explicit selection, then
+uses the existing topology inspector in a read-only comparison mode. Legacy Git
+Verification does not also inspect those checkouts. Other selected domains keep
+their existing Comparison behavior; the saved Blueprint is never narrowed.
+
+| Qualified target evidence | Comparison |
+| --- | --- |
+| Matching common repository, origin, required HEAD and verified dependencies | Matching |
+| Confirmed absent/empty checkout destination, or absent descriptor with verified dependencies | Missing |
+| Confirmed different origin, common/base/linked relationship or required HEAD | Differing |
+| Existing supported descriptor with different ordered folder paths/display names | Differing |
+| Unverified selected base/parent/folder dependency or missing referenced subdirectory | Unverified |
+| Non-Git destination conflict, symlink, operation lock or retained lifecycle uncertainty | Unverified; Needs Attention |
+| Unqualified Git capability/configuration or unsupported descriptor structure | Unsupported within Unverified |
+| Failed, malformed or changing observations | Unverified; never Missing or Matching |
+
+Named branches compare by name; their captured OID remains diagnostic. Detached
+HEAD compares by exact OID. Comparison does not require a prospective checkout's
+local branch/commit to be available to prove a different current HEAD. It does not
+qualify a future mutation, inspect remote availability, or collect project content
+for a planned branch switch. Existing Git configuration/submodule/filter exclusions
+remain. Folder-only descriptors require no Git capability. A shared existing folder
+can match its structural requirement independently of its Git role; enclosing
+selected checkout dependencies still apply.
+
+Both observation passes must agree. Each checkout contributes one `topology`
+predicate, each descriptor one `folder_relationships`, and each selected folder
+one `directory` predicate to the existing Verification/Comparison collector.
+Source Bundle and staged-input fingerprints are checked before returning results.
+No target files/refs, ordinary Generated Configuration, Blueprint or SSH identities
+are changed; private staging is removed. Invalid selection/payloads fail validation;
+mixed selected legacy Git records plus descriptors still require a topology Capture.
+
+Focused disposable Core/Desktop validation establishes this implementation, not
+representative real-Mac Execute/E2E acceptance. The
+[remaining gates](../../TODO.md#complete-workspace--git-worktree-restoration)
+remain open. Status never authorizes Restore or cleanup.
 
 ## VS Code settings lifecycle
 

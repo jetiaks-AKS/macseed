@@ -462,7 +462,85 @@ private struct StatusAnchorFrames: PreferenceKey {
         print("PASS: concise Status failures and summary, retained independent SSH warning and item counts")
     }
 
+    static func topologyChecks() throws {
+        let identities = ["opaque:" + String(repeating: "a", count: 64),
+                          "opaque:" + String(repeating: "b", count: 64)]
+        let workspaceID = "workspace-" + String(repeating: "c", count: 64)
+        for kind in ["matching", "missing", "differing", "unverified"] {
+            for unsupported in kind == "unverified" ? [false, true] : [false] {
+                let reason = kind == "matching" ? nil : kind == "unverified"
+                    ? (unsupported ? "unsupported_predicate" : "prerequisite_unmet") : "confirmed_mismatch"
+                var rows: [Object] = [], owners: [Object] = [], diagnostics: [Object] = []
+                for index in 0..<3 {
+                    let domain = index == 2 ? "vscode-workspaces" : "git-repositories"
+                    let identity = index == 2 ? workspaceID : identities[index]
+                    var fact = row(index, kind, support: unsupported ? "unsupported" : "supported", reason: reason)
+                    fact["domain"] = domain; fact["item_id"] = identity
+                    rows.append(fact)
+                    owners.append(["record_id": "v:\(index)", "domain": domain, "item_id": identity,
+                                   "predicate": index == 2 ? "folder_relationships" : "topology"])
+                    if let reason {
+                        diagnostics.append(["record_id": "v:\(index)", "code": reason, "severity": "warning", "phase": "observation"])
+                    }
+                }
+                let verdict = kind == "matching" ? "no_differences_detected" : kind == "unverified" ? "incomplete" : "differences_detected"
+                var object = payload(rows, verdict: verdict)
+                var records = object["records"] as! Object
+                records["verification_records"] = Array(owners.reversed())
+                records["diagnostics"] = diagnostics
+                object["records"] = records
+                object["reference_presentation"] = ["groups": [], "app_store_names": [:],
+                    "repository_labels": [identities[0]: "demo", identities[1]: "demo"],
+                    "workspace_labels": [workspaceID: "view.code-workspace"]] as Object
+                let value = try presentation(object)
+                let event = try CoreEvent(line: data(["protocol_version": 1, "operation_id": "topology-fixture",
+                    "sequence": 1, "type": "result", "data": object]))
+                var sanitizer = OperationLogSanitizer()
+                let log = sanitizer.event(event, at: Date())
+                let logText = String(decoding: try JSONEncoder().encode(log), as: UTF8.self)
+                var report = DiagnosticReportBuilder(id: UUID(), environment: .init(version: "3.4.0", build: nil,
+                    macOS: .init(majorVersion: 14, minorVersion: 0, patchVersion: 0), architecture: "arm64"))
+                report.receive(log)
+                for privateValue in ["view.code-workspace", "demo", workspaceID] + identities {
+                    precondition(!logText.contains(privateValue) && !report.snapshot().text.contains(privateValue))
+                }
+                let repositories = value.categories.first { $0.id == "git-repositories" }!
+                let descriptors = value.categories.first { $0.id == "vscode-workspaces" }!
+                let expected: DisplayStatus = kind == "matching" ? .matching : kind == "missing" ? .missing
+                    : kind == "differing" ? .different : unsupported ? .unsupported : .unverified
+                precondition(repositories.items.count == 2 && repositories.items.allSatisfy { $0.status == expected && $0.title == "demo" })
+                precondition(descriptors.items.count == 1 && descriptors.items[0].status == expected
+                             && descriptors.items[0].title == "view.code-workspace")
+                precondition(value.technicalFacts[descriptors.items[0].id]?.first?.predicateTitle == "Folder relationships")
+                precondition(value.needsAttention == (kind == "unverified"))
+                precondition(value.attentionCount == (kind == "unverified" ? 3 : 0))
+                let outcome: ComparisonOutcome = kind == "matching" ? .match : kind == "missing" ? .missing
+                    : kind == "differing" ? .different : .needsAttention
+                precondition(value.categoryCount(outcome, category: repositories) == 2)
+                precondition(value.categoryCount(outcome, category: descriptors) == 1)
+                object["comparison_records"] = Array(rows.reversed())
+                let reordered = try presentation(object)
+                precondition(Set(reordered.categories.flatMap(\.items).map(\.id)) == Set(value.categories.flatMap(\.items).map(\.id)))
+                object["reference_presentation"] = ["groups": [], "app_store_names": [:],
+                    "workspace_labels": [workspaceID: "/Users/private/view.code-workspace"]] as Object
+                let fallback = try presentation(object)
+                precondition(fallback.categories.first { $0.id == "vscode-workspaces" }!.items[0].title == "VS Code Workspace")
+                if kind == "matching" {
+                    // Same record ID with the wrong item cannot prove relationships.
+                    owners[2]["item_id"] = "another-workspace"
+                    records["verification_records"] = owners
+                    object["records"] = records
+                    let incomplete = try presentation(object)
+                    precondition(incomplete.needsAttention)
+                    precondition(incomplete.categories.first { $0.id == "vscode-workspaces" }!.items[0].status == .unverified)
+                }
+            }
+        }
+        print("PASS: topology and folder_relationships Status, stable identity, labels, counts, diagnostics and failed correlation")
+    }
+
     @MainActor static func main() async throws {
+        try topologyChecks()
         if CommandLine.arguments.contains("--concise-messages-only") { try conciseMessageChecks(); return }
         let finalVisual = try finalConsistencyChecks()
         let renderRuntime = CoreRuntime()

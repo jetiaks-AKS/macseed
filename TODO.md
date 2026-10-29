@@ -10,25 +10,7 @@ Follow the [capability checkpoint](ROADMAP.md#complete-workspace--git-worktree-r
 the [current limits](docs/toolkit/CONFIGURATION.md#linked-git-worktree-capability-limits)
 separate implemented Core Capture/Restore from remaining capability and real-Mac gates.
 
-### Phase 6 — topology-aware Environment Status (next)
-
-- [ ] Inspect the current Bundle comparison/verification contract and define bounded
-  read-only admission for supported topology Bundles, preserving legacy behavior,
-  private staging and no target mutation or configuration publication.
-- [ ] Reuse authoritative Core observations to compare selected base/linked checkout
-  relationships, origin, required HEAD and dependencies within the existing Git scope.
-- [ ] Compare selected `.code-workspace` folder relationships, display names and
-  dependencies under the Phase 5 contract; file presence alone is not Match.
-- [ ] Project confirmed Match/Different/Missing separately from unsupported coverage,
-  observation errors and unresolved/incomplete results through the shared Desktop
-  presentation. Preserve the Bundle-only `Review in Restore` handoff: no automatic
-  difference selection, Prepare, Preview or Execute.
-- [ ] Add focused Core/Desktop coverage for supported topology/descriptors, missing
-  and conflicting state, failed observations, unsupported cases and legacy Bundles;
-  verify comparison preserves target/reference state. Keep unrelated CI assertion
-  debt in the stabilization checkpoint below.
-
-### Workspace real-world E2E qualification (after Phase 6)
+### Workspace real-world E2E qualification (next)
 
 - [ ] Extend the accepted Capture and matching Preview gates to representative
   real-Mac Capture → Preview → Execute → Global Verification → Status, preserving

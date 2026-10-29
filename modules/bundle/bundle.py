@@ -111,7 +111,8 @@ def validate_workspace(files, *, home=None, exact=False, inspect_home=False):
 
 
 def require_runtime_workspace(files):
-    # Legacy CLI / Environment Status must never fall through to flat consumers.
+    # Legacy CLI must never fall through to flat consumers. Core Preview/Compare
+    # explicitly admit validated metadata to the shared topology inspector.
     blueprint = files.get('blueprint.conf', b'')
     selected = (parse_blueprint(blueprint)[0].get('vscode-workspaces', [])
                 if b'[vscode-workspaces]' in blueprint else [])

@@ -874,6 +874,8 @@ def environment_compare(operation_id, parameters):
     try:
         with restore_signals(), tempfile.TemporaryDirectory(prefix="macseed-compare-") as temporary:
             source_identity = None
+            workspace_files = None
+            staged_identity = None
             if "bundle_path" in parameters:
                 source = Path(parameters["bundle_path"])
                 if not stat.S_ISREG(source.lstat().st_mode):
@@ -883,9 +885,17 @@ def environment_compare(operation_id, parameters):
                 bundle.inspect_bundle(source, os.environ["HOME"])
                 stage = Path(temporary) / "stage"
                 stage.mkdir(mode=0o700)
-                bundle.unpack(source, stage, os.environ["HOME"])
+                bundle.unpack(source, stage, os.environ["HOME"], workspace_preview=True)
                 if bundle.fingerprint(source) != source_identity:
                     raise ExecuteFailed("reference_changed")
+                files = restore_selection.staged_files(stage)
+                if bundle.workspace_extension_present(files):
+                    bundle.validate_workspace(files, home=os.environ['HOME'], exact=True)
+                    if ('generated/workspace/topology.json' not in files and
+                            bundle.parse_blueprint(files['blueprint.conf'])[0]['git-repositories']):
+                        raise bundle.Unsupported('Selected Git checkouts require topology metadata alongside descriptors')
+                    workspace_files = files
+                staged_identity = bundle.fingerprint(stage)
                 generated = stage / "generated"
                 blueprint = str(stage / "blueprint.conf")
             else:
@@ -905,6 +915,8 @@ def environment_compare(operation_id, parameters):
                                BLUEPRINT_FILE=blueprint or str(Path(temporary) / "absent-blueprint"),
                                MACSEED_APPLICATION_COMPARE="true", MAS_NO_AUTO_INDEX="1",
                                HOMEBREW_NO_AUTO_UPDATE="1", PYTHONDONTWRITEBYTECODE="1")
+            if workspace_files is not None:
+                environment['MACSEED_WORKSPACE_COMPARE'] = 'true'
             def progress(kind, record):
                 if kind == "lifecycle":
                     event("execution_event", dict(record, read_only=True))
@@ -916,6 +928,8 @@ def environment_compare(operation_id, parameters):
                 owned.cancel()
                 raise
             if source is not None and bundle.fingerprint(source) != source_identity:
+                raise ExecuteFailed("reference_changed")
+            if staged_identity is not None and bundle.fingerprint(stage) != staged_identity:
                 raise ExecuteFailed("reference_changed")
             # Display-only metadata reuses the Bundle/Restore taxonomy and labels.
             names = {}
@@ -929,17 +943,25 @@ def environment_compare(operation_id, parameters):
                         if separator and identity in identities:
                             names[identity] = restore_selection.label(name)
             repository_labels = {}
+            workspace_labels = {}
             if source is not None:
                 sections, _ = bundle.parse_blueprint(bundle.checked_file(stage / "blueprint.conf"))
                 identities = {row["item_id"] for row in owned.comparison_records
                               if row["domain"] == "git-repositories"}
                 # Exact production identity, never basename, position or display label.
+                contract = bundle.workspace_contract() if workspace_files is not None else None
+                repositories = (contract.repository_records(workspace_files[contract.REPOSITORIES])
+                                if contract is not None and contract.TOPOLOGY in workspace_files else {})
                 for identity in sections["git-repositories"]:
                     key = opaque(identity)
-                    label = restore_selection.label(identity)
+                    label = restore_selection.label(repositories[identity]['name'] if identity in repositories else identity)
                     if (key in identities and label != "Private item"
                             and re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_. -]{0,79}', label)):
                         repository_labels[key] = label
+                if contract is not None and contract.VSCODE in workspace_files:
+                    for workspace in contract.objects(workspace_files[contract.VSCODE])['items']:
+                        if workspace['item_id'] in sections.get('vscode-workspaces', []):
+                            workspace_labels[workspace['item_id']] = contract.workspace_label(workspace['path'])
             setting_labels = {}
             if source is not None:
                 from capture import included_settings, CaptureError
@@ -966,6 +988,8 @@ def environment_compare(operation_id, parameters):
             presentation = dict(state["reference_presentation"])
             if status == 0:
                 presentation["repository_labels"] = repository_labels
+                if workspace_files is not None:
+                    presentation["workspace_labels"] = workspace_labels
             event("result", dict(state, reference_presentation=presentation))
             if status != 0:
                 codes = {row["code"] for row in owned.details["diagnostics"]}

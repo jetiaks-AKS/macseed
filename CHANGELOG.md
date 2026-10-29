@@ -22,12 +22,16 @@ The format is based on the principles of **Keep a Changelog**.
   creation and safe branch/exact detached HEAD changes through the existing owned
   lifecycle, with dependency checks, retained partials and Global Verification.
   Desktop enables confirmed Rebuild for executable plans and labels conditional
-  dependencies; matching repeats require no changes. Topology Environment Status
-  remains separate work.
+  dependencies; matching repeats require no changes.
 * Selected VS Code workspace descriptors now travel through Capture and Restore:
   metadata-only Bundles, explicit folder/checkout dependencies, exclusive creation,
   relationship/name verification and matching repeat no-op. Existing descriptors
   are preserved; settings, tasks and other arbitrary source content are excluded.
+* Environment Status compares supported Workspace Topology v1 Bundles read-only:
+  base/linked/nested checkout relationships, origin, required HEAD, selected folder
+  structure and VS Code workspace relationships. Confirmed Missing/Different stays
+  distinct from unsupported or unverified evidence; legacy comparison and the
+  explicit Bundle-only Review in Restore handoff are preserved.
 * Native SwiftUI Desktop over Core Protocol V1: real Capture, Restore
   Prepare/Execute and read-only Saved Environment Status, with explicit selection,
   confirmation, structured progress, Verification-aware results and fresh-plan
@@ -177,7 +181,8 @@ The format is based on the principles of **Keep a Changelog**.
 ### Safety / Limitations
 
 * Topology Restore requires Core's qualified execution path; ordinary CLI unpack
-  and Environment Status remain unsupported. Descriptor restoration is bounded to
+  remains unsupported. Read-only Status does not establish Restore eligibility or
+  real-Mac Execute/E2E acceptance. Descriptor restoration is bounded to
   selected folder relationships; see the [Workspace contract](docs/toolkit/CONFIGURATION.md#vs-code-workspace-descriptor-restoration--phase-5).
 
 ## [3.4.0] - 2026-10-02

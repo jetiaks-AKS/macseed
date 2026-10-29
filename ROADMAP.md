@@ -94,12 +94,13 @@ before functional work resumes. [Desktop CI integration](#desktop-ci-validation)
 is a completed milestone, not proof that the latest HEAD passes. Known test debt
 belongs to [TODO](TODO.md#consolidated-testci-stabilization). Continue in this order:
 
-1. **Workspace Phase 6 — topology-aware Environment Status:** the next functional
-   stage. Inspect the bounded comparison contract, then implement read-only Status
-   for supported repository/worktree and selected descriptor relationships. Reuse
-   Core facts, preserve legacy Bundles and the explicit Status → Restore handoff;
-   no automatic difference selection or Apply. Focused tests must cover new behavior.
-2. **[Workspace real-world E2E qualification](#complete-workspace--git-worktree-restoration):**
+1. **Workspace Phase 6 — topology-aware Environment Status: complete within the
+   validated comparison scope.** Focused local validation and a controlled real-Mac
+   Status check are accepted. Read-only Status covers supported checkout/descriptor
+   relationships through shared Core facts, preserving legacy Bundles and the
+   explicit Status → Restore handoff.
+   This does not close the representative real-Mac gate below.
+2. **[Workspace real-world E2E qualification](#complete-workspace--git-worktree-restoration) — next checkpoint:**
    qualify Capture → Preview → Execute → Global Verification → Status on representative
    real Macs, including Phase 5 descriptors, file preservation, conflicts,
    interruption/re-entry and repeat/no-op. Do not expand the bounded capability scope.
@@ -146,7 +147,12 @@ Restore Preview is published and includes an accepted matching real-Mac Preview.
 Phase 4 Core Execute/Global Verification and Desktop integration are published in
 `12beaa6`; Phase 5 selected descriptor Capture/Restore and relationship verification
 are published in `7ac0408`. Disposable fixtures cover these implementations.
-**Phase 6 — topology-aware Environment Status is next and not implemented.**
+**Phase 6 — topology-aware Environment Status is complete within its validated
+comparison scope.** Focused Core/Desktop validation passed; the user confirmed
+four Git repositories and six Workspace Folders as Already Matches on a real Mac
+after rebuilding the current Desktop. It compares supported topology and
+selected descriptor relationships without target mutation or configuration publication,
+preserving legacy Comparison and the Bundle-only Restore handoff.
 Representative real-Mac Execute/descriptor E2E and consolidated CI qualification
 remain open; prior Capture/matching Preview acceptance does not close them.
 [Configuration](docs/toolkit/CONFIGURATION.md#linked-git-worktree-capability-limits)

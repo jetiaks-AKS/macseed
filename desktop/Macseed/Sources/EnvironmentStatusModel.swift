@@ -92,16 +92,18 @@ struct EnvironmentStatusPresentation {
     init(_ result: CoreComparisonResult) throws {
         try result.validate()
         counts = result.comparison.counts
-        technicalFacts = Dictionary(grouping: result.comparisonRecords.filter { $0.domain == "git-repositories" }, by: { $0.domain + ":" + $0.itemID }).mapValues { rows in
+        technicalFacts = Dictionary(grouping: result.comparisonRecords.filter { ["git-repositories", "vscode-workspaces"].contains($0.domain) }, by: { $0.domain + ":" + $0.itemID }).mapValues { rows in
             rows.map { row in
-                ComparisonTechnicalFact(recordID: row.recordID,
-                    predicate: result.records.verificationRecords.first(where: { $0.recordID == row.recordID })?.predicate,
+                let owners = result.records.verificationRecords.filter { $0.recordID == row.recordID }
+                let owner = owners.count == 1 && owners[0].domain == row.domain && owners[0].itemID == row.itemID ? owners[0] : nil
+                return ComparisonTechnicalFact(recordID: row.recordID,
+                    predicate: owner?.predicate,
                     result: row.comparisonKind, reason: row.reason, phase: row.phase, support: row.support,
                     diagnostics: result.records.diagnostics.filter { $0.recordID == row.recordID })
             }.sorted {
-                let order = ["worktree", "origin", "branch"]
-                return (order.firstIndex(of: $0.predicate ?? "") ?? 3, $0.recordID)
-                    < (order.firstIndex(of: $1.predicate ?? "") ?? 3, $1.recordID)
+                let order = ["topology", "folder_relationships", "worktree", "origin", "branch"]
+                return (order.firstIndex(of: $0.predicate ?? "") ?? order.count, $0.recordID)
+                    < (order.firstIndex(of: $1.predicate ?? "") ?? order.count, $1.recordID)
             }
         }
         var grouped: [String: [DisplayItem]] = [:]
@@ -135,6 +137,13 @@ struct EnvironmentStatusPresentation {
             + result.records.coverageRecords.filter { $0.domain == "git-repositories" && $0.disposition != "excluded" }.map(\.itemID)
             + result.records.verificationRecords.filter { $0.domain == "git-repositories" }.map(\.itemID)).sorted()
         func title(_ identity: String, domain: String) -> String {
+            if domain == "vscode-workspaces", identity != "scope" {
+                if let label = result.referencePresentation?.workspaceLabels?[identity],
+                   label.range(of: "^[\\w .()+-]{1,160}$", options: .regularExpression) != nil {
+                    return label
+                }
+                return "VS Code Workspace"
+            }
             if domain == "git-repositories", identity != "scope" {
                 if let label = result.referencePresentation?.repositoryLabels?[identity],
                    label != "Private item", label.range(of: "^[A-Za-z0-9][A-Za-z0-9_. -]{0,79}$", options: .regularExpression) != nil {
@@ -183,7 +192,7 @@ struct EnvironmentStatusPresentation {
             add(row.domain, DisplayItem(id: logicalID(row.domain, row.itemID), title: title(row.itemID, domain: row.domain), status: status,
                                         action: action, reason: [technical(row.reason, row.phase), "Comparison: " + row.comparisonKind + " · " + row.recordID,
                                                                 row.domain == "app-store" ? "App Store ID: " + row.itemID : nil,
-                                                                row.domain == "git-repositories" || row.domain.hasPrefix("macos-") ? owner?.predicate.map { "Predicate: " + $0 } : nil].compactMap { $0 }.joined(separator: "\n")))
+                                                                ["git-repositories", "vscode-workspaces"].contains(row.domain) || row.domain.hasPrefix("macos-") ? owner?.predicate.map { "Predicate: " + $0 } : nil].compactMap { $0 }.joined(separator: "\n")))
         }
         for row in result.records.coverageRecords where !["resolved", "excluded"].contains(row.disposition) {
             let status: DisplayStatus = row.disposition == "unresolved" ? .unresolved : (row.disposition == "excluded" ? .excluded : .noRequirement)
@@ -255,7 +264,8 @@ struct EnvironmentStatusPresentation {
             let previous = grouped["git-repositories"]![index]
             let facts = technicalFacts[previous.id] ?? []
             if collapsedRepositoryIDs.contains(identity) { continue }
-            let complete = facts.count == 3 && Set(facts.compactMap(\.predicate)) == Set(["worktree", "origin", "branch"])
+            let topology = facts.count == 1 && facts[0].predicate == "topology"
+            let complete = topology || (facts.count == 3 && Set(facts.compactMap(\.predicate)) == Set(["worktree", "origin", "branch"]))
             let status: DisplayStatus
             let explanation: String
             if previous.status == .noRequirement && facts.isEmpty { continue }
@@ -264,7 +274,7 @@ struct EnvironmentStatusPresentation {
                 status = facts.contains(where: { $0.support == "unsupported" }) ? .unsupported : .unverified
                 explanation = "Couldn’t fully check this repository. View Log for the failed checks."
                 if !complete { incompleteRepositoryEvidence = true }
-            } else if facts.contains(where: { $0.predicate == "worktree" && $0.result == "missing" && $0.reason == "confirmed_mismatch" }) {
+            } else if facts.contains(where: { ["worktree", "topology"].contains($0.predicate ?? "") && $0.result == "missing" && $0.reason == "confirmed_mismatch" }) {
                 status = .missing
                 explanation = "Repository worktree was not found on this Mac."
             } else if facts.contains(where: { ["missing", "differing"].contains($0.result) }) {
@@ -276,6 +286,15 @@ struct EnvironmentStatusPresentation {
             }
             grouped["git-repositories"]![index] = DisplayItem(id: previous.id, title: previous.title,
                 status: status, action: explanation, reason: previous.reason)
+        }
+        // File presence alone cannot establish a descriptor's relationships.
+        for (index, item) in (grouped["vscode-workspaces"] ?? []).enumerated() where item.status != .noRequirement {
+            let facts = technicalFacts[item.id] ?? []
+            if facts.count != 1 || facts[0].predicate != "folder_relationships" {
+                incompleteRepositoryEvidence = true
+                grouped["vscode-workspaces"]![index] = DisplayItem(id: item.id, title: item.title,
+                    status: .unverified, action: "Couldn’t fully check this workspace’s folder relationships.", reason: item.reason)
+            }
         }
         for (index, item) in result.extra.items.enumerated() {
             add(item.domain, DisplayItem(id: "extra:\(index)", title: title(item.itemID, domain: item.domain), status: .extra,
@@ -353,7 +372,10 @@ struct ComparisonTechnicalFact: Identifiable {
     let support: String
     let diagnostics: [CoreComparisonResult.Diagnostic]
     var id: String { recordID }
-    var predicateTitle: String { predicate.map { $0.prefix(1).uppercased() + $0.dropFirst() } ?? "Requirement" }
+    var predicateTitle: String {
+        if predicate == "folder_relationships" { return "Folder relationships" }
+        return predicate.map { $0.prefix(1).uppercased() + $0.dropFirst() } ?? "Requirement"
+    }
     var resultTitle: String {
         switch result { case "matching": "Matching"; case "differing": "Different"; case "missing": "Missing"; default: support == "unsupported" ? "Unsupported" : "Unverified" }
     }

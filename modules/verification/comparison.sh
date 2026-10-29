@@ -5,6 +5,29 @@ source "$(dirname "${BASH_SOURCE[0]}")/../core/application-interface/observation
 # Verification record offset; it contains only typed observations, never values.
 source "$(dirname "${BASH_SOURCE[0]}")/provenance.sh"
 
+comparison_workspace() {
+    local report domain subject predicate result support code difference
+    report="$(python3 -B modules/bootstrap/workspace/topology_preview.py --compare)" || {
+        verification_input_error git-repositories
+        verification_input_error workspace-folders
+        verification_input_error vscode-workspaces
+        return 0
+    }
+    while IFS=$'\t' read -r domain subject predicate result support code difference; do
+        [[ -n "$domain" ]] || continue
+        verification_coverage "$domain" "$subject" resolved unknown || return 2
+        if [[ "$support" == unsupported ]]; then
+            verification_unsupported "$domain" "$subject" "$predicate" || return 2
+        else
+            [[ "$code" != none ]] || code=''
+            verification_result "$domain" "$subject" "$predicate" "$result" "$code" "$difference" || return 2
+        fi
+    done <<< "$report"
+    for domain in git-repositories workspace-folders vscode-workspaces; do
+        verification_items_selected "$domain" || continue
+    done
+}
+
 comparison_note() {
     [[ "${CV_ACTIVE:-false}" == true ]] || return 0
     case "$1" in absent|different|unknown) ;; *) return 2 ;; esac
