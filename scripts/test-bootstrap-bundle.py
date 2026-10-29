@@ -312,7 +312,7 @@ class BundleTests(unittest.TestCase):
         self.assertFalse(categories["macos-screenshots"])
 
     def test_restore_groups_cover_every_transferable_scope(self):
-        self.assertEqual(set(bundle.ITEMS) | set(bundle.CATEGORIES),
+        self.assertEqual(set(bundle.SELECTABLE_ITEMS) | set(bundle.CATEGORIES),
                          {scope for scopes in bundle.GROUPS.values() for scope in scopes})
 
     def test_vscode_settings_can_be_disabled_without_expanding_source_selection(self):

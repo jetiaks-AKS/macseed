@@ -140,8 +140,14 @@ class SelectionTests(unittest.TestCase):
     def test_all_modes_narrowing_identity_privacy_and_category_flags(self):
         sections = self.populated()
         projection, sources = selection_api.inventory(selection_api.staged_files(self.stage))
-        self.assertTrue(all(row['source_present'] for row in projection['inventory']))
-        self.assertTrue(all(row['capture_selected'] for row in projection['inventory']))
+        rows = {row['domain']: row for row in projection['inventory']}
+        for domain in bundle.ITEMS | bundle.CATEGORIES:
+            self.assertTrue(rows[domain]['source_present'], domain)
+            self.assertTrue(rows[domain]['capture_selected'], domain)
+        self.assertFalse(rows['vscode-workspaces']['source_present'])
+        self.assertFalse(rows['vscode-workspaces']['capture_selected'])
+        self.assertEqual(rows['vscode-workspaces']['items'], [])
+        self.assertEqual(rows['vscode-workspaces']['availability'], 'unavailable')
         files = selection_api.staged_files(self.stage)
         del files['generated/brew-casks.conf']
         files['generated/vscode/settings.json'] = b''
@@ -153,7 +159,7 @@ class SelectionTests(unittest.TestCase):
         self.assertNotIn('PRIVATE_', json.dumps(projection))
         self.assertNotIn('secure', json.dumps(projection))
         self.assertEqual(selection_api.label('https://user:SECRET@example.test/repo'), 'Private item')
-        self.assertEqual({r['domain'] for r in projection['inventory'] if r['selection_mode'] == 'items'}, set(bundle.ITEMS))
+        self.assertEqual({r['domain'] for r in projection['inventory'] if r['selection_mode'] == 'items'}, set(bundle.SELECTABLE_ITEMS))
         chosen = {'categories': ['macos-finder', 'macos-trackpad', 'vscode-settings', 'shell-zsh', 'ssh-configuration'],
                   'items': {domain: [selection_api.identity(domain, values[1])] for domain, values in sections.items()}}
         selection_api.narrow(self.stage, chosen, [])
