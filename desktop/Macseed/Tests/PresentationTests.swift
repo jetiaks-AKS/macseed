@@ -82,7 +82,10 @@ private struct WorkflowAnchorFrames: PreferenceKey {
                     "Hidden sidebar must release its width to detail: \(name), \(String(describing: task)), "
                     + "before=\(visibleDetailWidth), bounds=\(visibleBounds), insets=\(visibleInsets), "
                     + "after=\(detailWidth(split)), bounds=\(split.splitViewItems.last!.viewController.view.bounds), "
-                    + "insets=\(split.splitViewItems.last!.viewController.view.safeAreaInsets)")
+                    + "insets=\(split.splitViewItems.last!.viewController.view.safeAreaInsets), "
+                    + "windowContent=\(host.view.bounds.size), isVisible=\(window.isVisible), "
+                    + "occlusionState=\(window.occlusionState.rawValue). "
+                    + "Run this native geometry gate in an unlocked macOS GUI session; a locked session can suspend sidebar layout.")
                 for width in [1600.0, 1200, 1000] {
                     window.setContentSize(NSSize(width: width, height: 800))
                     settle(window)
