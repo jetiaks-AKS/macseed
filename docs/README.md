@@ -2,13 +2,14 @@
 
 English is authoritative. Read from product purpose toward technical contracts:
 
-**README / Vision → Architecture → Capture / Restore, CLI or Desktop
+**README / Vision / Product Direction → Architecture → Capture / Restore, CLI or Desktop
 → Core interface / Configuration → source and tests.**
 
 | Document | Owns |
 |---|---|
 | [Product README](../README.md) | Product introduction and current capabilities |
 | [Vision](VISION.md) | Product tagline, scope, capability value criteria and long-term boundaries |
+| [Product Direction](PRODUCT-DIRECTION.md) | Approved product priorities, capability visibility, deferrals and agreed delivery sequence; Roadmap owns current execution/status |
 | [Architecture](toolkit/ARCHITECTURE.md) | Core, CLI and Desktop responsibilities and invariants |
 | [Capture / Restore](CAPTURE-RESTORE.md) | Bundle workflow, reconstruction and secure transfer |
 | [CLI Quick Start](getting-started/QUICKSTART.md) | Current CLI setup and recommended workflows |

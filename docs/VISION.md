@@ -1,16 +1,36 @@
 # Macseed Vision
 
-Macseed helps people move a supported working environment to a new Mac with
-less manual setup and a result they can inspect. The product tagline is
+Macseed helps people build and maintain a supported working environment on a new
+or existing Mac with less manual setup and a result they can inspect. Fresh
+application/tool installation, supported macOS settings and **reusable Saved
+Environments** are its primary value. The product tagline is
 **Capture. Rebuild. Continue.** The engineering lifecycle is
 **Capture → Rebuild → Verify**.
 Users choose what matters, review the changes, and see which selected
 requirements were verified and which still need attention.
 
+**Capture this Mac, Restore a Mac and Environment Status are equally important.**
+A Saved Environment is a reusable reference for selected requirements: capture
+once, compare read-only later, then explicitly review, preview and confirm safe
+reapplication through Restore. Matching state should require no changes.
+Comparison never automatically selects differences or starts Restore.
+
+## Product focus
+
+Everyday value centers on applications, tools and reliably supported macOS settings.
+Developer workflows remain optional advanced capabilities within their qualified
+Git, Workspace, SSH and Shell contracts. Existing VS Code Settings/Extensions are
+optional application extras; they do not imply a universal adapter catalog.
+These priorities preserve the scope of existing supported capabilities.
+The approved [Product Direction](PRODUCT-DIRECTION.md) records the capability
+decisions and planned GUI grouping; Advanced and Application Extras are not yet
+implemented presentation groups.
+
 ## Product principles
 
 Macseed is deliberately scoped: breadth is secondary to completeness. Prefer a
-smaller set of valuable capabilities implemented completely and reliably.
+smaller set of valuable capabilities implemented completely and reliably, with
+complexity and maintenance costs suitable for a small developer project.
 Supported capabilities should provide meaningful end-to-end value through
 **Capture/Observe → Classify/Plan → Rebuild/Transfer → Verify**, as applicable;
 checklist coverage alone does not justify a feature.
@@ -41,7 +61,9 @@ secure physical transfer.
 
 Current Workspace Folders restores structure only. Future work may investigate
 bounded transfer of useful unique workspace/local data; that requires an explicit
-product and safety contract, not a general backup or file-migration engine.
+product and safety contract, not a general backup or file-migration engine, and is
+not required for 1.0. Hiding standalone folder structure from ordinary UX first
+requires a dependency/compatibility audit; the current Core contract remains intact.
 
 New application adapters require a clear portable contract and enough user
 value to justify their security and maintenance cost. Macseed should remain
@@ -51,7 +73,7 @@ security risk and maintenance cost justify narrowing, deferring or rejecting
 capabilities whose user value is insufficient. For high-value capabilities,
 investigate a bounded safe implementation before reducing the intended outcome.
 
-Applications remain important: continue qualifying existing Homebrew coverage.
+Applications are a primary focus: continue qualifying existing Homebrew coverage.
 Current App Store Restore is assisted: capture requirements, select and preview,
 install manually in Apple App Store, then refresh and verify through Core.
 Confirmed shared identity gives Homebrew Cask precedence; unresolved identity

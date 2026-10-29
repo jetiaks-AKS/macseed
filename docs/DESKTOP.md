@@ -23,7 +23,9 @@ is historical research material requiring a separate explicit decision.
 including all eight suites, both Restore subsets and native PresentationTests.
 [Contributing](../CONTRIBUTING.md#focused-feedback-and-ci) owns mandatory Core +
 Desktop + `validate` gates and measured CI timings. [Roadmap](../ROADMAP.md#current-practical-execution-order)
-owns stage status/order; Workspace & Git Worktree Restoration is next.
+owns stage status/order; Workspace Phase 6 (topology-aware Environment Status) is
+the next functional stage. The historical CI milestone does not assert current
+HEAD success; [TODO](../TODO.md#consolidated-testci-stabilization) tracks known test debt.
 [Desktop development](../desktop/Macseed/README.md) owns build, launch and test commands.
 
 ## Implemented runtime boundary
@@ -105,6 +107,29 @@ fallbacks. Across Capture, Restore and Environment Status, keep one short explan
 prerequisites only by compatible domain, scope, reason and action; preserve independent
 item problems and item counters. Repeated records are not separate user actions.
 Retain truthful Needs Attention versus Unverified evidence in all phases.
+
+## Planned product grouping — not implemented
+
+The approved [Product Direction](PRODUCT-DIRECTION.md#4-native-desktop-presentation-direction--planned-not-implemented)
+gives Capture, Restore and Environment Status equal importance and keeps their three
+destinations and accepted Minimal Premium foundation. After Workspace qualification
+and consolidated CI, a read-only Product Scope Revision must precede small-scope
+GUI realignment. The planned grouping is:
+
+- **Applications & Tools:** App Store, Homebrew Applications and Homebrew Packages.
+- **macOS Settings:** existing supported domains and only subsequently qualified additions.
+- **Application Extras:** existing VS Code Extensions and Settings.
+- **Advanced — For experienced users:** collapsed/opt-in Git, SSH, Shell,
+  repositories/worktrees, bounded descriptors and optional Secure Transfer once
+  Desktop 16H is implemented.
+
+Application Extras and Advanced are not implemented groups. Current Capture/Restore/
+Status grouping below remains the as-implemented contract. Hide standalone Workspace
+Folders from ordinary UX only after auditing Git/descriptor dependencies and Bundle
+compatibility; retain the structure-only Core capability. Realignment must preserve
+item/category selection, source ceilings, accessibility, Preview and independent
+verification. No separate Advanced engine, permanent expert-mode fork or additional
+wizard is planned. [Roadmap](../ROADMAP.md#current-practical-execution-order) owns sequence.
 
 ## Native appearance and Settings
 
@@ -437,6 +462,13 @@ Environment Status does not yet support topology Bundles, even when Restore Prev
 fully confirms Already Match. The comparison flow below remains available for
 supported legacy Bundles; [Configuration](toolkit/CONFIGURATION.md#topology-restore-preview--phase-3)
 owns the capability limits.
+
+**Planned Phase 6:** extend read-only Status to supported topology and selected
+descriptor relationships using the existing Core comparison/verification facts.
+This is the [next functional checkpoint](../TODO.md#phase-6--topology-aware-environment-status-next),
+not current support. It must preserve legacy comparison, honest unsupported/unknown
+coverage and the [Bundle-only handoff](#bundle-handoff), without selecting differences
+or starting Restore automatically.
 
 **Choose reference → Compare → Result** uses inline Domain → Items disclosures.
 The initial Choose Saved Environment card owns reference selection and its read-only

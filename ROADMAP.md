@@ -1,6 +1,8 @@
 # Roadmap
 
-Strategic outcomes and stage status. [Desktop](docs/DESKTOP.md) owns interaction
+Strategic outcomes and stage status. [Product Direction](docs/PRODUCT-DIRECTION.md)
+records the approved product decisions; this Roadmap owns their current execution
+order. [Desktop](docs/DESKTOP.md) owns interaction
 contracts, [TODO](TODO.md) owns concrete unfinished actions, and
 [Changelog](CHANGELOG.md) owns completed release-visible history.
 
@@ -87,30 +89,42 @@ qualification and recovery remain open under the [Core process contract](docs/co
 CI tuning is maintenance; [Contributing](CONTRIBUTING.md#focused-feedback-and-ci)
 owns canonical test execution and timing evidence.
 
-Desktop CI is [complete](#desktop-ci-validation). Continue in this order:
+Documentation Checkpoint 0 records the [approved sequence](docs/PRODUCT-DIRECTION.md#5-delivery-sequence-and-gates)
+before functional work resumes. [Desktop CI integration](#desktop-ci-validation)
+is a completed milestone, not proof that the latest HEAD passes. Known test debt
+belongs to [TODO](TODO.md#consolidated-testci-stabilization). Continue in this order:
 
-1. **[Complete Workspace & Git Worktree Restoration](#complete-workspace--git-worktree-restoration):**
-   next implementation checkpoint. Review architecture/data contracts, then qualify
-   the agreed end-to-end path, file preservation, conflicts and repeat/no-op convergence.
-2. **Secure SSH Desktop (16H):** implement and qualify the inherited secret-channel
-   interaction, encryption/unlock/import confirmation and secure privacy coverage
-   through representative Capture/Restore gates.
-3. **Remaining supported-domain Restore qualification:** continue Homebrew
-   compatibility, real Zsh, macOS visual effects, Extension Pack dependencies and
-   the remaining [TODO matrix](TODO.md#remaining-supported-domain-restore-qualification).
-   Close each supported scope with real Verify and repeat/no-op evidence;
-   preserve the accepted Assisted Restore flow and prior user confirmations.
-4. **Recovery / Stage 3C and remaining 16I/16K qualification:** establish a safe
-   route after unknown consequences, durable reconciliation and re-entry; qualify
-   native quiescence, measured budgets/progress, incomplete Verification, stale
-   inputs, transport, accessibility and lifecycle ownership. Complete against
-   representative failure/re-entry gates; diagnostic logs alone grant no recovery authority.
-5. **[Stage 17 — Distribution & Clean-Mac Qualification](#stage-17--distribution--clean-mac-e2e):**
+1. **Workspace Phase 6 — topology-aware Environment Status:** the next functional
+   stage. Inspect the bounded comparison contract, then implement read-only Status
+   for supported repository/worktree and selected descriptor relationships. Reuse
+   Core facts, preserve legacy Bundles and the explicit Status → Restore handoff;
+   no automatic difference selection or Apply. Focused tests must cover new behavior.
+2. **[Workspace real-world E2E qualification](#complete-workspace--git-worktree-restoration):**
+   qualify Capture → Preview → Execute → Global Verification → Status on representative
+   real Macs, including Phase 5 descriptors, file preservation, conflicts,
+   interruption/re-entry and repeat/no-op. Do not expand the bounded capability scope.
+3. **Consolidated test/CI stabilization:** repair known stale assertions and assess
+   actual defects separately. Run affected suites and the entire Desktop gate,
+   including suites hidden by earlier failures, before consolidated hosted CI.
+   Keep unrelated assertion debt separate from Phase 6 functionality; do not skip
+   its tests or treat failing CI as release readiness.
+4. **Product Scope Revision:** read-only impact audit of categories, dependencies,
+   selection, Status, Bundle compatibility and accepted GUI; decide primary,
+   Application Extras, Advanced, hidden or deferred scope before UI changes.
+5. **Small-scope GUI realignment:** apply the approved grouping consistently across
+   Capture, Restore and Status. Hide standalone Workspace Folders only after the
+   dependency audit; preserve existing selection and safety semantics.
+6. **Remaining Stage 16 qualification:** close the [supported-domain gates](TODO.md#remaining-supported-domain-restore-qualification),
+   optional Secure SSH Desktop (16H), completion (16I), integration/runtime hardening
+   (16K) and bounded Stage 3C recovery/re-entry according to the narrowed product
+   priorities. Distinguish mandatory release gates from optional Advanced refinements;
+   retain independent Verify/no-op evidence and accepted Assisted Restore behavior.
+7. **[Stage 17 — Distribution & Clean-Mac Qualification](#stage-17--distribution--clean-mac-e2e):**
    qualify a checkout-independent packaged runtime, signing/notarization and full
-   clean-Mac workflows on each claimed platform.
-6. **[Early Access / Alpha](#early-access--alpha):** validate with external technical
+   clean-Mac Capture/Restore/Status workflows on each claimed platform.
+8. **[Early Access / Alpha](#early-access--alpha):** validate with external technical
    users and resolve observed compatibility/UX failures before public launch.
-7. **[Macseed 1.0](#macseed-10):** close mandatory product gates, document supported
+9. **[Macseed 1.0](#macseed-10):** close mandatory product gates, document supported
    scope/limits and complete Early Access qualification before release.
 
 ## Desktop CI validation
@@ -129,10 +143,12 @@ owns the run links, Desktop duration and measured serial/parallel comparison.
 bounded Discovery, explicit Capture selection and Bundle inspection; the Capture
 role-overlap fix is published and its real-Mac Capture gate accepted. Phase 3
 Restore Preview is published and includes an accepted matching real-Mac Preview.
-Phase 4 implements Core Execute and Global Verification with disposable Git
-fixtures and Desktop integration. Phase 5 implements selected VS Code descriptor
-Capture/Restore and relationship verification. Hosted CI, representative real-Mac
-Execute qualification and topology Environment Status remain open.
+Phase 4 Core Execute/Global Verification and Desktop integration are published in
+`12beaa6`; Phase 5 selected descriptor Capture/Restore and relationship verification
+are published in `7ac0408`. Disposable fixtures cover these implementations.
+**Phase 6 — topology-aware Environment Status is next and not implemented.**
+Representative real-Mac Execute/descriptor E2E and consolidated CI qualification
+remain open; prior Capture/matching Preview acceptance does not close them.
 [Configuration](docs/toolkit/CONFIGURATION.md#linked-git-worktree-capability-limits)
 owns the contracts and compatibility limits. Independent-clone fallback is forbidden.
 
@@ -163,14 +179,15 @@ backup remain outside scope.
 read-only; qualify bundled Core/Python and age/OpenSSH. Sign the app and nested
 runtime with Developer ID / Hardened Runtime, notarize/staple, produce a DMG and
 validate downloaded-app Gatekeeper behavior. Prove Capture → Restore → Verify on
-clean Apple Silicon; qualify Intel separately before claiming support. Validate
+clean Apple Silicon and read-only Status against the same Saved Environment;
+qualify Intel separately before claiming support. Validate
 operation logs, interruption evidence and exact report preview/export/privacy in
 the packaged application. [Distribution](docs/DISTRIBUTION.md) owns these gates.
 
 ## Early Access / Alpha
 
 **Planned before 1.0.** Approximately 10–20 technical external users exercise real
-Capture/Restore workflows and voluntarily share privacy-safe reports/issues.
+Capture/Restore/Status workflows and voluntarily share privacy-safe reports/issues.
 Resolve observed compatibility and UX failures before public launch; local
 fixtures and development builds do not replace this product validation.
 
@@ -186,12 +203,14 @@ implied by completed Stage 16J.
 
 ## Post-1.0 / Future Direction
 
-**Environment Manager:** independent Profiles, Saved Environment History, Semantic
-Comparison, Drift Detection and explicit Selective Apply followed by Verification.
+**Possible, demand-driven Environment Manager capabilities:** independent Profiles,
+Saved Environment History, Semantic Comparison, Drift Detection and explicit
+Selective Apply followed by Verification. These are not requirements for 1.0.
 Build on Saved Environments and the existing Core; no parallel configuration,
 Restore or Verification engine, database or versioning subsystem without a proven
-need. Allow multiple Saved Environment references rather than one permanent
-Bundle. Current Bundle-backed Status/handoff does not implement these capabilities.
+need. No background monitoring is planned. Allow multiple Saved Environment
+references rather than one permanent Bundle. Current Bundle-backed Status/handoff
+does not implement these capabilities.
 Future Apply must follow Prepare → Preview → Confirm → Execute → Verify;
 comparison remains read-only and absence never authorizes deletion.
 

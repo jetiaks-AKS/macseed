@@ -10,18 +10,62 @@ Follow the [capability checkpoint](ROADMAP.md#complete-workspace--git-worktree-r
 the [current limits](docs/toolkit/CONFIGURATION.md#linked-git-worktree-capability-limits)
 separate implemented Core Capture/Restore from remaining capability and real-Mac gates.
 
-- [ ] Extend representative real-Mac topology qualification beyond the accepted Capture and matching Preview gates.
-- [ ] Decide any expansion of current bounded local clone SSH profiles/identity
-  routing and additional migration/proxy support in the Git/SSH contract. Keep
-  exclusions until qualified; filters/LFS require a separate scope decision.
-- [ ] Review/publish Phase 4 and obtain its hosted CI result after local validation.
-- [ ] Qualify topology Restore Execute on representative real Macs, including file
-  preservation, branch occupancy, conflicts, interruption and repeat/no-op.
-- [ ] Integrate topology Environment Status under its own inspection/verification contract.
+### Phase 6 — topology-aware Environment Status (next)
+
+- [ ] Inspect the current Bundle comparison/verification contract and define bounded
+  read-only admission for supported topology Bundles, preserving legacy behavior,
+  private staging and no target mutation or configuration publication.
+- [ ] Reuse authoritative Core observations to compare selected base/linked checkout
+  relationships, origin, required HEAD and dependencies within the existing Git scope.
+- [ ] Compare selected `.code-workspace` folder relationships, display names and
+  dependencies under the Phase 5 contract; file presence alone is not Match.
+- [ ] Project confirmed Match/Different/Missing separately from unsupported coverage,
+  observation errors and unresolved/incomplete results through the shared Desktop
+  presentation. Preserve the Bundle-only `Review in Restore` handoff: no automatic
+  difference selection, Prepare, Preview or Execute.
+- [ ] Add focused Core/Desktop coverage for supported topology/descriptors, missing
+  and conflicting state, failed observations, unsupported cases and legacy Bundles;
+  verify comparison preserves target/reference state. Keep unrelated CI assertion
+  debt in the stabilization checkpoint below.
+
+### Workspace real-world E2E qualification (after Phase 6)
+
+- [ ] Extend the accepted Capture and matching Preview gates to representative
+  real-Mac Capture → Preview → Execute → Global Verification → Status, preserving
+  tracked/staged/untracked/ignored files. Cover branch occupancy, destination
+  conflicts, observation failure, interruption, fresh-inspection re-entry and repeat/no-op.
 - [ ] Qualify Phase 5 descriptor Restore on representative real Macs, including
-  dependency creation, conflict preservation and repeat/no-op.
-- [ ] Define any unique Workspace-data transfer through a separate bounded secure
-  migration contract; keep current folder restoration structure-only.
+  explicitly selected dependency creation, conflict preservation, relationship
+  verification, Status and repeat/no-op. No workspace content transfer or expanded
+  SSH/filter/LFS support is implied.
+
+## Consolidated test/CI stabilization
+
+- [ ] Resolve the known [CI #124 Desktop failure](https://github.com/jetiaks-AKS/macseed/actions/runs/40832024401/job/123308547377)
+  at [CaptureTests.swift](desktop/Macseed/Tests/CaptureTests.swift):532. The current
+  assertion hard-codes `observed.count == 16`; inspect the registered capture-domain
+  contract before correcting it, preserving exact inventory/publication checks.
+  This checkpoint records test debt only; other CI #124 jobs and its final aggregate
+  result are not asserted here.
+- [ ] After Workspace qualification, reconcile stale regression/Swift expectations
+  in one scoped effort and diagnose any actual production defects separately.
+  Run affected suites and the entire Desktop gate, including suites not reached
+  after earlier failures, then record a complete consolidated hosted CI result.
+  Do not weaken assertions, skip tests or change workflows merely to obtain PASS.
+
+## Product Scope Revision and GUI realignment
+
+- [ ] After CI stabilization, perform a read-only Core/Desktop impact audit and
+  produce the retain/regroup/hide/freeze/defer matrix from [Product Direction](docs/PRODUCT-DIRECTION.md#3-product-capabilities-and-visibility).
+  Check category dependencies, selection modes, Status, legacy Bundle compatibility
+  and accepted UX before authorizing implementation.
+- [ ] Then implement small-scope grouping across Capture/Restore/Status: Applications
+  & Tools, macOS Settings, Application Extras and collapsed/opt-in Advanced.
+  These groups are planned; preserve current selection, Preview and verification
+  semantics without a separate engine or extra wizard.
+- [ ] Hide standalone Workspace Folders from ordinary UX only after proving Git and
+  descriptor dependencies and Bundle compatibility remain safe; retain its Core
+  structure-only contract. Do not introduce workspace content transfer.
 
 ## Secure SSH Desktop (16H)
 
@@ -163,7 +207,8 @@ broader Git and macOS 27 gates below remain separate from that completed repair 
   tools or system Python on a clean Mac.
 - [ ] Sign the app/nested runtime with Developer ID and configure Hardened Runtime.
 - [ ] Complete notarization, stapling, DMG and downloaded-app Gatekeeper checks.
-- [ ] Qualify packaged Capture → Restore → Verify on clean Apple Silicon.
+- [ ] Qualify packaged Capture → Restore → Verify and read-only Saved Environment
+  Status on clean Apple Silicon.
 - [ ] Qualify Intel runtime/E2E separately before claiming support, if included.
 - [ ] Validate Operation Logs, interruption details and Diagnostic Report privacy /
   exact snapshot export in the signed/notarized app and clean-Mac flows.
@@ -172,11 +217,22 @@ broader Git and macOS 27 gates below remain separate from that completed repair 
 
 ## Early Access / Macseed 1.0
 
-- [ ] Run real Capture/Restore validation with approximately 10–20 technical external
+- [ ] Run real Capture/Restore/Status validation with approximately 10–20 technical external
   users; collect only voluntarily shared privacy-safe reports/issues.
 - [ ] Resolve observed compatibility/UX problems before public 1.0 launch.
 - [ ] After mandatory capability/reliability/distribution gaps close, prepare supported
   scope, limitations and release documentation for the first native Desktop release.
+
+## Deferred product capabilities
+
+These are optional future decisions, not Workspace closure or 1.0 requirements.
+
+- [ ] If demand warrants, assess any expansion of bounded local clone SSH profiles/
+  identity routing, additional migration or proxy support under a separate Git/SSH
+  contract. Keep existing exclusions; filters/LFS require their own scope decision.
+- [ ] Assess any future unique Workspace-data transfer for value, provenance,
+  conflicts, permissions, privacy and transport/storage safety before defining a
+  bounded secure migration contract. Keep current folder restoration structure-only.
 
 ## Deferred tooling and maintenance
 
