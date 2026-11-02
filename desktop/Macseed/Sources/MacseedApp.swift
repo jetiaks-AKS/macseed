@@ -13,11 +13,52 @@ import SwiftUI
         .windowResizability(.contentSize)
         .commands {
             CommandGroup(replacing: .newItem) { }
+            CommandGroup(replacing: .appInfo) {
+                Button("About Macseed") {
+                    MacseedAbout.show(coreVersion: CoreRuntime.shared.capabilities?.productVersion)
+                }
+            }
             #if DEBUG
             RestoreScenarioCommands()
             #endif
         }
         Settings { FoundationSettingsView() }
+    }
+}
+
+@MainActor enum MacseedAbout {
+    static func show(coreVersion: String?) {
+        NSApp.orderFrontStandardAboutPanel(options: options(coreVersion: coreVersion))
+    }
+    static func options(bundle: Bundle = .main, coreVersion: String?) -> [NSApplication.AboutPanelOptionKey: Any] {
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.alignment = .center
+        paragraph.lineSpacing = 3
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize),
+            .foregroundColor: NSColor.labelColor, .paragraphStyle: paragraph]
+        let credits = NSMutableAttributedString(string: "Capture. Rebuild. Continue.\n\n", attributes: attributes)
+        if let coreVersion, !coreVersion.isEmpty {
+            credits.append(NSAttributedString(string: "Macseed Core \(coreVersion)\n\n", attributes: attributes))
+        }
+        credits.append(NSAttributedString(string: "MIT License\n", attributes: attributes))
+        for (title, address) in [
+            ("GitHub Project", "https://github.com/jetiaks-AKS/macseed"),
+            ("Report an Issue", "https://github.com/jetiaks-AKS/macseed/issues")
+        ] {
+            var link = attributes
+            link[.link] = URL(string: address)!
+            credits.append(NSAttributedString(string: title + "\n", attributes: link))
+        }
+        var result: [NSApplication.AboutPanelOptionKey: Any] = [
+            .applicationName: bundle.object(forInfoDictionaryKey: "CFBundleName") as? String ?? "Macseed",
+            .credits: credits]
+        if let icon = MacseedBundleIcon.load(bundle: bundle) { result[.applicationIcon] = icon }
+        if let version = bundle.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String {
+            result[.applicationVersion] = version
+        }
+        if let build = bundle.object(forInfoDictionaryKey: "CFBundleVersion") as? String { result[.version] = build }
+        return result
     }
 }
 
@@ -41,13 +82,11 @@ struct FoundationSettingsView: View {
                     .pickerStyle(.segmented)
                     .padding(8)
                 }
-                Text("Macseed Desktop Foundation").font(.headline)
-                Text("Use Capture, Restore and Environment Status from the main window.")
-                #if DEBUG
-                Text("Use --design-preview for the DEBUG sample experience. Normal launch checks the real Core.")
-                #else
-                Text("Capture, Restore Preview and Environment Status use the real Macseed Core runtime.")
-                #endif
+                Button("About Macseed…") {
+                    MacseedAbout.show(coreVersion: CoreRuntime.shared.capabilities?.productVersion)
+                }
+                .buttonStyle(.link).font(.callout)
+                .frame(maxWidth: .infinity, alignment: .trailing)
             }
             .padding(24)
             .tabItem { Label("General", systemImage: "gearshape") }.tag("general")
@@ -60,7 +99,8 @@ struct FoundationSettingsView: View {
                 selectedTab = "general"
             }
         }
-        .frame(width: 440, height: 300)
+        .frame(width: 440)
+        .fixedSize(horizontal: false, vertical: true)
     }
 }
 

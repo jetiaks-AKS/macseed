@@ -1,7 +1,8 @@
 # Macseed — Product Direction and Delivery Sequence
 
 - **Decision date:** 2026-10-29
-- **Status:** Product direction agreed; implementation and GUI changes pending
+- **Revision:** 2026-11-02 — Native UI Alignment implemented and visually accepted
+- **Status:** All native UI workflows visually accepted; local validation and Git checkpoint readiness remain separate from release qualification
 - **Repository:** `jetiaks-AKS/macseed`
 - **Working branch:** `develop`
 - **Baseline at documentation review:** `fa464c48ef1fd42a4e7c79c7856729d516e4cdf7`
@@ -24,11 +25,11 @@ Macseed must remain maintainable by a small developer project. Prefer a reliable
 
 ## 2. Three equally important everyday workflows
 
-1. **Capture this Mac:** Observe the supported current environment, let the user explicitly select meaningful items and categories, and save a private `.mbt` Saved Environment.
-2. **Restore a Mac:** On either a clean or an already-used Mac, inspect a selected `.mbt`, narrow its captured requirements, show a fresh non-mutating Preview, obtain confirmation, apply only safely actionable changes and verify the supported result. Matching state must be a no-op. An unsafe or ambiguous reinstall/repair must be declined, not forced.
-3. **Environment Status:** Compare a selected Saved Environment with the current Mac read-only. Explain confirmed matches, differences, missing items, unsupported coverage and observation uncertainty. Offer the already implemented handoff to Restore; the user must still inspect, select, preview and confirm. Reusing the *same* Saved Environment at a later date is a first-class workflow.
+1. **Save Your Setup (Capture):** Observe the supported current environment, let the user explicitly select meaningful items and categories, and save a private `.mbt` Saved Environment.
+2. **Rebuild Your Setup (Restore):** On either a clean or an already-used Mac, inspect a selected `.mbt`, narrow its captured requirements, show a fresh non-mutating Preview, obtain confirmation, apply only safely actionable changes and verify the supported result. Matching state must be a no-op. An unsafe or ambiguous reinstall/repair must be declined, not forced.
+3. **Compare Your Setup (Environment Status):** Compare a selected Saved Environment with the current Mac read-only. Explain confirmed matches, differences, missing items, unsupported coverage and observation uncertainty. Offer the already implemented handoff to Restore; the user must still inspect, select, preview and confirm. Reusing the *same* Saved Environment at a later date is a first-class workflow.
 
-**Implementation boundary at review:** Existing Bundle-backed Status and its `Review in Restore` handoff operate within their documented supported Bundle scope. New Workspace Topology Bundles are not yet supported by Environment Status. The handoff passes only the Bundle reference, without selecting differences or starting Prepare/Preview/Execute. Restore owns inspection, selection, Preview and confirmation under its normal session/freshness rules; the same Bundle preserves its existing session. See the [implemented handoff](DESKTOP.md#bundle-handoff). Phase 6 is intended to address topology-aware Status, not to silently add automatic selective Apply.
+**Current implementation boundary:** Bundle-backed Status supports the bounded Workspace Topology comparison contract. The [implemented handoff](DESKTOP.md#bundle-handoff) passes only the Bundle reference, without selecting differences or starting Prepare/Preview/Execute. Restore owns inspection, selection, Preview and confirmation; the same Bundle preserves its existing session. Status compares the complete saved reference, independently of Restore's local selection.
 
 `.mbt` is a requirements/reference artifact, not an image of installed binaries, an offline installer collection or an archive of arbitrary working files. Restoring an older reference may use available current application versions and may expose macOS incompatibilities; those are coverage/compatibility outcomes, not reasons for destructive cleanup. Normal Bundle configuration is **not encrypted**. Only explicitly selected SSH identity payloads use the separate `age` encryption contract.
 
@@ -41,28 +42,74 @@ Macseed must remain maintainable by a small developer project. Prefer a reliable
 | App Store apps | **Primary:** Assisted Restore | User installs through App Store; Core observes and verifies. Do not revive automatic MASHelper/XPC work. |
 | macOS Settings | **Primary:** maximize useful **reliably supported** settings | Extend by evidence, with honest stored-value vs effective-behavior Verification and cross-version compatibility. No undocumented/destructive shortcuts. |
 | Saved Environment / Status | **Primary:** reusable reference, explicit comparison and manual reapplication | Preserve the existing Bundle V1 and Core pipeline. No auto cleanup, background drift daemon or separate comparison engine. |
-| VS Code Settings / Extensions | **Optional Application Extras:** keep existing supported scope | Do not promise an adapter catalog. Assess other applications separately only if evidence warrants it. |
+| VS Code Settings / Extensions | **Application Extras → VS Code:** Extensions and Settings only | Independent item/category selection. New application support requires confirmed demand, a separate product decision, qualified Core support and tests; no placeholders or universal adapter framework. |
 | Git configuration, repositories, linked worktrees | **Advanced — for experienced users** | Keep and qualify current supported scope. Do not reopen unlimited Git topology or transport coverage. |
 | SSH configuration / selected SSH identities | **Advanced — for experienced users** | Keep limited SSH Host contract and optional separately encrypted identity migration; Desktop secret flow remains Stage 16H, not a shipped feature. |
 | Zsh / Shell | **Advanced — for experienced users** | Retain bounded `.zshrc` contract and its explicit exclusions; do not modify user configurations just to satisfy Discovery. |
-| `.code-workspace` descriptors | **Advanced:** preserve completed bounded implementation | Only supported names/folder relationships; arbitrary settings, launch and tasks data are not transferred. |
-| Workspace Folders (structure only) | **Not a valuable standalone everyday feature:** hide from ordinary UX **after dependency/impact audit** | Do not delete current Core contract or break Git/descriptor dependencies. No UI change has been implemented by this decision. |
+| `.code-workspace` descriptors | **HIDE / FREEZE for 1.0:** no ordinary promotion; explicit Advanced Capture and Restore selection, default OFF | Preserve Core, tests, Bundle V1, legacy selected-descriptor Restore, Verification and Status. No feature expansion or dependency auto-selection; only supported names/folder relationships. |
+| Workspace Folders (structure only) | **Collapsed Advanced compatibility selector, default OFF; no ordinary promotion** | Preserve the Core domain, explicit folder-only Capture, descriptor dependencies and folder-only Bundle Restore selectors. Both accepted selection screens expose folders in Advanced. No general file-content migration. |
 | Workspace file content transfer | **Deferred possible optional capability**, not required for 1.0 | Only after value, safety, provenance, conflict, permissions, privacy, and transport/storage contract assessment. No general folder migrator/backup. |
 | Universal secrets / passwords / Keychain copy | **Out of scope** | Use existing Apple/third-party mechanisms. SSH identity transfer is a bounded separate exception, not a general vault. |
 | Universal vendor app installers/config adapters | **Out of scope for 1.0** | Existing Stage 11 adapter decision remains deferred; avoid high-maintenance integration catalogs. |
 
-## 4. Native Desktop presentation direction — planned, not implemented
+<a id="4-native-desktop-presentation-direction--planned-not-implemented"></a>
 
-Retain the established three destinations: **Capture this Mac**, **Restore a Mac**, **Environment Status**. Retain the accepted Minimal Premium foundation, existing Core V1 protocol, single-operation and Preview/Verification boundaries.
+## 4. Native Desktop presentation direction
 
-Within Capture, Restore and Status, favor consistent, understandable groupings:
+The accepted native navigation is **Home**, **Save Your Setup**, **Rebuild Your Setup**
+and **Compare Your Setup**. Home, Sidebar and workflow headers share the approved
+names/descriptions; the tagline remains **Capture. Rebuild. Continue.** Compact
+General Settings and standard About are available from native application menus,
+with Settings also at the bottom of the sidebar and About in General. The
+[Desktop UI contract](DESKTOP.md#macseed-native-ui--design--interaction-contract)
+owns the implemented copy, measurements and interaction rules.
+
+**Native UI Alignment is implemented and visually accepted on 2026-11-02.** The
+accepted Minimal Premium foundation, Core V1 protocol, single-operation ownership
+and Preview/Verification boundaries remain unchanged.
+
+Capture and Restore Selection use one ordinary accordion:
 
 - **Applications & Tools:** App Store, Homebrew Applications (Casks), Homebrew Packages (Formulae).
-- **macOS Settings:** Finder, Dock, Windows, Keyboard, Trackpad, Screenshots and later carefully qualified additions.
-- **Application Extras:** existing VS Code Extensions and Settings; no implied future app support commitment.
-- **Advanced — For experienced users** (collapsed/opt-in): Git, SSH, Shell, Repositories, Worktrees, bounded VS Code workspace descriptors and optional Secure Transfer when implemented in Desktop.
+- **macOS Settings:** the existing supported domains.
+- **Application Extras → VS Code:** Extensions retain item selection; Settings retains category selection.
 
-These are **planned information architecture decisions**, not permission to change the current selection behavior before impact analysis. Grouping must not compromise Core item/category selection modes, source-selection ceilings, dependencies, accessibility, Preview, independent verification, legacy Bundles or the already accepted UX. A separate Advanced engine, permanent expert-mode fork or additional wizard screens are not desired.
+A separate **Advanced — For Experienced Users** container exposes Git Configuration,
+Git Repositories / Worktrees, Workspace Folders, SSH Configuration, Shell / Zsh and
+VS Code Workspace when present. Capture keeps its unavailable Secure Transfer
+presentation here; Secure SSH Desktop remains Stage 16H. Descriptors/folders remain
+explicitly selectable under the frozen compatibility contract, without ordinary
+promotion or dependency auto-selection.
+
+**Selection policy — implemented in Capture and Restore:** eligible ordinary
+requirements default ON; Advanced and unknown domains default OFF. Fresh Scan or
+Bundle inspection starts disclosures collapsed. The four group headers and VS Code
+have scoped tri-state masters, with separate ordinary/Advanced Expand/Collapse
+controls. Checkbox and disclosure actions are independent. Back/Refresh preserve
+explicit choices; selection changes require fresh preparation. Workspace Folders
+is directly reachable in Advanced, including folder-only scope. Core owns dependency
+validation; empty Advanced-only drafts do not automatically enable Preview.
+
+The inspected Bundle is Restore's strict scope ceiling. Absent/excluded requirements
+and empty groups are hidden; selected limitations remain explainable. Restore Preview
+retains detailed planned/matching/attention evidence and prerequisites, with automatic
+tasks grouped separately from manual App Store installation. It is read-only. Progress
+and Result use flat ordered domain lists. Completed Result shows visible planned-and-
+verified requirements and actual problems, omitting pre-existing matches; stopped
+Result retains reported work and uncertainty without inventing unchecked failures.
+
+**Environment Status intentionally differs:** static Applications & Tools, Settings,
+Application Extras and For Experienced Users headings contain ordinary diagnostic
+category rows. There is no parent VS Code/Advanced accordion or selection UI. It
+compares the complete saved reference, including Advanced/descriptors, retaining
+matching requirements, differences, attention and item-level details. Empty headings
+are hidden; numeric rails adapt to visible badge combinations without changing counts.
+
+VS Code and Advanced are presentation groups, never new Core domains. Core GROUPS,
+Bundle ceilings, IDs, item/category modes, evidence and native accessibility semantics
+remain intact. No new adapter, dependency engine, automatic Apply or extra wizard
+follows from visual acceptance. Remaining capability/runtime/packaging qualification
+is tracked separately in Roadmap and TODO.
 
 ## 5. Delivery sequence and gates
 
@@ -88,11 +135,17 @@ Run focused affected suites and **the entire Desktop gate including suites previ
 
 ### Checkpoint 4 — Product Scope Revision / read-only impact audit
 
-Audit all current Core/Desktop categories, dependencies, selection modes, Status and Bundle compatibility, and the accepted GUI. Produce a decision/impact matrix: retain primary, group under Application Extras, move to Advanced, hide empty Workspace Folders after dependency checks, freeze growth, or defer. Assess whether simple proposed GUI grouping works without model/protocol changes. **Audit first; no GUI or Core rewrite in the audit checkpoint.** Historical Stage 10/11/12 completion labels remain unchanged.
+The revised read-only audit and 13-column impact matrix are approved. The accepted inventory, dependencies and compatibility analysis underpin section 4. The former ordinary VS Code descriptor placement and retain-all-defaults recommendation are superseded. Default-policy changes require bounded Desktop model work, with no Core/Bundle format change. Historical Stage 10/11/12 completion labels remain unchanged.
 
-### Checkpoint 5 — Small-scope UX realignment
+### Checkpoint 5 — Native UI Alignment: implemented and visually accepted
 
-Implement the approved grouping consistently across Capture/Restore/Status and label Advanced appropriately. Hide the standalone empty Workspace Folders from ordinary UX only when dependencies and compatibility have been proven safe. Preserve existing working flows and tested selection semantics. Do not introduce Profiles/History/automatic drift monitors, automatic selective Apply or a second Restore model.
+Home/Sidebar/Settings/About, Capture Selection/Confirmation/Result, Restore
+Selection/Preview/Progress/completed and stopped Result, and Environment Status
+have explicit user visual approval. Final naming is consistent throughout the native
+application. The historical slice IDs are retained; no visual work remains in those
+slices. Consolidated local validation and explicit Git approval establish checkpoint
+readiness separately. This does not close remaining native lifecycle, capability or
+packaged qualification, and adds no Core feature or parallel Restore model.
 
 ### Checkpoint 6 — Finish remaining Stage 16 qualification
 
@@ -116,4 +169,9 @@ Possible Saved Environment history/profiles, confirmed-difference preselection f
 
 ## 7. Next action
 
-After completing Checkpoint 0, prepare a narrow Phase 6 implementation task based on the current Core comparison and Workspace topology contracts. The documentation checkpoint itself authorizes no implementation. Do not start GUI realignment, workspace content transfer, broad developer-environment expansions or general CI refactoring during it.
+Close the accepted UI Alignment checkpoint with synchronized owner documentation,
+one consolidated local validation and an accumulated-diff review. Commit/push requires
+separate explicit approval; visual acceptance does not imply hosted validation.
+After checkpoint approval, follow Roadmap's remaining Stage 16 priorities without
+reopening accepted UI or automatically beginning Stage 17, performance optimization,
+new Core capabilities or workspace content transfer.

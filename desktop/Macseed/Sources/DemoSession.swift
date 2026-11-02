@@ -20,6 +20,7 @@ enum DemoPreset: String, CaseIterable, Identifiable {
     case attention = "Result needing attention"
     case differences = "Environment Status differences"
     var id: String { rawValue }
+    var title: String { self == .differences ? ProductTask.status.title + " · Differences" : rawValue }
 }
 
 // In-memory UI demonstration only. No process, file, network or secret access.

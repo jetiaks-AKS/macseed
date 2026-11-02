@@ -1,6 +1,67 @@
 import SwiftUI
 import AppKit
 
+// Approved Desktop taxonomy, adopted by Capture. Restore/Status still use
+// WorkspaceCategoryStyle below until their selection/lifecycle slices are ready.
+// Classify original Core domain rows before workflow-specific macOS aggregation.
+// These display groups own no eligibility, selection, counts or protocol fields.
+enum WorkspacePresentationTaxonomy {
+    enum Section: String, CaseIterable, Identifiable {
+        case applicationsTools, macOSSettings, applicationExtras, advanced, otherFindings
+        var id: String { "presentation.section." + rawValue }
+        var title: String {
+            switch self {
+            case .applicationsTools: "Applications & Tools"
+            case .macOSSettings: "macOS Settings"
+            case .applicationExtras: "Application Extras"
+            case .advanced: "Advanced"
+            case .otherFindings: "Other Findings"
+            }
+        }
+    }
+    enum Group: String, CaseIterable, Identifiable {
+        case applicationsTools, macOSSettings, vscode, advanced, otherFindings
+        var id: String { "presentation.group." + rawValue }
+        var section: Section {
+            switch self {
+            case .applicationsTools: .applicationsTools
+            case .macOSSettings: .macOSSettings
+            case .vscode: .applicationExtras
+            case .advanced: .advanced
+            case .otherFindings: .otherFindings
+            }
+        }
+        var title: String { self == .vscode ? "VS Code" : section.title }
+        var domains: [String] {
+            switch self {
+            case .applicationsTools: ["app-store", "homebrew-casks", "homebrew-packages"]
+            case .macOSSettings: CaptureMacOSSettingsGroup.domainIDs
+            case .vscode: ["vscode-extensions", "vscode-settings"]
+            case .advanced: ["git-configuration", "git-repositories", "workspace-folders",
+                             "ssh-configuration", "shell-zsh", "vscode-workspaces"]
+            case .otherFindings: []
+            }
+        }
+    }
+    struct Projection<Row> {
+        let group: Group
+        let rows: [Row]
+    }
+    static func group(for domain: String) -> Group {
+        Group.allCases.first { $0.domains.contains(domain) } ?? .otherFindings
+    }
+    static func project<Row: Identifiable>(_ domains: [Row]) -> [Projection<Row>] where Row.ID == String {
+        Group.allCases.compactMap { group in
+            let members = group == .otherFindings
+                ? domains.filter { Self.group(for: $0.id) == .otherFindings }
+                : group.domains.flatMap { id in domains.filter { $0.id == id } }
+            // Keep the original rows, including unknown/unavailable evidence.
+            // Parent sections carry no copies of these requirements.
+            return members.isEmpty ? nil : Projection(group: group, rows: members)
+        }
+    }
+}
+
 // Visual vocabulary copied from the approved Environment Status presentation.
 // Domain identity, selection and execution order remain with their existing owners.
 enum WorkspaceCategoryStyle {
@@ -201,7 +262,7 @@ struct TaskHome: View {
                     Button { select(task) } label: {
                         WorkspaceActionCard(task: task, vertical: true)
                     }.buttonStyle(.plain)
-                        .accessibilityLabel(task.rawValue + ". " + task.subtitle)
+                        .accessibilityLabel(task.title + ". " + task.subtitle)
                 }
             }
         }.frame(maxWidth: 1080).frame(maxWidth: .infinity, alignment: .center)
@@ -256,10 +317,10 @@ struct WorkspaceActionCard: View {
                 .foregroundStyle(tint).frame(width: 90, height: 90)
                 .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 24))
                 .accessibilityHidden(true)
-            Text(task.rawValue).font(.title3.weight(.semibold))
+            Text(task.title).font(.title3.weight(.semibold))
                 .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
-                .frame(minHeight: 42)
-            description.multilineTextAlignment(.center).frame(minHeight: 56)
+                .frame(minHeight: 42, alignment: .top)
+            description.multilineTextAlignment(.center).frame(minHeight: 56, alignment: .top)
             Spacer(minLength: 0)
             affordance
         }.padding(22).frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -499,7 +560,7 @@ struct DemoWorkspace: View {
                         else if let task = ProductTask(rawValue: selection) { session.navigate(task) }
                     })) {
                     MacseedSidebarBrand()
-                    Label { Text("All Tasks") } icon: { Image(systemName: "house").foregroundStyle(.blue) }.tag("All Tasks")
+                    Label { Text("Home") } icon: { Image(systemName: "house").foregroundStyle(.blue) }.tag("All Tasks")
                     ForEach(ProductTask.allCases) { task in
                         MacseedTaskLabel(task: task).tag(task.rawValue)
                     }
@@ -519,7 +580,7 @@ struct DemoWorkspace: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 20) {
                         if let task = session.task {
-                            WorkspaceHeader(title: task.rawValue, subtitle: task.subtitle, symbol: task.symbol)
+                            WorkspaceHeader(title: task.title, subtitle: task.subtitle, symbol: task.symbol)
                             switch task {
                             case .capture: CaptureDemoView(session: session)
                             case .restore: RestoreDemoView(session: session, stop: { stopConfirmation = true })
@@ -551,7 +612,7 @@ struct DemoWorkspace: View {
                 ToolbarItem {
                     Menu {
                         ForEach(DemoPreset.allCases) { preset in
-                            Button(preset.rawValue) { session.load(preset) }
+                            Button(preset.title) { session.load(preset) }
                         }
                     } label: { Label("Demo States", systemImage: "slider.horizontal.3") }
                     .disabled(session.busy)

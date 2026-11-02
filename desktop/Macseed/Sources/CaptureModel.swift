@@ -136,6 +136,17 @@ struct CaptureMacOSSettingsGroup {
     var hasAttention: Bool { children.contains { $0.row.status == "observation_error" || !$0.notices.isEmpty } }
 }
 
+enum CaptureSelectionScope: CaseIterable {
+    case ordinary, advanced
+    func contains(_ domain: String) -> Bool {
+        switch WorkspacePresentationTaxonomy.group(for: domain).section {
+        case .applicationsTools, .macOSSettings, .applicationExtras: self == .ordinary
+        case .advanced: self == .advanced
+        case .otherFindings: false
+        }
+    }
+}
+
 @MainActor final class CaptureModel: ObservableObject {
     @Published private(set) var state: CaptureFlowState = .idle
     @Published private(set) var inventory: [CoreCaptureInventoryRow] = []
@@ -219,10 +230,22 @@ struct CaptureMacOSSettingsGroup {
         if !category.itemSelectable { return selectedCategories.contains(category.id) ? .all : .none }
         return SelectionState.summarize(selected: selectedItems[category.id] ?? [], children: category.row.items.map(\.itemID))
     }
-    var bulkState: SelectionState {
+    func categories(in scope: CaptureSelectionScope) -> [CaptureCategory] {
+        categories.filter { scope.contains($0.id) }
+    }
+    var bulkState: SelectionState { bulkState(in: .ordinary) }
+    func bulkState(in scope: CaptureSelectionScope) -> SelectionState {
+        bulkState(for: categories(in: scope))
+    }
+    func bulkState(for categories: [CaptureCategory]) -> SelectionState {
         let selectable = categories.filter(\.selectable)
         if !selectable.isEmpty && selectable.allSatisfy({ selectionState($0) == .all }) { return .all }
-        return selectedDomainCount == 0 ? .none : .mixed
+        return selectable.contains { selectionState($0) != .none } ? .mixed : .none
+    }
+    func selectionSummary(for categories: [CaptureCategory]) -> String {
+        let domains = categories.filter { selectionState($0) != .none }.count
+        let items = categories.reduce(0) { $0 + (selectedItems[$1.id]?.count ?? 0) }
+        return "\(domains) \(domains == 1 ? "domain" : "domains") · \(items) \(items == 1 ? "item" : "items") selected"
     }
     func selectCategory(_ domain: String, included: Bool) {
         guard state == .review, !runtime.isActive, let category = categories.first(where: { $0.id == domain }), category.selectable else { return }
@@ -237,9 +260,12 @@ struct CaptureMacOSSettingsGroup {
         if included { selectedItems[domain, default: []].insert(item) }
         else { selectedItems[domain]?.remove(item); if selectedItems[domain]?.isEmpty == true { selectedItems[domain] = nil } }
     }
-    func toggleAll() {
+    func toggleAll(in scope: CaptureSelectionScope = .ordinary) {
+        toggleCategories(categories(in: scope))
+    }
+    func toggleCategories(_ categories: [CaptureCategory]) {
         guard state == .review, !runtime.isActive else { return }
-        let included = bulkState != .all
+        let included = bulkState(for: categories) != .all
         for category in categories where category.selectable { selectCategory(category.id, included: included) }
     }
     func scan() {
@@ -311,7 +337,7 @@ struct CaptureMacOSSettingsGroup {
                         inventory = prepared.inventory
                         if next == .scanning {
                             selectedCategories = []; selectedItems = [:]; self.state = .review
-                            for category in categories where category.selectable { selectCategory(category.id, included: true) }
+                            for category in categories(in: .ordinary) where category.selectable { selectCategory(category.id, included: true) }
                         } else {
                             // A whole-domain selection includes its freshly observed inventory.
                             // Confirmation/counts must show that exact new Core scope.
@@ -331,16 +357,32 @@ struct CaptureMacOSSettingsGroup {
             }
         }
     }
+    var resultPresentation: CaptureResultPresentation? {
+        guard state == .result, publicationEvidence == .occurred, let publication, publication.publicationOccurred else { return nil }
+        return CaptureResultPresentation(publication: publication, notices: resultNotices)
+    }
     private func captureNotices() -> [DisplayCategory] {
         // Only Core's selected-category event facts contribute result warnings.
         let chosen = Set(preparation?.publicationSelection?.categories ?? []).union(preparation?.publicationSelection?.items.keys.map { $0 } ?? [])
-        return runtime.events.compactMap { event in
+        var notices: [DisplayCategory] = runtime.events.compactMap { event in
             guard event.type == "capture_category", let domain = event.data?["domain"]?.string, chosen.contains(domain),
                   let reason = event.data?["reason"]?.string, let category = categories.first(where: { $0.id == domain }) else { return nil }
             return DisplayCategory(id: domain, title: category.title, symbol: category.symbol,
                                    items: [DisplayItem(id: domain, title: "Needs Attention", status: .attention,
                                                        action: "Some supported state may be unavailable in this captured category.", reason: reason)])
         }
+        // A validated Bundle confirms publication, but absent selected-category
+        // observation evidence cannot establish a clean result for that category.
+        let observed = Set(runtime.events.compactMap { event -> String? in
+            guard event.type == "capture_category", event.data?["status"]?.string == "present" else { return nil }
+            return event.data?["domain"]?.string
+        })
+        for category in categories where chosen.contains(category.id) && !observed.contains(category.id) {
+            notices.append(DisplayCategory(id: category.id, title: category.title, symbol: category.symbol,
+                items: [DisplayItem(id: "capture-evidence:" + category.id, title: "Unverified", status: .unverified,
+                    action: "The selected category's capture details could not be confirmed.")]))
+        }
+        return notices
     }
     private func fail(_ error: CaptureFailure) { preparation = nil; publication = nil; failure = error; state = .failed }
     func cancel() { if busy { runtime.cancel() } }

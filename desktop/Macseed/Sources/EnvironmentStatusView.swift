@@ -137,19 +137,29 @@ struct EnvironmentComparisonView: View {
             }))
         })
     }
-    // Extra evidence remains in the result and diagnostics; only its window projection is hidden.
+    // Extras and explicit no-requirement coverage remain in the result/metrics.
+    // They must not recreate absent Bundle domains in the comparison tree.
     static func visibleCategory(_ category: DisplayCategory) -> DisplayCategory {
         DisplayCategory(id: category.id, title: category.title, symbol: category.symbol,
-            items: category.items.filter { $0.status != .extra && !$0.id.hasPrefix("extra-availability:") })
+            items: category.items.filter { ![.extra, .excluded, .noRequirement].contains($0.status) && !$0.id.hasPrefix("extra-availability:") })
     }
     static func visibleSections(_ result: EnvironmentStatusPresentation) -> [EnvironmentStatusSection] {
-        result.sections.compactMap { section in
-            let entries = section.entries.compactMap { entry -> EnvironmentStatusSection.Entry? in
-                let category = visibleCategory(entry.category)
-                guard !category.items.isEmpty else { return nil }
-                return .init(category: category, children: entry.children.map(visibleCategory).filter { !$0.items.isEmpty })
+        let entries = result.sections.flatMap(\.entries).compactMap { entry -> EnvironmentStatusSection.Entry? in
+            let category = visibleCategory(entry.category)
+            guard !category.items.isEmpty else { return nil }
+            return .init(category: category, children: entry.children.map(visibleCategory).filter { !$0.items.isEmpty })
+        }
+        // Reorder existing diagnostic rows; section titles have no state or counts.
+        return CaptureHierarchy.project(WorkspacePresentationTaxonomy.project(entries).flatMap(\.rows)).map { section in
+            let title: String
+            switch section.group {
+            case .applicationsTools: title = "Applications & Tools"
+            case .macOSSettings: title = "Settings"
+            case .vscode: title = "Application Extras"
+            case .advanced: title = "For Experienced Users"
+            case .otherFindings: title = "Other Findings"
             }
-            return entries.isEmpty ? nil : .init(id: section.id, entries: entries)
+            return .init(id: title, entries: section.rows)
         }
     }
     static func toggledCategories(_ expanded: Set<String>, ids: Set<String>) -> Set<String> {
@@ -198,6 +208,8 @@ struct EnvironmentComparisonView: View {
                 }
                 Text("Nothing will be removed or changed.").font(.callout).foregroundStyle(.secondary)
             }
+            .contentMargins(.trailing, pinnedList ? 18 : 0, for: .scrollContent)
+            .padding(.trailing, pinnedList ? -18 : 0)
         }
         .environment(\.comparisonCountSamples, Self.visibleSections(result).flatMap(\.entries).flatMap { entry in
             [Dictionary(uniqueKeysWithValues: ComparisonOutcome.allCases.map { ($0, result.categoryCount($0, category: entry.category, children: entry.children)) })]
@@ -211,11 +223,22 @@ struct EnvironmentComparisonRowLayout: Layout {
     var depth = 0
     var itemIndent = false
     var spansStatusColumn = false
+    static let statusLabelWidth: CGFloat = 152
 
-    static func widths(_ width: CGFloat) -> (text: CGFloat, status: CGFloat) {
+    static func widths(_ width: CGFloat, minimumStatusWidth: CGFloat = 0) -> (text: CGFloat, status: CGFloat) {
         let available = max(0, width - 12)
-        let status = min(available, min(240, max(160, available * 0.46)))
+        let status = min(available, max(minimumStatusWidth, min(240, max(160, available * 0.46))))
         return (available - status, status)
+    }
+    private func measuredColumns(_ width: CGFloat, subviews: Subviews) -> (text: CGFloat, status: CGFloat) {
+        // The optional third child measures the same widest badge rail as the
+        // trailing renderer. It is never placed. Keep the old width until that
+        // rail needs more space; sibling headers and items use the same samples.
+        let rail = subviews.count > 2 ? subviews[2].sizeThatFits(.unspecified).width : 0
+        let minimum = rail > 0 ? ceil(Self.statusLabelWidth + 8 + rail) : 0
+        // The caller already reserves 16 pt at each edge and 14 + 12 pt for
+        // disclosure (items reserve the same 26 pt). Do not count these twice.
+        return Self.widths(width, minimumStatusWidth: minimum)
     }
     static func leadingInset(_ width: CGFloat, depth: Int, item: Bool) -> CGFloat {
         let step: CGFloat = widths(width).text < 180 ? 8 : 24
@@ -225,7 +248,7 @@ struct EnvironmentComparisonRowLayout: Layout {
         let proposed = proposal.width ?? 520
         let width = proposed.isFinite ? max(0, proposed) : 520
         let rowWidth = spansStatusColumn ? max(0, width - 26) : width
-        let columns = Self.widths(rowWidth)
+        let columns = measuredColumns(rowWidth, subviews: subviews)
         let inset = Self.leadingInset(rowWidth, depth: depth, item: itemIndent)
         let text = subviews[0].sizeThatFits(.init(width: max(0, (spansStatusColumn ? width : columns.text) - inset), height: nil))
         if spansStatusColumn { return CGSize(width: width, height: text.height) }
@@ -234,7 +257,7 @@ struct EnvironmentComparisonRowLayout: Layout {
     }
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
         let rowWidth = spansStatusColumn ? max(0, bounds.width - 26) : bounds.width
-        let columns = Self.widths(rowWidth)
+        let columns = measuredColumns(rowWidth, subviews: subviews)
         let inset = Self.leadingInset(rowWidth, depth: depth, item: itemIndent)
         subviews[0].place(at: CGPoint(x: bounds.minX + inset, y: bounds.minY), anchor: .topLeading,
             proposal: .init(width: max(0, (spansStatusColumn ? bounds.width : columns.text) - inset), height: nil))
@@ -283,6 +306,7 @@ struct EnvironmentComparisonDomain: View {
             EnvironmentComparisonRowLayout(depth: depth) {
                 title
                 domainStatus
+                countRail
             }.padding(.vertical, 6)
         }.disclosureGroupStyle(TaskDisclosureStyle(contentTrailingInset: 0))
             .padding(.horizontal, depth == 0 ? 16 : 0)
@@ -290,7 +314,7 @@ struct EnvironmentComparisonDomain: View {
     private var title: some View {
         HStack(spacing: 12) {
             WorkspaceCategoryIcon(symbol: category.symbol)
-            Text(category.title).font(.body.weight(.medium))
+            Text(category.id == "git-repositories" ? "Git Repositories / Worktrees" : category.title).font(.body.weight(.medium))
         }
     }
     var sharedObservationFailure: Bool { !sharedObservationItemIDs.isEmpty }
@@ -321,13 +345,16 @@ struct EnvironmentComparisonDomain: View {
     }
     private var status: DisplayStatus { Self.summaryStatus(category) }
     @Environment(\.comparisonCountSamples) private var countSamples
+    private var countRail: some View {
+        WorkflowCountRailReference(groups: ([counts ?? [:]] + countSamples).map { Self.badgeCounts($0).map(\.1) })
+    }
     @ViewBuilder private var domainStatus: some View {
         if let counts {
-            WorkflowTrailingLayout(showsCounts: !Self.badgeCounts(counts).isEmpty, showsChevron: false, statusWidth: 152) {
+            WorkflowTrailingLayout(showsCounts: !Self.badgeCounts(counts).isEmpty, showsChevron: false, statusWidth: EnvironmentComparisonRowLayout.statusLabelWidth) {
                 statusLabel
                 badges(counts)
                 Color.clear.frame(width: 0, height: 0)
-                WorkflowCountRailReference(groups: ([counts] + countSamples).map { Self.badgeCounts($0).map(\.1) })
+                countRail
             }
         } else { statusLabel }
     }
@@ -360,6 +387,7 @@ struct EnvironmentComparisonItem: View {
     var depth = 0
     var technicalExpansion: Binding<Bool>? = nil
     var suppressExplanation = false
+    @Environment(\.comparisonCountSamples) private var countSamples
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             EnvironmentComparisonRowLayout(depth: depth, itemIndent: true) {
@@ -372,6 +400,7 @@ struct EnvironmentComparisonItem: View {
                 if item.isNormalComparisonMatch {
                     MatchedLeafIndicator()
                 } else { EnvironmentComparisonStatusLabel(status: item.status) }
+                WorkflowCountRailReference(groups: countSamples.map { EnvironmentComparisonDomain.badgeCounts($0).map(\.1) })
             }.padding(.trailing, 26)
         }.padding(.vertical, 7).frame(minHeight: 28)
     }

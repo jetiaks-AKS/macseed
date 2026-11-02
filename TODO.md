@@ -35,20 +35,6 @@ separate implemented Core Capture/Restore from remaining capability and real-Mac
   after earlier failures, then record a complete consolidated hosted CI result.
   Do not weaken assertions, skip tests or change workflows merely to obtain PASS.
 
-## Product Scope Revision and GUI realignment
-
-- [ ] After CI stabilization, perform a read-only Core/Desktop impact audit and
-  produce the retain/regroup/hide/freeze/defer matrix from [Product Direction](docs/PRODUCT-DIRECTION.md#3-product-capabilities-and-visibility).
-  Check category dependencies, selection modes, Status, legacy Bundle compatibility
-  and accepted UX before authorizing implementation.
-- [ ] Then implement small-scope grouping across Capture/Restore/Status: Applications
-  & Tools, macOS Settings, Application Extras and collapsed/opt-in Advanced.
-  These groups are planned; preserve current selection, Preview and verification
-  semantics without a separate engine or extra wizard.
-- [ ] Hide standalone Workspace Folders from ordinary UX only after proving Git and
-  descriptor dependencies and Bundle compatibility remain safe; retain its Core
-  structure-only contract. Do not introduce workspace content transfer.
-
 ## Secure SSH Desktop (16H)
 
 - [ ] **Secure SSH Desktop (16H):** implement/qualify the inherited FD/challenge

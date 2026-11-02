@@ -342,7 +342,7 @@ private actor DelayedLogPage {
         let history = [OperationLogHistory(id: older, header: oldHeader, finish: nil, incomplete: true),
                        OperationLogHistory(id: newer, header: newHeader, finish: complete, incomplete: false)]
         precondition(OperationLogHistoryList.sorted(history).map(\.id) == [newer, older])
-        precondition(OperationLogPresentation.operation(.environmentCompare) == "Environment Status · Compare")
+        precondition(OperationLogPresentation.operation(.environmentCompare) == "Compare Your Setup")
         print("PASS: compact operation labels and newest-first history")
         try await storeChecks()
     }

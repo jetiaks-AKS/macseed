@@ -81,8 +81,27 @@ The format is based on the principles of **Keep a Changelog**.
 
 ### Changed
 
+* Completed native UI alignment with consistent **Save Your Setup**, **Rebuild Your
+  Setup** and **Compare Your Setup** names/descriptions across Home, sidebar and
+  workflow headers, plus **Capture. Rebuild. Continue.** branding. Settings is
+  available from the sidebar and native menu; compact General and the standard
+  About panel retain runtime-derived versions, project/issue links and Operation Logs.
+* Desktop Restore Selection adopts the Capture accordion within the inspected Bundle
+  scope, with ordinary requirements selected initially, Advanced opt-in, scoped
+  tri-state masters and independent disclosure controls. Back and Refresh preserve
+  explicit choices; dependencies remain explicitly selected.
+
+* Desktop Capture groups VS Code Extensions and Settings under Application Extras
+  and keeps developer/Workspace capabilities in explicit Advanced selection.
+  Fresh scans select eligible ordinary requirements only; ordinary and Advanced
+  selection/expansion controls live within one ordinary accordion and separate Advanced
+  container, initially collapsed. Workspace Folders stays directly reachable in
+  Advanced; long item labels wrap, and Secure Transfer stays unavailable there.
+  Confirmation retains the selected scope. Capture Result now shows
+  one Save Complete card with exact saved counts and Bundle location, plus an
+  adjacent Needs Attention card and only affected selected categories when needed.
 * Unified Desktop Capture/Restore/Status around shared domain rows, nested macOS
-  settings, fixed information/actions, one scrolling tree, recursive disclosure and
+  settings, fixed information/actions, workflow-specific lists, recursive disclosure and
   aligned status/count columns. Selection, Preview and Result retain distinct scope
   and evidence semantics. Quiet native Light/Dark/System appearance and the finalized
   blue/lilac leaf identity replace intermediate branding; Home/sidebar/settings and
@@ -90,12 +109,21 @@ The format is based on the principles of **Keep a Changelog**.
 * Restore Selection respects source presence and Blueprint exclusions while retaining
   selected limitations. Preview uses explicit Refresh, Already Match / Changes
   Planned / Need Attention metrics and consent-bound Fix Issues. Result consolidates
-  manual/automatic issues, counts each evidenced requirement once and keeps technical
-  details in operation-specific logs. Verified remains distinct from Applied;
-  operation completion remains distinct from conformity.
+  manual/automatic issues and keeps technical details in operation-specific logs.
+  Automatic Preview tasks use ordinary/Advanced groups with main-group badges and
+  right-side disclosures; manual App Store work stays separate. Progress and Result
+  use flat ordered category lists. Completed Result shows **Complete — N Verified**
+  for visible planned-and-verified requirements, omits pre-existing matches and retains
+  informative Needs Attention. Stopped Result uses neutral **Verification — Not Run**
+  when appropriate, showing reported work and independent problems without counting
+  unchecked App Store requirements or untouched selection as failures. Verification
+  alone never proves a mutation; completed changes may remain after Stop.
 * Environment Status uses explicit Bundle references and an inspection-only Review
   in Restore handoff. Differences Found combines Different/Missing without changing
   precise leaf evidence; repository category counts represent logical repositories.
+  Static Applications & Tools, Settings, Application Extras and For Experienced Users
+  headings retain full matching/difference/attention detail without parent accordions.
+  Status/count columns adapt to three/four visible badges while preserving alignment.
   Extra applications stay in diagnostic evidence and never imply removal.
 * Reduced Capture/Preview/readiness/Verification overhead with bounded category
   observations, per-pass Cask metadata and validated formula/VS Code noop inventories.

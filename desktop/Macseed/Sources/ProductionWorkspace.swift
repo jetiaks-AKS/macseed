@@ -37,7 +37,7 @@ struct ProductionWorkspace: View {
                     navigation.task = ProductTask(rawValue: value)
                 })) {
                     MacseedSidebarBrand()
-                    Label { Text("All Tasks") } icon: { Image(systemName: "house").foregroundStyle(.blue) }.tag("All Tasks")
+                    Label { Text("Home") } icon: { Image(systemName: "house").foregroundStyle(.blue) }.tag("All Tasks")
                     ForEach(ProductTask.allCases) { task in MacseedTaskLabel(task: task).tag(task.rawValue) }
                 }
                 .listStyle(.sidebar).scrollContentBackground(.hidden)
@@ -55,7 +55,7 @@ struct ProductionWorkspace: View {
                     VStack(alignment: .leading, spacing: hasWorkflowList ? 12 : 20) {
                         if let task = navigation.task {
                             Group {
-                                WorkspaceHeader(title: task.rawValue, subtitle: task == .status ? "Compare your Mac with a saved environment." : task.subtitle, symbol: task.symbol)
+                                WorkspaceHeader(title: task.title, subtitle: task.subtitle, symbol: task.symbol)
                             }
                             if task == .status {
                                 EnvironmentStatusView(model: status, runtime: runtime, showsActions: status.state != .result)

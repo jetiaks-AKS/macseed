@@ -56,7 +56,7 @@ open/deferred gates, and no completed slice alone establishes release readiness.
 | 16I — Verification and completion | UI implemented/manually accepted; qualification open | Final category/item Result, disjoint confirmed cards and Process/Verification separation; remaining completion edge cases open |
 | 16J — Logging & Diagnostics | Completed | Typed persistent logs, history, Important/All and immutable Diagnostic Report preview/copy/save |
 | 16K — Desktop integration hardening | Partially complete | Bundle-backed Status completed; runtime, transport, security, accessibility and packaged-state hardening remain |
-| Visual Unification | Completed/manually accepted | Environment Status-style categories, disclosures, local results and compact counters, including final Restore Result |
+| Native UI Alignment / Visual Unification | Completed/visually accepted, 2026-11-02 | Consistent Home/workflow naming, native Sidebar/Settings/About, Capture accordion and publication Result, Restore selection/Preview and flat outcome-specific Progress/Result, static Status diagnostic sections and adaptive count columns |
 | Restore Cancellation Safety | Implemented; partially qualified | Operation-wide checkpoint Graceful Stop and separate Force Stop; automated tests and controlled real-Mac Early Cancelled/Partial Stopped checks; Stage 3C and broader installer quiescence open |
 | Unified UI Scenario Catalog | Deferred tooling | Existing Debug fixtures retained; optional Lite catalog after functional priorities |
 
@@ -109,12 +109,18 @@ belongs to [TODO](TODO.md#consolidated-testci-stabilization). Continue in this o
    including suites hidden by earlier failures, before consolidated hosted CI.
    Keep unrelated assertion debt separate from Phase 6 functionality; do not skip
    its tests or treat failing CI as release readiness.
-4. **Product Scope Revision:** read-only impact audit of categories, dependencies,
-   selection, Status, Bundle compatibility and accepted GUI; decide primary,
-   Application Extras, Advanced, hidden or deferred scope before UI changes.
-5. **Small-scope GUI realignment:** apply the approved grouping consistently across
-   Capture, Restore and Status. Hide standalone Workspace Folders only after the
-   dependency audit; preserve existing selection and safety semantics.
+4. **Product Scope Revision — approved:** the revised audit and matrix establish
+   the [final hierarchy, defaults and compatibility decisions](docs/PRODUCT-DIRECTION.md#4-native-desktop-presentation-direction--planned-not-implemented).
+5. **Native UI Alignment — implemented and Visually Accepted:** Home, Sidebar,
+   Settings/About and all Capture/Restore/Status screens are approved. Capture and
+   Restore Selection use scoped masters, ordinary ON / Advanced OFF defaults and
+   explicit dependencies within the source/Bundle ceiling. Restore keeps detailed
+   read-only Preview, separate manual App Store work and flat Progress/Result lists;
+   Status keeps static sections and complete read-only diagnostics. The
+   [Desktop contract](docs/DESKTOP.md#macseed-native-ui--design--interaction-contract)
+   owns exact geometry, counts, completed/stopped outcomes and naming. Close local
+   validation and checkpoint review before separately authorized publication;
+   accepted visual work does not close remaining capability or release gates.
 6. **Remaining Stage 16 qualification:** close the [supported-domain gates](TODO.md#remaining-supported-domain-restore-qualification),
    optional Secure SSH Desktop (16H), completion (16I), integration/runtime hardening
    (16K) and bounded Stage 3C recovery/re-entry according to the narrowed product

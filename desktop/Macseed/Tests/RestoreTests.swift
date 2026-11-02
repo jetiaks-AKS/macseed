@@ -15,7 +15,7 @@ import SwiftUI
             let selection = model.selection
             let preparedID = model.preparation?.preparedPlanID
             let workspace = VStack(alignment: .leading, spacing: 20) {
-                WorkspaceHeader(title: ProductTask.restore.rawValue, subtitle: ProductTask.restore.subtitle, symbol: ProductTask.restore.symbol)
+                WorkspaceHeader(title: ProductTask.restore.title, subtitle: ProductTask.restore.subtitle, symbol: ProductTask.restore.symbol)
                 if settingsOnly, let group = model.groups.first(where: { $0.id == "macOS Settings" }) {
                     RestoreMacOSSelectionView(model: model, group: group, expansion: .constant(true), childExpansion: .constant(true))
                         .modifier(WorkspaceCardSurface())
@@ -165,7 +165,7 @@ import SwiftUI
             let item = tasks.domains.flatMap(\.items).first { $0.id == "restore-0" }!
             precondition(item.resultLabels.contains("Applied"))
             precondition(RestoreFinalDomain.group(item) == "Needs Attention")
-            precondition(RestoreFinalDomain.finalStatus(tasks.domains[0]) == .attention)
+            precondition(RestoreFinalDomain.finalStatus(tasks.domains[0]) == (problem == "failed" ? .failed : .attention))
             precondition(RestoreFinalDomain.showsItemDetails(item))
             precondition(item.resultTechnicalDetails!.contains("state: " + problem))
             precondition(RestoreFinalDomain.visibleLabels(item) == [problem == "failed" ? "Failed" : "Needs Attention"])
@@ -250,7 +250,7 @@ import SwiftUI
         let restart = missing.domains.flatMap(\.items).first { $0.id == "restore-2" }!
         precondition(restart.auxiliaryCompletionUnreported)
         precondition(RestoreFinalDomain.group(restart) == nil)
-        precondition(RestoreFinalDomain.visibleLabels(restart) == ["Completion Not Reported"])
+        precondition(RestoreFinalDomain.visibleLabels(restart) == ["Unverified"])
         precondition(!RestoreFinalDomain.showsItemDetails(restart))
         precondition(!restart.resultLabels.contains("Applied") && !restart.resultLabels.contains("Verified"))
 
@@ -1032,17 +1032,194 @@ import SwiftUI
         precondition(!FileManager.default.fileExists(atPath: core.appendingPathComponent("MUTATION_ATTEMPT").path))
         print("PASS: App Store Refresh cancellation, operation ownership, terminal evidence, completion race, selection/navigation and fresh retry")
     }
+    @MainActor static func selectionAccordionRender(_ model: RestoreModel, runtime: CoreRuntime, name: String, expanded: Set<String>) throws {
+        guard !CommandLine.arguments.contains("--no-renders") else { return }
+        _ = NSApplication.shared
+        NSApp.appearance = NSAppearance(named: .aqua)
+        let selection = model.selection
+        for width in [785, 985] {
+            let content = VStack(spacing: 0) {
+                VStack(alignment: .leading, spacing: 20) {
+                    WorkspaceHeader(title: ProductTask.restore.title, subtitle: ProductTask.restore.subtitle, symbol: ProductTask.restore.symbol)
+                    RestoreView(model: model, runtime: runtime, selectionExpansion: .constant(expanded), showsSelectionActions: false)
+                }.padding(28).environment(\.workflowListViewport, true)
+                Divider()
+                RestoreSelectionActions(status: model.selectionSummary, canPreview: model.canPreview, preview: {}, reviewModel: model)
+                    .modifier(WorkspaceFooterPadding())
+            }.frame(width: CGFloat(width), height: 850).background(Color(nsColor: .windowBackgroundColor))
+            let host = NSHostingView(rootView: content)
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: 850), styleMask: [.borderless], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false; window.contentView = host; host.frame = window.contentView!.bounds
+            host.layoutSubtreeIfNeeded(); host.displayIfNeeded()
+            func scrolls(_ view: NSView) -> [NSScrollView] {
+                (view as? NSScrollView).map { [$0] } ?? view.subviews.flatMap(scrolls)
+            }
+            let viewports = scrolls(host)
+            precondition(viewports.count == 1, "Selection must have one scroll viewport")
+            let scroll = viewports[0]
+            let maximum = max(0, scroll.documentView!.bounds.height - scroll.documentVisibleRect.height)
+            let offsets: [(String, CGFloat)] = expanded.isEmpty ? [("", 0)] : [("-top", 0), ("-middle", maximum / 2), ("-bottom", maximum)]
+            for (suffix, offset) in offsets {
+                scroll.contentView.scroll(to: NSPoint(x: 0, y: offset))
+                scroll.reflectScrolledClipView(scroll.contentView)
+                host.layoutSubtreeIfNeeded(); host.displayIfNeeded()
+                let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds)!
+                host.cacheDisplay(in: host.bounds, to: bitmap)
+                try bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: "build/Debug/RestoreSelection-\(name)\(suffix)-\(width).png"))
+            }
+            precondition(model.selection == selection && model.preparation == nil)
+            window.close()
+        }
+    }
+
+    @MainActor static func selectionAccordionChecks(_ model: RestoreModel, runtime: CoreRuntime, core: URL, source: URL) async throws {
+        typealias Taxonomy = WorkspacePresentationTaxonomy
+        func row(_ id: String, mode: String = "category", available: String = "available", captured: Bool = true,
+                 present: Bool = true, items: [String] = [], reason: String? = nil) -> [String: Any] {
+            ["domain": id, "label": CaptureCategory.title(for: id), "selection_mode": mode, "availability": available,
+             "source_present": present, "capture_selected": captured, "reason": reason as Any? ?? NSNull(),
+             "items": items.enumerated().map { ["item_id": "stable-\(id)-\($0.offset)", "label": $0.element] }]
+        }
+        func inspect(_ rows: [[String: Any]], legacy: Bool = false) async throws {
+            let catalog = legacy ? rows.map { row -> [String: Any] in
+                var row = row; row.removeValue(forKey: "source_present"); row.removeValue(forKey: "capture_selected"); return row
+            } : rows
+            let captured = rows.filter { $0["capture_selected"] as? Bool == true && $0["source_present"] as? Bool == true }
+            let raw: [String: Any] = ["format_version": 1, "selected_categories": captured.filter { $0["selection_mode"] as? String == "category" }.map { $0["domain"]! },
+                "selected_item_counts": Dictionary(uniqueKeysWithValues: captured.filter { $0["selection_mode"] as? String == "items" }.map { ($0["domain"] as! String, ($0["items"] as! [[String: String]]).count) }),
+                "secure_component": false, "restore_selection": ["groups": [["id": "Inspected scope", "domains": rows.map { $0["domain"]! }]], "inventory": catalog]]
+            try JSONSerialization.data(withJSONObject: raw).write(to: core.appendingPathComponent("inspection.json"))
+            model.choose(source); await model.waitForCompletion()
+            precondition(model.state == .review, model.failure ?? "Inspection failed")
+        }
+        func selected() -> Set<String> { Set(model.selection.categories).union(model.selection.items.keys) }
+        func group(_ kind: Taxonomy.Group) -> CoreRestoreInspection.Group {
+            RestoreSelectionPresentation.group(model.selectionAreas.filter { Taxonomy.group(for: $0.id) == kind })
+        }
+        func requests() -> Data { try! Data(contentsOf: core.appendingPathComponent("requests.jsonl")) }
+        let ordinary = [row("app-store", mode: "items", items: ["Xcode", "Pages"]),
+            row("homebrew-casks", mode: "items", items: ["Firefox", "Visual Studio Code"]),
+            row("homebrew-packages", mode: "items", items: ["git", "ripgrep"]),
+            row("macos-finder"), row("macos-dock"),
+            row("vscode-extensions", mode: "items", items: ["ms-python.python", "editorconfig.editorconfig"]), row("vscode-settings")]
+        let advanced = [row("git-configuration"), row("git-repositories", mode: "items", items: ["Macseed", "Macseed worktree"]),
+            row("workspace-folders", mode: "items", items: ["Projects"]), row("ssh-configuration"), row("shell-zsh"),
+            row("vscode-workspaces", mode: "items", items: ["Development.code-workspace"])]
+        let absent = [row("macos-windows", captured: false), row("macos-keyboard", present: false),
+            row("macos-trackpad", captured: false, present: false)]
+        let limitations = [row("macos-screenshots", available: "unsupported", reason: "unsupported"),
+            row("future-domain", available: "unavailable", reason: "observation_error"),
+            row("future-eligible")]
+        try await inspect((ordinary + advanced + absent + limitations).reversed())
+        let expected = Set((ordinary + advanced + limitations).map { $0["domain"] as! String })
+        precondition(Set(model.selectionAreas.map(\.id)) == expected)
+        precondition(selected() == Set(ordinary.map { $0["domain"] as! String }))
+        precondition(!model.reviewCancellationNeedsConfirmation && model.canPreview)
+        precondition(model.groupState(group(.advanced)) == .none && model.groupState(group(.vscode)) == .all)
+        let ordered = RestoreSelectionPresentation.ordered(model.selectionAreas)
+        let projections = CaptureHierarchy.project(ordered)
+        precondition(projections.map(\.group) == [.applicationsTools, .macOSSettings, .vscode, .advanced, .otherFindings])
+        precondition(projections[0].rows.map(\.id) == ["app-store", "homebrew-casks", "homebrew-packages"])
+        precondition(projections[1].rows.map(\.id) == ["macos-finder", "macos-dock", "macos-screenshots"])
+        precondition(projections[1].rows.allSatisfy { $0.items.isEmpty }, "Aggregate settings must not invent preference keys")
+        precondition(projections[2].rows.map(\.id) == ["vscode-extensions", "vscode-settings"])
+        precondition(projections[3].rows.map(\.id) == Taxonomy.Group.advanced.domains)
+        precondition(Set(ordered.map(\.id)) == expected && ordered.count == expected.count)
+        let beforeLocalActions = requests()
+        let initial = model.selection
+        model.selectGroup(.init(id: "Excluded", domains: absent.map { $0["domain"] as! String }), included: true)
+        model.selectItem("homebrew-packages", item: "invented", included: true)
+        model.selectArea("macos-screenshots", included: true)
+        precondition(model.selection == initial)
+        model.selectItem("vscode-extensions", item: "stable-vscode-extensions-0", included: false)
+        precondition(model.groupState(group(.vscode)) == .mixed)
+        precondition(model.selection.items["vscode-extensions"] == ["stable-vscode-extensions-1"])
+        model.selectGroup(group(.vscode), included: true)
+        precondition(model.selection == initial && model.selection.items["vscode-extensions"] == nil)
+        model.selectGroup(group(.vscode), included: false)
+        precondition(model.groupState(group(.vscode)) == .none && !selected().contains("vscode-extensions"))
+        precondition(selected().contains("app-store") && !selected().contains("vscode-workspaces"))
+        model.selectGroup(group(.vscode), included: true)
+        model.selectArea("vscode-workspaces", included: true)
+        precondition(model.groupState(group(.advanced)) == .mixed)
+        precondition(selected().intersection(Taxonomy.Group.advanced.domains) == ["vscode-workspaces"], "Never infer descriptor dependencies")
+        model.selectItem("git-repositories", item: "stable-git-repositories-1", included: true)
+        precondition(model.selectedItems["git-repositories"] == ["stable-git-repositories-1"], "Never select base/parent worktrees implicitly")
+        precondition(!selected().contains("workspace-folders"))
+        model.selectGroup(group(.advanced), included: true)
+        precondition(model.groupState(group(.advanced)) == .all && selected().isSuperset(of: initial.categories))
+        precondition(!selected().contains("future-eligible"))
+        model.selectGroup(group(.advanced), included: false)
+        precondition(model.selection == initial && !model.reviewCancellationNeedsConfirmation)
+        precondition(requests() == beforeLocalActions, "Selection and masters must not call Core")
+        let ordinaryIDs = RestoreSelectionPresentation.disclosureIDs(ordered, advanced: false)
+        let advancedIDs = RestoreSelectionPresentation.disclosureIDs(ordered, advanced: true)
+        precondition(ordinaryIDs.isDisjoint(with: advancedIDs) && !advancedIDs.contains(CaptureHierarchy.secureTransferID))
+        var expansion = CaptureHierarchy.toggled([], ids: advancedIDs)
+        expansion = CaptureHierarchy.toggled(expansion, ids: ordinaryIDs)
+        expansion = CaptureHierarchy.toggled(expansion, ids: ordinaryIDs)
+        precondition(expansion == advancedIDs && model.selection == initial && requests() == beforeLocalActions)
+        model.selectItem("homebrew-packages", item: "stable-homebrew-packages-0", included: false)
+        model.selectArea("vscode-workspaces", included: true)
+        let explicit = model.selection
+        model.requestReviewCancellation(); precondition(model.reviewCancelConfirmation)
+        model.keepReviewSelection(); precondition(model.selection == explicit)
+        try write("workspace_dependency_missing", core.appendingPathComponent("mode"))
+        model.refreshPreview(); await model.waitForCompletion()
+        precondition(model.state == .failed && model.technicalReason == "workspace_dependency_missing")
+        model.back(); precondition(model.selection == explicit && model.preparation == nil)
+        model.selectArea("vscode-workspaces", included: false)
+        model.selectArea("workspace-folders", included: true)
+        let draft = model.selection
+        try write("clean", core.appendingPathComponent("mode"))
+        model.refreshPreview(); await model.waitForCompletion()
+        precondition(model.state == .preview && model.selection == draft)
+        model.refreshPreview(); await model.waitForCompletion()
+        precondition(model.state == .preview && model.selection == draft)
+        model.back(); precondition(model.state == .review && model.selection == draft && model.preparation == nil && model.preview == nil)
+        model.selectArea("app-store", included: false)
+        precondition(model.preparation == nil && model.reviewCancellationNeedsConfirmation)
+        model.requestReviewCancellation(); model.confirmReviewCancellation(); precondition(model.state == .choose)
+        // Capture-like inventory is never reconstructed for a sparse or legacy Bundle.
+        try await inspect([advanced[2]] + absent)
+        precondition(model.selectionAreas.map(\.id) == ["workspace-folders"] && !model.canPreview && selected().isEmpty)
+        precondition(CaptureHierarchy.project(model.selectionAreas).map(\.group) == [.advanced])
+        precondition(RestoreSelectionPresentation.disclosureIDs(model.selectionAreas, advanced: false).isEmpty)
+        let beforeEmptyPreview = requests(); model.refreshPreview()
+        precondition(requests() == beforeEmptyPreview && model.state == .review)
+        model.selectArea("workspace-folders", included: true); precondition(model.canPreview)
+        try await inspect([ordinary[6]] + absent, legacy: true)
+        precondition(model.selectionAreas.map(\.id) == ["vscode-settings"] && model.selection.categories == ["vscode-settings"])
+        precondition(RestoreSelectionPresentation.disclosureIDs(model.selectionAreas, advanced: true).isEmpty)
+        try await inspect([limitations[0], limitations[1]])
+        precondition(model.selectionAreas.count == 2 && !model.canPreview && selected().isEmpty)
+        precondition(!model.reviewCancellationNeedsConfirmation)
+        model.requestReviewCancellation(); precondition(model.state == .choose)
+        try await inspect(ordinary + advanced)
+        precondition(model.selection == initial && !model.reviewCancellationNeedsConfirmation, "New inspection alone reapplies defaults")
+        try selectionAccordionRender(model, runtime: runtime, name: "collapsed", expanded: [])
+        let all = RestoreSelectionPresentation.disclosureIDs(model.selectionAreas, advanced: false)
+            .union(RestoreSelectionPresentation.disclosureIDs(model.selectionAreas, advanced: true))
+        try selectionAccordionRender(model, runtime: runtime, name: "expanded", expanded: all)
+        let calls = try String(contentsOf: core.appendingPathComponent("requests.jsonl")).split(separator: "\n").map {
+            try JSONSerialization.jsonObject(with: Data($0.utf8)) as! [String: Any]
+        }
+        precondition(calls.allSatisfy { ["capabilities", "bundle_inspect", "restore_prepare"].contains($0["operation"] as! String) })
+        print("PASS: Restore accordion Bundle ceiling, sparse/legacy/Advanced-only scope, defaults, tri-state masters, stable subsets, explicit dependencies, cancellation and Back/Refresh preservation; no Execute")
+    }
+
     @MainActor static func main() async throws {
+        let selectionAccordionOnly = CommandLine.arguments.contains("--selection-accordion-only")
         let refreshCancellationOnly = CommandLine.arguments.contains("--appstore-refresh-cancel-only")
-        if !refreshCancellationOnly { try topologyPreviewChecks() }
+        if !selectionAccordionOnly && !refreshCancellationOnly { try topologyPreviewChecks() }
         if CommandLine.arguments.contains("--topology-preview-only") { return }
-        if !refreshCancellationOnly { try assistedAppStoreChecks() }
+        if !selectionAccordionOnly && !refreshCancellationOnly { try assistedAppStoreChecks() }
         if CommandLine.arguments.contains("--rosetta-only") {
             try taskPresentationChecks()
             print("PASS: Rosetta prerequisite and observation failure in Restore Preview and retained diagnostic evidence")
             return
         }
-        if !refreshCancellationOnly && !CommandLine.arguments.contains("--preview-appstore-layout-only") && !CommandLine.arguments.contains("--selection-preview-only") && !CommandLine.arguments.contains("--independent-ownership-only") && !CommandLine.arguments.contains("--review-cancel-only") && !CommandLine.arguments.contains("--restore-macos-only") && !CommandLine.arguments.contains("--pkg-preparation-only") && !CommandLine.arguments.contains("--fix-issues-only") {
+        if !selectionAccordionOnly && !refreshCancellationOnly && !CommandLine.arguments.contains("--preview-appstore-layout-only") && !CommandLine.arguments.contains("--selection-preview-only") && !CommandLine.arguments.contains("--independent-ownership-only") && !CommandLine.arguments.contains("--review-cancel-only") && !CommandLine.arguments.contains("--restore-macos-only") && !CommandLine.arguments.contains("--pkg-preparation-only") && !CommandLine.arguments.contains("--fix-issues-only") {
             for id in WorkspaceCategoryStyle.groups.flatMap({ $0.1 }) {
                 let problem = TaskItemPresentation(id: "problem", item: DisplayItem(id: "problem", title: "Problem", status: .attention, action: "Needs inspection"), state: .failed, resultLabels: ["Failed", "Mismatch"])
                 var category = TaskDomainPresentation(id: id, title: id, symbol: "folder", items: [problem], activityState: .working)
@@ -1063,28 +1240,31 @@ import SwiftUI
             let unverified = resultItem(["Applied", "Unverified"])
             let waiting = resultItem(["Unverified"], state: .waiting)
             let category = TaskDomainPresentation(id: "fixture", title: "Fixture", symbol: "folder", items: [success, matching, unsupported, skipped, unverified, waiting])
-            precondition(Dictionary(uniqueKeysWithValues: RestoreFinalDomain.counts(category)) == ["Success": 3, "Needs Attention": 1, "Skipped": 1])
+            precondition(Dictionary(uniqueKeysWithValues: RestoreFinalDomain.counts(category)) == ["Success": 2, "Needs Attention": 3, "Skipped": 1])
+            let visible = RestoreResultDetails.domains([category])[0]
+            precondition(visible.items.map(\.id) == [success, unsupported, unverified, waiting].map(\.id))
+            precondition(Dictionary(uniqueKeysWithValues: RestoreFinalDomain.counts(visible)) == ["Success": 1, "Needs Attention": 3])
             precondition(RestoreFinalDomain.visibleLabels(success) == ["Verified"])
             precondition(!RestoreFinalDomain.showsItemDetails(success))
             precondition(!RestoreFinalDomain.showsItemDetails(matching))
-            precondition(RestoreFinalDomain.group(unverified) == "Success")
+            precondition(RestoreFinalDomain.group(unverified) == "Needs Attention")
             let ids = Set(WorkspaceCategoryStyle.groups.flatMap { $0.1 })
             precondition(RestoreExecutionCategories.toggledCategories([], ids: ids) == ids)
             precondition(RestoreExecutionCategories.toggledCategories(ids, ids: ids).isEmpty)
             precondition(RestoreExecutionCategories.toggledCategories(["homebrew-casks"], ids: ids) == ids)
 
-            precondition(RestoreFinalDomain.visibleLabels(matching) == ["Already Matches"])
-            precondition(RestoreFinalDomain.visibleLabels(unverified) == ["Applied, not verified"] && RestoreFinalDomain.showsItemDetails(unverified))
+            precondition(RestoreFinalDomain.visibleLabels(matching) == ["Verified"] && !RestoreResultDetails.isVisible(matching))
+            precondition(RestoreFinalDomain.visibleLabels(unverified) == ["Unverified"] && RestoreFinalDomain.showsItemDetails(unverified))
             precondition(RestoreFinalDomain.visibleLabels(unsupported) == ["Needs Attention"] && unsupported.resultLabels.contains("Unsupported"))
             precondition(RestoreFinalDomain.visibleLabels(success, notRun: true) == ["Verified"])
             precondition(RestoreFinalDomain.group(resultItem(["Skipped", "Unverified"], state: .skipped)) == "Needs Attention")
-            precondition(RestoreFinalDomain.group(resultItem(["Verified"])) == "Success")
+            precondition(!RestoreResultDetails.isVisible(resultItem(["Verified"])))
             precondition(RestoreFinalDomain.counts(TaskDomainPresentation(id: "not-run", title: "Not Run", symbol: "folder", items: [waiting], confirmedFinalState: .notRun)).isEmpty)
             try taskPresentationChecks()
             try restoreEvidenceChecks()
         }
         if CommandLine.arguments.contains("--presentation-only") { return }
-        if !refreshCancellationOnly {
+        if !selectionAccordionOnly && !refreshCancellationOnly {
         for (status, expected, prompts) in [(Int32(0), RestoreAutomationPermission.Outcome.available, 0),
                                             (-1744, .available, 1), (-1743, .denied, 0), (-10004, .unavailable, 0)] {
             var promptCount = 0
@@ -1406,9 +1586,18 @@ import SwiftUI
         let model = RestoreModel(runtime: runtime, location: location)
         let source = root.appendingPathComponent("sample.mbt")
         model.choose(source); await model.waitForCompletion()
-        precondition(model.state == .review && model.areas.count == inventory.count && model.groups.count == 5 && model.bulkState == .all)
-        precondition(model.selectionSummary == "Everything selected" && model.canPreview)
-        precondition(model.inspection?.secureComponent == !Self.finalUXFixtures && model.selectedAreaCount == 13)
+        if selectionAccordionOnly {
+            try await selectionAccordionChecks(model, runtime: runtime, core: core, source: source)
+            try await realPrepare(repo: repo, python: python, root: root)
+            return
+        }
+        precondition(model.state == .review && model.bulkState == .mixed && !model.reviewCancellationNeedsConfirmation)
+        // These existing workflow fixtures explicitly exercise the entire eligible scope.
+        if !CommandLine.arguments.contains("--review-cancel-only") { model.toggleAll() }
+        precondition(model.state == .review && model.areas.count == inventory.count && model.groups.count == 5)
+        precondition(model.canPreview)
+        precondition(model.inspection?.secureComponent == !Self.finalUXFixtures)
+        if !CommandLine.arguments.contains("--review-cancel-only") { precondition(model.selectedAreaCount == 13) }
         if refreshCancellationOnly || CommandLine.arguments.contains("--assisted-appstore-only") {
             try await appStoreRefreshCancellationChecks(model, runtime: runtime, location: location, core: core, source: source)
             if refreshCancellationOnly { return }
@@ -1564,7 +1753,7 @@ import SwiftUI
             return
         }
         if CommandLine.arguments.contains("--assisted-appstore-only") {
-            model.toggleAll()
+            model.selectGroup(RestoreSelectionPresentation.group(model.eligibleAreas), included: false)
             model.selectArea("app-store", included: true)
             for (mode, expected) in [("assisted_missing", AssistedAppStoreItem.Status.missing),
                                      ("assisted_installed", .installed), ("assisted_unverified", .unverified)] {
@@ -1873,7 +2062,7 @@ import SwiftUI
             model.requestReviewCancellation(); model.confirmReviewCancellation()
             precondition(model.state == .inspecting && model.source == source)
             await model.waitForCompletion()
-            precondition(model.state == .review && model.bulkState == .all && requestBytes() != originalRequests)
+            precondition(model.state == .review && !model.reviewCancellationNeedsConfirmation && requestBytes() != originalRequests)
             let area = model.areas.first(where: \.selectable)!
             model.selectArea(area.id, included: false)
             let dirtySelection = model.selection, dirtyRequests = requestBytes()
@@ -1890,7 +2079,7 @@ import SwiftUI
             model.selectArea(area.id, included: false); model.requestReviewCancellation()
             precondition(model.reviewCancelConfirmation)
             model.choose(source); await model.waitForCompletion()
-            precondition(!model.reviewCancelConfirmation && model.bulkState == .all)
+            precondition(!model.reviewCancelConfirmation && !model.reviewCancellationNeedsConfirmation)
             model.confirmReviewCancellation(); precondition(model.state == .review && model.source == source)
             // Shared-runtime activity also blocks Review cancellation, even when owned by Status.
             status.compare()
@@ -1926,7 +2115,7 @@ import SwiftUI
             model.finish()
             try write("clean", core.appendingPathComponent("mode"))
             model.choose(source); await model.waitForCompletion()
-            precondition(model.state == .review && model.bulkState == .all && model.preparation == nil && model.preview == nil)
+            precondition(model.state == .review && !model.reviewCancellationNeedsConfirmation && model.preparation == nil && model.preview == nil)
             precondition(status.reference == reference && status.operationID == refreshedStatusID && status.state == .result && status.presentation?.counts == statusCounts)
             precondition(try! Data(contentsOf: source) == originalBytes)
             // Third and final control render: real Review view and fixed footer.
@@ -2614,7 +2803,8 @@ import SwiftUI
         let model = RestoreModel(runtime: runtime, location: CoreLocation(root: core, python: python, home: home, temporaryBase: root, toolDirectories: [root.appendingPathComponent("tools")]))
         model.choose(root.appendingPathComponent("real.mbt")); await model.waitForCompletion()
         precondition(model.state == .review, "Real inspection failed: \(model.failure ?? "")")
-        model.toggleAll()
+        precondition(model.selectedAreaCount == 0 && !model.canPreview && !model.reviewCancellationNeedsConfirmation)
+        precondition(model.selectionAreas.map(\.id) == ["workspace-folders"])
         let area = model.areas.first { $0.id == "workspace-folders" }!
         model.selectItem(area.id, item: area.items[1].id, included: true)
         model.refreshPreview(); await model.waitForCompletion()

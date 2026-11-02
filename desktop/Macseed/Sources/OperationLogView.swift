@@ -554,7 +554,7 @@ enum OperationLogPresentation {
         case .bundleInspect: "Restore · Inspect Environment"
         case .restorePrepare: "Restore · Preview"
         case .restoreExecute: "Restore · Rebuild"
-        case .environmentCompare: "Environment Status · Compare"
+        case .environmentCompare: ProductTask.status.title
         default: "Operation"
         }
     }

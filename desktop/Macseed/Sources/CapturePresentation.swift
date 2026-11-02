@@ -4,6 +4,288 @@ private typealias CapturePresentationState<Value> = SwiftUI.State<Value>
 
 enum CaptureItemRole { case wholeCategory, categoryWarning, selectedSubdomain, configuration }
 
+// Capture's macOS row is already aggregated; it is a display alias, not a Core ID.
+enum CaptureHierarchy {
+    typealias Group = WorkspacePresentationTaxonomy.Group
+    static let initialExpansion: Set<String> = []
+    static let ordinaryGroups: [Group] = [.applicationsTools, .macOSSettings, .vscode]
+    static let secureTransferID = "presentation.capture.secure-transfer"
+    static func symbol(_ group: Group) -> String {
+        switch group {
+        case .applicationsTools: "square.stack.3d.up"
+        case .macOSSettings: "slider.horizontal.3"
+        case .vscode: "puzzlepiece.extension"
+        case .advanced: "wrench.and.screwdriver"
+        case .otherFindings: "questionmark.folder"
+        }
+    }
+    static func group(for id: String) -> Group {
+        ["macos-settings", "macOS Settings"].contains(id) ? .macOSSettings : WorkspacePresentationTaxonomy.group(for: id)
+    }
+    static func sectionID(_ group: Group) -> String {
+        group == .vscode ? group.section.id : group == .macOSSettings ? "macos-settings" : group.id
+    }
+    static func sectionTitle(_ group: Group) -> String {
+        group == .advanced ? "Advanced" : group.section.title
+    }
+    static func project<Row: Identifiable>(_ rows: [Row]) -> [WorkspacePresentationTaxonomy.Projection<Row>] where Row.ID == String {
+        Group.allCases.compactMap { group in
+            let members = rows.filter { Self.group(for: $0.id) == group }
+            return members.isEmpty ? nil : .init(group: group, rows: members)
+        }
+    }
+    static func title(_ id: String, fallback: String) -> String {
+        ["vscode-extensions": "Extensions", "vscode-settings": "Settings", "git-repositories": "Git Repositories / Worktrees",
+         "shell-zsh": "Shell / Zsh", "vscode-workspaces": "VS Code Workspace"][id] ?? fallback
+    }
+    static func disclosureIDs(_ ids: [String], scope: CaptureSelectionScope) -> Set<String> {
+        var result = Set(ids.filter { scope.contains($0) || (scope == .ordinary && ["macos-settings", "macOS Settings"].contains($0)) })
+        let groups = Set(result.map { Self.group(for: $0) })
+        for group in Group.allCases where groups.contains(group) {
+            result.insert(sectionID(group))
+            if group == .vscode { result.insert(group.id) }
+            if group == .advanced { result.insert(secureTransferID) }
+        }
+        return result
+    }
+    static func childDisclosureIDs(_ ids: [String], group: Group) -> Set<String> {
+        var result = Set(ids.filter { Self.group(for: $0) == group })
+        if group == .vscode && !result.isEmpty { result.insert(group.id) }
+        return result
+    }
+    static func toggled(_ expanded: Set<String>, ids: Set<String>) -> Set<String> {
+        expanded.subtracting(ids).union(WorkflowExpansion.toggled(expanded.intersection(ids), available: ids))
+    }
+}
+
+// Presentation over the existing model maps, never a dependency graph or selection store.
+@MainActor enum CaptureReviewPresentation {
+    static let hierarchyStep: CGFloat = 12
+    static func bulkCategories(_ categories: [CaptureCategory], group: CaptureHierarchy.Group) -> [CaptureCategory] {
+        // Explicit bulk selection covers the same domains as the group summary;
+        // the existing model filters eligibility without inferring dependencies.
+        categories.filter { CaptureHierarchy.group(for: $0.id) == group }
+    }
+    static func selectionLabel(_ category: CaptureCategory, model: CaptureModel) -> String {
+        guard model.selectionState(category) != .none else { return "Not Selected" }
+        if category.itemSelectable {
+            return "\(model.selectedItems[category.id]?.count ?? 0) of \(category.row.items.count) selected"
+        }
+        return "Selected"
+    }
+    static func attention(_ categories: [CaptureCategory], model: CaptureModel) -> String? {
+        if categories.contains(where: { $0.row.status == "observation_error" }) { return "Scan Incomplete" }
+        if categories.contains(where: { model.selectionState($0) != .none && !$0.notices.isEmpty }) { return "Selected Requirements Need Attention" }
+        return nil
+    }
+    static func summary(_ categories: [CaptureCategory], model: CaptureModel) -> String {
+        guard categories.contains(where: \.selectable) else { return "Unavailable" }
+        switch model.bulkState(for: categories) {
+        case .all: return "All Selected"
+        case .mixed: return "Partially Selected"
+        case .none: return "Not Selected"
+        }
+    }
+}
+
+struct CaptureExpandButton: View {
+    let ids: Set<String>
+    let title: String
+    @Binding var expanded: Set<String>
+    var body: some View {
+        if !ids.isEmpty {
+            Button(WorkflowExpansion.allExpanded(expanded, available: ids) ? "Collapse All" : "Expand All") {
+                expanded = CaptureHierarchy.toggled(expanded, ids: ids)
+            }.buttonStyle(.plain).foregroundStyle(.secondary)
+                .accessibilityLabel((WorkflowExpansion.allExpanded(expanded, available: ids) ? "Collapse All " : "Expand All ") + title)
+        }
+    }
+}
+
+// Only leading content is indented. All Capture headers reserve the same trailing
+// status column and the existing native disclosure indicator, at every depth.
+struct CaptureRowColumns<Title: View, Status: View>: View {
+    let title: Title
+    let status: Status
+    var body: some View {
+        HStack(spacing: TaskRowLayout.columnSpacing) {
+            title.frame(maxWidth: .infinity, alignment: .leading).fixedSize(horizontal: false, vertical: true)
+            status.frame(width: TaskRowLayout.statusWidth, alignment: .leading)
+        }.padding(.vertical, 6)
+    }
+}
+
+// Reserve the status icon slot even for neutral selection text, so labels and
+// their secondary counts align with Not Supported and Needs Attention rows.
+struct CaptureStatusText: View {
+    let title: String
+    var state: TaskRowState? = nil
+    var secondary = false
+    static let textInset = TaskRowLayout.iconWidth + 7
+    var body: some View {
+        if let state { TaskStatusLabel(state: state, title: title) }
+        else {
+            HStack(spacing: 7) {
+                Color.clear.frame(width: TaskRowLayout.iconWidth, height: 1).accessibilityHidden(true)
+                Text(title).font(.callout).foregroundStyle(secondary ? .secondary : .primary)
+            }
+        }
+    }
+}
+
+struct CaptureGroupStatus: View {
+    let summary: String
+    var attention: String? = nil
+    var body: some View {
+        CaptureStatusText(title: summary, secondary: true)
+            .overlay(alignment: .leading) {
+                if attention != nil {
+                    Image(systemName: "exclamationmark.triangle").frame(width: TaskRowLayout.iconWidth)
+                        .foregroundStyle(.orange).accessibilityHidden(true)
+                }
+            }
+            .help(attention ?? summary).accessibilityElement(children: .ignore)
+            .accessibilityLabel(summary + (attention.map { ". " + $0 } ?? ""))
+    }
+}
+
+// Native button semantics and disclosure value, with a leading indicator for
+// presentation containers only. Domain rows retain their trailing indicators.
+struct CaptureAccordionStyle: DisclosureGroupStyle {
+    var selection: AnyView? = nil
+    var selectionLeadingInset: CGFloat = 0
+    func makeBody(configuration: Configuration) -> some View {
+        if let selection {
+            HStack(spacing: 12) {
+                Button { configuration.isExpanded.toggle() } label: {
+                    Image(systemName: "chevron.right")
+                        .rotationEffect(.degrees(configuration.isExpanded ? 90 : 0))
+                        .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                        .frame(width: 12, height: 48).contentShape(Rectangle())
+                }.buttonStyle(.plain).accessibilityHidden(true)
+                selection.frame(width: 28, height: 28).padding(.leading, selectionLeadingInset)
+                Button { configuration.isExpanded.toggle() } label: {
+                    configuration.label.frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
+                        .contentShape(Rectangle())
+                }.buttonStyle(.plain)
+                    .accessibilityValue(configuration.isExpanded ? "Expanded" : "Collapsed")
+            }.frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
+        } else {
+            Button { configuration.isExpanded.toggle() } label: {
+                HStack(spacing: 12) {
+                    Image(systemName: "chevron.right")
+                        .rotationEffect(.degrees(configuration.isExpanded ? 90 : 0))
+                        .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                        .frame(width: 12).accessibilityHidden(true)
+                    configuration.label.frame(maxWidth: .infinity, alignment: .leading)
+                }.frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
+                    .contentShape(Rectangle())
+            }.buttonStyle(.plain)
+                .accessibilityValue(configuration.isExpanded ? "Expanded" : "Collapsed")
+        }
+        if configuration.isExpanded { configuration.content }
+    }
+}
+
+struct CaptureGroupHeader: View {
+    let title: String
+    let summary: String
+    var symbol = "square.stack.3d.up"
+    var tint: Color = .blue
+    var titleTint: Color = .primary
+    var attention: String? = nil
+    var nested = false
+    var selection: AnyView? = nil
+    @Binding var expanded: Bool
+    var body: some View {
+        DisclosureGroup(isExpanded: $expanded) { EmptyView() } label: {
+            CaptureRowColumns(title: HStack(spacing: selection == nil ? 8 : 12) {
+                Image(systemName: symbol).foregroundStyle(tint)
+                    .frame(width: selection == nil ? 20 : TaskRowLayout.iconWidth).accessibilityHidden(true)
+                Text(title).font(nested ? .body.weight(.medium) : .headline).foregroundStyle(titleTint)
+            }, status: CaptureGroupStatus(summary: summary, attention: attention))
+                .padding(.trailing, 26)
+        }.disclosureGroupStyle(CaptureAccordionStyle(selection: selection,
+            selectionLeadingInset: nested ? CaptureReviewPresentation.hierarchyStep : 0))
+            .padding(.leading, 16).padding(.trailing, 16)
+            .accessibilityIdentifier("capture.disclosure." + title)
+    }
+}
+
+// Layout only: two principal surfaces, original rows exactly once. The same
+// projection serves editable Review and authoritative read-only saved scope.
+struct CaptureGroupedContent<Row: Identifiable, RowContent: View>: View where Row.ID == String {
+    @Environment(\.colorScheme) private var colorScheme
+    let rows: [Row]
+    @Binding var expanded: Set<String>
+    var selection: ((CaptureHierarchy.Group, [Row]) -> AnyView?)? = nil
+    var vscodeSelection: AnyView? = nil
+    var advancedControls: AnyView? = nil
+    var advancedFooter: AnyView? = nil
+    let summary: ([Row]) -> String
+    let attention: ([Row]) -> String?
+    @ViewBuilder let rowContent: (Row) -> RowContent
+    private var sections: [WorkspacePresentationTaxonomy.Projection<Row>] { CaptureHierarchy.project(rows) }
+    private var advancedTint: Color {
+        colorScheme == .dark ? Color(red: 0.95, green: 0.52, blue: 0.34) : Color(red: 0.72, green: 0.26, blue: 0.13)
+    }
+    var body: some View {
+        let ordinary = sections.filter { CaptureHierarchy.ordinaryGroups.contains($0.group) }
+        VStack(alignment: .leading, spacing: 12) {
+            if !ordinary.isEmpty {
+                VStack(spacing: 0) {
+                    ForEach(ordinary, id: \.group.id) { section in
+                        accordion(section.group, rows: section.rows)
+                        if section.group != ordinary.last?.group { Divider().padding(.horizontal, 16) }
+                    }
+                }.modifier(WorkspaceCardSurface()).accessibilityIdentifier("capture.container.ordinary")
+            }
+            let advanced = sections.first { $0.group == .advanced }?.rows ?? []
+            if !advanced.isEmpty || advancedFooter != nil {
+                HStack(alignment: .firstTextBaseline, spacing: 12) {
+                    WorkspaceSectionHeader(title: "For Experienced Users")
+                    if let advancedControls { advancedControls.padding(.trailing, 42) }
+                }
+                accordion(.advanced, rows: advanced)
+                    .background(.quaternary.opacity(0.2), in: RoundedRectangle(cornerRadius: 8))
+                    .modifier(WorkspaceCardSurface()).accessibilityIdentifier("capture.container.advanced")
+            }
+            if let unknown = sections.first(where: { $0.group == .otherFindings }) {
+                WorkspaceSectionHeader(title: unknown.group.title)
+                members(unknown.rows)
+            }
+        }
+    }
+    private func accordion(_ group: CaptureHierarchy.Group, rows: [Row]) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            CaptureGroupHeader(title: CaptureHierarchy.sectionTitle(group), summary: summary(rows),
+                symbol: CaptureHierarchy.symbol(group), tint: group == .advanced ? advancedTint : .blue,
+                titleTint: group == .advanced ? advancedTint : .primary,
+                attention: attention(rows), selection: selection?(group, rows),
+                expanded: WorkflowExpansion.binding(CaptureHierarchy.sectionID(group), in: $expanded))
+            if expanded.contains(CaptureHierarchy.sectionID(group)) {
+                if group == .vscode {
+                    CaptureGroupHeader(title: "VS Code", summary: summary(rows), symbol: "curlybraces", attention: attention(rows), nested: true,
+                        selection: vscodeSelection,
+                        expanded: WorkflowExpansion.binding(group.id, in: $expanded))
+                    if expanded.contains(group.id) { members(rows) }
+                } else {
+                    members(rows)
+                    if group == .advanced, let advancedFooter { advancedFooter }
+                }
+            }
+        }
+    }
+    private func members(_ rows: [Row]) -> some View {
+        VStack(spacing: 0) {
+            ForEach(rows) { row in
+                rowContent(row)
+                if row.id != rows.last?.id { Divider().padding(.horizontal, 16) }
+            }
+        }
+    }
+}
+
 // Read-only presentation of existing selection, preparation and publication facts.
 struct CaptureTaskPresentation {
     enum Phase { case confirmation, progress, result }
@@ -73,9 +355,9 @@ struct CaptureSummaryPresentation {
         return values
     }
     var scope: String { "\(domainCount) domains · \(itemCount) items " + (captured ? "captured" : "selected") }
-    static func review(categories: [CaptureCategory], domainCount: Int, itemCount: Int) -> Self {
+    static func review(categories: [CaptureCategory], domainCount: Int, itemCount: Int, selectedDomains: Set<String>? = nil) -> Self {
         Self(domainCount: domainCount, itemCount: itemCount,
-             attentionCount: categories.filter { $0.row.status == "observation_error" || !$0.notices.isEmpty }.count,
+             attentionCount: categories.filter { $0.row.status == "observation_error" || (!$0.notices.isEmpty && (selectedDomains?.contains($0.id) ?? true)) }.count,
              unsupportedCount: categories.filter { $0.row.status == "unsupported" || !["category", "items"].contains($0.row.selectionMode) }.count)
     }
 }
@@ -84,26 +366,26 @@ struct CaptureCategorySelectionView: View {
     @ObservedObject var model: CaptureModel
     let category: CaptureCategory
     var expansion: Binding<Bool>? = nil
+    var displayTitle: String? = nil
+    var leadingInset: CGFloat = 0
+    var hierarchyIndent: CGFloat = CaptureReviewPresentation.hierarchyStep
     @CapturePresentationState<Bool> private var expanded = false
     static func hasDisclosure(_ category: CaptureCategory) -> Bool {
         !(category.id == "vscode-settings" && category.selectable && !category.itemSelectable
             && category.row.reason == nil && (category.row.includedSettings?.isEmpty ?? true))
     }
     private var header: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: 12) { title; Spacer(); status }
-            VStack(alignment: .leading, spacing: 8) { title; status }
-        }.padding(.vertical, 6)
+        CaptureRowColumns(title: title, status: status)
     }
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 12) {
                 // Checkbox and disclosure are independent native controls.
                 if category.selectable {
-                    NativeSelectionCheckbox("", state: model.selectionState(category), accessibilityTitle: "Select " + category.title) {
+                    NativeSelectionCheckbox("", state: model.selectionState(category), accessibilityTitle: "Select " + (displayTitle ?? category.title)) {
                         model.selectCategory(category.id, included: $0)
-                    }.frame(width: 28, height: 28)
-                } else { Color.clear.frame(width: 28, height: 28).accessibilityHidden(true) }
+                    }.frame(width: 28, height: 28).padding(.leading, hierarchyIndent)
+                } else { Color.clear.frame(width: 28, height: 28).padding(.leading, hierarchyIndent).accessibilityHidden(true) }
                 if Self.hasDisclosure(category) {
                     DisclosureGroup(isExpanded: expansion ?? $expanded) { EmptyView() } label: { header }
                         .disclosureGroupStyle(TaskDisclosureStyle())
@@ -112,33 +394,52 @@ struct CaptureCategorySelectionView: View {
             if Self.hasDisclosure(category) && (expansion?.wrappedValue ?? expanded) {
                 if category.itemSelectable {
                     ForEach(category.display.items) { item in
-                        NativeSelectionCheckbox(item.title, isOn: Binding(
+                        CaptureItemSelectionRow(title: item.title, included: Binding(
                             get: { model.selectedItems[category.id]?.contains(item.id) == true },
                             set: { model.selectItem(category.id, item: item.id, included: $0) }))
-                            .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
+                            .padding(.leading, hierarchyIndent + CaptureReviewPresentation.hierarchyStep)
                     }
                 } else {
-                    CaptureNoticeDetails(items: category.display.items)
-                    if let settings = category.row.includedSettings, !settings.isEmpty { IncludedSettingsText(settings: settings) }
+                    CaptureNoticeDetails(items: category.display.items).padding(.leading, hierarchyIndent)
+                    if let settings = category.row.includedSettings, !settings.isEmpty {
+                        IncludedSettingsText(settings: settings).padding(.leading, hierarchyIndent + CaptureReviewPresentation.hierarchyStep)
+                    }
                 }
                 CaptureNoticeDetails(items: category.notices, suppressedDiagnosticIDs: CaptureReviewDiagnostics.repeatedNoticeIDs(category))
+                    .padding(.leading, hierarchyIndent)
             }
-        }.padding(.horizontal, 16)
+        }.padding(.leading, 16 + leadingInset).padding(.trailing, 16)
     }
     private var title: some View {
-        WorkspaceCategoryTitle(id: category.id, title: category.title, fallbackSymbol: category.symbol)
+        WorkspaceCategoryTitle(id: category.id, title: displayTitle ?? category.title, fallbackSymbol: category.symbol)
     }
     private var status: some View {
         VStack(alignment: .leading, spacing: 3) {
             if !category.selectable {
-                TaskStatusLabel(state: category.row.status == "observation_error" ? .attention : .skipped, title: category.headerSummary)
-            } else if !category.notices.isEmpty { TaskStatusLabel(state: .attention) }
-            else { Text(model.selectionState(category).captureTitle).font(.callout.weight(.medium)).foregroundStyle(.primary) }
-            if category.selectable {
-                Text(category.itemSelectable ? "\(model.selectedItems[category.id]?.count ?? 0) of \(category.row.items.count) selected" : category.headerSummary)
-                    .font(.caption).foregroundStyle(.secondary)
+                CaptureStatusText(title: category.headerSummary, state: category.row.status == "observation_error" ? .attention : .skipped)
+            } else if model.selectionState(category) != .none && !category.notices.isEmpty { CaptureStatusText(title: "Needs Attention", state: .attention) }
+            else if category.itemSelectable && model.selectionState(category) != .none {
+                CaptureStatusText(title: CaptureReviewPresentation.selectionLabel(category, model: model))
+            } else { Color.clear.frame(height: 1).accessibilityHidden(true) }
+            if category.itemSelectable && model.selectionState(category) != .none && !category.notices.isEmpty {
+                Text(CaptureReviewPresentation.selectionLabel(category, model: model))
+                    .font(.caption).foregroundStyle(.secondary).padding(.leading, CaptureStatusText.textInset)
             }
         }.frame(width: TaskRowLayout.statusWidth, alignment: .leading)
+    }
+}
+
+// Keep AppKit's checkbox and accessibility contract; SwiftUI wraps long labels.
+struct CaptureItemSelectionRow: View {
+    let title: String
+    @Binding var included: Bool
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            NativeSelectionCheckbox("", isOn: $included, accessibilityTitle: title).frame(width: 20, height: 28)
+            Text(title).font(.body).fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
+                .contentShape(Rectangle()).onTapGesture { included.toggle() }.accessibilityHidden(true)
+        }.frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 2)
     }
 }
 
@@ -165,20 +466,19 @@ struct CaptureNoticeDetails: View {
 }
 
 struct CaptureSecureTransferView: View {
+    var expansion: Binding<Bool>? = nil
     @CapturePresentationState<Bool> private var expanded = false
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            DisclosureGroup(isExpanded: $expanded) {
+        HStack(spacing: 12) {
+            Color.clear.frame(width: 28, height: 28).padding(.leading, CaptureReviewPresentation.hierarchyStep).accessibilityHidden(true)
+            DisclosureGroup(isExpanded: expansion ?? $expanded) {
                 Text("Private SSH identity transfer is not available in this build. No private SSH identities will be captured. Ordinary SSH Configuration is separate and remains selectable.")
-                    .font(.callout).foregroundStyle(.secondary)
+                    .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true).padding(.bottom, 8)
             } label: {
-                HStack {
-                    Label("Secure Transfer", systemImage: "lock.shield")
-                    Spacer()
-                    Text("Unavailable").font(.callout.weight(.medium)).foregroundStyle(.secondary).frame(width: TaskRowLayout.statusWidth, alignment: .leading)
-                }
+                CaptureRowColumns(title: WorkspaceCategoryTitle(id: CaptureHierarchy.secureTransferID, title: "Secure Transfer", fallbackSymbol: "lock.shield"),
+                    status: CaptureStatusText(title: "Unavailable", secondary: true))
             }.disclosureGroupStyle(TaskDisclosureStyle())
-        }.padding(.horizontal, 16)
+        }.padding(.leading, 16 + CaptureChildRowGrid.leadingInset).padding(.trailing, 16)
     }
 }
 
@@ -200,8 +500,9 @@ struct CaptureReviewRow: Identifiable {
         categories.contains { $0.row.status == "observation_error" || !$0.notices.isEmpty }
     }
     static func project(_ categories: [CaptureCategory]) -> [Self] {
-        let order = ["homebrew-casks", "app-store", "homebrew-packages", "vscode-extensions", "macos-settings",
-                     "vscode-settings", "shell-zsh", "git-configuration", "ssh-configuration", "workspace-folders", "git-repositories", "vscode-workspaces"]
+        let order = WorkspacePresentationTaxonomy.Group.allCases.flatMap { group in
+            group == .macOSSettings ? ["macos-settings"] : group.domains
+        }
         let known = Set(order + CaptureMacOSSettingsGroup.domainIDs)
         var rows = order.compactMap { id -> Self? in
             let members = categories.filter { id == "macos-settings" ? CaptureMacOSSettingsGroup.domainIDs.contains($0.id) : $0.id == id }
@@ -240,8 +541,8 @@ struct CaptureReviewMetrics: View {
         WorkspaceThreeMetrics { cards }
     }
     @ViewBuilder private var cards: some View {
-        CaptureMetricCard(title: "Selected Domains", count: summary.domainCount, symbol: "square.stack")
-        CaptureMetricCard(title: "Selected Items", count: summary.itemCount, symbol: "checklist")
+        WorkspaceMetricCard(title: "\(summary.domainCount) Selected Domains", value: nil, symbol: "square.stack", tint: .blue,
+            explanation: "\(summary.itemCount) Selected Items")
         if summary.attentionCount > 0 {
             CaptureMetricCard(title: "Needs Attention", count: summary.attentionCount, symbol: "exclamationmark.triangle", attention: true)
         }
@@ -325,18 +626,101 @@ struct CaptureConfirmationItems: View {
     }
 }
 
-struct CaptureSavedMetrics: View {
-    let publication: CoreCapturePublication
-    let notices: [DisplayCategory]
-    var body: some View {
-        let attention = Set(notices.filter { !$0.items.isEmpty && publication.bundle.capturedDomains.contains($0.id) }.map(\.id)).count
-        WorkspaceThreeMetrics { cards(attention) }
+// Publication is validated by CaptureModel before this presentation is available.
+// Retain distinct structured issues; repeated event evidence is not another issue.
+struct CaptureResultPresentation {
+    let destination: URL
+    let scope: String
+    let attention: [DisplayCategory]
+    var affectedCount: Int { attention.count }
+    var attentionSummary: String { "\(affectedCount) affected \(affectedCount == 1 ? "category" : "categories")" }
+    init(publication: CoreCapturePublication, notices: [DisplayCategory]) {
+        destination = URL(fileURLWithPath: publication.destination)
+        let domains = publication.bundle.capturedDomains.count
+        let items = publication.bundle.itemCount
+        scope = "\(domains) \(domains == 1 ? "domain" : "domains") · \(items) \(items == 1 ? "item" : "items") saved"
+        var grouped: [DisplayCategory] = []
+        for notice in notices where publication.bundle.capturedDomains.contains(notice.id) {
+            let index = grouped.firstIndex { $0.id == notice.id }
+            var issues = index.map { grouped[$0].items } ?? []
+            for item in notice.items where item.requiresAttention && !issues.contains(item) { issues.append(item) }
+            guard !issues.isEmpty else { continue }
+            let category = DisplayCategory(id: notice.id, title: CaptureCategory.title(for: notice.id), symbol: notice.symbol, items: issues)
+            if let index { grouped[index] = category } else { grouped.append(category) }
+        }
+        attention = grouped
     }
-    @ViewBuilder private func cards(_ attention: Int) -> some View {
-        CaptureMetricCard(title: "Domains Saved", count: publication.bundle.capturedDomains.count, symbol: "square.stack")
-        CaptureMetricCard(title: "Items Saved", count: publication.bundle.itemCount, symbol: "checklist")
-        if attention > 0 {
-            CaptureMetricCard(title: "Needs Attention", count: attention, symbol: "exclamationmark.triangle", attention: true)
+    static func explanation(_ item: DisplayItem) -> String {
+        // Event reasons stay in the log; never expose raw diagnostic content.
+        if item.status == .unverified { return "The selected category's capture details could not be confirmed." }
+        return switch item.reason {
+        case "source_partial": "Some supported state could not be included."
+        case "tool_unavailable": "A required tool was unavailable for part of this category."
+        case "observation_failed": "Some selected state could not be read."
+        default: "Some selected state may be unavailable in this saved category."
+        }
+    }
+}
+
+struct CaptureOutcomeCard: View {
+    let title: String
+    let detail: String
+    let symbol: String
+    let tint: Color
+    var body: some View {
+        HStack(spacing: 12) {
+            WorkspaceCircleIcon(symbol: symbol, tint: tint, size: 44)
+            VStack(alignment: .leading, spacing: 6) {
+                Text(title).font(.title2.weight(.semibold)).accessibilityAddTraits(.isHeader)
+                Text(detail).font(.callout).foregroundStyle(.secondary)
+            }.frame(maxWidth: .infinity, alignment: .leading)
+        }.padding(16).frame(maxWidth: .infinity, alignment: .leading)
+            .background(tint.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
+            .accessibilityElement(children: .combine)
+    }
+}
+
+struct CaptureResultOutcomes: View {
+    let result: CaptureResultPresentation
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .top, spacing: 12) { cards.frame(minWidth: 280) }
+            VStack(spacing: 12) { cards }
+        }
+    }
+    @ViewBuilder private var cards: some View {
+        CaptureOutcomeCard(title: "Save Complete", detail: result.scope, symbol: "checkmark", tint: .green)
+            .accessibilityIdentifier("capture.result.completion")
+        if !result.attention.isEmpty {
+            CaptureOutcomeCard(title: "Needs Attention", detail: result.attentionSummary,
+                symbol: "exclamationmark.triangle", tint: .orange)
+                .accessibilityIdentifier("capture.result.attention")
+        }
+    }
+}
+
+struct CaptureResultContent: View {
+    let result: CaptureResultPresentation
+    var body: some View {
+        WorkflowList {
+            CaptureResultOutcomes(result: result)
+            CaptureBundleLocationView(destination: result.destination, showsReveal: true)
+                .padding(14).frame(maxWidth: .infinity, alignment: .leading)
+                .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 8))
+            if !result.attention.isEmpty {
+                VStack(alignment: .leading, spacing: 14) {
+                    ForEach(result.attention) { category in
+                        VStack(alignment: .leading, spacing: 4) {
+                            Label { Text(category.title).font(.callout.weight(.semibold)) } icon: {
+                                Image(systemName: "exclamationmark.triangle").foregroundStyle(.orange)
+                            }
+                            Text(category.items.map(CaptureResultPresentation.explanation).joined(separator: "\n") + " See View Log for details.")
+                                .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }.frame(maxWidth: .infinity, alignment: .leading)
+                    .accessibilityIdentifier("capture.result.affected-categories")
+            }
         }
     }
 }
@@ -367,24 +751,21 @@ struct CaptureSettingsSubcategoryView: View {
             if editable && category.selectable {
                 NativeSelectionCheckbox("", state: model.selectionState(category), accessibilityTitle: "Select " + category.title) {
                     model.selectCategory(category.id, included: $0)
-                }.frame(width: 28, height: 48)
+                }.frame(width: 28, height: 48).padding(.leading, CaptureReviewPresentation.hierarchyStep)
             } else if editable {
-                Color.clear.frame(width: 28, height: 48).accessibilityHidden(true)
+                Color.clear.frame(width: 28, height: 48).padding(.leading, CaptureReviewPresentation.hierarchyStep).accessibilityHidden(true)
             }
             DisclosureGroup(isExpanded: expansion ?? $expanded) {
                 VStack(alignment: .leading, spacing: 0) {
                     if !category.selectable {
                         CaptureNoticeDetails(items: category.display.items)
-                    } else if let settings = category.row.includedSettings {
-                        ForEach(settings, id: \.id) { setting in Text(setting.label).padding(.vertical, 7) }
+                    } else if let labels = CaptureSettingsPresentation.labels([category.row])[category.id], !labels.isEmpty {
+                        CaptureIncludedSettingsList(labels: labels)
                     }
                     CaptureNoticeDetails(items: category.notices)
-                }.padding(.leading, 36).padding(.vertical, 4)
+                }
             } label: {
-                ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 12) { title; Spacer(); status }
-                    VStack(alignment: .leading, spacing: 8) { title; status }
-                }.padding(.vertical, 6)
+                CaptureRowColumns(title: title, status: status)
             }.disclosureGroupStyle(TaskDisclosureStyle())
         }
     }
@@ -392,9 +773,11 @@ struct CaptureSettingsSubcategoryView: View {
     private var status: some View {
         Group {
             if !category.selectable {
-                TaskStatusLabel(state: category.row.status == "observation_error" ? .attention : .skipped, title: category.headerSummary)
-            } else if !category.notices.isEmpty { TaskStatusLabel(state: .attention) }
-            else { Text(model.selectionState(category).captureTitle).font(.callout) }
+                CaptureStatusText(title: category.headerSummary, state: category.row.status == "observation_error" ? .attention : .skipped)
+            } else if model.selectionState(category) != .none && !category.notices.isEmpty { CaptureStatusText(title: "Needs Attention", state: .attention) }
+            else if !editable || (category.itemSelectable && model.selectionState(category) != .none) {
+                CaptureStatusText(title: CaptureReviewPresentation.selectionLabel(category, model: model))
+            } else { Color.clear.frame(height: 1).accessibilityHidden(true) }
         }.frame(width: TaskRowLayout.statusWidth, alignment: .leading)
     }
 }

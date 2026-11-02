@@ -23,12 +23,19 @@ enum DesktopAppearance: String, CaseIterable, Identifiable {
     }
 }
 
-// Display values only. Future Protocol mapping belongs outside the views.
+// Preserve existing navigation keys; user-facing copy comes from title/subtitle.
 enum ProductTask: String, CaseIterable, Identifiable {
     case capture = "Capture this Mac"
     case restore = "Restore a Mac"
     case status = "Environment Status"
     var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .capture: "Save Your Setup"
+        case .restore: "Rebuild Your Setup"
+        case .status: "Compare Your Setup"
+        }
+    }
     var symbol: String {
         switch self {
         case .capture: "cube"
@@ -38,9 +45,9 @@ enum ProductTask: String, CaseIterable, Identifiable {
     }
     var subtitle: String {
         switch self {
-        case .capture: "Save supported settings and tools for another Mac."
-        case .restore: "Review a saved environment and rebuild this Mac."
-        case .status: "Compare this Mac with a saved configuration."
+        case .capture: "Save selected apps, settings, and workspace."
+        case .restore: "Rebuild from a saved environment."
+        case .status: "See what matches and what differs."
         }
     }
 }

@@ -16,15 +16,16 @@ extension EnvironmentValues {
 // their intrinsic size; only the list scrolls in a workflow window.
 struct WorkflowList<Content: View>: View {
     @Environment(\.workflowListViewport) private var bounded
+    var spacing: CGFloat = 20
     @ViewBuilder let content: () -> Content
     var body: some View {
         if bounded {
             ScrollView {
-                VStack(alignment: .leading, spacing: 20, content: content)
+                VStack(alignment: .leading, spacing: spacing, content: content)
                     .frame(maxWidth: .infinity, alignment: .leading).padding(.bottom, 1)
             }.frame(minHeight: 96, maxHeight: .infinity)
         } else {
-            VStack(alignment: .leading, spacing: 20, content: content)
+            VStack(alignment: .leading, spacing: spacing, content: content)
         }
     }
 }
@@ -349,6 +350,31 @@ struct OperationSummaryHeader: View {
     }
 }
 
+// Presentation parents over the effective automatic plan. Original domain/item
+// identities and evidence remain intact; these groups never enter Core requests.
+enum RestorePreviewHierarchy {
+    static func sections(_ domains: [TaskDomainPresentation]) -> [WorkspacePresentationTaxonomy.Projection<TaskDomainPresentation>] {
+        CaptureHierarchy.project(WorkspacePresentationTaxonomy.project(domains).flatMap(\.rows))
+    }
+    static func disclosureIDs(_ domains: [TaskDomainPresentation], settings: [TaskDomainPresentation]) -> Set<String> {
+        var ids = TaskDomainList.disclosureIDs(domains, settings: settings)
+        for section in sections(domains) where section.group != .otherFindings {
+            ids.insert(CaptureHierarchy.sectionID(section.group))
+            if section.group == .vscode { ids.insert(section.group.id) }
+        }
+        return ids
+    }
+    static func summary(_ group: CaptureHierarchy.Group, rows: [TaskDomainPresentation]) -> TaskDomainPresentation {
+        TaskDomainPresentation(id: CaptureHierarchy.sectionID(group), title: CaptureHierarchy.sectionTitle(group),
+            symbol: CaptureHierarchy.symbol(group), items: rows.flatMap(\.items), previewOnly: true)
+    }
+    static func titleInset(_ id: String) -> CGFloat {
+        let group = CaptureHierarchy.group(for: id)
+        guard group != .otherFindings else { return 0 }
+        return CaptureChildRowGrid.leadingInset + 12 * (group == .vscode ? 2 : 1)
+    }
+}
+
 struct TaskDomainList: View {
     let domains: [TaskDomainPresentation]
     var stateTitles: [TaskRowState: String] = [:]
@@ -358,7 +384,9 @@ struct TaskDomainList: View {
     var title = "Tasks"
     var leadingContent: AnyView? = nil
     var restoreSettingsPreview = false
+    var restorePreviewHierarchy = false
     var captureResultLayout = false
+    var captureHierarchy = false
     var settingsCategories: [TaskDomainPresentation] = []
     var settingLabels: [String: [String]] = [:]
     var itemTitles: [String: String] = [:]
@@ -366,10 +394,14 @@ struct TaskDomainList: View {
     var settingsExpansion: Binding<Bool>? = nil
     var prerequisiteReasons: [String: Set<String>] = [:]
     @TaskViewState<Set<String>> private var expanded = []
+    @Environment(\.colorScheme) private var colorScheme
     static func disclosureIDs(_ domains: [TaskDomainPresentation], settings: [TaskDomainPresentation]) -> Set<String> {
         Set(domains.map(\.id) + (domains.contains { ["macos-settings", "macOS Settings"].contains($0.id) } ? settings.map(\.id) : []))
     }
-    private var availableIDs: Set<String> { Self.disclosureIDs(domains, settings: settingsCategories) }
+    private var availableIDs: Set<String> {
+        restorePreviewHierarchy ? RestorePreviewHierarchy.disclosureIDs(domains, settings: settingsCategories)
+            : Self.disclosureIDs(domains, settings: settingsCategories)
+    }
     private var treeExpansion: Binding<Set<String>> { Binding(get: { expandedIDs }, set: setExpanded) }
     private var expandedIDs: Set<String> { expansion?.wrappedValue ?? expanded }
     private func setExpanded(_ ids: Set<String>) {
@@ -377,34 +409,54 @@ struct TaskDomainList: View {
     }
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
-            HStack {
-                Text(title).font(.headline).accessibilityAddTraits(.isHeader)
-                Spacer()
-                expandAllButton
+            if !restorePreviewHierarchy {
+                HStack {
+                    Text(title).font(.headline).accessibilityAddTraits(.isHeader)
+                    Spacer()
+                    expandAllButton
+                }
             }
             if !domains.isEmpty || leadingContent != nil {
-                WorkflowList {
+                WorkflowList(spacing: restorePreviewHierarchy ? 12 : 20) {
                     if let leadingContent { leadingContent }
                     if restoreSettingsPreview && !domains.isEmpty {
                         HStack(alignment: .firstTextBaseline, spacing: 12) {
                             WorkspaceSectionHeader(title: "Automatic Restore Tasks", prominent: true)
+                            if restorePreviewHierarchy { expandAllButton }
                         }
                     }
-                    ForEach(WorkspaceCategoryStyle.sections(domains), id: \.title) { section in
-                        WorkspaceSectionHeader(title: section.title)
-                        VStack(spacing: 0) {
-                            ForEach(section.rows) { domain in
-                                if let selectDomain, let selection = selectionStates[domain.id] {
-                                    HStack(alignment: .top, spacing: 0) {
-                                        NativeSelectionCheckbox("", state: selection, accessibilityTitle: "Select " + domain.title) {
-                                            selectDomain(domain.id, $0)
-                                        }.frame(width: 28, height: 48).padding(.leading, 12)
-                                        domainRow(domain)
-                                    }
-                                } else { domainRow(domain) }
-                                if domain.id != section.rows.last?.id { Divider() }
+                    if restorePreviewHierarchy {
+                        previewGroups
+                    } else if captureHierarchy {
+                        CaptureGroupedContent(rows: domains, expanded: treeExpansion,
+                            advancedControls: AnyView(CaptureExpandButton(ids: captureDisclosureIDs(in: .advanced),
+                                title: "Advanced", expanded: treeExpansion)),
+                            summary: { $0.isEmpty ? "Not Included" : captureResultLayout ? "Saved" : "Ready to Save" },
+                            attention: { $0.contains { [TaskRowState.attention, .unverified, .failed, .partial].contains($0.state) } ? "Needs Attention" : nil }) { domain in
+                            if domain.id == "macos-settings", !settingsCategories.isEmpty {
+                                captureSettings(domain)
+                            } else {
+                                domainRow(domain)
+                                    .padding(.leading, CaptureChildRowGrid.leadingInset)
                             }
-                        }.modifier(WorkspaceCardSurface())
+                        }
+                    } else {
+                        ForEach(WorkspaceCategoryStyle.sections(domains), id: \.title) { section in
+                            WorkspaceSectionHeader(title: section.title)
+                            VStack(spacing: 0) {
+                                ForEach(section.rows) { domain in
+                                    if let selectDomain, let selection = selectionStates[domain.id] {
+                                        HStack(alignment: .top, spacing: 0) {
+                                            NativeSelectionCheckbox("", state: selection, accessibilityTitle: "Select " + domain.title) {
+                                                selectDomain(domain.id, $0)
+                                            }.frame(width: 28, height: 48).padding(.leading, 12)
+                                            domainRow(domain)
+                                        }
+                                    } else { domainRow(domain) }
+                                    if domain.id != section.rows.last?.id { Divider() }
+                                }
+                            }.modifier(WorkspaceCardSurface())
+                        }
                     }
                 }
             }
@@ -429,12 +481,105 @@ struct TaskDomainList: View {
         }
     }
 
+    @ViewBuilder private var previewGroups: some View {
+        let sections = RestorePreviewHierarchy.sections(domains)
+        let ordinary = sections.filter { CaptureHierarchy.ordinaryGroups.contains($0.group) }
+        if !ordinary.isEmpty {
+            VStack(spacing: 0) {
+                ForEach(ordinary, id: \.group.id) { section in
+                    previewAccordion(section.group, rows: section.rows)
+                    if section.group != ordinary.last?.group { Divider().padding(.horizontal, 16) }
+                }
+            }.modifier(WorkspaceCardSurface()).accessibilityIdentifier("restore.preview.ordinary")
+        }
+        if let advanced = sections.first(where: { $0.group == .advanced }) {
+            VStack(alignment: .leading, spacing: 12) {
+                WorkspaceSectionHeader(title: "For Experienced Users")
+                previewAccordion(.advanced, rows: advanced.rows)
+                    .background(.quaternary.opacity(0.2), in: RoundedRectangle(cornerRadius: 8))
+                    .modifier(WorkspaceCardSurface()).accessibilityIdentifier("restore.preview.advanced")
+            }
+        }
+        if let other = sections.first(where: { $0.group == .otherFindings }) {
+            WorkspaceSectionHeader(title: other.group.title)
+            previewMembers(other.rows).modifier(WorkspaceCardSurface())
+        }
+    }
+    private func previewAccordion(_ group: CaptureHierarchy.Group, rows: [TaskDomainPresentation]) -> some View {
+        VStack(spacing: 0) {
+            previewGroupHeader(group, rows: rows)
+            if expandedIDs.contains(CaptureHierarchy.sectionID(group)) {
+                if group == .vscode {
+                    previewGroupHeader(group, rows: rows, subgroup: true)
+                    if expandedIDs.contains(group.id) { previewMembers(rows) }
+                } else { previewMembers(rows) }
+            }
+        }
+    }
+    private func previewGroupHeader(_ group: CaptureHierarchy.Group, rows: [TaskDomainPresentation], subgroup: Bool = false) -> some View {
+        let summary = RestorePreviewHierarchy.summary(group, rows: rows)
+        let tint = colorScheme == .dark ? Color(red: 0.95, green: 0.52, blue: 0.34) : Color(red: 0.72, green: 0.26, blue: 0.13)
+        return DisclosureGroup(isExpanded: WorkflowExpansion.binding(subgroup ? group.id : summary.id, in: treeExpansion)) {
+            EmptyView()
+        } label: {
+            // Keep the existing Preview status/count reference, also used by
+            // Manual Installation. Parent labels add no extra count totals.
+            RestorePreviewRow(title: HStack(spacing: 12) {
+                Image(systemName: subgroup ? "curlybraces" : summary.symbol)
+                    .foregroundStyle(group == .advanced ? tint : .blue)
+                    .frame(width: TaskRowLayout.iconWidth).accessibilityHidden(true)
+                Text(subgroup ? "VS Code" : summary.title)
+                    .font(subgroup ? .body.weight(.medium) : .headline)
+                    .foregroundStyle(group == .advanced ? tint : .primary)
+            }, status: RestorePreviewCategoryStatus(domain: summary, stateTitles: stateTitles),
+                counts: subgroup ? [] : RestorePreviewMetrics.badges(summary),
+                // Preserve the former leading indicator's 12pt slot + 12pt gap.
+                titleInset: 24 + (subgroup ? CaptureReviewPresentation.hierarchyStep : 0),
+                expanded: expandedIDs.contains(subgroup ? group.id : summary.id),
+                statusWidth: nil).padding(.vertical, 6)
+        }.disclosureGroupStyle(TaskDisclosureStyle(includesIndicator: false, contentTrailingInset: 0)).padding(.horizontal, 16)
+            .accessibilityIdentifier("restore.preview.disclosure." + (subgroup ? group.id : summary.id))
+    }
+    private func previewMembers(_ rows: [TaskDomainPresentation]) -> some View {
+        VStack(spacing: 0) {
+            ForEach(rows) { domain in
+                if ["macos-settings", "macOS Settings"].contains(domain.id) {
+                    domainContents(domain).padding(.horizontal, 16)
+                } else { domainRow(domain) }
+                if domain.id != rows.last?.id { Divider().padding(.horizontal, 16) }
+            }
+        }
+    }
+
+    private func captureSettings(_ domain: TaskDomainPresentation) -> some View {
+        VStack(spacing: 0) {
+            ForEach(settingsCategories) { child in
+                TaskSettingsCategoryDetails(domain: child, stateTitles: stateTitles, compactReadyItems: compactReadyItems,
+                    settingLabels: settingLabels[child.id] ?? [], itemTitles: itemTitles,
+                    expansion: WorkflowExpansion.binding(child.id, in: treeExpansion), captureResultLayout: captureResultLayout)
+            }
+            let known = Set(settingsCategories.flatMap(\.items).map(\.id))
+            let remaining = domain.items.filter { !known.contains($0.id) }
+            if !remaining.isEmpty {
+                TaskDomainItems(domain: TaskDomainPresentation(id: domain.id, title: domain.title, symbol: domain.symbol, items: remaining),
+                    stateTitles: stateTitles, compactReadyItems: compactReadyItems, itemTitles: itemTitles, captureResultLayout: captureResultLayout)
+            }
+        }.padding(.leading, 16 + CaptureChildRowGrid.leadingInset).padding(.trailing, 16)
+    }
+
     @ViewBuilder private var expandAllButton: some View {
-        if !availableIDs.isEmpty {
+        if captureHierarchy {
+            CaptureExpandButton(ids: captureDisclosureIDs(in: .ordinary), title: "Ordinary Categories", expanded: treeExpansion)
+                .padding(.trailing, 42)
+        } else if !availableIDs.isEmpty {
             Button(WorkflowExpansion.allExpanded(expandedIDs, available: availableIDs) ? "Collapse All" : "Expand All") {
                 setExpanded(WorkflowExpansion.toggled(expandedIDs, available: availableIDs))
             }.buttonStyle(.plain).foregroundStyle(.secondary)
         }
+    }
+    private func captureDisclosureIDs(in scope: CaptureSelectionScope) -> Set<String> {
+        CaptureHierarchy.disclosureIDs(domains.map(\.id) + settingsCategories.map(\.id), scope: scope)
+            .subtracting([CaptureHierarchy.secureTransferID])
     }
 
     private func domainRow(_ domain: TaskDomainPresentation) -> some View {
@@ -443,13 +588,28 @@ struct TaskDomainList: View {
             if value { ids.insert(domain.id) } else { ids.remove(domain.id) }
             setExpanded(ids)
         })) {
+            domainContents(domain)
+        } label: {
+            if restoreSettingsPreview {
+                RestorePreviewRow(title: domainTitle(domain),
+                    status: RestorePreviewCategoryStatus(domain: domain, stateTitles: stateTitles),
+                    counts: restorePreviewHierarchy ? [] : RestorePreviewMetrics.badges(domain),
+                    titleInset: restorePreviewHierarchy ? RestorePreviewHierarchy.titleInset(domain.id) : 0,
+                    expanded: expandedIDs.contains(domain.id)).padding(.vertical, 6)
+            } else { ViewThatFits(in: .horizontal) {
+                HStack(spacing: TaskRowLayout.columnSpacing) { domainTitle(domain); Spacer(); domainStatus(domain) }
+                VStack(alignment: .leading, spacing: 8) { domainTitle(domain); domainStatus(domain).frame(maxWidth: .infinity, alignment: restoreSettingsPreview || captureResultLayout ? .trailing : .leading) }
+            }.padding(.vertical, 6) }
+        }.disclosureGroupStyle(TaskDisclosureStyle(includesIndicator: !restoreSettingsPreview, contentTrailingInset: restoreSettingsPreview ? 0 : 26)).padding(.horizontal, 16)
+    }
+    @ViewBuilder private func domainContents(_ domain: TaskDomainPresentation) -> some View {
             if ["macos-settings", "macOS Settings"].contains(domain.id), !settingsCategories.isEmpty {
                 VStack(spacing: 0) {
                     ForEach(settingsCategories) { child in
                         TaskSettingsCategoryDetails(domain: child, stateTitles: stateTitles, compactReadyItems: compactReadyItems,
                             settingLabels: settingLabels[child.id] ?? [], itemTitles: itemTitles,
                             expansion: settingsExpansion ?? WorkflowExpansion.binding(child.id, in: treeExpansion),
-                            restorePreview: restoreSettingsPreview, captureResultLayout: captureResultLayout)
+                            restorePreview: restoreSettingsPreview, showsPreviewCounts: !restorePreviewHierarchy, captureResultLayout: captureResultLayout)
                     }
                     let known = Set(settingsCategories.flatMap(\.items).map(\.id))
                     let remaining = domain.items.filter { !known.contains($0.id) }
@@ -462,19 +622,9 @@ struct TaskDomainList: View {
             } else {
                 TaskDomainItems(domain: domain, stateTitles: stateTitles, compactReadyItems: compactReadyItems, itemTitles: itemTitles, restorePreview: restoreSettingsPreview,
                     captureResultLayout: captureResultLayout,
+                    previewTitleInset: 36 + (restorePreviewHierarchy ? RestorePreviewHierarchy.titleInset(domain.id) : 0),
                     commonFailureInPrerequisites: prerequisiteReasons[domain.id]?.contains(domain.sharedObservationReason ?? "") == true)
             }
-        } label: {
-            if restoreSettingsPreview {
-                RestorePreviewRow(title: domainTitle(domain),
-                    status: RestorePreviewCategoryStatus(domain: domain, stateTitles: stateTitles),
-                    counts: RestorePreviewMetrics.badges(domain),
-                    expanded: expandedIDs.contains(domain.id)).padding(.vertical, 6)
-            } else { ViewThatFits(in: .horizontal) {
-                HStack(spacing: TaskRowLayout.columnSpacing) { domainTitle(domain); Spacer(); domainStatus(domain) }
-                VStack(alignment: .leading, spacing: 8) { domainTitle(domain); domainStatus(domain).frame(maxWidth: .infinity, alignment: restoreSettingsPreview || captureResultLayout ? .trailing : .leading) }
-            }.padding(.vertical, 6) }
-        }.disclosureGroupStyle(TaskDisclosureStyle(includesIndicator: !restoreSettingsPreview, contentTrailingInset: restoreSettingsPreview ? 0 : 26)).padding(.horizontal, 16)
     }
     private func domainSummary(_ domain: TaskDomainPresentation) -> String {
         if compactReadyItems {
@@ -493,7 +643,8 @@ struct TaskDomainList: View {
         }.joined(separator: " · ")
     }
     private func domainTitle(_ domain: TaskDomainPresentation) -> some View {
-        WorkspaceCategoryTitle(id: domain.id, title: domain.title, fallbackSymbol: domain.symbol)
+        WorkspaceCategoryTitle(id: domain.id, title: captureHierarchy || restorePreviewHierarchy ? CaptureHierarchy.title(domain.id, fallback: domain.title) : domain.title,
+            fallbackSymbol: domain.symbol)
             .frame(maxWidth: .infinity, alignment: .leading)
     }
     private func domainStatus(_ domain: TaskDomainPresentation) -> some View {
@@ -527,10 +678,13 @@ struct RestorePreviewRow<Title: View, Status: View>: View {
     var counts: [(String, Int)] = []
     var titleInset: CGFloat = 0
     var expanded: Bool? = nil
+    // Group badges can use the space after their status text while the shared
+    // reference below keeps every status at its existing horizontal origin.
+    var statusWidth: CGFloat? = TaskRowLayout.statusWidth
     var body: some View {
         RestoreResultColumns {
             title.padding(.leading, titleInset).fixedSize(horizontal: false, vertical: true)
-            RestoreTrailingControls(status: status, counts: counts, expanded: expanded, statusWidth: TaskRowLayout.statusWidth)
+            RestoreTrailingControls(status: status, counts: counts, expanded: expanded, statusWidth: statusWidth)
                 .frame(maxWidth: .infinity, alignment: .leading)
             RestoreTrailingReference(statusWidth: TaskRowLayout.statusWidth)
         }
@@ -544,6 +698,7 @@ struct TaskDomainItems: View {
     var itemTitles: [String: String] = [:]
     var restorePreview = false
     var captureResultLayout = false
+    var previewTitleInset: CGFloat = 36
     var commonFailureInPrerequisites = false
     var body: some View {
         let sharedIDs = domain.sharedObservationItemIDs
@@ -561,7 +716,7 @@ struct TaskDomainItems: View {
                         RestorePreviewRow(title: details(item, suppressExplanation: sharedIDs.contains(item.id)),
                             status: TaskStatusLabel(state: item.state, title: item.assistedAppStore?.status.rawValue ?? stateTitles[item.state],
                                 showsTitle: item.state != .matching),
-                            titleInset: 36).padding(.vertical, 7)
+                            titleInset: previewTitleInset).padding(.vertical, 7)
                     } else { TaskTextStatusLayout {
                         details(item, suppressExplanation: sharedIDs.contains(item.id)).fixedSize(horizontal: false, vertical: true)
                         TaskStatusLabel(state: item.state, title: item.assistedAppStore?.status.rawValue ?? stateTitles[item.state])
@@ -597,6 +752,7 @@ struct TaskSettingsCategoryDetails: View {
     var itemTitles: [String: String] = [:]
     var expansion: Binding<Bool>? = nil
     var restorePreview = false
+    var showsPreviewCounts = true
     var captureResultLayout = false
     @TaskViewState<Bool> private var expanded = false
     var body: some View {
@@ -629,7 +785,7 @@ struct TaskSettingsCategoryDetails: View {
         } label: {
             if restorePreview {
                 RestorePreviewRow(title: title, status: RestorePreviewCategoryStatus(domain: domain, stateTitles: stateTitles),
-                    counts: RestorePreviewMetrics.badges(domain),
+                    counts: showsPreviewCounts ? RestorePreviewMetrics.badges(domain) : [],
                     titleInset: 36, expanded: expansion?.wrappedValue ?? expanded).padding(.vertical, 6)
             } else { ViewThatFits(in: .horizontal) {
                 HStack(spacing: TaskRowLayout.columnSpacing) { title; Spacer(); status }

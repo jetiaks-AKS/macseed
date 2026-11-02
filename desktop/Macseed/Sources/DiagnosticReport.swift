@@ -269,7 +269,7 @@ struct DiagnosticReportBuilder {
         case .bundleInspect: return "Restore / Inspect"
         case .restorePrepare: return "Restore / Prepare"
         case .restoreExecute: return "Restore / Execute"
-        case .environmentCompare: return "Compare / Environment Status"
+        case .environmentCompare: return ProductTask.status.title
         case .capabilities: return "Capabilities"
         }
     }

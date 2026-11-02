@@ -52,8 +52,8 @@ private struct StatusAnchorFrames: PreferenceKey {
         let root = HStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 16) {
                 Text("Macseed").font(.title2.weight(.semibold))
-                Label("All Tasks", systemImage: "square.grid.2x2")
-                ForEach(ProductTask.allCases) { task in Label(task.rawValue, systemImage: task.symbol) }
+                Label("Home", systemImage: "square.grid.2x2")
+                ForEach(ProductTask.allCases) { task in Label(task.title, systemImage: task.symbol) }
                 Spacer()
             }.padding(20).frame(width: 215).background(.regularMaterial)
             ScrollView { view.modifier(WorkspaceContentGeometry()) }
@@ -539,7 +539,92 @@ private struct StatusAnchorFrames: PreferenceKey {
         print("PASS: topology and folder_relationships Status, stable identity, labels, counts, diagnostics and failed correlation")
     }
 
+    @MainActor static func groupedPresentationChecks() throws {
+        var rows: [Object] = []
+        var owners: [Object] = []
+        func append(_ domain: String, _ item: String, _ kind: String = "matching", predicate: String = "installed", unsupported: Bool = false) {
+            let id = rows.count
+            var fact = row(id, kind, support: unsupported ? "unsupported" : "supported",
+                reason: unsupported ? "unsupported_predicate" : kind == "unverified" ? "observation_failed" : kind == "matching" ? nil : "confirmed_mismatch")
+            fact["domain"] = domain; fact["item_id"] = item; rows.append(fact)
+            owners.append(["record_id": "v:\(id)", "domain": domain, "item_id": item, "predicate": predicate])
+        }
+        append("app-store", "425264550", "missing")
+        append("homebrew-casks", "firefox")
+        append("homebrew-casks", "iina", "differing")
+        append("homebrew-packages", "git")
+        append("homebrew-packages", "unavailable-package", "unverified")
+        for domain in CaptureMacOSSettingsGroup.domainIDs {
+            append(domain, "saved-preference", domain == "macos-dock" ? "differing" : "matching", predicate: "stored_preference")
+        }
+        append("vscode-extensions", "ms-python.python")
+        append("vscode-extensions", "ms-azuretools.vscode-docker", "missing")
+        append("vscode-settings", "settings.json", predicate: "file_content")
+        append("git-configuration", "user.name", predicate: "direct_global_value")
+        for predicate in ["worktree", "origin", "branch"] {
+            append("git-repositories", "repository-1", predicate == "branch" ? "differing" : "matching", predicate: predicate)
+        }
+        append("workspace-folders", "Projects", predicate: "directory")
+        append("ssh-configuration", "config", "unverified", predicate: "file_content", unsupported: true)
+        append("shell-zsh", ".zshrc", predicate: "file_content")
+        append("vscode-workspaces", "workspace-1", predicate: "folder_relationships")
+        var raw = payload(rows, verdict: "differences_detected", alsoIncomplete: true)
+        var evidence = raw["records"] as! Object
+        evidence["verification_records"] = owners
+        raw["records"] = evidence
+        raw["reference_presentation"] = ["groups": WorkspacePresentationTaxonomy.Group.allCases.map {
+            ["id": $0.title, "domains": $0.domains] as Object
+        }, "app_store_names": ["425264550": "Blackmagic Disk Speed Test"],
+        "repository_labels": ["repository-1": "macseed"], "workspace_labels": ["workspace-1": "Project workspace"],
+        "setting_labels": Dictionary(uniqueKeysWithValues: CaptureMacOSSettingsGroup.domainIDs.map { ($0, ["saved-preference": "Saved preference"]) })] as Object
+        let result = try presentation(raw)
+        let grouped = EnvironmentComparisonView.visibleSections(result)
+        precondition(grouped.map(\.id) == ["Applications & Tools", "Settings", "Application Extras", "For Experienced Users"])
+        precondition(grouped[0].entries.map(\.id) == ["app-store", "homebrew-casks", "homebrew-packages"])
+        precondition(grouped[1].entries.map(\.id) == ["macos-settings"])
+        precondition(grouped[1].entries[0].children.map(\.id) == CaptureMacOSSettingsGroup.domainIDs)
+        precondition(grouped[2].entries.map(\.id) == ["vscode-extensions", "vscode-settings"])
+        precondition(grouped[3].entries.map(\.id) == WorkspacePresentationTaxonomy.Group.advanced.domains)
+        let projected = grouped.flatMap(\.entries).flatMap { $0.children.isEmpty ? $0.category.items : $0.children.flatMap(\.items) }
+        let originals = result.categories.flatMap(\.items)
+        precondition(projected.count == originals.count && Set(projected.map(\.id)) == Set(originals.map(\.id)))
+        for item in originals {
+            let copy = projected.first { $0.id == item.id }!
+            precondition(copy.title == item.title && copy.status == item.status && copy.action == item.action && copy.reason == item.reason)
+        }
+        for outcome in ComparisonOutcome.allCases {
+            precondition(grouped.flatMap(\.entries).reduce(0) { $0 + result.categoryCount(outcome, category: $1.category, children: $1.children) }
+                == result.categories.reduce(0) { $0 + result.categoryCount(outcome, category: $1) }, "Grouping must not change category counts")
+        }
+        precondition(grouped[3].entries.first { $0.id == "ssh-configuration" }!.category.comparisonStatus == .attention)
+        precondition(grouped[1].entries[0].category.comparisonStatus == .different)
+        precondition(projected.contains { $0.isNormalComparisonMatch } && projected.contains { $0.status == .unsupported })
+        let ids = EnvironmentComparisonView.disclosureIDs(result)
+        precondition(!ids.contains(CaptureHierarchy.sectionID(.vscode)) && !ids.contains(CaptureHierarchy.Group.vscode.id))
+        precondition(ids == Set(result.categories.map(\.id)).union(["macos-settings"]), "Only diagnostic categories disclose; no presentation parents")
+        precondition(Set(CaptureMacOSSettingsGroup.domainIDs).isSubset(of: ids))
+        precondition(EnvironmentComparisonView.toggledCategories([], ids: ids) == ids)
+        precondition(EnvironmentComparisonView.toggledCategories(ids, ids: ids).isEmpty)
+        var sparse = payload([row(0, "matching")], verdict: "no_differences_detected")
+        let ordinary = try presentation(sparse)
+        precondition(EnvironmentComparisonView.visibleSections(ordinary).map(\.id) == ["Applications & Tools"])
+        var sparseEvidence = sparse["records"] as! Object
+        sparseEvidence["coverage_records"] = [["record_id": "c:none", "domain": "shell-zsh", "item_id": "scope", "disposition": "no_requirement", "source_status": "observed_absent"]]
+        sparse["records"] = sparseEvidence
+        let absent = try presentation(sparse)
+        precondition(EnvironmentComparisonView.visibleSections(absent).map(\.id) == ["Applications & Tools"], "Absent Advanced scope must stay hidden")
+        precondition(ComparisonSummaryOutcome.notApplicable.count(absent) == 1, "Authoritative coverage summary remains unchanged")
+        var future = row(0, "unverified"); future["domain"] = "future-domain"
+        let unknown = try presentation(payload([future], verdict: "incomplete", alsoIncomplete: true))
+        precondition(EnvironmentComparisonView.visibleSections(unknown).map(\.id) == ["Other Findings"])
+        let output = URL(fileURLWithPath: "build/Debug/StatusFinalGrouping", isDirectory: true)
+        try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+        try data(raw).write(to: output.appendingPathComponent("comparison-fixture.json"))
+        print("PASS: Static Status sections preserve every included matching/differing/unsupported item and diagnostic, counts once, hides absent groups, retains unknown evidence and nested disclosures")
+    }
+
     @MainActor static func main() async throws {
+        if CommandLine.arguments.contains("--status-grouping-only") { try groupedPresentationChecks(); return }
         try topologyChecks()
         if CommandLine.arguments.contains("--concise-messages-only") { try conciseMessageChecks(); return }
         let finalVisual = try finalConsistencyChecks()
@@ -548,7 +633,7 @@ private struct StatusAnchorFrames: PreferenceKey {
         for (label, width) in [("narrow", 1000), ("wide", 1600)] {
             try render(TaskHome(select: { _ in }), name: "AllTasksUIv2-" + label, width: width)
             try render(VStack(alignment: .leading, spacing: 20) {
-                WorkspaceHeader(title: ProductTask.status.rawValue, subtitle: ProductTask.status.subtitle, symbol: ProductTask.status.symbol)
+                WorkspaceHeader(title: ProductTask.status.title, subtitle: ProductTask.status.subtitle, symbol: ProductTask.status.symbol)
                 EnvironmentStatusView(model: renderModel, runtime: renderRuntime)
             }, name: "EnvironmentStatusUIv2-initial-" + label, width: width)
         }

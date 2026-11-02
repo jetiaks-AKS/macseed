@@ -313,6 +313,11 @@ struct RestoreProgressRow {
 
     var busy: Bool { retryingPrerequisites || state == .inspecting || state == .preparing || state == .confirming || state == .rebuilding }
     var areas: [CoreRestoreInspection.Area] { inspection?.restoreSelection?.inventory ?? [] }
+    var selectionAreas: [CoreRestoreInspection.Area] { RestoreSelectionPresentation.includedAreas(inspection) }
+    var eligibleAreas: [CoreRestoreInspection.Area] { selectionAreas.filter(\.selectable) }
+    private var defaultAreas: [CoreRestoreInspection.Area] {
+        eligibleAreas.filter { CaptureHierarchy.ordinaryGroups.contains(WorkspacePresentationTaxonomy.group(for: $0.id)) }
+    }
     var groups: [CoreRestoreInspection.Group] { inspection?.restoreSelection?.groups ?? [] }
     var selection: CoreRestoreSelection {
         let whole = areas.filter { $0.selectionMode == "items" && selectionState($0) == .all }.map(\.id)
@@ -325,7 +330,7 @@ struct RestoreProgressRow {
     var selectedAreaCount: Int { selectedCategories.count + selectedItems.filter { !$0.value.isEmpty }.count }
     var selectedItemCount: Int { selectedItems.values.reduce(0) { $0 + $1.count } }
     var selectionCategoryCounts: (fully: Int, partially: Int, notSelected: Int) {
-        areas.filter(\.selectable).reduce(into: (fully: 0, partially: 0, notSelected: 0)) { counts, area in
+        eligibleAreas.reduce(into: (fully: 0, partially: 0, notSelected: 0)) { counts, area in
             switch selectionState(area) {
             case .all: counts.fully += 1
             case .mixed: counts.partially += 1
@@ -347,7 +352,7 @@ struct RestoreProgressRow {
         }
     }
     var bulkState: SelectionState {
-        let available = areas.filter(\.selectable)
+        let available = eligibleAreas
         if !available.isEmpty && available.allSatisfy({ selectionState($0) == .all }) { return .all }
         return selectedAreaCount == 0 ? .none : .mixed
     }
@@ -475,7 +480,7 @@ struct RestoreProgressRow {
     }
     var canCancelReview: Bool { state == .review && !busy && !runtime.isActive && !runtime.stopping }
     var reviewCancellationNeedsConfirmation: Bool {
-        let initial = CoreRestoreSelection(categories: areas.filter(\.selectable).map(\.id).sorted(), items: [:])
+        let initial = CoreRestoreSelection(categories: defaultAreas.map(\.id).sorted(), items: [:])
         return selection != initial || preparation != nil || preview != nil
     }
     func requestReviewCancellation() {
@@ -508,7 +513,7 @@ struct RestoreProgressRow {
             : SelectionState.summarize(selected: selectedItems[area.id] ?? [], children: area.items.map(\.id))
     }
     func groupState(_ group: CoreRestoreInspection.Group) -> SelectionState {
-        let children = areas.filter { group.domains.contains($0.id) && $0.selectable }
+        let children = eligibleAreas.filter { group.domains.contains($0.id) }
         if !children.isEmpty && children.allSatisfy({ selectionState($0) == .all }) { return .all }
         return children.contains { selectionState($0) != .none } ? .mixed : .none
     }
@@ -535,12 +540,12 @@ struct RestoreProgressRow {
                 guard let result = runtime.latestResult else { throw CoreRuntimeError.malformedEvent }
                 let data = try result.decodeData(CoreRestoreInspection.self)
                 try data.validate(); inspection = data; state = .review
-                for area in areas where area.selectable { selectArea(area.id, included: true) }
+                for area in defaultAreas { updateDraftArea(area, included: true) }
             } catch { fail("The saved environment could not be inspected reliably.", code: "invalid_result") }
         }
     }
     func selectArea(_ id: String, included: Bool) {
-        guard !busy, !runtime.isActive, let area = areas.first(where: { $0.id == id }), area.selectable else { return }
+        guard !busy, !runtime.isActive, let area = eligibleAreas.first(where: { $0.id == id }) else { return }
         updateDraftArea(area, included: included)
         invalidate(); state = .review
     }
@@ -557,7 +562,7 @@ struct RestoreProgressRow {
         let scope = areas.first(where: { $0.id == id }).map { [$0] }
             ?? groups.first(where: { $0.id == id }).map { group in areas.filter { group.domains.contains($0.id) } }
             ?? []
-        for area in scope where area.selectable { updateDraftArea(area, included: included) }
+        for area in scope where eligibleAreas.contains(where: { $0.id == area.id }) { updateDraftArea(area, included: included) }
         // Keep the immutable accepted Preview. Only explicit Refresh invokes Core.
     }
     func previewSelectionState(_ id: String) -> SelectionState {
@@ -566,7 +571,7 @@ struct RestoreProgressRow {
         return .none
     }
     func selectItem(_ domain: String, item: String, included: Bool) {
-        guard !busy, !runtime.isActive, let area = areas.first(where: { $0.id == domain }), area.selectable,
+        guard !busy, !runtime.isActive, let area = eligibleAreas.first(where: { $0.id == domain }),
               area.selectionMode == "items", area.items.contains(where: { $0.id == item }) else { return }
         if included { selectedItems[domain, default: []].insert(item) }
         else { selectedItems[domain]?.remove(item); if selectedItems[domain]?.isEmpty == true { selectedItems[domain] = nil } }

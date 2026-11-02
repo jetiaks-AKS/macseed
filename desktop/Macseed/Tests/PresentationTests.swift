@@ -127,7 +127,17 @@ private struct WorkflowAnchorFrames: PreferenceKey {
         precondition(source.contains("if model.canReviewSelection {") && source.contains("Button(\"Review Selection\") { model.editSelection() }"))
         let result = source.components(separatedBy: "            case .result:")[1]
             .components(separatedBy: "            case .failed, .cancelled:")[0]
-        precondition(result.contains("saved.destination), showsReveal: true"))
+        precondition(result.contains("model.resultPresentation") && result.contains("CaptureResultContent(result: result)"))
+        let presentation = try! String(contentsOfFile: "Sources/CapturePresentation.swift")
+        let content = presentation.components(separatedBy: "struct CaptureResultContent: View {")[1].components(separatedBy: "// Wording only;")[0]
+        precondition(content.contains("CaptureBundleLocationView(destination: result.destination, showsReveal: true)"))
+        let outcomes = presentation.components(separatedBy: "struct CaptureResultOutcomes: View {")[1].components(separatedBy: "struct CaptureResultContent:")[0]
+        precondition(outcomes.components(separatedBy: "CaptureOutcomeCard(title: \"Save Complete\"").count == 2)
+        precondition(outcomes.contains("if !result.attention.isEmpty") && outcomes.contains("detail: result.attentionSummary"))
+        precondition(!content.contains("Needs Attention") && !content.contains("result.scope") && !content.contains("result.message"))
+        for obsolete in ["Environment Saved", "Captured Environment", "Domains Saved", "Items Saved", "TaskDomainList", "DisclosureGroup", "Completed"] {
+            precondition(!result.contains(obsolete) && !content.contains(obsolete), "Compact Result must not recreate the saved inventory or competing outcomes")
+        }
         let location = source.components(separatedBy: "struct CaptureBundleLocationView: View {")[1]
             .components(separatedBy: "struct CaptureActionsView: View {")[0]
         precondition(location.contains("HStack {") && location.contains("if showsReveal {"))
@@ -394,13 +404,13 @@ private struct WorkflowAnchorFrames: PreferenceKey {
                 let content = HStack(spacing: 0) {
                     VStack(alignment: .leading, spacing: 16) {
                         Text("Macseed").font(.title2.weight(.semibold))
-                        Label("All Tasks", systemImage: "square.grid.2x2")
-                        ForEach(ProductTask.allCases) { task in Label(task.rawValue, systemImage: task.symbol) }
+                        Label("Home", systemImage: "square.grid.2x2")
+                        ForEach(ProductTask.allCases) { task in Label(task.title, systemImage: task.symbol) }
                         Spacer()
                     }.padding(20).frame(width: 215).background(.regularMaterial)
                     ScrollView {
                         VStack(alignment: .leading, spacing: 20) {
-                            WorkspaceHeader(title: task.rawValue, subtitle: task.subtitle, symbol: task.symbol)
+                            WorkspaceHeader(title: task.title, subtitle: task.subtitle, symbol: task.symbol)
                             if task == .capture { CaptureView(model: capture, runtime: runtime, showsActions: false) }
                             else { RestoreView(model: restore, runtime: runtime, showsRebuildActions: false) }
                         }.modifier(WorkspaceContentGeometry())
@@ -501,7 +511,155 @@ private struct WorkflowAnchorFrames: PreferenceKey {
         print("PASS: Native read-only nested macOS Preview, exact setting names, preserved IDs/counts and unsupported details")
     }
 
+    @MainActor static func presentationTaxonomyChecks() {
+        typealias Taxonomy = WorkspacePresentationTaxonomy
+        // Read the authoritative registry as data, without importing/running Core.
+        // Optional extension domains must participate; a fixed count is not an oracle.
+        let registry = Process(), output = Pipe()
+        registry.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
+        registry.arguments = ["python3", "-B", "-c", """
+        import ast, json, pathlib
+        tree = ast.parse(pathlib.Path('../../modules/bundle/bundle.py').read_text())
+        names = {'ITEMS', 'EXTENSION_ITEMS', 'CATEGORIES'}
+        result = {}
+        for node in tree.body:
+            if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+                if node.targets[0].id in names:
+                    result[node.targets[0].id] = sorted(ast.literal_eval(node.value))
+        assert set(result) == names
+        print(json.dumps(result))
+        """]
+        registry.standardOutput = output
+        try! registry.run()
+        let data = output.fileHandleForReading.readDataToEndOfFile()
+        registry.waitUntilExit()
+        precondition(registry.terminationStatus == 0, "Cannot read canonical Core domain registry")
+        let registered = try! JSONDecoder().decode([String: [String]].self, from: data)
+        let itemDomains = Set(registered["ITEMS"]! + registered["EXTENSION_ITEMS"]!)
+        let categoryDomains = Set(registered["CATEGORIES"]!)
+        let known = itemDomains.union(categoryDomains)
+        let advertised = Taxonomy.Group.allCases.flatMap(\.domains)
+        precondition(Set(advertised) == known && advertised.count == known.count,
+                     "Every Core domain must be classified exactly once")
+        precondition(Taxonomy.Section.allCases.map(\.title) == ["Applications & Tools", "macOS Settings", "Application Extras", "Advanced", "Other Findings"])
+        precondition(Taxonomy.Group.allCases.map(\.section) == Taxonomy.Section.allCases)
+        precondition(Taxonomy.Group.vscode.section == .applicationExtras && Taxonomy.Group.vscode.title == "VS Code")
+        precondition(Taxonomy.Group.vscode.domains == ["vscode-extensions", "vscode-settings"])
+        precondition(Taxonomy.Group.advanced.domains == ["git-configuration", "git-repositories", "workspace-folders", "ssh-configuration", "shell-zsh", "vscode-workspaces"])
+        precondition(Taxonomy.Group.macOSSettings.domains == CaptureMacOSSettingsGroup.domainIDs)
+        precondition(Taxonomy.group(for: "future-domain") == .otherFindings)
+        let displayIDs = Taxonomy.Section.allCases.map(\.id) + Taxonomy.Group.allCases.map(\.id)
+        precondition(Set(displayIDs).count == displayIDs.count && known.isDisjoint(with: displayIDs))
+        precondition(Taxonomy.Group.vscode.id == "presentation.group.vscode" && Taxonomy.Section.advanced.id == "presentation.section.advanced")
+
+        let statuses: [DisplayStatus] = [.matching, .different, .missing, .unverified, .unsupported, .unresolved, .attention]
+        let domains = known.sorted() + ["future-domain", "another-future-domain"]
+        let rows = domains.enumerated().map { index, id in
+            DisplayCategory(id: id, title: id, symbol: "folder", items: (0...(index % 3)).map { item in
+                DisplayItem(id: id + ":\(item)", title: "Requirement \(item)", status: statuses[index % statuses.count], action: "Retained evidence")
+            })
+        }
+        let projected = Taxonomy.project(Array(rows.reversed()))
+        let leaves = projected.flatMap(\.rows)
+        precondition(leaves.count == rows.count && leaves.sorted { $0.id < $1.id } == rows.sorted { $0.id < $1.id })
+        precondition(leaves.flatMap(\.items).count == rows.flatMap(\.items).count)
+        for status in statuses {
+            precondition(leaves.flatMap(\.items).filter { $0.status == status }.count == rows.flatMap(\.items).filter { $0.status == status }.count)
+        }
+        precondition(projected.last!.group == .otherFindings && projected.last!.rows.map(\.id) == ["another-future-domain", "future-domain"])
+        precondition(projected.filter { $0.group.section == .applicationExtras }.flatMap(\.rows).map(\.id) == ["vscode-extensions", "vscode-settings"])
+        precondition(Taxonomy.project([DisplayCategory]()).isEmpty)
+        for id in ["vscode-workspaces", "workspace-folders", "future-domain"] {
+            let only = Taxonomy.project(rows.filter { $0.id == id })
+            precondition(only.count == 1 && only[0].rows.map(\.id) == [id])
+            precondition(only[0].group == (id == "future-domain" ? .otherFindings : .advanced))
+        }
+
+        // Exercise the projection with real Capture inventory rows and existing
+        // request types. Explicit subsets/categories survive placement unchanged.
+        let categories = domains.map { id -> CaptureCategory in
+            let object: [String: Any] = ["domain": id, "status": known.contains(id) ? "present" : "unsupported",
+                "selection_mode": itemDomains.contains(id) ? "items" : categoryDomains.contains(id) ? "category" : "future_mode",
+                "items": itemDomains.contains(id) ? ["one", "two"].map { ["item_id": $0, "label": $0] } : []]
+            return CaptureCategory(row: try! JSONDecoder().decode(CoreCaptureInventoryRow.self, from: JSONSerialization.data(withJSONObject: object)))
+        }
+        let moved = Taxonomy.project(categories).flatMap(\.rows)
+        let selectedCategories: Set<String> = ["vscode-settings", "ssh-configuration", "macos-finder"]
+        let selectedItems = ["vscode-extensions": ["one"], "vscode-workspaces": ["two"], "workspace-folders": ["one"]]
+        func requests(_ inventory: [CaptureCategory]) -> [CoreJSON] {
+            let categoryIDs = inventory.filter { selectedCategories.contains($0.id) }.map(\.id).sorted()
+            let items = Dictionary(uniqueKeysWithValues: inventory.compactMap { category -> (String, [String])? in
+                guard let chosen = selectedItems[category.id] else { return nil }
+                return (category.id, category.row.items.map(\.itemID).filter(chosen.contains).sorted())
+            })
+            let commands: [CoreCommand] = [
+                .capturePrepare(selection: .init(categories: categoryIDs, items: items, secureIdentities: [])),
+                .restorePrepare(path: "/private/tmp/taxonomy-reference.mbt", disabledGroups: [], includeSecure: false,
+                                selection: .init(categories: categoryIDs, items: items)),
+            ]
+            return commands.map { try! JSONDecoder().decode(CoreJSON.self, from: CoreRequest($0, operationID: "taxonomy-check").encoded()) }
+        }
+        precondition(requests(categories) == requests(moved))
+        for original in categories {
+            let retained = moved.first { $0.id == original.id }!
+            precondition(retained.row.selectionMode == original.row.selectionMode && retained.selectable == original.selectable)
+        }
+
+        // Capture adopts the taxonomy; Restore/Status retain their existing placement.
+        let liveCapture = CaptureHierarchy.project(CaptureReviewRow.project(categories))
+        precondition(liveCapture.first { $0.group == .vscode }!.rows.map(\.id) == ["vscode-extensions", "vscode-settings"])
+        precondition(liveCapture.first { $0.group == .advanced }!.rows.map(\.id) == Taxonomy.Group.advanced.domains)
+        precondition(liveCapture.flatMap(\.rows).flatMap(\.categories).map(\.id).sorted() == categories.map(\.id).sorted())
+        for section in liveCapture {
+            let controls = CaptureReviewPresentation.bulkCategories(categories, group: section.group)
+            precondition(controls.map(\.id).sorted() == section.rows.flatMap(\.categories).map(\.id).sorted(),
+                "Capture group summary and bulk action must use the same original domain membership")
+        }
+        precondition(CaptureReviewPresentation.bulkCategories(categories, group: .advanced).contains { $0.id == "workspace-folders" })
+        precondition(SelectionState.none.bulkActionTitle == "Select All" && SelectionState.mixed.bulkActionTitle == "Select All"
+            && SelectionState.all.bulkActionTitle == "Deselect All")
+        let topGroups = liveCapture.filter { $0.group != .otherFindings }.map(\.group)
+        precondition(topGroups.map(CaptureHierarchy.sectionTitle) == ["Applications & Tools", "macOS Settings", "Application Extras", "Advanced — For Experienced Users"])
+        precondition(Set(topGroups.map(CaptureHierarchy.sectionID)).count == 4)
+        precondition(CaptureHierarchy.sectionID(.vscode) != Taxonomy.Group.vscode.id,
+            "Application Extras and its VS Code child must have independent disclosures")
+        precondition(CaptureHierarchy.initialExpansion.isEmpty)
+        precondition(CaptureHierarchy.ordinaryGroups == [.applicationsTools, .macOSSettings, .vscode])
+        precondition(!CaptureHierarchy.initialExpansion.contains(CaptureHierarchy.sectionID(.advanced)))
+        precondition(CaptureHierarchy.title("vscode-workspaces", fallback: "old title") == "VS Code Workspace")
+        let appDisclosure = CaptureHierarchy.childDisclosureIDs(domains, group: .applicationsTools)
+        let extrasDisclosure = CaptureHierarchy.childDisclosureIDs(domains, group: .vscode)
+        precondition(appDisclosure == Set(Taxonomy.Group.applicationsTools.domains) && appDisclosure.isDisjoint(with: extrasDisclosure))
+        precondition(extrasDisclosure == Set(Taxonomy.Group.vscode.domains + [Taxonomy.Group.vscode.id]))
+        let selection = CoreCaptureSelection(categories: known.sorted(), items: [:], secureIdentities: [])
+        let confirmation = CaptureTaskPresentation(categories: categories, selection: selection, phase: .confirmation)
+        let taskGroups = CaptureHierarchy.project(confirmation.domains)
+        precondition(taskGroups.first { $0.group == .macOSSettings }!.rows.map(\.id) == ["macos-settings"])
+        precondition(taskGroups.flatMap(\.rows).flatMap(\.items).map(\.id) == confirmation.domains.flatMap(\.items).map(\.id))
+        let ordinaryIDs = CaptureHierarchy.disclosureIDs(domains + ["macos-settings"], scope: .ordinary)
+        let advancedIDs = CaptureHierarchy.disclosureIDs(domains, scope: .advanced)
+        precondition(ordinaryIDs.isDisjoint(with: advancedIDs) && !ordinaryIDs.contains("future-domain"))
+        precondition(CaptureHierarchy.disclosureIDs(["git-repositories"], scope: .ordinary).isEmpty)
+        precondition(ordinaryIDs.contains(Taxonomy.Group.vscode.id) && advancedIDs.contains(Taxonomy.Group.advanced.id))
+        let expanded = CaptureHierarchy.toggled(["future-domain"], ids: advancedIDs)
+        precondition(CaptureHierarchy.toggled(expanded, ids: ordinaryIDs).isSuperset(of: expanded))
+        precondition(CaptureHierarchy.toggled(expanded, ids: advancedIDs) == ["future-domain"])
+        let coreGroups = [CoreRestoreInspection.Group(id: "Applications", domains: ["app-store", "vscode-extensions"]),
+                          .init(id: "VS Code Settings", domains: ["vscode-settings"]),
+                          .init(id: "Workspace", domains: ["workspace-folders", "git-repositories", "vscode-workspaces"]),
+                          .init(id: "Future", domains: ["future-domain"])]
+        let liveRestore = RestorePresentationSection.project(coreGroups)
+        precondition(liveRestore.first { $0.id == "Workspace" }!.groups.flatMap(\.domains) == coreGroups[2].domains)
+        precondition(liveRestore.last!.groups.flatMap(\.domains) == ["future-domain"])
+        let liveStatus = EnvironmentStatusSection.project(rows, groups: coreGroups)
+        precondition(liveStatus.first { $0.id == "Applications & Tools" }!.entries.contains { $0.id == "vscode-extensions" })
+        precondition(liveStatus.first { $0.id == "Workspace" }!.entries.map(\.id) == coreGroups[2].domains)
+        precondition(liveStatus.last!.entries.contains { $0.id == "future-domain" })
+        print("PASS: Capture taxonomy covers Core registry once, preserves unknown evidence/counts/requests, scopes expansion and leaves Restore/Status placement unchanged")
+    }
+
     @MainActor static func visualContractChecks() {
+        presentationTaxonomyChecks()
         let source = try! String(contentsOfFile: "Sources/ContentView.swift")
         let domains = WorkspaceCategoryStyle.groups.flatMap { $0.1 }.filter { $0 != "macOS Settings" }
         let rows = domains.map { DisplayCategory(id: $0, title: $0, symbol: "", items: []) }
@@ -526,10 +684,39 @@ private struct WorkflowAnchorFrames: PreferenceKey {
         precondition(source.contains(".padding(12)") && source.contains("tint.opacity(0.06)") && source.contains("cornerRadius: 8"))
         let status = try! String(contentsOfFile: "Sources/EnvironmentStatusView.swift")
         precondition(status.contains("WorkspaceSectionHeader(title: section.id)") && status.contains("WorkspaceMetricCard(title: outcome.title"))
-        for path in ["CaptureView.swift", "RestoreView.swift", "TaskComponents.swift"] {
+        // Capture replaces section labels with native disclosure headers; other
+        // workflows retain their existing section-header contract.
+        for path in ["RestoreView.swift", "TaskComponents.swift"] {
             let view = try! String(contentsOfFile: "Sources/" + path)
             precondition(view.contains("WorkspaceSectionHeader(") && view.contains("WorkspaceCardSurface()"))
         }
+        let capture = try! String(contentsOfFile: "Sources/CaptureView.swift")
+        precondition(capture.contains("CaptureGroupedContent(rows: rows") && capture.contains("captureHierarchy: true"))
+        let capturePresentation = try! String(contentsOfFile: "Sources/CapturePresentation.swift")
+        precondition(capturePresentation.contains("CaptureGroupHeader(title: CaptureHierarchy.sectionTitle") && capturePresentation.contains("WorkspaceCardSurface()"))
+        precondition(capturePresentation.contains("CaptureGroupHeader(title: \"VS Code\"") && capturePresentation.contains("CaptureRowColumns(title: title, status: status)"))
+        let review = capture.components(separatedBy: "case .review:")[1].components(separatedBy: "case .confirmation:")[0]
+        let globalHeading = review.components(separatedBy: "WorkflowList {")[0]
+        precondition(!globalHeading.contains("Controls(") && !globalHeading.contains("Button("))
+        precondition(review.contains("advancedFooter: AnyView(CaptureSecureTransferView("))
+        let grouping = capturePresentation.components(separatedBy: "struct CaptureGroupedContent<")[1].components(separatedBy: "struct CaptureTaskPresentation")[0]
+        precondition(grouping.components(separatedBy: "WorkspaceCardSurface()").count - 1 == 2)
+        precondition(grouping.contains("capture.container.ordinary") && grouping.contains("capture.container.advanced"))
+        precondition(grouping.contains("CaptureHierarchy.ordinaryGroups") && !capturePresentation.contains("Compatibility & Dependencies"))
+        precondition(!capturePresentation.contains("compatibilityID") && !grouping.contains("rows.filter"))
+        precondition(grouping.contains("members(rows)") && !grouping.contains("NativeSelectionCheckbox"))
+        precondition(grouping.range(of: "members(rows)\n                    if group == .advanced, let advancedFooter { advancedFooter }") != nil,
+            "Secure Transfer follows the ordered Advanced rows without a detached card or divider")
+        precondition(grouping.contains("tint: group == .advanced ? .secondary : .blue"))
+        precondition(WorkspacePresentationTaxonomy.Group.advanced.domains == ["git-configuration", "git-repositories", "workspace-folders", "ssh-configuration", "shell-zsh", "vscode-workspaces"])
+        let secure = capturePresentation.components(separatedBy: "struct CaptureSecureTransferView:")[1].components(separatedBy: "extension SelectionState")[0]
+        precondition(secure.contains("WorkspaceCategoryTitle(") && secure.contains("Color.clear.frame(width: 28, height: 28)"))
+        precondition(secure.contains("CaptureRowColumns(") && secure.contains("TaskDisclosureStyle()"))
+        precondition(secure.contains("CaptureStatusText(title: \"Unavailable\"") && !secure.contains("NativeSelectionCheckbox") && !secure.contains("Divider()"))
+        let header = capturePresentation.components(separatedBy: "struct CaptureGroupHeader:")[1].components(separatedBy: "struct CaptureGroupedContent<")[0]
+        precondition(header.contains("CaptureAccordionStyle()") && !header.contains("NativeSelectionCheckbox"))
+        precondition(header.contains("var tint: Color = .blue"), "Ordinary sections and nested VS Code use the native blue accent")
+        precondition(!capture.contains("var categoryExpansion: Binding<Bool>"))
         let restore = try! String(contentsOfFile: "Sources/RestoreView.swift")
         precondition(!restore.contains("struct RestoreHeaderDisclosureStyle") && !restore.contains("struct RestoreSectionHeader"))
         let area = restore.components(separatedBy: "struct RestoreAreaSelectionView:")[1].components(separatedBy: "struct RestorePresentationSection:")[0]
@@ -804,14 +991,14 @@ private struct WorkflowAnchorFrames: PreferenceKey {
         }
         let ids = ["git-repositories", "ssh-configuration", "git-configuration", "macOS Settings", "homebrew-packages", "homebrew-casks", "workspace-folders"]
         let rows = ids.map { domain($0, state: .unverified) }
-        let sections = RestoreExecutionCategories.sections(rows)
-        precondition(sections.compactMap(\.title) == ["Applications & Tools", "Settings", "Git", "SSH Configuration", "Workspace"])
-        precondition(sections.last!.rows.map(\.id) == ["workspace-folders", "git-repositories"])
-        precondition(Set(sections.flatMap(\.rows).map(\.id)) == Set(ids))
-        precondition(sections.flatMap(\.rows).allSatisfy { $0.executionStatus == .unverified && $0.executionStatus.tone == .warning })
+        let ordered = RestoreExecutionCategories.orderedRows(rows)
+        precondition(ordered.map(\.id) == ["homebrew-casks", "homebrew-packages", "macOS Settings",
+            "git-configuration", "git-repositories", "workspace-folders", "ssh-configuration"])
+        precondition(Set(ordered.map(\.id)) == Set(ids))
+        precondition(ordered.allSatisfy { $0.executionStatus == .unverified && $0.executionStatus.tone == .warning })
         for state in [TaskRowState.working, .completed, .attention, .unverified, .notRun, .failed] {
             let original = ids.map { domain($0, state: state) }
-            let reordered = RestoreExecutionCategories.sections(original).flatMap(\.rows)
+            let reordered = RestoreExecutionCategories.orderedRows(original)
             for row in original {
                 let after = reordered.first { $0.id == row.id }!
                 precondition(after.executionStatus == row.executionStatus && after.executionMessages == row.executionMessages)
@@ -820,9 +1007,9 @@ private struct WorkflowAnchorFrames: PreferenceKey {
             }
         }
         let unknown = domain("future-core-group", state: .unverified)
-        let anchored = RestoreExecutionCategories.sections([rows[0], unknown, rows[1]])
-        precondition(anchored.map { $0.rows.map(\.id) } == [[rows[0].id], [unknown.id], [rows[1].id]])
-        precondition(anchored[1].title == nil && anchored[1].rows[0].title == unknown.title)
+        let withUnknown = RestoreExecutionCategories.orderedRows([rows[0], unknown, rows[1]])
+        precondition(withUnknown.map(\.id) == [rows[0].id, rows[1].id, unknown.id])
+        precondition(withUnknown.last?.title == unknown.title && withUnknown.last?.items.first?.item == unknown.items.first?.item)
         func render<V: View>(_ view: V, name: String) {
             _ = NSApplication.shared; NSApp.appearance = NSAppearance(named: .aqua)
             let content = view.padding(28).frame(width: 785, height: 1000, alignment: .topLeading)
@@ -848,7 +1035,7 @@ private struct WorkflowAnchorFrames: PreferenceKey {
                 "verified_count": .integer(2), "mismatch_count": .integer(1), "unverified_count": .integer(4), "unresolved_count": .integer(0)])])
             RestoreExecutionCategories(domains: ids.enumerated().map { domain($0.element, state: $0.offset == 5 ? .attention : .unverified) }, showsWarnings: false)
         }, name: "Needs-Attention")
-        print("PASS: Execution/Result section order and shared icon mapping; all rows, statuses, warning colors, diagnostics and unknown group anchors preserved; two native renders")
+        print("PASS: flat Execution/Result order and shared icon mapping; all rows, statuses, warning colors, diagnostics and unknown findings preserved; two native renders")
     }
 
     @MainActor static func neutralUnverifiedChecks() {
@@ -868,7 +1055,7 @@ private struct WorkflowAnchorFrames: PreferenceKey {
         }
         precondition(domains[1].executionStatus == .unverified)
         let source = try! String(contentsOfFile: "Sources/RestoreView.swift")
-        precondition(source.contains("RestoreExecutionCategories(domains: tasks.automaticDomains, showsWarnings: false, resultStatuses: true,"))
+        precondition(source.contains("RestoreExecutionCategories(domains: domains, showsWarnings: false, resultStatuses: true,"))
         _ = NSApplication.shared; NSApp.appearance = NSAppearance(named: .aqua)
         let content = VStack(alignment: .leading, spacing: 20) {
             Text("Rebuild Cancelled").font(.title.weight(.bold))
@@ -925,6 +1112,12 @@ private struct WorkflowAnchorFrames: PreferenceKey {
             == "Rebuild Completed")
         precondition(RestoreResultContent.heading(outcome: .attention, original: "Rebuild Completed with Issues", pendingManualWork: false)
             == "Rebuild Completed with Issues")
+        precondition(RestoreResultSummaryView.completionTitle(.clean) == "Complete"
+            && RestoreResultSummaryView.completionTitle(.attention) == "Complete")
+        for outcome: RestoreExecutionPresentation.Outcome in [.partial, .failedBeforeMutation, .failedAfterMutation,
+                                                               .interrupted, .stoppedBeforeMutation, .stoppedAfterMutation] {
+            precondition(RestoreResultSummaryView.completionTitle(outcome) == "Verification")
+        }
         // Manual work never replaces failure, partial, interruption or stop headings,
         // nor supplies evidence that automatic work succeeded.
         for outcome: RestoreExecutionPresentation.Outcome in [.clean, .partial, .failedBeforeMutation, .failedAfterMutation,
@@ -939,9 +1132,13 @@ private struct WorkflowAnchorFrames: PreferenceKey {
         let sections = ["RestoreResultSummaryView(summary:", "RestoreExecutionCategories(domains:"]
         let positions = sections.map { result.range(of: $0)!.lowerBound }
         precondition(positions == positions.sorted(), "Summary followed directly by grouped details")
-        precondition(result.contains("appStore: tasks.appStore, reviewAppStore: reviewAppStore)"))
+        precondition(result.contains("appStore: manual, reviewAppStore: reviewAppStore,")
+            && result.contains("RestoreResultDetails.domains(tasks?.automaticDomains") && result.contains("RestoreResultDetails.manual($0.appStore, result: result)"))
         precondition(!result.contains("RestoreRequiresAttention") && !source.contains("Text(\"Requires Attention\")"))
         precondition(!result.contains("App Store Applications — All Installed"))
+        let manualResult = source.components(separatedBy: "struct AppStoreRestoreResultRow:")[1].components(separatedBy: "struct RestoreVerificationResult:")[0]
+        precondition(manualResult.contains("Button(\"Review App Store Apps\")") && manualResult.contains("summary.attentionCount"))
+        precondition(!manualResult.contains("ForEach") && !manualResult.contains("RestoreResultItemRow") && !manualResult.contains("summary.attentionBreakdown"))
         precondition(result.contains("Text(Self.heading(outcome: result.outcome"))
         precondition(!source.contains("Global Verification includes automatic Restore"))
         precondition(!source.contains("Selected environment: "))
@@ -951,8 +1148,8 @@ private struct WorkflowAnchorFrames: PreferenceKey {
         precondition(!source.contains("message: preview.summary"))
         precondition(result.contains("Text(Self.message(result:") && result.contains("RestoreResultActions(result: result, refresh: refresh, done: done, logRuntime: logRuntime)"))
         let selection = source.components(separatedBy: "if model.state == .review {")[1].components(separatedBy: "} else if let prepared")[0]
-        precondition(selection.contains("RestorePresentationSection.visible(model.groups, inventory: includedAreas)"))
-        precondition(selection.contains("section.areas(in: includedAreas)") && !selection.contains("automaticAreas"))
+        precondition(selection.contains("RestoreSelectionContent(model: model"))
+        precondition(!selection.contains("automaticAreas") && !selection.contains("toggleAll"))
         precondition(!selection.contains("if let appStore"), "App Store uses the shared group and row exactly once")
         precondition(preview.contains("WorkspaceSectionHeader(title: \"Manual Installation\", prominent: true)"))
         let taskComponents = try! String(contentsOfFile: "Sources/TaskComponents.swift")
@@ -1044,14 +1241,17 @@ private struct WorkflowAnchorFrames: PreferenceKey {
             (item("unknown", ["Unverified"], state: .unverified, known: false), nil),
             (item("unverified", ["Unverified"], state: .unverified, known: true), "Needs Attention"),
             (item("waiting", ["Unverified"], state: .waiting), nil)]
-        for (row, expected) in fixtures {
-            precondition(row.resultGroup == expected && RestoreFinalDomain.group(row) == expected)
+        let displayedGroups = ["Success", "Needs Attention", "Needs Attention", "Needs Attention", "Needs Attention", "Needs Attention",
+            "Needs Attention", "Skipped", "Needs Attention", "Needs Attention", "Needs Attention"]
+        for (index, fixture) in fixtures.enumerated() {
+            let (row, expected) = fixture
+            precondition(row.resultGroup == expected && RestoreFinalDomain.group(row) == displayedGroups[index])
             let domain = TaskDomainPresentation(id: row.id, title: row.id, symbol: "folder", items: [row])
             let summary = RestoreResultSummary(domains: [domain, domain])
             precondition(summary.cards.count == (expected == nil ? 0 : 1))
             precondition(summary.cards.first?.count == (expected == nil ? nil : 1))
             precondition(summary.cards.first?.id == expected)
-            precondition(RestoreFinalDomain.counts(domain).first?.0 == expected)
+            precondition(RestoreFinalDomain.counts(domain).first?.0 == displayedGroups[index])
         }
         let domain = TaskDomainPresentation(id: "all", title: "All", symbol: "folder", items: fixtures.map { $0.0 })
         let summary = RestoreResultSummary(domains: [domain])
@@ -1094,7 +1294,7 @@ private struct WorkflowAnchorFrames: PreferenceKey {
         precondition(TaskDomainPresentation(id: "blocked", title: "", symbol: "", items: [blocked]).resultTitle == "Needs Attention")
         let partial = TaskDomainPresentation(id: "partial", title: "", symbol: "", items: [applied, unknown])
         precondition(partial.resultTitle == "Partial")
-        precondition(RestoreFinalDomain.counts(partial).map(\.1) == [1])
+        precondition(RestoreFinalDomain.counts(partial).map(\.1) == [2])
         let partialStyle = RestoreResultStatusLabel(state: RestoreFinalDomain.finalStatus(partial), title: partial.resultTitle)
         precondition(partialStyle.tone == .neutral && partialStyle.symbol == "circle.lefthalf.filled")
         let unknownDomain = TaskDomainPresentation(id: "unknown", title: "", symbol: "", items: [unknown])
@@ -1104,7 +1304,7 @@ private struct WorkflowAnchorFrames: PreferenceKey {
         let mixed = TaskDomainPresentation(id: "mixed", title: "", symbol: "", items: [applied, item("second-applied", ["Applied"], known: true), fixtures[6].0, unknown, item("second-unknown", ["Unverified"], state: .unverified, known: false)])
         precondition(mixed.resultTitle == "Needs Attention")
         precondition(RestoreResultSummary(domains: [mixed]).cards.map(\.count) == [2, 1])
-        precondition(RestoreFinalDomain.counts(mixed).map(\.1) == [2, 1])
+        precondition(RestoreFinalDomain.counts(mixed).map(\.1) == [5])
         for outcome in [RestoreExecutionPresentation.Outcome.stoppedBeforeMutation, .stoppedAfterMutation] {
             precondition(RestoreExecutionPresentation.stopRequestExplanation(outcome: outcome, notice: "Stopped by User") == nil)
         }
@@ -1291,55 +1491,129 @@ private struct WorkflowAnchorFrames: PreferenceKey {
         print("PASS: Windows Included Settings uses observed Core labels and matching Restore labels without defaults")
     }
 
-    @MainActor static func captureResultAlignmentChecks() {
-        let ids = ["macos-finder", "macos-dock", "macos-windows", "macos-keyboard", "macos-trackpad", "macos-screenshots"]
-        let children = ids.map { id in
-            TaskDomainPresentation(id: id, title: CaptureCategory.title(for: id), symbol: WorkspaceCategoryStyle.symbol(id),
-                items: [TaskItemPresentation(id: id + ":saved", item: DisplayItem(id: id + ":saved", title: id, status: .ready,
-                    action: ""), state: .completed, captureRole: .selectedSubdomain)])
+    @MainActor static func captureCompactSettingsChecks() {
+        let source = try! String(contentsOfFile: "Sources/CapturePresentation.swift")
+        let settingsDetails = source.components(separatedBy: "struct CaptureSettingsSubcategoryView:")[1].components(separatedBy: "enum CaptureSettingsPresentation")[0]
+        precondition(settingsDetails.contains("CaptureIncludedSettingsList(labels: labels)") && settingsDetails.contains("CaptureSettingsPresentation.labels([category.row])"))
+        precondition(!settingsDetails.contains("ForEach(settings") && !settingsDetails.contains("padding(.leading, 36)"), "Review reuses compact read-only labels without duplicated layout or indentation")
+        let compactLabels = source.components(separatedBy: "struct CaptureIncludedSettingsList:")[1].components(separatedBy: "struct CaptureConfirmationItems:")[0]
+        precondition(compactLabels.contains("SettingsFlowLayout") && compactLabels.contains("Array(labels.enumerated())") && compactLabels.contains("CaptureCompactLabel(title: label)"))
+        precondition(!compactLabels.contains("NativeSelectionCheckbox") && !compactLabels.contains("Button("))
+        for domain in CaptureMacOSSettingsGroup.domainIDs {
+            let labels = ["First supported preference", "A longer supported preference label that must wrap completely", "Last supported preference"]
+            let row = try! JSONDecoder().decode(CoreCaptureInventoryRow.self, from: JSONSerialization.data(withJSONObject: [
+                "domain": domain, "status": "present", "selection_mode": "category", "items": [],
+                "included_settings": labels.enumerated().map { ["id": "setting-\($0.offset)", "label": $0.element] }]))
+            precondition(CaptureSettingsPresentation.labels([row])[domain] == labels)
+            let small = ImageRenderer(content: CaptureIncludedSettingsList(labels: labels).frame(width: 180)).cgImage!
+            let wide = ImageRenderer(content: CaptureIncludedSettingsList(labels: labels).frame(width: 600)).cgImage!
+            precondition(small.width == 180 && wide.width == 600 && small.height > wide.height,
+                "The existing compact labels wrap with available width and retain the complete ordered inventory")
         }
-        let parent = TaskDomainPresentation(id: "macos-settings", title: "macOS Settings", symbol: "gearshape", items: children.flatMap(\.items))
-        let vscode = TaskDomainPresentation(id: "vscode-settings", title: "VS Code Settings", symbol: "curlybraces",
-            items: [TaskItemPresentation(id: "vscode-settings:saved", item: DisplayItem(id: "vscode-settings:saved", title: "JSON", status: .ready,
-                action: ""), state: .completed, captureRole: .configuration)])
-        let source = try! String(contentsOfFile: "Sources/CaptureView.swift")
-        let result = source.components(separatedBy: "            case .result:")[1].components(separatedBy: "            case .failed, .cancelled:")[0]
-        precondition(result.contains("captureResultLayout: true"))
-        let restore = try! String(contentsOfFile: "Sources/RestoreView.swift")
-        precondition(!restore.contains("captureResultLayout: true"))
-        for width in [420.0, 785.0, 985.0] {
-            for typeSize in [DynamicTypeSize.large, .accessibility3] {
-                let view = TaskDomainList(domains: [parent, vscode], compactReadyItems: true, captureResultLayout: true,
-                    settingsCategories: children, settingLabels: ["macos-screenshots": ["Save location", "Window shadow", "Floating thumbnail"]],
-                    expansion: .constant([parent.id]), settingsExpansion: .constant(false))
-                    .padding(20).frame(width: width).environment(\.dynamicTypeSize, typeSize).environment(\.colorScheme, .light)
-                let image = ImageRenderer(content: view).cgImage!
-                var pixels = [UInt8](repeating: 0, count: image.width * image.height * 4)
-                pixels.withUnsafeMutableBytes { bytes in
-                    let context = CGContext(data: bytes.baseAddress, width: image.width, height: image.height, bitsPerComponent: 8,
-                        bytesPerRow: image.width * 4, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
-                    context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+        print("PASS: all six macOS Review categories reuse the existing compact read-only labels, inventory order and responsive wrapping")
+    }
+
+    @MainActor static func captureResultAlignmentChecks() {
+        _ = NSApplication.shared
+        let publication = CoreCapturePublication(publicationOccurred: true, destination: "/Users/Example/Environments/My Mac.mbt",
+            preparedCaptureID: String(repeating: "a", count: 64),
+            bundle: .init(formatVersion: 1, selectedCategories: ["macos-finder", "vscode-settings"],
+                selectedItemCounts: ["homebrew-packages": 93], secureComponent: false))
+        func warning(_ id: String, reason: String, domain: String = "homebrew-packages") -> DisplayCategory {
+            .init(id: domain, title: domain, symbol: "shippingbox", items: [
+                .init(id: id, title: "Needs Attention", status: .attention, action: "private diagnostic must not render", reason: reason)])
+        }
+        let first = warning("source", reason: "source_partial")
+        let independent = warning("tool", reason: "tool_unavailable")
+        let clean = CaptureResultPresentation(publication: publication, notices: [warning("ssh", reason: "source_partial", domain: "ssh-configuration")])
+        let limited = CaptureResultPresentation(publication: publication, notices: [first, first, independent,
+            warning("finder", reason: "observation_failed", domain: "macos-finder")])
+        precondition(clean.attention.isEmpty && clean.scope == "3 domains · 93 items saved")
+        precondition(clean.affectedCount == 0)
+        precondition(limited.attention.count == 2 && limited.attention.flatMap(\.items).count == 3 && limited.attentionSummary == "2 affected categories")
+        let unknown = warning("distinct", reason: "private_token_value").items[0]
+        precondition(!CaptureResultPresentation.explanation(unknown).contains("private"))
+        let sameReason = CaptureResultPresentation(publication: publication, notices: [first, warning("independent-source", reason: "source_partial")])
+        precondition(sameReason.attention[0].items.count == 2, "Independent identities must not collapse just because their explanations match")
+        let many = CaptureResultPresentation(publication: publication, notices: (1...30).map { warning("issue-\($0)", reason: "source_partial") })
+        precondition(many.attention[0].items.count == 30)
+        func coloredBounds(_ image: NSBitmapImageRep, warning: Bool) -> CGRect? {
+            var xs: [Int] = [], ys: [Int] = []
+            for y in 0..<image.pixelsHigh { for x in 0..<image.pixelsWide {
+                guard let c = image.colorAt(x: x, y: y)?.usingColorSpace(.sRGB), c.alphaComponent > 0.9 else { continue }
+                let match = warning ? c.redComponent > 0.5 && c.greenComponent > 0.15 && c.redComponent > c.greenComponent * 1.1 && c.blueComponent < 0.3
+                    : c.greenComponent > 0.4 && c.greenComponent > c.redComponent * 1.4 && c.greenComponent > c.blueComponent * 1.2
+                if match { xs.append(x); ys.append(y) }
+            } }
+            guard let x = xs.min(), let y = ys.min() else { return nil }
+            return CGRect(x: x, y: y, width: xs.max()! - x + 1, height: ys.max()! - y + 1)
+        }
+        for width: CGFloat in [420, 729, 929] {
+            for (name, result) in [("clean", clean), ("attention", limited)] {
+                let view = CaptureResultOutcomes(result: result).frame(width: width).background(Color(nsColor: .windowBackgroundColor))
+                let bitmap = NSBitmapImageRep(cgImage: ImageRenderer(content: view).cgImage!)
+                let green = coloredBounds(bitmap, warning: false)!
+                let amber = coloredBounds(bitmap, warning: true)
+                precondition((amber != nil) == (name == "attention"), "Clean publication has one outcome; affected domains add one attention card")
+                if let amber {
+                    if width >= 729 { precondition(abs(green.minY - amber.minY) <= 2 && amber.minX > green.maxX) }
+                    else { precondition(amber.minY > green.maxY, "Only narrow actual detail widths stack outcome cards") }
                 }
-                var bands: [(y: Int, x: Int)] = []
-                for y in 0..<image.height {
-                    var left: Int? = nil
-                    for x in 0..<image.width {
-                        let offset = (y * image.width + x) * 4
-                        let r = Int(pixels[offset]), g = Int(pixels[offset + 1]), b = Int(pixels[offset + 2])
-                        if g > 60 && g > r * 13 / 10 && g > b * 12 / 10 && pixels[offset + 3] > 150 { left = x; break }
-                    }
-                    if let left {
-                        if let last = bands.last, y - last.y <= 10 {
-                            bands[bands.count - 1] = (y, min(left, last.x))
-                        } else { bands.append((y, left)) }
-                    }
-                }
-                precondition(bands.count == 8, "All eight Completed statuses must render: \(bands)")
-                precondition(bands.map(\.x).max()! - bands.map(\.x).min()! <= 1,
-                    "Parent, six settings children and VS Code statuses share a column: \(bands)")
             }
         }
-        print("PASS: Capture Result's eight Completed statuses align at narrow/wide widths and increased Dynamic Type")
+        func scrolls(_ view: NSView) -> [NSScrollView] { (view as? NSScrollView).map { [$0] } ?? view.subviews.flatMap(scrolls) }
+        for size in [MainWindowPolicy.minimum, MainWindowPolicy.preferred] {
+            for dark in [false, true] {
+                NSApp.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+                for (name, result) in [("clean", clean), ("attention", limited), ("many", many)] {
+                    var frames: [String: CGRect] = [:]
+                    let content = HStack(spacing: 0) {
+                        Color(nsColor: .controlBackgroundColor).frame(width: 215)
+                        VStack(spacing: 0) {
+                            WorkflowContentViewport(pinned: true) {
+                                VStack(alignment: .leading, spacing: 20) {
+                                    WorkspaceHeader(title: ProductTask.capture.title, subtitle: ProductTask.capture.subtitle, symbol: ProductTask.capture.symbol)
+                                    CaptureResultContent(result: result)
+                                        .background(GeometryReader { Color.clear.preference(key: WorkflowAnchorFrames.self, value: ["result": $0.frame(in: .named("result"))]) })
+                                }.modifier(WorkspaceContentGeometry())
+                            }
+                            Divider()
+                            HStack { Text("View Log"); Spacer(); Button("Capture Again") {}; Button("Done") {} }
+                                .modifier(WorkspaceFooterPadding())
+                                .background(GeometryReader { Color.clear.preference(key: WorkflowAnchorFrames.self, value: ["footer": $0.frame(in: .named("result"))]) })
+                        }
+                    }.frame(width: size.width, height: size.height).background(Color(nsColor: .windowBackgroundColor))
+                        .coordinateSpace(name: "result").onPreferenceChange(WorkflowAnchorFrames.self) { frames = $0 }
+                    let host = NSHostingView(rootView: content)
+                    let window = NSWindow(contentRect: CGRect(origin: .zero, size: size), styleMask: [.borderless], backing: .buffered, defer: false)
+                    window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
+                    RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.05)); host.layoutSubtreeIfNeeded(); host.displayIfNeeded()
+                    let scroll = scrolls(host)
+                    precondition(scroll.count == 1 && frames.count == 2, "Result fixture viewport=\(scroll.count), frames=\(frames), size=\(size)")
+                    precondition(frames["footer"]!.maxY <= size.height && frames["result"]!.minY >= 0)
+                    if name == "clean" {
+                        precondition(scroll[0].documentView!.frame.height <= scroll[0].contentView.bounds.height + 1,
+                            "A clean Result must fit without scrolling at the 1000x700 minimum")
+                        precondition(frames["result"]!.maxY < frames["footer"]!.minY)
+                    }
+                    if name == "many" {
+                        let bottom = scroll[0].documentView!.frame.height - scroll[0].contentView.bounds.height
+                        precondition(bottom > 0, "Independent warnings must remain reachable when they exceed the viewport")
+                        let footer = frames["footer"]!
+                        scroll[0].contentView.scroll(to: CGPoint(x: 0, y: bottom)); scroll[0].reflectScrolledClipView(scroll[0].contentView)
+                        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.05)); host.layoutSubtreeIfNeeded()
+                        precondition(abs(scroll[0].contentView.bounds.minY - bottom) < 2 && frames["footer"] == footer)
+                        scroll[0].contentView.scroll(to: .zero); scroll[0].reflectScrolledClipView(scroll[0].contentView)
+                    }
+                    let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds)!
+                    host.cacheDisplay(in: host.bounds, to: bitmap)
+                    try! bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath:
+                        "build/Debug/CaptureResult-closure-\(name)-\(Int(size.width))-\(dark ? "dark" : "light").png"))
+                    window.close()
+                }
+            }
+        }
+        print("PASS: compact Result exact scope, selected/deduplicated independent warnings and safe explanations; clean Result fits minimum window in Light/Dark with fixed footer")
     }
 
     @MainActor static func restoreResultColumnsChecks() {
@@ -1654,22 +1928,21 @@ private struct WorkflowAnchorFrames: PreferenceKey {
             (progress(0, 0, 16), 0, 16, "16 unverified")] {
             precondition(snapshot.installed.count == installedCount && snapshot.attentionCount == attention && snapshot.attentionBreakdown == breakdown)
         }
-        let grouped = RestoreExecutionCategories.sections([
+        let grouped = RestoreExecutionCategories.orderedRows([
             .init(id: "homebrew-casks", title: "Applications", symbol: "app", items: []),
             .init(id: "vscode-extensions", title: "Extensions", symbol: "app", items: []),
             .init(id: "workspace-folders", title: "Workspace", symbol: "folder", items: [])])
-        precondition(grouped.first?.title == "Applications & Tools" && grouped.last?.title == "Workspace")
-        precondition(grouped.first?.rows.map(\.id) == ["homebrew-casks", "vscode-extensions"])
-        let withManual = RestoreExecutionCategories.sections([
+        precondition(grouped.map(\.id) == ["homebrew-casks", "vscode-extensions", "workspace-folders"])
+        let withManual = RestoreExecutionCategories.orderedRows([
             .init(id: "homebrew-casks", title: "Applications", symbol: "app", items: []),
             .init(id: "homebrew-packages", title: "Packages", symbol: "app", items: []),
             .init(id: "vscode-extensions", title: "Extensions", symbol: "app", items: []),
             .init(id: "workspace-folders", title: "Workspace", symbol: "folder", items: [])], appStore: mixed)
-        precondition(withManual.first?.rows.map(\.id) == ["app-store", "homebrew-casks", "homebrew-packages", "vscode-extensions"])
-        precondition(withManual.flatMap(\.rows).filter { $0.id == "app-store" }.count == 1)
-        precondition(RestoreExecutionCategories.sections([]).isEmpty)
-        let manualOnly = RestoreExecutionCategories.sections([], appStore: mixed)
-        precondition(manualOnly.first?.title == "Applications & Tools" && manualOnly.first?.rows.map(\.id) == ["app-store"])
+        precondition(withManual.map(\.id) == ["app-store", "homebrew-casks", "homebrew-packages", "vscode-extensions", "workspace-folders"])
+        precondition(withManual.filter { $0.id == "app-store" }.count == 1)
+        precondition(RestoreExecutionCategories.orderedRows([]).isEmpty)
+        let manualOnly = RestoreExecutionCategories.orderedRows([], appStore: mixed)
+        precondition(manualOnly.map(\.id) == ["app-store"])
         let allRows = ImageRenderer(content: AppStoreRestoreList(summary: installed).frame(width: 785)).nsImage!
         precondition(allRows.size.height >= 16 * 28, "All Installed rows are immediately visible")
         let pendingRows = ImageRenderer(content: AppStoreRestoreList(summary: mixed).frame(width: 785)).nsImage!
@@ -2155,7 +2428,7 @@ private struct WorkflowAnchorFrames: PreferenceKey {
                 check(CaptureCategorySelectionView(model: capture, category: CaptureCategory(row: captureRow), expansion: .constant(true)), boxes: selectable ? (mode == "items" ? 2 : 1) : 0)
             }
         }
-        check(CaptureMacOSSettingsView(model: capture, expansion: .constant(true)), boxes: 0)
+        check(CaptureMacOSSettingsView(model: capture), boxes: 0)
         precondition(runtime.state == .idle && capture.selectedItems.isEmpty && restore.selectedItems.isEmpty)
         print("PASS: leaf arrows absent; only supported selection creates enabled native checkboxes; category-only settings retain category selection")
     }
@@ -2181,12 +2454,6 @@ private struct WorkflowAnchorFrames: PreferenceKey {
         }
         let domains = [TaskDomainPresentation(id: "macos-settings", title: "macOS Settings", symbol: "slider.horizontal.3", items: children.flatMap(\.items)),
             TaskDomainPresentation(id: "vscode-extensions", title: "VS Code Extensions", symbol: "puzzlepiece", items: (0..<24).map { item("vscode-extensions", $0) })]
-        let captureDomains = domains.map { domain in
-            TaskDomainPresentation(id: domain.id, title: domain.title, symbol: domain.symbol, items: domain.items.map {
-                TaskItemPresentation(id: $0.id, item: $0.item, state: .completed, sourceDomain: $0.sourceDomain)
-            })
-        }
-        let captureChildren = captureDomains[0].resultChildren
         let ids = TaskDomainList.disclosureIDs(domains, settings: children)
         precondition(ids.count == 8 && Set(children.map(\.id)).isSubset(of: ids))
         precondition(RestoreExecutionCategories.disclosureIDs(domains) == ids)
@@ -2302,17 +2569,12 @@ private struct WorkflowAnchorFrames: PreferenceKey {
                         VStack(spacing: 0) {
                             WorkflowContentViewport(pinned: true) {
                                 VStack(alignment: .leading, spacing: 12) {
-                                    WorkspaceHeader(title: task.rawValue, subtitle: task.subtitle, symbol: task.symbol)
+                                    WorkspaceHeader(title: task.title, subtitle: task.subtitle, symbol: task.symbol)
                                         .background(GeometryReader { proxy in Color.clear.preference(key: WorkflowAnchorFrames.self, value: ["header": proxy.frame(in: .named("workflow"))]) })
                                     if task == .capture {
-                                        Text("Environment Saved").font(.title2.weight(.semibold))
-                                        WorkspaceThreeMetrics {
-                                            CaptureMetricCard(title: "Domains Saved", count: 7, symbol: "square.stack")
-                                            CaptureMetricCard(title: "Items Saved", count: 60, symbol: "checklist")
-                                        }
-                                        CaptureBundleLocationView(destination: URL(fileURLWithPath: "/Users/Example/Environments/My Mac.mbt"), showsReveal: true)
-                                        TaskDomainList(domains: captureDomains, compactReadyItems: true, title: "Captured Environment", captureResultLayout: true,
-                                            settingsCategories: captureChildren, expansion: binding)
+                                        CaptureResultContent(result: CaptureResultPresentation(publication:
+                                            .init(publicationOccurred: true, destination: "/Users/Example/Environments/My Mac.mbt", preparedCaptureID: String(repeating: "a", count: 64),
+                                                bundle: .init(formatVersion: 1, selectedCategories: ["macos-finder"], selectedItemCounts: ["homebrew-packages": 60], secureComponent: false)), notices: []))
                                     } else if task == .restore {
                                         Label("My Mac.mbt", systemImage: "shippingbox").font(.headline)
                                         RestorePreviewContent(title: "Needs Attention", state: .attention, domains: domains,
@@ -2352,7 +2614,8 @@ private struct WorkflowAnchorFrames: PreferenceKey {
                     "All fixed content must remain inside the window: \(name) \(size) \(fixed)")
                 if task != .restore { expansion.ids = WorkflowExpansion.toggled([], available: task == .status ? statusIDs : ids) }
                 flush(host)
-                if task != .restore { precondition(scroll.documentView!.frame.height > collapsedHeight + 200, "Hidden descendants must render after Expand All") }
+                if task == .status { precondition(scroll.documentView!.frame.height > collapsedHeight + 200, "Hidden descendants must render after Expand All") }
+                if task == .capture { precondition(scroll.documentView!.frame.height == collapsedHeight, "Result has no hidden category inventory") }
                 let bottom = max(0, scroll.documentView!.frame.height - scroll.contentView.bounds.height)
                 scroll.contentView.scroll(to: CGPoint(x: 0, y: bottom)); scroll.reflectScrolledClipView(scroll.contentView); flush(host)
                 precondition(abs(scroll.contentView.bounds.minY - bottom) < 2, "Last row must be reachable")
@@ -2439,7 +2702,7 @@ private struct WorkflowAnchorFrames: PreferenceKey {
             let content = HStack(alignment: .top, spacing: 20) {
                 VStack(alignment: .leading, spacing: 20) {
                     Text("Capture Selection").font(.title2)
-                    CaptureMacOSSettingsView(model: model, expansion: .constant(true), childExpansion: .constant(false))
+                    CaptureMacOSSettingsView(model: model, childExpansion: .constant(false))
                         .modifier(WorkspaceCardSurface())
                 }.frame(width: width)
                 VStack(alignment: .leading, spacing: 20) {
@@ -2490,7 +2753,7 @@ private struct WorkflowAnchorFrames: PreferenceKey {
                 VStack(spacing: 0) {
                     WorkflowContentViewport(pinned: true) {
                         VStack(alignment: .leading, spacing: 12) {
-                            WorkspaceHeader(title: "Restore", subtitle: ProductTask.restore.subtitle, symbol: ProductTask.restore.symbol)
+                            WorkspaceHeader(title: ProductTask.restore.title, subtitle: ProductTask.restore.subtitle, symbol: ProductTask.restore.symbol)
                             RestorePreviewContent(title: "Needs Attention", state: .attention, domains: previewDomains, alreadyMatches: false,
                                 prerequisites: prerequisites,
                                 areas: [.init(domain: "ssh-configuration", label: "SSH Configuration", selectionMode: "category",
@@ -2567,7 +2830,7 @@ private struct WorkflowAnchorFrames: PreferenceKey {
                 VStack(spacing: 0) {
                     WorkflowContentViewport(pinned: true) {
                         VStack(alignment: .leading, spacing: 12) {
-                            WorkspaceHeader(title: "Restore", subtitle: ProductTask.restore.subtitle, symbol: ProductTask.restore.symbol)
+                            WorkspaceHeader(title: ProductTask.restore.title, subtitle: ProductTask.restore.subtitle, symbol: ProductTask.restore.symbol)
                             preview
                         }.modifier(WorkspaceContentGeometry())
                     }
@@ -2638,7 +2901,574 @@ private struct WorkflowAnchorFrames: PreferenceKey {
         print("PASS: topology readiness, shared-destination, dependency and preservation explanations")
     }
 
+    @MainActor static func restoreActualChangesChecks() async throws {
+        setbuf(stdout, nil)
+        _ = NSApplication.shared; NSApp.appearance = NSAppearance(named: .aqua)
+        let output = URL(fileURLWithPath: "build/Debug/RestoreActualChanges", isDirectory: true)
+        try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+        let fixture = FileManager.default.temporaryDirectory.appendingPathComponent("macseed-result-details-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: fixture) }
+        for folder in ["modules/core/application-interface", "config", "home", "tmp"] {
+            try FileManager.default.createDirectory(at: fixture.appendingPathComponent(folder), withIntermediateDirectories: true)
+        }
+        for file in ["bootstrap.sh", "config/toolkit.conf", "modules/core/application-interface/core.py"] {
+            try Data().write(to: fixture.appendingPathComponent(file))
+        }
+        try "#!/bin/bash\nexec /usr/bin/python3 -B fixture.py\n".write(to: fixture.appendingPathComponent("modules/core/application-interface/core.sh"), atomically: true, encoding: .utf8)
+        try """
+        import json, sys
+        from pathlib import Path
+        request=json.load(sys.stdin)
+        payload=json.loads(Path('payload.json').read_text())
+        for sequence,(kind,data) in enumerate([('started',{}),('result',payload),('completed',{})],1):
+            print(json.dumps(dict(protocol_version=1,operation_id=request['operation_id'],sequence=sequence,type=kind,data=data)),flush=True)
+        """.write(to: fixture.appendingPathComponent("fixture.py"), atomically: true, encoding: .utf8)
+        let specifications: [(String, String, String, Bool)] =
+            (1...24).map { ("vscode-extensions", $0 == 24 ? "ms-python.python" : "extension-\($0)", "install", $0 == 24) }
+            + (1...4).map { ("git-repositories", $0 == 4 ? "Macseed" : "Repository \($0)", "clone", $0 == 4) }
+            + (1...6).map { ("workspace-folders", $0 == 6 ? "Projects" : "Folder \($0)", "create_directory", $0 == 6) }
+            + [("homebrew-casks", "Firefox", "install", false), ("macos-finder", "com.apple.finder/AppleShowAllExtensions", "set_preference", false)]
+            + (1...16).map { ("app-store", String(123450 + $0), "inspect", $0 == 16) }
+        let ids = Array(Set(specifications.map { $0.0 })).sorted()
+        let catalog = CoreRestoreInspection.Inventory(groups: ids.map { .init(id: $0 == "macos-finder" ? "macOS Settings" : $0, domains: [$0]) },
+            inventory: ids.map { .init(domain: $0, label: CaptureCategory.title(for: $0), selectionMode: "category", availability: "available", reason: nil, items: []) })
+        let planID = String(repeating: "a", count: 64)
+        var mixedTasks: RestoreTaskPresentation?
+        var mixedResult: RestoreExecutionPresentation?
+        for changed in [true, false] {
+            let rows: [[String: Any]] = specifications.map { domain, id, action, candidate in
+                let affected = changed && candidate
+                return ["domain": domain, "item_id": id, "display_name": domain == "app-store" ? (candidate ? "Pages" : "Installed App " + id) : id,
+                    "action": action, "disposition": affected ? (domain == "app-store" ? "warning" : "planned") : "satisfied",
+                    "reason": domain == "app-store" && affected ? "manual_installation_required" : NSNull()]
+            }
+            let planRaw: [String: Any] = ["prepared_plan_id": planID, "selection": ["categories": ids, "items": [:]], "selected_categories": ids,
+                "selected_item_counts": [:], "selected_groups": catalog.groups.map(\.id), "include_secure": false, "secure_restore_status": "not_selected",
+                "plan": rows, "readiness": ["ready": true, "ready_scope": "environment", "conditions": [], "reentry": "restore_prepare"],
+                "has_planned_changes": changed, "warning_count": changed ? 1 : 0, "error_count": 0]
+            let plan = try JSONDecoder().decode(CoreRestorePreparation.self, from: JSONSerialization.data(withJSONObject: planRaw))
+            try plan.validate(expected: .init(categories: ids, items: [:]), catalog: catalog)
+            let preview = RestorePreviewPresentation(plan, catalog: catalog)
+            let operations: [[String: Any]] = specifications.filter { $0.0 != "app-store" }.map { domain, id, action, candidate in
+                ["domain": domain, "item_id": id, "action": action, "outcome": changed && candidate ? "success" : "noop"]
+            }
+            let observations: [[String: Any]] = specifications.map { domain, id, _, candidate in
+                ["domain": domain, "item_id": id, "predicate": domain == "macos-finder" ? "stored_preference" : "selected_requirement",
+                    "conformity": changed && candidate && domain == "app-store" ? "mismatch" : "verified"]
+            }
+            let payload: [String: Any] = ["prepared_plan_id": planID, "execution_status": "completed", "target_mutation_may_have_started": changed,
+                "unknown_consequences": false, "warning_count": changed ? 1 : 0, "error_count": 0,
+                "verification": ["status": "complete", "verdict": changed ? "needs_attention" : "selected_requirements_verified",
+                    "verified_count": observations.count - (changed ? 1 : 0), "mismatch_count": changed ? 1 : 0,
+                    "unverified_count": 0, "unresolved_count": 0, "warning_count": changed ? 1 : 0, "error_count": 0,
+                    "details": ["status": "complete", "prepared_plan_id": planID, "operation_records": operations,
+                        "verification_records": observations, "coverage_records": []]]]
+            let payloadData = try JSONSerialization.data(withJSONObject: payload)
+            try payloadData.write(to: fixture.appendingPathComponent("payload.json"))
+            let runtime = CoreRuntime(operationLogs: nil)
+            runtime.start(CoreRequest(.restoreExecute(path: fixture.appendingPathComponent("sample.mbt").path, disabledGroups: [], includeSecure: false,
+                preparedID: planID, selection: .init(categories: ids, items: [:]))),
+                location: .init(root: fixture, python: URL(fileURLWithPath: "/usr/bin/python3"), home: fixture.appendingPathComponent("home"),
+                    temporaryBase: fixture.appendingPathComponent("tmp"), toolDirectories: []))
+            await runtime.waitForCompletion()
+            precondition(runtime.state == .completed, "Disposable JSON emitter failed: \(String(describing: runtime.error))")
+            let result = RestoreExecutionPresentation(runtime: runtime, payload: try JSONDecoder().decode([String: CoreJSON].self, from: payloadData), expectedID: planID, catalog: catalog)
+            let tasks = RestoreTaskPresentation(preview: preview, plan: plan, result: result, executing: true, operationProgress: true)
+            let summary = RestoreResultSummary(domains: tasks.automaticDomains, result: result, appStore: tasks.appStore)
+            let visible = RestoreResultDetails.domains(tasks.automaticDomains)
+            let manual = RestoreResultDetails.manual(tasks.appStore)
+            precondition(tasks.appStore.items.count == 16 && tasks.automaticDomains.flatMap(\.items).count == 36)
+            precondition(summary.appliedCount == (changed ? 3 : 0) && summary.verifiedAppliedCount == summary.appliedCount)
+            precondition(summary.verifiedRestorationCount == (changed ? 3 : 0), "Complete excludes pre-existing matches")
+            precondition(summary.manualAttentionCount == (changed ? 1 : 0) && summary.automaticAttentionCount == 0)
+            precondition(summary.noChangesRequired == !changed && manual.items.count == (changed ? 1 : 0))
+            if changed {
+                precondition(Set(visible.map(\.id)) == ["vscode-extensions", "git-repositories", "workspace-folders"])
+                precondition(visible.allSatisfy { $0.items.count == 1 })
+                precondition(visible.flatMap(\.items).allSatisfy { RestoreResultDetails.labels($0) == ["Verified"] })
+                precondition(manual.items.first?.item.title == "Pages")
+                // Repeated parent/child rows or receipts cannot inflate requirement counts.
+                let duplicate = RestoreResultSummary(domains: tasks.automaticDomains + tasks.automaticDomains, result: result, appStore: tasks.appStore)
+                precondition(duplicate.appliedCount == 3 && duplicate.verifiedRestorationCount == 3 && duplicate.manualAttentionCount == 1)
+                var verificationOnly = try JSONDecoder().decode([String: CoreJSON].self, from: payloadData)
+                var verification = verificationOnly["verification"]!.object!, details = verification["details"]!.object!
+                details["operation_records"] = .array([]); verification["details"] = .object(details); verificationOnly["verification"] = .object(verification)
+                let withoutReceipts = RestoreExecutionPresentation(runtime: runtime, payload: verificationOnly, expectedID: planID, catalog: catalog)
+                func project(_ action: String?, itemID: String = "ms-python.python") throws -> RestoreTaskPresentation {
+                    let events = try action.map { action in [try CoreEvent(line: JSONSerialization.data(withJSONObject: [
+                        "protocol_version": 1, "operation_id": "fixture", "sequence": 1, "type": "execution_event",
+                        "data": ["domain": "vscode-extensions", "item_id": itemID, "action": action, "state": "changed"]]))] } ?? []
+                    return RestoreTaskPresentation(preview: preview, plan: plan, events: events, result: withoutReceipts, executing: true, operationProgress: true)
+                }
+                for unconfirmed in [try project(nil), try project("reinstall"), try project("install", itemID: "scope")] {
+                    precondition(unconfirmed.automaticDomains.flatMap(\.items).allSatisfy { !RestoreResultDetails.hasChange($0) })
+                    let visible = RestoreResultDetails.domains(unconfirmed.automaticDomains).flatMap(\.items)
+                    precondition(visible.count == 3 && visible.allSatisfy { RestoreResultDetails.labels($0) == ["Verified"] && !RestoreResultDetails.needsAttention($0) },
+                        "Previously planned, verified requirements stay visible without becoming applied changes or attention")
+                    let summary = RestoreResultSummary(domains: unconfirmed.automaticDomains, result: withoutReceipts, appStore: nil)
+                    precondition(summary.appliedCount == 0 && summary.verifiedRestorationCount == 3)
+                }
+                let changedEvent = try project("install")
+                precondition(changedEvent.automaticDomains.flatMap(\.items).filter(RestoreResultDetails.hasChange).count == 1)
+                let earlierMismatch = try CoreEvent(line: JSONSerialization.data(withJSONObject: [
+                    "protocol_version": 1, "operation_id": "fixture", "sequence": 1, "type": "verification_record",
+                    "data": ["domain": "vscode-extensions", "item_id": "ms-python.python", "predicate": "selected_requirement", "conformity": "mismatch"]]))
+                let refreshedEvidence = RestoreTaskPresentation(preview: preview, plan: plan, events: [earlierMismatch], result: result, executing: true, operationProgress: true)
+                let refreshedItem = refreshedEvidence.automaticDomains.flatMap(\.items).first { $0.sourceItemID == "ms-python.python" }!
+                precondition(RestoreResultDetails.verified(refreshedItem), "Final evidence replaces an earlier observation of the same predicate")
+                var scopeFailurePayload = try JSONDecoder().decode([String: CoreJSON].self, from: payloadData)
+                var scopeVerification = scopeFailurePayload["verification"]!.object!, scopeDetails = scopeVerification["details"]!.object!
+                scopeDetails["module_outcomes"] = .array([.object(["domain": .string("vscode-extensions"), "item_id": .string("scope"),
+                    "action": .string("restore"), "state": .string("failed"), "reason": .string("module_failed")])])
+                scopeVerification["details"] = .object(scopeDetails); scopeFailurePayload["verification"] = .object(scopeVerification)
+                let scopeFailure = RestoreExecutionPresentation(runtime: runtime, payload: scopeFailurePayload, expectedID: planID, catalog: catalog)
+                let scopeTasks = RestoreTaskPresentation(preview: preview, plan: plan, result: scopeFailure, executing: true, operationProgress: true)
+                let failedDomain = scopeTasks.automaticDomains.first { $0.id == "vscode-extensions" }!
+                precondition(failedDomain.resultCategoryIssue && RestoreResultDetails.title(failedDomain) == "Needs Attention",
+                    "Retained scope failures remain visible even after runtime event history is truncated")
+                mixedTasks = tasks; mixedResult = result
+            } else {
+                precondition(visible.isEmpty && manual.items.isEmpty && summary.issues.isEmpty)
+                precondition(RestoreResultContent.message(result: result, summary: summary).hasPrefix("No changes were needed."))
+            }
+            if !CommandLine.arguments.contains("--no-renders") {
+                renderActualChanges(result: result, tasks: tasks, name: changed ? "Changed" : "No-Changes", output: output)
+            }
+        }
+        let changed = RestoreResultDetails.domains(mixedTasks!.automaticDomains).flatMap(\.items).first!
+        var resolvedWarning = changed; resolvedWarning.previewProblem = "prerequisite_unmet"
+        precondition(!RestoreResultDetails.needsAttention(resolvedWarning) && RestoreResultDetails.explanation(resolvedWarning) == nil,
+            "An applied and verified change must not retain a resolved Preview warning")
+        var independentFailure = changed; independentFailure.resultLabels = ["Failed", "Verified"]
+        precondition(RestoreResultDetails.isVisible(independentFailure) && RestoreResultDetails.needsAttention(independentFailure)
+            && RestoreResultDetails.labels(independentFailure) == ["Failed"], "Conformity cannot erase an execution failure")
+        var partialVerification = changed; partialVerification.resultVerificationComplete = false
+        precondition(RestoreResultDetails.needsAttention(partialVerification) && !RestoreResultDetails.verified(partialVerification))
+        precondition(RestoreResultDetails.labels(partialVerification) == ["Unverified"])
+        var secondAction = changed; secondAction.executionAction = "Reinstall"
+        let repeatedRequirement = TaskDomainPresentation(id: "vscode-extensions", title: "Extensions", symbol: "folder", items: [changed, secondAction])
+        precondition(RestoreFinalDomain.counts(repeatedRequirement).map(\.1) == [1])
+        let pending = RestoreResultDetails.manual(mixedTasks!.appStore)
+        let duplicatedManual = AppStoreRestorePresentation(domains: [.init(id: "app-store", title: "Apps", symbol: "app", items: pending.items + pending.items)])
+        precondition(RestoreResultDetails.manual(duplicatedManual).items.count == 1)
+        var noVerification = changed; noVerification.resultLabels = ["Applied"]; noVerification.verificationEvidenceAvailable = false
+        precondition(RestoreResultDetails.hasChange(noVerification) && RestoreResultDetails.needsAttention(noVerification))
+        precondition(RestoreResultDetails.labels(noVerification) == ["Unverified"])
+        for label in ["Failed", "Mismatch", "Unsupported", "Unresolved", "Unverified", "Needs Attention"] {
+            var issue = changed; issue.resultLabels = [label]
+            precondition(RestoreResultDetails.isVisible(issue) && RestoreResultDetails.needsAttention(issue) && !RestoreResultDetails.hasChange(issue))
+        }
+        var notRun = changed; notRun.resultLabels = []; notRun.resultNotRun = true
+        precondition(RestoreResultDetails.isVisible(notRun) && RestoreResultDetails.labels(notRun) == ["Not Run"])
+        var unknown = changed; unknown.resultLabels = ["Unverified"]; unknown.resultEvidenceAvailable = false
+        precondition(RestoreResultDetails.isVisible(unknown) && !RestoreResultDetails.hasChange(unknown))
+        var skipped = changed; skipped.resultLabels = ["Skipped"]
+        precondition(RestoreResultDetails.needsAttention(skipped), "A skip without a neutral reason stays visible")
+        let neutralSkip = TaskItemPresentation(id: "planned-skip", item: DisplayItem(id: "planned-skip", title: "Planned requirement",
+            status: .ready, action: "", reason: "not_applicable"), state: .skipped, resultLabels: ["Skipped"], resultEvidenceAvailable: true)
+        precondition(RestoreResultDetails.isVisible(neutralSkip) && RestoreResultDetails.labels(neutralSkip) == ["Skipped"]
+            && !RestoreResultDetails.needsAttention(neutralSkip))
+        let matching = mixedTasks!.automaticDomains.first { $0.id == "macOS Settings" }!
+        var categoryIssue = matching; categoryIssue.resultCategoryIssue = true
+        categoryIssue.resultProblemDomains = ["macos-finder"]; categoryIssue.resultProblemMessages = ["macos-finder": "Independent settings diagnostic"]
+        let issueOnly = RestoreResultDetails.domains([categoryIssue])
+        precondition(issueOnly.count == 1 && issueOnly[0].items.isEmpty && issueOnly[0].resultChildren.count == 1)
+        precondition(issueOnly[0].resultChildren[0].resultCategoryExplanation == "Independent settings diagnostic")
+        let uncertainSummary = RestoreResultSummary(domains: [.init(id: "vscode-extensions", title: "Extensions", symbol: "folder", items: [noVerification, noVerification])], result: mixedResult!, appStore: nil)
+        precondition(uncertainSummary.appliedCount == 1 && uncertainSummary.verifiedAppliedCount == 0 && uncertainSummary.automaticAttentionCount == 1)
+        precondition(uncertainSummary.verifiedRestorationCount == 0)
+        print("PASS: Result retains planned Verified requirements and genuine problems; Complete counts unique visible planned requirements, excludes existing matches, preserves mutation evidence and failed/stopped headings; App Store stays category-only")
+    }
+
+    @MainActor static func restoreStoppedResultChecks() async throws {
+        let fixture = FileManager.default.temporaryDirectory.appendingPathComponent("macseed-stopped-result-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: fixture) }
+        for path in ["modules/core/application-interface", "config", "home", "tmp"] {
+            try FileManager.default.createDirectory(at: fixture.appendingPathComponent(path), withIntermediateDirectories: true)
+        }
+        for path in ["bootstrap.sh", "config/toolkit.conf", "modules/core/application-interface/core.py"] {
+            try Data().write(to: fixture.appendingPathComponent(path))
+        }
+        try "#!/bin/bash\nexec /usr/bin/python3 -B fixture.py\n".write(to: fixture.appendingPathComponent("modules/core/application-interface/core.sh"), atomically: true, encoding: .utf8)
+        try """
+        import json,sys
+        from pathlib import Path
+        request=json.load(sys.stdin)
+        payload=json.loads(Path('payload.json').read_text())
+        events=[('started',{}),('execution_event',dict(domain='orchestration',state='graceful_stop_accepted')),
+                ('execution_event',dict(domain='workspace-folders',item_id='started',action='create_directory',state='applying')),
+                ('failed',payload)]
+        for sequence,(kind,data) in enumerate(events,1):
+            print(json.dumps(dict(protocol_version=1,operation_id=request['operation_id'],sequence=sequence,type=kind,data=data)),flush=True)
+        sys.exit(130 if payload['code']=='cancelled' else 2)
+        """.write(to: fixture.appendingPathComponent("fixture.py"), atomically: true, encoding: .utf8)
+        let ids = ["git-repositories", "workspace-folders", "homebrew-casks", "macos-finder", "app-store"]
+        let catalog = CoreRestoreInspection.Inventory(groups: ids.map { .init(id: $0, domains: [$0]) },
+            inventory: ids.map { .init(domain: $0, label: $0, selectionMode: "category", availability: "available", reason: nil, items: []) })
+        let rows: [[String: Any]] = [
+            ["domain": "git-repositories", "item_id": "cloned", "action": "clone", "disposition": "planned"],
+            ["domain": "git-repositories", "item_id": "matching", "action": "clone", "disposition": "satisfied"],
+            ["domain": "workspace-folders", "item_id": "started", "action": "create_directory", "disposition": "planned"],
+            ["domain": "homebrew-casks", "item_id": "not-started", "action": "install", "disposition": "planned"],
+            ["domain": "macos-finder", "item_id": "not-started", "action": "set_preference", "disposition": "planned"]
+        ] + (1...16).map { ["domain": "app-store", "item_id": String($0), "action": "inspect", "disposition": "satisfied"] }
+        let planID = String(repeating: "b", count: 64)
+        let raw: [String: Any] = ["prepared_plan_id": planID, "selection": ["categories": ids, "items": [:]],
+            "selected_categories": ids, "selected_item_counts": [:], "selected_groups": ids,
+            "include_secure": false, "secure_restore_status": "not_selected", "plan": rows,
+            "readiness": ["ready": true, "ready_scope": "environment", "conditions": [], "reentry": "restore_prepare"],
+            "has_planned_changes": true, "warning_count": 0, "error_count": 0]
+        let plan = try JSONDecoder().decode(CoreRestorePreparation.self, from: JSONSerialization.data(withJSONObject: raw))
+        let operations: [[String: Any]] = [
+            ["domain": "git-repositories", "item_id": "cloned", "action": "clone", "outcome": "success"],
+            ["domain": "git-repositories", "item_id": "matching", "action": "clone", "outcome": "noop"]]
+        for scenario in ["stopped", "independent-failure", "unknown", "failed"] {
+            let independent = scenario == "independent-failure"
+            let payload: [String: Any] = ["code": scenario == "failed" ? "bootstrap_failed" : "cancelled",
+                "prepared_plan_id": planID, "target_mutation_may_have_started": true, "unknown_consequences": scenario == "unknown",
+                "verification": ["status": "not_run", "verdict": "incomplete", "details": ["status": "partial",
+                    "operation_records": operations + (independent ? [["domain": "homebrew-casks", "item_id": "not-started", "action": "install", "outcome": "failure", "reason": "target_conflict"]] : []),
+                    "verification_records": [], "module_outcomes": [], "diagnostics": []]]]
+            let data = try JSONSerialization.data(withJSONObject: payload)
+            try data.write(to: fixture.appendingPathComponent("payload.json"))
+            let runtime = CoreRuntime(operationLogs: nil)
+            runtime.start(CoreRequest(.restoreExecute(path: fixture.appendingPathComponent("unused.mbt").path, disabledGroups: [], includeSecure: false,
+                preparedID: planID, selection: .init(categories: ids, items: [:]))),
+                location: .init(root: fixture, python: URL(fileURLWithPath: "/usr/bin/python3"), home: fixture.appendingPathComponent("home"),
+                    temporaryBase: fixture.appendingPathComponent("tmp"), toolDirectories: []))
+            await runtime.waitForCompletion()
+            let result = RestoreExecutionPresentation(runtime: runtime, payload: try JSONDecoder().decode([String: CoreJSON].self, from: data),
+                expectedID: planID, catalog: catalog, stopRequest: .init(operationID: runtime.operationID!, force: false))
+            let tasks = RestoreTaskPresentation(preview: RestorePreviewPresentation(plan, catalog: catalog), plan: plan,
+                events: runtime.events, result: result, executing: true, operationProgress: true)
+            let summary = RestoreResultSummary(domains: tasks.automaticDomains, result: result, appStore: tasks.appStore)
+            let visible = RestoreResultDetails.domains(tasks.automaticDomains, result: result).flatMap(\.items)
+            if ["stopped", "independent-failure"].contains(scenario) {
+                precondition(result.outcome == .stoppedAfterMutation && result.title == "Rebuild Stopped" && result.stopNotice == "Stopped by User")
+                precondition(RestoreResultDetails.stoppedWithoutVerification(result))
+                precondition(Set(visible.compactMap(\.sourceItemID)) == Set(independent ? ["cloned", "started", "not-started"] : ["cloned", "started"]))
+                precondition(summary.manualAttentionCount == 0 && summary.verifiedRestorationCount == 0)
+                precondition(summary.issues.allSatisfy { !$0.appStore } && !summary.issues.contains { $0.id.hasPrefix("macos-") })
+                precondition(RestoreResultDetails.manual(tasks.appStore, result: result).items.isEmpty)
+                precondition(visible.allSatisfy { !RestoreResultDetails.labels($0).contains("Verified") })
+                precondition(RestoreResultContent.message(result: result, summary: summary).hasPrefix("Completed changes remain."))
+                if independent { precondition(visible.contains { RestoreResultDetails.labels($0) == ["Failed"] }) }
+                let clone = visible.first { $0.sourceItemID == "cloned" }!
+                precondition(clone.resultLabels.contains("Applied") && RestoreResultDetails.labels(clone) == ["Unverified"])
+                precondition(RestoreResultDetails.explanation(clone) == "The action completed, but its result was not independently verified.")
+            } else {
+                precondition(result.outcome == (scenario == "unknown" ? .interrupted : .failedAfterMutation))
+                precondition(!RestoreResultDetails.stoppedWithoutVerification(result))
+                precondition(visible.map(\.id) == RestoreResultDetails.domains(tasks.automaticDomains).flatMap(\.items).map(\.id),
+                    "Failed and unknown-consequence filtering must stay unchanged")
+            }
+        }
+        print("PASS: stopped without Verification retains completed/started work and independent failures; unchecked requirements and manual apps stay out; failed/unknown outcomes unchanged")
+    }
+
+    @MainActor static func renderActualChanges(result: RestoreExecutionPresentation, tasks: RestoreTaskPresentation, name: String, output: URL) {
+        let content = VStack(spacing: 0) {
+            WorkflowContentViewport(pinned: true) {
+                VStack(alignment: .leading, spacing: 20) {
+                    WorkspaceHeader(title: ProductTask.restore.title, subtitle: ProductTask.restore.subtitle, symbol: ProductTask.restore.symbol)
+                    RestoreResultContent(result: result, showsActions: false, tasks: tasks, reviewAppStore: {}, refresh: {}, done: {})
+                }.padding(28)
+            }
+            Divider()
+            RestoreResultActions(result: result, refresh: {}, done: {}).modifier(WorkspaceFooterPadding())
+        }.frame(width: 985, height: 1100).background(Color(nsColor: .windowBackgroundColor))
+        let host = NSHostingView(rootView: content)
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 985, height: 1100), styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = host; window.makeKeyAndOrderFront(nil)
+        func flush() { RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.1)); host.layoutSubtreeIfNeeded(); host.displayIfNeeded() }
+        func snapshot(_ suffix: String) {
+            flush()
+            let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds)!
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            try! bitmap.representation(using: .png, properties: [:])!.write(to: output.appendingPathComponent(name + suffix + ".png"))
+        }
+        snapshot("")
+        if name == "Changed" {
+            let point = host.convert(NSPoint(x: 920, y: host.isFlipped ? 343 : 1100 - 343), to: nil)
+            for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+                window.sendEvent(NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                    windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: type == .leftMouseDown ? 1 : 0)!)
+            }
+            snapshot("-Expanded")
+        }
+        window.close()
+    }
+
+    @MainActor static func restoreFlatCategoryChecks() {
+        let expected = ["homebrew-casks", "homebrew-packages", "macOS Settings", "vscode-extensions", "vscode-settings",
+            "git-configuration", "git-repositories", "workspace-folders", "ssh-configuration", "shell-zsh", "vscode-workspaces"]
+        func domain(_ id: String) -> TaskDomainPresentation {
+            TaskDomainPresentation(id: id, title: "Existing " + id, symbol: "folder", items: [
+                TaskItemPresentation(id: id + ":selected", item: DisplayItem(id: id + ":selected", title: "Selected requirement",
+                    status: .unverified, action: "Existing explanation", reason: "inspection_unavailable"), state: .unverified,
+                    resultLabels: ["Unverified"], sourceDomain: id, sourceItemID: "selected")],
+                activityState: id == "git-repositories" ? .working : nil,
+                resultCategoryIssue: id == "ssh-configuration", resultCategoryMessage: "Existing category warning")
+        }
+        let input = [domain("future-selected-domain")] + expected.reversed().map(domain)
+        let rows = RestoreExecutionCategories.orderedRows(input)
+        precondition(rows.map(\.id) == expected + ["future-selected-domain"])
+        precondition(rows.count == input.count && Set(rows.map(\.id)) == Set(input.map(\.id)))
+        for original in input {
+            let row = rows.first { $0.id == original.id }!
+            precondition(row.title == original.title && row.symbol == original.symbol)
+            precondition(row.items.map(\.item) == original.items.map(\.item)
+                && row.items.map(\.resultLabels) == original.items.map(\.resultLabels))
+            precondition(row.executionStatusTitle == original.executionStatusTitle && row.resultTitle == original.resultTitle)
+            precondition(row.resultCategoryIssue == original.resultCategoryIssue
+                && row.resultCategoryMessage == original.resultCategoryMessage)
+        }
+        for ids in [[], ["workspace-folders"], ["vscode-workspaces"], ["future-selected-domain"], ["macos-settings"]] {
+            precondition(RestoreExecutionCategories.orderedRows(ids.map(domain)).map(\.id) == ids)
+        }
+        let macOS = CaptureMacOSSettingsGroup.domainIDs
+        precondition(RestoreExecutionCategories.orderedRows(macOS.reversed().map(domain)).map(\.id) == macOS)
+        let manual = AppStoreRestorePresentation(domains: [.init(id: "app-store", title: "App Store Applications", symbol: "app", items: [
+            .init(id: "manual-app", item: DisplayItem(id: "manual-app", title: "Pages", status: .missing, action: "Install manually"),
+                state: .attention, assistedAppStore: .init(appID: "123456", status: .missing))])])
+        let withManual = RestoreExecutionCategories.orderedRows(input, appStore: manual)
+        precondition(withManual.map(\.id) == ["app-store"] + rows.map(\.id))
+        precondition(RestoreExecutionCategories.orderedRows([], appStore: manual).map(\.id) == ["app-store"])
+        precondition(RestoreExecutionCategories.orderedRows([], appStore: .init(domains: [])).isEmpty)
+        print("PASS: flat Progress/Result order preserves exact selected rows, names, states and warnings; sparse/macOS/unknown/manual scopes remain intact")
+    }
+
+    @MainActor static func restorePreviewGroupingChecks() {
+        setbuf(stdout, nil)
+        try! FileManager.default.createDirectory(atPath: "build/Debug/RestorePreviewRefinement", withIntermediateDirectories: true)
+        _ = NSApplication.shared
+        NSApp.appearance = NSAppearance(named: .aqua)
+        // Project a selected Core plan through the same adapters as production.
+        // Inspection-only domains are deliberately absent from this plan.
+        let specification: [(String, String, String, String, String?)] = [
+            ("homebrew-casks", "Firefox", "install", "satisfied", nil),
+            ("homebrew-casks", "IINA", "install", "planned", nil),
+            ("homebrew-packages", "git", "install", "satisfied", nil),
+            ("homebrew-packages", "ripgrep", "install", "planned", nil),
+            ("macos-finder", "com.apple.finder/AppleShowAllExtensions", "set_preference", "satisfied", nil),
+            ("macos-dock", "com.apple.dock/tilesize", "set_preference", "planned", nil),
+            ("macos-dock", "Dock", "restart_process", "planned", nil),
+            ("vscode-extensions", "ms-python.python", "install", "planned", nil),
+            ("vscode-settings", "settings.json", "replace_with_backup", "planned", nil),
+            ("git-configuration", "core.editor", "set_setting", "satisfied", nil),
+            ("git-repositories", "Macseed", "clone", "planned", "workspace_dependency_pending"),
+            ("git-repositories", "Feature worktree", "add_worktree", "blocked", "workspace_dependency_missing"),
+            ("workspace-folders", "Projects", "create_directory", "planned", nil),
+            ("ssh-configuration", "scope", "none", "warning", "partial_source_coverage"),
+            ("shell-zsh", "Zsh configuration", "none", "satisfied", nil),
+            ("vscode-workspaces", "Development.code-workspace", "create_workspace", "conflict", "workspace_descriptor_conflict"),
+            ("app-store", "123456", "inspect", "warning", "manual_installation_required"),
+            ("app-store", "234567", "inspect", "satisfied", nil)]
+        let macOS = ["macos-finder", "macos-dock"]
+        let ids = Array(Set(specification.map { $0.0 })).sorted()
+        let catalog = CoreRestoreInspection.Inventory(
+            groups: [.init(id: "macOS Settings", domains: macOS)] + ids.filter { !macOS.contains($0) }.map { .init(id: $0, domains: [$0]) },
+            inventory: ids.map { .init(domain: $0, label: CaptureCategory.title(for: $0), selectionMode: "category", availability: "available", reason: nil, items: []) })
+        let rawRows: [[String: Any]] = specification.map { domain, name, action, disposition, reason in
+            ["domain": domain, "item_id": name, "display_name": domain == "app-store" ? (name == "123456" ? "Pages" : "Keynote") : name,
+             "action": action, "disposition": disposition, "reason": reason as Any? ?? NSNull()]
+        }
+        let raw: [String: Any] = ["prepared_plan_id": String(repeating: "a", count: 64),
+            "selection": ["categories": ids, "items": [:]], "selected_categories": ids,
+            "selected_item_counts": [:], "selected_groups": catalog.groups.map(\.id),
+            "include_secure": false, "secure_restore_status": "not_selected", "plan": rawRows,
+            "readiness": ["ready": false, "ready_scope": "environment", "reentry": "restore_prepare", "conditions": [
+                ["domain": "vscode-extensions", "code": "vscode_cli_required", "status": "external_action_required"],
+                ["domain": "ssh-configuration", "code": "ssh_configuration_not_ready", "status": "external_action_required"]]],
+            "has_planned_changes": true, "warning_count": 2, "error_count": 0]
+        let plan = try! JSONDecoder().decode(CoreRestorePreparation.self, from: JSONSerialization.data(withJSONObject: raw))
+        try! plan.validate(expected: .init(categories: ids, items: [:]), catalog: catalog)
+        let preview = RestorePreviewPresentation(plan, catalog: catalog)
+        let tasks = RestoreTaskPresentation(preview: preview, plan: plan)
+        let domains = tasks.automaticDomains
+        let children = RestoreSettingsPresentation.children(domains, categories: preview.categories)
+        let titles = RestoreSettingsPresentation.titles(plan.plan)
+        let sections = RestorePreviewHierarchy.sections(domains)
+        precondition(sections.map(\.group) == [.applicationsTools, .macOSSettings, .vscode, .advanced])
+        precondition(sections[0].rows.map(\.id) == ["homebrew-casks", "homebrew-packages"])
+        precondition(sections[1].rows.map(\.id) == ["macOS Settings"] && children.map(\.id) == macOS)
+        precondition(sections[2].rows.map(\.id) == ["vscode-extensions", "vscode-settings"])
+        precondition(sections[3].rows.map(\.id) == WorkspacePresentationTaxonomy.Group.advanced.domains)
+        let regrouped = sections.flatMap(\.rows)
+        precondition(Set(regrouped.map(\.id)) == Set(domains.map(\.id)) && regrouped.count == domains.count)
+        precondition(!regrouped.contains { $0.id == "app-store" } && tasks.appStore.items.count == 2)
+        // Exact item correspondence includes actions, warnings and diagnostic identity.
+        for original in domains {
+            let row = regrouped.first { $0.id == original.id }!
+            precondition(row.items.map(\.id) == original.items.map(\.id))
+            for (before, after) in zip(original.items, row.items) {
+                precondition(before.item == after.item && before.state == after.state)
+                precondition(before.sourceDomain == after.sourceDomain && before.sourceItemID == after.sourceItemID)
+                precondition(before.executionAction == after.executionAction && before.previewProblem == after.previewProblem)
+                precondition(before.diagnostic?.technicalDescription == after.diagnostic?.technicalDescription)
+            }
+            precondition(RestorePreviewMetrics.badges(row).map { "\($0.0):\($0.1)" } == RestorePreviewMetrics.badges(original).map { "\($0.0):\($0.1)" })
+        }
+        let allItems = domains.flatMap(\.items)
+        precondition(allItems.count == specification.filter { $0.0 != "app-store" }.count)
+        for section in sections {
+            let summary = RestorePreviewHierarchy.summary(section.group, rows: section.rows)
+            precondition(summary.items.map(\.id) == section.rows.flatMap(\.items).map(\.id))
+            precondition(!["Ready to Save", "Saved", "Completed", "Verified"].contains(RestorePreviewCategoryStatus.title(summary, stateTitles: [:])))
+        }
+        let groupCounts = sections.map { RestorePreviewMetrics.counts([RestorePreviewHierarchy.summary($0.group, rows: $0.rows)]) }
+        let total = RestorePreviewMetrics.counts(domains)
+        precondition(groupCounts.map(\.matching) == [2, 1, 0, 2])
+        precondition(groupCounts.map(\.changes) == [2, 2, 2, 2])
+        precondition(groupCounts.map(\.attention) == [0, 0, 0, 3])
+        precondition(groupCounts.reduce(0) { $0 + $1.matching } == total.matching
+            && groupCounts.reduce(0) { $0 + $1.changes } == total.changes
+            && groupCounts.reduce(0) { $0 + $1.attention } == total.attention,
+            "Group counts partition the automatic plan; macOS children and manual App Store never add duplicate requirements")
+        precondition(RestorePreviewHierarchy.summary(.advanced, rows: sections[3].rows).state == .attention)
+        let ordinary = domains.filter { CaptureHierarchy.group(for: $0.id) != .advanced }
+        precondition(!RestorePreviewHierarchy.sections(ordinary).contains { $0.group == .advanced })
+        precondition(RestorePreviewHierarchy.sections([]).isEmpty)
+        let descriptorOnly = domains.filter { $0.id == "vscode-workspaces" }
+        precondition(RestorePreviewHierarchy.sections(descriptorOnly).flatMap(\.rows).map(\.id) == ["vscode-workspaces"], "No implicit Git or folder dependencies")
+        let unknownItem = TaskItemPresentation(id: "future-warning", item: DisplayItem(id: "future-warning", title: "Unknown requirement", status: .unverified, action: "Inspection unavailable", reason: "inspection_unavailable"), state: .unverified)
+        let unknown = TaskDomainPresentation(id: "future-domain", title: "Future domain", symbol: "questionmark", items: [unknownItem], previewOnly: true)
+        precondition(RestorePreviewHierarchy.sections([unknown]).first?.group == .otherFindings)
+        precondition(RestorePreviewHierarchy.sections([unknown]).flatMap(\.rows).flatMap(\.items).first?.item == unknownItem.item)
+        let expandedIDs = RestorePreviewHierarchy.disclosureIDs(domains, settings: children)
+        precondition(Set(children.map(\.id)).isSubset(of: expandedIDs))
+        precondition(expandedIDs.contains(WorkspacePresentationTaxonomy.Group.vscode.id))
+        precondition(!expandedIDs.contains("app-store") && !expandedIDs.contains("macos-keyboard"))
+        precondition(WorkflowExpansion.toggled(expandedIDs, available: expandedIDs).isEmpty)
+        let prerequisites = RestorePrerequisiteSummaryPresentation(conditions: plan.readiness.conditions, ready: false)
+        precondition(prerequisites.manualConditions.map(\.code) == ["vscode_cli_required", "ssh_configuration_not_ready"])
+        print("PASS: Preview grouping preserves exact effective plan rows, actions, statuses, counts, macOS details and manual App Store scope; sparse/Advanced-only/unknown plans retain evidence")
+
+        var actionCalls = 0
+        func flush(_ host: NSView) {
+            RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.02))
+            host.layoutSubtreeIfNeeded(); host.displayIfNeeded()
+        }
+        func scrolls(_ view: NSView) -> [NSScrollView] { (view as? NSScrollView).map { [$0] } ?? view.subviews.flatMap(scrolls) }
+        func buttons(_ view: NSView) -> [NSButton] { (view as? NSButton).map { [$0] } ?? view.subviews.flatMap(buttons) }
+        for width: CGFloat in [785, 985] {
+            let state = PreviewExpansionState()
+            let height: CGFloat = width == 985 ? 1200 : 950
+            var footerFrame = CGRect.zero
+            let content = PreviewExpansionHost(state: state) { binding in AnyView(VStack(spacing: 0) {
+                WorkflowContentViewport(pinned: true) {
+                    VStack(alignment: .leading, spacing: 20) {
+                        WorkspaceHeader(title: ProductTask.restore.title, subtitle: ProductTask.restore.subtitle, symbol: ProductTask.restore.symbol)
+                        HStack { Label("sample.mbt", systemImage: "shippingbox").font(.headline); Spacer(); Button("Change…") { actionCalls += 1 } }
+                        RestorePreviewContent(title: "Needs Attention", state: .attention, domains: domains, alreadyMatches: false,
+                            prerequisites: prerequisites, areas: catalog.inventory, settingsCategories: children, itemTitles: titles,
+                            categoryExpansion: Binding(get: { !binding.wrappedValue.isEmpty }, set: { binding.wrappedValue = $0 ? expandedIDs : [] }),
+                            appStore: tasks.appStore, reviewAppStore: { actionCalls += 1 }, showsActions: false)
+                    }.padding(28)
+                }
+                Divider()
+                RestorePreviewActions(back: { actionCalls += 1 }, refresh: { actionCalls += 1 }, rebuild: { actionCalls += 1 }, canRebuild: false)
+                    .modifier(WorkspaceFooterPadding())
+                    .background(GeometryReader { proxy in Color.clear.preference(key: WorkflowAnchorFrames.self, value: ["footer": proxy.frame(in: .named("preview-grouping"))]) })
+            }.frame(width: width, height: height).background(Color(nsColor: .windowBackgroundColor))
+                .coordinateSpace(name: "preview-grouping").onPreferenceChange(WorkflowAnchorFrames.self) { footerFrame = $0["footer"] ?? .zero }) }
+            let host = NSHostingView(rootView: content)
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: height), styleMask: [.borderless], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil); flush(host)
+            let viewports = scrolls(host)
+            precondition(viewports.count == 1, "Prerequisites, manual and automatic tasks share one viewport")
+            precondition(buttons(host).allSatisfy { !($0.target is NativeSelectionCheckbox.Coordinator) }, "Preview has no selection controls")
+            let scroll = viewports[0], collapsedHeight = scroll.documentView!.frame.height, fixedFooter = footerFrame
+            func snapshot(_ name: String, fraction: CGFloat = 0) {
+                let maxOffset = max(0, scroll.documentView!.frame.height - scroll.contentView.bounds.height)
+                scroll.contentView.scroll(to: NSPoint(x: 0, y: maxOffset * fraction)); scroll.reflectScrolledClipView(scroll.contentView); flush(host)
+                precondition(footerFrame == fixedFooter, "Footer stays fixed during expansion and scrolling")
+                guard !CommandLine.arguments.contains("--no-renders") else { return }
+                let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds)!
+                host.cacheDisplay(in: host.bounds, to: bitmap)
+                try! bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: "build/Debug/RestorePreviewRefinement/Preview-\(name)-\(Int(width)).png"))
+            }
+            snapshot("collapsed")
+            snapshot("collapsed-automatic", fraction: 1)
+            // Same state transition as the existing Expand All button, followed
+            // by native layout/display (as in previewExpansionPerformanceChecks).
+            state.ids = WorkflowExpansion.toggled(state.ids, available: expandedIDs)
+            flush(host)
+            precondition(state.ids == expandedIDs && scroll.documentView!.frame.height > collapsedHeight + 500,
+                "Expanded IDs: \(state.ids); document: \(scroll.documentView!.frame.height), collapsed: \(collapsedHeight)")
+            snapshot("prerequisites-manual")
+            snapshot("ordinary", fraction: 0.27)
+            snapshot("vscode", fraction: 0.53)
+            snapshot("advanced", fraction: 1)
+            state.ids = WorkflowExpansion.toggled(state.ids, available: expandedIDs); flush(host)
+            precondition(state.ids.isEmpty)
+            precondition(abs(scroll.documentView!.frame.height - collapsedHeight) < 2)
+            precondition(actionCalls == 0, "Disclosure cannot invoke any workflow action")
+            window.close()
+        }
+        print("PASS: native Preview Expand/Collapse, zero selection controls/actions, one scroll viewport and fixed footer at 785/985pt")
+    }
+
+    @MainActor static func restoreSelectionAccordionChecks() {
+        _ = NSApplication.shared
+        let runtime = CoreRuntime(operationLogs: nil)
+        let model = RestoreModel(runtime: runtime)
+        let package = CoreRestoreInspection.Area(domain: "homebrew-packages", label: "Homebrew Packages", selectionMode: "items",
+            availability: "available", reason: nil, items: [.init(itemID: "stable-package", label: "ripgrep")])
+        let extensions = CoreRestoreInspection.Area(domain: "vscode-extensions", label: "Extensions", selectionMode: "items",
+            availability: "available", reason: nil, items: [.init(itemID: "stable-extension", label: "ms-python.python")])
+        let settings = CoreRestoreInspection.Area(domain: "vscode-settings", label: "Settings", selectionMode: "category",
+            availability: "available", reason: nil, items: [])
+        let legacy = CoreRestoreInspection(formatVersion: 1, selectedCategories: [], selectedItemCounts: [package.id: 0], secureComponent: false,
+            restoreSelection: .init(groups: [.init(id: "Homebrew", domains: [package.id])], inventory: [package]))
+        precondition(RestoreSelectionPresentation.includedAreas(legacy).isEmpty, "Explicit zero selected items must not expose legacy inventory")
+        precondition(!RestoreAreaSelectionView.hasDisclosure(settings), "No fabricated details for aggregate inspection")
+        precondition(TaskRowLayout.statusWidth == 200 && CaptureReviewPresentation.hierarchyStep == 12)
+        let checkbox = AnyView(NativeSelectionCheckbox("", isOn: .constant(true), accessibilityTitle: "Master"))
+        for width: CGFloat in [729, 929] {
+            let content = VStack(spacing: 0) {
+                CaptureGroupHeader(title: "Applications & Tools", summary: "All Selected", selection: checkbox, expanded: .constant(true))
+                RestoreAreaSelectionView(model: model, area: package, expansion: .constant(true))
+                CaptureGroupHeader(title: "VS Code", summary: "All Selected", nested: true, selection: checkbox, expanded: .constant(true))
+                RestoreAreaSelectionView(model: model, area: extensions, expansion: .constant(true), hierarchyIndent: 24)
+                RestoreAreaSelectionView(model: model, area: settings, hierarchyIndent: 24)
+            }.frame(width: width)
+            let host = NSHostingView(rootView: content)
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: host.fittingSize.height), styleMask: [.borderless], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false; window.contentView = host; host.frame = window.contentView!.bounds
+            host.layoutSubtreeIfNeeded()
+            func buttons(_ view: NSView) -> [NSButton] { (view as? NSButton).map { [$0] } ?? view.subviews.flatMap(buttons) }
+            let boxes = buttons(host).filter { $0.target is NativeSelectionCheckbox.Coordinator }
+            precondition(boxes.count == 7 && boxes.allSatisfy { $0.allowsMixedState && $0.action != nil })
+            let origins = boxes.map { $0.convert($0.bounds, to: host).minX }
+            precondition(abs(origins[1] - origins[0] - 12) < 1, "Domain checkbox must be indented 12pt: \(origins)")
+            precondition(abs(origins[3] - origins[0] - 12) < 1, "VS Code subgroup must be indented 12pt")
+            precondition(abs(origins[4] - origins[1] - 12) < 1 && abs(origins[6] - origins[4]) < 1, "VS Code child domains must align at 24pt")
+            precondition(abs(origins[5] - origins[2] - 12) < 1, "Extension items must be one level deeper than package items")
+            window.close()
+        }
+        let source = try! String(contentsOfFile: "Sources/RestoreView.swift")
+        let selection = source.components(separatedBy: "if model.state == .review {")[1].components(separatedBy: "} else if let prepared")[0]
+        precondition(selection.contains("RestoreSelectionContent(") && !selection.contains("toggleAll"))
+        let content = source.components(separatedBy: "struct RestoreSelectionContent:")[1].components(separatedBy: "struct RestorePresentationSection:")[0]
+        precondition(content.contains("CaptureGroupedContent(rows: areas") && content.contains("model.selectionAreas"))
+        precondition(content.components(separatedBy: "CaptureExpandButton(").count == 3)
+        precondition(!content.contains("advancedFooter:") && !content.contains("restore_prepare") && !content.contains("ScrollView"))
+        precondition(runtime.state == .idle && model.selection.categories.isEmpty && model.selection.items.isEmpty)
+        print("PASS: Restore Selection native checkbox hierarchy at narrow/wide widths, shared 200pt status rail, independent disclosures, one WorkflowList and aggregate settings")
+    }
+
     @MainActor static func main() async {
+        if CommandLine.arguments.contains("--status-grouping-only") { textStatusLayoutChecks(); return }
+        if CommandLine.arguments.contains("--restore-stopped-result-only") {
+            try! await restoreStoppedResultChecks(); restoreResultSummaryChecks(); return
+        }
+        if CommandLine.arguments.contains("--restore-actual-changes-only") {
+            try! await restoreActualChangesChecks(); restoreResultSummaryChecks(); resultCleanupChecks(); return
+        }
+        if CommandLine.arguments.contains("--restore-flat-categories-only") { restoreFlatCategoryChecks(); executionVisualChecks(); appStoreVisualChecks(); return }
+        if CommandLine.arguments.contains("--restore-preview-grouping-only") { restorePreviewGroupingChecks(); return }
+        if CommandLine.arguments.contains("--restore-selection-only") { restoreSelectionAccordionChecks(); return }
         topologyPreviewChecks()
         if CommandLine.arguments.contains("--topology-preview-only") { return }
         if CommandLine.arguments.contains("--preview-notices-only") { restorePreviewNoticesChecks(); return }
@@ -2649,6 +3479,7 @@ private struct WorkflowAnchorFrames: PreferenceKey {
     }
 
     @MainActor static func runChecks() {
+        restoreSelectionAccordionChecks()
         if CommandLine.arguments.contains("--workflow-descendants-only") { workflowDescendantChecks(); return }
         if CommandLine.arguments.contains("--workflow-controls-only") { workflowInteractiveControlsChecks(); operationLogChecks(); resultStatusAlignmentChecks(); screenshotsIncludedSettingsChecks(); workflowDescendantChecks(); return }
         if CommandLine.arguments.contains("--workflow-layout-only") { workflowDescendantChecks(); workflowLayoutChecks(); return }
@@ -2659,7 +3490,7 @@ private struct WorkflowAnchorFrames: PreferenceKey {
         if CommandLine.arguments.contains("--selection-preview-only") { resultCleanupChecks(); resultStatusAlignmentChecks(); return }
         if CommandLine.arguments.contains("--appstore-visual-only") { appStoreVisualChecks(); return }
         if CommandLine.arguments.contains("--restore-result-columns-only") { restoreResultColumnsChecks(); resultStatusAlignmentChecks(); resultCleanupChecks(); minimalResultSummaryChecks(); appStoreVisualChecks(); return }
-        if CommandLine.arguments.contains("--capture-checkpoint-only") { captureResultActionsChecks(); screenshotsIncludedSettingsChecks(); windowsIncludedSettingsChecks(); captureResultAlignmentChecks(); return }
+        if CommandLine.arguments.contains("--capture-checkpoint-only") { captureCompactSettingsChecks(); captureResultActionsChecks(); screenshotsIncludedSettingsChecks(); windowsIncludedSettingsChecks(); captureResultAlignmentChecks(); return }
         if CommandLine.arguments.contains("--windows-included-only") { windowsIncludedSettingsChecks(); return }
         if CommandLine.arguments.contains("--screenshots-included-only") { screenshotsIncludedSettingsChecks(); return }
         if CommandLine.arguments.contains("--capture-result-actions-only") { captureResultActionsChecks(); return }
@@ -2951,7 +3782,7 @@ private struct WorkflowAnchorFrames: PreferenceKey {
                      && aggregateSource.contains("$0.sourcePresent != false") && aggregateSource.contains("$0.captureSelected != false"))
         precondition(aggregateSource.contains("model.selectArea(area.id") && aggregateSource.contains("RestoreMacOSAreaDetails(area: area"))
         precondition(aggregateSource.contains("model.selectGroup(group") && aggregateSource.contains("Included"))
-        precondition(restoreView.contains("WorkspaceSectionHeader(title: section.id)"))
+        precondition(restoreView.contains("CaptureGroupedContent(rows: areas"))
         precondition(restoreView.contains("showsSelectionActions") && restoreView.contains("if showsSelectionActions"))
         precondition(restoreView.components(separatedBy: "Button(\"Preview Restore\"").count == 2)
         precondition(workspaceSource.contains("showsSelectionActions: false"))
@@ -3021,7 +3852,7 @@ private struct WorkflowAnchorFrames: PreferenceKey {
         precondition(RestoreRowGrid.titleInset == RestoreRowGrid.checkboxWidth + RestoreRowGrid.disclosureWidth + RestoreRowGrid.iconWidth + RestoreRowGrid.spacing * 3)
         precondition(restoreView.contains(".disclosureGroupStyle(TaskDisclosureStyle())"))
         precondition(content.contains(".frame(width: TaskRowLayout.iconWidth)") && restoreView.contains("WorkspaceCategoryIcon(symbol: symbol)"))
-        precondition(restoreView.contains("ItemDetails(items: notices).padding(.leading, RestoreRowGrid.titleInset)"))
+        precondition(restoreView.contains("ItemDetails(items: notices).padding(.leading, RestoreRowGrid.titleInset + hierarchyIndent)"))
         precondition(restoreView.contains("Secure Transfer is not available") && restoreView.contains("Read-only preview — no changes are made."))
         // Views may reference the operation type for logs, but only the model
         // constructs Execute requests and starts the Core operation.
@@ -3079,8 +3910,8 @@ private struct WorkflowAnchorFrames: PreferenceKey {
         precondition(!confirmation.contains("OperationSummaryHeader") && !confirmation.contains("scopeSummary"))
         let capturedResultEnd = captureView.range(of: "            case .failed, .cancelled:")!
         let capturedResult = String(captureView[confirmationEnd.upperBound..<capturedResultEnd.lowerBound])
-        precondition(capturedResult.contains("CaptureSavedMetrics(publication: saved") && capturedResult.contains("saved.destination"))
-        precondition(capturedResult.contains("Captured Environment") && capturedResult.contains("compactReadyItems: true"))
+        precondition(capturedResult.contains("model.resultPresentation") && capturedResult.contains("CaptureResultContent(result: result)"))
+        precondition(!capturedResult.contains("Captured Environment") && !capturedResult.contains("TaskDomainList"))
         precondition(!capturedResult.contains("OperationSummaryHeader") && !capturedResult.contains("Ready to Save"))
 
 
@@ -3092,16 +3923,16 @@ private struct WorkflowAnchorFrames: PreferenceKey {
         let groupStart = captureView.range(of: "struct CaptureMacOSSettingsView: View")!
         let groupEnd = captureView.range(of: "struct CaptureView: View")!
         let macOSGroup = String(captureView[groupStart.lowerBound..<groupEnd.lowerBound])
-        precondition(macOSGroup.contains("@CaptureViewState<Bool> private var expanded = false"))
-        precondition(macOSGroup.contains("CaptureSettingsSubcategoryView(model: model, category: category") && macOSGroup.contains(".frame(width: 28, height: 28)"))
-        precondition(macOSGroup.contains(".disclosureGroupStyle(TaskDisclosureStyle())"))
+        precondition(macOSGroup.contains("treeExpansion: Binding<Set<String>>?"))
+        precondition(macOSGroup.contains("CaptureSettingsSubcategoryView(model: model, category: category") && capturePresentation.contains(".frame(width: 28, height: 28)"))
+        precondition(!macOSGroup.contains("NativeSelectionCheckbox") && !macOSGroup.contains("selectMacOSSettings"))
         precondition(!macOSGroup.contains("CategoryRow(") && !macOSGroup.contains("Included as a whole category"))
-        precondition(macOSGroup.components(separatedBy: "DisclosureGroup(").count == 2, "Parent disclosure delegates supported category-only details to subcategory views")
+        precondition(macOSGroup.contains("CaptureSettingsSubcategoryView") && !macOSGroup.contains("DisclosureGroup("), "The shared accordion owns the macOS parent; children retain category selection and disclosure")
         precondition(CaptureChildRowGrid.leadingInset == 24 && CaptureChildRowGrid.titleInset == 20)
         precondition(content.contains(".padding(.leading, CaptureChildRowGrid.leadingInset).padding(.vertical, 8)"))
-        precondition(macOSGroup.contains(".padding(.leading, editable ? CaptureChildRowGrid.leadingInset : 0)"), "macOS areas share the selectable child checkbox column")
+        precondition(macOSGroup.contains(".padding(.leading, 16 + (editable ? CaptureChildRowGrid.leadingInset : 0))"), "macOS areas share the selectable child checkbox column")
         precondition(capturePresentation.contains("accessibilityTitle: \"Select \" + category.title"))
-        precondition(capturePresentation.contains("ForEach(settings, id:") && capturePresentation.contains("Text(setting.label)"), "Nested metadata keeps authoritative labels without setting checkboxes")
+        captureCompactSettingsChecks()
         precondition(macOSGroup.contains("Supported settings only") && capturePresentation.contains("category.row.includedSettings"))
         let metadataStart = captureView.range(of: "struct IncludedSettingsText: View")!
         let metadataView = String(captureView[metadataStart.lowerBound..<groupStart.lowerBound])
@@ -3117,10 +3948,10 @@ private struct WorkflowAnchorFrames: PreferenceKey {
         precondition(zip(narrow, labelSizes).allSatisfy { $0.size == $1 && $0.maxX <= 180 })
         precondition(SettingsFlowLayout.frames(sizes: labelSizes, width: 600) == wide, "Re-expansion restores layout without losing labels")
         print("PASS: Included settings are Core-supplied read-only labels; flow reflows by width without losing scope")
-        print("PASS: macOS Settings uses separate native checkbox/header targets and nested domain disclosures without individual setting selection")
+        print("PASS: macOS children use separate native checkbox/header targets and nested domain disclosures without individual setting selection")
         precondition(content.contains("struct WorkspaceHeader: View") && content.contains("struct InsetSidebarSurface: ViewModifier"))
-        precondition(content.contains("MacseedHomeHero()") && content.contains("WorkspaceHeader(title: task.rawValue"))
-        precondition(production.contains("WorkspaceHeader(title: task.rawValue"))
+        precondition(content.contains("MacseedHomeHero()") && content.contains("WorkspaceHeader(title: task.title"))
+        precondition(production.contains("WorkspaceHeader(title: task.title"))
         precondition(content.contains(".modifier(InsetSidebarSurface())") && production.contains(".modifier(InsetSidebarSurface())"))
         precondition(!content.contains(".systemBlue") && !production.contains(".systemBlue"))
         precondition(app.contains(".pickerStyle(.segmented)") && !app.contains(".preferredColorScheme(") && !app.contains(".onChange(of: appearanceValue)"))

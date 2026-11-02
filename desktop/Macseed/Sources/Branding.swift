@@ -55,7 +55,7 @@ struct MacseedHomeHero: View {
             MacseedAppIcon().frame(width: 112, height: 112)
             VStack(alignment: .leading, spacing: 10) {
                 Text("Macseed").font(.system(size: 40, weight: .bold))
-                Text("Capture your environment. Rebuild with confidence.").font(.title3).foregroundStyle(.secondary)
+                Text("Capture. Rebuild. Continue.").font(.title3).foregroundStyle(.secondary)
             }
         }.padding(32).frame(maxWidth: .infinity, minHeight: 210, alignment: .leading)
             .background(LinearGradient(colors: scheme == .dark
@@ -67,7 +67,7 @@ struct MacseedHomeHero: View {
 struct MacseedTaskLabel: View {
     let task: ProductTask
     var body: some View {
-        Label { Text(task.rawValue) } icon: {
+        Label { Text(task.title) } icon: {
             Image(systemName: task.symbol).foregroundStyle(WorkspaceIdentity.tint(task))
         }
     }

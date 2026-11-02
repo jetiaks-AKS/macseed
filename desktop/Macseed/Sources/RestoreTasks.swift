@@ -48,6 +48,7 @@ struct TaskItemPresentation: Identifiable {
     var auxiliaryCompletionUnreported = false
     var resultEvidenceAvailable: Bool? = nil
     var verificationEvidenceAvailable: Bool? = nil
+    var resultVerificationComplete: Bool? = nil
     var resultNotRun = false
     var previewProblem: String? = nil
     var sourceDomain: String? = nil
@@ -154,6 +155,7 @@ struct RestoreTaskPresentation {
         }
         let operations = events.filter { $0.type == "operation_record" }.compactMap(\.data) + records("operation_records")
         let verification = events.filter { $0.type == "verification_record" }.compactMap(\.data) + records("verification_records")
+        let lifecycle = events.filter { $0.type == "execution_event" }.compactMap(\.data) + records("module_outcomes")
         // Core executes sequentially. A new activity replaces the previous one;
         // finishing an operation clears activity without claiming conformity.
         var currentActivity: (domain: String, itemID: String)?
@@ -316,6 +318,9 @@ struct RestoreTaskPresentation {
                         && operation == nil && !completedActivity && activity == nil,
                     resultEvidenceAvailable: operation != nil || activity != nil || observed != nil,
                     verificationEvidenceAvailable: observed != nil,
+                    resultVerificationComplete: result == nil ? nil : entry.map {
+                        Self.hasVerifiedRequirements(entries: [$0], observations: Array(predicates.values), operations: operations)
+                    },
                     resultNotRun: result != nil && result?.outcome != .interrupted
                         && result?.structuredEvidence?["target_mutation_may_have_started"]?.boolean == false
                         && result?.structuredEvidence?["unknown_consequences"]?.boolean != true
@@ -363,10 +368,10 @@ struct RestoreTaskPresentation {
                         return !explainedCode || !explainedItemIDs.contains(linked?["item_id"]?.string ?? "")
                     }
                     let independentDiagnostic = !independentDiagnostics.isEmpty
-                    let unexplainedScope = events.contains { event in
-                        guard event.type == "execution_event", event.data?["domain"]?.string == scope,
-                              event.data?["item_id"]?.string == "scope", ["failed", "blocked", "conflict", "warning"].contains(event.data?["state"]?.string ?? "") else { return false }
-                        return !Self.scopeProblemExplained(reason: event.data?["reason"]?.string,
+                    let unexplainedScope = lifecycle.contains { record in
+                        guard record["domain"]?.string == scope,
+                              record["item_id"]?.string == "scope", ["failed", "blocked", "conflict", "warning"].contains(record["state"]?.string ?? "") else { return false }
+                        return !Self.scopeProblemExplained(reason: record["reason"]?.string,
                             hasItemProblems: !explainedItemIDs.isEmpty && (result == nil || evidence?["status"]?.string == "complete") && scopeItems.filter { !$0.auxiliaryCompletionUnreported }.allSatisfy { $0.resultGroup != nil }, independentProblem: unresolvedCoverage || unexplainedOperation || independentDiagnostic)
                     }
                     let hasProblem = unresolvedCoverage || unexplainedOperation || independentDiagnostic || unexplainedScope
@@ -663,6 +668,116 @@ extension TaskItemPresentation {
     }
 }
 
+// Result-only projection. Keep the full plan and its execution/verification
+// evidence untouched for Progress, manual App Store review and diagnostics.
+enum RestoreResultDetails {
+    static func stoppedWithoutVerification(_ result: RestoreExecutionPresentation?) -> Bool {
+        guard let result else { return false }
+        return [.stoppedBeforeMutation, .stoppedAfterMutation].contains(result.outcome)
+            && result.structuredEvidence?["unknown_consequences"]?.boolean == false
+            && result.structuredEvidence?["verification"]?.object?["status"]?.string == "not_run"
+    }
+    static func stoppedItem(_ item: TaskItemPresentation) -> TaskItemPresentation? {
+        // A stopped run did not inspect the remaining selection. Keep reported
+        // work and independent problems, not absence of evidence for every row.
+        if item.assistedAppStore != nil && item.resultEvidenceAvailable != true { return nil }
+        guard item.resultEvidenceAvailable == true || item.hasResultProblemDetails else { return nil }
+        if item.resultLabels.contains("Already Matches") && !hasChange(item) && !item.hasResultProblemDetails { return nil }
+        var visible = item
+        visible.resultVerificationComplete = false
+        return visible
+    }
+    static func wasPlanned(_ item: TaskItemPresentation) -> Bool {
+        // RestorePreviewPresentation maps the authoritative planned disposition
+        // to ready; this is the original Preview status, not execution state.
+        item.item.status == .ready && !item.auxiliaryCompletionUnreported
+    }
+    static func hasChange(_ item: TaskItemPresentation) -> Bool {
+        item.assistedAppStore == nil && !item.resultNotRun && item.resultEvidenceAvailable != false
+            && item.resultLabels.contains("Applied") && !["None", "Inspect"].contains(item.executionAction ?? "")
+    }
+    static func verified(_ item: TaskItemPresentation) -> Bool {
+        item.resultVerificationComplete != false && item.verificationEvidenceAvailable != false
+            && item.resultEvidenceAvailable != false && item.resultLabels.contains("Verified")
+            && Set(item.resultLabels).isDisjoint(with: ["Mismatch", "Unverified", "Unresolved", "Unsupported"])
+    }
+    static func unchanged(_ item: TaskItemPresentation) -> Bool {
+        !hasChange(item) && verified(item) && !item.hasResultProblemDetails && !item.resultNotRun
+            && (item.resultLabels.contains("Already Matches") || item.item.status == .matching
+                || ["None", "Inspect"].contains(item.executionAction ?? ""))
+    }
+    static func needsAttention(_ item: TaskItemPresentation) -> Bool {
+        if item.hasResultProblemDetails { return true }
+        if let app = item.assistedAppStore { return app.status != .installed }
+        // Positive final conformity is sufficient to resolve the requirement,
+        // but does not provide a mutation receipt.
+        if verified(item) && !item.resultNotRun { return false }
+        if item.auxiliaryCompletionUnreported || item.resultGroup == "Skipped" || unchanged(item) { return false }
+        // A reported restart has no independent Verification predicate. Retain
+        // that limitation without inventing a failed check or an Apply receipt.
+        if hasChange(item) { return !verified(item) && item.executionAction != "Restart Process" }
+        return true
+    }
+    static func isVisible(_ item: TaskItemPresentation) -> Bool {
+        hasChange(item) || needsAttention(item)
+            || (wasPlanned(item) && (verified(item) || item.resultGroup == "Skipped"))
+    }
+    static func group(_ item: TaskItemPresentation) -> String? {
+        needsAttention(item) ? "Needs Attention" : item.resultGroup
+    }
+    static func title(_ domain: TaskDomainPresentation) -> String {
+        if domain.resultCategoryIssue { return "Needs Attention" }
+        let statuses = Set(domain.items.flatMap { labels($0) })
+        if statuses.contains("Failed") { return "Failed" }
+        if statuses.contains("Needs Attention") { return "Needs Attention" }
+        if statuses == ["Not Run"] || domain.confirmedFinalState == .notRun { return "Not Run" }
+        if statuses.contains("Outcome Unknown") { return domain.resultTitle == "Partial" ? "Partial" : "Outcome Unknown" }
+        if statuses.contains("Unverified") || statuses.contains("Not Run") { return "Unverified" }
+        if statuses == ["Skipped"] { return "Skipped" }
+        if statuses == ["Verified"] { return "Complete" }
+        return statuses.isEmpty ? domain.resultTitle : "Partial"
+    }
+    static func labels(_ item: TaskItemPresentation, notRun: Bool = false) -> [String] {
+        if item.resultNotRun || (notRun && item.resultGroup == nil) { return ["Not Run"] }
+        if item.state == .failed || item.resultLabels.contains("Failed") { return ["Failed"] }
+        if item.assistedAppStore != nil { return ["Needs Attention"] }
+        if !Set(item.resultLabels).isDisjoint(with: ["Needs Attention", "Mismatch", "Unsupported", "Unresolved"])
+            || (item.hasResultProblemDetails && (item.previewProblem != nil || item.resultLabels.contains("Skipped"))) {
+            return ["Needs Attention"]
+        }
+        if item.resultGroup == "Skipped" && !item.hasResultProblemDetails { return ["Skipped"] }
+        if verified(item) && !item.hasResultProblemDetails { return ["Verified"] }
+        return [item.resultTitle == "Outcome Unknown" ? "Outcome Unknown" : "Unverified"]
+    }
+    static func explanation(_ item: TaskItemPresentation) -> String? {
+        if item.hasResultProblemDetails, let explanation = item.resultExplanation { return explanation }
+        if item.resultNotRun { return "This selected requirement was not run." }
+        if hasChange(item) && !verified(item) { return "The action completed, but its result was not independently verified." }
+        if needsAttention(item) { return "Completion or final verification of this requirement could not be confirmed." }
+        return nil
+    }
+    static func domains(_ domains: [TaskDomainPresentation], result: RestoreExecutionPresentation? = nil) -> [TaskDomainPresentation] {
+        let stopped = stoppedWithoutVerification(result)
+        return domains.compactMap { domain in
+            let items = (stopped ? domain.items.compactMap(stoppedItem) : domain.items).filter(isVisible)
+            guard !items.isEmpty || domain.resultCategoryIssue else { return nil }
+            return TaskDomainPresentation(id: domain.id, title: domain.title, symbol: domain.symbol, items: items,
+                activityState: domain.activityState, previewOnly: domain.previewOnly,
+                resultCategoryIssue: domain.resultCategoryIssue, resultProblemDomains: domain.resultProblemDomains,
+                resultCategoryMessage: domain.resultCategoryMessage, resultProblemMessages: domain.resultProblemMessages,
+                confirmedFinalState: domain.confirmedFinalState)
+        }
+    }
+    static func manual(_ summary: AppStoreRestorePresentation, result: RestoreExecutionPresentation? = nil) -> AppStoreRestorePresentation {
+        var seen = Set<String>()
+        let pending = summary.pending.filter {
+            (!stoppedWithoutVerification(result) || $0.resultEvidenceAvailable == true)
+                && seen.insert($0.assistedAppStore?.appID ?? $0.sourceItemID ?? $0.id).inserted
+        }
+        return AppStoreRestorePresentation(domains: [.init(id: "app-store", title: "App Store Applications", symbol: "app", items: pending)])
+    }
+}
+
 struct RestoreResultSummary {
     struct Issue: Identifiable {
         let id: String
@@ -680,6 +795,18 @@ struct RestoreResultSummary {
     let cards: [Card]
     let uncounted: Int
     var successfulCount = 0
+    var verifiedRestorationCount = 0
+    var appliedCount = 0
+    var verifiedAppliedCount = 0
+    var noChangesRequired = false
+    var appliedCaption: String {
+        if noChangesRequired { return "No changes were needed" }
+        if appliedCount == 0 { return "No confirmed changes" }
+        var parts: [String] = []
+        if verifiedAppliedCount > 0 { parts.append("\(verifiedAppliedCount) verified") }
+        if appliedCount > verifiedAppliedCount { parts.append("\(appliedCount - verifiedAppliedCount) not independently verified") }
+        return parts.joined(separator: " · ")
+    }
     var independentIssueTitles: [String] = []
     var issues: [Issue] = []
     var automaticAttentionCount: Int? = 0
@@ -725,9 +852,15 @@ struct RestoreResultSummary {
 
     // Consolidate existing row/category/findings projections; Core outcomes stay authoritative.
     init(domains: [TaskDomainPresentation], result: RestoreExecutionPresentation, appStore: AppStoreRestorePresentation?) {
-        let automatic = domains.filter { $0.id != "app-store" }
+        let stopped = RestoreResultDetails.stoppedWithoutVerification(result)
+        let automatic = (stopped ? RestoreResultDetails.domains(domains, result: result) : domains).filter { $0.id != "app-store" }
+        let appStore = stopped ? appStore.map { RestoreResultDetails.manual($0, result: result) } : appStore
         self.init(domains: automatic)
         var successful = Set<String>()
+        var verifiedRestoration = Set<String>()
+        var applied = Set<String>()
+        var verifiedChanges = Set<String>()
+        var unverifiedChanges = Set<String>()
         var represented = Set<String>()
         var representedScopes = Set<String>()
         func requirement(_ item: TaskItemPresentation, domain: String) -> String {
@@ -736,13 +869,22 @@ struct RestoreResultSummary {
         for domain in automatic {
             for item in domain.items {
                 let key = requirement(item, domain: domain.id)
+                if RestoreResultDetails.wasPlanned(item) && RestoreResultDetails.isVisible(item)
+                    && RestoreResultDetails.labels(item) == ["Verified"] {
+                    verifiedRestoration.insert(key)
+                }
+                if RestoreResultDetails.hasChange(item) {
+                    applied.insert(key)
+                    if RestoreResultDetails.verified(item) { verifiedChanges.insert(key) }
+                    else { unverifiedChanges.insert(key) }
+                }
                 if item.resultGroup == "Success" && item.resultLabels.contains("Verified") && !item.resultNotRun {
                     successful.insert(key)
                 }
-                if item.hasResultProblemDetails && represented.insert(key).inserted {
+                if RestoreResultDetails.needsAttention(item) && represented.insert(key).inserted {
                     successful.remove(key)
                     issues.append(Issue(id: key, title: item.item.title,
-                        message: item.resultExplanation ?? "This requirement could not be completed or confirmed.",
+                        message: RestoreResultDetails.explanation(item) ?? "This requirement could not be completed or confirmed.",
                         nextAction: "Review its category details, then Refresh Preview.",
                         count: ["dependency_failed", "dependency_observation_failed"].contains(item.item.reason ?? "") ? nil : 1))
                 }
@@ -758,6 +900,9 @@ struct RestoreResultSummary {
         }
         successful.subtract(represented)
         successfulCount = successful.count
+        verifiedRestorationCount = verifiedRestoration.subtracting(represented).count
+        appliedCount = applied.count
+        verifiedAppliedCount = verifiedChanges.subtracting(unverifiedChanges).count
         if let reason = RestoreExecutionPresentation.launcherFailureReason(events: result.diagnosticEvents, payload: result.structuredEvidence) {
             let message: String
             switch reason {
@@ -807,6 +952,12 @@ struct RestoreResultSummary {
         let automaticIssues = issues.filter { !$0.appStore }
         automaticAttentionCount = !unknown && automaticIssues.allSatisfy { $0.count != nil }
             ? automaticIssues.reduce(0) { $0 + ($1.count ?? 0) } : nil
+        noChangesRequired = result.outcome == .clean && appliedCount == 0 && issues.isEmpty
+            && (!automatic.isEmpty || appStore?.items.isEmpty == false)
+            && RestoreResultDetails.domains(automatic).isEmpty
+            && automatic.flatMap(\.items).allSatisfy {
+                RestoreResultDetails.unchanged($0) || $0.auxiliaryCompletionUnreported || $0.resultGroup == "Skipped"
+            }
     }
 }
 
@@ -823,10 +974,10 @@ extension TaskDomainPresentation {
     var resultChildren: [TaskDomainPresentation] {
         guard id == "macOS Settings" || id == "macos-settings" else { return [] }
         let known = CaptureMacOSSettingsGroup.domainIDs
-        let ids = known + Set(items.compactMap(\.sourceDomain)).subtracting(known).sorted()
+        let ids = known + Set(items.compactMap(\.sourceDomain)).union(resultProblemDomains).subtracting(known).sorted()
         return ids.compactMap { domain in
             let members = items.filter { $0.sourceDomain == domain }
-            guard !members.isEmpty else { return nil }
+            guard !members.isEmpty || resultProblemDomains.contains(domain) else { return nil }
             return TaskDomainPresentation(id: domain, title: CaptureCategory.title(for: domain),
                 symbol: WorkspaceCategoryStyle.symbol(domain), items: members, resultCategoryIssue: resultProblemDomains.contains(domain), resultCategoryMessage: resultProblemMessages[domain])
         }
