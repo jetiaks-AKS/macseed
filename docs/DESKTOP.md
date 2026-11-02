@@ -1042,7 +1042,8 @@ Environment Status supports legacy Bundles and validated Workspace Topology v1
 Bundles, including selected base/linked/nested checkouts, Workspace Folder structure
 and VS Code descriptor relationships. [Configuration](toolkit/CONFIGURATION.md#topology-environment-status--phase-6)
 owns the bounded comparison contract. [Roadmap](../ROADMAP.md#complete-workspace--git-worktree-restoration)
-records Phase 6 acceptance; representative real-Mac Execute/E2E remains open.
+records Phase 6 and bounded real-Mac Core E2E acceptance; native Desktop E2E with
+that selected Bundle, full SIGTERM recovery and packaged qualification remain open.
 The existing layout and [Bundle-only handoff](#bundle-handoff) are preserved.
 
 **Choose reference → Compare → Result** uses inline Domain → Items disclosures.

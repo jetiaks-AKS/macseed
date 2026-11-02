@@ -6,34 +6,37 @@ below does not reopen accepted UI or the completed D1–D4/R5 implementation aud
 
 ## Complete Workspace & Git Worktree Restoration
 
-Follow the [capability checkpoint](ROADMAP.md#complete-workspace--git-worktree-restoration);
+Follow the [capability checkpoint and accepted bounded Core E2E scope](ROADMAP.md#complete-workspace--git-worktree-restoration);
 the [current limits](docs/toolkit/CONFIGURATION.md#linked-git-worktree-capability-limits)
 separate implemented Core Capture/Restore from remaining capability and real-Mac gates.
 
-### Workspace real-world E2E qualification (next)
+### Remaining Workspace E2E qualification
 
-- [ ] Extend the accepted Capture and matching Preview gates to representative
-  real-Mac Capture → Preview → Execute → Global Verification → Status, preserving
-  tracked/staged/untracked/ignored files. Cover branch occupancy, destination
-  conflicts, observation failure, interruption, fresh-inspection re-entry and repeat/no-op.
-- [ ] Qualify Phase 5 descriptor Restore on representative real Macs, including
-  explicitly selected dependency creation, conflict preservation, relationship
-  verification, Status and repeat/no-op. No workspace content transfer or expanded
-  SSH/filter/LFS support is implied.
+- [ ] Complete native Desktop E2E with the retained selected Workspace Bundle.
+  This gate is **NOT RUN**: first establish safe native HOME/Core/journal/preferences
+  isolation, then verify the saved reference, six matching requirements, group/item
+  counts and read-only behavior. Qualify [Review in Restore](docs/DESKTOP.md#bundle-handoff)
+  separately with confirmed Missing/Different and no Apply; all-matching results
+  intentionally offer no handoff. Prior independent GUI acceptance does not close this gate.
+- [ ] Qualify full SIGTERM reconciliation/recovery and successful fresh re-entry
+  beyond the accepted fail-closed fence. Inspect retained uncertainty and reconcile
+  only with sufficient evidence before fresh Preview/Execute, Verification and no-op;
+  blocked retry is not completed recovery. No automatic journal clearing or rollback.
+
+Packaged/clean-Mac qualification remains under [distribution prerequisites](#distribution-prerequisites-and-packaged-runtime-16k--stage-17).
+These remaining gates do not authorize workspace content transfer or expanded
+SSH/filter/LFS support, and bounded Core acceptance does not close Workspace or Stage 16/17.
 
 ## Consolidated test/CI stabilization
 
-- [ ] Resolve the known [CI #124 Desktop failure](https://github.com/jetiaks-AKS/macseed/actions/runs/40832024401/job/123308547377)
-  at [CaptureTests.swift](desktop/Macseed/Tests/CaptureTests.swift):532. The current
-  assertion hard-codes `observed.count == 16`; inspect the registered capture-domain
-  contract before correcting it, preserving exact inventory/publication checks.
-  This checkpoint records test debt only; other CI #124 jobs and its final aggregate
-  result are not asserted here.
-- [ ] After Workspace qualification, reconcile stale regression/Swift expectations
-  in one scoped effort and diagnose any actual production defects separately.
-  Run affected suites and the entire Desktop gate, including suites not reached
-  after earlier failures, then record a complete consolidated hosted CI result.
-  Do not weaken assertions, skip tests or change workflows merely to obtain PASS.
+The [successful CI #127 baseline](ROADMAP.md#current-practical-execution-order)
+supersedes the earlier CI #123/#124 failure notes. The Capture event-count repair
+is already present in `a1fa2a5`; it checks exact inventory correspondence rather
+than a fixed count. Those historical failures are not current open defects.
+
+The consolidated evidence assessment is accepted; no repair task remains from
+those failures. Run additional canonical validation for identified gaps or changes,
+without weakening assertions, skipping tests or changing workflows merely to obtain PASS.
 
 ## Secure SSH Desktop (16H)
 
@@ -134,7 +137,8 @@ broader Git and macOS 27 gates below remain separate from that completed repair 
 - [ ] Qualify native installer Stop timing and detached/privileged process
   quiescence; controlled real-Mac Stop cases and the historical Firefox smoke
   test do not prove universal safety.
-- [ ] Qualify Formula, VS Code Extensions and Git re-entry. Operation-wide Stop
+- [ ] Qualify Formula and VS Code Extensions re-entry, plus Git lifecycles beyond the
+  [accepted Workspace Core cases](ROADMAP.md#complete-workspace--git-worktree-restoration). Operation-wide Stop
   admission does not qualify every native lifecycle; App Store installation is
   manual and outside Core's installer cancellation boundary.
 - [ ] Qualify application Restore's VS Code CLI absolute budgets, real owned-process

@@ -6,6 +6,7 @@
 - **Repository:** `jetiaks-AKS/macseed`
 - **Working branch:** `develop`
 - **Baseline at documentation review:** `fa464c48ef1fd42a4e7c79c7856729d516e4cdf7`
+- **Published baseline for GUI realignment:** `ed521e7`; CI #127 successful
 
 **Scope of this document:** Approved product positioning, priorities and deferrals. [Vision](VISION.md) owns enduring product principles; [Roadmap](../ROADMAP.md) owns current stage status and execution order; [TODO](../TODO.md) owns open actions. [Desktop](DESKTOP.md), [Capture / Restore](CAPTURE-RESTORE.md), [Core](core/APPLICATION-INTERFACE.md) and [Configuration](toolkit/CONFIGURATION.md) retain their implementation contracts. This dated decision record does not replace those owners.
 
@@ -29,7 +30,7 @@ Macseed must remain maintainable by a small developer project. Prefer a reliable
 2. **Rebuild Your Setup (Restore):** On either a clean or an already-used Mac, inspect a selected `.mbt`, narrow its captured requirements, show a fresh non-mutating Preview, obtain confirmation, apply only safely actionable changes and verify the supported result. Matching state must be a no-op. An unsafe or ambiguous reinstall/repair must be declined, not forced.
 3. **Compare Your Setup (Environment Status):** Compare a selected Saved Environment with the current Mac read-only. Explain confirmed matches, differences, missing items, unsupported coverage and observation uncertainty. Offer the already implemented handoff to Restore; the user must still inspect, select, preview and confirm. Reusing the *same* Saved Environment at a later date is a first-class workflow.
 
-**Current implementation boundary:** Bundle-backed Status supports the bounded Workspace Topology comparison contract. The [implemented handoff](DESKTOP.md#bundle-handoff) passes only the Bundle reference, without selecting differences or starting Prepare/Preview/Execute. Restore owns inspection, selection, Preview and confirmation; the same Bundle preserves its existing session. Status compares the complete saved reference, independently of Restore's local selection.
+**Current implementation boundary:** Bundle-backed Status supports the bounded Workspace Topology comparison contract. [Roadmap](../ROADMAP.md#complete-workspace--git-worktree-restoration) records Phase 6 and accepted bounded Core E2E evidence, with same-Bundle native GUI, full SIGTERM recovery and packaged qualification still open. The [implemented handoff](DESKTOP.md#bundle-handoff) passes only the Bundle reference, without selecting differences or starting Prepare/Preview/Execute. Restore owns inspection, selection, Preview and confirmation; the same Bundle preserves its existing session. Status compares the complete saved reference, independently of Restore's local selection.
 
 `.mbt` is a requirements/reference artifact, not an image of installed binaries, an offline installer collection or an archive of arbitrary working files. Restoring an older reference may use available current application versions and may expose macOS incompatibilities; those are coverage/compatibility outcomes, not reasons for destructive cleanup. Normal Bundle configuration is **not encrypted**. Only explicitly selected SSH identity payloads use the separate `age` encryption contract.
 
@@ -129,9 +130,7 @@ Complete representative controlled real-Mac Capture → Restore Preview → Exec
 
 ### Checkpoint 3 — Consolidated test/CI stabilization
 
-Repair known stale regression/Swift test assumptions in one scoped stabilization effort, and diagnose any actual production issues separately. CI #123 legacy item-scope assertion fixes landed in `fa464c4` after Desktop `ca45fd3`. [CI #124 Desktop](https://github.com/jetiaks-AKS/macseed/actions/runs/40832024401/job/123308547377) failed at `CaptureTests.swift:532`, whose assertion still hard-codes `16` capture events; verify the exact contract before changing it. [TODO](../TODO.md#consolidated-testci-stabilization) tracks this debt. This documentation checkpoint makes no claim about the other CI #124 jobs or final aggregate result.
-
-Run focused affected suites and **the entire Desktop gate including suites previously hidden by an earlier failure** before an intentionally consolidated hosted CI. Do not weaken assertions, silently skip tests or change CI workflow merely to obtain green status. Avoid repeated long hosted runs for small intermediate changes.
+The consolidated evidence assessment is accepted at `ed521e7` / [CI #127](https://github.com/jetiaks-AKS/macseed/actions/runs/40914838447): lint, four regression shards, Desktop and validate succeeded. Historical CI #123/#124 assertions were repaired; Capture inventory correspondence replaced the fixed event count in `a1fa2a5`. No active regression debt is established by those historical failures. Additional runs or repairs require current evidence or implementation changes; green CI does not close native/packaged qualification gates or prove future GUI behavior.
 
 ### Checkpoint 4 — Product Scope Revision / read-only impact audit
 
@@ -162,7 +161,7 @@ Possible Saved Environment history/profiles, confirmed-difference preselection f
 ## 6. Working and release discipline
 
 - **One bounded checkpoint at a time:** read/audit contracts → address the selected scope → focused tests → inspect diffs → record accepted evidence → move to next checkpoint.
-- **CI strategy:** while Phase 6 is underway, use proportional focused verification for the new behavior; defer existing unrelated CI assertion churn to Checkpoint 3. Never omit tests of newly changed functionality or interpret a failing run as release readiness.
+- **CI strategy:** use proportional focused verification for each implementation slice and canonical validation at closure. CI #127 is the published baseline, not validation of subsequent changes. Never omit changed-behavior tests or treat historical failures as active debt without evidence.
 - **Documentation truth:** [Roadmap](../ROADMAP.md) records outcomes/stage status, [TODO](../TODO.md) concrete open actions, [Desktop](DESKTOP.md) as-implemented UX and planned changes clearly separated, [Changelog](../CHANGELOG.md) only completed release-visible work. This document records product decisions and their agreed sequence; Roadmap tracks execution.
 - **Git:** work on `develop`; preserve `main`, released history and all local commits. Avoid force-push, destructive reset and unreviewed cross-cutting changes. A documentation-only local commit may be kept unpushed and later published with validated implementation to avoid unnecessary hosted CI cycles.
 - **Privacy and safety:** no implicit deletions; Bundle ordinary metadata is private but not encrypted; SSH private identity migration requires explicit consent and its separate encrypted contract. Do not weaken idempotency, failure-state honesty or conflict preservation for UI convenience.

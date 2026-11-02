@@ -89,26 +89,30 @@ qualification and recovery remain open under the [Core process contract](docs/co
 CI tuning is maintenance; [Contributing](CONTRIBUTING.md#focused-feedback-and-ci)
 owns canonical test execution and timing evidence.
 
-Documentation Checkpoint 0 records the [approved sequence](docs/PRODUCT-DIRECTION.md#5-delivery-sequence-and-gates)
-before functional work resumes. [Desktop CI integration](#desktop-ci-validation)
-is a completed milestone, not proof that the latest HEAD passes. Known test debt
-belongs to [TODO](TODO.md#consolidated-testci-stabilization). Continue in this order:
+Documentation Checkpoint 0 records the [approved sequence](docs/PRODUCT-DIRECTION.md#5-delivery-sequence-and-gates);
+the current status below supersedes its historical CI-debt notes.
+[CI #127](https://github.com/jetiaks-AKS/macseed/actions/runs/40914838447) passed at
+`ed521e7`: lint, all four Core regression shards, Desktop and `validate`.
+Earlier CI #123/#124 assertion failures are not active blockers at this baseline.
+The consolidated CI evidence assessment and revised Product Scope audit are accepted;
+Native UI Alignment is implemented and explicitly visually accepted on 2026-11-02;
+consolidated local validation and Git checkpoint approval are separate from that
+acceptance and from the published CI baseline. Continue in this order:
 
 1. **Workspace Phase 6 — topology-aware Environment Status: complete within the
    validated comparison scope.** Focused local validation and a controlled real-Mac
    Status check are accepted. Read-only Status covers supported checkout/descriptor
    relationships through shared Core facts, preserving legacy Bundles and the
    explicit Status → Restore handoff.
-   This does not close the representative real-Mac gate below.
-2. **[Workspace real-world E2E qualification](#complete-workspace--git-worktree-restoration) — next checkpoint:**
-   qualify Capture → Preview → Execute → Global Verification → Status on representative
-   real Macs, including Phase 5 descriptors, file preservation, conflicts,
-   interruption/re-entry and repeat/no-op. Do not expand the bounded capability scope.
-3. **Consolidated test/CI stabilization:** repair known stale assertions and assess
-   actual defects separately. Run affected suites and the entire Desktop gate,
-   including suites hidden by earlier failures, before consolidated hosted CI.
-   Keep unrelated assertion debt separate from Phase 6 functionality; do not skip
-   its tests or treat failing CI as release readiness.
+   This does not close native E2E with the selected Workspace Bundle below.
+2. **[Workspace real-world E2E qualification](#complete-workspace--git-worktree-restoration) — accepted in bounded Core scope:**
+   the real-Mac Core lifecycle, topology/descriptor verification, preservation,
+   repeat/no-op, controlled Stop/re-entry and SIGTERM fence are accepted.
+   Native Desktop E2E with that Bundle, full SIGTERM recovery and packaged/clean-Mac
+   qualification remain open; do not expand the bounded capability scope.
+3. **Consolidated test/CI stabilization assessment — accepted at CI #127:** no active
+   regression debt is demonstrated by the historical failures. Additional repairs
+   or runs require current evidence or changes; native qualification remains separate.
 4. **Product Scope Revision — approved:** the revised audit and matrix establish
    the [final hierarchy, defaults and compatibility decisions](docs/PRODUCT-DIRECTION.md#4-native-desktop-presentation-direction--planned-not-implemented).
 5. **Native UI Alignment — implemented and Visually Accepted:** Home, Sidebar,
@@ -159,8 +163,28 @@ four Git repositories and six Workspace Folders as Already Matches on a real Mac
 after rebuilding the current Desktop. It compares supported topology and
 selected descriptor relationships without target mutation or configuration publication,
 preserving legacy Comparison and the Bundle-only Restore handoff.
-Representative real-Mac Execute/descriptor E2E and consolidated CI qualification
-remain open; prior Capture/matching Preview acceptance does not close them.
+
+**Bounded Workspace Core E2E accepted — 2026-10-30, `ed521e7`.** Retained real-Mac
+qualification reports and disposable fixtures establish the following on Apple
+Silicon/macOS 27.2 with the development runtime:
+
+- Core Capture → Preview → Execute, **6/6 Global Verification** and **6/6 Core
+  Environment Comparison** against the same saved Bundle: base, linked and nested
+  repositories, two folders and one selected `.code-workspace` descriptor.
+  Independent Git/filesystem checks confirm topology and descriptor relationships.
+- Tracked/staged/untracked/ignored preservation, conflict safeguards and repeat/no-op.
+  Protection passes in conflict cases do not imply successful restoration.
+- Controlled Graceful Stop and safe fresh Preview/Execute re-entry, followed by
+  repeat/no-op. The **SIGTERM fail-closed interruption fence** is accepted separately:
+  retained uncertainty blocks retry before new publication; it does not establish
+  completed reconciliation or recovery.
+
+**Still open:** native Desktop E2E with this selected Bundle (**NOT RUN** because
+safe native HOME/journal isolation was not established), full SIGTERM
+reconciliation/recovery, and [packaged/clean-Mac qualification](#stage-17--distribution--clean-mac-e2e).
+Prior native Status/handoff acceptance remains valid within its independent scope;
+it does not replace the missing same-Bundle GUI gate. Workspace and Stage 16/17
+are not complete. CI #127 supplies successful hosted validation, not these real gates.
 [Configuration](docs/toolkit/CONFIGURATION.md#linked-git-worktree-capability-limits)
 owns the contracts and compatibility limits. Independent-clone fallback is forbidden.
 
