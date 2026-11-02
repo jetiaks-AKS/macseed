@@ -18,7 +18,7 @@ Macseed is a focused native macOS utility for **capturing, rebuilding, comparing
 
 Its principal value is **fresh application/tool installation, supported macOS preference restoration and reusable Saved Environments**—not the number of developer-oriented domains supported.
 
-**Tagline:** Capture. Rebuild. Continue.
+**Tagline:** A smarter way to capture, rebuild, and check your Mac setup.
 
 Macseed is not a replacement for Migration Assistant, Time Machine, a filesystem backup, a complete Mac clone or a universal third-party application configuration migrator. Avoid stale caches, logs, sessions, unqualified preferences and broad copying of application data. Do not claim that an entire machine or application health is verified merely because supported requirements matched.
 
@@ -26,9 +26,9 @@ Macseed must remain maintainable by a small developer project. Prefer a reliable
 
 ## 2. Three equally important everyday workflows
 
-1. **Save Your Setup (Capture):** Observe the supported current environment, let the user explicitly select meaningful items and categories, and save a private `.mbt` Saved Environment.
-2. **Rebuild Your Setup (Restore):** On either a clean or an already-used Mac, inspect a selected `.mbt`, narrow its captured requirements, show a fresh non-mutating Preview, obtain confirmation, apply only safely actionable changes and verify the supported result. Matching state must be a no-op. An unsafe or ambiguous reinstall/repair must be declined, not forced.
-3. **Compare Your Setup (Environment Status):** Compare a selected Saved Environment with the current Mac read-only. Explain confirmed matches, differences, missing items, unsupported coverage and observation uncertainty. Offer the already implemented handoff to Restore; the user must still inspect, select, preview and confirm. Reusing the *same* Saved Environment at a later date is a first-class workflow.
+1. **Capture:** Observe the supported current environment, let the user explicitly select meaningful items and categories, and save a private `.mbt` Saved Environment.
+2. **Rebuild (Restore):** On either a clean or an already-used Mac, inspect a selected `.mbt`, narrow its captured requirements, show a fresh non-mutating Preview, obtain confirmation, apply only safely actionable changes and verify the supported result. Matching state must be a no-op. An unsafe or ambiguous reinstall/repair must be declined, not forced.
+3. **Check (Environment Status):** Compare a selected Saved Environment with the current Mac read-only. Explain confirmed matches, differences, missing items, unsupported coverage and observation uncertainty. Offer the already implemented handoff to Restore; the user must still inspect, select, preview and confirm. Reusing the *same* Saved Environment at a later date is a first-class workflow.
 
 **Current implementation boundary:** Bundle-backed Status supports the bounded Workspace Topology comparison contract. [Roadmap](../ROADMAP.md#complete-workspace--git-worktree-restoration) records Phase 6 and accepted bounded Core E2E evidence, with same-Bundle native GUI, full SIGTERM recovery and packaged qualification still open. The [implemented handoff](DESKTOP.md#bundle-handoff) passes only the Bundle reference, without selecting differences or starting Prepare/Preview/Execute. Restore owns inspection, selection, Preview and confirmation; the same Bundle preserves its existing session. Status compares the complete saved reference, independently of Restore's local selection.
 
@@ -57,10 +57,10 @@ Macseed must remain maintainable by a small developer project. Prefer a reliable
 
 ## 4. Native Desktop presentation direction
 
-The accepted native navigation is **Home**, **Save Your Setup**, **Rebuild Your Setup**
-and **Compare Your Setup**. Home, Sidebar and workflow headers share the approved
-names/descriptions; the tagline remains **Capture. Rebuild. Continue.** Compact
-General Settings and standard About are available from native application menus,
+The accepted native navigation is **Home**, **Capture**, **Rebuild**
+and **Check**. Home, Sidebar and workflow headers share the approved
+names/descriptions; the tagline is **A smarter way to capture, rebuild, and check your Mac setup.**
+Compact General Settings and standard About are available from native application menus,
 with Settings also at the bottom of the sidebar and About in General. The
 [Desktop UI contract](DESKTOP.md#macseed-native-ui--design--interaction-contract)
 owns the implemented copy, measurements and interaction rules.

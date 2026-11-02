@@ -31,9 +31,9 @@ enum ProductTask: String, CaseIterable, Identifiable {
     var id: String { rawValue }
     var title: String {
         switch self {
-        case .capture: "Save Your Setup"
-        case .restore: "Rebuild Your Setup"
-        case .status: "Compare Your Setup"
+        case .capture: "Capture"
+        case .restore: "Rebuild"
+        case .status: "Check"
         }
     }
     var symbol: String {
@@ -45,9 +45,9 @@ enum ProductTask: String, CaseIterable, Identifiable {
     }
     var subtitle: String {
         switch self {
-        case .capture: "Save selected apps, settings, and workspace."
+        case .capture: "Capture apps, settings, and workspace."
         case .restore: "Rebuild from a saved environment."
-        case .status: "See what matches and what differs."
+        case .status: "Check a saved environment."
         }
     }
 }

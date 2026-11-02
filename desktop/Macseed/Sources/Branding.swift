@@ -55,7 +55,7 @@ struct MacseedHomeHero: View {
             MacseedAppIcon().frame(width: 112, height: 112)
             VStack(alignment: .leading, spacing: 10) {
                 Text("Macseed").font(.system(size: 40, weight: .bold))
-                Text("Capture. Rebuild. Continue.").font(.title3).foregroundStyle(.secondary)
+                Text("A smarter way to capture, rebuild, and check your Mac setup.").font(.title3).foregroundStyle(.secondary)
             }
         }.padding(32).frame(maxWidth: .infinity, minHeight: 210, alignment: .leading)
             .background(LinearGradient(colors: scheme == .dark

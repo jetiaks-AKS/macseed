@@ -81,9 +81,9 @@ The format is based on the principles of **Keep a Changelog**.
 
 ### Changed
 
-* Completed native UI alignment with consistent **Save Your Setup**, **Rebuild Your
-  Setup** and **Compare Your Setup** names/descriptions across Home, sidebar and
-  workflow headers, plus **Capture. Rebuild. Continue.** branding. Settings is
+* Completed native UI alignment with consistent **Capture**, **Rebuild** and
+  **Check** names/descriptions across Home, sidebar and workflow headers, plus
+  **A smarter way to capture, rebuild, and check your Mac setup.** branding. Settings is
   available from the sidebar and native menu; compact General and the standard
   About panel retain runtime-derived versions, project/issue links and Operation Logs.
 * Desktop Restore Selection adopts the Capture accordion within the inspected Bundle

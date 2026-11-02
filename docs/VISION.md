@@ -4,12 +4,12 @@ Macseed helps people build and maintain a supported working environment on a new
 or existing Mac with less manual setup and a result they can inspect. Fresh
 application/tool installation, supported macOS settings and **reusable Saved
 Environments** are its primary value. The product tagline is
-**Capture. Rebuild. Continue.** The engineering lifecycle is
+**A smarter way to capture, rebuild, and check your Mac setup.** The engineering lifecycle is
 **Capture → Rebuild → Verify**.
 Users choose what matters, review the changes, and see which selected
 requirements were verified and which still need attention.
 
-**Capture this Mac, Restore a Mac and Environment Status are equally important.**
+**Capture, Rebuild and Check are equally important.**
 A Saved Environment is a reusable reference for selected requirements: capture
 once, compare read-only later, then explicitly review, preview and confirm safe
 reapplication through Restore. Matching state should require no changes.
@@ -84,7 +84,7 @@ active implementation path. Direct/vendor application restoration is not current
 
 One authoritative Core serves the official CLI and the native Desktop under
 development.
-Desktop should make Capture, Restore and Environment Status approachable without
+Desktop should make Capture, Rebuild and Check approachable without
 reimplementing their behavior. Missing prerequisites should lead to clear guidance
 and a fresh check, rather than being mistaken for permanent lack of support.
 

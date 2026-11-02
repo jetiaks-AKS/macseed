@@ -3,12 +3,12 @@
 
 # Macseed
 
-**Capture. Rebuild. Continue.**
+**A smarter way to capture, rebuild, and check your Mac setup.**
 
 [English](../../README.md) | Русский
 
 Macseed объединяет Core на Bash/Python, официальный CLI и разрабатываемый
-нативный SwiftUI Desktop. Capture, Restore и Environment Status уже работают
+нативный SwiftUI Desktop. Capture, Rebuild и Check уже работают
 через общий Core; Desktop пока не готов к распространению как самостоятельное приложение.
 
 **Текущая версия Core/CLI: 3.4.0. Desktop Stage 16 — в разработке.**

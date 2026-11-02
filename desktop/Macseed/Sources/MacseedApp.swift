@@ -37,7 +37,7 @@ import SwiftUI
         let attributes: [NSAttributedString.Key: Any] = [
             .font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize),
             .foregroundColor: NSColor.labelColor, .paragraphStyle: paragraph]
-        let credits = NSMutableAttributedString(string: "Capture. Rebuild. Continue.\n\n", attributes: attributes)
+        let credits = NSMutableAttributedString(string: "A smarter way to capture, rebuild, and check your Mac setup.\n\n", attributes: attributes)
         if let coreVersion, !coreVersion.isEmpty {
             credits.append(NSAttributedString(string: "Macseed Core \(coreVersion)\n\n", attributes: attributes))
         }

@@ -434,6 +434,13 @@ private struct WorkflowAnchorFrames: PreferenceKey {
     }
 
     @MainActor static func renderHomeBranding() {
+        precondition(ProductTask.allCases.map(\.title) == ["Capture", "Rebuild", "Check"])
+        precondition(ProductTask.allCases.map(\.subtitle) == ["Capture apps, settings, and workspace.",
+            "Rebuild from a saved environment.", "Check a saved environment."])
+        let tagline = "A smarter way to capture, rebuild, and check your Mac setup."
+        for file in ["Branding.swift", "MacseedApp.swift"] {
+            precondition(try! String(contentsOfFile: "Sources/" + file).contains(tagline))
+        }
         precondition(MacseedAppIcon().leafScale == 1)
         precondition(MacseedAppIcon.systemLeafScale == 1.22)
         for scheme in [ColorScheme.light, .dark] {
@@ -605,7 +612,7 @@ private struct WorkflowAnchorFrames: PreferenceKey {
             precondition(retained.row.selectionMode == original.row.selectionMode && retained.selectable == original.selectable)
         }
 
-        // Capture adopts the taxonomy; Restore/Status retain their existing placement.
+        // Capture uses the visual taxonomy; Core group projections retain their IDs.
         let liveCapture = CaptureHierarchy.project(CaptureReviewRow.project(categories))
         precondition(liveCapture.first { $0.group == .vscode }!.rows.map(\.id) == ["vscode-extensions", "vscode-settings"])
         precondition(liveCapture.first { $0.group == .advanced }!.rows.map(\.id) == Taxonomy.Group.advanced.domains)
@@ -619,7 +626,9 @@ private struct WorkflowAnchorFrames: PreferenceKey {
         precondition(SelectionState.none.bulkActionTitle == "Select All" && SelectionState.mixed.bulkActionTitle == "Select All"
             && SelectionState.all.bulkActionTitle == "Deselect All")
         let topGroups = liveCapture.filter { $0.group != .otherFindings }.map(\.group)
-        precondition(topGroups.map(CaptureHierarchy.sectionTitle) == ["Applications & Tools", "macOS Settings", "Application Extras", "Advanced — For Experienced Users"])
+        precondition(topGroups.map(CaptureHierarchy.sectionTitle) == ["Applications & Tools", "macOS Settings", "Application Extras", "Advanced"])
+        let capturePresentation = try! String(contentsOfFile: "Sources/CapturePresentation.swift")
+        precondition(capturePresentation.contains("WorkspaceSectionHeader(title: \"For Experienced Users\")"))
         precondition(Set(topGroups.map(CaptureHierarchy.sectionID)).count == 4)
         precondition(CaptureHierarchy.sectionID(.vscode) != Taxonomy.Group.vscode.id,
             "Application Extras and its VS Code child must have independent disclosures")
@@ -684,8 +693,7 @@ private struct WorkflowAnchorFrames: PreferenceKey {
         precondition(source.contains(".padding(12)") && source.contains("tint.opacity(0.06)") && source.contains("cornerRadius: 8"))
         let status = try! String(contentsOfFile: "Sources/EnvironmentStatusView.swift")
         precondition(status.contains("WorkspaceSectionHeader(title: section.id)") && status.contains("WorkspaceMetricCard(title: outcome.title"))
-        // Capture replaces section labels with native disclosure headers; other
-        // workflows retain their existing section-header contract.
+        // Selection accordions coexist with static workflow section headings.
         for path in ["RestoreView.swift", "TaskComponents.swift"] {
             let view = try! String(contentsOfFile: "Sources/" + path)
             precondition(view.contains("WorkspaceSectionHeader(") && view.contains("WorkspaceCardSurface()"))
@@ -707,14 +715,18 @@ private struct WorkflowAnchorFrames: PreferenceKey {
         precondition(grouping.contains("members(rows)") && !grouping.contains("NativeSelectionCheckbox"))
         precondition(grouping.range(of: "members(rows)\n                    if group == .advanced, let advancedFooter { advancedFooter }") != nil,
             "Secure Transfer follows the ordered Advanced rows without a detached card or divider")
-        precondition(grouping.contains("tint: group == .advanced ? .secondary : .blue"))
+        precondition(grouping.contains("tint: group == .advanced ? advancedTint : .blue")
+            && grouping.contains("titleTint: group == .advanced ? advancedTint : .primary"))
+        precondition(grouping.contains("colorScheme == .dark ? Color(red: 0.95, green: 0.52, blue: 0.34) : Color(red: 0.72, green: 0.26, blue: 0.13)"))
         precondition(WorkspacePresentationTaxonomy.Group.advanced.domains == ["git-configuration", "git-repositories", "workspace-folders", "ssh-configuration", "shell-zsh", "vscode-workspaces"])
         let secure = capturePresentation.components(separatedBy: "struct CaptureSecureTransferView:")[1].components(separatedBy: "extension SelectionState")[0]
         precondition(secure.contains("WorkspaceCategoryTitle(") && secure.contains("Color.clear.frame(width: 28, height: 28)"))
         precondition(secure.contains("CaptureRowColumns(") && secure.contains("TaskDisclosureStyle()"))
         precondition(secure.contains("CaptureStatusText(title: \"Unavailable\"") && !secure.contains("NativeSelectionCheckbox") && !secure.contains("Divider()"))
         let header = capturePresentation.components(separatedBy: "struct CaptureGroupHeader:")[1].components(separatedBy: "struct CaptureGroupedContent<")[0]
-        precondition(header.contains("CaptureAccordionStyle()") && !header.contains("NativeSelectionCheckbox"))
+        precondition(header.contains("CaptureAccordionStyle(selection: selection,")
+            && header.contains("selectionLeadingInset: nested ? CaptureReviewPresentation.hierarchyStep : 0)")
+            && !header.contains("NativeSelectionCheckbox"))
         precondition(header.contains("var tint: Color = .blue"), "Ordinary sections and nested VS Code use the native blue accent")
         precondition(!capture.contains("var categoryExpansion: Binding<Bool>"))
         let restore = try! String(contentsOfFile: "Sources/RestoreView.swift")
@@ -3729,7 +3741,8 @@ private struct WorkflowAnchorFrames: PreferenceKey {
         precondition(countPill.contains(".padding(.horizontal, 6).frame(minWidth: 32, minHeight: 23)"))
         precondition(content.contains("Rectangle().fill(Color.primary.opacity(0.22)).frame(height: 1.5)"))
 
-        precondition(domainView.contains("WorkflowTrailingLayout(showsCounts: !Self.badgeCounts(counts).isEmpty, showsChevron: false, statusWidth: 152)"))
+        precondition(EnvironmentComparisonRowLayout.statusLabelWidth == 152)
+        precondition(domainView.contains("WorkflowTrailingLayout(showsCounts: !Self.badgeCounts(counts).isEmpty, showsChevron: false, statusWidth: EnvironmentComparisonRowLayout.statusLabelWidth)"))
         precondition(domainView.contains("title: EnvironmentComparisonView.visibleCategory(category).comparisonStatusText)"))
         precondition(!domainView.contains("warningCompanion") && !domainView.contains("warning && outcomes"))
 
@@ -3818,8 +3831,9 @@ private struct WorkflowAnchorFrames: PreferenceKey {
 
         precondition(RestoreRowIcon.symbol(for: "vscode-settings") == "slider.horizontal.3")
         precondition(aggregateSource.contains("WorkspaceCategoryTitle(id: \"macos-settings\","))
-        precondition(restoreView.contains("WorkspaceCategoryTitle(id: area.id, title: area.label, fallbackSymbol: RestoreRowIcon.symbol(for: area.id))"))
-        precondition(restoreView.contains("RestorePresentationSection.visible(model.groups, inventory: includedAreas)"))
+        precondition(restoreView.contains("WorkspaceCategoryTitle(id: area.id, title: CaptureHierarchy.title(area.id, fallback: area.label), fallbackSymbol: RestoreRowIcon.symbol(for: area.id))"))
+        precondition(restoreView.contains("RestoreSelectionPresentation.ordered(model.selectionAreas)")
+            && restoreView.contains("CaptureGroupedContent(rows: areas, expanded: treeExpansion,"))
         func luminance(_ color: NSColor) -> Double {
             let rgb = color.usingColorSpace(.sRGB)!
             func linear(_ value: CGFloat) -> Double {

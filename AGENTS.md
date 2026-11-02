@@ -39,8 +39,8 @@ Audit/review is read-only unless implementation is explicitly requested.
 
 ## Product scope and capability qualification
 
-The product tagline is **Capture. Rebuild. Continue.**; the engineering lifecycle
-remains **Capture → Rebuild → Verify**. Follow [Vision](docs/VISION.md): prefer
+The product tagline is **A smarter way to capture, rebuild, and check your Mac setup.**
+The engineering lifecycle remains **Capture → Rebuild → Verify**. Follow [Vision](docs/VISION.md): prefer
 complete, reliable end-to-end value over breadth or checklist coverage. Reconstruct
 safely reacquirable state; transfer unique portable state only under a bounded safe
 contract; exclude caches, logs, temporary/derived state and obsolete artifacts from

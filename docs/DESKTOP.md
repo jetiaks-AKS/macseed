@@ -63,8 +63,8 @@ and native lifecycle qualification remain open.
 
 ## Window and navigation
 
-Use one main window with **Home**, **Save Your Setup**, **Rebuild Your Setup** and
-**Compare Your Setup** in the sidebar. These are the user-facing names for the
+Use one main window with **Home**, **Capture**, **Rebuild** and
+**Check** in the sidebar. These are the user-facing names for the
 Capture, Restore and Environment Status workflows; operational terminology and
 internal identifiers retain their meaning. An operation detail view belongs to
 the active flow. Settings → Operation Logs opens the shared native log window;
@@ -190,15 +190,15 @@ Remaining Stage 16/17 gates retain their separately documented status.
 
 ### Home and native navigation — Visually Accepted
 
-Home retains **Macseed** and **Capture. Rebuild. Continue.** The three cards,
-sidebar destinations and workflow headers use the same `ProductTask.title` /
+Home displays **Macseed** and **A smarter way to capture, rebuild, and check your Mac setup.**
+The three cards, sidebar destinations and workflow headers use the same `ProductTask.title` /
 `subtitle` copy, including Home accessibility labels and DEBUG workflow headers:
 
 | Workflow | Display title | Introductory description |
 |---|---|---|
-| Capture | Save Your Setup | Save selected apps, settings, and workspace. |
-| Restore | Rebuild Your Setup | Rebuild from a saved environment. |
-| Environment Status | Compare Your Setup | See what matches and what differs. |
+| Capture | Capture | Capture apps, settings, and workspace. |
+| Restore | Rebuild | Rebuild from a saved environment. |
+| Environment Status | Check | Check a saved environment. |
 
 `ProductTask.rawValue` and the `All Tasks` tag remain internal navigation keys;
 they are not displayed as workflow titles. Restore Preview, Capture Again,
@@ -363,7 +363,7 @@ claim. Failed, interrupted or uncertain publication must not render success.
 `CaptureResultPresentation`, `CaptureResultOutcomes` and `CaptureResultContent`
 render it, using `CaptureBundleLocationView` and the existing fixed footer actions
 View Log, Capture Again and Done. Publication proves the saved Bundle, not
-application health or target verification. See [Save Your Setup](#capture-this-mac)
+application health or target verification. See [Capture](#capture-this-mac)
 for the publication and re-entry contract. The final current Capture Result layout
 is **Visually Accepted** within the Capture UI scope above.
 
@@ -536,7 +536,7 @@ from visual acceptance.
 
 ### Environment Status — Visually Accepted
 
-The **Compare Your Setup** workflow retains full read-only diagnostics and the
+The **Check** workflow retains full read-only diagnostics and the
 existing Match / Differences Found / Needs Attention cards. It compares the
 complete selected Bundle reference, independently of Restore defaults or selection.
 Matching requirements remain visible; there is no Issues Only filter.
@@ -638,7 +638,7 @@ new failures without reopening the accepted design merely from historical incide
 
 <a id="capture-this-mac"></a>
 
-## Save Your Setup (Capture)
+## Capture
 
 **Scan → Review / Select → Destination / fresh preparation → Confirm → Result**
 uses content states in one workspace, not mandatory wizard pages.
@@ -794,7 +794,7 @@ are independent of these local presentation actions.
 
 <a id="restore-a-mac"></a>
 
-## Rebuild Your Setup (Restore)
+## Rebuild (Restore)
 
 **Choose Bundle → Selection → Preview → Rebuild → Result**. Inspection and
 Verification occur within these states; prerequisites do not add wizard pages.
@@ -1036,7 +1036,7 @@ untouched requirements and unchecked manual apps. See the complete
 
 <a id="environment-status"></a>
 
-## Compare Your Setup (Environment Status)
+## Check (Environment Status)
 
 Environment Status supports legacy Bundles and validated Workspace Topology v1
 Bundles, including selected base/linked/nested checkouts, Workspace Folder structure

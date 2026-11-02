@@ -1,6 +1,6 @@
 # Macseed
 
-**Capture. Rebuild. Continue.**
+**A smarter way to capture, rebuild, and check your Mac setup.**
 
 Macseed captures the supported parts of a working Mac, reconstructs them on
 another Mac, and reports what matches the selected environment. It reduces
@@ -45,9 +45,9 @@ The current Core/CLI version is **3.4.0**, including Global Verification,
 Environment Comparison and the completed Protocol V1 application interface.
 Macseed Core owns the behavior shared by its clients.
 
-Native SwiftUI **Macseed Desktop** has real Capture, Restore Prepare/Execute and
-read-only Bundle-backed Environment Status/handoff. Functional Restore Result and
-Visual Unification are implemented and manually accepted. Stage 16J Operation Logs
+Native SwiftUI **Macseed Desktop** presents **Capture**, **Rebuild** (Restore
+Prepare/Execute) and **Check** (read-only Bundle-backed comparison/handoff).
+Functional Restore Result and Visual Unification are implemented and manually accepted. Stage 16J Operation Logs
 and Diagnostic Reports are complete. Operation-wide checkpoint Graceful Stop and
 separate Force Stop are implemented, with controlled real-Mac Stop checks accepted.
 Performance optimization and an opt-in private trace are implemented through

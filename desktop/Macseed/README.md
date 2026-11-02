@@ -1,7 +1,7 @@
 # Macseed Desktop development
 
 Native SwiftUI Desktop consumes Core/CLI 3.4.0 through Protocol V1. Normal Debug
-and Release run real capabilities, Capture, Restore and Environment Status.
+and Release run real capabilities through **Capture**, **Rebuild** and **Check**.
 Explicit DEBUG design-preview uses samples and launches no Core.
 [Desktop](../../docs/DESKTOP.md) owns UX, runtime and safety contracts;
 [Roadmap](../../ROADMAP.md#current-practical-execution-order) owns implementation order.
