@@ -450,22 +450,28 @@ class Inspector(discovery.Observer):
         self.remember(in_progress)
         entries = discovery.porcelain(self.run(path, 'worktree', 'list', '--porcelain', '-z'))
         origin = self.line(path, 'config', '--local', '--no-includes', '--get', 'remote.origin.url', absent=True)
-        oid = self.line(path, 'rev-parse', '--verify', 'HEAD^{commit}')
+        # Both facts belong to this fresh checkout observation. Require exactly
+        # two complete lines; retain native --verify and the usual text checks.
+        metadata = self.run(path, 'rev-parse', '--show-object-format', '--verify', 'HEAD^{commit}').split(b'\n')
+        if len(metadata) != 3 or metadata[-1] != b'':
+            raise discovery.ObservationError('ambiguous_git_observation')
+        object_format, oid = (contract.text(value.decode('utf-8')) for value in metadata[:-1])
         branch = self.line(path, 'symbolic-ref', '--quiet', 'HEAD', absent=True)
         own = [entry for entry in entries if entry['path'] == str(path)]
         if len(own) != 1 or own[0].get('HEAD') != oid or own[0].get('branch', '') != branch:
             raise discovery.ObservationError('workspace_observation_changed')
         if any(key in own[0] for key in ('locked', 'prunable', 'bare')):
             raise Conflict('workspace_topology_conflict')
-        index = self.run(path, 'ls-files', '--stage', '-z')
-        if any(row.startswith(b'160000 ') for row in index.split(b'\0')):
+        # One fresh index read supplies both modes and visibility flags. Keep
+        # submodule rejection first, including entries with unsupported flags.
+        index = self.run(path, 'ls-files', '--stage', '-v', '-z').split(b'\0')
+        if any(row[2:].startswith(b'160000 ') for row in index):
             raise contract.Unsupported('workspace_submodule_unsupported')
-        flags = self.run(path, 'ls-files', '-v', '-z')
-        if any(row and not row.startswith(b'H ') for row in flags.split(b'\0')):
+        if any(row and not row.startswith(b'H ') for row in index):
             # assume-unchanged / skip-worktree can hide tracked edits from status.
             raise contract.Unsupported('workspace_index_unsupported')
         status = self.run(path, 'status', '--porcelain=v1', '-z', '--untracked-files=no', '--ignore-submodules=none')
-        return dict(common=common, entries=entries, origin=origin, oid=oid, branch=branch,
+        return dict(common=common, entries=entries, origin=origin, oid=oid, branch=branch, object_format=object_format,
                     dirty=bool(status), protected=None, in_progress=in_progress)
 
     def desired(self, path, record, member, observed, *, creating=False):
@@ -538,6 +544,9 @@ class Inspector(discovery.Observer):
         if selected and capability['status'] == 'supported':
             self.git = contract.git_executable()
         result, completed = [], {}
+        # Literal branch syntax is independent of checkout state. Validate each
+        # name once per pass; failures and later observations must check again.
+        valid_branches = set()
         pending = set(selected)
         dependencies = {item: ({members[item][0]['base_item_id']} - {item}) |
                         {other for other in selected if other != item and contract.within(paths[item], paths[other])}
@@ -561,7 +570,10 @@ class Inspector(discovery.Observer):
                     if capability['status'] != 'supported':
                         raise contract.Unsupported('workspace_git_unsupported')
                     if member['head_kind'] == 'branch':
-                        self.run(self.home, 'check-ref-format', '--branch', row['branch'])
+                        contract.branch_metadata_valid(row['branch'])
+                        if row['branch'] not in valid_branches:
+                            self.run(self.home, 'check-ref-format', '--branch', row['branch'])
+                            valid_branches.add(row['branch'])
                     allowed = ('satisfied',) if self.comparison else ('satisfied', 'planned')
                     if any(completed[parent]['disposition'] not in allowed for parent in dependencies[item]):
                         action, disposition, reason = 'inspect', 'blocked', 'workspace_dependency_pending'
@@ -590,7 +602,7 @@ class Inspector(discovery.Observer):
                         observation = self.checkout(path)
                         if self.comparison and observation['in_progress']:
                             raise Conflict('workspace_operation_in_progress')
-                        if self.line(path, 'rev-parse', '--show-object-format') != group['object_format']:
+                        if observation['object_format'] != group['object_format']:
                             difference = 'different'
                             raise Conflict('workspace_topology_conflict')
                         expected_common = self.home / paths[base] / '.git'

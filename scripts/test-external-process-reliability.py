@@ -12,7 +12,7 @@ import tempfile
 import time
 import unittest
 from contextlib import ExitStack
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parents[1]
@@ -223,6 +223,72 @@ check_defaults_config "$TEST_CONFIG" finder >/dev/null || exit 95
             launch.assert_not_called()
         self.assertTrue((self.items / 'external-tool-active.json').exists())
 
+    def test_confirmed_clone_cleanup_runs_once_before_verification(self):
+        original = clone.ProcessTree.stop
+        stops = []
+        def stop(tree):
+            result = original(tree)
+            stops.append(result)
+            return result
+        def verify():
+            self.assertEqual(stops, [True])
+            self.assertTrue((self.items / 'external-tool-active.json').is_file())
+            return True
+        with patch.object(clone.ProcessTree, 'stop', stop), \
+             patch.object(clone, 'command', return_value=(self.script('pass'), dict(os.environ))):
+            self.assertEqual(clone.CloneExecutor().run('remote', str(self.destination), 'main', verify=verify),
+                             (0, 'none', True))
+        self.assertEqual(stops, [True])
+        self.assertFalse(clone.pending())
+
+    def test_failed_clone_cleanup_stays_unknown_after_successful_retry(self):
+        original = clone.ProcessTree.stop
+        stops = []
+        def stop(tree):
+            self.assertTrue(original(tree))
+            stops.append(True)
+            return len(stops) > 1
+        with patch.object(clone.ProcessTree, 'stop', stop):
+            self.assertEqual(self.run_clone('pass'), (129, 'git_clone_quiescence_unconfirmed', False))
+        self.assertEqual(len(stops), 2)
+        self.assertTrue(clone.pending())
+        self.assertTrue((self.items / 'external-tool-active.json').exists())
+
+    def test_confirmed_clone_tree_still_requires_pipe_eof(self):
+        with patch.object(clone, 'pipe_eof', return_value=False):
+            self.assertEqual(self.run_clone('pass'), (129, 'git_clone_quiescence_unconfirmed', False))
+        self.assertTrue(clone.pending())
+        self.assertTrue((self.items / 'external-tool-active.json').exists())
+
+    def test_sigterm_cancellation_kills_term_ignoring_descendant(self):
+        pidfile = self.root / 'worker'
+        child = ('import os,pathlib,signal,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); '
+                 f'pathlib.Path({str(pidfile)!r}).write_text(str(os.getpid())); time.sleep(20)')
+        body = ('import pathlib,subprocess,sys,time; pathlib.Path(sys.argv[1]).mkdir(); '
+                f'subprocess.Popen([sys.executable,"-B","-c",{child!r}]); time.sleep(20)')
+        executor = clone.CloneExecutor(deadline=5)
+        original = clone.ProcessTree.scan
+        sent = False
+        def scan(tree):
+            nonlocal sent
+            rows = original(tree)
+            if not sent and pidfile.exists():
+                sent = True
+                os.kill(os.getpid(), signal.SIGTERM)
+            return rows
+        handler = signal.signal(signal.SIGTERM, executor.cancel)
+        try:
+            with patch.object(clone, 'command', return_value=(self.script(body), dict(os.environ))), \
+                 patch.object(clone.ProcessTree, 'scan', scan):
+                self.assertEqual(executor.run('remote', str(self.destination), 'main'), (130, 'cancelled', True))
+        finally:
+            signal.signal(signal.SIGTERM, handler)
+        self.assertTrue(sent)
+        self.assertNotIn(int(pidfile.read_text()), item_execution.process_table())
+        self.assertFalse(clone.pending())
+        self.assertTrue(clone.pending(self.destination))
+        self.assertTrue(self.destination.is_dir())
+
     def test_write_ahead_failure_and_crash_keep_launch_or_reentry_blocked(self):
         with patch.object(clone, 'journal', side_effect=OSError('fsync denied')), \
              patch.object(clone, 'command', return_value=(self.script('pass'), dict(os.environ))):
@@ -242,6 +308,132 @@ check_defaults_config "$TEST_CONFIG" finder >/dev/null || exit 95
                                 str(ROOT / 'modules/bootstrap/workspace'), str(self.destination)], timeout=5)
         self.assertEqual(child.returncode, 17)
         self.assertTrue(clone.pending())
+
+    def test_observation_exit_read_preserves_bytes_limits_and_fresh_scans(self):
+        cases = [
+            ('short', [b'value\n', b'', b''], b'value\n', 0, 3, 100, None),
+            ('empty', [b'', b''], b'', 0, 3, 100, None),
+            ('warning', [b'value\n', b'', b''], b'value\n', 1, 3, 100, None),
+            ('more', [b'first', b'second', b'', b''], b'firstsecond', 0, 4, 100, None),
+            ('delayed', [b'first', BlockingIOError(), b'second', b'', b''],
+             b'firstsecond', 0, 4, 100, None),
+            ('exact_limit', [b'ab', b'c', b'', b''], b'abc', 0, 4, 3, None),
+            ('extra_limit', [b'ab', b'cd', b''], None, 0, 3, 3, 'external_observation_limit'),
+            ('first_limit', [b'abcd', b''], None, 0, 3, 3, 'external_observation_limit'),
+        ]
+        for name, chunks, expected, code, scans, limit, reason in cases:
+            with self.subTest(name=name), tempfile.TemporaryFile() as stream, ExitStack() as stack:
+                # Model kernel readiness deterministically; the real-process
+                # cases below independently exercise owned pipes and cleanup.
+                values = iter(chunks)
+                descriptor = stream.fileno()
+                native_read = os.read
+                def read(fd, size):
+                    if fd != descriptor:
+                        return native_read(fd, size)
+                    self.assertFalse(os.get_blocking(fd))
+                    self.assertEqual(size, 65536)
+                    value = next(values)
+                    if isinstance(value, BaseException):
+                        raise value
+                    return value
+                process = Mock(pid=2**30, stdout=stream)
+                process.poll.return_value = process.wait.return_value = process.returncode = code
+                table = Mock(return_value={})
+                stack.enter_context(patch.object(observation, 'process_table', table))
+                stack.enter_context(patch.object(item_execution, 'process_table', table))
+                launch = stack.enter_context(patch.object(observation.subprocess, 'Popen', return_value=process))
+                stack.enter_context(patch.object(observation.os, 'read', read))
+                stack.enter_context(patch.object(observation.select, 'select', return_value=([stream], [], [])))
+                stack.enter_context(patch.object(observation, 'MAX_OUTPUT', limit))
+                if reason:
+                    with self.assertRaises(observation.ObservationError) as caught:
+                        observation.read(['fixture'])
+                    self.assertEqual(caught.exception.reason, reason)
+                    self.assertTrue(caught.exception.quiescent)
+                else:
+                    result = observation.read(['fixture'])
+                    self.assertEqual((result.stdout, result.returncode), (expected, code))
+                self.assertEqual(table.call_count, scans)  # admission, initial, fresh completion(s)
+                launch.assert_called_once()
+                self.assertEqual(list(values), [])
+                self.assertFalse((self.items / 'external-tool-active.json').exists())
+
+    def test_observation_completion_failure_retains_unknown_and_final_eof(self):
+        for failure in ('admission', 'initial', 'completion', 'eof'):
+            with self.subTest(failure=failure), ExitStack() as stack:
+                marker = self.items / 'external-tool-active.json'
+                if marker.exists():
+                    marker.unlink()  # Reset only this fixture's previous failure.
+                if failure == 'admission':
+                    stack.enter_context(patch.object(observation, 'process_table', side_effect=OSError('unavailable')))
+                    launch = stack.enter_context(patch.object(observation.subprocess, 'Popen'))
+                elif failure in ('initial', 'completion'):
+                    original = item_execution.process_table
+                    calls = 0
+                    def table():
+                        nonlocal calls
+                        calls += 1
+                        if failure == 'initial' or calls >= 2:
+                            raise OSError('unavailable')
+                        return original()
+                    stack.enter_context(patch.object(item_execution, 'process_table', table))
+                else:
+                    stack.enter_context(patch.object(observation, 'pipe_eof', return_value=False))
+                with self.assertRaises(observation.ObservationError) as caught:
+                    observation.read(self.script('print("complete")'), timeout=2)
+                if failure == 'admission':
+                    launch.assert_not_called()
+                    self.assertEqual(caught.exception.reason, 'external_observation_process')
+                    self.assertTrue(caught.exception.quiescent)
+                    self.assertFalse(marker.exists())
+                else:
+                    self.assertEqual(caught.exception.reason, 'external_observation_unquiescent')
+                    self.assertFalse(caught.exception.quiescent)
+                    self.assertEqual(json.loads(marker.read_text())['state'], 'unknown_consequences')
+
+    def test_observation_root_exit_and_sigterm_clean_term_ignoring_pipe_worker(self):
+        before = self.snapshot()
+        for cancel in (False, True):
+            with self.subTest(cancel=cancel):
+                pidfile = self.root / ('observer-worker-' + str(cancel))
+                child = ('import os,pathlib,signal,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); '
+                         f'pathlib.Path({str(pidfile)!r}).write_text(str(os.getpid())); time.sleep(20)')
+                body = ('import subprocess,sys,time; '
+                        f'subprocess.Popen([sys.executable,"-B","-c",{child!r}]); '
+                        f'print("partial",flush=True); time.sleep({20 if cancel else .3})')
+                original = observation.ProcessTree.scan
+                roots, sent = set(), False
+                def scan(tree):
+                    nonlocal sent
+                    initial = not tree.initialized
+                    roots.add(tree.root)
+                    rows = original(tree)
+                    if cancel and not initial and not sent and pidfile.exists():
+                        self.assertIn(int(pidfile.read_text()), tree.known)
+                        sent = True
+                        os.kill(os.getpid(), signal.SIGTERM)
+                    return rows
+                handler = signal.signal(signal.SIGTERM, lambda *_: sys.exit(130))
+                try:
+                    with patch.object(observation.ProcessTree, 'scan', scan):
+                        if cancel:
+                            with self.assertRaises(SystemExit) as caught:
+                                observation.read(self.script(body), timeout=3)
+                            self.assertEqual(caught.exception.code, 130)
+                        else:
+                            with self.assertRaises(observation.ObservationError) as caught:
+                                observation.read(self.script(body), timeout=3)
+                            self.assertEqual(caught.exception.reason, 'external_observation_worker')
+                            self.assertTrue(caught.exception.quiescent)
+                finally:
+                    signal.signal(signal.SIGTERM, handler)
+                self.assertEqual(sent, cancel)
+                table = item_execution.process_table()
+                self.assertTrue(roots.isdisjoint(table))
+                self.assertNotIn(int(pidfile.read_text()), table)
+                self.assertFalse((self.items / 'external-tool-active.json').exists())
+                self.assertEqual(before, self.snapshot())
 
     def test_observation_deadline_pipe_worker_and_no_home_writes(self):
         before = self.snapshot()

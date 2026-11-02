@@ -940,6 +940,53 @@ Invalid/unwritable output or unavailable helper
 disables diagnostics without changing operation outcomes. No trace enters Protocol
 V1, operation JSONL or Diagnostic Report. This trace is not restoration evidence.
 
+### Workspace and Git observation efficiency
+
+Workspace reduces duplicate work inside fresh observations and confirmed process
+completion, without sharing repository observations across mutation boundaries:
+
+- One `ls-files --stage -v -z` read supplies index modes/stages and visibility
+  flags. Gitlinks, assume-unchanged, skip-worktree and abnormal index states remain
+  unsupported; native failures still fail observation.
+- One `rev-parse --show-object-format --verify HEAD^{commit}` read supplies HEAD
+  and object format. Exactly two complete fields are required, and the existing
+  worktree/HEAD and expected-format comparisons remain.
+- Successful literal branch-name syntax checks are shared only within one
+  `Inspector.plan()` pass. Failures are not retained, and both independent passes
+  in every `inspect()` validate names afresh.
+- Clone cleanup omits a repeated stop scan only after confirmed empty-tree
+  cleanup. Uncertain cleanup is retried without clearing the earlier failure;
+  root reaping and pipe EOF remain required before verification.
+- On first root exit, `observation.read()` attempts one additional bounded,
+  nonblocking stdout read. Already available EOF can share the existing fresh
+  completion scan. Additional data retains the output limit; EAGAIN preserves
+  the exit scan and subsequent EOF verification.
+
+Pre-launch admission, initial process observation, PID/birth identity and descendant
+tracking, Stop, deadlines, unknown-consequences fences, input fingerprints, final
+pre-mutation inspection, post-operation checks and Global Verification remain.
+Prepared private observation fingerprints can change with the command sequence;
+old evidence requires fresh preparation, not compatibility reuse.
+
+Local qualification on 2026-11-02 used disposable repositories and isolated HOME.
+Each row below has its own baseline; these measurements are **not additive**:
+
+| Change and fixture | Calls before → after | Wall time before → after |
+| --- | --- | --- |
+| Combined index read; four existing checkouts and folder Execute + Verification | Supervised Git reads: 472 → 440 | 75.960 → 70.110 s |
+| Combined HEAD/format read; same fixture shape | Supervised Git reads: 440 → 408 | 68.025 → 65.139 s |
+| Branch syntax reuse; local clone/folder Execute + Verification | Supervised Git commands: 738 → 722 | 114.832 → 117.406 s |
+| Available-EOF completion; 20 identical short local Git reads per version | Process-table calls: 80 → 60 | 3.561 → 2.723 s |
+
+The first two timings are means of two runs per version; the branch row is one
+pair, and the EOF row alternates batches of five reads. Branch syntax reuse and
+confirmed clone-cleanup scan removal did not establish an overall topology
+wall-time improvement. Targeted fixtures retained matching results and preservation
+evidence and covered observation failure, delayed EOF, limits and cancellation.
+No combined five-change full Restore or new real-Mac Restore was measured; these
+results do not establish a full-Restore speedup or new native lifecycle qualification.
+Fresh whole-scope Git observations remain a significant cost.
+
 ## Verification and Environment Status
 
 Each structured Restore Preview, read-only readiness invocation and Global

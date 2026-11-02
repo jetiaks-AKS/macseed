@@ -81,6 +81,12 @@ The format is based on the principles of **Keep a Changelog**.
 
 ### Changed
 
+* Workspace Git inspection combines index and HEAD/object-format reads and shares
+  successful branch syntax checks within each independent pass. Supervised Git
+  completion avoids redundant scans after confirmed cleanup or already available
+  stdout EOF, retaining freshness, data preservation, Stop and Verification.
+  [Disposable-fixture measurements](docs/core/APPLICATION-INTERFACE.md#workspace-and-git-observation-efficiency)
+  do not establish a full-Restore speedup.
 * Completed native UI alignment with consistent **Capture**, **Rebuild** and
   **Check** names/descriptions across Home, sidebar and workflow headers, plus
   **A smarter way to capture, rebuild, and check your Mac setup.** branding. Settings is

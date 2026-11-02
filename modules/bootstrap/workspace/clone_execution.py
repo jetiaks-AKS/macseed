@@ -357,7 +357,10 @@ class CloneExecutor:
         finally:
             if process is not None:
                 try:
-                    if tree is not None:
+                    # A successful stop already confirmed that the owned tree
+                    # is empty. Retry uncertain cleanup, retaining its failure;
+                    # root reaping and pipe EOF are still required below.
+                    if tree is not None and not safe:
                         safe = tree.stop() and safe
                     if process.poll() is None:
                         os.killpg(process.pid, signal.SIGKILL)

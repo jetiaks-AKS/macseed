@@ -3935,6 +3935,213 @@ class TopologyPreviewTests(unittest.TestCase):
         row = self.git_rows(self.preview())[0]
         self.assertEqual((row['disposition'], row['reason']), ('blocked', 'workspace_index_unsupported'))
 
+    def test_native_index_modes_and_flags_remain_fail_closed(self):
+        import struct
+        sys.path.insert(0, str(ROOT / 'modules/bootstrap/workspace'))
+        sys.path.insert(0, str(ROOT / 'modules/core/application-interface'))
+        import topology_preview as preview
+        from observation import read
+
+        index = self.base / '.git/index'
+        original = index.read_bytes()
+        tracked = self.base / 'tracked.txt'
+        with patch.dict(os.environ, self.environment, clear=True):
+            for mode, flags, extended, dirty, reason in (
+                    (0o100644, 0, 0, False, None),
+                    (0o100644, 0, 0, True, None),
+                    (0o100644, 0x8000, 0, True, 'workspace_index_unsupported'),
+                    (0o100644, 0x4000, 0x4000, True, 'workspace_index_unsupported'),
+                    (0o100644, 0x1000, 0, False, 'workspace_index_unsupported'),
+                    (0o160000, 0, 0, False, 'workspace_submodule_unsupported'),
+                    (0o160000, 0x8000, 0, False, 'workspace_submodule_unsupported'),
+                    (0o160000, 0x4000, 0x4000, False, 'workspace_submodule_unsupported')):
+                with self.subTest(mode=mode, flags=flags, dirty=dirty):
+                    tracked.write_bytes(b'tracked\n')
+                    self.fixture.write_index(index.parent, original[52:72].hex(), tracked.stat())
+                    fields = bytearray(index.read_bytes()[12:72])
+                    fields[24:28] = struct.pack('>I', mode)
+                    entry = bytes(fields) + struct.pack('>H', flags | len(b'tracked.txt'))
+                    if extended:
+                        entry += struct.pack('>H', extended)
+                    entry += b'tracked.txt\0'
+                    entry += b'\0' * (-len(entry) % 8)
+                    data = b'DIRC' + struct.pack('>II', 3 if extended else 2, 1) + entry
+                    index.write_bytes(data + hashlib.sha1(data).digest())
+                    if dirty:
+                        tracked.write_bytes(b'changed content\n')
+                    observer = preview.Inspector(self.home, read, time.monotonic() + 120)
+                    observer.git = self.git
+                    if reason:
+                        with self.assertRaisesRegex(preview.contract.Unsupported, '^' + reason + '$'):
+                            observer.checkout(self.base)
+                    else:
+                        self.assertEqual(observer.checkout(self.base)['dirty'], dirty)
+
+    def test_index_change_between_observations_remains_unverified(self):
+        sys.path.insert(0, str(ROOT / 'modules/bootstrap/workspace'))
+        sys.path.insert(0, str(ROOT / 'modules/core/application-interface'))
+        import topology_preview as preview
+        from observation import read
+        from restore_selection import staged_files
+
+        stage = self.root / 'inspection-stage'
+        stage.mkdir(mode=0o700)
+        bundle.unpack(self.archive, stage, str(self.home), workspace_preview=True)
+        files = staged_files(stage)
+        original = preview.Inspector.plan
+        calls = 0
+        def change_after_first(observer, inputs):
+            nonlocal calls
+            result = original(observer, inputs)
+            calls += 1
+            if calls == 1:
+                self.assertTrue(all(row['disposition'] == 'satisfied' for row in result))
+                index = self.base / '.git/index'
+                data = bytearray(index.read_bytes())
+                data[72] |= 0x80
+                data[-20:] = hashlib.sha1(data[:-20]).digest()
+                index.write_bytes(data)
+            return result
+        with patch.dict(os.environ, self.environment, clear=True), \
+                patch.object(preview.Inspector, 'plan', change_after_first):
+            result = preview.inspect(files, self.home, read)
+        self.assertEqual(calls, 2)
+        self.assertTrue(all((row['disposition'], row['reason']) ==
+                            ('unknown', 'workspace_observation_changed') for row in result['plan']))
+        self.assertFalse((self.root / 'mutations').exists())
+
+    def test_branch_syntax_success_is_shared_only_within_one_plan(self):
+        sys.path.insert(0, str(ROOT / 'modules/bootstrap/workspace'))
+        sys.path.insert(0, str(ROOT / 'modules/core/application-interface'))
+        import topology_preview as preview
+        from observation import ObservationError
+        from restore_selection import staged_files
+
+        self.fixture.repository(self.home, 'Projects/fourth')
+        self.paths.append('Projects/fourth'); self.branches.append('main'); self.parents.append(3)
+        self.configure()
+        stage = self.root / 'branch-stage'
+        stage.mkdir(mode=0o700)
+        bundle.unpack(self.archive, stage, str(self.home), workspace_preview=True)
+        files = staged_files(stage)
+        calls = []
+        reject = False
+        failure = None
+        def reader(command, timeout, *, env):
+            if command[-3:-1] == ['check-ref-format', '--branch']:
+                calls.append(command[-1])
+                if command[-1] == 'main':
+                    if failure is not None:
+                        raise failure
+                    if reject:
+                        return subprocess.CompletedProcess(command, 1, b'')
+            return subprocess.run(command, timeout=timeout, env=env, capture_output=True)
+
+        before = bundle.fingerprint(self.home)
+        with patch.dict(os.environ, self.environment, clear=True):
+            result = preview.inspect(files, self.home, reader)
+            self.assertTrue(all(row['disposition'] == 'satisfied' for row in result['plan']))
+            # Both independent observations validate every distinct name.
+            self.assertEqual(sorted(calls), ['feature', 'feature', 'main', 'main'])
+            calls.clear()
+            observer = preview.Inspector(self.home, reader, time.monotonic() + 120)
+            self.assertEqual(observer.plan(files), result['plan'])
+            reject = True
+            rows = observer.plan(files)
+            # Re-entering even the same Inspector performs fresh validation;
+            # a failure also cannot suppress the next item's native check.
+            self.assertEqual(calls.count('main'), 3)
+            self.assertEqual(calls.count('feature'), 2)
+            for row in rows:
+                if row.get('checkout_id') in (self.ids[0], self.ids[3]):
+                    self.assertEqual((row['disposition'], row['reason']),
+                                     ('unknown', 'workspace_observation_failed'))
+            failure = ObservationError('external_observation_unquiescent', False)
+            with self.assertRaises(ObservationError) as caught:
+                preview.inspect(files, self.home, reader)
+            self.assertIs(caught.exception, failure)
+        self.assertEqual(bundle.fingerprint(self.home), before)
+        self.assertFalse((self.root / 'mutations').exists())
+
+    def test_checkout_revision_metadata_is_fresh(self):
+        sys.path.insert(0, str(ROOT / 'modules/bootstrap/workspace'))
+        sys.path.insert(0, str(ROOT / 'modules/core/application-interface'))
+        import topology_preview as preview
+        from observation import read
+        from restore_selection import staged_files
+
+        with patch.dict(os.environ, self.environment, clear=True):
+            observer = preview.Inspector(self.home, read, time.monotonic() + 120)
+            observer.git = self.git
+            for path in self.paths:
+                state = observer.checkout(self.home / path)
+                self.assertEqual((state['object_format'], state['oid']), ('sha1', self.oid))
+            # Re-enter the same Inspector after a native ref changes: no reuse.
+            gitdir = self.base / '.git'
+            tree = self.fixture.object_file(gitdir, 'tree', b'')
+            changed = self.fixture.object_file(gitdir, 'commit', (
+                f'tree {tree}\nauthor Fixture <test@example.invalid> 2 +0000\n'
+                'committer Fixture <test@example.invalid> 2 +0000\n\nchanged\n').encode())
+            (gitdir / 'refs/heads/main').write_text(changed + '\n')
+            self.assertEqual(observer.checkout(self.base)['oid'], changed)
+            (gitdir / 'refs/heads/main').write_text(self.oid + '\n')
+            stage = self.root / 'revision-stage'
+            stage.mkdir(mode=0o700)
+            bundle.unpack(self.archive, stage, str(self.home), workspace_preview=True)
+            files = staged_files(stage)
+            original = preview.Inspector.plan
+            calls = 0
+            def change_after_first(current, inputs):
+                nonlocal calls
+                result = original(current, inputs)
+                calls += 1
+                if calls == 1:
+                    self.assertTrue(all(row['disposition'] == 'satisfied' for row in result))
+                    (gitdir / 'refs/heads/main').write_text(changed + '\n')
+                return result
+            with patch.object(preview.Inspector, 'plan', change_after_first):
+                result = preview.inspect(files, self.home, read)
+            self.assertEqual(calls, 2)
+            self.assertTrue(all((row['disposition'], row['reason']) ==
+                                ('unknown', 'workspace_observation_changed') for row in result['plan']))
+        self.assertFalse((self.root / 'mutations').exists())
+
+    def test_checkout_revision_metadata_rejects_incomplete_or_failed_reads(self):
+        sys.path.insert(0, str(ROOT / 'modules/bootstrap/workspace'))
+        sys.path.insert(0, str(ROOT / 'modules/core/application-interface'))
+        import topology_preview as preview
+        from observation import read, ObservationError
+        from restore_selection import staged_files
+
+        valid = b'sha1\n' + self.oid.encode() + b'\n'
+        values = [(0, b''), (0, b'sha1\n'), (0, valid[:-1]), (0, valid + b'extra\n'),
+                  (0, b'\n' + self.oid.encode() + b'\n'), (0, valid.replace(b'sha1', b'sha1\0')),
+                  (0, valid.replace(b'sha1', b'\xff')), (1, valid)]
+        with patch.dict(os.environ, self.environment, clear=True):
+            for code, output in values:
+                with self.subTest(code=code, output=output):
+                    def reader(command, *args, **kwargs):
+                        if command[-4:] == ['rev-parse', '--show-object-format', '--verify', 'HEAD^{commit}']:
+                            return subprocess.CompletedProcess(command, code, output)
+                        return read(command, *args, **kwargs)
+                    observer = preview.Inspector(self.home, reader, time.monotonic() + 120)
+                    observer.git = self.git
+                    with self.assertRaises(ValueError):
+                        observer.checkout(self.base)
+            # An unquiescent metadata read must escape plan projection unchanged.
+            failure = ObservationError('external_observation_unquiescent', False)
+            def unquiescent(command, *args, **kwargs):
+                if command[-4:] == ['rev-parse', '--show-object-format', '--verify', 'HEAD^{commit}']:
+                    raise failure
+                return read(command, *args, **kwargs)
+            stage = self.root / 'failed-revision-stage'
+            stage.mkdir(mode=0o700)
+            bundle.unpack(self.archive, stage, str(self.home), workspace_preview=True)
+            with self.assertRaises(ObservationError) as caught:
+                preview.inspect(staged_files(stage), self.home, unquiescent)
+            self.assertIs(caught.exception, failure)
+        self.assertFalse((self.root / 'mutations').exists())
+
     def test_file_open_races_are_bounded_and_never_read_replacements(self):
         # The alarm bounds the regression itself; subprocess.run kills/reaps the
         # isolated child on its independent five-second deadline as a backstop.

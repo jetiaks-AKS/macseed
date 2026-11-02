@@ -96,6 +96,19 @@ def read(command, timeout=LOCAL_SECONDS, *, env=None, cwd=None, progress=None, m
             else:
                 time.sleep(.05)
             if process.poll() is not None:
+                # A short command may have left both output and EOF ready. One
+                # nonblocking read lets the fresh exit scan cover EOF as well.
+                if not root_exited and not eof:
+                    try:
+                        chunk = os.read(process.stdout.fileno(), 65536)
+                    except BlockingIOError:
+                        pass
+                    else:
+                        data.extend(chunk)
+                        eof = not chunk
+                        if len(data) > MAX_OUTPUT:
+                            reason = 'external_observation_limit'
+                            break
                 # Scan once on exit and again at EOF if it arrives later. The
                 # constructor already scanned; do not repeat it immediately.
                 if (not root_exited or eof) and tree.scan():
