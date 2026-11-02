@@ -329,7 +329,7 @@ struct WorkspaceActionCard: View {
     }
     private var description: some View {
         Text(task.subtitle).font(.callout).foregroundStyle(.secondary)
-            .fixedSize(horizontal: false, vertical: true).frame(maxWidth: .infinity, alignment: .leading)
+            .fixedSize(horizontal: false, vertical: true).frame(maxWidth: .infinity, alignment: .center)
     }
     private var affordance: some View {
         Image(systemName: "chevron.right").font(.caption.weight(.medium)).foregroundStyle(.blue)
