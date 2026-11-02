@@ -1690,37 +1690,49 @@ private struct WorkflowAnchorFrames: PreferenceKey {
 
     @MainActor static func resultStatusAlignmentChecks() {
         _ = NSApplication.shared; NSApp.appearance = NSAppearance(named: .aqua)
-        func origin<V: View>(_ view: V, width: CGFloat) -> Int {
+        func origin<V: View>(_ view: V, width: CGFloat, status: TaskRowState = .completed) -> Int {
+            // Result rows can represent verified work or outstanding manual work.
+            // Match the expected status tint after the renderer's color conversion.
+            let swatch = NSBitmapImageRep(cgImage: ImageRenderer(content: status.tone.color.frame(width: 8, height: 8)).cgImage!)
+            let expected = swatch.colorAt(x: 4, y: 4)!.usingColorSpace(.sRGB)!
             let bitmap = NSBitmapImageRep(cgImage: ImageRenderer(content: view.frame(width: width).environment(\.restoreTrailingSamples, references)).cgImage!)
             for x in 0..<bitmap.pixelsWide {
                 for y in 0..<bitmap.pixelsHigh {
                     guard let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.sRGB), color.alphaComponent > 0.9 else { continue }
-                    if color.greenComponent > 0.2 && color.greenComponent > color.redComponent * 1.3 && color.greenComponent > color.blueComponent * 1.2 { return x }
+                    if abs(color.redComponent - expected.redComponent) <= 2 / 255
+                        && abs(color.greenComponent - expected.greenComponent) <= 2 / 255
+                        && abs(color.blueComponent - expected.blueComponent) <= 2 / 255 { return x }
                 }
             }
-            preconditionFailure("Expected a green status")
+            preconditionFailure("Expected \(status.rawValue) status at \(width) pt")
         }
         let item = TaskItemPresentation(id: "row", item: DisplayItem(id: "row", title: "Item", status: .ready, action: ""),
             state: .completed, resultLabels: ["Verified"])
         let domain = TaskDomainPresentation(id: "fixture", title: "Category", symbol: "folder", items: [item])
-        let app = TaskItemPresentation(id: "app", item: item.item, state: .matching,
-            assistedAppStore: AssistedAppStoreItem(appID: "425264550", status: .installed))
-        let summary = AppStoreRestorePresentation(domains: [.init(id: "app-store", title: "Apps", symbol: "app", items: [app])])
+        let missingApp = TaskItemPresentation(id: "425264550", item: DisplayItem(id: "425264550", title: "App Store App",
+            status: .missing, action: "Install manually from the App Store."), state: .attention,
+            assistedAppStore: AssistedAppStoreItem(appID: "425264550", status: .missing))
+        let summary = AppStoreRestorePresentation(domains: [.init(id: "app-store", title: "Apps", symbol: "app", items: [missingApp])])
+        precondition(summary.pending.count == 1 && summary.attentionCount == 1 && summary.categoryState == .attention)
         let references = RestoreTrailingSample.result([domain], appStore: summary)
+        // Preview still includes already-installed requirements; Result does not.
+        let installedApp = TaskItemPresentation(id: "app", item: item.item, state: .matching,
+            assistedAppStore: AssistedAppStoreItem(appID: "425264550", status: .installed))
+        let previewSummary = AppStoreRestorePresentation(domains: [.init(id: "app-store", title: "Apps", symbol: "app", items: [installedApp])])
         for width: CGFloat in [420, 785, 985] {
             let positions = [
                 origin(RestoreFinalDomain(domain: domain), width: width),
                 origin(RestoreFinalDomain(domain: domain, depth: 1).padding(.horizontal, 16), width: width),
                 origin(RestoreResultItemRow(item: item, notRun: false, depth: 0).padding(.horizontal, 16), width: width),
                 origin(RestoreResultItemRow(item: item, notRun: false, depth: 1).padding(.horizontal, 16), width: width),
-                origin(AppStoreRestoreResultRow(summary: summary, review: {}, expansion: .constant(false)), width: width)]
+                origin(AppStoreRestoreResultRow(summary: summary, review: {}, expansion: .constant(false)), width: width, status: .attention)]
             precondition(positions.max()! - positions.min()! <= 3, "Category/nested/item/App Store status origins: \(positions)")
-            let previewDomain = TaskDomainPresentation(id: "homebrew-casks", title: "Homebrew Applications", symbol: "app", items: [app])
+            let previewDomain = TaskDomainPresentation(id: "homebrew-casks", title: "Homebrew Applications", symbol: "app", items: [installedApp])
             // Exercise the actual shared Preview list: its environment supplies
             // identical status/count measurements to manual and automatic rows.
             let preview = TaskDomainList(domains: [previewDomain],
-                leadingContent: AnyView(AppStoreRestoreCard(summary: summary, review: {})), restoreSettingsPreview: true)
-                .environment(\.restoreTrailingSamples, [RestoreTrailingSample(title: summary.categoryStatus, disclosure: false)])
+                leadingContent: AnyView(AppStoreRestoreCard(summary: previewSummary, review: {})), restoreSettingsPreview: true)
+                .environment(\.restoreTrailingSamples, [RestoreTrailingSample(title: previewSummary.categoryStatus, disclosure: false)])
             let bitmap = NSBitmapImageRep(cgImage: ImageRenderer(content: preview.frame(width: width)).cgImage!)
             var origins: [Int] = []
             var lastY = -100
