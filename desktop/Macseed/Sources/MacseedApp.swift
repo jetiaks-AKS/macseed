@@ -121,7 +121,7 @@ struct FoundationSettingsView: View {
         let alert = NSAlert()
         alert.messageText = "Stop the operation and quit?"
         if runtime.operation == .restorePrepare || runtime.operation == .bundleInspect {
-            alert.informativeText = "The read-only inspection will stop. Prepare a fresh Restore Preview before rebuilding."
+            alert.informativeText = "The read-only inspection will stop. Prepare a fresh Rebuild Preview before rebuilding."
         } else if runtime.operation == .capturePrepare {
             alert.informativeText = "The scan will stop. Scan this Mac again before another attempt."
         } else if runtime.operation == .captureExecute {
@@ -149,7 +149,7 @@ struct RestoreScenarioCommands: Commands {
     @ObservedObject private var runtime = CoreRuntime.shared
     var body: some Commands {
         CommandMenu("Debug") {
-            Picker("Restore Scenario", selection: $scenarios.selected) {
+            Picker("Rebuild Scenario", selection: $scenarios.selected) {
                 ForEach(RestoreDebugScenario.allCases) { Text($0.rawValue).tag($0) }
             }.disabled(runtime.isActive)
         }

@@ -201,8 +201,10 @@ The three cards, sidebar destinations and workflow headers use the same `Product
 | Environment Status | Check | Check a saved environment. |
 
 `ProductTask.rawValue` and the `All Tasks` tag remain internal navigation keys;
-they are not displayed as workflow titles. Restore Preview, Capture Again,
-Review in Restore, Verification and other action/state labels remain distinct.
+they are not displayed as workflow titles. Rebuild Preview, Capture Again,
+Review in Rebuild, Verification and other action/state labels remain distinct.
+Workflow-facing progress, errors and footers use Check/Rebuild; item-level restore
+verbs and structured Core operation/diagnostic identifiers retain their meaning.
 
 The main window retains a **1000 × 700 pt content minimum**, **1200 × 800 pt**
 preferred size and **215 pt** native sidebar. Home's centered content caps at
@@ -393,17 +395,17 @@ and Result re-entry preserve explicit selection; new inspection establishes defa
 Selection changes invalidate preparation; cancellation compares with those defaults.
 Inspection supplies aggregate macOS domains, not an invented per-setting inventory.
 
-### Restore Preview — Visually Accepted
+### Rebuild Preview — Visually Accepted
 
-`RestorePreviewContent` retains **Restore Preview**, its read-only notice and the
-**Automatic Restore** summary caption. The existing cards appear when their count
+`RestorePreviewContent` retains **Rebuild Preview**, its read-only notice and the
+**Automatic Rebuild** summary caption. The existing cards appear when their count
 is nonzero: green **Already Match**, blue **Changes Planned**, amber **Need Attention**.
 `RestorePreviewMetrics` counts automatic Core plan rows once; these are Preview
 observations/plans, not completed work or Verification. Manual App Store requirements
 are excluded from those metrics.
 
 The scrolling content contains **Prerequisites** when applicable, **Manual
-Installation** when effective App Store scope is present, then **Automatic Restore
+Installation** when effective App Store scope is present, then **Automatic Rebuild
 Tasks** when automatic domains exist. Fix Issues and its approval explanation remain
 available when supported. Prerequisites retain category names, Action Required,
 specific reasons and their own disclosures; there is no standalone duplicate Action
@@ -422,7 +424,7 @@ Aggregate numeric badges appear only on Applications & Tools, macOS Settings,
 Application Extras and Advanced; nested categories retain meaningful status labels
 without badges. Group totals aggregate original plan rows, not child totals added
 again. All expandable automatic rows have far-right chevrons. Expand All / Collapse
-All sits beside Automatic Restore Tasks and controls its group, VS Code, domain and
+All sits beside Automatic Rebuild Tasks and controls its group, VS Code, domain and
 macOS child disclosures together; it does not control Prerequisites or the manual
 screen. Detailed planned actions, matching items, unsupported/unavailable findings,
 diagnostic explanations and item checks keep their existing renderers.
@@ -457,7 +459,7 @@ rollback. Handled stop, failed and unknown outcomes remain distinct under the
 
 ### Restore Result — Visually Accepted
 
-`RestoreResultContent` keeps the operation outcome heading, two Restore Summary
+`RestoreResultContent` keeps the operation outcome heading, two Rebuild Summary
 cards, one flat **Details by Category** container, legend and fixed Done / Refresh
 Preview / View Log actions. Refresh Preview remains outcome-dependent. Domain order
 matches Progress, with App Store Applications first when supported manual work is
@@ -574,7 +576,7 @@ minimum height. Count pills keep their shared dimensions, typography and colors.
 Pinned content reserves an **18 pt** native-scrollbar margin without a second scroll view.
 
 The [Status evidence/count contract](#status-presentation-and-counts), fixed footer,
-explicit Compare Again and Bundle-only Review in Restore handoff are unchanged.
+explicit Check Again and Bundle-only Review in Rebuild handoff are unchanged.
 
 ### Shared language and intentional workflow differences
 
@@ -764,11 +766,11 @@ content region when needed, and the existing fixed action footer. Capture Review
 ordinary disclosure control scrolls with its list; Advanced's control stays with
 its divider heading. Capture Result uses outcome cards and affected-category
 explanations, not a category tree.
-Manual Installation and Automatic Restore Tasks share Preview's list viewport.
+Manual Installation and Automatic Rebuild Tasks share Preview's list viewport.
 Preview keeps operation availability, the available Fix Issues action and its
 approval guidance above the list. The list contains the single Prerequisites heading
 and specific issues when present. A compact read-only notice sits beside the
-Restore Preview heading; Selection has no duplicate read-only notice.
+Rebuild Preview heading; Selection has no duplicate read-only notice.
 Headers and progress remain live while the list scrolls. Screens without a list
 retain their ordinary content layout. The supported minimum window stays 1000 × 700.
 
@@ -776,7 +778,7 @@ Existing count pills share Restore's oval shape (minimum 32 × 23 pt, 6 pt horiz
 insets and monospaced caption digits). Each tree reserves a common count rail and
 an independent rightmost disclosure position. Category status text, icons, colors and
 horizontal anchors remain unchanged; counts wrap below if space is limited.
-Manual Installation uses the same Preview status column as Automatic Restore Tasks.
+Manual Installation uses the same Preview status column as Automatic Rebuild Tasks.
 Matching Preview and Status leaves share a plain green checkmark with the accessible
 name Already Matches; category statuses retain their text. Compact Capture Result
 outcome cards and affected-category explanations wrap within the detail width.
@@ -840,8 +842,8 @@ See the [descriptor contract](toolkit/CONFIGURATION.md#vs-code-workspace-descrip
 Fully/partially/not-selected counts describe selectable Core categories,
 exclude unavailable categories and do not replace Preview item metrics.
 
-Selection status and Preview Restore stay in the fixed footer. Preparation shows
-indeterminate **Preparing Restore Preview**, explaining that target state is unchanged.
+Selection status and Preview Rebuild stay in the fixed footer. Preparation shows
+indeterminate **Preparing Rebuild Preview**, explaining that target state is unchanged.
 `restore_prepare` returns prerequisites, plan and matching/changed scope. Bundle
 changes invalidate preparation. The production UI changes selection through
 **Back → Review → fresh Preview**; Preview has no selection checkboxes. The model's
@@ -851,7 +853,7 @@ domains remain available for reselection; excluding SSH removes its prerequisite
 without weakening checks when selected. Back retains selection but requires fresh
 Prepare. Failed/cancelled/interrupted refreshes clear old Preview evidence.
 
-**Restore Preview — implemented and Visually Accepted.** Automatic
+**Rebuild Preview — implemented and Visually Accepted.** Automatic
 Restore Tasks uses one ordinary accordion for Applications & Tools, macOS Settings
 and Application Extras → VS Code, plus a separate Advanced container below
 For Experienced Users. Only domains in the effective plan appear; unknown domains
@@ -860,7 +862,7 @@ preference details retain their existing renderers. Numeric badges appear only o
 the four main groups, aggregating original plan rows once; nested domains retain
 their status labels. Automatic task disclosures use the far-right indicator without
 moving titles or status columns. Preview has no selection controls. Expand All /
-Collapse All sits beside Automatic Restore Tasks and retains its group, VS Code
+Collapse All sits beside Automatic Rebuild Tasks and retains its group, VS Code
 and macOS child scope. Prerequisites retain their category statuses, explanations
 and disclosures; the duplicate overall status and general Tasks heading are omitted.
 Section spacing is compact; Manual Installation, summary cards and footer remain.
@@ -877,7 +879,7 @@ remote URLs or credentials are needed to explain actions. Homebrew Applications 
 Packages stay separate through Preview, Rebuild and Result. Qualified repairs show
 Will Repair / Ready to Repair and Repairing; finishing execution awaits Verification.
 
-Desktop supports topology-aware Restore Preview and confirmed Rebuild through Core.
+Desktop supports topology-aware Rebuild Preview and confirmed Rebuild through Core.
 Clone, Add Worktree and HEAD changes use existing progress and Verification-aware
 Result presentation. Dependent actions show Conditional until Core can inspect the
 created base; conflicts and Unsupported/Unverified requirements stay visible.
@@ -963,8 +965,8 @@ Identity, cache/provenance and protected App Store target rules are owned by
 [Configuration](toolkit/CONFIGURATION.md#other-application-generated-inputs).
 
 Preview puts one App Store card under **Manual Installation**, after applicable
-Prerequisites and before **Automatic Restore Tasks**. There is no general Tasks
-heading. Expand All / Collapse All sits beside Automatic Restore Tasks and changes
+Prerequisites and before **Automatic Rebuild Tasks**. There is no general Tasks
+heading. Expand All / Collapse All sits beside Automatic Rebuild Tasks and changes
 only its local automatic disclosure tree. Manual/automatic rows share status geometry;
 width references contain distinct status/disclosure combinations, not copies of the
 whole inventory per row. **Review App Store Apps** opens a dedicated screen without
@@ -990,7 +992,7 @@ executable Rebuild; manual issues do not block independent automatic work. Apple
 App Store owns installation/account authorization. MASHelper/XPC and automatic MAS
 installation remain retired, including deployment/registration paths.
 
-Result presents the execution outcome, then the existing two **Restore Summary** cards:
+Result presents the execution outcome, then the existing two **Rebuild Summary** cards:
 Complete / N Verified and Needs Attention with its evidence-based description
 (apps to install, apps to check, restore issues or work needing review). Complete counts unique selected
 requirements that were planned for restoration and now have a visible Verified result;
@@ -1056,7 +1058,7 @@ run Discovery or compare a new scan of this Mac with itself.
 Core `environment_compare` validates/stages the Bundle privately, preserves its
 Blueprint/provenance, compares read-only and removes staging without publication or
 secure decryption. Older capability evidence gets an explicit compatibility state.
-References are window-session-local. **Compare This Mac**, **Compare Again**, Cancel
+References are window-session-local. **Check This Mac**, **Check Again**, Cancel
 and Choose a Different Environment are explicit; Restore never auto-runs Compare.
 
 Only a completed validated result can show conformity. Failed/interrupted/malformed
@@ -1125,7 +1127,7 @@ Expand/Collapse includes macOS children before views are created.
 Status and Restore keep independent session state. Entering Status without a
 reference takes the current Restore Bundle, but still needs explicit fresh Compare.
 A completed Bundle-based result with Core-confirmed Different/Missing offers
-**Review in Restore** beside Compare Again. Coverage warnings alone, development
+**Review in Rebuild** beside Check Again. Coverage warnings alone, development
 references, failed/cancelled/active comparisons do not. Active operations and Rebuild
 confirmation block handoff without stopping/replacing work.
 
@@ -1202,7 +1204,7 @@ A structured `stale_plan` with `failed_before_mutation`, explicit no target muta
 and `verification.status=not_run` shows neutral **Not Run** for categories with no
 execution/Verification evidence. Other failures retain their evidence-based statuses;
 unavailable Verification counts remain unavailable.
-A supported item-local skip can produce **Partial Restore** only with
+A supported item-local skip can produce **Partial Rebuild** only with
 confirmed independent success, consistent Verification and no unexplained failure.
 The original Core terminal failure remains available.
 
@@ -1238,14 +1240,14 @@ remain in the fixed footer.
 |---|---|
 | Rebuild Completed | Clean completed outcome, or completed execution with only manual App Store work outstanding; the latter retains Needs Attention and manual review. The Complete / N Verified card counts requirements and is not a separate overall-success verdict. |
 | Rebuild Completed with Issues | Completed execution with automatic issues; retain their evidence and explanations |
-| Partial Restore | Supported independent work completed alongside an item-local skip, with the required typed evidence; the Core failure terminal is preserved |
+| Partial Rebuild | Supported independent work completed alongside an item-local skip, with the required typed evidence; the Core failure terminal is preserved |
 | Failed | Actual prerequisite, execution or runtime failure prevents completed work under the operation contract |
 | Stopped | User cancellation after execution begins, with sufficient evidence of handled termination; completed changes may remain |
 | Interrupted/Unknown | Terminal evidence is missing, invalid or incomplete; completion and effects cannot be established |
 
 Known unsupported remaining state alone must not become a generic execution failure.
 A blocking prerequisite still prevents execution. A supported item-local skip may
-be presented as Partial Restore only when Core proves completed independent work
+be presented as Partial Rebuild only when Core proves completed independent work
 and the required complete final evidence; it does not turn Core failure into success.
 Preserve Core terminal codes, exits and Verification verdicts in diagnostic evidence. Current
 Protocol V1 can retain exit `2` / `bootstrap_failed` for item failures with

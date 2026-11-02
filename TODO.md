@@ -15,7 +15,7 @@ separate implemented Core Capture/Restore from remaining capability and real-Mac
 - [ ] Complete native Desktop E2E with the retained selected Workspace Bundle.
   This gate is **NOT RUN**: first establish safe native HOME/Core/journal/preferences
   isolation, then verify the saved reference, six matching requirements, group/item
-  counts and read-only behavior. Qualify [Review in Restore](docs/DESKTOP.md#bundle-handoff)
+  counts and read-only behavior. Qualify [Review in Rebuild](docs/DESKTOP.md#bundle-handoff)
   separately with confirmed Missing/Different and no Apply; all-matching results
   intentionally offer no handoff. Prior independent GUI acceptance does not close this gate.
 - [ ] Qualify full SIGTERM reconciliation/recovery and successful fresh re-entry

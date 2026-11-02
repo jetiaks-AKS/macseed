@@ -157,7 +157,7 @@ cd desktop/Macseed
 | Selector | Purpose / limits |
 |---|---|
 | `--workflow-layout-only` | Aggregation, recursive disclosure, count geometry and native viewports; six representative PNGs under ignored `build/Debug/` |
-| `--workflow-scroll-only` | ProductionWorkspace with disposable Protocol fixture; result arrival, native wheel to bottom/back, disclosure and changed Compare Again at 1000 × 700 and 1200 × 800 |
+| `--workflow-scroll-only` | ProductionWorkspace with disposable Protocol fixture; result arrival, native wheel to bottom/back, disclosure and changed Check Again at 1000 × 700 and 1200 × 800 |
 | `--workflow-controls-only` | Leaf indicators, native selection controls, log visibility, status alignment and recursive macOS disclosure |
 | `--native-controls` | Actual NSButton mixed states/actions and checkbox/label bounds; not full-window mouse automation |
 | `--preview-expansion-only` | Bounded Preview expansion probe; `--stress` expands the optional benchmark |

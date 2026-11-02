@@ -727,7 +727,7 @@ struct RestoreDemoView: View {
                     Spacer()
                     Button(session.restoreBulkState.bulkActionTitle) { session.toggleAllRestore() }
                 }
-                Text("Choose groups to restore. Expand a group to see changes and already matching items.")
+                Text("Choose groups for this rebuild. Expand a group to see changes and already matching items.")
                     .foregroundStyle(.secondary)
                 if session.needsHomebrew {
                     VStack(alignment: .leading, spacing: 10) {
@@ -777,10 +777,10 @@ struct StatusDemoView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             Label("Reference: Sample saved configuration", systemImage: "folder")
-            Text("Generated Configuration · No Blueprint · Read-only comparison").font(.callout).foregroundStyle(.secondary)
+            Text("Generated Configuration · No Blueprint · Read-only check").font(.callout).foregroundStyle(.secondary)
             if session.statusState == .choose {
-                Text("Compare with this sample saved configuration. Bundle comparison is not supported.")
-                Button("Compare") { session.compare() }.buttonStyle(.borderedProminent)
+                Text("Check this Mac against the sample saved configuration. This demo uses sample data only.")
+                Button("Check This Mac") { session.compare() }.buttonStyle(.borderedProminent)
             } else {
                 Text("Needs Attention").font(.title2)
                 Text("1 matching · 1 different · 1 unverified")

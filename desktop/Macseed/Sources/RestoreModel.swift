@@ -223,7 +223,7 @@ struct RestoreProgressRow {
         if events.contains(where: { $0.data?["domain"]?.string == "verification" || $0.phase == "verification" }) {
             return "Verifying restored environment…"
         }
-        return mutationPossible ? "Restoring environment…" : "Preparing rebuild…"
+        return mutationPossible ? "Rebuilding environment…" : "Preparing rebuild…"
     }
 }
 
@@ -533,7 +533,7 @@ struct RestoreProgressRow {
         work = Task {
             guard await receive(CoreRequest(.capabilities)) else { return }
             guard runtime.capabilities?.supportsRestoreSelection == true else {
-                fail("Restore selection is unavailable in this build. Use a compatible Macseed version.", code: nil); return
+                fail("Rebuild selection is unavailable in this build. Use a compatible Macseed version.", code: nil); return
             }
             guard await receive(CoreRequest(.bundleInspect(path: url.path))) else { return }
             do {
@@ -674,7 +674,7 @@ struct RestoreProgressRow {
                 let data = try result.decodeData(CoreRestorePreparation.self)
                 try data.validate(expected: expected, catalog: catalog)
                 preparation = data; preview = RestorePreviewPresentation(data, catalog: catalog); state = .preview
-            } catch { fail("Restore Preview did not provide complete, consistent evidence. Refresh Preview before rebuilding.", code: "invalid_result") }
+            } catch { fail("Rebuild Preview did not provide complete, consistent evidence. Refresh Preview before rebuilding.", code: "invalid_result") }
         }
     }
     func back() {
@@ -686,17 +686,17 @@ struct RestoreProgressRow {
     private func receive(_ request: CoreRequest, alreadyStarted: Bool = false) async -> Bool {
         if !alreadyStarted {
             if cancelRequested {
-                invalidate(); failure = "Restore preparation cancelled. No target changes were made."; state = .cancelled; return false
+                invalidate(); failure = "Rebuild preparation cancelled. No target changes were made."; state = .cancelled; return false
             }
             operationID = request.operationID
             runtime.start(request, location: location)
         }
         await runtime.waitForCompletion()
-        guard runtime.operationID == request.operationID else { fail("Restore inspection was interrupted. Try again.", code: "operation_mismatch"); return false }
+        guard runtime.operationID == request.operationID else { fail("Rebuild inspection was interrupted. Try again.", code: "operation_mismatch"); return false }
         switch runtime.state {
         case .completed: return true
         case .cancelled:
-            invalidate(); failure = "Restore preparation cancelled. No target changes were made. Refresh Preview or choose a saved environment again."
+            invalidate(); failure = "Rebuild preparation cancelled. No target changes were made. Refresh Preview or choose a saved environment again."
             state = .cancelled; return false
         default:
             let error = runtime.error
@@ -707,7 +707,7 @@ struct RestoreProgressRow {
             case "bundle_invalid": message = "The saved environment is invalid or damaged. Choose another saved environment."
             case "unsupported_bundle": message = "This saved environment uses an unsupported format. Choose a compatible saved environment."
             case "bundle_unavailable": message = "The saved environment is unavailable. Choose an accessible file."
-            case "recovery_required": message = "An earlier Restore needs recovery through the CLI before another Preview."
+            case "recovery_required": message = "An earlier Rebuild needs recovery through the CLI before another Preview."
             case "stale_plan": message = "The inputs changed. Refresh Preview to inspect the current state."
             case "workspace_dependency_missing", "workspace_path_conflict":
                 message = CoreRestorePreparation.workspacePreviewReasons[code!]!
@@ -725,7 +725,7 @@ struct RestoreProgressRow {
                     default: message = "Installer preparation failed. Refresh Preview before trying again."
                     }
                 }
-            default: message = error == .interrupted ? "Restore preparation was interrupted. No complete Preview is available. Try again." : "Restore preparation could not complete. Try again or choose another saved environment."
+            default: message = error == .interrupted ? "Rebuild preparation was interrupted. No complete Preview is available. Try again." : "Rebuild preparation could not complete. Try again or choose another saved environment."
             }
             fail(message, code: code)
             if code == "pkg_preparation_failed",
@@ -806,17 +806,17 @@ struct RestoreExecutionPresentation {
         stopNotice = stopRequest?.notice(operationID: operationID, outcome: outcome, response: runtime.gracefulStopState)
         switch outcome {
         case .clean: title = "Rebuild Completed"; message = "Your selected environment has been restored and verified."
-        case .partial: title = "Partial Restore"; message = "Some selected changes completed. Refresh Preview to inspect unresolved items before rebuilding again."
+        case .partial: title = "Partial Rebuild"; message = "Some selected changes completed. Refresh Preview to inspect unresolved items before rebuilding again."
         case .attention: title = "Rebuild Completed with Issues"; message = "Review the observed results, then Refresh Preview to check current state."
         case .stoppedBeforeMutation: title = "Rebuild Cancelled"; message = "Rebuild cancelled before target changes began. Refresh Preview before rebuilding again."
         case .stoppedAfterMutation: title = "Rebuild Stopped"; message = "Rebuild stopped safely. Completed changes remain. Refresh Preview before rebuilding again."
         case .interrupted: title = "Rebuild Interrupted"; message = "Final consequences are unknown. Changes may remain. Refresh Preview to inspect current state."
         case .failedBeforeMutation:
             if payload?["code"]?.string == "stale_plan" || terminal?.code == "stale_plan" {
-                title = "Restore Plan Is Outdated"
-                message = "The restore plan is no longer valid. Refresh Preview to generate an updated plan before rebuilding."
+                title = "Rebuild Plan Is Outdated"
+                message = "The rebuild plan is no longer valid. Refresh Preview to generate an updated plan before rebuilding."
                     + (payload?["target_mutation_may_have_started"]?.boolean == false
-                       ? " No changes were made by this Restore attempt." : "")
+                       ? " No changes were made by this Rebuild attempt." : "")
             } else {
                 title = "Rebuild Could Not Start"
                 message = "Core reports that no target mutation started. Refresh Preview to check prerequisites and current state."
@@ -929,7 +929,7 @@ struct RestoreExecutionPresentation {
         }
     }
     var diagnosticReport: String {
-        (["Restore diagnostic report (allowlisted Protocol fields; raw payloads and process output excluded)."] + technicalDetails + planValidationDetails).joined(separator: "\n")
+        (["Rebuild diagnostic report (allowlisted Protocol fields; raw payloads and process output excluded)."] + technicalDetails + planValidationDetails).joined(separator: "\n")
     }
 
     private var planValidationDetails: [String] {
@@ -983,7 +983,7 @@ struct RestoreExecutionPresentation {
             append(event.type, event.data ?? [:])
         }
         if let payload = structuredEvidence {
-            append("Restore result", payload)
+            append("Rebuild result", payload)
             if case .array(let records) = payload["operation_failures"] {
                 for record in records { if let row = record.object { append("operation_failures", row) } }
             }

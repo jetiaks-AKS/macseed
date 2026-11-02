@@ -421,7 +421,7 @@ struct TaskDomainList: View {
                     if let leadingContent { leadingContent }
                     if restoreSettingsPreview && !domains.isEmpty {
                         HStack(alignment: .firstTextBaseline, spacing: 12) {
-                            WorkspaceSectionHeader(title: "Automatic Restore Tasks", prominent: true)
+                            WorkspaceSectionHeader(title: "Automatic Rebuild Tasks", prominent: true)
                             if restorePreviewHierarchy { expandAllButton }
                         }
                     }

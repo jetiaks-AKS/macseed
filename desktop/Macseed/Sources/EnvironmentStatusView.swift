@@ -16,7 +16,7 @@ struct EnvironmentStatusView: View {
             switch model.state {
             case .choose:
                 WorkspacePrimaryActionCard(title: "Choose Saved Environment", symbol: ProductTask.status.symbol, tint: WorkspaceIdentity.tint(.status),
-                    message: "Select a Macseed Saved Environment (.mbt) to compare with this Mac.", notice: "Read-only comparison. Nothing will be installed, removed or changed.") {
+                    message: "Select a Macseed Saved Environment (.mbt) to check against this Mac.", notice: "Read-only check. Nothing will be installed, removed or changed.") {
                     if showsActions { EnvironmentStatusActions(model: model, runtime: runtime) }
                     referenceDetails
                 }
@@ -26,13 +26,13 @@ struct EnvironmentStatusView: View {
                     HStack(spacing: 16) {
                         ProgressView().controlSize(.large).frame(width: 40, height: 40).accessibilityHidden(true)
                         VStack(alignment: .leading, spacing: 6) {
-                            Text("Comparing Your Mac").font(.title2.weight(.bold))
-                            Text(runtime.stopping ? "Stopping comparison…" : (runtime.currentPhase == "bundle_validation" ? "Validating the saved environment…" : "Comparing supported requirements…"))
+                            Text("Checking Your Mac").font(.title2.weight(.bold))
+                            Text(runtime.stopping ? "Stopping check…" : (runtime.currentPhase == "bundle_validation" ? "Validating the saved environment…" : "Checking supported requirements…"))
                                 .font(.callout).foregroundStyle(.secondary)
                         }
                     }
                     Divider()
-                    Label("Read-only comparison. Nothing will be installed, removed or changed.", systemImage: "checkmark.shield")
+                    Label("Read-only check. Nothing will be installed, removed or changed.", systemImage: "checkmark.shield")
                         .font(.callout).foregroundStyle(.secondary)
                 }.padding(18).frame(maxWidth: .infinity, alignment: .leading)
                     .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 12))
@@ -45,9 +45,9 @@ struct EnvironmentStatusView: View {
                 }
                 if showsActions { EnvironmentStatusActions(model: model, runtime: runtime) }
             case .failed, .cancelled:
-                OperationSummaryHeader(title: model.state == .cancelled ? "Comparison Cancelled" : "Needs Attention",
-                    message: model.failure?.message ?? "No complete comparison is available.",
-                    state: model.state == .cancelled ? .skipped : .attention, counters: [], suppliedMetrics: [], scopeSummary: "Read-only comparison")
+                OperationSummaryHeader(title: model.state == .cancelled ? "Check Cancelled" : "Needs Attention",
+                    message: model.failure?.message ?? "No complete check is available.",
+                    state: model.state == .cancelled ? .skipped : .attention, counters: [], suppliedMetrics: [], scopeSummary: "Read-only check")
                 if showsActions { EnvironmentStatusActions(model: model, runtime: runtime) }
                 referenceDetails
             }
@@ -86,11 +86,11 @@ struct EnvironmentStatusActions: View {
             Button(model.reference == nil ? "Choose Saved Environment…" : "Choose a Different Environment…", action: chooseReference).disabled(busy).fixedSize()
             if model.state != .choose && horizontal { Spacer() }
             if model.restoreReviewBundle != nil, let reviewInRestore {
-                Button("Review in Restore", action: reviewInRestore).buttonStyle(.bordered)
+                Button("Review in Rebuild", action: reviewInRestore).buttonStyle(.bordered)
                     .disabled(busy || handoffBlocked).fixedSize()
             }
             if model.reference != nil {
-                Button(model.state == .choose ? "Compare This Mac" : "Compare Again") { model.compare() }
+                Button(model.state == .choose ? "Check This Mac" : "Check Again") { model.compare() }
                     .buttonStyle(.borderedProminent).disabled(busy).fixedSize()
             }
         }
@@ -98,7 +98,7 @@ struct EnvironmentStatusActions: View {
     private func chooseReference() {
         let panel = NSOpenPanel()
         panel.title = "Choose Saved Environment"
-        panel.message = "Select a Macseed Saved Environment (.mbt) to compare with this Mac."
+        panel.message = "Select a Macseed Saved Environment (.mbt) to check against this Mac."
         panel.prompt = "Choose Saved Environment"
         panel.canChooseDirectories = false
         panel.canChooseFiles = true

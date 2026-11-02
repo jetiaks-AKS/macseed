@@ -796,7 +796,7 @@ private struct WorkflowAnchorFrames: PreferenceKey {
                 precondition(notices.count == 1 && notices[0].reason == code && notices[0].status == .attention && notices[0].title == "Needs Attention")
             }
         }
-        precondition(restoreSource.contains("Discard Current Restore Selection?") && restoreSource.contains("Keep Selection") && restoreSource.contains("Discard and Cancel"))
+        precondition(restoreSource.contains("Discard Current Rebuild Selection?") && restoreSource.contains("Keep Selection") && restoreSource.contains("Discard and Cancel"))
         if CommandLine.arguments.contains("--no-renders") {
             print("PASS: Addressed diagnostics, compact Capture settings, meaningful Restore disclosures and warning preservation")
             return
@@ -1112,7 +1112,7 @@ private struct WorkflowAnchorFrames: PreferenceKey {
         }
         let source = try! String(contentsOfFile: "Sources/RestoreView.swift")
             .components(separatedBy: "struct RestoreVerificationResult: View {")[1].components(separatedBy: "struct RestoreResultContent:")[0]
-        precondition(!source.contains("WorkspaceMetricCard(") && !source.contains("Automatic Restore outcomes"))
+        precondition(!source.contains("WorkspaceMetricCard(") && !source.contains("Automatic Rebuild outcomes"))
         precondition(!source.contains("Verification mismatches:") && !source.contains("Verification unverified:"))
         precondition(source.contains("Label(summary.title") && source.contains("Some selected scope remains unresolved"))
         precondition(source.contains("summary.requirementsTitle") && !source.contains("summary.overallResult(outcome:"))
@@ -1165,7 +1165,7 @@ private struct WorkflowAnchorFrames: PreferenceKey {
         precondition(!selection.contains("if let appStore"), "App Store uses the shared group and row exactly once")
         precondition(preview.contains("WorkspaceSectionHeader(title: \"Manual Installation\", prominent: true)"))
         let taskComponents = try! String(contentsOfFile: "Sources/TaskComponents.swift")
-        precondition(taskComponents.contains("WorkspaceSectionHeader(title: \"Automatic Restore Tasks\", prominent: true)"))
+        precondition(taskComponents.contains("WorkspaceSectionHeader(title: \"Automatic Rebuild Tasks\", prominent: true)"))
         precondition(!result.contains("DisclosureGroup(\"Technical Details\") {") && !result.contains("isExpanded:"))
         precondition(!result.contains("result.compactTechnicalDetails") && !result.contains("Copy Diagnostic Details") && !result.contains("result.diagnosticReport"))
         let model = try! String(contentsOfFile: "Sources/RestoreModel.swift")
@@ -1936,7 +1936,7 @@ private struct WorkflowAnchorFrames: PreferenceKey {
         wording.automaticAttentionCount = 1
         wording.manualMissingCount = 1
         wording.manualUnverifiedCount = 2
-        precondition(wording.attentionCaption == "1 restore issue · 1 app to install · 2 apps to check")
+        precondition(wording.attentionCaption == "1 rebuild issue · 1 app to install · 2 apps to check")
         let unknown = summary([item(1, .unverified)])
         precondition(unknown.categoryState == .unverified && unknown.categoryStatus == "Unverified" && unknown.counts.count == 1)
         precondition(summary([]).counts.isEmpty && !summary([]).allInstalled)
@@ -2394,17 +2394,17 @@ private struct WorkflowAnchorFrames: PreferenceKey {
             payload["comparison_records"] = records
             payload["comparison"] = ["status": "complete", "verdict": "differences_detected", "also_incomplete": true, "counts": counts]
             try JSONSerialization.data(withJSONObject: payload).write(to: dir.appendingPathComponent("response.json"))
-            // Use the actual fixed footer's Compare Again button, with the list at the bottom.
+            // Use the actual fixed footer's Check Again button, with the list at the bottom.
             click(host.view.convert(NSPoint(x: size.width - 90, y: size.height - 62), to: nil))
             await model.waitForCompletion(); settle()
-            precondition(model.operationID != previousID && model.state == .result, "Compare Again must execute the fixture request")
+            precondition(model.operationID != previousID && model.state == .result, "Check Again must execute the fixture request")
             precondition(model.presentation?.counts["matching"] == counts["matching"], "The new result must contain the changed fixture data")
             let fresh = scrollView()
             precondition(abs(fresh.contentView.bounds.minY) < 1 && abs(fresh.documentView!.frame.height - collapsed) < 2,
                 "Fresh Comparison resets scroll and disclosure state")
             wheelTo(fresh, bottom: true); wheelTo(fresh, bottom: false)
             snapshot(size)
-            print("PASS: native ProductionWorkspace Status \(Int(size.width))x\(Int(size.height)), viewport \(Int(frame.height))pt; wheel top-bottom-top, recursive buttons, last row and fresh Compare Again")
+            print("PASS: native ProductionWorkspace Status \(Int(size.width))x\(Int(size.height)), viewport \(Int(frame.height))pt; wheel top-bottom-top, recursive buttons, last row and fresh Check Again")
         }
     }
 
@@ -2614,7 +2614,7 @@ private struct WorkflowAnchorFrames: PreferenceKey {
                                 }.modifier(WorkspaceContentGeometry())
                             }
                             Divider()
-                            HStack { if task != .restore { Text("View Log") }; Spacer(); Button(task == .capture ? "Done" : task == .restore ? "Rebuild" : "Compare Again") {} }
+                            HStack { if task != .restore { Text("View Log") }; Spacer(); Button(task == .capture ? "Done" : task == .restore ? "Rebuild" : "Check Again") {} }
                                 .modifier(WorkspaceFooterPadding())
                                 .background(GeometryReader { proxy in Color.clear.preference(key: WorkflowAnchorFrames.self, value: ["footer": proxy.frame(in: .named("workflow"))]) })
                             Divider()
@@ -2899,7 +2899,7 @@ private struct WorkflowAnchorFrames: PreferenceKey {
         let onlyGate = RestorePrerequisiteSummaryPresentation(conditions: [gate], ready: false)
         precondition(!onlyGate.needsAttention && onlyGate.title == "Preview completed" && !onlyGate.isTerminalReady)
         precondition(onlyGate.manualConditions.isEmpty && onlyGate.displayConditions.isEmpty && onlyGate.sharedReasons.isEmpty)
-        precondition(onlyGate.operationAvailabilityMessage == "Restore Preview completed. Rebuild for Git worktree topology is not yet available.")
+        precondition(onlyGate.operationAvailabilityMessage == "Rebuild Preview completed. Rebuild for Git worktree topology is not yet available.")
         let other = CoreRestorePreparation.Condition(domain: "homebrew-packages", code: "homebrew_unavailable",
             status: "external_action_required", selectedItemIndex: nil, scope: "operation")
         let mixed = RestorePrerequisiteSummaryPresentation(conditions: [gate, other], ready: false)
@@ -3702,7 +3702,7 @@ private struct WorkflowAnchorFrames: PreferenceKey {
         }
         let content = try! String(contentsOf: sources.appendingPathComponent("ContentView.swift"), encoding: .utf8)
         let statusView = try! String(contentsOf: sources.appendingPathComponent("EnvironmentStatusView.swift"), encoding: .utf8)
-        precondition(statusView.contains("Compare This Mac") && statusView.contains("Choose Saved Environment…"))
+        precondition(statusView.contains("Check This Mac") && statusView.contains("Choose Saved Environment…"))
         precondition(statusView.contains("panel.canChooseDirectories = false") && statusView.contains("UTType(filenameExtension: \"mbt\")"))
         precondition(statusView.contains("model.selectBundle(url)"))
         precondition(statusView.contains("EnvironmentComparisonDomain(category: child, technicalFacts: technicalFacts,"))
@@ -3760,10 +3760,10 @@ private struct WorkflowAnchorFrames: PreferenceKey {
         let scrollEnd = production.range(of: "                if navigation.task == .status && status.state == .result {")!
         precondition(production[scrollEnd.lowerBound...].contains("EnvironmentStatusActions(model: status, runtime: runtime, reviewInRestore:"))
         precondition(production.contains("EnvironmentStatusView(model: status, runtime: runtime, showsActions: status.state != .result)"))
-        precondition(statusView.contains("Button(\"Review in Restore\", action: reviewInRestore).buttonStyle(.bordered)"))
+        precondition(statusView.contains("Button(\"Review in Rebuild\", action: reviewInRestore).buttonStyle(.bordered)"))
         precondition(statusView.contains(".disabled(busy || handoffBlocked)"))
         precondition(production.contains("reviewInRestore: reviewStatusInRestore, handoffBlocked: busy || syntheticRestore"))
-        precondition(production.contains("Replace Current Restore Session?") && production.contains("Use Selected Environment"))
+        precondition(production.contains("Replace Current Rebuild Session?") && production.contains("Use Selected Environment"))
         precondition(production.contains("restore.choose(bundle)") && production.contains("if restore.source == bundle { task = .restore; return }"))
 
 
@@ -3809,13 +3809,13 @@ private struct WorkflowAnchorFrames: PreferenceKey {
         precondition(aggregateSource.contains("model.selectGroup(group") && aggregateSource.contains("Included"))
         precondition(restoreView.contains("CaptureGroupedContent(rows: areas"))
         precondition(restoreView.contains("showsSelectionActions") && restoreView.contains("if showsSelectionActions"))
-        precondition(restoreView.components(separatedBy: "Button(\"Preview Restore\"").count == 2)
+        precondition(restoreView.components(separatedBy: "Button(\"Preview Rebuild\"").count == 2)
         precondition(workspaceSource.contains("showsSelectionActions: false"))
         precondition(workspaceSource.contains("else if restore.state == .review { selectionActionArea }"))
         precondition(workspaceSource.range(of: "else if restore.state == .review { selectionActionArea }")!.lowerBound
             > workspaceSource.range(of: ".modifier(WorkspaceContentGeometry())")!.lowerBound,
             "Selection actions must be placed after the workflow content viewport")
-        precondition(restoreView.contains("Preparing Restore Preview") && restoreView.contains("Stopping Preview…"))
+        precondition(restoreView.contains("Preparing Rebuild Preview") && restoreView.contains("Stopping Preview…"))
         precondition(restoreView.contains("Read-only inspection — no changes will be made to this Mac."))
         let stopConfirmation = restoreView.components(separatedBy: ".sheet(isPresented: Binding(get: { model.stopConfirmation")[1]
             .components(separatedBy: "private func chooseBundle()")[0]

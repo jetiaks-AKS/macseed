@@ -15,7 +15,7 @@ The format is based on the principles of **Keep a Changelog**.
   worktrees, with stable checkout IDs and relationships preserved in Bundles.
 * Topology-aware Capture selection validates explicit base/linked/parent dependencies
   and saves portable `.mbt` metadata.
-* Read-only topology Restore Preview reports Already Match, Clone Planned, Add
+* Read-only topology Rebuild Preview reports Already Match, Clone Planned, Add
   Worktree Planned and Switch Branch Planned, conflicts and Unsupported/Unverified,
   with stable prepared-plan identity for consistent repeated observations.
 * Topology-aware Core Restore executes selected base Clone, native linked worktree
@@ -31,7 +31,7 @@ The format is based on the principles of **Keep a Changelog**.
   base/linked/nested checkout relationships, origin, required HEAD, selected folder
   structure and VS Code workspace relationships. Confirmed Missing/Different stays
   distinct from unsupported or unverified evidence; legacy comparison and the
-  explicit Bundle-only Review in Restore handoff are preserved.
+  explicit Bundle-only Review in Rebuild handoff are preserved.
 * Native SwiftUI Desktop over Core Protocol V1: real Capture, Restore
   Prepare/Execute and read-only Saved Environment Status, with explicit selection,
   confirmation, structured progress, Verification-aware results and fresh-plan
@@ -47,7 +47,7 @@ The format is based on the principles of **Keep a Changelog**.
   privileged fallback are retired to `archive/mas-automatic-restore-v4`; existing
   Bundle application records remain compatible.
 * Confirmed Cask/App Store identity overlap uses Cask-first precedence consistently
-  in effective Capture scope, Restore Preview and Verification. Explicit App
+  in effective Capture scope, Rebuild Preview and Verification. Explicit App
   Store-only selection remains valid; unresolved identity retains both requirements.
   Private confirmed catalog bindings last 30 days; optional lookup failure never
   silently removes requirements. Protected App Store targets remain conflicts.

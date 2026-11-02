@@ -58,7 +58,7 @@ struct CoreRestoreInspection: Decodable {
 
 struct CoreRestorePreparation: Decodable {
     static let workspacePreviewReasons: [String: String] = [
-        "workspace_restore_not_enabled": "Restore Preview completed. Rebuild for Git worktree topology is not yet available.",
+        "workspace_restore_not_enabled": "Rebuild Preview completed. Rebuild for Git worktree topology is not yet available.",
         "workspace_git_unsupported": "Unsupported: Git is unavailable or the required inspection capability is not qualified.",
         "workspace_file_count_limit": "Unsupported: planning a Git change exceeds the 4,096-file inspection limit. Existing files will be preserved.",
         "workspace_file_bytes_limit": "Unsupported: planning a Git change exceeds the 16 MiB file inspection limit. Existing files will be preserved.",
@@ -68,7 +68,7 @@ struct CoreRestorePreparation: Decodable {
         "workspace_index_unsupported": "Unsupported: Git index flags can hide local changes, so this checkout cannot be qualified safely.",
         "workspace_hooks_unsupported": "Unsupported: a Git hook or hook configuration could run external code during this action.",
         "workspace_tree_unsupported": "Unsupported: the requested Git tree contains a symbolic link or submodule that this action cannot safely restore.",
-        "workspace_submodule_unsupported": "Unsupported: the checkout contains a submodule that topology Restore does not yet support.",
+        "workspace_submodule_unsupported": "Unsupported: the checkout contains a submodule that topology Rebuild does not yet support.",
         "workspace_git_metadata_unsupported": "Unsupported: the Git directory metadata contains an unsafe link or an unqualified format.",
         "workspace_worktree_unsupported": "Unsupported: Git worktree relationships could not be qualified from the available metadata.",
         "workspace_path_unsupported": "Unsupported: a required Git path is outside HOME or cannot be qualified safely.",
@@ -89,9 +89,9 @@ struct CoreRestorePreparation: Decodable {
         "workspace_verification_failed": "Git finished, but the requested checkout could not be verified. Its retained state needs attention.",
         "workspace_preservation_unconfirmed": "Other checkout state could not be confirmed unchanged. Further Rebuild is blocked pending inspection.",
         "workspace_execution_failed": "Workspace restoration could not complete safely. Review its operation and verification results.",
-        "workspace_not_authorized": "This action was not included in the confirmed Restore plan. Refresh Preview.",
+        "workspace_not_authorized": "This action was not included in the confirmed Rebuild plan. Refresh Preview.",
         "workspace_dependency_missing": "A selected workspace descriptor or checkout requires its folders and base or parent repositories. Review Selection and include them, or deselect the dependent item.",
-        "workspace_path_conflict": "Selected Workspace destinations conflict. Review Selection before preparing Restore.",
+        "workspace_path_conflict": "Selected Workspace destinations conflict. Review Selection before preparing Rebuild.",
         "workspace_local_changes": "Tracked or staged changes prevent a safe branch switch. Existing files will be preserved.",
         "workspace_protected_files": "Untracked or ignored files conflict with the requested branch. Existing files will be preserved.",
         "workspace_local_changes_preserved": "The requested checkout already matches. Local changes will be preserved.",

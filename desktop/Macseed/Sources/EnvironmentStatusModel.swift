@@ -33,12 +33,12 @@ enum StatusFailure: Error, Equatable {
     case runtime(CoreRuntimeError)
     var message: String {
         switch self {
-        case .noReference: "Choose a Saved Environment (.mbt) to compare with this Mac."
-        case .unsupportedCapability: "Comparison is unavailable in this build. Check the app setup or update Macseed."
+        case .noReference: "Choose a Saved Environment (.mbt) to check against this Mac."
+        case .unsupportedCapability: "Check is unavailable in this build. Check the app setup or update Macseed."
         case .referenceUnavailable: "The selected Saved Environment is unavailable. Choose an accessible file or restore access."
-        case .invalidResult: "Comparison results are incomplete. Compare again to check the current state."
-        case .cancelled: "Comparison cancelled. Check again to inspect current state."
-        case .interrupted: "Comparison was interrupted. Compare again to check the current state."
+        case .invalidResult: "Check results are incomplete. Check again to inspect the current state."
+        case .cancelled: "Check cancelled. Check again to inspect current state."
+        case .interrupted: "Check was interrupted. Check again to inspect the current state."
         case .runtime(.coreFailure(let code)):
             switch code {
             case "bundle_unavailable": "The selected Saved Environment is unavailable. Choose an accessible file."
@@ -46,15 +46,15 @@ enum StatusFailure: Error, Equatable {
             case "unsupported_bundle": "This Saved Environment uses an unsupported Bundle format."
             case "reference_unavailable": "The selected reference is unavailable. Choose an accessible saved configuration or Blueprint."
             case "reference_invalid": "The selected configuration or Blueprint is invalid. Choose a valid reference."
-            case "reference_changed": "The reference changed during comparison. Check again to compare its current contents."
-            case "comparison_reporting_incomplete": "Comparison results are incomplete. Compare again to check the current state."
-            case "comparison_unavailable": "Comparison could not finish. Compare again to check the current state."
-            case "comparison_failed": "Comparison failed. Check the saved environment and try again."
-            default: "Couldn’t compare this Mac with the selected saved environment."
+            case "reference_changed": "The reference changed during the check. Check again against its current contents."
+            case "comparison_reporting_incomplete": "Check results are incomplete. Check again to inspect the current state."
+            case "comparison_unavailable": "Check could not finish. Check again to inspect the current state."
+            case "comparison_failed": "Check failed. Review the saved environment and try again."
+            default: "Couldn’t check this Mac against the selected saved environment."
             }
         case .runtime(.runtimeUnavailable), .runtime(.pythonUnavailable), .runtime(.invalidRuntimeConfiguration), .runtime(.writableCoreRequired), .runtime(.incompatibleProtocol):
-            "Comparison is unavailable in this build. Check the app setup or update Macseed."
-        case .runtime: "Comparison was interrupted. Compare again to check the current state."
+            "Check is unavailable in this build. Check the app setup or update Macseed."
+        case .runtime: "Check was interrupted. Check again to inspect the current state."
         }
     }
     var technicalReason: String? {
@@ -217,7 +217,7 @@ struct EnvironmentStatusPresentation {
             } ?? false
             // Expected predicate diagnostics explain the typed result; independent warnings retain attention.
             add(domain, DisplayItem(id: owner != nil || coverage != nil ? logicalID(domain, identity) : "diagnostic:\(index)", title: title(identity, domain: domain), status: attention && !expectedDiagnostic ? .attention : .information,
-                                    action: expectedDiagnostic ? "" : (attention ? diagnosticMessage(diagnostic.code) : "Additional comparison information is available."),
+                                    action: expectedDiagnostic ? "" : (attention ? diagnosticMessage(diagnostic.code) : "Additional diagnostic information is available."),
                                     reason: diagnostic.severity + ": " + diagnostic.code + "\nPhase: " + diagnostic.phase + "\nRecord: " + diagnostic.recordID
                                     + (coverage.map { "\nSource status: " + $0.sourceStatus } ?? "")))
         }
@@ -318,7 +318,7 @@ struct EnvironmentStatusPresentation {
             "macos-finder": ("Finder", "finder"), "macos-dock": ("Dock", "dock.rectangle"),
             "macos-windows": ("Windows", "macwindow"), "macos-keyboard": ("Keyboard", "keyboard"),
             "macos-trackpad": ("Trackpad", "hand.draw"), "macos-screenshots": ("Screenshots", "camera"),
-            "comparison": ("Comparison", "checkmark.circle"), "blueprint": ("Blueprint", "doc.text")]
+            "comparison": ("Check", "checkmark.circle"), "blueprint": ("Blueprint", "doc.text")]
         categories = order.map { domain in
             DisplayCategory(id: domain, title: names[domain]?.0 ?? domain, symbol: names[domain]?.1 ?? "folder", items: grouped[domain]!)
         }

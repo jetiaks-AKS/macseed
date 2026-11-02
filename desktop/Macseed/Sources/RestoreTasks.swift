@@ -816,8 +816,8 @@ struct RestoreResultSummary {
     var attentionCount: Int? { automaticAttentionCount.map { $0 + manualAttentionCount } }
     var attentionCaption: String {
         var parts: [String] = []
-        if let count = automaticAttentionCount, count > 0 { parts.append("\(count) restore issue\(count == 1 ? "" : "s")") }
-        else if automaticAttentionCount == nil { parts.append("Restore work needs review") }
+        if let count = automaticAttentionCount, count > 0 { parts.append("\(count) rebuild issue\(count == 1 ? "" : "s")") }
+        else if automaticAttentionCount == nil { parts.append("Rebuild work needs review") }
         if manualMissingCount > 0 { parts.append("\(manualMissingCount) app\(manualMissingCount == 1 ? "" : "s") to install") }
         if manualUnverifiedCount > 0 { parts.append("\(manualUnverifiedCount) app\(manualUnverifiedCount == 1 ? "" : "s") to check") }
         return parts.joined(separator: " · ")

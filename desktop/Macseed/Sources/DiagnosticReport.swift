@@ -266,9 +266,9 @@ struct DiagnosticReportBuilder {
         switch value {
         case .capturePrepare: return "Capture / Prepare"
         case .captureExecute: return "Capture / Execute"
-        case .bundleInspect: return "Restore / Inspect"
-        case .restorePrepare: return "Restore / Prepare"
-        case .restoreExecute: return "Restore / Execute"
+        case .bundleInspect: return "Rebuild / Inspect"
+        case .restorePrepare: return "Rebuild / Prepare"
+        case .restoreExecute: return "Rebuild / Execute"
         case .environmentCompare: return ProductTask.status.title
         case .capabilities: return "Capabilities"
         }

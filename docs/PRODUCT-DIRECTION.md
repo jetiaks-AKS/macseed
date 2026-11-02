@@ -92,7 +92,7 @@ is directly reachable in Advanced, including folder-only scope. Core owns depend
 validation; empty Advanced-only drafts do not automatically enable Preview.
 
 The inspected Bundle is Restore's strict scope ceiling. Absent/excluded requirements
-and empty groups are hidden; selected limitations remain explainable. Restore Preview
+and empty groups are hidden; selected limitations remain explainable. Rebuild Preview
 retains detailed planned/matching/attention evidence and prerequisites, with automatic
 tasks grouped separately from manual App Store installation. It is read-only. Progress
 and Result use flat ordered domain lists. Completed Result shows visible planned-and-
@@ -126,7 +126,7 @@ Before implementation, perform a narrowly scoped contract/impact inspection; imp
 
 ### Checkpoint 2 — Workspace closure and real-world qualification
 
-Complete representative controlled real-Mac Capture → Restore Preview → Execute → Global Verification → Status for supported topology, with preservation of tracked/staged/untracked/ignored files, branch occupancy/conflicts, interrupted/re-entry behavior and repeat/no-op. Qualify Phase 5 `.code-workspace` descriptor restoration where selected. Do not claim full workspace content migration. Do not broaden SSH transport, filters or Git LFS by default. Complete product-safe behavior before asserting Workspace feature readiness.
+Complete representative controlled real-Mac Capture → Rebuild Preview → Execute → Global Verification → Status for supported topology, with preservation of tracked/staged/untracked/ignored files, branch occupancy/conflicts, interrupted/re-entry behavior and repeat/no-op. Qualify Phase 5 `.code-workspace` descriptor restoration where selected. Do not claim full workspace content migration. Do not broaden SSH transport, filters or Git LFS by default. Complete product-safe behavior before asserting Workspace feature readiness.
 
 ### Checkpoint 3 — Consolidated test/CI stabilization
 

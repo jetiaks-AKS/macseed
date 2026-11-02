@@ -40,7 +40,7 @@ private actor ReportReadGate {
         var failure = finish("failed"); failure.runtimeError = "bootstrap_failed"; failure.incomplete = true
         let publication = event(1, "operation_record", OperationLogFacts(codes: ["state": "failed", "reason": "privileged_lifecycle_unknown"], flags: ["publication_occurred": true, "target_mutation_may_have_started": true, "unknown_consequences": true]))
         let failed = makeReport([header(id), publication, verification, failure], id: id).text
-        check(failed.contains("Operation: Restore / Execute") && failed.contains("Process Result: Failed"))
+        check(failed.contains("Operation: Rebuild / Execute") && failed.contains("Process Result: Failed"))
         check(failed.contains("Exit code: 2") && failed.contains("Reason: bootstrap_failed"))
         check(failed.contains("Verification status: complete") && failed.contains("Log completeness: Incomplete"))
         check(failed.contains("Verification verdict: selected_requirements_not_verified") && failed.contains("Verification mismatch_count: 1"))

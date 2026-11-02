@@ -121,7 +121,7 @@ struct ProductionWorkspace: View {
                 HStack {
                     if let capabilities = runtime.capabilities {
                         Label("Ready · Macseed Core " + capabilities.productVersion, systemImage: "checkmark.circle")
-                    } else { Text(runtime.operation == .environmentCompare ? "Macseed Core · Read-only comparison" : "Macseed") }
+                    } else { Text(runtime.operation == .environmentCompare ? "Macseed Core · Read-only check" : "Macseed") }
                     Spacer()
                 }.font(.caption).foregroundStyle(.secondary).padding(12)
             }
@@ -139,7 +139,7 @@ struct ProductionWorkspace: View {
             }
         }
         .modifier(OperationLogPresenter(runtime: runtime))
-        .alert("Replace Current Restore Session?", isPresented: Binding(
+        .alert("Replace Current Rebuild Session?", isPresented: Binding(
             get: { navigation.pendingRestoreBundle != nil },
             set: { if !$0 { navigation.cancelRestoreReplacement() } })) {
                 Button("Cancel", role: .cancel) { navigation.cancelRestoreReplacement() }
@@ -148,7 +148,7 @@ struct ProductionWorkspace: View {
                     navigation.confirmRestoreReplacement(bundle, restore: restore)
                 }
             } message: {
-                Text("The selected Saved Environment will replace your current Restore selection and prepared Preview. Nothing will be restored automatically.")
+                Text("The selected Saved Environment will replace your current Rebuild selection and prepared Preview. Nothing will be restored automatically.")
             }
         .onChange(of: navigation.task) { _, task in
             if task == .status, status.reference == nil, let source = restore.source, !busy {

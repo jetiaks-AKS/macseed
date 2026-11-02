@@ -50,14 +50,14 @@ using Bootstrap Bundle v1. Normal configuration is **not encrypted**; only
 explicitly selected SSH key pairs are encrypted in `secure.age`.
 
 Legacy Bundles retain supported Restore for ordinary Git repositories. New Workspace
-Topology v1 Bundles support Capture, Restore Preview and confirmed Core Rebuild with
+Topology v1 Bundles support Capture, Rebuild Preview and confirmed Core Rebuild with
 Global Verification. Selected base repositories precede linked/nested checkouts;
 conditional branches/commits are checked again after Clone. Existing files are
 preserved, and a matching repeat Preview needs no Rebuild. Selected VS Code workspace
 descriptors are created without overwriting existing files; folder relationships and
 display names are verified. Read-only Environment Status compares supported topology
 and selected descriptor relationships against the original Bundle, preserving its
-selection. Review in Restore passes only that Bundle and requires fresh Restore
+selection. Review in Rebuild passes only that Bundle and requires fresh Restore
 inspection and confirmation. Technical details and recovery
 limits belong to the [Workspace contract](toolkit/CONFIGURATION.md#topology-restore-execute--phase-4).
 

@@ -109,7 +109,7 @@ enum RestoreDebugScenario: String, CaseIterable, Identifiable {
             let reason = self != .done && state != .working && index == 1 ? "observation_failed: Synthetic diagnostic evidence. An included Git configuration could not be observed reliably. No assumption of absence is safe. Inspect the owning file and its permissions, resolve the observation error, then Refresh Preview. This deliberately long example exercises wrapping; no real configuration was read or changed." : nil
             var items = [TaskItemPresentation(id: "scenario-item-\(index)", item: DisplayItem(id: "scenario-item-\(index)", title: index == 1 ? "core.editor" : title,
                 status: state == .matching ? .matching : state == .planned ? .ready : state == .unverified ? .unverified : state == .completed ? .complete : .attention,
-                action: self == .done ? "Verified against the saved environment (sample)." : state == .working ? "Applying or verifying this item (sample)…" : "Synthetic presentation only; no Restore actions.", reason: reason), state: state)]
+                action: self == .done ? "Verified against the saved environment (sample)." : state == .working ? "Applying or verifying this item (sample)…" : "Synthetic presentation only; no Rebuild actions.", reason: reason), state: state)]
             if self == .preview && index == 0 {
                 items.append(TaskItemPresentation(id: "scenario-unsupported", item: DisplayItem(id: "scenario-unsupported", title: "Unsupported application", status: .unsupported,
                     action: "This application's installation requirements are not supported.", reason: "cask_execution_requirements_unsupported"), state: .attention))

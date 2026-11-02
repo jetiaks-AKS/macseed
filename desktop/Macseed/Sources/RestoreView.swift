@@ -180,7 +180,7 @@ struct RestoreSelectionContent: View {
                         expansion: WorkflowExpansion.binding(area.id, in: treeExpansion),
                         hierarchyIndent: CaptureReviewPresentation.hierarchyStep * (CaptureHierarchy.group(for: area.id) == .vscode ? 2 : 1))
                 }
-            if !model.canPreview { Text("Choose supported requirements to restore.").foregroundStyle(.secondary) }
+            if !model.canPreview { Text("Choose requirements for this rebuild.").foregroundStyle(.secondary) }
         }
     }
 }
@@ -473,7 +473,7 @@ struct RestoreView: View {
                         ProgressView().controlSize(.large)
                             .frame(width: 40, height: 40).accessibilityHidden(true)
                         VStack(alignment: .leading, spacing: 6) {
-                            Text("Preparing Restore Preview").font(.title2.weight(.bold))
+                            Text("Preparing Rebuild Preview").font(.title2.weight(.bold))
                                 .accessibilityAddTraits(.isHeader)
                             Text(runtime.stopping ? "Stopping Preview…" : "Inspecting the selected environment and checking prerequisites…")
                                 .font(.callout).foregroundStyle(.secondary)
@@ -500,7 +500,7 @@ struct RestoreView: View {
                         .font(.callout).foregroundStyle(.secondary)
                 }
                 if model.state == .review {
-                    Text("Choose what to restore").font(.headline)
+                    Text("Choose what to rebuild").font(.headline)
                     RestoreSelectionContent(model: model, expansion: selectionExpansion, expandAll: categoryExpansion)
                     if showsSelectionActions {
                         RestoreSelectionActions(status: model.selectionSummary, canPreview: model.canPreview, preview: { model.refreshPreview() }, reviewModel: model)
@@ -546,7 +546,7 @@ struct RestoreView: View {
                         refresh: { model.checkCurrentState() }, done: { model.finish() }, logRuntime: runtime)
                 }
             case .failed, .cancelled:
-                Label(model.state == .cancelled ? "Restore Preparation Cancelled" : "Can't Prepare Restore", systemImage: "exclamationmark.triangle").font(.title2)
+                Label(model.state == .cancelled ? "Rebuild Preparation Cancelled" : "Can't Prepare Rebuild", systemImage: "exclamationmark.triangle").font(.title2)
                 if let failure = model.failure { Text(failure) }
                 HStack {
                     RestoreReviewLogButton(model: model)
@@ -589,7 +589,7 @@ struct RestoreView: View {
         .sheet(isPresented: Binding(get: { model.stopConfirmation }, set: { if !$0 { model.dismissStopConfirmation() } })) {
             VStack(alignment: .leading, spacing: 16) {
                 Text(model.forceStopConfirmation ? "Force Stop Rebuild?" : "Stop rebuilding?").font(.title2).accessibilityAddTraits(.isHeader)
-                Text(model.forceStopConfirmation ? "Force Stop will interrupt the current operation. This may leave some changes incomplete and require additional steps before rebuilding again." : "Rebuild is still in progress. Stopping it may leave some changes already applied to this Mac. A fresh Restore Preview will be required before another Rebuild.")
+                Text(model.forceStopConfirmation ? "Force Stop will interrupt the current operation. This may leave some changes incomplete and require additional steps before rebuilding again." : "Rebuild is still in progress. Stopping it may leave some changes already applied to this Mac. A fresh Rebuild Preview will be required before another Rebuild.")
                 HStack {
                     Button(model.forceStopConfirmation ? "Continue Waiting" : "Continue Rebuild") { model.dismissStopConfirmation() }.keyboardShortcut(.defaultAction)
                     Button(model.forceStopConfirmation ? "Force Stop" : "Stop Rebuild", role: model.forceStopConfirmation ? .destructive : nil) { model.confirmStop() }
@@ -647,7 +647,7 @@ struct RestorePreviewContent: View {
                 Label("Selection changed. Refresh Preview to update counts and prerequisites. The current Preview shows the previous selection.", systemImage: "arrow.clockwise")
                     .font(.callout).foregroundStyle(.secondary)
             }
-            Text("Automatic Restore").font(.headline)
+            Text("Automatic Rebuild").font(.headline)
             RestorePreviewMetrics(domains: domains)
             ForEach(scopeWarnings, id: \.self) { Text($0).font(.callout).foregroundStyle(.orange) }
             if alreadyMatches { Text("Selected requirements already match this Mac.") }
@@ -699,7 +699,7 @@ struct RestorePreviewContent: View {
         }.frame(maxWidth: .infinity, alignment: .leading)
     }
     private var previewTitle: some View {
-        Text("Restore Preview").font(.title2.weight(.semibold)).accessibilityAddTraits(.isHeader)
+        Text("Rebuild Preview").font(.title2.weight(.semibold)).accessibilityAddTraits(.isHeader)
     }
     private var readOnlyNotice: some View {
         Text("Read-only preview — no changes are made.")
@@ -770,7 +770,7 @@ struct RestoreSelectionActions: View {
         }
     }
     private var action: some View {
-        Button("Preview Restore", action: preview).buttonStyle(.borderedProminent).disabled(!canPreview)
+        Button("Preview Rebuild", action: preview).buttonStyle(.borderedProminent).disabled(!canPreview)
     }
 }
 
@@ -778,14 +778,14 @@ struct RestoreReviewCancelButton: View {
     @ObservedObject var model: RestoreModel
     var body: some View {
         Button("Cancel", action: model.requestReviewCancellation).disabled(!model.canCancelReview)
-            .alert("Discard Current Restore Selection?", isPresented: Binding(
+            .alert("Discard Current Rebuild Selection?", isPresented: Binding(
                 get: { model.reviewCancelConfirmation },
                 set: { if !$0 { model.keepReviewSelection() } })) {
                     Button("Keep Selection", role: .cancel, action: model.keepReviewSelection).keyboardShortcut(.defaultAction)
                     Button("Discard and Cancel", role: .destructive, action: model.confirmReviewCancellation)
                         .disabled(!model.canCancelReview)
                 } message: {
-                    Text("The current Restore selection and any prepared Preview will be discarded. The saved environment file will not be changed.")
+                    Text("The current Rebuild selection and any prepared Preview will be discarded. The saved environment file will not be changed.")
                 }
     }
 }
@@ -1233,7 +1233,7 @@ struct RestoreResultSummaryView: View {
     }
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Restore Summary").font(.headline).accessibilityAddTraits(.isHeader)
+            Text("Rebuild Summary").font(.headline).accessibilityAddTraits(.isHeader)
             WorkspaceThreeMetrics {
                 WorkspaceMetricCard(title: Self.completionTitle(outcome), value: nil,
                     symbol: verificationNotRun ? "minus.circle" : "checkmark.circle",
@@ -1575,7 +1575,7 @@ struct AppStoreRestoreScreen: View {
                 AppStoreRestoreMetrics(summary: summary)
                 AppStoreRestoreList(summary: summary)
                 if model.state == .result {
-                    Text("Refresh Status checks current state in a new Restore Preview. The completed execution is not rerun.")
+                    Text("Refresh Status checks current state in a new Rebuild Preview. The completed execution is not rerun.")
                         .font(.callout).foregroundStyle(.secondary)
                 }
             }
@@ -1587,7 +1587,7 @@ struct AppStoreRestoreActions: View {
     @ObservedObject var model: RestoreModel
     var body: some View {
         HStack {
-            Button("Back to Restore") { model.closeAppStore() }.disabled(model.busy || model.runtime.isActive)
+            Button("Back to Rebuild") { model.closeAppStore() }.disabled(model.busy || model.runtime.isActive)
             Spacer()
             if model.isRefreshingAppStore {
                 Button("Cancel Refresh") { model.cancelAppStoreRefresh() }

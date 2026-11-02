@@ -294,13 +294,13 @@ import SwiftUI
         }
         let firstActivity = try event("execution_event", domains[0], "firefox", "state", "applying", action: "reinstall")
         let nextActivity = try event("execution_event", domains[1], "firefox", "state", "applying")
-        precondition(activity([]) == "Restoring environment…")
+        precondition(activity([]) == "Rebuilding environment…")
         precondition(activity([firstActivity]) == "Repairing firefox…")
         precondition(activity([firstActivity, nextActivity]) == "Installing firefox…")
-        precondition(activity([firstActivity, finished]) == "Restoring environment…")
+        precondition(activity([firstActivity, finished]) == "Rebuilding environment…")
         precondition(activity([firstActivity, failure]) == "Repairing firefox…") // unrelated receipt
         precondition(activity([firstActivity, phase]) == "Verifying restored environment…")
-        precondition(activity([firstActivity, cancelled]) == "Restoring environment…")
+        precondition(activity([firstActivity, cancelled]) == "Rebuilding environment…")
         let unknownActivity = try event("execution_event", domains[0], "opaque:unknown", "state", "applying")
         precondition(activity([firstActivity, unknownActivity]) == "Homebrew Applications…")
         let startedCategory = try event("execution_event", domains[1], "scope", "state", "started")
@@ -308,7 +308,7 @@ import SwiftUI
         for type in ["phase_started", "phase_completed", "completed", "failed", "cancelled"] {
             let boundary = try CoreEvent(line: JSONSerialization.data(withJSONObject: ["protocol_version": 1, "operation_id": "presentation", "sequence": 2,
                 "type": type, "data": ["phase": "bootstrap"]]))
-            precondition(activity([firstActivity, boundary]) == "Restoring environment…")
+            precondition(activity([firstActivity, boundary]) == "Rebuilding environment…")
         }
         func resultSummary(_ counts: [String: CoreJSON]) -> RestoreVerificationSummary {
             RestoreVerificationSummary(payload: ["verification": .object(counts)])
@@ -905,7 +905,7 @@ import SwiftUI
         let prerequisites = RestorePrerequisiteSummaryPresentation(conditions: matched.readiness.conditions, ready: false)
         precondition(prerequisites.manualConditions.isEmpty && prerequisites.displayConditions.isEmpty)
         precondition(!prerequisites.isTerminalReady && !prerequisites.needsAttention)
-        precondition(prerequisites.operationAvailabilityMessage == "Restore Preview completed. Rebuild for Git worktree topology is not yet available.")
+        precondition(prerequisites.operationAvailabilityMessage == "Rebuild Preview completed. Rebuild for Git worktree topology is not yet available.")
         var currentMatching = matching
         currentMatching["readiness"] = executable["readiness"]
         let currentNoop = try JSONDecoder().decode(CoreRestorePreparation.self,
@@ -1216,7 +1216,7 @@ import SwiftUI
         if !selectionAccordionOnly && !refreshCancellationOnly { try assistedAppStoreChecks() }
         if CommandLine.arguments.contains("--rosetta-only") {
             try taskPresentationChecks()
-            print("PASS: Rosetta prerequisite and observation failure in Restore Preview and retained diagnostic evidence")
+            print("PASS: Rosetta prerequisite and observation failure in Rebuild Preview and retained diagnostic evidence")
             return
         }
         if !selectionAccordionOnly && !refreshCancellationOnly && !CommandLine.arguments.contains("--preview-appstore-layout-only") && !CommandLine.arguments.contains("--selection-preview-only") && !CommandLine.arguments.contains("--independent-ownership-only") && !CommandLine.arguments.contains("--review-cancel-only") && !CommandLine.arguments.contains("--restore-macos-only") && !CommandLine.arguments.contains("--pkg-preparation-only") && !CommandLine.arguments.contains("--fix-issues-only") {
@@ -1702,7 +1702,7 @@ import SwiftUI
                 if name == "launcher-plus-manual" {
                     precondition(summary.attentionCount == 2 && summary.automaticAttentionCount == 1 && summary.manualAttentionCount == 1)
                     precondition(summary.issues.map(\.id) == ["launcher:scope", "app-store"])
-                    precondition(summary.attentionCaption == "1 restore issue · 1 app to install")
+                    precondition(summary.attentionCaption == "1 rebuild issue · 1 app to install")
                     precondition(RestoreResultContent.message(result: result, summary: summary) == "Macseed Launcher could not be configured.")
                     var independent = summary
                     independent.independentIssueTitles = ["Secure preparation"]
@@ -2262,7 +2262,7 @@ import SwiftUI
             try write("execute_stale", core.appendingPathComponent("mode"))
             model.requestRebuild(); model.confirmRebuild(); await model.waitForCompletion()
             precondition(model.executionResult?.outcome == .failedBeforeMutation)
-            precondition(model.executionResult?.title == "Restore Plan Is Outdated")
+            precondition(model.executionResult?.title == "Rebuild Plan Is Outdated")
             let notRun = RestoreTaskPresentation(preview: model.executionPreview!, plan: model.executionPlan!,
                 events: runtime.events, result: model.executionResult!, operationProgress: true)
             precondition(notRun.domains.allSatisfy { $0.executionStatus == .notRun && $0.executionStatus.tone == .neutral })
@@ -2284,7 +2284,7 @@ import SwiftUI
                 events: [performed], result: model.executionResult!, operationProgress: true)
             precondition(mixed.domains.first { $0.id == "homebrew-casks" }!.executionStatus == .unverified)
 
-            precondition(model.executionResult!.message.contains("No changes were made by this Restore attempt."))
+            precondition(model.executionResult!.message.contains("No changes were made by this Rebuild attempt."))
             precondition(model.executionResult!.diagnosticReport.contains("stale_plan"))
             precondition(model.executionResult!.diagnosticReport.contains("Core recomputed ID:"))
             precondition(model.executionResult!.diagnosticReport.contains("Execute requested ID:"))
@@ -2439,7 +2439,7 @@ import SwiftUI
         events.append(try event(packageRow.id, "changed"))
         precondition(packageRow.project(events: events).status == .attention)
         precondition(RestoreProgressRow.phase(events: [], mutationPossible: false) == "Preparing rebuild…")
-        precondition(RestoreProgressRow.phase(events: [], mutationPossible: true) == "Restoring environment…")
+        precondition(RestoreProgressRow.phase(events: [], mutationPossible: true) == "Rebuilding environment…")
         let settingsProgress = frozen.first { $0.id == "macOS Settings" }!
         let oneSettingEvent = try event(macOS[0], "changed")
         let allSettingsEvents = try macOS.map { try event($0, "changed") }
@@ -2582,6 +2582,9 @@ import SwiftUI
         let retryRequestsAfter = try String(contentsOf: core.appendingPathComponent("requests.jsonl"), encoding: .utf8)
         precondition(retryRequestsAfter.split(separator: "\n").count == retryRequestsBefore.split(separator: "\n").count + 2)
         print("PASS: Actionable Automation denial preserves fail-closed Preview; user retry performs one Prepare after access")
+        // A fresh Bundle inspection leaves Advanced OFF. This fixture explicitly
+        // needs SSH in scope to exercise its prerequisite blocker.
+        model.selectArea("ssh-configuration", included: true)
         try write("scoped_ssh", core.appendingPathComponent("mode"))
         model.refreshPreview(); await model.waitForCompletion()
         precondition(!model.canRebuild && model.preparation!.readiness.conditions.contains { $0.code == "ssh_configuration_not_ready" })
@@ -2591,6 +2594,10 @@ import SwiftUI
                 .filter { $0["operation"] as? String == "restore_prepare" }
         }
         let prepareCount = try prepareRequests().count
+        let sshRequestParameters = try prepareRequests().last!["parameters"] as! [String: Any]
+        let sshRequestSelection = sshRequestParameters["selection"] as! [String: Any]
+        precondition((sshRequestSelection["categories"] as! [String]).contains("ssh-configuration"))
+        precondition(model.preparation!.selection.categories.contains("ssh-configuration"))
         let sshPlanID = model.preparation!.preparedPlanID
         let selectedMetrics = RestorePreviewMetrics.counts(RestoreTaskPresentation(preview: model.preview!, plan: model.preparation!).domains)
         model.selectPreviewDomain("ssh-configuration", included: false)
@@ -2758,7 +2765,7 @@ import SwiftUI
                 precondition(result.details.contains { $0.reason == "item_stalled_timeout" })
             }
             if mode == "execute_item_skip" {
-                precondition(model.executionResult!.title == "Partial Restore")
+                precondition(model.executionResult!.title == "Partial Rebuild")
                 precondition(!model.executionResult!.details.contains { $0.action == "Rebuild could not complete." })
                 precondition(model.executionResult!.details.contains { $0.reason == "differences_detected" })
                 precondition(model.executionResult!.details.contains { $0.reason == "cask_execution_requirements_unsupported" })
@@ -2818,6 +2825,6 @@ import SwiftUI
         let after = try Data(contentsOf: root.appendingPathComponent("real.mbt"))
         precondition(after == original)
         precondition(runtime.operation == .restorePrepare)
-        print("PASS: Swift → real bundle_inspect → stable subset → production Restore Preview, no target/config/Bundle mutation")
+        print("PASS: Swift → real bundle_inspect → stable subset → production Rebuild Preview, no target/config/Bundle mutation")
     }
 }

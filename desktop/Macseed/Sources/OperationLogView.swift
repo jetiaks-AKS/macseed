@@ -551,9 +551,9 @@ enum OperationLogPresentation {
         switch value {
         case .capturePrepare: "Capture · Scan and Prepare"
         case .captureExecute: "Capture · Save Environment"
-        case .bundleInspect: "Restore · Inspect Environment"
-        case .restorePrepare: "Restore · Preview"
-        case .restoreExecute: "Restore · Rebuild"
+        case .bundleInspect: "Rebuild · Inspect Environment"
+        case .restorePrepare: "Rebuild · Preview"
+        case .restoreExecute: "Rebuild · Execute"
         case .environmentCompare: ProductTask.status.title
         default: "Operation"
         }
@@ -828,7 +828,7 @@ struct OperationLogStopControls: View {
                 let force = pending?.mode == .force
                 Text(force ? "Force Stop Rebuild?" : pending?.mode == .graceful ? "Stop rebuilding?" : "Cancel operation?")
                     .font(.title2).accessibilityAddTraits(.isHeader)
-                Text(force ? "Force Stop will interrupt the current operation. This may leave some changes incomplete and require additional steps before rebuilding again." : pending?.mode == .graceful ? "Rebuild is still in progress. Stopping it may leave some changes already applied to this Mac. A fresh Restore Preview will be required before another Rebuild." : runtime.operation == .captureExecute ? "Once saving begins, stopping does not promise that a published file will be removed." : "Cancel the current inspection? You can start a fresh operation afterward.")
+                Text(force ? "Force Stop will interrupt the current operation. This may leave some changes incomplete and require additional steps before rebuilding again." : pending?.mode == .graceful ? "Rebuild is still in progress. Stopping it may leave some changes already applied to this Mac. A fresh Rebuild Preview will be required before another Rebuild." : runtime.operation == .captureExecute ? "Once saving begins, stopping does not promise that a published file will be removed." : "Cancel the current inspection? You can start a fresh operation afterward.")
                 HStack {
                     Button("Continue Operation") { pending = nil }.keyboardShortcut(.defaultAction)
                     Button(force ? "Force Stop" : pending?.mode == .graceful ? "Stop Rebuild" : "Cancel Operation", role: force ? .destructive : nil) {
