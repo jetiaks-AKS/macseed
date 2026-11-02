@@ -20,7 +20,7 @@ private struct WorkflowAnchorFrames: PreferenceKey {
 }
 
 @main struct PresentationTests {
-    @MainActor static func sidebarLayoutChecks() {
+    @MainActor static func sidebarLayoutChecks() async {
         _ = NSApplication.shared
         func splitController(in view: NSView) -> NSSplitViewController? {
             if let split = view as? NSSplitView, let controller = split.delegate as? NSSplitViewController {
@@ -32,9 +32,9 @@ private struct WorkflowAnchorFrames: PreferenceKey {
             if let table = view as? NSTableView { return table }
             return view.subviews.lazy.compactMap { navigationList(in: $0) }.first
         }
-        func settle(_ window: NSWindow, duration: TimeInterval = 0.08) {
+        func settle(_ window: NSWindow) async {
             window.contentView?.layoutSubtreeIfNeeded()
-            RunLoop.main.run(until: Date(timeIntervalSinceNow: duration))
+            try! await Task.sleep(nanoseconds: 80_000_000)
             window.contentView?.layoutSubtreeIfNeeded()
         }
         func detailWidth(_ split: NSSplitViewController) -> CGFloat {
@@ -43,7 +43,7 @@ private struct WorkflowAnchorFrames: PreferenceKey {
             // rather than reducing the full-bleed detail view's frame.
             return detail.bounds.width - detail.safeAreaInsets.left - detail.safeAreaInsets.right
         }
-        func check<V: View>(_ view: V, name: String, tasks: [ProductTask?], navigate: (ProductTask?, NSView) -> Void) {
+        func check<V: View>(_ view: V, name: String, tasks: [ProductTask?], navigate: (ProductTask?, NSView) -> Void) async {
             let host = NSHostingController(rootView: view.frame(minWidth: MainWindowPolicy.minimum.width,
                                                                minHeight: MainWindowPolicy.minimum.height))
             host.sizingOptions = []
@@ -53,15 +53,30 @@ private struct WorkflowAnchorFrames: PreferenceKey {
             window.setContentSize(NSSize(width: 1600, height: 800))
             window.orderFront(nil)
             defer { window.close() }
-            settle(window)
+            await settle(window)
             guard let split = splitController(in: host.view), let sidebar = split.splitViewItems.first else {
                 preconditionFailure("Missing native sidebar in \(name)")
+            }
+            func waitForLayout(_ transition: String, task: ProductTask?, before: CGFloat, until ready: () -> Bool) async {
+                let deadline = ProcessInfo.processInfo.systemUptime + 5
+                repeat {
+                    window.contentView?.layoutSubtreeIfNeeded()
+                    if ready() { return }
+                    // toggleSidebar animates. A nested RunLoop.run cannot release
+                    // the main actor when this fixture resumes after an await.
+                    try! await Task.sleep(nanoseconds: 10_000_000)
+                } while ProcessInfo.processInfo.systemUptime < deadline
+                let detail = split.splitViewItems.last!.viewController.view
+                preconditionFailure("Sidebar \(transition) did not converge within 5s: \(name), \(String(describing: task)), "
+                    + "collapsed=\(sidebar.isCollapsed), sidebarWidth=\(sidebar.viewController.view.frame.width), "
+                    + "before=\(before), after=\(detailWidth(split)), bounds=\(detail.bounds), insets=\(detail.safeAreaInsets), "
+                    + "windowContent=\(host.view.bounds.size), isVisible=\(window.isVisible), occlusionState=\(window.occlusionState.rawValue)")
             }
             for task in tasks {
                 navigate(task, host.view)
                 for width in [1600.0, 1200, 1000, 1200, 1600, 1000] {
                     window.setContentSize(NSSize(width: width, height: 800))
-                    settle(window)
+                    await settle(window)
                     let thickness = sidebar.viewController.view.frame.width
                     precondition(abs(host.view.bounds.width - width) < 1)
                     precondition(!sidebar.isCollapsed && abs(thickness - 215) < 1,
@@ -76,7 +91,10 @@ private struct WorkflowAnchorFrames: PreferenceKey {
                 let visibleInsets = split.splitViewItems.last!.viewController.view.safeAreaInsets
                 let selectedRows = navigationList(in: sidebar.viewController.view)?.selectedRowIndexes
                 split.toggleSidebar(nil)
-                settle(window, duration: 0.4)
+                await waitForLayout("collapse", task: task, before: visibleDetailWidth) {
+                    sidebar.isCollapsed && detailWidth(split) > visibleDetailWidth + 200
+                        && abs(detailWidth(split) - host.view.bounds.width) < 1
+                }
                 precondition(sidebar.isCollapsed, "Existing sidebar toggle must hide the sidebar")
                 precondition(detailWidth(split) > visibleDetailWidth + 200,
                     "Hidden sidebar must release its width to detail: \(name), \(String(describing: task)), "
@@ -88,13 +106,20 @@ private struct WorkflowAnchorFrames: PreferenceKey {
                     + "Run this native geometry gate in an unlocked macOS GUI session; a locked session can suspend sidebar layout.")
                 for width in [1600.0, 1200, 1000] {
                     window.setContentSize(NSSize(width: width, height: 800))
-                    settle(window)
+                    await settle(window)
                     precondition(sidebar.isCollapsed, "Resize must preserve explicit hidden state")
                 }
                 split.toggleSidebar(nil)
-                settle(window, duration: 0.4)
+                await waitForLayout("expansion", task: task, before: visibleDetailWidth) {
+                    !sidebar.isCollapsed && abs(sidebar.viewController.view.frame.width - 215) < 1
+                        && !sidebar.viewController.view.isHiddenOrHasHiddenAncestor
+                        && sidebar.viewController.view.visibleRect.width >= 214
+                        && abs(detailWidth(split) - visibleDetailWidth) < 1
+                }
                 precondition(!sidebar.isCollapsed && abs(sidebar.viewController.view.frame.width - 215) < 1,
                              "Existing toggle must restore the normal sidebar width")
+                precondition(abs(detailWidth(split) - visibleDetailWidth) < 1,
+                             "Expanded sidebar must restore the original effective detail width")
                 precondition(!sidebar.viewController.view.isHiddenOrHasHiddenAncestor)
                 precondition(sidebar.viewController.view.visibleRect.width >= 214)
                 precondition(navigationList(in: sidebar.viewController.view)?.selectedRowIndexes == selectedRows,
@@ -105,11 +130,11 @@ private struct WorkflowAnchorFrames: PreferenceKey {
         let tasks = [nil] + ProductTask.allCases.map(Optional.some)
         #if DEBUG
         let session = DemoSession()
-        check(DemoWorkspace(session: session), name: "preview", tasks: tasks) { task, _ in session.navigate(task) }
+        await check(DemoWorkspace(session: session), name: "preview", tasks: tasks) { task, _ in session.navigate(task) }
         #endif
         // No Core launch or local operation-log writes in this native layout fixture.
         let runtime = CoreRuntime(resolver: CoreLocationResolver(resources: nil), operationLogs: nil)
-        check(ProductionWorkspace(runtime: runtime), name: "production", tasks: tasks) { task, view in
+        await check(ProductionWorkspace(runtime: runtime), name: "production", tasks: tasks) { task, view in
             guard let table = navigationList(in: view) else { preconditionFailure("Missing native navigation list") }
             let row = task.map { ProductTask.allCases.firstIndex(of: $0)! + 2 } ?? 1
             table.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
@@ -3593,6 +3618,7 @@ private struct WorkflowAnchorFrames: PreferenceKey {
     }
 
     @MainActor static func main() async {
+        if CommandLine.arguments.contains("--sidebar-layout-only") { await sidebarLayoutChecks(); return }
         if CommandLine.arguments.contains("--summary-metrics-only") {
             try! await summaryMetricVisibilityChecks(); minimalResultSummaryChecks(); return
         }
@@ -3612,7 +3638,10 @@ private struct WorkflowAnchorFrames: PreferenceKey {
         if CommandLine.arguments.contains("--final-alignment-only") { try! await finalCapturePreviewAlignmentChecks(); return }
         if CommandLine.arguments.contains("--restore-macos-only") { await restoreMacOSChecks(); return }
         if CommandLine.arguments.contains("--workflow-scroll-only") { try! await workflowStatusScrollChecks(); return }
-        if CommandLine.arguments.count == 1 { try! await summaryMetricVisibilityChecks() }
+        if CommandLine.arguments.count == 1 {
+            try! await summaryMetricVisibilityChecks()
+            await sidebarLayoutChecks()
+        }
         runChecks()
     }
 
@@ -3622,7 +3651,6 @@ private struct WorkflowAnchorFrames: PreferenceKey {
         if CommandLine.arguments.contains("--workflow-controls-only") { workflowInteractiveControlsChecks(); operationLogChecks(); resultStatusAlignmentChecks(); screenshotsIncludedSettingsChecks(); workflowDescendantChecks(); return }
         if CommandLine.arguments.contains("--workflow-layout-only") { workflowDescendantChecks(); workflowLayoutChecks(); return }
         if CommandLine.arguments.contains("--concise-workflows-only") { conciseWorkflowChecks(); operationLogChecks(); resultCleanupChecks(); restoreResultSummaryChecks(); return }
-        if CommandLine.arguments.contains("--sidebar-layout-only") { sidebarLayoutChecks(); return }
         if CommandLine.arguments.contains("--preview-expansion-only") { previewExpansionPerformanceChecks(); return }
         if CommandLine.arguments.contains("--preview-appstore-layout-only") { previewColumnGeometryChecks(); resultStatusAlignmentChecks(); appStoreVisualChecks(); return }
         if CommandLine.arguments.contains("--selection-preview-only") { resultCleanupChecks(); resultStatusAlignmentChecks(); return }
@@ -3778,7 +3806,6 @@ private struct WorkflowAnchorFrames: PreferenceKey {
         precondition(CaptureMetricCard.tone(attention: true, count: 0) == .neutral)
         precondition(CaptureMetricCard.tone(attention: true, count: 1) == .amber)
         visualContractChecks()
-        sidebarLayoutChecks()
         renderUnifiedSettings()
         renderRestoreV2()
         renderInitialStates()
