@@ -1086,6 +1086,116 @@ private struct WorkflowAnchorFrames: PreferenceKey {
         print("PASS: Result-only neutral Unverified/questionmark.circle; other colors/symbols and global Unverified unchanged; one Rebuild Cancelled render")
     }
 
+    @MainActor static func summaryMetricVisibilityChecks() async throws {
+        _ = NSApplication.shared; NSApp.appearance = NSAppearance(named: .aqua)
+        let fixture = FileManager.default.temporaryDirectory.appendingPathComponent("macseed-summary-metrics-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: fixture) }
+        for folder in ["modules/core/application-interface", "config", "home", "tmp"] {
+            try FileManager.default.createDirectory(at: fixture.appendingPathComponent(folder), withIntermediateDirectories: true)
+        }
+        for file in ["bootstrap.sh", "config/toolkit.conf", "modules/core/application-interface/core.py"] {
+            try Data().write(to: fixture.appendingPathComponent(file))
+        }
+        // An isolated JSON emitter exercises the production result projection; no Rebuild runs.
+        try "#!/bin/bash\nexec /usr/bin/python3 -B fixture.py\n".write(to: fixture.appendingPathComponent("modules/core/application-interface/core.sh"), atomically: true, encoding: .utf8)
+        try """
+        import json, sys
+        from pathlib import Path
+        request=json.load(sys.stdin)
+        payload=json.loads(Path('payload.json').read_text())
+        for sequence,(kind,data) in enumerate([('started',{}),('result',payload),('completed',{})],1):
+            print(json.dumps(dict(protocol_version=1,operation_id=request['operation_id'],sequence=sequence,type=kind,data=data)),flush=True)
+        """.write(to: fixture.appendingPathComponent("fixture.py"), atomically: true, encoding: .utf8)
+        let planID = String(repeating: "a", count: 64)
+        // Complete authoritative Verification, without retained per-command diagnostics.
+        let payload: [String: CoreJSON] = ["prepared_plan_id": .string(planID), "execution_status": .string("completed"),
+            "target_mutation_may_have_started": .bool(true), "unknown_consequences": .bool(false),
+            "warning_count": .integer(0), "error_count": .integer(0),
+            "verification": .object(["status": .string("complete"), "verdict": .string("selected_requirements_verified"),
+                "verified_count": .integer(132), "mismatch_count": .integer(0), "unverified_count": .integer(0),
+                "unresolved_count": .integer(0), "warning_count": .integer(0), "error_count": .integer(0)])]
+        try JSONEncoder().encode(payload).write(to: fixture.appendingPathComponent("payload.json"))
+        let runtime = CoreRuntime(operationLogs: nil)
+        runtime.start(CoreRequest(.restoreExecute(path: fixture.appendingPathComponent("sample.mbt").path,
+            disabledGroups: [], includeSecure: false, preparedID: planID, selection: .init(categories: ["git-repositories"], items: [:]))),
+            location: .init(root: fixture, python: URL(fileURLWithPath: "/usr/bin/python3"), home: fixture.appendingPathComponent("home"),
+                temporaryBase: fixture.appendingPathComponent("tmp"), toolDirectories: []))
+        await runtime.waitForCompletion()
+        precondition(runtime.state == .completed)
+        let result = RestoreExecutionPresentation(runtime: runtime, payload: payload, expectedID: planID)
+        precondition(result.outcome == .clean && result.findings.isEmpty)
+        let rows = (1...9).map { index in
+            TaskItemPresentation(id: "repository-\(index)", item: DisplayItem(id: "repository-\(index)", title: "Repository \(index)", status: .ready, action: "Clone"),
+                state: .completed, executionAction: "Clone", resultLabels: ["Applied", "Verified"])
+        }
+        let domains = [TaskDomainPresentation(id: "git-repositories", title: "Git Repositories", symbol: "folder", items: rows)]
+        let clean = RestoreResultSummary(domains: domains, result: result, appStore: nil)
+        precondition(clean.verifiedRestorationCount == 9 && RestoreVerificationSummary(payload: payload).verified == 132)
+        precondition(clean.attentionCount == 0 && clean.issues.isEmpty && clean.attentionCaption.isEmpty)
+        precondition(RestoreResultSummaryView(summary: clean, outcome: .clean).attentionExplanation == nil)
+
+        var positive = clean; positive.automaticAttentionCount = 2
+        precondition(RestoreResultSummaryView(summary: positive, outcome: .attention).attentionExplanation == "2 rebuild issues")
+        var unknown = clean; unknown.automaticAttentionCount = nil
+        precondition(RestoreResultSummaryView(summary: unknown, outcome: .interrupted).attentionExplanation == "Rebuild work needs review")
+        var uncounted = clean
+        uncounted.issues = [.init(id: "scope", title: "Rebuild", message: "The remaining scope is unknown.", nextAction: "Refresh Preview.", count: nil)]
+        precondition(uncounted.attentionCaption.isEmpty)
+        precondition(RestoreResultSummaryView(summary: uncounted, outcome: .attention).attentionExplanation == "Rebuild work needs review")
+        for outcome in [RestoreExecutionPresentation.Outcome.stoppedBeforeMutation, .stoppedAfterMutation, .interrupted] {
+            let view = RestoreResultSummaryView(summary: unknown, outcome: outcome, verificationNotRun: true)
+            precondition(view.verificationNotRun && RestoreResultSummaryView.completionTitle(outcome) == "Verification" && view.attentionExplanation != nil)
+        }
+        let matching = TaskItemPresentation(id: "matching", item: DisplayItem(id: "matching", title: "Existing repository", status: .matching, action: "Inspect"),
+            state: .completed, resultLabels: ["Already Matches", "Verified"])
+        let noChanges = RestoreResultSummary(domains: [.init(id: "git-repositories", title: "Git Repositories", symbol: "folder", items: [matching])], result: result, appStore: nil)
+        precondition(noChanges.noChangesRequired && noChanges.verifiedRestorationCount == 0)
+        precondition(RestoreResultSummaryView(summary: noChanges, outcome: .clean).attentionExplanation == nil)
+        func apps(_ status: AssistedAppStoreItem.Status) -> AppStoreRestorePresentation {
+            let row = TaskItemPresentation(id: "app", item: DisplayItem(id: "app", title: "Application", status: .information, action: ""),
+                state: .unverified, assistedAppStore: .init(appID: "425264550", status: status))
+            return AppStoreRestorePresentation(domains: [.init(id: "app-store", title: "App Store", symbol: "app", items: [row])])
+        }
+        let installed = apps(.installed), missing = apps(.missing), unchecked = apps(.unverified)
+        for (apps, caption) in [(installed, nil), (missing, "1 app to install"), (unchecked, "1 app to check")] {
+            let summary = RestoreResultSummary(domains: domains, result: result, appStore: apps)
+            precondition(RestoreResultSummaryView(summary: summary, outcome: .clean).attentionExplanation == caption)
+        }
+        let output = URL(fileURLWithPath: "build/Debug/SummaryMetrics", isDirectory: true)
+        try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+        func height<V: View>(_ view: V, width: CGFloat) -> CGFloat {
+            // The one-point marker makes an empty production view measurable.
+            ImageRenderer(content: VStack(spacing: 0) { view; Color.clear.frame(height: 1) }.frame(width: width)).nsImage!.size.height - 1
+        }
+        let emptyCapture = CaptureSummaryPresentation(domainCount: 0, itemCount: 0, attentionCount: 0, unsupportedCount: 0)
+        let selectedCapture = CaptureSummaryPresentation(domainCount: 1, itemCount: 0, attentionCount: 0, unsupportedCount: 0)
+        let attentionCapture = CaptureSummaryPresentation(domainCount: 0, itemCount: 0, attentionCount: 1, unsupportedCount: 0)
+        let emptyDomain = TaskDomainPresentation(id: "empty", title: "Empty", symbol: "folder", items: [])
+        for width in [CGFloat(420), 785, 985] {
+            precondition(height(CaptureReviewMetrics(summary: emptyCapture), width: width) == 0, "No zero-count Capture card or empty row")
+            precondition(height(RestorePreviewMetrics(domains: [emptyDomain]), width: width) == 0, "No empty Preview metric row")
+            precondition(height(RestorePreviewMetrics(domains: []), width: width) > 0, "Retain the explicit no-selection message")
+            for view in [AnyView(CaptureReviewMetrics(summary: selectedCapture)), AnyView(CaptureReviewMetrics(summary: attentionCapture)),
+                         AnyView(AppStoreRestoreMetrics(summary: installed)), AnyView(AppStoreRestoreMetrics(summary: unchecked))] {
+                precondition(height(view, width: width) == 80, "A single metric uses the existing responsive layout")
+            }
+            let cleanView = RestoreResultSummaryView(summary: clean, outcome: .clean)
+            let attentionView = RestoreResultSummaryView(summary: positive, outcome: .attention)
+            precondition(height(attentionView, width: width) - height(cleanView, width: width) == (width < 450 ? 90 : 0),
+                "Clean Result removes the second card at narrow and wide widths")
+            let content = VStack(alignment: .leading, spacing: 20) {
+                cleanView
+                attentionView
+                RestoreResultSummaryView(summary: unknown, outcome: .stoppedAfterMutation, verificationNotRun: true)
+                CaptureReviewMetrics(summary: selectedCapture)
+                AppStoreRestoreMetrics(summary: installed)
+            }.padding(16).frame(width: width + 32).background(Color(nsColor: .windowBackgroundColor))
+            let bitmap = NSBitmapImageRep(cgImage: ImageRenderer(content: content).cgImage!)
+            try bitmap.representation(using: .png, properties: [:])!.write(to: output.appendingPathComponent("summary-\(Int(width)).png"))
+        }
+        print("PASS: summary cards at 420/785/985; clean 9 Verified versus 132 predicates; positive/unknown/manual attention; Not Run; empty Capture/Preview rows; retained no-change outcome")
+    }
+
     @MainActor static func minimalResultSummaryChecks() {
         for value in [CoreJSON.null, .integer(0), .integer(-1), .string("2"), .integer(2)] {
             let payload: [String: CoreJSON] = ["verification": .object(["status": .string("incomplete"), "mismatch_count": value, "unverified_count": value])]
@@ -3483,6 +3593,9 @@ private struct WorkflowAnchorFrames: PreferenceKey {
     }
 
     @MainActor static func main() async {
+        if CommandLine.arguments.contains("--summary-metrics-only") {
+            try! await summaryMetricVisibilityChecks(); minimalResultSummaryChecks(); return
+        }
         if CommandLine.arguments.contains("--status-grouping-only") { textStatusLayoutChecks(); return }
         if CommandLine.arguments.contains("--restore-stopped-result-only") {
             try! await restoreStoppedResultChecks(); restoreResultSummaryChecks(); return
@@ -3499,6 +3612,7 @@ private struct WorkflowAnchorFrames: PreferenceKey {
         if CommandLine.arguments.contains("--final-alignment-only") { try! await finalCapturePreviewAlignmentChecks(); return }
         if CommandLine.arguments.contains("--restore-macos-only") { await restoreMacOSChecks(); return }
         if CommandLine.arguments.contains("--workflow-scroll-only") { try! await workflowStatusScrollChecks(); return }
+        if CommandLine.arguments.count == 1 { try! await summaryMetricVisibilityChecks() }
         runChecks()
     }
 

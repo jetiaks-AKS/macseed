@@ -538,11 +538,15 @@ struct CaptureMetricCard: View {
 struct CaptureReviewMetrics: View {
     let summary: CaptureSummaryPresentation
     var body: some View {
-        WorkspaceThreeMetrics { cards }
+        if summary.domainCount > 0 || summary.attentionCount > 0 {
+            WorkspaceThreeMetrics { cards }
+        }
     }
     @ViewBuilder private var cards: some View {
-        WorkspaceMetricCard(title: "\(summary.domainCount) Selected Domains", value: nil, symbol: "square.stack", tint: .blue,
-            explanation: "\(summary.itemCount) Selected Items")
+        if summary.domainCount > 0 {
+            WorkspaceMetricCard(title: "\(summary.domainCount) Selected Domains", value: nil, symbol: "square.stack", tint: .blue,
+                explanation: "\(summary.itemCount) Selected Items")
+        }
         if summary.attentionCount > 0 {
             CaptureMetricCard(title: "Needs Attention", count: summary.attentionCount, symbol: "exclamationmark.triangle", attention: true)
         }

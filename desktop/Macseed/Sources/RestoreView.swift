@@ -1231,6 +1231,10 @@ struct RestoreResultSummaryView: View {
     static func completionTitle(_ outcome: RestoreExecutionPresentation.Outcome) -> String {
         [.clean, .attention].contains(outcome) ? "Complete" : "Verification"
     }
+    var attentionExplanation: String? {
+        guard summary.attentionCount != 0 || !summary.issues.isEmpty else { return nil }
+        return summary.attentionCaption.isEmpty ? "Rebuild work needs review" : summary.attentionCaption
+    }
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Rebuild Summary").font(.headline).accessibilityAddTraits(.isHeader)
@@ -1239,9 +1243,11 @@ struct RestoreResultSummaryView: View {
                     symbol: verificationNotRun ? "minus.circle" : "checkmark.circle",
                     tint: verificationNotRun ? RestoreStatusTone.neutral.color : RestoreStatusTone.success.color,
                     explanation: verificationNotRun ? "Not Run" : "\(summary.verifiedRestorationCount) Verified")
-                WorkspaceMetricCard(title: "Needs Attention", value: nil,
-                    symbol: "exclamationmark.triangle", tint: .orange,
-                    explanation: summary.attentionCaption)
+                if let attentionExplanation {
+                    WorkspaceMetricCard(title: "Needs Attention", value: nil,
+                        symbol: "exclamationmark.triangle", tint: .orange,
+                        explanation: attentionExplanation)
+                }
             }
         }
     }
@@ -1385,7 +1391,9 @@ struct RestorePreviewMetrics: View {
         let counts = Self.counts(domains)
         if domains.isEmpty {
             Text("No automatic requirements selected.").foregroundStyle(.secondary)
-        } else { WorkspaceThreeMetrics { cards(counts) } }
+        } else if counts.matching > 0 || counts.changes > 0 || counts.attention > 0 {
+            WorkspaceThreeMetrics { cards(counts) }
+        }
     }
     @ViewBuilder private func cards(_ counts: (changes: Int, attention: Int, matching: Int)) -> some View {
         if counts.matching > 0 { Self.metric("Already Match", count: counts.matching, symbol: "checkmark.circle", color: RestoreStatusTone.success.color) }

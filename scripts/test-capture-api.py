@@ -69,7 +69,7 @@ esac
                 if not (workspace and name == 'discover_workspace')) + '\n'))
         self.selection = {'categories': ['homebrew-packages'], 'items': {}, 'secure_identities': []}
 
-    def invoke_capture(self, operation='capture_prepare', selection=None, extra=None, channel=None):
+    def invoke_capture(self, operation='capture_prepare', selection=None, extra=None, channel=None, timeout=30):
         request = {'protocol_version': 1, 'operation_id': 'capture-test', 'operation': operation,
                    'parameters': {'selection': selection}}
         request['parameters'].update(extra or {})
@@ -79,7 +79,7 @@ esac
             command += ['--secure-fd', str(channel)]
             kwargs['pass_fds'] = (channel,)
         result = subprocess.run(command, cwd=self.project, env=self.environment, input=json.dumps(request).encode(),
-                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30, **kwargs)
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout, **kwargs)
         return result, [json.loads(line) for line in result.stdout.splitlines()]
 
     def prepare(self, selection=None):
@@ -88,10 +88,10 @@ esac
         self.assertEqual(sum(row['type'] in ('completed', 'failed') for row in events), 1)
         return events[-2]['data']
 
-    def execute(self, prepared, selection=None, destination=None):
+    def execute(self, prepared, selection=None, destination=None, timeout=30):
         return self.invoke_capture('capture_execute', selection or self.selection,
                                    {'expected_prepared_capture_id': prepared,
-                                    'destination': str(destination or self.root / 'captured.mbt')})
+                                    'destination': str(destination or self.root / 'captured.mbt')}, timeout=timeout)
 
     def test_inventory_absence_error_privacy_and_determinism(self):
         self.fixture()
@@ -775,7 +775,10 @@ esac
         selected = self.prepare(selection)
         self.assertEqual(selected['selection'], selection)
         self.assertEqual(selected['summary']['selected_items'], 0)
-        status, events = self.execute(selected['prepared_capture_id'], selection=selection)
+        # This real-discovery fixture executes a fresh scan plus validation.
+        # CI #131 passed both Executes in 40.864 s total; #132 hit the former
+        # 30 s per-operation bound. Keep the extra headroom local to this case.
+        status, events = self.execute(selected['prepared_capture_id'], selection=selection, timeout=60)
         self.assertEqual(status.returncode, 0, events)
         self.assertTrue(events[-2]['data']['publication_occurred'])
         self.assertEqual(set(events[-2]['data']['bundle']['selected_categories']), set(expected))
@@ -805,7 +808,7 @@ esac
         selection = {'categories': ['macos-screenshots'], 'items': {}, 'secure_identities': []}
         prepared = self.prepare(selection)
         destination = self.root / 'desktop.mbt'
-        status, events = self.execute(prepared['prepared_capture_id'], selection=selection, destination=destination)
+        status, events = self.execute(prepared['prepared_capture_id'], selection=selection, destination=destination, timeout=60)
         self.assertEqual(status.returncode, 0, events)
         self.assertEqual(bundle.validate_archive(destination)['generated/macos/screenshots.conf'],
                          b'com.apple.screencapture|location|string|~/Desktop\n')

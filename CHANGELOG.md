@@ -145,6 +145,9 @@ The format is based on the principles of **Keep a Changelog**.
 
 ### Fixed
 
+* Desktop Rebuild hides an empty Needs Attention summary while preserving real
+  issues, unknown outcomes and Verification Not Run. Capture Review and Rebuild
+  Preview omit empty numeric metric rows without changing selection or evidence.
 * Recognize macOS 27.2 missing optional preferences without masking observation
   errors. Screenshots retains portable Bundle v1 destination semantics across
   macOS 15/26 legacy and macOS 27 screenshot-specific keys. Unknown backends and
