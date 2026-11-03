@@ -10,7 +10,7 @@ if [[ $# -gt 2 || ( $# -eq 2 && "$2" != --test ) ]]; then
 fi
 # One inventory drives execution and the optional CI summary. Counts are suite
 # invocations, never assertions; compilation and execution are separate stages.
-suites=(PresentationTests DiagnosticReportTests OperationLogViewTests OperationLogTests
+suites=(PresentationTests HomebrewSetupTests HomebrewPackageTests HomebrewLaunchTests DiagnosticReportTests OperationLogViewTests OperationLogTests
     CoreRuntimeTests EnvironmentStatusTests CaptureTests RestoreTests)
 restore_subsets=(--final-restore-ux-only --assisted-appstore-only)
 stages=("$configuration app build")

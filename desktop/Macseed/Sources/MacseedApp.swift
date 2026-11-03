@@ -1,9 +1,46 @@
 import SwiftUI
 
-@main struct MacseedApp: App {
+// Decide the initial scene before SwiftUI creates any windows. The native probe
+// runs off the main actor and has a finite deadline; healthy launches never build
+// a setup scene. No Core runtime or developer dependency is needed for this gate.
+@main enum MacseedStartup {
+    @MainActor static func main() {
+        HomebrewStartupGate.prepare(HomebrewSetupModel.shared)
+        if #available(macOS 15, *) { MacseedApp.main() }
+        else { LegacyMacseedApp.main() }
+    }
+}
+
+@available(macOS 15, *)
+struct MacseedApp: App {
+    @StateObject private var homebrew = HomebrewSetupModel.shared
     @NSApplicationDelegateAdaptor(CoreAppLifecycle.self) private var lifecycle
     var body: some Scene {
-        WindowGroup("Macseed") {
+        MacseedHomeScene()
+            .defaultLaunchBehavior(homebrew.launchOffersSetup ? .suppressed : .presented)
+            .restorationBehavior(.disabled)
+        Window("Set Up Homebrew", id: "homebrew-setup") { HomebrewSetupWindow() }
+            .windowResizability(.contentSize)
+            .defaultLaunchBehavior(homebrew.launchOffersSetup ? .presented : .suppressed)
+            .restorationBehavior(.disabled)
+        MacseedSettingsScene()
+    }
+}
+
+// macOS 14 remains supported by Macseed, but not the current Homebrew installers.
+// Its normal Home scene opens directly; manual setup provides honest guidance.
+private struct LegacyMacseedApp: App {
+    @NSApplicationDelegateAdaptor(CoreAppLifecycle.self) private var lifecycle
+    var body: some Scene {
+        MacseedHomeScene()
+        Window("Set Up Homebrew", id: "homebrew-setup") { HomebrewSetupWindow() }.windowResizability(.contentSize)
+        MacseedSettingsScene()
+    }
+}
+
+private struct MacseedHomeScene: Scene {
+    var body: some Scene {
+        WindowGroup("Macseed", id: "home") {
             ContentView()
                 .frame(minWidth: MainWindowPolicy.minimum.width,
                        minHeight: MainWindowPolicy.minimum.height)
@@ -14,15 +51,18 @@ import SwiftUI
         .commands {
             CommandGroup(replacing: .newItem) { }
             CommandGroup(replacing: .appInfo) {
-                Button("About Macseed") {
-                    MacseedAbout.show(coreVersion: CoreRuntime.shared.capabilities?.productVersion)
-                }
+                Button("About Macseed") { MacseedAbout.show(coreVersion: CoreRuntime.shared.capabilities?.productVersion) }
             }
             #if DEBUG
             RestoreScenarioCommands()
             #endif
         }
-        Settings { FoundationSettingsView() }
+    }
+}
+
+private struct MacseedSettingsScene: Scene {
+    var body: some Scene {
+        Settings { FoundationSettingsView(showAbout: { MacseedAbout.show(coreVersion: CoreRuntime.shared.capabilities?.productVersion) }) }
     }
 }
 
@@ -62,48 +102,6 @@ import SwiftUI
     }
 }
 
-private typealias SettingsViewState<Value> = SwiftUI.State<Value>
-
-struct FoundationSettingsView: View {
-    @AppStorage(DesktopAppearance.preferenceKey) private var appearanceValue = DesktopAppearance.system.rawValue
-    @SettingsViewState private var selectedTab = "general"
-    var body: some View {
-        TabView(selection: $selectedTab) {
-            VStack(alignment: .leading, spacing: 16) {
-                GroupBox("Appearance") {
-                    Picker("Appearance", selection: Binding(
-                        get: { appearanceValue },
-                        set: { value in
-                            appearanceValue = value
-                            DesktopAppearance(storedValue: value).apply(to: NSApp)
-                        })) {
-                        ForEach(DesktopAppearance.allCases) { mode in Text(mode.title).tag(mode.rawValue) }
-                    }
-                    .pickerStyle(.segmented)
-                    .padding(8)
-                }
-                Button("About Macseed…") {
-                    MacseedAbout.show(coreVersion: CoreRuntime.shared.capabilities?.productVersion)
-                }
-                .buttonStyle(.link).font(.callout)
-                .frame(maxWidth: .infinity, alignment: .trailing)
-            }
-            .padding(24)
-            .tabItem { Label("General", systemImage: "gearshape") }.tag("general")
-            Color.clear
-                .tabItem { Label("Operation Logs", systemImage: "clock") }.tag("logs")
-        }
-        .onChange(of: selectedTab) { _, tab in
-            if tab == "logs" {
-                OperationLogWindowController.shared.open(runtime: CoreRuntime.shared, target: nil)
-                selectedTab = "general"
-            }
-        }
-        .frame(width: 440)
-        .fixedSize(horizontal: false, vertical: true)
-    }
-}
-
 // Quit waits for real owned-process cancellation; closing a window does not
 // terminate the application or detach the shared runtime. RestoreModel.shared retains
 // the operation/result context when a window is closed and reopened.
@@ -114,6 +112,10 @@ struct FoundationSettingsView: View {
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Use the packaged Hero-derived icon for this running app, independent of Dock caching.
         if let icon = MacseedBundleIcon.load() { NSApp.applicationIconImage = icon }
+        if HomebrewSetupModel.shared.observation == nil { Task { await HomebrewSetupModel.shared.check() } }
+        #if DEBUG
+        HomebrewSetupDebug.start()
+        #endif
     }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         let runtime = CoreRuntime.shared

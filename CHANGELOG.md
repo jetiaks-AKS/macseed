@@ -11,6 +11,14 @@ The format is based on the principles of **Keep a Changelog**.
 
 ### Added
 
+* Optional native Homebrew setup guidance, shared by first launch, General Settings
+  and Rebuild prerequisites. Read-only checks distinguish missing, usable and
+  uncertain/broken installations. Supported Macs can download the official package
+  with progress/cancellation and required checksum, pinned publisher and Apple
+  certificate trust checks before handing it to macOS Installer, or use the manual
+  Terminal command. Enabled Gatekeeper must approve the package; disabled assessments
+  use independent authenticity checks without claiming notarization or bypassing rejection.
+  A dedicated startup window, persistent reminder preference and fresh rechecks keep installation external and never start Rebuild.
 * Workspace Topology v1 discovery for ordinary Git repositories and base/linked
   worktrees, with stable checkout IDs and relationships preserved in Bundles.
 * Topology-aware Capture selection validates explicit base/linked/parent dependencies

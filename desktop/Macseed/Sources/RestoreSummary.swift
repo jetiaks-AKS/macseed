@@ -171,6 +171,7 @@ struct RestoreIssueSummaryView: View {
 struct RestorePrerequisiteSummaryView: View {
     let summary: RestorePrerequisiteSummaryPresentation
     let areas: [CoreRestoreInspection.Area]
+    var homebrewRecheck: (() -> Void)? = nil
     var body: some View {
         if !summary.manualConditions.isEmpty {
             VStack(alignment: .leading, spacing: 6) {
@@ -180,6 +181,11 @@ struct RestorePrerequisiteSummaryView: View {
                         RestoreBlockingPrerequisiteAreaView(
                             title: areas.first { $0.id == domain }?.label ?? "Selected work",
                             conditions: summary.manualConditions.filter { $0.domain == domain })
+                    }
+                    if let homebrewRecheck, summary.manualConditions.contains(where: {
+                        ["homebrew_installation_requires_interaction", "homebrew_unavailable"].contains($0.code)
+                    }) {
+                        HomebrewPrerequisiteAction(refreshPreview: homebrewRecheck)
                     }
                 }
             }.padding(.horizontal, 16)

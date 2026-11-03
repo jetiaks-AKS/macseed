@@ -108,16 +108,77 @@ Use the existing entrypoint for an authorized Desktop validation checkpoint:
 ```
 
 `build.sh` is the single inventory owner. It compiles each executable once and runs
-these eight suites sequentially:
+these eleven suites sequentially:
 
 1. PresentationTests
-2. DiagnosticReportTests
-3. OperationLogViewTests
-4. OperationLogTests
-5. CoreRuntimeTests
-6. EnvironmentStatusTests
-7. CaptureTests
-8. RestoreTests
+2. HomebrewSetupTests
+3. HomebrewPackageTests
+4. HomebrewLaunchTests
+5. DiagnosticReportTests
+6. OperationLogViewTests
+7. OperationLogTests
+8. CoreRuntimeTests
+9. EnvironmentStatusTests
+10. CaptureTests
+11. RestoreTests
+
+`HomebrewSetupTests` uses injected observations/external actions and disposable fake
+executables. `HomebrewLaunchTests` covers the synchronous entry stack, an actually
+suspended check, a bounded startup timeout and late completion. Neither installs
+Homebrew. `RestoreTests <core-root> <python> --homebrew-setup-only --no-renders`
+uses the existing disposable Core fixture for setup → fresh Prepare/Preview,
+including reminder suppression and no Execute.
+
+After building Debug, `python3 -B scripts/test-homebrew-startup.py` from the repository
+root exercises the **actual app**, serially, in an unlocked GUI session with native
+accessibility access. Its explicit `--homebrew-setup-test` configuration, isolated
+preference suites and control files are DEBUG-only; they override only setup state
+and external-action sinks, never Core readiness or restoration. Public AXPress
+invokes the real controls. The last scenario observes the real installed Homebrew
+read-only. Window-only screenshots and traces stay ignored under
+`build/Debug/HomebrewStartup`. A full matrix PASS is required; incomplete runs do
+not establish native acceptance. Browser/Terminal launches and clipboard writes
+remain simulated in this automated matrix. Release excludes the injection driver. With macOS Keyboard Navigation enabled,
+`python3 -B scripts/test-homebrew-startup.py --keyboard-only` verifies native
+Tab traversal and Return through public CoreGraphics key events on only the test
+app. The runner never changes that system preference. Escape is covered by the
+regular matrix; a window-level focus result with Keyboard Navigation disabled is
+reported as unqualified traversal with exit 2, not a passing keyboard gate. The
+complete matrix requires Keyboard Navigation enabled; `--keyboard-only` is available
+for an explicitly authorized supplemental check.
+
+For setup presentation and Settings refinements, `--ux-polish-only` limits the
+native runner to method switching, Light/Dark geometry and screenshots, manual
+focus/reminder preservation, startup continuation, same-session reopening and
+read-only healthy Homebrew. It uses public accessibility frames and produces
+`ux-polish-report.json` plus `polish-*.png` under the same output directory.
+`PresentationTests --homebrew-setup-only` checks compact content sizing and the
+unchanged Settings width; the model and launch suites cover the shared state and
+async gate. These focused checks do not rerun or replace the full platform matrix.
+
+`HomebrewPackageTests` uses injected metadata, URLSession/URLProtocol responses,
+signature/trust outcomes and Installer actions. It exercises actual model cancellation,
+native window close, late completions, duplicate-click guards and boot-bound cache
+retention/cleanup with simulated boot changes. It also rejects an inert malformed
+package using the real read-only verifier. Its explicit `--official-download` mode
+resolves/downloads the current official asset with the production client and runs
+read-only verification plus the independent `stapler validate` developer diagnostic;
+it **never opens Installer**. `--official-file /private/staging/Homebrew.pkg /path/release.json`
+validates an existing private package against retained official release metadata,
+without downloading or launching it. `--trust-only` runs the eight policy scenarios
+with injected system results and simulated handoff, plus read-only before/after
+checks of this development host's existing Homebrew. Ordinary suite execution uses
+an injected healthy observation instead of requiring real Homebrew. The public DER
+fixture in `Tests/Fixtures/HomebrewPackageTrust.json` is bound to its recorded release;
+fixture policy time is fixed, while production uses current certificate validity.
+A blocked real trust gate exits 2 and is not installation acceptance. Acquisition/trust ownership and retained
+handoff storage are documented in [Desktop](../../docs/DESKTOP.md#homebrew-setup--implemented-visually-accepted).
+
+`python3 -B scripts/test-homebrew-startup.py --package-only` captures the actual Debug
+app's stacked buttons, download/progress/cancel/retry, verification, safe fallback
+and Terminal states in Light/Dark. Network and Installer outcomes are injected in
+every debug startup fixture, including fixtures that observe real installed
+Homebrew. These screenshots demonstrate native UI behavior, not a real installation.
 
 The same Restore executable also runs `--final-restore-ux-only` and
 `--assisted-appstore-only`; it does not repeat the full suite. Capture/Restore use

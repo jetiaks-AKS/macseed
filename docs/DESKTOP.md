@@ -612,7 +612,191 @@ without separate color-scheme overrides. This has no Core/Blueprint/Bundle meani
 Operation Logs opens the shared viewer/history; Diagnostic Report belongs to the
 selected operation. General is **440 pt** wide and vertically content-sized, retaining
 the Appearance control and Operation Logs tab. Obsolete development instructions
-are absent; DEBUG functionality and normal startup are unchanged.
+are absent; DEBUG functionality is unchanged.
+
+### Homebrew setup — implemented, visually accepted
+
+Homebrew setup is a single native SwiftUI window shared by first launch, General's
+**Tools & Dependencies**, and selected Rebuild prerequisites. The approved Home and
+workflow contents remain unchanged. A synchronous main-thread entry pumps its run
+loop while a bounded read-only check runs asynchronously, then starts the regular
+SwiftUI app outside any suspended concurrency job. This avoids holding MainActor
+inside `App.main`. The startup gate has a six-second fallback to Home/Unknown; a
+late result cannot reopen setup over Home. Disabled reminders open Home immediately
+and check availability afterward.
+
+On macOS 15+, only confirmed absence on a supported platform presents setup first;
+Home is suppressed and not created behind it. Healthy, broken, unknown and
+unsupported configurations open normal Home without flashing setup. macOS 14 keeps
+normal Home launch and manual dependency guidance. Public scene launch/restoration
+controls prevent restoration from bypassing the initial gate. Setup becomes key;
+Not Now, native close, or a successful fresh Check Again opens Home. General offers
+**Setup…** when Available, **Install…** for supported absence, and **Details…** for
+diagnostic states. Setup opened from Settings stays open after Check Again, keeps Home available,
+and returns focus to Settings on Done or native close. Available shows a positive
+status with no missing warning or installation choices. Completing or dismissing setup
+updates scene launch policy, so closing Home and reopening the app during the same
+launch does not repeat the reminder.
+
+**Show Homebrew setup reminders on startup** defaults on. The setup checkbox is an
+inverse draft of that preference at automatic startup: Not Now commits it; the native close control
+never commits it. A previously explicit deferral is migrated. Settings can always
+open setup and re-enable reminders. Manual setup omits the startup checkbox and
+never changes the preference on opening or closing. Suppression never alters actual prerequisites.
+The compact warning uses a semantic yellow icon, dark gold text in Light Mode and
+system yellow text in Dark Mode; no large warning surface is added.
+The 700 pt setup content uses native content sizing, with no repeated window-title
+heading. Two full-width native buttons offer **Install with macOS Installer** and
+**Install via Terminal**. Initially neither method is expanded. Installer starts
+the download immediately; Terminal replaces its content with manual instructions.
+Switching to Terminal, Check Again, Not Now or closing setup cancels pending
+acquisition/verification. Verification uses **Cancel**. Cancellation immediately
+invalidates progress updates and the handoff intent; another attempt waits until
+the cancelled worker finishes. Late results/errors cannot open Installer.
+
+The app-local Swift probe requires no source checkout, Python, shell profile or
+developer tools. It checks canonical `/opt/homebrew` and legacy
+`/usr/local/Homebrew` layouts, rejecting unexpected symlinks, ownership and
+world-writable files or non-administrator group-writable files rather than executing
+arbitrary PATH candidates. A noncanonical PATH candidate blocks an absence claim. `brew
+--version` and `brew --prefix` must succeed with consistent output. Each read has a
+two-second deadline, 64 KiB output ceiling, an isolated process group, EOF and a
+fresh process-group check before success; the root is held unreaped during cleanup
+to avoid signaling a recycled PID. The environment disables updates, analytics and
+sudo and excludes inherited shell/Ruby/Homebrew overrides. Partial installations,
+permissions failures, unexpected locations and incomplete observations fail closed.
+This is basic availability, not selected Rebuild capability or cryptographic
+attestation of user-owned Homebrew. Noncanonical installations are not automatically
+executed or repaired. Core installation, supervision, Protocol V1 and Bundle
+contracts remain unchanged; the former private Python setup worker is retired.
+
+**Upstream policy reviewed 2026-11-03:** [installation guidance](https://docs.brew.sh/Installation)
+and the [current official shell installer](https://github.com/Homebrew/install/blob/HEAD/install.sh)
+restrict new installation to Apple Silicon; the installer defines macOS 15 as its
+oldest supported version and 28 as the next unsupported version. Macseed therefore
+offers automatic pkg acquisition and the Terminal command for macOS 15–27 on Apple Silicon. Intel,
+older systems, unknown architecture and unqualified future versions receive no
+installer action. Existing Intel Homebrew can still be observed as usable. This
+policy is independent of Macseed's macOS 14 deployment target and must be reviewed
+when upstream support changes.
+
+`HomebrewPackage.swift` owns acquisition, independent of Core and Rebuild. It resolves
+the [official latest release API](https://api.github.com/repos/Homebrew/brew/releases/latest),
+rejects drafts/prereleases and inconsistent metadata, and selects exactly one
+`Homebrew.pkg`. An immutable plan binds release/asset IDs, stable version, exact
+official asset URL, size and SHA-256. Metadata is limited to 2 MiB/30 seconds;
+packages to the advertised size, at most 512 MiB/15 minutes. The ephemeral
+URLSession streams to an exclusive mode-0600 partial file. Redirects are limited
+to the planned URL and the Homebrew/brew repository's path on GitHub's release
+asset CDN; HTTPS, normal TLS validation and bounded redirect counts are mandatory.
+
+Before opening the system Installer, Macseed requires the official release plan,
+size/SHA-256, a valid `pkgutil --check-signature` result and the exact pinned
+publisher **Developer ID Installer: Patrick Linnane (927JGANW46)**. The pin follows
+Homebrew maintainer/signer confirmation in [discussion #5557](https://github.com/orgs/Homebrew/discussions/5557),
+reviewed 2026-11-03; rotation requires another explicit review. Generic Apple signing
+is insufficient. Bounded, cancellable `xar --dump-toc` reads only certificate metadata,
+never payloads. All three DER certificate fingerprints must match pkgutil's signing
+chain, and the leaf common name must match the pin. Certificate dates must be current
+both before and after trust evaluation; a historical timestamp does not extend them.
+
+`security verify-cert` independently evaluates that chain with Apple's specific
+Developer ID Installer policy, OID `1.2.840.113635.100.1.103`, and requires a positive
+OCSP revocation response (a still-valid cached response is allowed). The result
+must be implicit system trust with revocation checked; user-explicit trust and
+unknown result formats are refused. Apple's
+[policy definition](https://github.com/apple-oss-distributions/Security/blob/main/OSX/sec/Security/SecPolicy.c)
+and [identifier list](https://github.com/apple-oss-distributions/Security/blob/main/OSX/sec/Security/SecPolicy.list)
+define Apple anchors, three certificates, Developer ID intermediate/Installer leaf
+markers, the Installer EKU and strong keys. Unknown/unsupported policy, unavailable
+revocation evidence, invalid dates or uncertain chain trust blocks handoff. Temporary
+DER files are private, exclusive, removed after evaluation and covered by abandoned
+staging cleanup; no certificate is imported into a keychain.
+
+| Observed system assessment state | Required policy before handoff |
+| --- | --- |
+| Enabled | Complete, accepted, non-overridden structured assessment with the pinned origin and `Notarized Developer ID`, plus every authenticity check above. |
+| Disabled | Exact `spctl --status` disabled result and a complete structured `security disabled` override; these are **not Gatekeeper approval**. Every independent authenticity check above must pass. |
+| Unknown, inconsistent or rejected | Fail closed, including a negative original verdict hidden under an override, any assessment error, unexpected override or changed mode. |
+
+System status and raw assessment are checked again after certificate evaluation;
+SHA-256 and actual Homebrew absence are rechecked before external handoff. The
+disabled path authenticates the expected Homebrew release bytes and Apple-issued
+signing identity. It does **not** establish independent notarization, a malware scan,
+Gatekeeper approval or safety of every action in the publisher's installer. Missing
+stapling alone is not failed notarization. Both paths require the user's explicit
+**Install with macOS Installer** action; macOS Installer retains its ordinary prompts
+and authorization. Macseed never silently installs, changes security settings,
+removes quarantine or overrides an explicit rejection. **Open Official Download
+Page** remains the fallback for failed or uncertain identity/trust.
+
+Private mode-0700 staging lives under the app's HomebrewPackages cache. Failed or
+cancelled acquisition/verification removes its directory after the worker returns.
+A process-held file lock protects active work from other instances and cleanup;
+abandoned acquisitions are swept at model creation and before another download.
+Before the non-cancellable external handoff, Macseed records the kernel boot-session
+UUID. The read-only package then survives setup/app closure and uncertain launch
+failures. A different boot session proves its old Installer/installerd readers
+cannot remain active; the next Macseed launch or download safely removes it.
+Installer exit, elapsed time and PID reuse are not deletion evidence. Legacy files
+without a marker are conservatively adopted for the current boot. Unknown ownership,
+unsafe paths or unavailable boot identity fail closed. At most four staged packages
+(up to 2 GiB of package data) are admitted; a full cache blocks further downloads
+with restart/reopen guidance and the official-page fallback. No in-use package is
+deleted to make room. Opening Installer does not imply installation or readiness;
+macOS handles authorization, and only **Check Again** can establish availability.
+No shell installer, `sudo installer`, password collection or automatic Rebuild is used.
+
+**Install via Terminal** displays the command
+from [brew.sh](https://brew.sh/), with Copy Command and Open Terminal. Macseed never
+executes that command, injects keystrokes, handles passwords or changes shell files.
+The user runs the installer and handles authorization externally. Page/Terminal
+opening is not installation evidence; failure/cancellation remains absent, broken
+or unknown until a fresh check establishes usability.
+
+From Prerequisites, Check Again also requests fresh Core Prepare and regenerates
+Preview, retaining selection and never starting Rebuild. The native setup window
+and reminder control are visually accepted; this is separate from installer qualification. Injected platform checks do not qualify
+real macOS 15/26/27 or Intel hardware, and neither fixtures nor a development build
+qualify clean-Mac installation. Native checks on an Apple Silicon development Mac running macOS 27.2 covered the
+actual Debug app's initial scene, focus, both external-action intents, reminders
+across launches, Settings entry, native close, fresh checks, delayed/unknown startup,
+and healthy real Homebrew. Native Tab/Return passed with Keyboard Navigation
+explicitly enabled for the check and restored afterward; Escape passed in the
+ordinary session. Browser/Terminal/clipboard effects were injected in the UI matrix;
+no installation was attempted. The real RestoreModel plus its isolated Core fixture
+verified fresh Prepare/Preview and no Execute. These boundaries are distinct from
+real installer/clean-Mac qualification. See the
+[focused native startup runner](../desktop/Macseed/README.md) for acceptance scope.
+
+**Package qualification:** on 2026-11-03 the official 7.0.12 asset (release
+431225594, asset 701066861, 152451269 bytes) matched its release SHA-256 and pinned
+signer. `pkgutil` reported the Apple chain and trusted notarization. This host's
+Gatekeeper result was `accepted` with `override=security disabled`; the raw result
+contained no negative original verdict. [Apple's assessment implementation](https://github.com/apple-oss-distributions/Security/blob/main/OSX/libsecurity_codesigning/lib/SecAssessment.cpp)
+explains why the override is not approval. `stapler validate` exited 65 because the
+asset has no stapled ticket; independent notarization remains **unconfirmed**.
+`stapler` is only a developer diagnostic, not a runtime requirement or an admission
+gate in the disabled-authenticity policy.
+
+The complete production verifier passed read-only on those same release bytes with
+the disabled policy: signing-chain binding, the specific Apple Developer ID Installer
+policy, current certificate dates and positive revocation evidence passed. This
+qualifies local package authentication, **not real Installer launch or installation**.
+Injected tests cover enabled acceptance/rejection, disabled authenticated/invalid
+signer/checksum cases, unknown status, cancellation and healthy-Homebrew protection;
+additional cases reject invalid signatures, overridden original denials, certificate
+substitution, uncertain trust and validity/mode changes during verification. Real
+Homebrew remained usable with unchanged brew bytes and Cellar/Caskroom versions.
+
+Focused tests cover all requested Download/Verification cancellation and dismissal
+paths, rapid repeated clicks, late success/error/progress, manual-window close and
+uncertain handoff failure. Network/trust/Installer dependencies are injected; native
+window close and the cancellable process reader are exercised directly. Cache tests
+simulate boot changes and abandoned owners; no reboot or installation is performed.
+Light/Dark presentation checks retain approved geometry and render the verification
+**Cancel** label. Real Installer launch/installation remains **unqualified** and was
+not attempted; macOS 15/26, clean Macs and other hardware require their own real gates.
 
 The standard About panel shows the existing icon/name, tagline, version and build
 from `CFBundleShortVersionString` / `CFBundleVersion`, and the Core capability

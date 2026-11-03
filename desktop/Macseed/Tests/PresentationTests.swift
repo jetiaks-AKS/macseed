@@ -20,6 +20,77 @@ private struct WorkflowAnchorFrames: PreferenceKey {
 }
 
 @main struct PresentationTests {
+    @MainActor static func homebrewSetupChecks() async {
+        _ = NSApplication.shared
+        let suite = "org.macseed.homebrew-test.presentation." + UUID().uuidString
+        let preferences = UserDefaults(suiteName: suite)!
+        defer { preferences.removePersistentDomain(forName: suite) }
+        var observation = HomebrewObservation.absent, pauseResolve = true
+        let staging = FileManager.default.temporaryDirectory.appendingPathComponent("macseed-homebrew-layout-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: staging) }
+        let model = HomebrewSetupModel(host: .init(architecture: .appleSilicon, majorVersion: 27, version: "27.2"),
+            preferences: preferences, detect: { observation }, packageService: .init(resolve: {
+                while pauseResolve { try await Task.sleep(nanoseconds: 10_000_000) }
+                return HomebrewDownloadPlan(releaseID: 1, version: "1.2.3", assetID: 1,
+                    url: URL(string: "https://github.com/Homebrew/brew/releases/download/1.2.3/Homebrew.pkg")!,
+                    sha256: String(repeating: "0", count: 64), size: 1)
+            }, download: { _, file, _ in try Data([0]).write(to: file, options: .withoutOverwriting) },
+            verify: { _, _ in try await Task.sleep(nanoseconds: 60_000_000_000) },
+            openInstaller: { _ in preconditionFailure("No Installer launch in layout test") }), packageStagingBase: staging)
+        await model.prepareLaunch()
+        for appearance in [NSAppearance.Name.aqua, .darkAqua] {
+            pauseResolve = true
+            let host = NSHostingView(rootView: HomebrewSetupView(model: model, notNow: {})
+                .background(Color(nsColor: .windowBackgroundColor)))
+            host.appearance = NSAppearance(named: appearance)
+            func size() async -> NSSize {
+                try! await Task.sleep(nanoseconds: 50_000_000)
+                host.layoutSubtreeIfNeeded()
+                return host.fittingSize
+            }
+            model.beginSetup()
+            let initial = await size()
+            precondition((650...750).contains(initial.width) && initial.height < 400, "Compact initial setup")
+            model.selectMethod(.terminal)
+            let terminal = await size()
+            precondition(terminal.width == initial.width && terminal.height > initial.height && terminal.height < 550)
+            model.installPackage()
+            let package = await size()
+            precondition(package.width == initial.width && package.height > initial.height && package.height < 550,
+                         "Resolving/cancellation controls must fit the compact setup width and height")
+            model.cancelPackageDownload(); await model.waitForPackageDownload()
+            pauseResolve = false
+            model.installPackage()
+            let deadline = ProcessInfo.processInfo.systemUptime + 3
+            while model.packageState != .verifying {
+                precondition(ProcessInfo.processInfo.systemUptime < deadline, "Verification did not start")
+                try! await Task.sleep(nanoseconds: 10_000_000)
+            }
+            let verification = await size()
+            precondition(verification.width == initial.width && verification.height < 550)
+            let output = URL(fileURLWithPath: "build/Debug/HomebrewStartup", isDirectory: true)
+            try! FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+            host.setFrameSize(verification); host.layoutSubtreeIfNeeded()
+            let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds)!
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            let appearanceName = appearance == .aqua ? "light" : "dark"
+            try! bitmap.representation(using: .png, properties: [:])!.write(to: output.appendingPathComponent("safety-verifying-" + appearanceName + ".png"))
+            model.cancelPackageDownload(); await model.waitForPackageDownload()
+            precondition(model.packageState == .cancelled)
+            model.beginSetup()
+            let reopened = await size()
+            precondition(reopened == initial, "Reopening starts compact")
+            observation = .usable; await model.check()
+            let available = await size()
+            precondition(available.width == initial.width && available.height < initial.height)
+            let settings = NSHostingView(rootView: FoundationGeneralSettings(homebrew: model, showAbout: {}).frame(width: 440))
+            settings.appearance = NSAppearance(named: appearance)
+            precondition(settings.fittingSize.width == 440, "Preserve approved Settings width")
+            observation = .absent; await model.check()
+        }
+        print("PASS: compact Homebrew layout in Light/Dark; Terminal expands; Installer replaces it; reopen contracts; Available is compact; Settings retains width")
+    }
+
     @MainActor static func sidebarLayoutChecks() async {
         _ = NSApplication.shared
         func splitController(in view: NSView) -> NSSplitViewController? {
@@ -1313,7 +1384,7 @@ private struct WorkflowAnchorFrames: PreferenceKey {
     }
 
     @MainActor static func operationLogChecks() {
-        let app = try! String(contentsOfFile: "Sources/MacseedApp.swift", encoding: .utf8)
+        let app = try! String(contentsOfFile: "Sources/FoundationSettings.swift", encoding: .utf8)
         let captureView = try! String(contentsOfFile: "Sources/CaptureView.swift", encoding: .utf8)
         let restoreView = try! String(contentsOfFile: "Sources/RestoreView.swift", encoding: .utf8)
         let statusView = try! String(contentsOfFile: "Sources/EnvironmentStatusView.swift", encoding: .utf8)
@@ -3618,6 +3689,8 @@ private struct WorkflowAnchorFrames: PreferenceKey {
     }
 
     @MainActor static func main() async {
+        if CommandLine.arguments.contains("--homebrew-setup-only") { await homebrewSetupChecks(); return }
+        if CommandLine.arguments.contains("--operation-log-only") { operationLogChecks(); return }
         if CommandLine.arguments.contains("--sidebar-layout-only") { await sidebarLayoutChecks(); return }
         if CommandLine.arguments.contains("--summary-metrics-only") {
             try! await summaryMetricVisibilityChecks(); minimalResultSummaryChecks(); return
@@ -3639,6 +3712,7 @@ private struct WorkflowAnchorFrames: PreferenceKey {
         if CommandLine.arguments.contains("--restore-macos-only") { await restoreMacOSChecks(); return }
         if CommandLine.arguments.contains("--workflow-scroll-only") { try! await workflowStatusScrollChecks(); return }
         if CommandLine.arguments.count == 1 {
+            await homebrewSetupChecks()
             try! await summaryMetricVisibilityChecks()
             await sidebarLayoutChecks()
         }
@@ -3722,7 +3796,6 @@ private struct WorkflowAnchorFrames: PreferenceKey {
             return
         }
         restoreResultSummaryChecks()
-        if CommandLine.arguments.contains("--operation-log-only") { operationLogChecks(); return }
         if CommandLine.arguments.contains("--visual-contract-only") { visualContractChecks(); return }
         if CommandLine.arguments.contains("--result-cleanup-only") { resultCleanupChecks(); return }
         if CommandLine.arguments.contains("--minimal-result-summary-only") { minimalResultSummaryChecks(); return }
@@ -3909,6 +3982,7 @@ private struct WorkflowAnchorFrames: PreferenceKey {
 
 
         let app = try! String(contentsOf: sources.appendingPathComponent("MacseedApp.swift"), encoding: .utf8)
+            + String(contentsOf: sources.appendingPathComponent("FoundationSettings.swift"), encoding: .utf8)
         let captureView = try! String(contentsOf: sources.appendingPathComponent("CaptureView.swift"), encoding: .utf8)
         precondition(!captureView.contains("Capture does not rebuild or change settings on this Mac."))
         precondition(captureView.contains("The saved settings are private but unencrypted. Private SSH identities are not included."))

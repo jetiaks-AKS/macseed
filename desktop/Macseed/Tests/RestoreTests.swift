@@ -1209,7 +1209,8 @@ import SwiftUI
     }
 
     @MainActor static func main() async throws {
-        let selectionAccordionOnly = CommandLine.arguments.contains("--selection-accordion-only")
+        let homebrewSetupOnly = CommandLine.arguments.contains("--homebrew-setup-only")
+        let selectionAccordionOnly = CommandLine.arguments.contains("--selection-accordion-only") || homebrewSetupOnly
         let refreshCancellationOnly = CommandLine.arguments.contains("--appstore-refresh-cancel-only")
         if !selectionAccordionOnly && !refreshCancellationOnly { try topologyPreviewChecks() }
         if CommandLine.arguments.contains("--topology-preview-only") { return }
@@ -1586,6 +1587,32 @@ import SwiftUI
         let model = RestoreModel(runtime: runtime, location: location)
         let source = root.appendingPathComponent("sample.mbt")
         model.choose(source); await model.waitForCompletion()
+        if homebrewSetupOnly {
+            try write("attention", core.appendingPathComponent("mode"))
+            model.selectArea("homebrew-packages", included: true)
+            model.refreshPreview(); await model.waitForCompletion()
+            precondition(model.state == .preview && !model.canRebuild)
+            precondition(model.preparation!.readiness.conditions.contains { $0.code == "homebrew_installation_requires_interaction" })
+            let selected = model.selection
+            let suite = "org.macseed.homebrew-test.restore." + UUID().uuidString
+            let preferences = UserDefaults(suiteName: suite)!
+            defer { preferences.removePersistentDomain(forName: suite) }
+            preferences.set(false, forKey: HomebrewSetupModel.reminderKey)
+            var observed = HomebrewObservation.absent
+            let setup = HomebrewSetupModel(preferences: preferences, detect: { observed })
+            setup.beginSetup(rechecked: { model.refreshPreview() })
+            await setup.checkAgain(); await model.waitForCompletion()
+            precondition(model.state == .preview && !model.canRebuild, "Reminder suppression cannot hide a Core blocker")
+            try write("clean", core.appendingPathComponent("mode"))
+            observed = .usable
+            await setup.checkAgain(); await model.waitForCompletion()
+            precondition(model.state == .preview && model.selection == selected && model.preparation!.readiness.ready)
+            let requests = try String(contentsOf: core.appendingPathComponent("requests.jsonl"))
+            precondition(requests.components(separatedBy: "restore_prepare").count - 1 == 3)
+            precondition(!requests.contains("restore_execute") && !FileManager.default.fileExists(atPath: core.appendingPathComponent("MUTATION_ATTEMPT").path))
+            print("PASS: actual RestoreModel + owned Core fixture transport: missing blocker survives reminders off; setup Check Again issues fresh Prepare, regenerates Preview, preserves selection and never Executes")
+            return
+        }
         if selectionAccordionOnly {
             try await selectionAccordionChecks(model, runtime: runtime, core: core, source: source)
             try await realPrepare(repo: repo, python: python, root: root)

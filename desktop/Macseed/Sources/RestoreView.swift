@@ -721,7 +721,8 @@ struct RestorePreviewContent: View {
     }
     private var prerequisiteDetails: some View {
         VStack(alignment: .leading, spacing: 12) {
-            RestorePrerequisiteSummaryView(summary: prerequisites, areas: areas)
+            RestorePrerequisiteSummaryView(summary: prerequisites, areas: areas,
+                homebrewRecheck: reviewModel.map { model in { model.refreshPreview() } })
             if let retryMessage { Text(retryMessage).font(.callout).foregroundStyle(.secondary) }
         }
     }
