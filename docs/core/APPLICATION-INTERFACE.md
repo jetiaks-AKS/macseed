@@ -39,6 +39,8 @@ Prepared IDs are 64 lowercase hexadecimal characters.
 | `restore_execute` | `path`, `disabled_groups`, `include_secure`, `expected_prepared_plan_id`, optional `selection` | Fresh preparation, local-state publication and restoration |
 | `environment_compare` | `generated_dir`, `blueprint_path` **or** `bundle_path` | Explicit read-only reference-to-current-Mac comparison |
 
+<a id="capture-destination-replacement"></a>
+
 Capture publication remains no-clobber by default. After explicit native Save Panel
 Replace confirmation, Desktop may supply `replacement_sha256`: the SHA-256 of the
 observed existing regular, user-owned destination. Core rejects a changed file,
@@ -135,7 +137,11 @@ identity lookup. This adds no archive fields and does not rewrite existing Bundl
 `stale_prepared_capture` requires fresh preparation and confirmation.
 
 `destination` must be an absolute `.mbt` path whose existing parent is canonical
-and user-owned. Existing files are never replaced. Success returns
+and user-owned. Existing files are refused by default. Replacement requires explicit
+consent bound to the existing file's SHA-256 through `replacement_sha256`, under the
+[Capture destination contract](#capture-destination-replacement). Core revalidates
+that identity and the new Bundle before atomic replacement; failed or stale
+preparation preserves the existing Bundle. Success returns
 `publication_occurred`, `destination`, `bundle` information and
 `prepared_capture_id`. Ordinary Generated Configuration and Blueprint are unchanged.
 
@@ -751,9 +757,24 @@ unowned changes. Unsupported clone delegation is declined rather than qualified.
 The 24-hour aggregate bound is not per-command lifecycle qualification for existing
 checkout, preferences or other local mutations. Blocking filesystem/kernel calls,
 including an uninterruptible fsync, are outside a Python subprocess deadline.
-Real network/large-repository budgets, SSH transport, native Stop timing, detached
-workers and reconciliation remain qualification work. Focused CI entry:
+Real network/large-repository budgets, SSH transport, native Stop timing and detached
+workers remain qualification work. Reconciliation requires the implementation below.
+Focused CI entry:
 `scripts/test-external-process-reliability.py`; all mutations use disposable fixtures.
+
+### Stage 3C reconciliation boundary
+
+Durable Homebrew, VS Code, Git clone and operation-wide admission journals, Stop
+checkpoints, process budgets and uncertainty fences are implemented. Their accepted
+blocking behavior does not establish recovery. Stage 3C still needs bounded
+operation-owned resource evidence, ordinary-Cask/DMG reconciliation and a supported
+authority-aware route from unknown consequences to safe fresh preparation/execution.
+Reuse those lifecycle conventions; do not replace the existing journals or fences.
+Verification, another Preview or observed process termination alone cannot clear
+uncertainty. Insufficient or foreign evidence must remain blocked, with no automatic
+journal clearing, unrelated-volume detach, user-data deletion or rollback. Implement
+this reconciliation before qualifying full SIGTERM recovery and successful re-entry
+from retained unknown state; qualification of existing Stop/fence behavior remains separate.
 
 ### Bounded VS Code CLI execution
 

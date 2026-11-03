@@ -114,19 +114,34 @@ is tracked separately in Roadmap and TODO.
 
 ## 5. Delivery sequence and gates
 
+The checkpoint IDs below preserve the approved historical slices. [Roadmap's current
+execution order](../ROADMAP.md#current-practical-execution-order) owns the remaining
+Macseed 1.0 sequence; completed checkpoints are not new implementation or rerun tasks.
+
 ### Checkpoint 0 — Documentation first
 
-Record this approved product direction in the authoritative repository docs. Align [Vision](VISION.md), [Roadmap](../ROADMAP.md), [TODO](../TODO.md), [Desktop](DESKTOP.md) and the [documentation index](README.md) with brief accurate references. Preserve historical completed stages and existing implementation boundaries. **No Core, SwiftUI or test changes in this checkpoint.** Do not publish new feature claims as completed.
+The approved product direction is recorded in the authoritative repository docs.
+Keep [Vision](VISION.md), [Roadmap](../ROADMAP.md), [TODO](../TODO.md), [Desktop](DESKTOP.md)
+and the [documentation index](README.md) aligned while preserving historical
+completed stages and current implementation/qualification boundaries.
 
 ### Checkpoint 1 — Workspace Phase 6: topology-aware Environment Status
 
-Complete **read-only** comparison of supported Workspace Topology V1 Bundles, including the bounded base-repository/linked-worktree relationships and selected VS Code workspace descriptors where the existing supported contracts permit. Reuse the authoritative Core comparison and verification facts and the Desktop presentation model. Preserve legacy Bundle Status behavior and the explicit Status → Restore handoff. Unsupported cases must produce honest coverage/attention, not fabricated Match. No target mutation, no auto-select differences, no automatic Restore, and no new general file transfer.
-
-Before implementation, perform a narrowly scoped contract/impact inspection; implement in a bounded slice with **focused tests for new functionality** and explicit unsupported/legacy cases. Do not make unrelated failing historical assertions the purpose of Phase 6.
+**Complete within the validated comparison scope.** Read-only comparison covers
+supported Workspace Topology V1 relationships and selected VS Code descriptors,
+reusing Core facts and preserving legacy Bundle Status and explicit Status → Restore
+handoff. Unsupported coverage remains honest; no target mutation, auto-selection,
+automatic Restore or general file transfer is introduced. [Roadmap](../ROADMAP.md#complete-workspace--git-worktree-restoration)
+records the accepted evidence and remaining native qualification.
 
 ### Checkpoint 2 — Workspace closure and real-world qualification
 
-Complete representative controlled real-Mac Capture → Rebuild Preview → Execute → Global Verification → Status for supported topology, with preservation of tracked/staged/untracked/ignored files, branch occupancy/conflicts, interrupted/re-entry behavior and repeat/no-op. Qualify Phase 5 `.code-workspace` descriptor restoration where selected. Do not claim full workspace content migration. Do not broaden SSH transport, filters or Git LFS by default. Complete product-safe behavior before asserting Workspace feature readiness.
+**Bounded Core E2E accepted:** Capture → Preview → Execute → Global Verification →
+Status, including **6/6 Verification and 6/6 Comparison**, selected descriptors,
+file preservation, conflicts, repeat/no-op, controlled Stop/re-entry and the SIGTERM
+fence. Native same-Bundle Desktop E2E, full reconciliation/recovery and packaged
+qualification remain open. This is qualification of existing Workspace capability,
+not authorization for content migration or expanded SSH/filter/LFS support.
 
 ### Checkpoint 3 — Consolidated test/CI stabilization
 
@@ -142,13 +157,20 @@ Home/Sidebar/Settings/About, Capture Selection/Confirmation/Result, Restore
 Selection/Preview/Progress/completed and stopped Result, and Environment Status
 have explicit user visual approval. Final naming is consistent throughout the native
 application. The historical slice IDs are retained; no visual work remains in those
-slices. Consolidated local validation and explicit Git approval establish checkpoint
-readiness separately. This does not close remaining native lifecycle, capability or
+slices. The UI and subsequent Homebrew Setup implementation are published through
+`ac6c5bd`; visual acceptance, retained local validation and hosted qualification
+remain separate. This does not close remaining native lifecycle, capability or
 packaged qualification, and adds no Core feature or parallel Restore model.
 
 ### Checkpoint 6 — Finish remaining Stage 16 qualification
 
-Resume the remaining mandatory supported-domain work based on the narrowed product priorities: Homebrew real install/repair qualification, macOS Settings stored/effective behavior, supported Zsh/SSH/Git configuration, VS Code dependencies, optional Secure SSH Desktop (16H), completion (16I), integration/runtime hardening (16K) and bounded Stage 3C re-entry/recovery. Distinguish critical release gates from optional Advanced refinements. Update TODO according to measured value and risk; do not expand feature breadth automatically.
+Follow Roadmap's order: remaining native Workspace qualification, bounded Stage 3C
+reconciliation, an explicit optional Secure SSH Desktop (16H) release decision, then
+remaining supported-domain, Homebrew Setup Installer, lifecycle, completion (16I)
+and integration/runtime (16K) gates. Existing journals, Stop and fences stay
+implemented; blocked retry is not recovery. Finish with fresh end-to-end
+Capture → Rebuild → Verify → Check → no-op evidence before Stage 17. Do not expand
+feature breadth or repeat accepted gates without a specific remaining evidence need.
 
 ### Checkpoint 7 — Stage 17, Early Access and Macseed 1.0
 
@@ -168,9 +190,11 @@ Possible Saved Environment history/profiles, confirmed-difference preselection f
 
 ## 7. Next action
 
-Close the accepted UI Alignment checkpoint with synchronized owner documentation,
-one consolidated local validation and an accumulated-diff review. Commit/push requires
-separate explicit approval; visual acceptance does not imply hosted validation.
-After checkpoint approval, follow Roadmap's remaining Stage 16 priorities without
-reopening accepted UI or automatically beginning Stage 17, performance optimization,
-new Core capabilities or workspace content transfer.
+Native UI Alignment and the subsequent Homebrew Setup implementation are published
+on `develop` through `ac6c5bd`. Visual acceptance, retained local validation and hosted
+qualification remain distinct; CI #127 is a historical accepted baseline.
+[Roadmap](../ROADMAP.md#current-practical-execution-order) records CI #135's Desktop
+compilation failure and the approved remaining 1.0 sequence. Continue with native
+same-Bundle Workspace qualification, bounded reconciliation/safe re-entry and the
+remaining Stage 16 gates. Preserve approved UI and real-Mac acceptance; do not
+automatically begin Stage 17 or expand into workspace content transfer.

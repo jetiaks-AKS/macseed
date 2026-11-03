@@ -772,8 +772,9 @@ alone does not select or require Git, including when nested inside an unselected
 checkout. Cross-role conflicts and target checks use only selected roles;
 full inventory/schema validation remains mandatory. Topology Preview plans the
 checkout as the owner of shared destination creation; the folder row retains its
-relationship with action `none`. Future Execute must verify that resulting
-directory without precreating it ahead of clone admission. No fallback is allowed.
+relationship with action `none`. [Execute](#topology-restore-execute--phase-4)
+verifies the resulting directory without precreating it ahead of clone admission.
+No fallback is allowed.
 Selection never adds a base or other hidden dependency. Validate the full inventory
 before reducing it to the selected Bundle projection; records and topology members
 must then match exactly.
@@ -793,9 +794,11 @@ for the root, otherwise safe relative components), and optional `name` (160 UTF-
 bytes maximum). References must resolve; selected descriptors require explicitly
 selected dependencies. Arbitrary settings, tasks, launch data and file bytes are
 not accepted. Discovery accepts bounded JSON/JSONC folder relationships and names;
-other descriptor content is discarded. Capture and Restore expose individual
-descriptors under Workspace using stable IDs and safe basenames; only confirmed
-selected descriptors enter the Bundle. An empty selection adds no extension requirement.
+other descriptor content is discarded. Native Capture and Rebuild Selection expose
+individual descriptors under **Advanced → VS Code Workspace**, using the unchanged
+`vscode-workspaces` domain, stable IDs and safe basenames. Only explicitly selected
+descriptors with their selected dependencies enter the Bundle. An empty selection
+adds no extension requirement.
 Confirmed missing folder references exclude only that descriptor as unsupported.
 Access errors or changing observations fail the snapshot and preserve prior state.
 
@@ -957,7 +960,10 @@ retain their state for inspection. Repeated matching Restore performs no descrip
 write. Protocol V1 and diagnostics carry IDs, safe labels and fixed reasons, never
 raw descriptor contents or private absolute paths. Legacy Bundles without this
 optional extension retain their previous schema and behavior. Disposable fixtures
-cover this implementation; representative real-Mac qualification remains open.
+cover this implementation. The [bounded real-Mac Core E2E](../../ROADMAP.md#complete-workspace--git-worktree-restoration)
+includes descriptor restoration, relationship verification and repeat/no-op.
+Native Desktop E2E with the retained selected Bundle, full SIGTERM reconciliation/
+recovery and packaged clean-Mac qualification remain open.
 
 ### Topology Environment Status — Phase 6
 

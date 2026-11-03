@@ -75,9 +75,15 @@ screen may expose only its matching operation's journal; Settings history remain
 Use native file dialogs, accessible controls, text plus icons for status, and
 keyboard navigation. Never rely on color alone.
 
-First launch shows the three actions, a short explanation of supported environment
-state, and **Ready** when the Core/runtime capability check succeeds. It does not
-scan, restore, compare or request administrator authentication automatically.
+Startup reads Homebrew availability. When the
+[Homebrew reminder gate](#homebrew-setup--implemented-visually-accepted) applies,
+the dedicated setup window precedes Home; continuing or dismissing it starts no
+workflow. Installation requires explicit initiation and hands a verified package
+to standard macOS Installer, or opens the manual Terminal route. Home exposes
+Capture, Rebuild and Check, a short explanation of supported environment state,
+and **Ready** when its Core/runtime capability check succeeds. Launch does not
+automatically scan, rebuild, compare, install Homebrew or request administrator
+authentication.
 Capability failure shows **Needs Attention**, with launch/runtime guidance and
 **Check Again**. Capability availability is not readiness for a selected Restore.
 
@@ -459,8 +465,9 @@ rollback. Handled stop, failed and unknown outcomes remain distinct under the
 
 ### Restore Result — Visually Accepted
 
-`RestoreResultContent` keeps the operation outcome heading, two Rebuild Summary
-cards, one flat **Details by Category** container, legend and fixed Done / Refresh
+`RestoreResultContent` keeps the operation outcome heading, a Rebuild Summary
+completion/Verification card and conditional Needs Attention card, one flat
+**Details by Category** container, legend and fixed Done / Refresh
 Preview / View Log actions. Refresh Preview remains outcome-dependent. Domain order
 matches Progress, with App Store Applications first when supported manual work is
 outstanding. Categories start collapsed; nested macOS categories, item explanations
@@ -471,8 +478,11 @@ unique selected requirements that needed restoration in Preview and have a visib
 successfully verified Result item, excluding pre-existing Already Matches and manual
 App Store work. It is a conformity count, not a mutation count. **Needs Attention**
 uses `RestoreResultSummary.attentionCaption`: evidenced restore issues, apps to install
-or apps to check, with correct plurals; incomplete issue counts use **Restore work
-needs review** rather than an invented number. Both cards retain their layout.
+or apps to check, with correct plurals; incomplete issue counts use **Rebuild work
+needs review** rather than an invented number. Needs Attention appears only for
+confirmed attention items, a real uncounted issue or an unknown attention count;
+a clean zero-issue result omits it. The completion/Verification card always remains.
+Confirmed Stopped with Verification not run retains neutral **Not Run** presentation.
 
 `RestoreResultDetails` omits pre-existing matches and empty categories, retaining
 planned-and-verified requirements, confirmed changes and actual problems or uncertain
@@ -1176,13 +1186,17 @@ executable Rebuild; manual issues do not block independent automatic work. Apple
 App Store owns installation/account authorization. MASHelper/XPC and automatic MAS
 installation remain retired, including deployment/registration paths.
 
-Result presents the execution outcome, then the existing two **Rebuild Summary** cards:
-Complete / N Verified and Needs Attention with its evidence-based description
+Result presents the execution outcome, then **Rebuild Summary**:
+the completion/Verification card always remains; Needs Attention appears only for
+confirmed attention items, a real uncounted issue or an unknown attention count.
+A clean zero-issue result omits Needs Attention. Complete / N Verified and the
+conditional Needs Attention card retain their evidence-based descriptions
 (apps to install, apps to check, restore issues or work needing review). Complete counts unique selected
 requirements that were planned for restoration and now have a visible Verified result;
 pre-existing matches are excluded. Unknown attention counts remain unnumbered.
 For partial, failed, interrupted or stopped execution, the first card says Verification
-instead of Complete; the authoritative outcome heading remains. Completed execution
+instead of Complete; the authoritative outcome heading remains. Confirmed Stopped
+with Verification not run uses neutral Verification / Not Run. Completed execution
 with only manual work remains completed; real failure,
 partial/interrupted/stopped outcomes retain their meaning. No repeated attention
 section or separate Verification-details disclosure is added.
@@ -1392,12 +1406,14 @@ A supported item-local skip can produce **Partial Rebuild** only with
 confirmed independent success, consistent Verification and no unexplained failure.
 The original Core terminal failure remains available.
 
-Result keeps the operation outcome in its heading and the two cards documented in
+Result keeps the operation outcome in its heading and the summary documented in
 the [accepted Result presentation](#restore-result--visually-accepted).
 Complete / N Verified counts only visible planned-and-verified automatic requirements,
 once per stable identity; pre-existing matches and manual work are excluded. Needs
-Attention uses an evidence-based caption, not a generic item total. Both cards remain;
-uncertain issue counts omit the number. There is no separate Skipped summary card or
+Attention uses an evidence-based caption, not a generic item total. The completion/
+Verification card always remains. Needs Attention appears only for confirmed attention
+items, a real uncounted issue or an unknown attention count; a clean zero-issue result
+omits it. Unknown counts remain unnumbered. There is no separate Skipped summary card or
 Verification-details panel. Confirmed Stopped with Verification not run and no unknown
 consequences uses neutral Verification / Not Run and only reported work or independent
 problems; absence of evidence for untouched requirements is not a failure count.
@@ -1550,8 +1566,10 @@ rollback, Resume, automatic installer kill/DMG cleanup or global quiescence.
 Graceful waiting has no guaranteed bound for an unresponsive installer. Automated
 checkpoint/launch-race fixtures and controlled real-Mac Early Cancelled / Partial
 Stopped cases passed, but do not qualify every installer timing or interruption.
-Stage 3C ordinary-Cask durable reconciliation, operation-owned DMG evidence and safe
-re-entry remain open. Diagnostic logs confer no recovery authority; manual App Store
+Existing durable lifecycle/admission journals and uncertainty fences remain implemented;
+[Stage 3C reconciliation](core/APPLICATION-INTERFACE.md#stage-3c-reconciliation-boundary),
+operation-owned DMG evidence and safe re-entry remain open. Diagnostic logs confer
+no recovery authority; manual App Store
 installation is outside Core's cancellation boundary. Never detach unrelated volumes
 or delete user data to recover.
 

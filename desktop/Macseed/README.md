@@ -51,8 +51,14 @@ open "$PWD/desktop/Macseed/build/Release/Macseed.app"
 
 Before rebuilding, ensure the output app has no active operation. Open that exact
 path without creating another instance over active work; do not interrupt Restore
-or overwrite an installed `/Applications` copy. Normal launch only checks Core
-capabilities: **Ready · Macseed Core** does not run or qualify Capture/Restore/Compare.
+or overwrite an installed `/Applications` copy. Startup reads Homebrew availability;
+Home performs the Core capability check. When the
+[Homebrew reminder gate](../../docs/DESKTOP.md#homebrew-setup--implemented-visually-accepted)
+applies, its dedicated setup window precedes Home. Continuing or dismissing setup
+starts no workflow. Installation requires explicit initiation and hands a verified
+package to standard macOS Installer, or opens the manual Terminal route. Otherwise
+Home exposes Capture, Rebuild and Check. Launch does not automatically scan, rebuild
+or install Homebrew; **Ready · Macseed Core** does not qualify Capture/Restore/Compare.
 Choose workflows explicitly; real Capture publishes a Bundle and real Rebuild can
 mutate the Mac. Manual gates require appropriate scope/side-effect authorization.
 

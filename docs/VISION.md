@@ -23,8 +23,9 @@ Git, Workspace, SSH and Shell contracts. Existing VS Code Settings/Extensions ar
 optional application extras; they do not imply a universal adapter catalog.
 These priorities preserve the scope of existing supported capabilities.
 The approved [Product Direction](PRODUCT-DIRECTION.md) records the capability
-decisions and planned GUI grouping; Advanced and Application Extras are not yet
-implemented presentation groups.
+decisions and Desktop hierarchy. Advanced and Application Extras are implemented
+presentation groups; [Desktop](DESKTOP.md#macseed-native-ui--design--interaction-contract)
+owns their current interaction and qualification boundaries.
 
 ## Product principles
 
@@ -62,8 +63,9 @@ secure physical transfer.
 Current Workspace Folders restores structure only. Future work may investigate
 bounded transfer of useful unique workspace/local data; that requires an explicit
 product and safety contract, not a general backup or file-migration engine, and is
-not required for 1.0. Hiding standalone folder structure from ordinary UX first
-requires a dependency/compatibility audit; the current Core contract remains intact.
+not required for 1.0. Workspace Folders remains an explicit Advanced selector,
+default off in ordinary Capture and Rebuild selection. Selection never adds hidden
+dependencies; the structure-only Core contract and legacy compatibility remain intact.
 
 New application adapters require a clear portable contract and enough user
 value to justify their security and maintenance cost. Macseed should remain

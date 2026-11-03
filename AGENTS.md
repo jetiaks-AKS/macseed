@@ -17,8 +17,11 @@ both requirements. Automatic MAS is retired from active development;
 `archive/mas-automatic-restore-v4` preserves historical evidence. Future research
 using that archive requires a separate explicit decision. Do not reactivate its
 install, helper, authorization or deployment paths in the current workflow.
-Continuing Homebrew qualification, Secure SSH Desktop (16H), remaining 16I/16K
-qualification and Stage 3C recovery remain open. Unified UI
+Homebrew Setup is implemented; real standard Installer qualification remains open.
+Continuing Homebrew qualification, optional Secure SSH Desktop (16H), remaining 16I/16K
+qualification and Stage 3C reconciliation/recovery remain open. Secure SSH Desktop
+requires an explicit release-scope decision. Existing durable journals, Stop and
+safety fences remain implemented. Unified UI
 Scenario Catalog is deferred tooling. Follow the current
 [execution order](ROADMAP.md#current-practical-execution-order), one checkpoint
 at a time without unrelated task hopping; historical slice IDs are unchanged.
@@ -28,9 +31,9 @@ The D1–D4/R5 repair queue is accepted within documented implementation and
 automated integration boundaries; Roadmap records the baseline and successful CI.
 Do not reopen its completed general Restore audit. CI weight tuning is maintenance;
 native lifecycle, progress/recovery and remaining real gates stay open. Desktop CI
-validation is a completed milestone. Workspace Phase 6 is the next functional
-checkpoint; the Roadmap owns subsequent qualification, stabilization and product
-alignment order.
+validation and Workspace Phase 6 comparison are completed milestones within their
+recorded scopes. Roadmap owns the remaining native Workspace E2E, supported-domain,
+recovery and integration qualification order.
 
 Read existing code and consumers before proposing changes. Prefer minimal safe
 changes and existing helpers over replacements or new abstractions. Follow

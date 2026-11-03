@@ -139,8 +139,9 @@ on a single local machine, where temporary-directory observations can overlap.
 The required `validate` check retains `if: always()` and dependencies
 `[lint, regression, desktop]`; all three must report `success`. Failure,
 cancellation, skipped or missing execution cannot pass the gate.
-The existing eight suites and two Restore subsets retain their fixture isolation
-and native assertions; Capture/Restore keep `--no-renders`. The runner's selected
+The existing eleven suites and two Restore subsets retain their fixture isolation
+and native assertions; [build.sh](desktop/Macseed/build.sh) owns the inventory.
+Capture/Restore keep `--no-renders`. The runner's selected
 Xcode, SDK, Swift and Xcode-resolved Python are checked before execution. Safe GUI
 session facts help diagnose WindowServer failures; they never replace native tests.
 

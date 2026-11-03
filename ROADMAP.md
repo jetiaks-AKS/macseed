@@ -47,12 +47,12 @@ open/deferred gates, and no completed slice alone establishes release readiness.
 |---|---|---|
 | 16A — Product / UX contract | Defined | Native Protocol V1 client; Core remains authoritative |
 | 16B — Native shell and design | Completed | Approved Minimal Premium, navigation, shared components and Debug fixtures |
-| 16C — Runtime and capabilities | Implemented; hardening open | Owned Core processes and validated transport; packaged writable workspace unqualified |
+| 16C — Runtime and capabilities | Development runtime implemented; hardening open | Owned Core processes and validated transport; packaged writable workspace not implemented, packaged qualification open |
 | 16D — Environment Status | Completed | Read-only comparison; Saved Environment reference and Restore handoff accepted |
 | 16E — Capture | Completed in supported scope | Real inventory/selection, preparation and publication; secure interaction remains 16H |
 | 16F — Restore preparation | Completed in supported scope | Inspection, selection, prerequisites and fresh Preview |
 | 16G — Restore execution | Implemented; qualification open | Core Rebuild/Verification and Assisted App Store Restore; continuing Cask and interruption/re-entry qualification |
-| 16H — Secure SSH interactions | Open | Desktop FD/challenge bridge and secure Capture/Restore qualification |
+| 16H — Secure SSH interactions | Optional; release-scope decision pending | Desktop FD/challenge bridge and secure Capture/Restore qualification are missing; not automatically required for 1.0 |
 | 16I — Verification and completion | UI implemented/manually accepted; qualification open | Final category/item Result, disjoint confirmed cards and Process/Verification separation; remaining completion edge cases open |
 | 16J — Logging & Diagnostics | Completed | Typed persistent logs, history, Important/All and immutable Diagnostic Report preview/copy/save |
 | 16K — Desktop integration hardening | Partially complete | Bundle-backed Status completed; runtime, transport, security, accessibility and packaged-state hardening remain |
@@ -78,8 +78,8 @@ implemented; remaining qualifications do not reopen those UI implementations.
 Assisted App Store Restore, supported UI flows and the current development app
 are accepted milestones. [Desktop qualification](docs/DESKTOP.md#recent-restore-qualification-and-performance)
 owns representative real-Mac results and their limits; [Configuration](docs/toolkit/CONFIGURATION.md)
-owns domain capability boundaries. A fresh full Capture → Rebuild → Verification
-cycle, remaining supported-domain gates and packaged qualification remain open.
+owns domain capability boundaries. A fresh full Capture → Rebuild → Verify → Check
+→ no-op cycle, remaining supported-domain gates and packaged qualification remain open.
 
 **D1–D4/R5 is accepted within its implementation and automated integration scope**
 at [03198a2](https://github.com/jetiaks-AKS/macseed/commit/03198a2010d554c5f87f73c3260ef2f34af0fc89),
@@ -89,51 +89,57 @@ qualification and recovery remain open under the [Core process contract](docs/co
 CI tuning is maintenance; [Contributing](CONTRIBUTING.md#focused-feedback-and-ci)
 owns canonical test execution and timing evidence.
 
-Documentation Checkpoint 0 records the [approved sequence](docs/PRODUCT-DIRECTION.md#5-delivery-sequence-and-gates);
-the current status below supersedes its historical CI-debt notes.
+Documentation Checkpoint 0 records the [approved product direction](docs/PRODUCT-DIRECTION.md#5-delivery-sequence-and-gates);
+the current status and release order below supersede historical next-action notes.
 [CI #127](https://github.com/jetiaks-AKS/macseed/actions/runs/40914838447) passed at
 `ed521e7`: lint, all four Core regression shards, Desktop and `validate`.
 Earlier CI #123/#124 assertion failures are not active blockers at this baseline.
 The consolidated CI evidence assessment and revised Product Scope audit are accepted;
-Native UI Alignment is implemented and explicitly visually accepted on 2026-11-02;
-consolidated local validation and Git checkpoint approval are separate from that
-acceptance and from the published CI baseline. Continue in this order:
+CI #127 remains historical evidence, not validation of later changes.
+Native UI Alignment is implemented and explicitly visually accepted on 2026-11-02.
+It and the subsequent Homebrew Setup implementation are published on `develop`
+through `ac6c5bd`. At that baseline, [CI #135](https://github.com/jetiaks-AKS/macseed/actions/runs/41678025367)
+passed lint and all four regression shards, but Desktop compilation failed before
+tests ran. Visual acceptance, retained local validation and hosted qualification
+remain distinct; no new full-local-PASS or hosted Desktop acceptance is inferred.
 
-1. **Workspace Phase 6 — topology-aware Environment Status: complete within the
-   validated comparison scope.** Focused local validation and a controlled real-Mac
-   Status check are accepted. Read-only Status covers supported checkout/descriptor
-   relationships through shared Core facts, preserving legacy Bundles and the
-   explicit Status → Restore handoff.
-   This does not close native E2E with the selected Workspace Bundle below.
-2. **[Workspace real-world E2E qualification](#complete-workspace--git-worktree-restoration) — accepted in bounded Core scope:**
-   the real-Mac Core lifecycle, topology/descriptor verification, preservation,
-   repeat/no-op, controlled Stop/re-entry and SIGTERM fence are accepted.
-   Native Desktop E2E with that Bundle, full SIGTERM recovery and packaged/clean-Mac
-   qualification remain open; do not expand the bounded capability scope.
-3. **Consolidated test/CI stabilization assessment — accepted at CI #127:** no active
-   regression debt is demonstrated by the historical failures. Additional repairs
-   or runs require current evidence or changes; native qualification remains separate.
-4. **Product Scope Revision — approved:** the revised audit and matrix establish
-   the [final hierarchy, defaults and compatibility decisions](docs/PRODUCT-DIRECTION.md#4-native-desktop-presentation-direction--planned-not-implemented).
-5. **Native UI Alignment — implemented and Visually Accepted:** Home, Sidebar,
-   Settings/About and all Capture/Restore/Status screens are approved. Capture and
-   Restore Selection use scoped masters, ordinary ON / Advanced OFF defaults and
-   explicit dependencies within the source/Bundle ceiling. Restore keeps detailed
-   read-only Preview, separate manual App Store work and flat Progress/Result lists;
-   Status keeps static sections and complete read-only diagnostics. The
-   [Desktop contract](docs/DESKTOP.md#macseed-native-ui--design--interaction-contract)
-   owns exact geometry, counts, completed/stopped outcomes and naming. Close local
-   validation and checkpoint review before separately authorized publication;
-   accepted visual work does not close remaining capability or release gates.
-6. **Remaining Stage 16 qualification:** close the [supported-domain gates](TODO.md#remaining-supported-domain-restore-qualification),
-   optional Secure SSH Desktop (16H), completion (16I), integration/runtime hardening
-   (16K) and bounded Stage 3C recovery/re-entry according to the narrowed product
-   priorities. Distinguish mandatory release gates from optional Advanced refinements;
-   retain independent Verify/no-op evidence and accepted Assisted Restore behavior.
-7. **[Stage 17 — Distribution & Clean-Mac Qualification](#stage-17--distribution--clean-mac-e2e):**
-   qualify a checkout-independent packaged runtime, signing/notarization and full
-   clean-Mac Capture/Restore/Status workflows on each claimed platform.
-8. **[Early Access / Alpha](#early-access--alpha):** validate with external technical
+[Workspace Phase 6 and bounded Core E2E](#complete-workspace--git-worktree-restoration)
+remain accepted: read-only comparison, **6/6 Verification and 6/6 Comparison**,
+preservation, repeat/no-op, controlled Stop/re-entry and the SIGTERM fail-closed fence.
+Native same-Bundle E2E is qualification-only; successful blocking is not full recovery.
+The approved [hierarchy/defaults](docs/PRODUCT-DIRECTION.md#4-native-desktop-presentation-direction--planned-not-implemented)
+and [Desktop UI](docs/DESKTOP.md#macseed-native-ui--design--interaction-contract)
+remain closed visual milestones. Homebrew Setup is implemented; real standard
+Installer handoff and installation qualification remain open separately from Cask Restore.
+
+Continue toward Macseed 1.0 in this order, preserving accepted UI and real-Mac gates:
+
+1. **Documentation reconciliation:** align owner status, remaining tasks and evidence
+   boundaries with the comprehensive audit; do not reopen completed checkpoints.
+2. **Remaining native Workspace qualification:** use the retained selected Bundle
+   after proving native HOME/Core/journal/preferences isolation. Qualify counts,
+   read-only matching and explicit Missing/Different handoff without Apply.
+3. **Bounded Stage 3C reconciliation:** extend existing durable journals, Stop and
+   safety fences with operation-owned evidence, reconciliation and safe re-entry
+   under the [Core contract](docs/core/APPLICATION-INTERFACE.md#stage-3c-reconciliation-boundary).
+   Uncertain or foreign evidence stays blocked; no automatic journal clearing or rollback.
+4. **Optional Secure SSH Desktop decision:** explicitly include or defer 16H for
+   the first release. Include the bridge/privacy/PTY implementation and qualification
+   only if selected; ordinary 1.0 does not automatically depend on it.
+5. **Remaining Stage 16 qualification:** close the [supported-domain gates](TODO.md#remaining-supported-domain-restore-qualification),
+   Homebrew Setup Installer gate, lifecycle/recovery, completion (16I), integration,
+   accessibility and runtime hardening (16K). Account for the 23 Graceful Stop tests
+   outside canonical coverage. Recovery gates depend on step 3; preserve accepted
+   Assisted Restore behavior and distinguish mandatory gates from optional scope.
+6. **Fresh end-to-end Capture → Rebuild → Verify → Check → no-op:** use current
+   supported scope, confirmed backup protection and independent evidence. This
+   development-runtime gate does not replace packaged clean-Mac qualification.
+7. **[Stage 17 — autonomous distribution](#stage-17--distribution--clean-mac-e2e):**
+   implement and qualify checkout-independent bundled Core/Python/tool placement,
+   a managed writable workspace, signing/notarization and DMG delivery after the
+   agreed Stage 16 closure. Do not begin packaging automatically from UI acceptance.
+8. **Clean-Mac qualification and [Early Access](#early-access--alpha):** qualify full
+   packaged workflows on each claimed platform, then validate with external technical
    users and resolve observed compatibility/UX failures before public launch.
 9. **[Macseed 1.0](#macseed-10):** close mandatory product gates, document supported
    scope/limits and complete Early Access qualification before release.
@@ -164,9 +170,10 @@ after rebuilding the current Desktop. It compares supported topology and
 selected descriptor relationships without target mutation or configuration publication,
 preserving legacy Comparison and the Bundle-only Restore handoff.
 
-**Bounded Workspace Core E2E accepted — 2026-10-30, `ed521e7`.** Retained real-Mac
-qualification reports and disposable fixtures establish the following on Apple
-Silicon/macOS 27.2 with the development runtime:
+**Bounded Workspace Core E2E accepted — 2026-10-30, `ed521e7`.** The recorded real-Mac
+acceptance and disposable fixtures cover the following on Apple Silicon/macOS 27.2
+with the development runtime. The comprehensive audit did not locate the raw report;
+this preserves the owner-recorded acceptance without claiming a new run or artifact path:
 
 - Core Capture → Preview → Execute, **6/6 Global Verification** and **6/6 Core
   Environment Comparison** against the same saved Bundle: base, linked and nested
@@ -212,7 +219,8 @@ backup remain outside scope.
 ## Stage 17 — Distribution & Clean-Mac E2E
 
 **Planned.** Deliver a private writable Core workspace while signed resources stay
-read-only; qualify bundled Core/Python and age/OpenSSH. Sign the app and nested
+read-only; implement and qualify checkout-independent bundled Core/Python and
+secure tools required by the selected release scope. Sign the app and nested
 runtime with Developer ID / Hardened Runtime, notarize/staple, produce a DMG and
 validate downloaded-app Gatekeeper behavior. Prove Capture → Restore → Verify on
 clean Apple Silicon and read-only Status against the same Saved Environment;

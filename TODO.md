@@ -3,6 +3,9 @@
 Concrete unfinished actions only; follow the [Current Execution Order](ROADMAP.md#current-practical-execution-order).
 Completed milestones, including Desktop CI, belong to Roadmap; qualification
 below does not reopen accepted UI or the completed D1–D4/R5 implementation audit.
+Close future gates with the evidence location, revision, host/runtime, selected scope
+and result. Preserve accepted evidence and obtain only missing evidence under the
+authorized gate; an interrupted run is not a full PASS and does not justify broad reruns.
 
 ## Complete Workspace & Git Worktree Restoration
 
@@ -19,6 +22,7 @@ separate implemented Core Capture/Restore from remaining capability and real-Mac
   separately with confirmed Missing/Different and no Apply; all-matching results
   intentionally offer no handoff. Prior independent GUI acceptance does not close this gate.
 - [ ] Qualify full SIGTERM reconciliation/recovery and successful fresh re-entry
+  after the [Stage 3C reconciliation implementation](docs/core/APPLICATION-INTERFACE.md#stage-3c-reconciliation-boundary),
   beyond the accepted fail-closed fence. Inspect retained uncertainty and reconcile
   only with sufficient evidence before fresh Preview/Execute, Verification and no-op;
   blocked retry is not completed recovery. No automatic journal clearing or rollback.
@@ -38,9 +42,12 @@ The consolidated evidence assessment is accepted; no repair task remains from
 those failures. Run additional canonical validation for identified gaps or changes,
 without weakening assertions, skipping tests or changing workflows merely to obtain PASS.
 
-## Secure SSH Desktop (16H)
+<a id="secure-ssh-desktop-16h"></a>
 
-- [ ] **Secure SSH Desktop (16H):** implement/qualify the inherited FD/challenge
+## Optional Secure SSH Desktop (16H)
+
+- [ ] **Optional Secure SSH Desktop (16H), subject to an explicit first-release scope decision:**
+  implement/qualify the inherited FD/challenge
   bridge, opt-in Capture encryption and Restore unlock/import confirmation over
   the existing engine; qualify age/OpenSSH PTY behavior. Extend privacy/report
   fixtures for secure operations without exporting keys, names or secret input.
@@ -59,6 +66,11 @@ Unsupported (`ownership_unproven`); in-place Repair is not implemented.
 - [ ] Broaden representative Homebrew Install/Repair → Verify → fresh no-op gates
   as compatibility maintenance. Keep ambiguous/damaged privileged Repair states
   fail-closed and retain action-specific requirements/ownership evidence.
+- [ ] Qualify the [published Homebrew Setup](docs/DESKTOP.md#homebrew-setup--implemented-visually-accepted)'s
+  real standard Installer handoff, package retention while Installer is active,
+  cancellation/return/recheck and enabled-Gatekeeper behavior on claimed hosts.
+  Keep real clean-Mac installation under the separately authorized distribution gate;
+  independent package authentication with Gatekeeper disabled does not establish notarization.
 
 ### macOS settings manual qualification
 
@@ -80,13 +92,18 @@ these tasks require native effects or unexercised writes, not another fixture pa
   refresh and repeat/no-op. `EnableTilingByEdgeDrag` and `EnableTopTilingByEdgeDrag`
   already matched in the controlled test, so their write paths remain untested.
   Stored-preference Verification alone does not establish live effect.
+- [ ] Complete visual/device-behavior qualification of `Clicking`,
+  `TrackpadRightClick` and other version-dependent settings on macOS 27; the
+  controlled Restore confirmed saved values only. Qualify each claimed device/version
+  under the [supported-domain matrix](#remaining-mandatory-supported-domain-qualification).
 
 <a id="broad-restore-manual-gate--2026-10-05"></a>
+<a id="mandatory-restore-capability-gaps"></a>
 
-### Mandatory Restore capability gaps
+### Remaining mandatory supported-domain qualification
 
-- [ ] Complete a fresh full Capture → Rebuild → Verification gate from a newly
-  captured Bundle on the current Mac after explicit scope approval and fresh
+- [ ] Complete a fresh full Capture → Rebuild → independent Verify → Check → no-op
+  gate from a newly captured Bundle on the current Mac after explicit scope approval and fresh
   Preview. Preserve archive/worktree state, resolve or explicitly exclude conflicts
   through supported selection, and
   check repeat/no-op convergence. This does not replace Stage 17 clean-Mac gates.
@@ -121,17 +138,22 @@ does not require reinstalling extensions; only the checks below remain.
 
 ## Cancellation, recovery and runtime reliability
 
-Operation-wide checkpoint Graceful Stop is implemented and has controlled real-Mac
-acceptance; [Desktop](docs/DESKTOP.md#restore-cancellation-safety) records its scope.
-Diagnostic records do not establish durable recovery or installer quiescence.
+Operation-wide checkpoint Graceful Stop, durable lifecycle/admission journals,
+process budgets and safety fences are implemented. Graceful Stop has controlled
+real-Mac acceptance; [Desktop](docs/DESKTOP.md#restore-cancellation-safety) records its
+scope. The [Stage 3C contract](docs/core/APPLICATION-INTERFACE.md#stage-3c-reconciliation-boundary)
+separates these foundations from missing reconciliation. Diagnostic records and
+blocked retry do not establish recovery or installer quiescence.
 
 D1–D4/R5 implementation and automated integration are accepted. The real lifecycle,
 broader Git and macOS 27 gates below remain separate from that completed repair queue.
 
-- [ ] **Stage 3C:** implement durable ordinary-Cask journal/reconciliation and safe
-  re-entry, including operation-owned DMG evidence. Do not delete user data or
-  detach unrelated volumes.
-- [ ] Define and qualify the user route after unknown consequences: inspect retained
+- [ ] **Stage 3C:** extend the existing durable lifecycle/admission journals with
+  ordinary-Cask operation-owned resource evidence, reconciliation and safe re-entry,
+  including DMG ownership, under the [shared reconciliation contract](docs/core/APPLICATION-INTERFACE.md#stage-3c-reconciliation-boundary).
+  Do not delete user data or detach unrelated volumes.
+- [ ] Define, implement and qualify the user route after unknown consequences under
+  that [Stage 3C contract](docs/core/APPLICATION-INTERFACE.md#stage-3c-reconciliation-boundary): inspect retained
   evidence, reconcile only with sufficient authority, then allow fresh preparation
   and explicit execution when safe. No automatic journal clearing or whole-Mac rollback.
 - [ ] Qualify native installer Stop timing and detached/privileged process
@@ -142,7 +164,8 @@ broader Git and macOS 27 gates below remain separate from that completed repair 
   admission does not qualify every native lifecycle; App Store installation is
   manual and outside Core's installer cancellation boundary.
 - [ ] Qualify application Restore's VS Code CLI absolute budgets, real owned-process
-  termination and durable re-entry/reconciliation; interrupted installs remain
+  termination and, after [Stage 3C implementation](docs/core/APPLICATION-INTERFACE.md#stage-3c-reconciliation-boundary),
+  durable re-entry/reconciliation; interrupted installs remain
   fail-closed even after observed tree termination. Fixtures do not qualify detached workers or
   external services.
 - [ ] Real-Mac qualify implemented application clone budgets, SSH transport,
@@ -160,6 +183,11 @@ broader Git and macOS 27 gates below remain separate from that completed repair 
   deadlines alone do not establish a stall.
 - [ ] Independently qualify a real approximately 180-second no-progress watchdog
   stall, owned descendant termination and continued independent work.
+- [ ] Account for the **23 tests** in `scripts/test-homebrew-graceful-stop.py`,
+  currently outside canonical/CI coverage, in the canonical regression inventory;
+  verify isolation/coverage without weakening assertions. Explicitly classify the
+  older Stage 1 `scripts/test-restore-cancellation-mocks.py` diagnostic harness and
+  its nonduplicated contracts. Preserve the canonical runner and four-shard CI structure.
 - [ ] **16K:** qualify unexercised stale-input/plan and transport/terminal failures,
   close/reopen/quit ownership, plus remaining accessibility and flow/security
   hardening. Retain the accepted real stale_plan/re-preview gate and keep
@@ -175,8 +203,8 @@ broader Git and macOS 27 gates below remain separate from that completed repair 
 - [ ] Implement/qualify a managed private writable Core workspace for root-relative
   logs and configuration; preserve read-only signed resources and the controlled
   child environment. Current bundled workflow roots are rejected.
-- [ ] Qualify bundled Core/Python and secure tool placement; do not assume developer
-  tools or system Python on a clean Mac.
+- [ ] Implement and qualify checkout-independent bundled Core/Python and secure-tool
+  placement; do not assume developer tools or system Python on a clean Mac.
 - [ ] Sign the app/nested runtime with Developer ID and configure Hardened Runtime.
 - [ ] Complete notarization, stapling, DMG and downloaded-app Gatekeeper checks.
 - [ ] Qualify packaged Capture → Restore → Verify and read-only Saved Environment
@@ -221,6 +249,3 @@ These are optional future decisions, not Workspace closure or 1.0 requirements.
   Needs Attention, Error, Cancelled and Interrupted states using production/shared
   views. Preserve existing fixtures/DemoSession; no parallel components or large
   tooling framework. See the [catalog contract](docs/DESKTOP.md#unified-ui-scenario-catalog--deferred-uidev-tooling).
-- [ ] Complete visual/device-behavior qualification of `Clicking`,
-  `TrackpadRightClick` and other version-dependent settings on macOS 27; the
-  controlled Restore confirmed saved values only.
