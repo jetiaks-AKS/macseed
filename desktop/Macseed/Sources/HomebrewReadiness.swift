@@ -104,12 +104,12 @@ enum NativeHomebrewRead {
             posix_spawn_file_actions_adddup2(&actions, output.fileHandleForWriting.fileDescriptor, STDOUT_FILENO),
             posix_spawn_file_actions_addchdir_np(&actions, "/")]
         guard codes.allSatisfy({ $0 == 0 }) else { return failed }
-        let arguments = ([executable] + input).map { strdup($0) }
+        let arguments = ([executable] + input).map { $0.withCString { strdup($0) } }
         // Do not inherit Homebrew/Ruby/Bash injection or user shell initialization.
         let environment = ["PATH=/usr/bin:/bin:/usr/sbin:/sbin", "HOME=" + NSHomeDirectory(), "LC_ALL=C",
             "HOMEBREW_NO_AUTO_UPDATE=1", "HOMEBREW_NO_ANALYTICS=1", "HOMEBREW_NO_ANALYTICS_THIS_RUN=1",
             "HOMEBREW_NO_ANALYTICS_MESSAGE_OUTPUT=1", "HOMEBREW_NO_ENV_HINTS=1", "HOMEBREW_NO_SUDO=1",
-            "HOMEBREW_NO_ASK=1", "HOMEBREW_NO_INSTALL_FROM_API=1"].map { strdup($0) }
+            "HOMEBREW_NO_ASK=1", "HOMEBREW_NO_INSTALL_FROM_API=1"].map { $0.withCString { strdup($0) } }
         defer { arguments.forEach { free($0) }; environment.forEach { free($0) } }
         var pid: pid_t = 0
         let code = (arguments + [nil]).withUnsafeBufferPointer { argv in
