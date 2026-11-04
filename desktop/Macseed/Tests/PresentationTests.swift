@@ -4105,7 +4105,12 @@ private struct WorkflowAnchorFrames: PreferenceKey {
         precondition(restoreView.contains("RestoreSelectionActions(status: model.selectionSummary, canPreview: model.canPreview"))
         precondition(restoreView.contains(".disabled(!canPreview)"))
         precondition(restoreView.contains("TaskDomainList(domains: domains.map"))
-        precondition(restoreView.contains("RestorePrerequisiteSummaryView(summary: prerequisites, areas: areas)"))
+        // Keep the callback check bound to this initializer while allowing formatting changes.
+        let prerequisiteSummaryPattern = #"RestorePrerequisiteSummaryView\s*\(\s*summary\s*:\s*prerequisites\s*,\s*areas\s*:\s*areas\s*,"#
+            + #"\s*homebrewRecheck\s*:\s*reviewModel\s*\.\s*map\s*\{\s*model\s+in\s*\{"#
+            + #"\s*model\s*\.\s*refreshPreview\s*\(\s*\)\s*\}\s*\}\s*\)"#
+        precondition(restoreView.range(of: prerequisiteSummaryPattern, options: .regularExpression) != nil,
+                     "Preview prerequisites must retain their summary/areas and recheck Homebrew through model.refreshPreview()")
         precondition(restoreView.contains("var showsFixIssues: Bool { prerequisites.canFixIssues }"))
         precondition(restoreView.contains("if showsFixIssues {") && !restoreView.contains("prerequisites.blockers"))
         let taskSource = try! String(contentsOf: sources.appendingPathComponent("TaskComponents.swift"), encoding: .utf8)
