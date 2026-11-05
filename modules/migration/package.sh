@@ -4,11 +4,14 @@ migration_run() {
     local migration_code
     migration_code="$(
         # Do not lend the application channel to the heredoc reader.
-        if [[ $# -eq 10 && "$7" == --application-channel-fd && "$8" =~ ^[0-9]+$ && "$8" -gt 2 ]]; then
+        if [[ ( $# -eq 10 || $# -eq 12 ) && "$7" == --application-channel-fd && "$8" =~ ^[0-9]+$ && "$8" -gt 2 ]]; then
             eval "exec ${8}<&-"
         fi
         if [[ $# -eq 7 && "$4" == --application-channel-fd && "$5" =~ ^[0-9]+$ && "$5" -gt 2 ]]; then
             eval "exec ${5}<&-"
+        fi
+        if [[ $# -eq 6 && "$3" == --application-channel-fd && "$4" =~ ^[0-9]+$ && "$4" -gt 2 ]]; then
+            eval "exec ${4}<&-"
         fi
         cat <<'PY'
 import hashlib
@@ -35,16 +38,28 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, sys.argv.pop(1))
 from evidence import Evidence
 from secret_input import Input, SecureError, PrivateTemporaryDirectory, decrypt, key_public, encrypt
+from age_runtime import executable as age_executable
+from external_sources import ExternalSourceError, read_pair as external_pair, read_control, paths as external_paths
 mode, *args = sys.argv[1:]
 interaction = None
+expected_target_state = None
+if mode == 'import' and len(args) == 11:
+    expected_target_state = args[10]
+    args = args[:9]
 if mode == 'import' and len(args) == 9:
     interaction = Input(int(args[6]), args[8])
     args = args[:5]
 if mode == 'application-export' and len(args) == 6:
     interaction = Input(int(args[3]), args[5])
     args = args[:2]
+if mode == 'application-compare' and len(args) == 5:
+    interaction = Input(int(args[2]), args[4])
+    args = args[:1]
 evidence = Evidence(args[2], args[4]) if mode == 'import' and len(args) == 5 else Evidence()
 secure_code = None
+# Process-local proof only: exact bytes, no passphrases, never reused by Preview.
+validated_pairs = {}
+decryption_started = False
 private_temporary = PrivateTemporaryDirectory if interaction is not None else tempfile.TemporaryDirectory
 home = os.environ.get('HOME', '')
 ssh = os.path.join(home, '.ssh')
@@ -170,12 +185,20 @@ def public_fields(raw):
     except (UnicodeError, ValueError):
         raise Invalid('unsupported or malformed public key')
 
-def validate_pair(private, public):
+def validate_pair(private, public, *, cryptographic=True, position=None, total=None):
     raw_private = checked_bytes(private, 0o600)
     raw_public = checked_bytes(public, (0o600, 0o644))
     if not raw_private.startswith(b'-----BEGIN OPENSSH PRIVATE KEY-----'):
         raise Invalid('unsupported private key format')
     kind, blob = public_fields(raw_public)
+    fp = 'SHA256:' + __import__('base64').b64encode(hashlib.sha256(blob).digest()).decode().rstrip('=')
+    proof_key = (raw_private, raw_public)
+    if cryptographic and proof_key in validated_pairs:
+        return kind, fp, raw_private, raw_public
+    identity = {'name': os.path.basename(private), 'key_type': kind, 'fingerprint': fp}
+    safe_name(identity['name'])
+    if position is not None:
+        identity.update(position=position, total=total)
     tty_settings = None
     if os.isatty(0):
         tty_settings = termios.tcgetattr(0)
@@ -190,8 +213,24 @@ def validate_pair(private, public):
             with os.fdopen(fd, 'wb') as staged:
                 os.fchmod(staged.fileno(), 0o600)
                 staged.write(raw_private)
+            validated_public = os.path.join(validation_dir, 'public')
+            with open(validated_public, 'xb') as staged:
+                os.fchmod(staged.fileno(), 0o600)
+                staged.write(raw_public)
+            # OpenSSH reads public metadata without unlocking the private key.
+            # This validates the readable envelope/public format, NOT the encrypted
+            # private payload. Execute still derives and compares the public key.
+            for candidate in (validated_public, validated_private):
+                observed = subprocess.run(['ssh-keygen', '-l', '-E', 'sha256', '-f', candidate],
+                                          stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=30)
+                fields = observed.stdout.split()
+                expected_type = 'ED25519' if kind == 'ssh-ed25519' else 'RSA' if kind == 'ssh-rsa' else 'ECDSA'
+                if observed.returncode or len(observed.stdout) > 4096 or len(observed.stdout.splitlines()) != 1 or len(fields) < 3 or fields[1] != fp.encode() or fields[-1] != ('(' + expected_type + ')').encode():
+                    raise Invalid('invalid identity public metadata')
+            if not cryptographic:
+                return kind, fp, raw_private, raw_public
             if interaction is not None:
-                public_output = key_public(validated_private, interaction)
+                public_output = key_public(validated_private, interaction, identity)
             else:
                 for attempt in range(1, 4):
                     wrong_passphrase = False
@@ -250,7 +289,8 @@ def validate_pair(private, public):
     derived_kind, derived_blob = public_fields(public_output)
     if (kind, blob) != (derived_kind, derived_blob):
         raise Invalid('public/private mismatch')
-    fp = 'SHA256:' + __import__('base64').b64encode(hashlib.sha256(blob).digest()).decode().rstrip('=')
+    if len(validated_pairs) < MAX_ITEMS:
+        validated_pairs[proof_key] = True
     return kind, fp, raw_private, raw_public
 
 def candidates():
@@ -313,6 +353,35 @@ def application_candidates():
     if len(entries) > MAX_ITEMS:
         raise Invalid('too many candidates')
     return {'status': 'present' if entries else 'unavailable', 'reason': None if entries else 'no_eligible_identities', 'items': entries}
+
+def external_candidate(path, *, cryptographic=False, position=None, total=None):
+    name, private, public, source_stamp = external_pair(path)
+    with PrivateTemporaryDirectory(prefix='ssh-migrate-', dir=local_tempbase()) as stage:
+        os.chmod(stage, 0o700)
+        for suffix, raw in (('', private), ('.pub', public)):
+            with open(os.path.join(stage, name + suffix), 'xb') as output:
+                os.fchmod(output.fileno(), 0o600)
+                output.write(raw)
+        kind, fp, validated_private, validated_public = validate_pair(
+            os.path.join(stage, name), os.path.join(stage, name + '.pub'),
+            cryptographic=cryptographic, position=position, total=total)
+    if external_pair(path)[3] != source_stamp:
+        raise ExternalSourceError('external_identity_changed')
+    entry = {'item_id': hashlib.sha256(('external:' + path + ':' + fp).encode()).hexdigest(),
+             'label': name, 'key_type': kind, 'fingerprint': fp, 'source': 'manual',
+             'validation': 'candidate_requires_pair_validation', '_stamp': source_stamp,
+             '_name': name, '_source_path': path}
+    return entry, validated_private, validated_public
+
+
+def current_application_selection(selected):
+    current = {entry['item_id']: entry for entry in application_candidates()['items']}
+    for entry in selected:
+        if entry.get('source') == 'manual':
+            observed, _, _ = external_candidate(entry['_source_path'])
+            current[observed['item_id']] = observed
+    return current
+
 
 def ask(prompt):
     if interaction is not None:
@@ -402,7 +471,7 @@ def raw_tar_names(path):
         offset += 512 + ((size + 511) // 512) * 512
     raise Invalid('truncated archive')
 
-def archive_validate(path, stage):
+def archive_validate(path, stage, *, cryptographic=True):
     if os.path.getsize(path) > MAX_PACKAGE:
         raise Invalid('package too large')
     raw_names = raw_tar_names(path)
@@ -430,7 +499,7 @@ def archive_validate(path, stage):
         if names != expected:
             raise Invalid('unexpected archive entries')
         result = []
-        for r in records:
+        for position, r in enumerate(records, 1):
             name, kind, fp, psz, ph, usz, uh = r
             private = archive.extractfile('keys/' + name).read(MAX_KEY + 1)
             public = archive.extractfile('keys/' + name + '.pub').read(MAX_KEY + 1)
@@ -443,13 +512,13 @@ def archive_validate(path, stage):
                 with os.fdopen(fd, 'wb') as f:
                     os.fchmod(f.fileno(), perm)
                     f.write(payload)
-            actual_kind, actual_fp, _, _ = validate_pair(p, q)
+            actual_kind, actual_fp, _, _ = validate_pair(p, q, cryptographic=cryptographic, position=position, total=len(records))
             if (kind, fp) != (actual_kind, actual_fp):
                 raise Invalid('package fingerprint mismatch')
             result.append((name, kind, fp, private, public))
         return result
 
-def target_plan(records):
+def target_plan(records, *, cryptographic=True):
     home_check()
     exists = os.path.lexists(ssh)
     if exists:
@@ -458,7 +527,7 @@ def target_plan(records):
         except Invalid:
             raise Conflict('unsafe SSH target directory')
     plan = []
-    for name, _, _, private, public in records:
+    for position, (name, _, _, private, public) in enumerate(records, 1):
         p = os.path.join(ssh, name)
         q = p + '.pub'
         if not exists or (not os.path.lexists(p) and not os.path.lexists(q)):
@@ -467,14 +536,48 @@ def target_plan(records):
         if not (os.path.lexists(p) and os.path.lexists(q)):
             raise Conflict('partial target pair')
         try:
-            _, _, current_private, current_public = validate_pair(p, q)
+            current_private, current_public = checked_bytes(p, 0o600), checked_bytes(q, (0o600, 0o644))
             if current_private != private or current_public != public:
                 evidence.different(name)
                 raise Conflict('different target pair')
+            if cryptographic:
+                _, _, verified_private, verified_public = validate_pair(p, q, position=position, total=len(records))
+                if (verified_private, verified_public) != (private, public):
+                    raise Conflict('target changed during validation')
         except (Invalid, OSError):
             raise Conflict('unsafe target pair')
         plan.append('identical')
     return plan
+
+def target_observation(records):
+    # A bounded observation token, not a second comparison algorithm. Reuse the
+    # same target safety/byte readers; never return names, paths or key bytes.
+    home_check()
+    rows = []
+    def stamp(path):
+        value = os.lstat(path)
+        return [value.st_dev, value.st_ino, value.st_mode, value.st_uid,
+                value.st_nlink, value.st_size, value.st_mtime_ns, value.st_ctime_ns]
+    rows.append(stamp(home))
+    if not os.path.lexists(ssh):
+        rows.append(None)
+    else:
+        owned(ssh, 'dir', 0o700)
+        rows.append(stamp(ssh))
+        for name, _, _, _, _ in records:
+            for suffix, modes in (('', 0o600), ('.pub', (0o600, 0o644))):
+                path = os.path.join(ssh, name + suffix)
+                if not os.path.lexists(path):
+                    rows.append(None)
+                else:
+                    before = stamp(path)
+                    raw = checked_bytes(path, modes)
+                    if stamp(path) != before:
+                        raise Conflict('target changed')
+                    rows.append([before, digest(raw)])
+        if rows[1] != stamp(ssh):
+            raise Conflict('target changed')
+    return digest(json.dumps(rows, separators=(',', ':')).encode('ascii'))
 
 def open_home_dir():
     fd = os.open(home, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
@@ -543,9 +646,21 @@ def publish_pair(name, private, public, created, dirfd):
             os.fsync(f.fileno())
 
 def run():
+    global decryption_started
     for dependency in ('ssh-keygen', 'tar', 'python3'):
         if not shutil.which(dependency):
             raise Invalid('required tool missing: ' + dependency)
+    if mode == 'application-external-list':
+        try:
+            entries = [external_candidate(path)[0] for path in external_paths(read_control(args[0]))]
+            if len({entry['label'].casefold() for entry in entries}) != len(entries) or len({entry['fingerprint'] for entry in entries}) != len(entries):
+                raise ExternalSourceError('external_identity_duplicate')
+            print(json.dumps({'items': entries}))
+        except ExternalSourceError as exc:
+            print(json.dumps({'error': exc.code}))
+        except (Invalid, OSError, subprocess.SubprocessError):
+            print(json.dumps({'error': 'external_identity_pair_invalid'}))
+        return
     if mode == 'application-list':
         print(json.dumps(application_candidates(), sort_keys=True))
         return
@@ -553,7 +668,7 @@ def run():
         for index, (name, kind, fp) in enumerate(candidates(), 1):
             print(f'{index}. {name} {kind} {fp}')
         return
-    if not shutil.which('age'):
+    if not age_executable():
         raise Invalid('age required')
     if not os.isatty(0) and interaction is None:
         raise Invalid('interactive terminal required')
@@ -567,12 +682,17 @@ def run():
             raise Invalid('export parent contains symlink')
         if mode == 'application-export':
             selected = json.loads(data(args[1]))
-            current = {entry['item_id']: entry for entry in application_candidates()['items']}
+            current = current_application_selection(selected)
             if (not isinstance(selected, list) or not 1 <= len(selected) <= MAX_ITEMS or
                     len({entry['item_id'] for entry in selected}) != len(selected) or
                     any(current.get(entry['item_id']) != entry for entry in selected)):
                 raise Conflict('selected identity changed')
-            chosen = sorted(entry['_name'] for entry in selected)
+            if (any(entry.get('source') == 'manual' for entry in selected) and
+                    (len({entry['_name'].casefold() for entry in selected}) != len(selected)
+                     or len({entry['fingerprint'] for entry in selected}) != len(selected))):
+                raise Conflict('duplicate selected identity')
+            sources = {entry['_name']: entry for entry in selected}
+            chosen = sorted(sources)
             candidate_details = {entry['_name']: (entry['key_type'], entry['fingerprint']) for entry in selected}
         else:
             items = capture_candidates() if mode == 'capture-export' else candidates()
@@ -604,13 +724,19 @@ def run():
                 if ask('Type export to confirm: ') != 'export':
                     raise Cancel()
         records = []
-        for name in chosen:
-            kind, fp, private, public = validate_pair(os.path.join(ssh, name), os.path.join(ssh, name + '.pub'))
+        for position, name in enumerate(chosen, 1):
+            if mode == 'application-export' and sources[name].get('source') == 'manual':
+                observed, private, public = external_candidate(sources[name]['_source_path'], cryptographic=True, position=position, total=len(chosen))
+                if observed != sources[name]:
+                    raise Conflict('selected identity changed')
+                kind, fp = observed['key_type'], observed['fingerprint']
+            else:
+                kind, fp, private, public = validate_pair(os.path.join(ssh, name), os.path.join(ssh, name + '.pub'), position=position, total=len(chosen))
             if mode in ('capture-export', 'application-export') and (kind, fp) != candidate_details[name]:
                 raise Conflict('selected identity changed')
             records.append((name, kind, fp, private, public))
         if mode == 'application-export':
-            current = {entry['item_id']: entry for entry in application_candidates()['items']}
+            current = current_application_selection(selected)
             if any(current.get(entry['item_id']) != entry for entry in selected):
                 raise Conflict('selected identity changed')
         if sum(len(r[3]) + len(r[4]) for r in records) > MAX_PACKAGE - 65536:
@@ -654,7 +780,7 @@ def run():
                             encrypt(tar_fd, out, interaction)
                             age = subprocess.CompletedProcess([], 0)
                         else:
-                            age = subprocess.run(['age', '-p', '/dev/fd/' + str(tar_fd)], stdout=out, pass_fds=(tar_fd,))
+                            age = subprocess.run([age_executable(), '-p', '/dev/fd/' + str(tar_fd)], stdout=out, pass_fds=(tar_fd,))
                     finally:
                         tar.stdout.close()
                         if tar.poll() is None and (age is None or age.returncode != 0):
@@ -664,6 +790,10 @@ def run():
                         raise Invalid('encryption failed')
                 if not os.path.getsize(encrypted) or os.path.getsize(encrypted) > MAX_PACKAGE:
                     raise Invalid('encrypted package size invalid')
+                if mode == 'application-export':
+                    for entry in selected:
+                        if entry.get('source') == 'manual' and external_pair(entry['_source_path'])[3] != entry['_stamp']:
+                            raise ExternalSourceError('external_identity_changed')
                 metadata = os.stat(encrypted, follow_symlinks=False)
                 published_identity = (metadata.st_dev, metadata.st_ino)
                 export_parent_still_visible(parent_fd, parent)
@@ -699,14 +829,31 @@ def run():
             os.chmod(archive, 0o600)
             input_fd = encrypted_in.fileno()
             evidence.reason = 'decrypt_failed'
+            decryption_started = True
             if interaction is not None:
                 decrypt(input_fd, out, interaction)
             else:
-                result = subprocess.run(['age', '-d', '/dev/fd/' + str(input_fd)], stdout=out, pass_fds=(input_fd,))
+                result = subprocess.run([age_executable(), '-d', '/dev/fd/' + str(input_fd)], stdout=out, pass_fds=(input_fd,))
                 if result.returncode:
                     raise Invalid('decryption failed')
         evidence.reason = 'input_invalid'
-        records = archive_validate(archive, stage)
+        records = archive_validate(archive, stage, cryptographic=mode != 'application-compare')
+        if mode == 'application-compare':
+            # This branch returns before consent, journal/evidence publication,
+            # target directory creation or any importer Apply code.
+            try:
+                before = target_observation(records)
+                plan = target_plan(records, cryptographic=False)
+                if target_observation(records) != before:
+                    raise SecureError('secure_target_changed')
+                comparison = {'decision': 'import_required' if 'create' in plan else 'all_match',
+                              'target_state': before}
+            except (Conflict, Invalid, OSError):
+                comparison = {'decision': 'conflict', 'target_state': None}
+            print(json.dumps(comparison, separators=(',', ':')))
+            return
+        if expected_target_state is not None and target_observation(records) != expected_target_state:
+            raise SecureError('secure_target_changed')
         evidence.selected([r[0] for r in records])
         plan = target_plan(records)
         for (name, kind, fp, _, _), status in zip(records, plan):
@@ -717,6 +864,8 @@ def run():
             return
         if ask('Type import to confirm: ') != 'import':
             raise Cancel()
+        if expected_target_state is not None and target_observation(records) != expected_target_state:
+            raise SecureError('secure_target_changed')
         if target_plan(records) != plan:
             raise Conflict('target changed')
         evidence.phase = 'apply'
@@ -777,6 +926,10 @@ def run():
 status = 0
 try:
     run()
+except ExternalSourceError:
+    secure_code = 'secure_export_failed'
+    evidence.failed('failure', 'operation_failed')
+    status = 2
 except SecureError as exc:
     secure_code = exc.code
     if secure_code == 'secure_payload_invalid' and evidence.phase in ('apply', 'post_apply'):
@@ -798,6 +951,8 @@ except Conflict as exc:
         evidence.failed('skipped', 'target_conflict')
     status = 1
 except (Invalid, OSError, tarfile.TarError, subprocess.SubprocessError) as exc:
+    if mode == 'application-compare' and not decryption_started:
+        secure_code = 'secure_comparison_failed'
     say('Migration failed: ' + (str(exc) if isinstance(exc, Invalid) else 'operation failed'))
     reason = 'post_validation_failed' if evidence.phase == 'post_apply' else ('operation_failed' if evidence.phase == 'apply' else (evidence.reason if evidence.reason in ('decrypt_failed', 'input_invalid') else 'operation_failed'))
     evidence.failed('failure', reason)
@@ -806,8 +961,10 @@ except KeyboardInterrupt:
     say('Interrupted')
     evidence.failed('cancelled', 'cancelled')
     status = 130
+validated_pairs.clear()
 try:
-    evidence.publish()
+    if mode != 'application-compare':
+        evidence.publish()
 except (OSError, ValueError, KeyboardInterrupt):
     pass # Evidence transport never changes the standalone import result.
 if interaction is not None:

@@ -15,6 +15,9 @@ struct CoreProcessOutcome: Sendable {
     let error: CoreRuntimeError?
     let stderr: CoreStderrDiagnostics
     let cancellationRequested: Bool
+    // Nil keeps older/injected outcomes unknown; absence of Core events alone
+    // does not establish whether a process launched.
+    var processLaunched: Bool? = nil
 }
 
 // One owned process group per operation. All blocking I/O runs off the MainActor.
@@ -25,6 +28,16 @@ final class CoreTransport: @unchecked Sendable {
     private var reaped = false
     private var consumed = false
     private var controlWriter: FileHandle?
+    private var secure: CoreSecureTransport?
+    private let secureClock: @Sendable () -> TimeInterval
+
+    init(secureClock: @escaping @Sendable () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) {
+        self.secureClock = secureClock
+    }
+    var secureState: CoreSecureState {
+        lock.lock(); let channel = secure; lock.unlock()
+        return channel?.state ?? .idle
+    }
 
     func requestGracefulStop() -> Bool {
         lock.lock(); defer { lock.unlock() }
@@ -36,6 +49,8 @@ final class CoreTransport: @unchecked Sendable {
     private func stop(userRequested: Bool) {
         lock.lock()
         if userRequested { cancellationRequested = true }
+        // Lock order is transport -> secret channel; its callbacks run without its lock.
+        secure?.cancel(userRequested: userRequested)
         if let pid { _ = kill(-pid, SIGTERM) }
         lock.unlock()
         DispatchQueue.global().asyncAfter(deadline: .now() + 3) { [self] in
@@ -54,18 +69,20 @@ final class CoreTransport: @unchecked Sendable {
     }
 
     func run(request: CoreRequest, location: CoreLocation,
+             secureChallenge: CoreSecureChallengeHandler? = nil,
              receive: @escaping @Sendable (CoreEvent) -> Void) async -> CoreProcessOutcome {
         await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async { [self] in
-                continuation.resume(returning: perform(request: request, location: location, receive: receive))
+                continuation.resume(returning: perform(request: request, location: location, secureChallenge: secureChallenge, receive: receive))
             }
         }
     }
     private func perform(request: CoreRequest, location: CoreLocation,
+                         secureChallenge: CoreSecureChallengeHandler?,
                          receive: @escaping @Sendable (CoreEvent) -> Void) -> CoreProcessOutcome {
         func failure(_ error: CoreRuntimeError) -> CoreProcessOutcome {
             CoreProcessOutcome(terminal: nil, exitCode: nil, signalled: false, error: error,
-                               stderr: CoreStderrDiagnostics(), cancellationRequested: wasCancelled())
+                               stderr: CoreStderrDiagnostics(), cancellationRequested: wasCancelled(), processLaunched: false)
         }
         lock.lock()
         let reused = consumed
@@ -73,19 +90,42 @@ final class CoreTransport: @unchecked Sendable {
         lock.unlock()
         if reused { return failure(.invalidLifecycle) }
         let requestBytes: Data
-        do { requestBytes = try request.encoded(); try location.validate(for: request.command) }
+        do {
+            guard secureChallenge == nil || request.command.requiresSecretBridge else { throw CoreRuntimeError.invalidRequest }
+            requestBytes = try request.encoded()
+            try location.validate(for: request.command, secureTransportAvailable: secureChallenge != nil)
+        }
         catch { return failure(error as? CoreRuntimeError ?? .invalidRequest) }
         if wasCancelled() {
             return CoreProcessOutcome(terminal: nil, exitCode: nil, signalled: false, error: nil,
-                                      stderr: CoreStderrDiagnostics(), cancellationRequested: true)
+                                      stderr: CoreStderrDiagnostics(), cancellationRequested: true, processLaunched: false)
         }
         let temporary = location.temporaryBase.appendingPathComponent("macseed-operation-" + UUID().uuidString)
         do { try FileManager.default.createDirectory(at: temporary, withIntermediateDirectories: false,
                                                      attributes: [.posixPermissions: 0o700]) }
         catch { return failure(.ioFailed(Int32(errno))) }
         defer { try? FileManager.default.removeItem(at: temporary) }
+        if !request.externalIdentityPaths.isEmpty {
+            do {
+                let bytes = try JSONSerialization.data(withJSONObject: ["version": 1, "operation_id": request.operationID, "paths": request.externalIdentityPaths])
+                guard bytes.count <= 65536,
+                      FileManager.default.createFile(atPath: temporary.appendingPathComponent("external-ssh-sources.json").path,
+                                                     contents: bytes, attributes: [.posixPermissions: 0o600]) else { return failure(.invalidRequest) }
+            } catch { return failure(.invalidRequest) }
+        }
         let input = Pipe(), output = Pipe(), diagnostics = Pipe()
         let control: Pipe? = request.command.operation == .restoreExecute ? Pipe() : nil
+        let secureChannel: CoreSecureTransport?
+        do {
+            secureChannel = try secureChallenge.map { try CoreSecureTransport(request: request, handler: $0, clock: secureClock) }
+        } catch { return failure(error as? CoreRuntimeError ?? .secureChannelInvalid) }
+        lock.lock(); secure = secureChannel; let cancelledBeforeLaunch = cancellationRequested; lock.unlock()
+        var secureWorkerStarted = false
+        defer {
+            if !secureWorkerStarted { secureChannel?.closeBeforeLaunch() }
+            secureChannel?.closeChildEndpoint()
+        }
+        if cancelledBeforeLaunch, let secureChannel { secureChannel.cancel(userRequested: true); return failure(.interrupted) }
         defer {
             lock.lock(); controlWriter = nil; lock.unlock()
             try? control?.fileHandleForReading.close(); try? control?.fileHandleForWriting.close()
@@ -101,12 +141,22 @@ final class CoreTransport: @unchecked Sendable {
                                            (output.fileHandleForWriting.fileDescriptor, STDOUT_FILENO),
                                            (diagnostics.fileHandleForWriting.fileDescriptor, STDERR_FILENO)]
         if let control { descriptors.append((control.fileHandleForReading.fileDescriptor, 3)) }
+        if let secureChannel { descriptors.append((secureChannel.childFD, CoreSecureTransport.inheritedFD)) }
         var setupError: Int32 = 0
         for (source, target) in descriptors {
             let code = posix_spawn_file_actions_adddup2(&actions, source, target)
             if code != 0 { setupError = code }
         }
-        // Only explicitly duplicated stdio is inherited. No app/credential/secret FDs.
+        if secureChannel != nil {
+            // Darwin considers descriptors referenced by file actions explicitly
+            // inherited. Close dup2 sources after all remapping, except target FDs.
+            let targets = Set(descriptors.map { $0.1 })
+            for source in Set(descriptors.map { $0.0 }).subtracting(targets) {
+                let code = posix_spawn_file_actions_addclose(&actions, source)
+                if code != 0 { setupError = code }
+            }
+        }
+        // Only explicitly duplicated stdio/control and an opted-in secret endpoint inherit.
         let flags = Int16(POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETSIGDEF | POSIX_SPAWN_CLOEXEC_DEFAULT)
         var mask = sigset_t(); sigemptyset(&mask)
         var defaults = sigset_t(); sigemptyset(&defaults); sigaddset(&defaults, SIGTERM); sigaddset(&defaults, SIGINT)
@@ -119,6 +169,7 @@ final class CoreTransport: @unchecked Sendable {
         if actionsResult != 0 { setupError = actionsResult }
         guard setupError == 0 else { return failure(.launchFailed(setupError)) }
         let argumentStrings: [String] = ["/bin/bash", location.launcher.path]
+            + (secureChannel == nil ? [] : ["--secure-fd", String(CoreSecureTransport.inheritedFD)])
         let arguments = argumentStrings.map { $0.withCString { strdup($0) } }
         var childEnvironment = location.environment(temporary: temporary)
         if control != nil { childEnvironment["MACSEED_GRACEFUL_FD"] = "3" }
@@ -133,6 +184,7 @@ final class CoreTransport: @unchecked Sendable {
             }
         }
         guard launch == 0 else { return failure(.launchFailed(launch)) }
+        secureChannel?.closeChildEndpoint()
         lock.lock()
         pid = child
         if let control {
@@ -147,6 +199,15 @@ final class CoreTransport: @unchecked Sendable {
         try? diagnostics.fileHandleForWriting.close()
 
         let readers = DispatchGroup()
+        let secretReader = DispatchGroup()
+        if let secureChannel {
+            secureWorkerStarted = true
+            secretReader.enter()
+            DispatchQueue.global(qos: .userInitiated).async { [self] in
+                defer { secretReader.leave() }
+                secureChannel.run { stop(userRequested: false) }
+            }
+        }
         // Each variable below has a single writer and is read only after group.wait.
         var stream = CoreEventStream(operationID: request.operationID)
         var streamError: CoreRuntimeError?
@@ -154,9 +215,19 @@ final class CoreTransport: @unchecked Sendable {
         readers.enter()
         DispatchQueue.global().async { [self] in
             defer { readers.leave(); try? output.fileHandleForReading.close() }
+            var secureFailureStopped = false
             drain(output.fileHandleForReading.fileDescriptor) { data in
                 guard streamError == nil else { return }
-                do { try stream.append(data, receive: receive) }
+                do {
+                    try stream.append(data) { event in
+                        secureChannel?.observe(event)
+                        if !secureFailureStopped, secureChannel?.error != nil {
+                            secureFailureStopped = true
+                            stop(userRequested: false)
+                        }
+                        receive(event)
+                    }
+                }
                 catch { streamError = error as? CoreRuntimeError ?? .malformedEvent; stop(userRequested: false) }
             } failed: { error in if streamError == nil { streamError = error } }
         }
@@ -193,14 +264,18 @@ final class CoreTransport: @unchecked Sendable {
         let signalled = (status & 0x7f) != 0
         let exitCode = signalled ? (status & 0x7f) : ((status >> 8) & 0xff)
         var terminal: CoreEvent?
-        var finalError = streamError ?? waitError
+        var finalError = secureChannel?.error ?? streamError ?? waitError
         if finalError == nil {
             do { terminal = try stream.finish(exitCode: exitCode, signalled: signalled) }
             catch let failure as CoreRuntimeError { finalError = failure }
             catch { finalError = .malformedEvent }
         }
+        secureChannel?.finish(outcomeError: finalError)
+        secretReader.wait()
+        if let error = secureChannel?.error { finalError = error; terminal = nil }
         return CoreProcessOutcome(terminal: terminal, exitCode: exitCode, signalled: signalled,
-                                  error: finalError, stderr: stderr, cancellationRequested: wasCancelled())
+                                  error: finalError, stderr: stderr,
+                                  cancellationRequested: wasCancelled() || secureChannel?.cancellationRequested == true, processLaunched: true)
     }
 
     private func drain(_ fd: Int32, receive: (Data) -> Void, failed: (CoreRuntimeError) -> Void) {

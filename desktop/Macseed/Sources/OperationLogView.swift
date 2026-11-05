@@ -83,7 +83,7 @@ enum OperationLogVisibility {
         guard terminal else { return false }
         if state == .result { return visible(final: true, active: active, reference: reference, operation: .restoreExecute) }
         let allowed: Set<CoreOperation> = [.review, .failed, .cancelled].contains(state)
-            ? [.bundleInspect, .restorePrepare] : [.restorePrepare]
+            ? [.bundleInspect, .restorePrepare, .secureRestoreCompare] : [.restorePrepare, .secureRestoreCompare]
         let failure = [.failed, .cancelled].contains(state)
             || (failedOperation && [.review, .preview, .confirming].contains(state))
         return final(failure,
@@ -549,10 +549,12 @@ enum OperationLogPresentation {
     }
     static func operation(_ value: CoreOperation?) -> String {
         switch value {
+        case .captureIdentityInspect: "Capture · Inspect SSH Identity"
         case .capturePrepare: "Capture · Scan and Prepare"
         case .captureExecute: "Capture · Save Environment"
         case .bundleInspect: "Rebuild · Inspect Environment"
         case .restorePrepare: "Rebuild · Preview"
+        case .secureRestoreCompare: "Rebuild · Secure Comparison"
         case .restoreExecute: "Rebuild · Execute"
         case .environmentCompare: ProductTask.status.title
         default: "Operation"
@@ -562,6 +564,7 @@ enum OperationLogPresentation {
         guard let finish, OperationLogSanitizer.valid(finish), finish.kind == .finish else {
             return active ? "Running" : "Interrupted or Unknown"
         }
+        if finish.failedBeforeLaunch { return "Failed Before Launch" }
         guard finish.terminalValid == true else { return "Interrupted or Unknown" }
         switch finish.eventType {
         case "completed": return "Completed"

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Disposable Core peer, real age/OpenSSH, and fail-closed channel regressions."""
 import base64
+import ast
 import hashlib
 import importlib.util
 import io
@@ -24,7 +25,7 @@ import unittest
 sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / 'modules/migration'))
-from secret_input import SecureError, inherited_socket, receive, response, tool
+from secret_input import SecureError, inherited_socket, receive, response, tool, valid_challenge, unique_fields
 spec = importlib.util.spec_from_file_location('prepare_tests', ROOT / 'scripts/test-restore-prepare.py')
 fixtures = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(fixtures)
@@ -383,14 +384,17 @@ class SecureRestoreTests(unittest.TestCase):
 
     def test_post_publication_failure_preserves_mutation(self):
         self.fixture()
-        real_keygen = shutil.which('ssh-keygen')
-        path = self.root / 'bin/ssh-keygen'
-        path.write_text('#!/bin/bash\n'
-                        'if [[ "$1" == -y ]]; then\n'
-                        '  if [[ -e "$HOME/.ssh/id_disposable" ]]; then exit 2; fi\n'
-                        'fi\nexec ' + real_keygen + ' "$@"\n')
-        path.chmod(0o700)
-        _, events, _ = self.peer()
+        # Exact-byte pair proof can avoid a second ssh-keygen call. Permissions
+        # must still be checked after publication, independently of that proof.
+        path = self.project / 'modules/migration/package.sh'
+        source = path.read_text()
+        boundary = "            evidence.phase = 'post_apply'\n"
+        self.assertEqual(source.count(boundary), 1)
+        path.write_text(source.replace(boundary, boundary +
+                        "            os.chmod(os.path.join(ssh, records[0][0]), 0o644)\n"))
+        status, events, _ = self.peer()
+        self.assertNotEqual(status, 0, events)
+        self.assertEqual(events[-1]['type'], 'failed', events)
         self.assertTrue(events[-1]['data']['target_mutation_may_have_started'], events)
         self.assertFalse((self.home / '.ssh').exists(), 'only importer-created files rolled back')
         self.assertEqual(sum(e['type'] == 'secure_publication_started' for e in events), 1)
@@ -503,13 +507,15 @@ class SecureRestoreTests(unittest.TestCase):
         self.fixture()
         marker = self.root / 'publication-observed'
         self.environment['TEST_POST_PUBLICATION'] = str(marker)
-        real_keygen = shutil.which('ssh-keygen')
-        path = self.root / 'bin/ssh-keygen'
-        path.write_text('#!/bin/bash\n'
-                        'if [[ "$1" == -y && -e "$HOME/.ssh/id_disposable" ]]; then\n'
-                        ' : > "$TEST_POST_PUBLICATION"\n sleep 30\nfi\n'
-                        'exec ' + real_keygen + ' "$@"\n')
-        path.chmod(0o700)
+        # Pause at the real post-publication boundary, even when exact-byte proof
+        # means post-apply verification does not launch another ssh-keygen.
+        path = self.project / 'modules/migration/package.sh'
+        source = path.read_text()
+        boundary = "            evidence.phase = 'post_apply'\n"
+        self.assertEqual(source.count(boundary), 1)
+        path.write_text(source.replace(boundary, boundary +
+                        "            with open(os.environ['TEST_POST_PUBLICATION'], 'x'): pass\n"
+                        "            __import__('time').sleep(30)\n"))
         workers = []
         def answer(challenge, count, child):
             if challenge['kind'] == 'import_confirmation':
@@ -523,10 +529,12 @@ class SecureRestoreTests(unittest.TestCase):
                 worker = threading.Thread(target=cancel_after_publication, daemon=True)
                 workers.append(worker)
                 worker.start()
-        _, events, _ = self.peer(answer)
+        status, events, _ = self.peer(answer)
         for worker in workers:
             worker.join(timeout=2)
         self.assertTrue(marker.exists())
+        self.assertNotEqual(status, 0, events)
+        self.assertEqual(events[-1]['type'], 'failed', events)
         self.assertEqual(events[-1]['data']['code'], 'cancelled', events)
         self.assertTrue(events[-1]['data']['target_mutation_may_have_started'])
         self.assertFalse((self.home / '.ssh').exists(), 'only current import files removed')
@@ -549,6 +557,94 @@ class SecureRestoreTests(unittest.TestCase):
         self.assertFalse(events[-1]['data']['target_mutation_may_have_started'])
         self.assertFalse((self.home / '.ssh').exists())
 
+
+
+class PairProofTests(unittest.TestCase):
+    def test_target_change_between_comparison_and_proof_is_not_matching(self):
+        # Exercise the actual embedded production function with a deterministic
+        # observer race. Both byte sets may already have valid crypto proofs.
+        source = (ROOT / 'modules/migration/package.sh').read_text().split("<<'PY'\n", 1)[1].rsplit('\nPY\n', 1)[0]
+        tree = ast.parse(source)
+        function = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == 'target_plan')
+        class Conflict(Exception):
+            pass
+        class Invalid(Exception):
+            pass
+        for changed in (False, True):
+            records = [('fixture', 'ssh-ed25519', 'unused', b'saved-private', b'saved-public')]
+            namespace = dict(home_check=lambda: None, ssh='/unused-fixture',
+                             os=type('OS', (), {'path': type('Paths', (), {'lexists': staticmethod(lambda _: True), 'join': staticmethod(lambda *x: '/'.join(x))})}),
+                             owned=lambda *args: None, checked_bytes=lambda path, mode: b'saved-public' if path.endswith('.pub') else b'saved-private',
+                             validate_pair=lambda *args, **kwargs: ('ssh-ed25519', 'unused', b'changed-private' if changed else b'saved-private', b'saved-public'),
+                             Conflict=Conflict, Invalid=Invalid)
+            exec(compile(ast.Module(body=[function], type_ignores=[]), '<production-target-plan>', 'exec'), namespace)
+            if changed:
+                with self.assertRaises(Conflict):
+                    namespace['target_plan'](records)
+            else:
+                self.assertEqual(namespace['target_plan'](records), ['identical'])
+            # Preview never reaches a cryptographic validator.
+            namespace['validate_pair'] = lambda *args, **kwargs: self.fail('Preview attempted crypto unlock')
+            self.assertEqual(namespace['target_plan'](records, cryptographic=False), ['identical'])
+
+
+class ChallengeContextTests(unittest.TestCase):
+    def challenge(self):
+        return dict(type='challenge', protocol_version=2, operation_id='context-test',
+                    challenge_id='a' * 32, kind='ssh_key_unlock', attempt=1,
+                    identity=dict(name='fixture_identity', key_type='ssh-ed25519',
+                                  fingerprint='SHA256:' + 'A' * 43, position=1, total=2))
+
+    def valid(self, value, kinds={'ssh_key_unlock'}):
+        return valid_challenge(value, 'context-test', kinds)
+
+    def test_exact_context_and_compatibility(self):
+        self.assertTrue(self.valid(self.challenge()))
+        value = self.challenge()
+        del value['identity']['position'], value['identity']['total']
+        self.assertTrue(self.valid(value))
+        for kind in ('bundle_unlock', 'bundle_encrypt', 'import_confirmation'):
+            value = self.challenge()
+            value.update(kind=kind, protocol_version=1)
+            self.assertFalse(self.valid(value, {kind}))
+            del value['identity']
+            self.assertTrue(self.valid(value, {kind}))
+        self.assertFalse(self.valid(self.challenge(), {'bundle_unlock'}))
+
+    def test_invalid_identity_fails_closed(self):
+        invalid = {'name': ['', '../key', 'key.pub', 'key\n', 'key\x1b', 'a' * 81, True, [], None],
+                   'key_type': ['unknown', [], {}, None],
+                   'fingerprint': ['SHA256:' + 'A' * 42, 'SHA256:' + 'A' * 42 + 'B', [], None],
+                   'position': [0, 3, True, 1.0, '1', None],
+                   'total': [0, 33, True, 2.0, '2', None]}
+        for field, values in invalid.items():
+            for item in values:
+                with self.subTest(field=field, type=type(item).__name__):
+                    value = self.challenge(); value['identity'][field] = item
+                    self.assertFalse(self.valid(value))
+        for field in self.challenge()['identity']:
+            value = self.challenge(); del value['identity'][field]
+            self.assertFalse(self.valid(value))
+        value = self.challenge(); value['identity']['path'] = 'forbidden'
+        self.assertFalse(self.valid(value))
+
+    def test_identity_is_bound_to_strict_challenge(self):
+        for field, item in [('operation_id', 'another-operation'), ('challenge_id', 'a' * 31),
+                            ('challenge_id', 'a' * 32 + '\n'), ('kind', []), ('kind', 'unknown'),
+                            ('protocol_version', 1), ('protocol_version', True), ('protocol_version', 2.0),
+                            ('attempt', True), ('attempt', 0), ('attempt', 4), ('attempt', 1.0)]:
+            value = self.challenge(); value[field] = item
+            self.assertFalse(self.valid(value))
+        value = self.challenge(); del value['identity']
+        self.assertFalse(self.valid(value))
+        value = self.challenge(); value['extra'] = 1
+        self.assertFalse(self.valid(value))
+
+    def test_duplicate_fields_rejected_before_forwarding(self):
+        for value in ('{"kind":"ssh_key_unlock","kind":"bundle_unlock"}',
+                      '{"identity":{"name":"first","name":"second"}}'):
+            with self.assertRaises(ValueError):
+                json.loads(value, object_pairs_hook=unique_fields)
 
 
 class ChannelTests(unittest.TestCase):

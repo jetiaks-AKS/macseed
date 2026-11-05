@@ -75,10 +75,12 @@ struct CaptureView: View {
     private var treeExpansion: Binding<Set<String>> { categoryTreeExpansion ?? $expandedCategories }
     private var progressText: String {
         if runtime.stopping { return "Stopping Capture…" }
+        if runtime.secureChallenge != nil { return "Waiting for secure input…" }
         switch runtime.currentPhase {
         case "discovery": return model.state == .saving ? "Rechecking selected environment…" : "Scanning supported environment…"
         case "validation": return "Checking selected environment…"
         case "bundle_creation": return "Creating Saved Environment…"
+        case "secure_packaging": return "Validating and encrypting selected SSH identities…"
         default: return model.state == .scanning ? "Starting scan…" : "Preparing selected environment…"
         }
     }
@@ -143,20 +145,23 @@ struct CaptureView: View {
             case .review:
                 let rows = CaptureReviewRow.project(model.categories)
                 CaptureReviewMetrics(summary: selectionSummary)
-                Text("Review and select").font(.headline)
+                Text("Review and select").font(.headline).accessibilityAddTraits(.isHeader)
                 WorkflowList {
-                    HStack {
-                        Spacer()
-                        CaptureExpandButton(ids: disclosureIDs(in: .ordinary), title: "Ordinary Categories", expanded: treeExpansion)
-                            .padding(.trailing, 42)
-                    }
                     CaptureGroupedContent(rows: rows, expanded: treeExpansion,
                         selection: { group, _ in
                             guard (CaptureHierarchy.ordinaryGroups + [.advanced]).contains(group) else { return nil }
                             return AnyView(CaptureGroupControls(model: model, group: group))
                         }, vscodeSelection: AnyView(CaptureGroupControls(model: model, group: .vscode, subgroup: true)),
-                        advancedControls: AnyView(CaptureExpandButton(ids: disclosureIDs(in: .advanced), title: "Advanced", expanded: treeExpansion)),
-                        advancedFooter: AnyView(CaptureSecureTransferView(expansion: WorkflowExpansion.binding(CaptureHierarchy.secureTransferID, in: treeExpansion))),
+                        ordinaryTitle: "Standard Setup",
+                        ordinaryControls: AnyView(CaptureExpandButton(ids: disclosureIDs(in: .ordinary), title: "Standard Setup", expanded: treeExpansion)),
+                        advancedControls: AnyView(CaptureExpandButton(ids: disclosureIDs(in: .advanced), title: "For Experienced Users", expanded: treeExpansion)),
+                        secureTransferGroup: AnyView(CaptureSecureTransferView(inventory: model.secureInventory, selected: model.selectedSecureIdentities,
+                            editable: !runtime.isActive, select: { model.selectSecureIdentity($0, included: $1) },
+                            selectAll: { model.selectAllSecureIdentities(included: $0) },
+                            expansion: WorkflowExpansion.binding(CaptureHierarchy.secureTransferID, in: treeExpansion),
+                            addIdentity: chooseSSHIdentity, removeIdentity: model.removeSSHIdentity,
+                            manualIDs: model.manualIdentityIDs, checkingIdentity: model.addingIdentity,
+                            identityError: model.identityError, cancelIdentity: model.cancel)),
                         summary: { CaptureReviewPresentation.summary($0.flatMap(\.categories), model: model) },
                         attention: { CaptureReviewPresentation.attention($0.flatMap(\.categories), model: model) }) { row in
                         if row.id == "macos-settings" {
@@ -189,9 +194,15 @@ struct CaptureView: View {
                               systemImage: "exclamationmark.triangle")
                             .font(.callout).foregroundStyle(.orange)
                     }
-                    Text("The saved settings are private but unencrypted. Private SSH identities are not included.")
+                    Text(selection.secureIdentities.isEmpty
+                         ? "The saved settings are private but unencrypted. Private SSH identities are not included."
+                         : "Selected SSH identities will be encrypted separately with a new Bundle passphrase. Other saved settings remain private but unencrypted. Keep the passphrase separate from the saved environment.")
                         .font(.callout).foregroundStyle(.secondary)
-                    let tasks = CaptureTaskPresentation(categories: prepared.inventory.map { CaptureCategory(row: $0) }, selection: selection, phase: .confirmation)
+                    if let explanation = model.externalDestinationExplanation {
+                        Text(explanation).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    }
+                    let tasks = CaptureTaskPresentation(categories: prepared.inventory.map { CaptureCategory(row: $0) }, selection: selection,
+                        phase: .confirmation, secureIdentities: prepared.secureIdentities.items)
                     TaskDomainList(domains: tasks.domains, stateTitles: [.planned: "Ready to Save"], compactReadyItems: true, title: "Included in this capture",
                         captureHierarchy: true, settingsCategories: CaptureSettingsPresentation.children(tasks.domains),
                         settingLabels: CaptureSettingsPresentation.labels(prepared.inventory),
@@ -227,18 +238,119 @@ struct CaptureView: View {
             }
             if showsActions { CaptureActionsView(model: model, runtime: runtime) }
         }.modifier(OperationLogPresenter(runtime: runtime))
+            .sheet(item: Binding(get: { runtime.operationID == model.operationID ? runtime.secureChallenge : nil }, set: { _ in })) { challenge in
+                CaptureSecureInputView(runtime: runtime, challenge: challenge).id(challenge.id)
+                    .interactiveDismissDisabled()
+            }
             .onChange(of: model.state) { _, state in
                 if state == .scanning { treeExpansion.wrappedValue = CaptureHierarchy.initialExpansion }
             }
     }
     private var selectionSummary: CaptureSummaryPresentation {
         CaptureSummaryPresentation.review(categories: model.state == .review ? model.categories : model.categories.filter { model.selectionState($0) != .none }, domainCount: model.selectedDomainCount, itemCount: model.selectedItemCount,
-            selectedDomains: Set(model.selection.categories).union(model.selection.items.keys))
+            selectedDomains: Set(model.selection.categories).union(model.selection.items.keys), secureIdentityCount: model.selectedSecureIdentities.count)
+    }
+    private func chooseSSHIdentity() {
+        let panel = NSOpenPanel()
+        panel.title = "Add SSH Identity"
+        panel.prompt = "Add Identity"
+        panel.message = "Choose a private SSH key with its matching .pub file. It will be added unchecked and restored into ~/.ssh using its name."
+        panel.canChooseFiles = true; panel.canChooseDirectories = false
+        panel.canCreateDirectories = false; panel.allowsMultipleSelection = false
+        panel.resolvesAliases = false; panel.showsHiddenFiles = true
+        if let window = NSApp.keyWindow {
+            panel.beginSheetModal(for: window) { response in
+                if response == .OK, let url = panel.url { model.addSSHIdentity(url) }
+            }
+        } else {
+            panel.begin { response in if response == .OK, let url = panel.url { model.addSSHIdentity(url) } }
+        }
     }
     private func disclosureIDs(in scope: CaptureSelectionScope) -> Set<String> {
-        let ids = CaptureHierarchy.disclosureIDs(model.categories.map(\.id), scope: scope)
+        CaptureHierarchy.disclosureIDs(model.categories.map(\.id) + [CaptureHierarchy.secureTransferID], scope: scope)
             .subtracting(model.categories.filter { !CaptureCategorySelectionView.hasDisclosure($0) }.map(\.id))
-        return scope == .advanced ? ids.union([CaptureHierarchy.sectionID(.advanced), CaptureHierarchy.secureTransferID]) : ids
+    }
+}
+
+// Transient view-owned input only: never published in a model, event or log.
+struct CaptureSecureEntry {
+    var passphrase = ""
+    var confirmation = ""
+    func valid(for kind: CoreSecureChallenge.Kind) -> Bool {
+        [.bundleEncrypt, .bundleUnlock, .sshKeyUnlock].contains(kind)
+            && (1...CoreSecureTransport.maximumSecret).contains(passphrase.utf8.count)
+            && !passphrase.unicodeScalars.contains { $0.value < 32 || $0.value == 127 }
+            && (kind != .bundleEncrypt || passphrase == confirmation)
+    }
+    mutating func clear() { passphrase = ""; confirmation = "" }
+    mutating func consume(for kind: CoreSecureChallenge.Kind) -> CoreSecureResponse? {
+        guard valid(for: kind) else { return nil }
+        defer { clear() }
+        return .secret(Data(passphrase.utf8))
+    }
+}
+
+struct CaptureSecureInputView: View {
+    @ObservedObject var runtime: CoreRuntime
+    let challenge: CoreSecureChallenge
+    var restoring = false
+    var comparing = false
+    @CaptureViewState private var entry = CaptureSecureEntry()
+    private var encrypting: Bool { challenge.kind == .bundleEncrypt }
+    private var confirmingImport: Bool { challenge.kind == .importConfirmation }
+    private var title: String {
+        if confirmingImport { return "Import SSH Identities?" }
+        return encrypting ? "Encrypt SSH Identities" : challenge.kind == .bundleUnlock ? "Unlock SSH Identities" : "Unlock SSH Key"
+    }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(title)
+                .font(.title2.weight(.semibold)).accessibilityAddTraits(.isHeader)
+            if challenge.kind == .sshKeyUnlock, let identity = challenge.identity {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(identity.name).font(.callout.weight(.semibold))
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text(identity.typeLabel + " · " + identity.fingerprint).font(.caption.monospaced())
+                        .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    if let position = identity.position, let total = identity.total {
+                        Text("Identity \(position) of \(total)").font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+            }
+            Text(confirmingImport ? "Import the validated encrypted SSH identity package? Existing identities will not be overwritten. This confirmation is required before import."
+                 : challenge.kind == .bundleUnlock ? "Enter the Bundle passphrase created when capturing this environment. It unlocks the encrypted Secure Transfer package."
+                 : encrypting
+                 ? "Choose a new Bundle passphrase for the encrypted SSH identities. Other saved settings are not encrypted."
+                 : "Enter the existing passphrase for this SSH key. It verifies this protected identity; it is separate from the Bundle passphrase. The key keeps its original encryption.")
+                .font(.callout).foregroundStyle(.secondary)
+            if challenge.attempt > 1 {
+                Text("The previous passphrase was not accepted. Attempt \(challenge.attempt) of 3.")
+                    .font(.callout).foregroundStyle(.orange)
+            }
+            if !confirmingImport {
+                SecureField(encrypting ? "Bundle encryption passphrase" : challenge.kind == .bundleUnlock ? "Bundle passphrase" : "SSH-key passphrase", text: $entry.passphrase)
+                    .accessibilityIdentifier("capture.secure.passphrase")
+                if encrypting {
+                    SecureField("Confirm Bundle passphrase", text: $entry.confirmation)
+                        .accessibilityIdentifier("capture.secure.confirmation")
+                }
+                Text("Up to 128 UTF-8 bytes. Input expires after 120 seconds.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            HStack {
+                Button(comparing ? "Cancel Preview" : restoring ? "Cancel Rebuild" : "Cancel Capture", role: .cancel) { entry.clear(); runtime.cancelSecureChallenge(challenge) }
+                    .keyboardShortcut(.cancelAction)
+                Spacer()
+                Button(confirmingImport ? "Import SSH Identities" : encrypting ? "Encrypt" : "Unlock") {
+                    if confirmingImport { entry.clear(); runtime.respond(to: challenge, with: .confirmImport); return }
+                    guard let response = entry.consume(for: challenge.kind) else { return }
+                    runtime.respond(to: challenge, with: response)
+                }.buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
+                    .disabled((!confirmingImport && !entry.valid(for: challenge.kind)) || runtime.secureChallenge != challenge || runtime.stopping)
+            }
+        }.padding(24).frame(width: 440)
+            .onChange(of: runtime.secureChallenge) { _, current in if current != challenge { entry.clear() } }
+            .onDisappear { entry.clear(); runtime.cancelSecureChallenge(challenge) }
     }
 }
 

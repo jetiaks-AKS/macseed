@@ -1,7 +1,17 @@
 #!/bin/bash
 source "${SCRIPT_ROOT}/modules/migration/package.sh"
 migration_main() {
-    if [[ $# -eq 1 && "$1" == list ]]; then
+    if [[ $# -eq 7 && "$1" == application-compare && "$2" == --input && "$3" == /* &&
+            "$4" == --application-channel-fd && "$5" =~ ^[0-9]+$ &&
+            "$6" == --operation-id && "$7" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+        migration_run application-compare "$3" "$4" "$5" "$6" "$7"
+    elif [[ $# -eq 13 && "$1" == import && "$2" == --input && "$3" == /* &&
+            "$4" == --internal-evidence && "$5" == /* && "$6" == --attempt &&
+            "$7" =~ ^[a-zA-Z0-9_-]+$ && "$8" == --application-channel-fd &&
+            "$9" =~ ^[0-9]+$ && "${10}" == --operation-id &&
+            "${11}" =~ ^[a-zA-Z0-9_-]+$ && "${12}" == --expected-target-state && "${13}" =~ ^[0-9a-f]{64}$ ]]; then
+        migration_run import "$3" "$4" "$5" "$6" "$7" "$8" "$9" "${10}" "${11}" "${12}" "${13}"
+    elif [[ $# -eq 1 && "$1" == list ]]; then
         migration_run list
     elif [[ $# -eq 3 && "$1" == export && "$2" == --output && "$3" == /* ]]; then
         migration_run export "$3"
@@ -19,6 +29,8 @@ migration_main() {
             "$9" =~ ^[0-9]+$ && "${10}" == --operation-id &&
             "${11}" =~ ^[a-zA-Z0-9_-]+$ ]]; then
         migration_run import "$3" "$4" "$5" "$6" "$7" "$8" "$9" "${10}" "${11}"
+    elif [[ $# -eq 3 && "$1" == application-external-list && "$2" == --sources && "$3" == /* ]]; then
+        migration_run application-external-list "$3"
     elif [[ $# -eq 1 && "$1" == application-list ]]; then
         migration_run application-list
     elif [[ $# -eq 9 && "$1" == application-export && "$2" == --output && "$3" == /* &&

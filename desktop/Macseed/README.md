@@ -76,7 +76,14 @@ Build products, module caches and optional render fixtures remain in ignored
 
 ## Runtime preparation
 
-Both build paths invoke `prepare-runtime.sh RESOURCE_DIRECTORY`. It resolves the
+Both build paths invoke `prepare-runtime.sh RESOURCE_DIRECTORY ARCHITECTURE`.
+`prepare-age.py` verifies and reuses the pinned official archive cache, downloading
+only when absent, and copies age v1.3.2 into `Contents/Helpers/age` with the upstream
+license in `Contents/Resources/ThirdPartyNotices/`. Initial preparation needs network
+access or the verified cache. One explicit arm64/x86_64 target is required; Intel
+execution and universal packaging remain unqualified. See the
+[provenance and distribution contract](../../docs/DISTRIBUTION.md#bundled-age--required-for-desktop-10).
+No runtime download or external age/Homebrew fallback occurs. Preparation resolves the
 checkout and Python using `xcrun --find python3`, then generates
 `Contents/Resources/CoreRuntime.plist` with Version=1, Mode=development and absolute
 CoreRoot/PythonExecutable. Launch does not search for a checkout, install tools or
@@ -98,8 +105,9 @@ changes do. Missing runtime/protocol failure stays explicit.
 A future bundled descriptor uses relative CorePath/PythonPath confined to resources.
 Current Core logs/configuration need a private writable workflow workspace; signed
 resources cannot serve as that root. Bundled workflow resolution rejects writes
-with `writableCoreRequired`. Secure Execute currently fails before launch with
-`secureBridgeUnavailable`; the inherited socket bridge remains Stage 16H.
+with `writableCoreRequired`. Selected secure operations use the implemented
+Stage 16H inherited socket bridge and validated bundled age; ordinary operations
+continue if that helper is unavailable.
 [Desktop runtime](../../docs/DESKTOP.md#implemented-runtime-boundary) owns behavior,
 and [Distribution](../../docs/DISTRIBUTION.md) owns packaged runtime qualification.
 

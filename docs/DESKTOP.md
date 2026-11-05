@@ -51,11 +51,18 @@ validated records reach the independent log before eviction. JSONL limits are
 64 MiB per event and 256 MiB per operation, distinct from Core's per-record limits.
 Cancellation signals the owned root group with bounded TERM/KILL escalation;
 Core owns its tool groups, so forced root termination cannot prove all effects settled.
+The native outcome records whether a process actually launched. A client encoder
+rejection (`request_too_large`) is Failed Before Launch, with no Core terminal or
+Verification, in the existing Operation Log/Diagnostic Report presentation. Older
+logs with this client-only code are also identifiable; missing events or a generic
+interruption alone never prove that launch did not occur.
 
 This boundary is implemented, not packaged clean-Mac proof. Core's root-relative
 logs/config require a private writable workflow workspace before signed-resource
-workflow qualification; current bundled resolution rejects those writes. Secure
-Execute needs the future 16H socket bridge and is rejected before launch today.
+workflow qualification; current bundled resolution rejects those writes. Selected
+Secure Capture, selected Secure Restore Execute and authenticated secure Preview
+comparison open the same 16H socket bridge. `restore_prepare` and ordinary
+operations do not open a secret channel.
 Handled cancellation retains Core evidence; forced termination without a terminal
 event is interruption with unknown effects, never rollback or item-boundary stop.
 Diagnostic persistence and Result presentation are implemented; broader completion
@@ -138,8 +145,10 @@ The approved target grouping is:
 - **Application Extras → VS Code:** collapsible application group; Extensions retain
   item selection and Settings retains whole-category selection.
 - **Advanced — For experienced users:** collapsed/opt-in Git, repositories/worktrees,
-  Workspace Folders, SSH, Shell / Zsh and **VS Code Workspace**. Capture also keeps
-  its unavailable Secure Transfer presentation here; Restore sends `include_secure: false`.
+  Workspace Folders, SSH, Shell / Zsh and **VS Code Workspace**. Capture places
+  **Secure Transfer** directly below Advanced as a sibling under **For Experienced Users**,
+  with its own explicit, default-off identity selection. Restore also defaults
+  `include_secure` to false; explicit selection enables the encrypted package.
 
 Descriptors are **HIDE / FREEZE** from ordinary UX, with explicit Advanced Capture
 and Restore selection, default OFF. Preserve Core/tests/Bundle V1 and legacy
@@ -153,7 +162,8 @@ Neither feature introduces general content transfer.
 default ON and all Advanced OFF. Both have native tri-state master checkboxes in
 the four section headers and the VS Code subgroup; macOS keeps six independent
 child selectors. Text Select All / Deselect All buttons are replaced by these
-scoped masters. Ordinary and Advanced each have one Expand All / Collapse All control.
+scoped masters. Capture has separate ordinary and experienced section disclosure
+controls; Restore Selection retains its ordinary and Advanced controls.
 Expansion never changes selection or resets the other scope. Advanced-only Bundles
 remain explicitly selectable; an empty draft does not trigger automatic inclusion.
 Status always compares the complete saved reference, including Advanced, with
@@ -232,16 +242,31 @@ and metadata boundaries.
 
 ### Capture Review — implemented structure and geometry
 
-`CaptureGroupedContent` renders one ordinary bordered accordion containing
+Both Review and Confirmation use **Standard Setup** and **For Experienced Users**
+as sibling category section names. `CaptureGroupedContent` renders one ordinary
+bordered accordion containing
 **Applications & Tools**, **macOS Settings** and **Application Extras**. Application
 Extras contains the **VS Code** subgroup, then **Extensions** and **Settings**.
-A separate neutral Advanced container holds Git Configuration, Git Repositories /
-Worktrees, Workspace Folders, SSH Configuration, Shell / Zsh, VS Code Workspace
-and the unavailable Secure Transfer presentation. **For Experienced Users** and
-its divider sit outside that container; the inner title is **Advanced**. Only its
-title/icon use the restrained warm orange accent, with light/dark variants; the
-container is not an error surface. Unknown domains remain visible as Other Findings.
+**For Experienced Users** precedes one shared bordered container with two sibling
+rows: **Advanced**, then **Secure Transfer**, separated by one standard inset divider.
+There is no gap or second border between them; expanded content stays inside the
+shared 8 pt rounded surface. Both reuse the ordinary container's header columns,
+horizontal padding and 48 pt row height, with independent disclosure. Advanced
+holds Git Configuration, Git Repositories / Worktrees, Workspace Folders, SSH
+Configuration, Shell / Zsh and VS Code Workspace. It retains its warm title/icon
+accent; Secure Transfer retains blue. The shared surface remains neutral in
+Light/Dark. Unknown domains remain visible as Other Findings.
 Presentation parents add no requirements or duplicate counts.
+
+Each sibling owns one master checkbox. Advanced's master/status cover only its
+eligible configuration descendants and never change SSH identities. Secure Transfer
+reuses the identity selection: Off/Partial selects all eligible identities; All clears
+them. Individual controls update the same state; status is Off, N of M selected or
+All Selected. There is no shared parent selector or second identity master.
+The experienced section's Expand All controls both sibling groups and their nested
+disclosures, independently of either master checkbox. Secure-only Capture remains
+available with every ordinary category deselected; Confirmation keeps the prepared
+secure scope read-only in the same shared hierarchy.
 
 The following are implemented point values, not proposed targets. They describe
 Review only. `CaptureReviewPresentation.hierarchyStep` is **12 pt**. Offsets apply
@@ -250,9 +275,9 @@ baseline, rather than accumulating padding on nested containers:
 
 | Review level | Examples | Additional leading offset | Selection-slot origin from container edge |
 |---|---|---:|---:|
-| 1 — Main group | Applications & Tools, macOS Settings, Application Extras, Advanced | 0 pt | 40 pt |
+| 1 — Main group | Applications & Tools, macOS Settings, Application Extras, Advanced, Secure Transfer | 0 pt | 40 pt |
 | 2 — Domain / subgroup | Homebrew Packages, Finder, Git Configuration, VS Code | 12 pt | 52 pt |
-| 3 — Child domain / item | Extensions, Settings, package names, Git/folder items | 24 pt | 64 pt |
+| 3 — Child domain / item | Extensions, Settings, package names, Git/folder items, SSH identities | 24 pt | 64 pt |
 | 4 — Nested item | Individual VS Code extensions | 36 pt | 76 pt |
 
 The 40 pt baseline is the existing **16 pt** row edge inset plus
@@ -278,20 +303,21 @@ checkboxes; native inactive appearance remains system-controlled. Use secondary
 neutral styling for unsupported/unavailable state, orange for attention and green
 for confirmed completion. Status text/icons accompany color. The Advanced group
 header has the implemented warm title/icon tint; its surface remains neutral.
-The Review summary remains one blue card with dynamic selected
-domains and smaller selected-items text, plus a separate Needs Attention card only
+The Review summary orders Selected Domains (with selected-items text), Selected SSH
+Identities when nonzero, then Needs Attention only
 when its count is positive.
 
 ### Capture Review — selection and disclosure
 
-The four main group headers and VS Code have native tri-state masters:
+The ordinary group headers, Advanced, Secure Transfer and VS Code have native tri-state masters:
 **checked** means all eligible descendants, **unchecked** none, and **mixed** a
 partial selection. Clicking checked clears the eligible scope; clicking unchecked
-or mixed selects the eligible scope. `CaptureGroupControls` uses
+or mixed selects that group's eligible scope. Ordinary/Advanced `CaptureGroupControls` uses
 `CaptureReviewPresentation.bulkCategories`, `CaptureModel.bulkState(for:)` and
 `toggleCategories`; `NativeSelectionCheckbox` retains native checkbox/accessibility
-semantics and a separate hit target from disclosure. An empty eligible scope has a
-disabled master and an Unavailable summary.
+semantics and a separate hit target from disclosure. An empty eligible scope has
+no active master and an Unavailable summary. Secure Transfer reuses its existing
+`selectAllSecureIdentities` / `selectSecureIdentity` callbacks and shared selected-ID set.
 
 Application Extras and its VS Code subgroup currently cover the same two Core
 domains, `vscode-extensions` and `vscode-settings`; their states stay synchronized
@@ -302,8 +328,8 @@ existing `selectCategory` / `selectItem` operations and stable Core IDs. Standal
 Selected / Not Selected text is omitted where a row checkbox already expresses
 that fact; meaningful item counts, aggregate summaries and diagnostics remain.
 
-Every fresh Scan selects eligible ordinary requirements and leaves Advanced and
-unknown domains OFF; all section and nested disclosures start collapsed.
+Every fresh Scan selects eligible ordinary requirements and leaves Advanced,
+Secure Transfer and unknown domains OFF; all section and nested disclosures start collapsed.
 Unsupported, unavailable and observation-error domains are never selected. The
 Advanced master explicitly selects/clears all eligible Advanced domains and their
 items, including Workspace Folders. It leaves ordinary choices intact. Ordinary
@@ -311,16 +337,25 @@ actions and disclosures never select dependencies; Core still validates explicit
 selected workspace/descriptor dependencies. No additional selection engine or
 request fields are introduced.
 
-Review has **exactly two shared Expand All / Collapse All controls**. The ordinary
-control sits below **Review and select**, right-aligned immediately above the
-ordinary container **inside the scrollable `WorkflowList`**. Advanced's independent
-control sits on the right of the external **For Experienced Users** divider
-heading. Both retain a 42 pt trailing inset. There are no per-category bulk
-disclosure controls. `CaptureExpandButton`, `CaptureHierarchy.disclosureIDs` and
-`WorkflowExpansion` include nested disclosures, offer Expand All for a partially
-expanded scope, and clear child expansion on Collapse All. They preserve the other
-scope and never change selection, prepare a Bundle or call Core. The action footer
-stays fixed outside the scrolling list.
+Review and Confirmation each have **two section-level Expand All / Collapse All
+controls** when both sections are present. The ordinary control sits beside
+**Standard Setup** on both screens and affects only Applications & Tools, macOS
+Settings, Application Extras and their applicable nested disclosures.
+The **For Experienced Users** control affects both Advanced and Secure Transfer,
+including applicable nested disclosures. Both headers and controls live inside
+`WorkflowList`, scroll with their content and retain the 42 pt trailing inset.
+There are no pinned, floating or per-category bulk disclosure controls.
+
+**Review and select** and **Included in this capture** remain plain informational
+headings in their general workflow header areas, outside the category scroll view.
+Neither owns a disclosure control; each appears once above the category sections.
+
+Each category keeps its own chevron. `CaptureExpandButton`,
+`CaptureHierarchy.disclosureIDs` and `WorkflowExpansion` show Collapse All only when
+every applicable disclosure in that section is open; a mixed state shows Expand
+All. Collapse All clears the section's child expansion, preserving the other
+section. Disclosure never changes selection, counters or preparation, starts secure
+input or calls Core. The bottom action bar stays fixed outside the scrolling list.
 
 Implementation locations: [CaptureView.swift](../desktop/Macseed/Sources/CaptureView.swift)
 owns `CaptureView`, `CaptureGroupControls` and `CaptureMacOSSettingsView`;
@@ -339,8 +374,12 @@ status dimensions, domain disclosure style and workflow viewport.
 settings details. **Included in this capture** preserves compact wrapping names
 for applications/extensions and compact macOS preference labels, with Ready to Save
 summaries and separate independent warnings. There are **no selection checkboxes**.
-Ordinary and Advanced disclosure remain independent; the ordinary control remains
-beside the included-content heading, unlike the Review placement above.
+Only groups included in the effective prepared selection appear. Ordinary categories
+share one container; included Advanced and Secure Transfer share the second. Empty
+sections and their controls are omitted, including the ordinary section for a
+secure-only Capture. Both section headers and controls scroll with their content,
+using the same disclosure scopes as Review; Back and Create Saved Environment stay
+fixed below the viewport.
 
 Preserve `CaptureIncludedSettingsList`, `CaptureCompactLabel` and
 `SettingsFlowLayout`: the flow places labels left-to-right, wrapping at available
@@ -381,9 +420,13 @@ is **Visually Accepted** within the Capture UI scope above.
 `CaptureRowColumns`, native checkboxes and the accepted Capture Unified Accordion.
 One ordinary container holds Applications & Tools (App Store Applications, Homebrew
 Applications, Homebrew Packages), macOS Settings and Application Extras → VS Code →
-Extensions / Settings. A separate Advanced container below **For Experienced Users**
-contains Git Configuration, Git Repositories / Worktrees, Workspace Folders, SSH
-Configuration, Shell / Zsh and VS Code Workspace, in that order.
+Extensions / Settings under **Standard Setup**. Below **For Experienced Users**,
+Advanced contains Git Configuration, Git Repositories / Worktrees, Workspace Folders,
+SSH Configuration, Shell / Zsh and VS Code Workspace, in that order. Stage 16H adds
+Secure Transfer as Advanced's independent sibling in the same bordered container
+when the Bundle includes `secure.age`. Its default-off checkbox selects the whole
+package. The prior ordinary Selection visual acceptance is retained; Stage 16H
+identity workflows have the accepted manual E2E evidence below.
 
 The inspected Bundle is the strict scope ceiling. Absent/Capture-excluded domains
 and empty groups are hidden; captured unavailable/unsupported evidence remains
@@ -888,8 +931,10 @@ uses content states in one workspace, not mandatory wizard pages.
    scope, read-only child rows and Ready to Save section summaries. Result shows publication
    outcomes and only affected selected categories. No synthetic
    parent requirements or counts are added. Legacy Bundle and Restore are unchanged.
-   Secure Transfer remains unavailable inside Advanced; Capture still sends
-   `secure_identities: []`. No Stage 16H work is enabled.
+   Secure Transfer is Advanced's sibling under For Experienced Users and starts off
+   on every Scan. Its existing master and individual checkboxes use actual Core
+   candidate IDs; Advanced bulk actions never change identities. No secure selection
+   sends `secure_identities: []` as before.
 4. A native save dialog chooses the destination; Desktop normalizes exactly one
    `.mbt` suffix, then prepares the chosen selection again. Inline confirmation
    shows destination and **Included in this capture**, without repeated aggregate
@@ -945,8 +990,8 @@ compatibility and stored-value semantics; [TODO](../TODO.md#macos-settings-manua
 retains native settings gates.
 
 Secure SSH remains within Capture, not a Credentials area/password vault. The
-future [16H interaction](#secure-interactions) uses optional, default-off SSH identity
-selection, safe names/types/public fingerprints and **Encrypted separately**.
+[16H Capture interaction](#secure-interactions) uses optional, default-off SSH identity
+selection and safe names/types/public fingerprints; identities are encrypted separately.
 Ordinary SSH configuration stays independent; ordinary Bundle data is private but
 unencrypted. Prepare neither unlocks nor proves key pairs. Missing secure tools
 permit guidance or continuing without identities; selecting none permits an
@@ -982,7 +1027,7 @@ separate from disclosure, and verified status checks remain distinct.
 Capture's textual item summaries remain text, and zero counts remain hidden.
 
 Expand All / Collapse All operates on stable IDs for its available scope (ordinary
-or Advanced independently in Capture and Restore Selection),
+or experienced independently in Capture; ordinary or Advanced in Restore Selection),
 including Finder, Dock, Windows, Keyboard, Trackpad and Screenshots before their
 views are created. A partially open tree offers Expand All. Collapse All clears
 child disclosure state too. Selection, prerequisites, dialogs and Core operations
@@ -1049,12 +1094,15 @@ Prepare. Failed/cancelled/interrupted refreshes clear old Preview evidence.
 
 **Rebuild Preview — implemented and Visually Accepted.** Automatic
 Restore Tasks uses one ordinary accordion for Applications & Tools, macOS Settings
-and Application Extras → VS Code, plus a separate Advanced container below
-For Experienced Users. Only domains in the effective plan appear; unknown domains
+and Application Extras → VS Code, plus an experienced container below
+For Experienced Users. Advanced and selected Secure Transfer are sibling rows in
+that container. Only domains in the effective plan appear; unknown domains
 retain Other Findings. Domain actions, statuses, diagnostics and nested macOS
 preference details retain their existing renderers. Numeric badges appear only on
-the four main groups, aggregating original plan rows once; nested domains retain
-their status labels. Automatic task disclosures use the far-right indicator without
+the four ordinary/Advanced main groups and the selected Secure Transfer sibling,
+aggregating original plan rows once; nested domains retain their status labels.
+The Secure Transfer extension has separate Stage 16H manual E2E acceptance;
+the historical ordinary Preview visual acceptance is unchanged. Automatic task disclosures use the far-right indicator without
 moving titles or status columns. Preview has no selection controls. Expand All /
 Collapse All sits beside Automatic Rebuild Tasks and retains its group, VS Code
 and macOS child scope. Prerequisites retain their category statuses, explanations
@@ -1108,7 +1156,8 @@ identity and execution rules belong to the [Core contract](core/APPLICATION-INTE
 Rosetta remains an item-scoped manual Terminal prerequisite with **Refresh Preview**;
 Fix Issues never installs it. Distinguish a required installation from a failed
 check. Missing Homebrew requires external installation. Explain Command Line Tools,
-`mas`, VS Code CLI, network or `age` only when relevant. Administrator, Apple ID,
+`mas`, VS Code CLI or network only when relevant. A missing/damaged bundled age
+requires rebuilding/reinstalling Macseed, not installing an external tool. Administrator, Apple ID,
 SSH agent/known-host and vendor authorization are external actions; native dialogs
 may appear. Never invent Fix All or feed credentials into Core's closed stdin.
 `safely_satisfiable` is a Core capability, not authorization for a client mutation.
@@ -1626,24 +1675,189 @@ rebuild, without an extra blocking modal. The fresh Preview is the safety gate.
 
 ## Secure interactions
 
-**Planned Desktop contract — Stage 16H.** Core has the separate secret-channel
-engine; current Desktop rejects secure Execute before launch. The following
-interaction requirements are not implemented Desktop functionality.
+**Stage 16H SSH Identities — COMPLETED (2026-11-05).** The user accepted the
+following manual E2E results; this final pre-commit check records that evidence
+without repeating the real-user SSH workflows:
 
-Execute alone opens the separate inherited Unix-socket FD bridge. Use native secure
-text fields for Bundle encryption/unlock and protected-key unlock, with distinct
+| Accepted manual check | Result |
+| --- | --- |
+| Automatic SSH Capture → Rebuild → Verification | PASS |
+| Manual external SSH Capture → Rebuild → Verification | PASS |
+| Byte-for-byte matching | PASS |
+| Permissions and fingerprints | PASS |
+| Repeated Preview / Already Matches / no-op | PASS |
+
+Supported identities are encrypted in `secure.age`; external pairs can be added
+manually. All identities currently restore into `~/.ssh`; custom restore destinations
+are **not implemented**. The accepted comparison includes one Secure Transfer
+requirement and disables Rebuild for a confirmed no-op. This closes the supported
+identity checkpoint, not hosted CI, Stage 17 distribution or clean-Mac qualification.
+[SSH Environment Completion — Developer Environment Closure](CAPTURE-RESTORE.md#ssh-environment-completion--developer-environment-closure)
+is **NEXT / PLANNED**, with configuration/destination integration owned there.
+
+Core owns Secure Migration. `CoreRuntime` opens `CoreSecureTransport` only for
+Capture Execute with explicit identity IDs, Restore Execute with explicit
+`include_secure: true`, or the selected read-only `secure_restore_compare` operation. Ordinary operations retain their existing launch path.
+The selected Macseed 1.0 scope requires 16H and bundled age. Pinned, verified age
+v1.3.2 is implemented locally in `Contents/Helpers/age`. `CoreLocationResolver`
+binds every production launch to its app; Core validates the fixed helper path,
+file safety, architecture and pinned bytes for Capture encryption, Preview and
+Restore decryption. No external age/Homebrew fallback or runtime download exists.
+Missing/damaged helpers block selected secure work in the existing failure or
+prerequisite surface, with rebuild/reinstall guidance; ordinary work continues.
+CLI consent-based installation is unchanged. Age updates ship with Macseed
+releases. [Distribution](DISTRIBUTION.md#bundled-age--required-for-desktop-10) owns
+provenance, redistribution and remaining Stage 17 signing/clean-Mac qualification.
+
+Capture validates typed candidate inventory and preparation counts, shows names,
+types and public fingerprints in the Secure Transfer sibling group, and defaults every identity off.
+Prepare does not unlock keys or establish cryptographic pairing. Execute rechecks the prepared ID,
+validates all selected pairs and exports `secure.age` with Core's existing engine.
+Results require matching preparation/destination, publication evidence and the
+secure-component flag; the displayed encrypted count comes from that bound
+selection, not an inferred per-key result. Ordinary partial coverage remains visible.
+
+**Add SSH Identity…** in the same Secure Transfer disclosure opens a single-file
+native `NSOpenPanel`. Core checks that explicitly chosen private file and its
+adjacent `.pub`, including safe sources outside `~/.ssh`/HOME; there is no recursive
+search. Validated candidates use the existing name/type/public-fingerprint rows,
+with a small Manually Added label and Remove action. Adding starts unchecked;
+Remove forgets the candidate without deleting files. The one existing tri-state
+master and independent disclosure retain their semantics. Advanced selection and
+ordinary domain/item counts remain separate; secure-only Capture is supported.
+
+Review and confirmation explain the fixed destination `~/.ssh/<validated-name>`
+in the receiving HOME and the `IdentityFile` limitation. No custom destination or
+source path is stored in the Bundle; the existing encrypted v1 names authenticate
+the destination. Existing Preview/Result secondary detail gives the same bounded
+configuration reminder, without inferring a Host-profile relationship. Core source
+checks and format compatibility are owned by [Secure Migration](toolkit/SSH-IDENTITY-MIGRATION.md#manually-selected-desktop-sources).
+
+Source references remain in the current Capture session and private operation
+staging, never persistent preferences or ordinary requests/events/logs. Only
+explicitly selected manual references enter Prepare/Execute; adding/removing or
+changing selection invalidates preparation. New scan, Cancel Review and Done clear
+session references. Core rejects changed sources before publication. Candidate
+inspection uses the existing cancellable runtime without a secret channel;
+encrypted execution keeps the existing FD challenges and operation ownership.
+This extension is included in the accepted Stage 16H identity scope. Broader
+release and packaged qualification remain separate.
+
+Secure Execute and authenticated secure comparison open the separate inherited Unix-socket FD bridge. Native secure
+text fields handle Bundle encryption and protected-key unlock, with distinct
 labels; keys retain their original encryption. Import confirmation is an explicit
-Yes/Cancel decision, not a passphrase. Do not send secret responses in JSON requests.
+Import/Cancel decision during Restore, not a passphrase or automatic consent.
+Secret responses never enter JSON requests.
 Bind each response to the active operation/challenge ID and kind, honor Core's
 attempt and timeout limits, and clear transient field content on submission,
 challenge replacement, cancellation or close. No persistent secret storage,
 clipboard automation or log capture. Never claim complete memory erasure.
 
-Show that secure validation/import is pending until Execute provides evidence.
-Preparation cannot enumerate decrypted Restore identities; do not promise a
-per-key Restore selection screen. Import uses existing no-clobber Core behavior;
-conflicts/errors remain visible. Secret-channel content and isolated PTY traffic
-must never enter operation Details or diagnostics.
+The Unlock SSH Key dialog now shows Core-validated name, key type, public
+fingerprint and reliable position/total from the active authenticated FD challenge.
+The narrow secure-channel v2 extension applies only to `ssh_key_unlock`; Bundle
+and import-consent challenges retain v1. Core and Desktop require exact fields and
+matching operation, nonce and retry context. Labels are never inferred from UI
+order. This context stays in the active dialog and transient transport state, not
+ordinary events, operation records, logs, diagnostics or error descriptions.
+The earlier generic-dialog limitation is resolved in the completed identity
+checkpoint; complete 1.0 qualification remains separate.
+
+Restore Selection reuses the Capture hierarchy: Standard Setup has one ordinary
+container; For Experienced Users has one container with Advanced and Secure
+Transfer sibling rows. Secure Transfer retains its independent Selected/Off
+master but has no disclosure in Selection. Its description is always visible:
+“Encrypted SSH identities. Preview checks which keys already match this Mac.
+Missing keys can be imported during Rebuild without overwriting existing keys.”
+Experienced Expand/Collapse controls Advanced and its nested categories only;
+Capture and Preview retain their meaningful Secure Transfer disclosures.
+Secure Transfer is absent without `secure.age`, otherwise defaults off and selects
+the whole package. When off it is absent from Preview, confirmation, Progress and Result.
+Secure-only Rebuild is supported; identities never enter ordinary Advanced counts.
+
+The existing Preview button runs ordinary `restore_prepare`, then automatically
+runs authenticated read-only `secure_restore_compare` when Secure Transfer is
+selected. The existing secure dialog requests only the Bundle passphrase, never
+an SSH-key passphrase; there is no extra button, screen or card. Complete Preview appears only after comparison
+resolves. `restore_prepare` itself still accepts no secrets and performs no decryption.
+Comparison reuses authenticated age decryption, strict archive/manifest/hash
+validation, OpenSSH public/envelope checks and race-safe exact target-byte checks.
+It does not unlock encrypted private keys or claim cryptographic private/public
+pair validity. Import confirmation, target writes, configuration publication and
+import receipts remain excluded. Execute independently derives and verifies every
+private/public pair, with original key encryption preserved. Successful pair proof
+may be reused only for the exact same private/public bytes within that worker;
+file ownership, modes, links and target state are still rechecked. No passphrases
+or validation proofs cross operations.
+
+The one package requirement maps `all_match` to Already Matches, `import_required`
+to Changes Planned when readiness permits, and `conflict` to Needs Attention.
+Expanded “Encrypted SSH identity package” uses the existing secondary text:
+“All saved SSH identities already match this Mac. Nothing to restore.”,
+“Some saved SSH identities are missing. Rebuild can import them without overwriting
+existing keys.”, or “An existing SSH identity conflicts with the saved version.
+No keys will be overwritten.” These descriptions require a confirmed comparison.
+Existing metrics and category pills consume the same task; ordinary/Advanced counts
+are unchanged and zero pills/cards stay hidden. Partial match plus missing identities
+is one planned requirement, not a key count. Secure-only confirmed match disables
+Rebuild. Mixed work retains secure scope and revalidates it during execution.
+Cancellation, rejected input, unavailable tools, timeout or incomplete evidence use
+existing preparation errors; they never fabricate a match, planned import or conflict.
+
+Prepare and Compare reuse the same compact selection: full item domains use their
+existing category shorthand, while partial selections retain every explicit Core ID.
+Canonical scope validation remains separate, and the comparison receipt preserves
+the compact representation so Execute does not retransmit a full inventory.
+
+Comparison is bound to source fingerprint, prepared ID, exact selection, comparison
+operation and a private target-observation digest for executable decisions. Selection,
+source, Back/Refresh or a new session invalidates it. Every Preview compares afresh.
+Execute checks the binding, re-unlocks without cached secrets and rejects a changed
+target before secure mutation, retaining no-clobber checks around explicit consent.
+Preview places Secure Transfer after Advanced in their existing shared container;
+no decrypted identity names or per-key Restore selection are exposed.
+
+Existing Rebuild confirmation explains no-clobber import. Execute handles
+`bundle_unlock`, identity-bound `ssh_key_unlock`, and mandatory explicit
+`import_confirmation` through the existing secure dialog and FD. Core completes
+import before dependent Bootstrap work. Progress retains the existing flat list
+with one Secure Transfer row and evidence-based waiting/input/import/verification
+states. Existing Result, Stop and interruption layouts are reused.
+
+Core projects its validated importer receipt into existing operation, coverage and
+verification records for `encrypted_identity_set` before the post-import Stop
+checkpoint. Desktop retains those records across subsequent work and history
+truncation. Only positive import and conformity evidence marks this one logical
+requirement Verified; exit zero or phase completion alone cannot. A no-op stays
+Already Matches; conflicts preserve target files. Stop retains verified imports,
+while missing evidence and interruption remain unverified/unknown. Cancelling
+secure input alone does not establish that the whole Rebuild stopped or that no
+mutation began. Force Stop keeps existing unknown-consequence and re-entry fences.
+Secret-channel content and isolated PTY traffic never enter Details or diagnostics.
+
+Checkpoint 3 local evidence belongs to `RestoreTests --secure-restore-only` and
+`PresentationTests --secure-restore-only`: disposable HOME/identities, production
+CoreRuntime/importer, typed preparation, selection/counts, challenge lifecycle,
+no-clobber/no-op, stale plans, Stop evidence and native 580/1040 pt Light/Dark
+fixtures. Checkpoint 3B adds `RestoreTests --secure-compare-only` and
+`PresentationTests --secure-compare-only`, plus the focused
+`RestoreTests --secure-compare-binding-only` Execute checks: automatic prompts, authenticated
+match/missing/partial/conflict, no-op gating, target content/metadata preservation,
+private staging cleanup, stale bindings, FD interruption and diagnostic privacy.
+Existing transport/Capture/ordinary Restore evidence is reused. These automated
+fixtures are distinct from the accepted manual E2E recorded above and do not
+establish broad regression, hosted or packaged qualification.
+
+The passphrase-refinement checkpoint adds focused `--secure-passphrase-only`
+Restore/Presentation checks and `CoreRuntimeTests --secure-context-only`, plus
+`ChallengeContextTests` / `PairProofTests` in the Core secure harness. Disposable
+production Capture supplies protected and plain keys; Preview needs one Bundle
+prompt and zero key prompts, with unchanged target bytes/metadata and cleaned
+staging. Execute covers identity-bound retries, distinct protected keys, exact-byte
+proof reuse, changed targets and authoritative Verification. Selection, result text
+and secure-dialog layouts are checked at 580/1040 pt in Light/Dark. Earlier evidence
+is retained alongside the accepted manual E2E above; no broader release acceptance
+is inferred.
 
 ## Generic rendering and Protocol V1 fit
 
@@ -1788,14 +2002,16 @@ bounded native rendering of a 6000-record fixture. CI #108 includes the diagnost
 suites and native PresentationTests. This does not qualify user-driven report
 scrolling, native Save panel interaction or signed/notarized clean-Mac behavior.
 Those checks remain in [TODO](../TODO.md#distribution-prerequisites-and-packaged-runtime-16k--stage-17);
-future Secure SSH needs corresponding privacy fixtures.
+Secure Capture and Restore have disposable-key log/report privacy fixtures; broader
+real application and packaged privacy qualification remains open.
 
 ## Implementation slices and qualification
 
 [Roadmap](../ROADMAP.md#stage-16--native-macseed-desktop) owns the historical slice
 IDs and completion table; they are identifiers, not a new execution order. Supported
 16B–16G flows, Result/Visual Unification and 16J diagnostics are implemented;
-16H secure integration, remaining 16I/16K cases and Stage 3C recovery stay open.
+16H SSH Identities is completed. SSH Environment Completion is the next planned
+checkpoint; remaining 16I/16K cases and Stage 3C recovery stay open.
 Accepted UI/controlled Stop checks do not establish universal native lifecycle safety.
 
 The repository Core/external Python runtime is not an installed-app distribution.

@@ -40,6 +40,17 @@ struct RestorePreviewPresentation {
             let status: DisplayStatus
             let message: String
             switch row.disposition {
+            case "pending_unlock" where row.isSecureImport:
+                switch prepared.secureComparison?.decision {
+                case .allMatch:
+                    status = .matching; message = "All saved SSH identities already match this Mac. Nothing to restore."
+                case .importRequired where prepared.secureExecutable:
+                    status = .ready; message = "Some saved SSH identities are missing. Rebuild can import them without overwriting existing keys."
+                case .conflict:
+                    status = .attention; message = "An existing SSH identity conflicts with the saved version. No keys will be overwritten."
+                default:
+                    status = .unverified; message = "Secure comparison is incomplete. Refresh Preview to unlock and compare the selected package."
+                }
             case "satisfied": status = .matching; message = "Already Matches"
             case "planned":
                 status = .ready
@@ -71,20 +82,21 @@ struct RestorePreviewPresentation {
             default: reasonMessage = row.reason.flatMap { CoreRestorePreparation.workspacePreviewReasons[$0] }
             }
             let inventoryLabel = row.selectionItemID.flatMap { id in catalog.inventory.first { $0.id == row.domain }?.items.first { $0.id == id }?.label }
-            let title = inventoryLabel ?? row.displayName ?? (row.itemID.hasPrefix("opaque:") ? "Private item" : (row.itemID == "scope" ? "Selected area" : row.itemID))
+            let title = row.isSecureImport ? "Encrypted SSH identity package" : inventoryLabel ?? row.displayName ?? (row.itemID.hasPrefix("opaque:") ? "Private item" : (row.itemID == "scope" ? "Selected area" : row.itemID))
             let action = row.assistedAppStoreItem?.message ?? row.unsupportedRepairExplanation ?? row.diagnostic?.explanation ?? reasonMessage ?? (row.authorizationRequired == true ? message + " · Administrator authorization required" : message)
             let conditional = ["workspace_dependency_pending", "workspace_commit_after_clone"].contains(row.reason ?? "")
             rows[row.domain, default: []].append(DisplayItem(id: "restore-\(index)", title: title, status: status, action: action, reason: row.reason, restoreReadyText: status == .ready ? (conditional ? "Conditional" : Self.readyText(action: row.action)) : nil))
         }
         categories = order.map { domain in
-            DisplayCategory(id: domain, title: catalog.inventory.first { $0.id == domain }?.label ?? "Other supported state", symbol: "slider.horizontal.3", items: rows[domain] ?? [])
+            DisplayCategory(id: domain, title: domain == CoreRestorePreparation.secureDomain ? "Secure Transfer" : catalog.inventory.first { $0.id == domain }?.label ?? "Other supported state", symbol: domain == CoreRestorePreparation.secureDomain ? "lock.shield" : "slider.horizontal.3", items: rows[domain] ?? [])
         }
-        let planned = prepared.plan.filter { $0.disposition == "planned" }.count
-        let satisfied = prepared.plan.filter { $0.disposition == "satisfied" }.count
-        let attention = prepared.plan.filter { !["planned", "satisfied"].contains($0.disposition) }.count
+        let items = categories.flatMap(\.items)
+        let planned = items.filter { $0.status == .ready }.count
+        let satisfied = items.filter { $0.status == .matching }.count
+        let attention = items.filter { ![.ready, .matching].contains($0.status) }.count
         summary = Self.summary(changes: planned, matches: satisfied, attention: attention)
         let domainRows = categories
-        sections = RestorePresentationSection.project(catalog.groups).compactMap { section in
+        let ordinarySections: [Section] = RestorePresentationSection.project(catalog.groups).compactMap { section in
             var projected: [DisplayCategory] = []
             for group in section.groups {
                 if group.id == "macOS Settings" {
@@ -102,6 +114,7 @@ struct RestorePreviewPresentation {
             }.compactMap { area in domainRows.first { $0.id == area.id } }
             return projected.isEmpty ? nil : Section(id: section.id, rows: projected)
         }
+        sections = ordinarySections + (categories.first { $0.id == CoreRestorePreparation.secureDomain }.map { [Section(id: "Secure Transfer", rows: [$0])] } ?? [])
     }
 }
 
@@ -129,10 +142,27 @@ struct RestoreProgressRow {
                 names[entry.domain, default: [:]][entry.itemID] = item.title
             }
             return Self(id: row.id, title: row.title, domains: Set(relevant.map(\.domain)),
-                        hasAttention: relevant.contains { $0.disposition != "planned" }, itemNames: names)
+                        hasAttention: relevant.contains { $0.isSecureImport ? !plan.secureExecutable : $0.disposition != "planned" }, itemNames: names)
         }
     }
     func project(events: [CoreEvent]) -> DisplayItem {
+        if id == CoreRestorePreparation.secureDomain {
+            let evidence = CoreSecureRestoreEvidence(events: events)
+            let latest = events.last { $0.phase == "secure_import" || $0.type == "secure_challenge_waiting" || $0.type == "secure_publication_started" }
+            let status: DisplayStatus
+            let message: String
+            if evidence.verified { status = .complete; message = "Verified" }
+            else if hasAttention || evidence.available && evidence.operation?["outcome"]?.string != "success" {
+                status = .attention; message = "Needs Attention"
+            } else if evidence.available || latest?.type == "phase_completed" {
+                status = .working; message = "Awaiting Verification"
+            } else if latest?.type == "secure_challenge_waiting" {
+                status = .working; message = "Awaiting Secure Input"
+            } else if latest != nil { status = .working; message = "Importing" }
+            else { status = .waiting; message = "Waiting" }
+            return DisplayItem(id: id, title: title, status: status, action: message,
+                               restoreActivity: status == .working ? message : nil)
+        }
         var states: [String: DisplayStatus] = [:]
         var active: [String: (id: String, text: String)] = [:]
         for event in events where ["execution_event", "operation_record"].contains(event.type) {
@@ -262,7 +292,7 @@ struct RestoreProgressRow {
     private var evidenceSubscription: AnyCancellable?
     private var evidenceSequence = 0
     var categoryPresentationEvents: [CoreEvent] {
-        (categoryEvidenceEvents + runtime.events.filter { !["verification_record", "coverage_record", "operation_record"].contains($0.type) })
+        (categoryEvidenceEvents + runtime.events.filter { event in !categoryEvidenceEvents.contains(where: { $0.sequence == event.sequence }) && !["verification_record", "coverage_record", "operation_record"].contains(event.type) })
             .sorted { $0.sequence < $1.sequence }
     }
 
@@ -282,7 +312,7 @@ struct RestoreProgressRow {
         return previewSelectionState("app-store") != .none
     }
     var hasAutomaticSelection: Bool {
-        selectedCategories.contains { $0 != "app-store" } || selectedItems.contains { $0.key != "app-store" && !$0.value.isEmpty }
+        includeSecure || selectedCategories.contains { $0 != "app-store" } || selectedItems.contains { $0.key != "app-store" && !$0.value.isEmpty }
     }
     var appStorePresentation: AppStoreRestorePresentation {
         if state == .result, let preview = executionPreview, let plan = executionPlan {
@@ -309,6 +339,13 @@ struct RestoreProgressRow {
         guard canCancelAppStoreRefresh else { return }
         appStoreRefreshState = .cancelling
         runtime.cancel()
+    }
+
+    @Published private(set) var includeSecure = false
+    func selectSecureTransfer(_ included: Bool) {
+        guard state == .review, !busy, !runtime.isActive, inspection?.secureComponent == true else { return }
+        includeSecure = included
+        invalidate()
     }
 
     var busy: Bool { retryingPrerequisites || state == .inspecting || state == .preparing || state == .confirming || state == .rebuilding }
@@ -345,7 +382,8 @@ struct RestoreProgressRow {
             .map { "\($0.0) \($0.0 == 1 ? "category" : "categories") \($0.1)" }.joined(separator: " · ")
     }
     var selectionSummary: String {
-        switch bulkState {
+        if includeSecure && selectedAreaCount == 0 { return "Secure Transfer selected" }
+        return switch bulkState {
         case .all: "Everything selected"
         case .mixed: "Some items excluded"
         case .none: "Nothing selected"
@@ -356,15 +394,16 @@ struct RestoreProgressRow {
         if !available.isEmpty && available.allSatisfy({ selectionState($0) == .all }) { return .all }
         return selectedAreaCount == 0 ? .none : .mixed
     }
-    var canPreview: Bool { !busy && !runtime.isActive && selectedAreaCount > 0 && source != nil && inspection != nil }
+    var canPreview: Bool { !busy && !runtime.isActive && (selectedAreaCount > 0 || includeSecure) && source != nil && inspection != nil }
     var previewNeedsRefresh: Bool {
-        preparation.map { $0.selection != canonicalSelection } ?? false
+        preparation.map { $0.selection != canonicalSelection || $0.includeSecure != includeSecure } ?? false
     }
     var ready: Bool {
         guard !previewNeedsRefresh, state == .preview, let plan = preparation, plan.readiness.ready, plan.errorCount == 0 else { return false }
         return !plan.plan.contains { row in
             // A conflict with no proposed action is retained by the existing
             // consumer; environmental blockers are owned by Core readiness.
+            if row.isSecureImport { return !plan.secureComparedReady }
             if row.disposition == "conflict" && row.action == "none" { return false }
             return ["conflict", "blocked", "unknown", "pending_unlock"].contains(row.disposition) && !plan.isItemLocalSkip(row) && row.assistedAppStoreItem == nil
         }
@@ -379,6 +418,10 @@ struct RestoreProgressRow {
                 if event.operationID == self.runtime.operationID && event.data?["state"]?.string == "graceful_stop_unavailable" && self.confirmedStopRequest?.force == false {
                     self.confirmedStopRequest = nil
                 }
+                if self.includeSecure && (event.phase == "secure_import" || ["secure_challenge_waiting", "secure_publication_started"].contains(event.type)) {
+                    self.categoryEvidence["secure:" + event.type + ":" + (event.phase ?? "")] = event
+                    changed = true
+                }
                 guard ["verification_record", "coverage_record", "operation_record"].contains(event.type),
                       let domain = event.data?["domain"]?.string, let item = event.data?["item_id"]?.string else { continue }
                 let key = [event.type, domain, item, event.data?["predicate"]?.string ?? "", event.data?["action"]?.string ?? ""].joined(separator: "|")
@@ -389,8 +432,8 @@ struct RestoreProgressRow {
         }
     }
     var canRebuild: Bool {
-        ready && !runtime.isActive && preparation?.hasExecutableChanges == true
-            && preparation?.selection == canonicalSelection
+        ready && !runtime.isActive && preparation?.hasComparedExecutableChanges == true
+            && preparation?.selection == canonicalSelection && preparation?.includeSecure == includeSecure
     }
     var confirmationMessages: [String] {
         guard let preview, let preparation else { return [] }
@@ -401,10 +444,11 @@ struct RestoreProgressRow {
     }
     private var progressScope: [RestoreProgressRow] = []
     var activity: String {
-        RestoreProgressRow.activity(events: runtime.events, rows: progressScope, mutationPossible: mutationPossible)
+        if runtime.secureCancellationRequested { return "Cancelling secure input… Awaiting the Rebuild outcome." }
+        return RestoreProgressRow.activity(events: runtime.events, rows: progressScope, mutationPossible: mutationPossible)
     }
     var executionActivities: [DisplayItem] {
-        progressScope.map { $0.project(events: runtime.events) }
+        progressScope.map { $0.project(events: categoryPresentationEvents) }
     }
     func requestRebuild() {
         guard canRebuild else { return }
@@ -413,9 +457,10 @@ struct RestoreProgressRow {
     func cancelRebuildConfirmation() { if state == .confirming { state = .preview } }
     func confirmRebuild() {
         guard state == .confirming, !runtime.isActive, let source, let plan = preparation, let preview,
-              plan.readiness.ready, plan.errorCount == 0, plan.hasExecutableChanges, plan.selection == canonicalSelection else { return }
-        let request = CoreRequest(.restoreExecute(path: source.path, disabledGroups: [], includeSecure: false,
-                                                preparedID: plan.preparedPlanID, selection: selection))
+              plan.readiness.ready, plan.errorCount == 0, plan.hasComparedExecutableChanges, plan.selection == canonicalSelection, plan.includeSecure == includeSecure,
+              !includeSecure || plan.secureComparedReady else { return }
+        let request = CoreRequest(.restoreExecute(path: source.path, disabledGroups: [], includeSecure: includeSecure,
+                                                preparedID: plan.preparedPlanID, selection: selection, secureComparison: plan.secureComparison))
         progressScope = RestoreProgressRow.freeze(preview: preview, plan: plan)
         executionPreview = preview; executionPlan = plan
         executionStartedAt = Date(); executionFinishedAt = nil
@@ -434,7 +479,7 @@ struct RestoreProgressRow {
             let names = progressScope.reduce(into: [String: [String: String]]()) { result, row in
                 result.merge(row.itemNames) { previous, _ in previous }
             }
-            executionResult = RestoreExecutionPresentation(runtime: runtime, payload: payload, expectedID: plan.preparedPlanID, catalog: inspection?.restoreSelection, itemNames: names, expectedDiagnostics: plan.planDiagnostics, stopRequest: confirmedStopRequest)
+            executionResult = RestoreExecutionPresentation(runtime: runtime, payload: payload, expectedID: plan.preparedPlanID, catalog: inspection?.restoreSelection, itemNames: names, expectedDiagnostics: plan.planDiagnostics, stopRequest: confirmedStopRequest, expectedIncludeSecure: plan.includeSecure)
             invalidate(); state = .result
         }
     }
@@ -476,12 +521,12 @@ struct RestoreProgressRow {
         invalidate(); progressScope = []; executionResult = nil; inspection = nil; source = nil
         executionPreview = nil; executionPlan = nil; executionStartedAt = nil; executionFinishedAt = nil
         categoryEvidence = [:]; categoryEvidenceEvents = []; evidenceSequence = 0
-        selectedCategories = []; selectedItems = [:]; state = .choose
+        selectedCategories = []; selectedItems = [:]; includeSecure = false; state = .choose
     }
     var canCancelReview: Bool { state == .review && !busy && !runtime.isActive && !runtime.stopping }
     var reviewCancellationNeedsConfirmation: Bool {
         let initial = CoreRestoreSelection(categories: defaultAreas.map(\.id).sorted(), items: [:])
-        return selection != initial || preparation != nil || preview != nil
+        return includeSecure || selection != initial || preparation != nil || preview != nil
     }
     func requestReviewCancellation() {
         guard canCancelReview else { return }
@@ -499,7 +544,7 @@ struct RestoreProgressRow {
         // owned async phases and any active shared Core operation are excluded.
         work = nil
         operationID = nil
-        invalidate(); source = nil; inspection = nil; selectedCategories = []; selectedItems = [:]
+        invalidate(); source = nil; inspection = nil; selectedCategories = []; selectedItems = [:]; includeSecure = false
         failure = nil; technicalReason = nil; prerequisiteRetryMessage = nil; retryingPrerequisites = false
         cancelRequested = false; reviewCancelConfirmation = false; reviewCancelSource = nil; stopConfirmation = false; stopOperationID = nil
         executionResult = nil; executionPreview = nil; executionPlan = nil
@@ -524,7 +569,7 @@ struct RestoreProgressRow {
         cancelRequested = false
         showingAppStore = false
         appStoreRefreshState = .idle
-        source = url; inspection = nil; selectedCategories = []; selectedItems = [:]
+        source = url; inspection = nil; selectedCategories = []; selectedItems = [:]; includeSecure = false
         invalidate(); failure = nil; technicalReason = nil
         guard url.isFileURL, url.pathExtension.lowercased() == "mbt" else {
             fail("Choose a Macseed saved environment (.mbt).", code: nil); return
@@ -639,7 +684,9 @@ struct RestoreProgressRow {
         cancelRequested = false
         prerequisiteRetryMessage = retryMessage
         let expected = canonicalSelection
-        let request = CoreRequest(.restorePrepare(path: source.path, disabledGroups: [], includeSecure: false, selection: selection, installerPreparations: installerPreparations))
+        let expectedSecure = includeSecure
+        let requestSelection = selection
+        let request = CoreRequest(.restorePrepare(path: source.path, disabledGroups: [], includeSecure: includeSecure, selection: requestSelection, installerPreparations: installerPreparations))
         invalidate(); failure = nil; technicalReason = nil; state = .preparing
         appStoreRefreshState = .idle
         if appStoreRefresh {
@@ -671,8 +718,21 @@ struct RestoreProgressRow {
             }
             do {
                 guard let result = runtime.latestResult else { throw CoreRuntimeError.malformedEvent }
-                let data = try result.decodeData(CoreRestorePreparation.self)
-                try data.validate(expected: expected, catalog: catalog)
+                var data = try result.decodeData(CoreRestorePreparation.self)
+                try data.validate(expected: expected, catalog: catalog, expectedIncludeSecure: expectedSecure)
+                if expectedSecure {
+                    // Reuse Prepare's bounded wire representation. The canonical
+                    // scope above still validates Core's expansion against inventory.
+                    let compare = CoreRequest(.secureRestoreCompare(path: source.path, preparedID: data.preparedPlanID, selection: requestSelection))
+                    guard await receive(compare) else { return }
+                    guard let result = runtime.latestResult else { throw CoreRuntimeError.malformedEvent }
+                    let comparison = try result.decodeData(CoreSecureComparison.self)
+                    try comparison.validate(plan: data, operationID: compare.operationID, requestSelection: requestSelection)
+                    guard self.source == source, canonicalSelection == expected, includeSecure == expectedSecure, !cancelRequested else {
+                        throw CoreRuntimeError.malformedEvent
+                    }
+                    data.secureComparison = comparison
+                }
                 preparation = data; preview = RestorePreviewPresentation(data, catalog: catalog); state = .preview
             } catch { fail("Rebuild Preview did not provide complete, consistent evidence. Refresh Preview before rebuilding.", code: "invalid_result") }
         }
@@ -701,13 +761,21 @@ struct RestoreProgressRow {
         default:
             let error = runtime.error
             let code: String?
-            if case .coreFailure(let value) = error { code = value } else { code = nil }
+            if case .coreFailure(let value) = error { code = value }
+            else if error == .requestTooLarge { code = "request_too_large" }
+            else { code = nil }
             let message: String
             switch code {
+            case "request_too_large": message = "This selection exceeds Core’s request size limit. No process was launched. Review Selection before trying Preview again."
             case "bundle_invalid": message = "The saved environment is invalid or damaged. Choose another saved environment."
             case "unsupported_bundle": message = "This saved environment uses an unsupported format. Choose a compatible saved environment."
             case "bundle_unavailable": message = "The saved environment is unavailable. Choose an accessible file."
             case "recovery_required": message = "An earlier Rebuild needs recovery through the CLI before another Preview."
+            case "secure_unlock_rejected", "secure_key_unlock_rejected": message = "The passphrase was not accepted. Secure comparison is incomplete; Refresh Preview to try again."
+            case "secure_channel_timeout": message = "Secure comparison timed out. No SSH identities were changed. Refresh Preview to try again."
+            case "secure_comparison_unavailable": message = "Secure comparison could not use the bundled tool or required secure prerequisites. Check the requirement; rebuild or reinstall Macseed if its bundled tool is unavailable, then Refresh Preview."
+            case "secure_comparison_failed": message = "Secure comparison could not start or finish safely. No SSH identities were changed. Check the local runtime and temporary-folder access, then Refresh Preview."
+            case "secure_channel_invalid", "secure_target_changed": message = "Secure comparison could not confirm a stable target state. No SSH identities were changed. Refresh Preview."
             case "stale_plan": message = "The inputs changed. Refresh Preview to inspect the current state."
             case "workspace_dependency_missing", "workspace_path_conflict":
                 message = CoreRestorePreparation.workspacePreviewReasons[code!]!
@@ -777,7 +845,7 @@ struct RestoreExecutionPresentation {
     let operationID: String?
     private let expectedPlanID: String
     private let expectedDiagnostics: [String: String]?
-    @MainActor init(runtime: CoreRuntime, payload: [String: CoreJSON]?, expectedID: String, catalog: CoreRestoreInspection.Inventory? = nil, itemNames: [String: [String: String]] = [:], expectedDiagnostics: [String: String]? = nil, stopRequest: RestoreStopRequest? = nil) {
+    @MainActor init(runtime: CoreRuntime, payload: [String: CoreJSON]?, expectedID: String, catalog: CoreRestoreInspection.Inventory? = nil, itemNames: [String: [String: String]] = [:], expectedDiagnostics: [String: String]? = nil, stopRequest: RestoreStopRequest? = nil, expectedIncludeSecure: Bool = false) {
         self.expectedPlanID = expectedID
         self.expectedDiagnostics = expectedDiagnostics
         structuredEvidence = payload
@@ -792,12 +860,16 @@ struct RestoreExecutionPresentation {
         let verified = verification?["verdict"]?.string == "selected_requirements_verified"
             && verification?["status"]?.string == "complete"
             && ["mismatch_count", "unverified_count", "unresolved_count", "warning_count", "error_count"].allSatisfy { verification?[$0]?.integer == 0 }
+            && (!expectedIncludeSecure || CoreSecureRestoreEvidence(events: runtime.events, payload: payload).verified)
         if payload?["unknown_consequences"]?.boolean == true || !validTerminal || terminal == nil || payload?["target_mutation_may_have_started"]?.boolean == nil {
             outcome = .interrupted
         } else if terminal?.isCancellation == true {
             outcome = mayMutate ? .stoppedAfterMutation : .stoppedBeforeMutation
         } else if terminal?.type == "failed" {
-            outcome = Self.hasPartialEvidence(payload: payload, expectedID: expectedID)
+            let secure = CoreSecureRestoreEvidence(events: runtime.events, payload: payload)
+            let importedSubset = expectedIncludeSecure && mayMutate && payload?["prepared_plan_id"]?.string == expectedID
+                && secure.verified && secure.operation?["outcome"]?.string == "success"
+            outcome = importedSubset || Self.hasPartialEvidence(payload: payload, expectedID: expectedID)
                 ? .partial : mayMutate ? .failedAfterMutation : .failedBeforeMutation
         } else if runtime.state == .completed && payload?["execution_status"]?.string == "completed"
                     && payload?["prepared_plan_id"]?.string == expectedID {
@@ -1028,6 +1100,7 @@ struct RestoreResultFindings {
         var otherIssues: Set<String> = []
         var verifiedAreaOrder: [String] = []
         func area(_ domain: String) -> (String, String)? {
+            if domain == CoreRestorePreparation.secureDomain { return (domain, "Secure Transfer") }
             if let group = catalog?.groups.first(where: { $0.id == "macOS Settings" && $0.domains.contains(domain) }) {
                 return (group.id, group.id)
             }

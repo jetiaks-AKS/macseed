@@ -18,11 +18,18 @@ both requirements. Automatic MAS is retired from active development;
 using that archive requires a separate explicit decision. Do not reactivate its
 install, helper, authorization or deployment paths in the current workflow.
 Homebrew Setup is implemented; real standard Installer qualification remains open.
-Continuing Homebrew qualification, optional Secure SSH Desktop (16H), remaining 16I/16K
-qualification and Stage 3C reconciliation/recovery remain open. Secure SSH Desktop
-requires an explicit release-scope decision. Existing durable journals, Stop and
-safety fences remain implemented. Unified UI
-Scenario Catalog is deferred tooling. Follow the current
+Stage 16H SSH Identities is completed with accepted automatic/manual external
+Capture → Rebuild → Verification, byte matching, permissions/fingerprints and
+repeat/no-op. Identity migration remains opt-in/default-off, encrypted in
+`secure.age`, with all identities restoring into `~/.ssh`. Required bundled age
+v1.3.2 removes the Desktop age/Homebrew prerequisite; CLI consent is unchanged.
+SSH Environment Completion — Developer Environment Closure is NEXT / PLANNED:
+SSH Configuration and optional destinations in existing Rebuild Selection, with
+read-only Preview and explicit authorization for configuration corrections. Custom
+restore destinations are not implemented. Continuing Homebrew, remaining 16I/16K,
+Stage 3C recovery and Stage 17 distribution qualification remain open. Existing
+durable journals, Stop and safety fences remain implemented. Unified UI Scenario
+Catalog is deferred tooling. Follow the current
 [execution order](ROADMAP.md#current-practical-execution-order), one checkpoint
 at a time without unrelated task hopping; historical slice IDs are unchanged.
 Stage 17 owns packaging and clean-Mac qualification.

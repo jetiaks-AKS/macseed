@@ -1,7 +1,9 @@
 """Transient application input for the existing SSH importer; no secret storage."""
 import errno
+import base64
 import json
 import os
+import re
 import pty
 import select
 import socket
@@ -12,12 +14,51 @@ import subprocess
 import termios
 import time
 import uuid
+from age_runtime import executable as age_executable
 
 MAX_FRAME = 2048
 MAX_SECRET = 128  # Fits the smallest supported terminal canonical input limit.
 WAIT_SECONDS = 120
 TOOL_SECONDS = 30
 KINDS = {'bundle_unlock', 'ssh_key_unlock', 'import_confirmation', 'bundle_encrypt'}
+
+
+def valid_identity(value):
+    if not isinstance(value, dict) or set(value) not in ({'name', 'key_type', 'fingerprint'},
+            {'name', 'key_type', 'fingerprint', 'position', 'total'}):
+        return False
+    name, kind, fingerprint = (value.get(key) for key in ('name', 'key_type', 'fingerprint'))
+    if (not isinstance(name, str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,79}', name, re.ASCII)
+            or name.endswith('.pub') or not isinstance(kind, str) or kind not in {'ssh-ed25519', 'ssh-rsa', 'ecdsa-sha2-nistp256', 'ecdsa-sha2-nistp384', 'ecdsa-sha2-nistp521'}
+            or not isinstance(fingerprint, str) or not re.fullmatch(r'SHA256:[A-Za-z0-9+/]{43}', fingerprint, re.ASCII)):
+        return False
+    raw = base64.b64decode(fingerprint[7:] + '=', validate=True)
+    if len(raw) != 32 or base64.b64encode(raw).decode().rstrip('=') != fingerprint[7:]:
+        return False
+    return 'position' not in value or (type(value['position']) is int and type(value['total']) is int
+                                      and 1 <= value['position'] <= value['total'] <= 32)
+
+
+def valid_challenge(value, operation_id, kinds):
+    base = {'type', 'protocol_version', 'operation_id', 'challenge_id', 'kind', 'attempt'}
+    if (not isinstance(value, dict) or value.get('type') != 'challenge' or value.get('operation_id') != operation_id
+            or not isinstance(value.get('kind'), str) or value['kind'] not in kinds
+            or type(value.get('attempt')) is not int or not 1 <= value['attempt'] <= 3
+            or not isinstance(value.get('challenge_id'), str) or not re.fullmatch('[0-9a-f]{32}', value['challenge_id'])
+            or type(value.get('protocol_version')) is not int):
+        return False
+    if value['kind'] == 'ssh_key_unlock':
+        return set(value) == base | {'identity'} and value['protocol_version'] == 2 and valid_identity(value['identity'])
+    return set(value) == base and value['protocol_version'] == 1
+
+
+def unique_fields(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError('duplicate secure field')
+        result[key] = value
+    return result
 
 
 class SecureError(Exception):
@@ -125,10 +166,14 @@ class Input:
         self.channel = inherited_socket(fd)
         self.operation_id = operation_id
 
-    def ask(self, kind, attempt=1):
-        challenge = dict(type='challenge', protocol_version=1,
+    def ask(self, kind, attempt=1, identity=None):
+        challenge = dict(type='challenge', protocol_version=2 if kind == 'ssh_key_unlock' else 1,
                          operation_id=self.operation_id, challenge_id=uuid.uuid4().hex,
                          kind=kind, attempt=attempt)
+        if identity is not None:
+            challenge['identity'] = identity
+        if not valid_challenge(challenge, self.operation_id, KINDS):
+            raise SecureError('secure_channel_invalid')
         metadata(self.channel, challenge)
         return response(receive(self.channel, time.monotonic() + WAIT_SECONDS), challenge)
 
@@ -208,7 +253,7 @@ def tool(command, secret, stdout=None, pass_fds=(), secret_repeats=1):
         os.close(master)
 
 
-def key_public(path, interaction):
+def key_public(path, interaction, identity):
     environment = dict(os.environ, SSH_ASKPASS_REQUIRE='never')
     environment.pop('SSH_ASKPASS', None)
     environment.pop('DISPLAY', None)
@@ -224,7 +269,7 @@ def key_public(path, interaction):
     if b'incorrect passphrase' not in probe.stderr:
         raise SecureError('secure_payload_invalid')
     for attempt in range(1, 4):
-        secret = interaction.ask('ssh_key_unlock', attempt)
+        secret = interaction.ask('ssh_key_unlock', attempt, identity=identity)
         try:
             status, public, diagnostic = tool(['ssh-keygen', '-y', '-f', path], secret)
         finally:
@@ -238,12 +283,17 @@ def key_public(path, interaction):
 
 def decrypt(input_fd, out, interaction):
     for attempt in range(1, 4):
+        if age_executable() is None:
+            raise SecureError('secure_tool_failed')
         secret = interaction.ask('bundle_unlock', attempt)
         os.lseek(input_fd, 0, os.SEEK_SET)
         out.seek(0)
         out.truncate()
         try:
-            status, _, diagnostic = tool(['age', '-d', '/dev/fd/' + str(input_fd)],
+            executable = age_executable()
+            if executable is None:
+                raise SecureError('secure_tool_failed')
+            status, _, diagnostic = tool([executable, '-d', '/dev/fd/' + str(input_fd)],
                                          secret, stdout=out, pass_fds=(input_fd,))
         finally:
             del secret
@@ -255,9 +305,14 @@ def decrypt(input_fd, out, interaction):
 
 
 def encrypt(input_fd, out, interaction):
+    if age_executable() is None:
+        raise SecureError('secure_tool_failed')
     secret = interaction.ask('bundle_encrypt')
     try:
-        status, _, _ = tool(['age', '-p', '/dev/fd/' + str(input_fd)], secret,
+        executable = age_executable()
+        if executable is None:
+            raise SecureError('secure_tool_failed')
+        status, _, _ = tool([executable, '-p', '/dev/fd/' + str(input_fd)], secret,
                             stdout=out, pass_fds=(input_fd,), secret_repeats=2)
     finally:
         del secret

@@ -1,10 +1,43 @@
 import Foundation
 
+struct CoreCaptureSecureInventory: Decodable {
+    struct Identity: Decodable, Identifiable {
+        let itemID: String
+        let label: String
+        let keyType: String
+        let fingerprint: String
+        let validation: String
+        var source: String? = nil
+        var id: String { itemID }
+        enum CodingKeys: String, CodingKey { case itemID = "item_id", label, keyType = "key_type", fingerprint, validation, source }
+    }
+    let status: String
+    let reason: String?
+    let items: [Identity]
+    static let unavailable = Self(status: "unavailable", reason: nil, items: [])
+    func validate() throws {
+        let types: Set<String> = ["ssh-ed25519", "ssh-rsa", "ecdsa-sha2-nistp256", "ecdsa-sha2-nistp384", "ecdsa-sha2-nistp521"]
+        guard ["present", "unavailable", "observation_error"].contains(status), items.count <= 32,
+              (status == "present") == !items.isEmpty,
+              Set(items.map(\.itemID)).count == items.count,
+              Set(items.map(\.label)).count == items.count,
+              items.allSatisfy({ item in
+                  item.itemID.range(of: "^[0-9a-f]{64}\\z", options: .regularExpression) != nil
+                  && item.label.range(of: "^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}\\z", options: .regularExpression) != nil
+                  && !item.label.hasSuffix(".pub") && types.contains(item.keyType)
+                  && item.validation == "candidate_requires_pair_validation"
+                  && (item.source == nil || item.source == "manual")
+                  && item.fingerprint.range(of: "^SHA256:[A-Za-z0-9+/]{43}\\z", options: .regularExpression) != nil
+                  && Data(base64Encoded: String(item.fingerprint.dropFirst(7)) + "=")?.count == 32
+              }) else { throw CoreRuntimeError.malformedEvent }
+    }
+}
+
 // Existing V1 payloads only; Discovery, validation and publication remain Core-owned.
 struct CoreCapturePreparation: Decodable {
     let preparedCaptureID: String
     let inventory: [CoreCaptureInventoryRow]
-    let secureIdentities: CoreJSON
+    let secureIdentities: CoreCaptureSecureInventory
     let selection: CoreCaptureSelection?
     var effectiveSelection: CoreCaptureSelection? = nil
     var applicationDuplicates: [CoreRestorePreparation.ApplicationDuplicate]? = nil
@@ -23,6 +56,8 @@ struct CoreCapturePreparation: Decodable {
         case effectiveSelection = "effective_selection", applicationDuplicates = "application_duplicates"
     }
     func validate(expected: CoreCaptureSelection?) throws {
+        try secureIdentities.validate()
+        let identities = expected?.secureIdentities ?? []
         guard preparedCaptureID.range(of: "^[0-9a-f]{64}$", options: .regularExpression) != nil,
               Set(inventory.map(\.domain)).count == inventory.count, !inventory.isEmpty,
               inventory.allSatisfy({ row in
@@ -31,8 +66,9 @@ struct CoreCapturePreparation: Decodable {
                     && (row.includedSettings ?? []).count <= 2048
                     && Set((row.includedSettings ?? []).map(\.id)).count == (row.includedSettings ?? []).count
                     && (row.includedSettings ?? []).allSatisfy { !$0.id.isEmpty && !$0.label.isEmpty && $0.label.count <= 160 && !$0.label.contains("\n") }
-              }), selection == expected, summary.secureIdentityCount == 0,
-              (selection?.secureIdentities ?? []).isEmpty else { throw CoreRuntimeError.malformedEvent }
+              }), selection == expected, summary.secureIdentityCount == identities.count,
+              Set(identities).count == identities.count,
+              Set(identities).isSubset(of: Set(secureIdentities.items.map(\.itemID))) else { throw CoreRuntimeError.malformedEvent }
         guard let expected else {
             guard summary.selectedDomains == 0, summary.selectedItems == 0,
                   effectiveSelection == nil, applicationDuplicates == nil else { throw CoreRuntimeError.malformedEvent }
@@ -95,7 +131,8 @@ struct CoreCapturePublication: Decodable {
     func validate(preparation: CoreCapturePreparation, destination: URL) throws {
         try preparation.validate(expected: preparation.selection)
         guard let selection = preparation.publicationSelection, publicationOccurred, self.destination == destination.path,
-              preparedCaptureID == preparation.preparedCaptureID, bundle.formatVersion == 1, !bundle.secureComponent,
+              preparedCaptureID == preparation.preparedCaptureID, bundle.formatVersion == 1,
+              bundle.secureComponent == !selection.secureIdentities.isEmpty,
               bundle.selectedItemCounts.count <= preparation.inventory.count,
               bundle.selectedItemCounts.values.allSatisfy({ (0...2048).contains($0) }),
               bundle.capturedDomains == Set(selection.categories).union(selection.items.keys),

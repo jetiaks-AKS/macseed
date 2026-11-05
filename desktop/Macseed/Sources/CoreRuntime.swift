@@ -16,6 +16,10 @@ struct OperationLogReference: Sendable {
     let time: Date
 }
 
+extension CoreSecureChallenge: Identifiable {
+    var id: String { operationID + ":" + challengeID }
+}
+
 @MainActor final class CoreRuntime: ObservableObject {
     static let shared = CoreRuntime()
     @Published private(set) var state: CoreRuntimeState = .idle
@@ -27,6 +31,9 @@ struct OperationLogReference: Sendable {
     @Published private(set) var latestResult: CoreEvent?
     @Published private(set) var error: CoreRuntimeError?
     @Published private(set) var termination: CoreProcessOutcome?
+    @Published private(set) var secureChallenge: CoreSecureChallenge?
+    @Published private(set) var secureCancellationRequested = false
+    private var secureReply: (@Sendable (CoreSecureResponse) -> Void)?
     private(set) var bundleComparisonSupported: Bool?
     private(set) var homebrewGracefulSupported = false
     @Published private(set) var gracefulStopRequested = false
@@ -40,12 +47,14 @@ struct OperationLogReference: Sendable {
     @Published private(set) var operationLogReferences: [CoreOperation: OperationLogReference] = [:]
     private let resolver: CoreLocationResolver
     private let operationLogs: OperationLogStore?
+    private let secureClock: @Sendable () -> TimeInterval
     private var logSession: OperationLogSession?
     private var logGeneration = UUID()
     private var logFinished = false
     private var coreProductVersion: String?
-    init(resolver: CoreLocationResolver = CoreLocationResolver(), operationLogs: OperationLogStore? = .shared) {
-        self.resolver = resolver; self.operationLogs = operationLogs
+    init(resolver: CoreLocationResolver = CoreLocationResolver(), operationLogs: OperationLogStore? = .shared,
+         secureClock: @escaping @Sendable () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) {
+        self.resolver = resolver; self.operationLogs = operationLogs; self.secureClock = secureClock
     }
     private var transport: CoreTransport?
     private var work: Task<Void, Never>?
@@ -63,6 +72,8 @@ struct OperationLogReference: Sendable {
         latestResult = nil
         error = nil
         termination = nil
+        clearSecureChallenge()
+        secureCancellationRequested = false
         capabilities = nil
         mutationMayHaveStarted = nil
         publicationOccurred = nil
@@ -88,7 +99,7 @@ struct OperationLogReference: Sendable {
                 operation: request.command.operation, time: Date())
         }
         let channel = AsyncStream<CoreEvent>.makeStream()
-        let transport = CoreTransport()
+        let transport = CoreTransport(secureClock: secureClock)
         self.transport = transport
         work = Task {
             let resolved: CoreLocation
@@ -99,16 +110,48 @@ struct OperationLogReference: Sendable {
                 state = .failed
                 self.transport = nil
                 if let log {
-                    let status = await log.finish(nil, error: failure)
+                    let status = await log.finish(nil, error: failure, processLaunched: false)
                     if logGeneration == generation { logFinished = true; operationLogStatus = status }
                 }
                 return
             }
-            let producer = Task {
-                let result = await transport.run(request: request, location: resolved) { event in
+            let producer = Task<CoreProcessOutcome, Never> {
+                let secureExecution = request.command.requiresSecretBridge
+                let handler: CoreSecureChallengeHandler?
+                if secureExecution {
+                    handler = { [weak self = self] challenge, reply in
+                        Task<Void, Never> { @MainActor in
+                            guard let self, self.transport === transport, self.operationID == challenge.operationID,
+                                  self.isActive, !self.stopping, transport.secureState == .waiting(challenge) else { return }
+                            if self.operation == .secureRestoreCompare && challenge.kind != .bundleUnlock {
+                                reply(.cancel)
+                                return
+                            }
+                            if self.operation == .restoreExecute && self.gracefulStopRequested {
+                                self.secureCancellationRequested = true
+                                reply(.cancel)
+                                return
+                            }
+                            self.secureReply = reply
+                            self.secureChallenge = challenge
+                        }
+                    }
+                } else { handler = nil }
+                let monitor: Task<Void, Never>? = secureExecution ? Task<Void, Never> { @MainActor [weak self = self] in
+                    while !Task.isCancelled {
+                        guard let self, self.transport === transport else { return }
+                        if let challenge = self.secureChallenge, transport.secureState != .waiting(challenge) {
+                            self.clearSecureChallenge()
+                        }
+                        try? await Task.sleep(for: .milliseconds(50))
+                    }
+                } : nil
+                let result = await transport.run(request: request, location: resolved, secureChallenge: handler) { event in
                     log?.receive(event)
                     channel.continuation.yield(event)
                 }
+                monitor?.cancel()
+                if self.transport === transport { clearSecureChallenge() }
                 channel.continuation.finish()
                 return result
             }
@@ -127,6 +170,7 @@ struct OperationLogReference: Sendable {
                 if let mutation = event.data?["target_mutation_may_have_started"]?.boolean {
                     mutationMayHaveStarted = mutationMayHaveStarted == true || mutation
                 }
+                if event.type == "secure_publication_started" { mutationMayHaveStarted = true }
                 if let publication = event.data?["publication_occurred"]?.boolean {
                     publicationOccurred = publicationOccurred == true || publication
                 }
@@ -172,15 +216,33 @@ struct OperationLogReference: Sendable {
         }
         gracefulStopRequested = true; gracefulStopState = .requested; gracefulStopMessage = "Stop Requested"
         logSession?.client(.gracefulStopDelivered)
+        if let challenge = secureChallenge { cancelSecureChallenge(challenge) }
         return true
     }
     func cancel() {
         guard isActive else { return }
+        clearSecureChallenge()
         stopping = true
         gracefulStopMessage = nil
         logSession?.client(.forceStopRequested)
         transport?.cancel()
     }
+    private func clearSecureChallenge() {
+        secureReply = nil
+        secureChallenge = nil
+    }
+    @discardableResult func respond(to challenge: CoreSecureChallenge, with response: CoreSecureResponse) -> Bool {
+        guard isActive, !stopping, (operation == .captureExecute || operation == .restoreExecute || operation == .secureRestoreCompare), operationID == challenge.operationID,
+              secureChallenge == challenge, transport?.secureState == .waiting(challenge), let reply = secureReply else { return false }
+        clearSecureChallenge()
+        if case .cancel = response {
+            if operation == .restoreExecute || operation == .secureRestoreCompare { secureCancellationRequested = true }
+            else { stopping = true }
+        }
+        reply(response)
+        return true
+    }
+    func cancelSecureChallenge(_ challenge: CoreSecureChallenge) { _ = respond(to: challenge, with: .cancel) }
     func waitForCompletion() async { await work?.value }
     func operationLogHistory() async throws -> [OperationLogHistory] { try await operationLogs?.history() ?? [] }
     var operationLogStore: OperationLogStore? { operationLogs }

@@ -45,7 +45,7 @@ Macseed must remain maintainable by a small developer project. Prefer a reliable
 | Saved Environment / Status | **Primary:** reusable reference, explicit comparison and manual reapplication | Preserve the existing Bundle V1 and Core pipeline. No auto cleanup, background drift daemon or separate comparison engine. |
 | VS Code Settings / Extensions | **Application Extras → VS Code:** Extensions and Settings only | Independent item/category selection. New application support requires confirmed demand, a separate product decision, qualified Core support and tests; no placeholders or universal adapter framework. |
 | Git configuration, repositories, linked worktrees | **Advanced — for experienced users** | Keep and qualify current supported scope. Do not reopen unlimited Git topology or transport coverage. |
-| SSH configuration / selected SSH identities | **Advanced — for experienced users** | Keep limited SSH Host contract and optional separately encrypted identity migration; Desktop secret flow remains Stage 16H, not a shipped feature. |
+| SSH configuration / selected SSH identities | **Advanced / Secure Transfer — for experienced users** | Keep SSH configuration in Advanced and Capture identities in its independent Secure Transfer sibling. Keep the limited Host contract and separately encrypted, strictly opt-in/default-off identity migration. Stage 16H SSH Identities is completed and manually accepted with native Secure Capture, whole-package Restore and bundled age v1.3.2; all identities currently restore to `~/.ssh`. SSH Configuration/destination completion is next, not implemented. |
 | Zsh / Shell | **Advanced — for experienced users** | Retain bounded `.zshrc` contract and its explicit exclusions; do not modify user configurations just to satisfy Discovery. |
 | `.code-workspace` descriptors | **HIDE / FREEZE for 1.0:** no ordinary promotion; explicit Advanced Capture and Restore selection, default OFF | Preserve Core, tests, Bundle V1, legacy selected-descriptor Restore, Verification and Status. No feature expansion or dependency auto-selection; only supported names/folder relationships. |
 | Workspace Folders (structure only) | **Collapsed Advanced compatibility selector, default OFF; no ordinary promotion** | Preserve the Core domain, explicit folder-only Capture, descriptor dependencies and folder-only Bundle Restore selectors. Both accepted selection screens expose folders in Advanced. No general file-content migration. |
@@ -77,8 +77,9 @@ Capture and Restore Selection use one ordinary accordion:
 
 A separate **Advanced — For Experienced Users** container exposes Git Configuration,
 Git Repositories / Worktrees, Workspace Folders, SSH Configuration, Shell / Zsh and
-VS Code Workspace when present. Capture keeps its unavailable Secure Transfer
-presentation here; Secure SSH Desktop remains Stage 16H. Descriptors/folders remain
+VS Code Workspace when present. Under **For Experienced Users**, Capture and Restore place
+explicit, default-off **Secure Transfer** directly below **Advanced** as an independent
+sibling, with no shared selector. Restore selects the encrypted SSH package as a whole. Descriptors/folders remain
 explicitly selectable under the frozen compatibility contract, without ordinary
 promotion or dependency auto-selection.
 
@@ -164,8 +165,20 @@ packaged qualification, and adds no Core feature or parallel Restore model.
 
 ### Checkpoint 6 — Finish remaining Stage 16 qualification
 
-Follow Roadmap's order: remaining native Workspace qualification, bounded Stage 3C
-reconciliation, an explicit optional Secure SSH Desktop (16H) release decision, then
+The 2026-11-04 product decision includes Secure SSH Desktop (16H) in Macseed 1.0.
+Stage 16H SSH Identities is now completed with accepted automatic/manual external
+Capture → Rebuild → Verification, byte matching, permissions/fingerprints and no-op.
+[SSH Environment Completion — Developer Environment Closure](CAPTURE-RESTORE.md#ssh-environment-completion--developer-environment-closure)
+is NEXT / PLANNED, not implemented; all identities currently restore to `~/.ssh`.
+Bundled age is required for 1.0 and pinned v1.3.2 is implemented: Desktop Secure Transfer needs
+no separate age/Homebrew installation. CLI installation consent is unchanged; age
+updates arrive with Macseed releases, without a runtime updater. Core Secure
+Migration remains the engine; migration defaults off. Broader release qualification
+remains open; signing/notarization and clean-Mac proof belong to
+[Stage 17](DISTRIBUTION.md).
+
+Follow Roadmap's order: SSH Environment Completion, remaining native Workspace
+qualification, bounded Stage 3C reconciliation, then
 remaining supported-domain, Homebrew Setup Installer, lifecycle, completion (16I)
 and integration/runtime (16K) gates. Existing journals, Stop and fences stay
 implemented; blocked retry is not recovery. Finish with fresh end-to-end

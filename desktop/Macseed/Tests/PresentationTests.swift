@@ -12,6 +12,37 @@ private struct PreviewExpansionHost: View {
     var body: some View { content(Binding(get: { state.ids }, set: { state.ids = $0 })) }
 }
 
+private final class SecureSelectionFixture: ObservableObject {
+    @Published var selected: Set<String> = []
+    @Published var groupsExpanded: Set<String> = []
+    @Published var advancedSelected = false
+    var expanded: Bool {
+        get { groupsExpanded.contains(CaptureHierarchy.secureTransferID) }
+        set {
+            if newValue { groupsExpanded.insert(CaptureHierarchy.secureTransferID) }
+            else { groupsExpanded.remove(CaptureHierarchy.secureTransferID) }
+        }
+    }
+}
+
+private struct SecureSelectionFixtureView: View {
+    @ObservedObject var state: SecureSelectionFixture
+    let inventory: CoreCaptureSecureInventory
+    var body: some View {
+        CaptureGroupedContent(rows: [TaskDomainPresentation(id: "ssh-configuration", title: "SSH Configuration", symbol: "key", items: [])],
+            expanded: $state.groupsExpanded,
+            selection: { _, _ in AnyView(NativeSelectionCheckbox("", isOn: $state.advancedSelected, accessibilityTitle: "Select Advanced")) },
+            secureTransferGroup: AnyView(secure), summary: { _ in state.advancedSelected ? "All Selected" : "Not Selected" },
+            attention: { _ in nil }) { row in Text(row.title).padding(16) }
+    }
+    private var secure: some View {
+        CaptureSecureTransferView(inventory: inventory, selected: state.selected, editable: true,
+            select: { id, included in
+                if included { state.selected.insert(id) } else { state.selected.remove(id) }
+            }, selectAll: { state.selected = $0 ? Set(inventory.items.map(\.id)) : [] }, expansion: $state.expanded)
+    }
+}
+
 private struct WorkflowAnchorFrames: PreferenceKey {
     static var defaultValue: [String: CGRect] = [:]
     static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) {
@@ -20,6 +51,642 @@ private struct WorkflowAnchorFrames: PreferenceKey {
 }
 
 @main struct PresentationTests {
+    @MainActor static func externalIdentityChecks() async throws {
+        setbuf(stdout, nil)
+        _ = NSApplication.shared
+        var windows: [NSWindow] = []
+        defer { windows.forEach { $0.close() } }
+        let source = try String(contentsOfFile: "Sources/CaptureView.swift")
+        let picker = source.components(separatedBy: "private func chooseSSHIdentity()")[1].components(separatedBy: "private var disclosureIDs")[0]
+        precondition(picker.contains("NSOpenPanel()") && picker.contains("allowsMultipleSelection = false")
+            && picker.contains("canChooseDirectories = false") && picker.contains("resolvesAliases = false")
+            && picker.contains("model.addSSHIdentity"))
+        precondition(source.contains("model.externalDestinationExplanation") && source.contains("manualIDs: model.manualIdentityIDs"))
+        var items: [CoreCaptureSecureInventory.Identity] = []
+        for index in 0..<3 {
+            let label = index == 0 ? "id_standard" : String(repeating: "external_", count: 8) + String(index)
+            let fingerprint = "SHA256:" + Data(repeating: UInt8(index), count: 32).base64EncodedString().replacingOccurrences(of: "=", with: "")
+            items.append(.init(itemID: String(repeating: String(index), count: 64), label: label,
+                keyType: "ssh-ed25519", fingerprint: fingerprint, validation: "candidate_requires_pair_validation",
+                source: index == 0 ? nil : "manual"))
+        }
+        let inventory = CoreCaptureSecureInventory(status: "present", reason: nil, items: items)
+        try inventory.validate()
+        let all = Set(inventory.items.map(\.id)), manual = Set(inventory.items.dropFirst().map(\.id))
+        for (selection, expected) in [(Set<String>(), SelectionState.none), (Set([inventory.items[1].id]), .mixed), (all, .all)] {
+            precondition(CaptureSecureTransferView(inventory: inventory, selected: selection).selectionState == expected)
+        }
+        let output = URL(fileURLWithPath: "build/Debug/ExternalSSH")
+        try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+        for width: CGFloat in [580, 1040] { for dark in [false, true] {
+            var added = false, removed: String?, selection = Set([inventory.items[1].id]), expanded = true
+            let view = CaptureSecureTransferView(inventory: inventory, selected: selection, editable: true,
+                select: { id, included in if included { selection.insert(id) } else { selection.remove(id) } },
+                selectAll: { selection = $0 ? all : [] }, expansion: Binding(get: { expanded }, set: { expanded = $0 }),
+                addIdentity: { added = true }, removeIdentity: { removed = $0 }, manualIDs: manual)
+            let host = NSHostingView(rootView: view.frame(width: width).background(Color(nsColor: .windowBackgroundColor)))
+            let window = NSWindow(contentRect: .init(x: 0, y: 0, width: width, height: host.fittingSize.height), styleMask: [.borderless], backing: .buffered, defer: false)
+            windows.append(window)
+            window.isReleasedWhenClosed = false; window.contentView = host; host.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+            window.orderFront(nil); try await Task.sleep(for: .milliseconds(60)); host.layoutSubtreeIfNeeded(); host.displayIfNeeded()
+            precondition(host.fittingSize.width <= width + 1 && host.fittingSize.height < 850)
+            func buttons(_ view: NSView) -> [NSButton] { (view as? NSButton).map { [$0] } ?? view.subviews.flatMap(buttons) }
+            let masters = buttons(host).filter { $0.target is NativeSelectionCheckbox.Coordinator }
+            precondition(masters.count == 4 && masters[0].state == .mixed)
+            precondition(NSApp.sendAction(masters[0].action!, to: masters[0].target, from: masters[0]))
+            precondition(selection == all && expanded)
+            view.selectAll(false); precondition(selection.isEmpty && expanded)
+            view.expansion?.wrappedValue = false; precondition(selection.isEmpty)
+            view.addIdentity?(); view.removeIdentity(inventory.items[1].id)
+            precondition(added && removed == inventory.items[1].id && selection.isEmpty)
+            let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds)!
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            try bitmap.representation(using: .png, properties: [:])!.write(to: output.appendingPathComponent("manual-\(Int(width))-\(dark ? "dark" : "light").png"))
+        } }
+        print("PASS: native Add picker contract; same rows/master; unchecked additions/removal callbacks; disclosure independence; destination confirmation")
+        print("PASS: manual identity rows, long names and fingerprints render in Light/Dark at 580/1040 pt (4 renders)")
+    }
+
+    @MainActor static func securePassphraseChecks() async throws {
+        if !CommandLine.arguments.contains("--secure-dialog-only") { try await secureComparisonChecks() }
+        let source = try String(contentsOfFile: "Sources/RestoreView.swift", encoding: .utf8)
+        let selection = source.components(separatedBy: "struct RestoreSelectionContent: View {")[1].components(separatedBy: "// Only section placement")[0]
+        let secure = selection.components(separatedBy: "private var secureTransferGroup: AnyView?")[1]
+        precondition(secure.contains("expanded: nil") && !secure.contains("if treeExpansion") && !secure.contains("WorkflowExpansion.binding"))
+        precondition(secure.contains("Encrypted SSH identities. Preview checks which keys already match this Mac. Missing keys can be imported during Rebuild without overwriting existing keys."))
+        precondition(selection.contains("RestoreSelectionPresentation.disclosureIDs(areas, advanced: advanced)") && !selection.contains("ids.insert(CoreRestorePreparation.secureDomain)"))
+        let capture = try String(contentsOfFile: "Sources/CaptureView.swift", encoding: .utf8)
+        let capturePresentation = try String(contentsOfFile: "Sources/CapturePresentation.swift", encoding: .utf8)
+        let captureSecure = capturePresentation.components(separatedBy: "struct CaptureSecureTransferView: View")[1]
+        precondition(captureSecure.contains("expanded:") && captureSecure.contains("if "))
+        let details = try String(contentsOfFile: "Sources/TaskComponents.swift", encoding: .utf8)
+        precondition(details.contains("restorePreview && item.sourceDomain == CoreRestorePreparation.secureDomain"))
+        let output = URL(fileURLWithPath: "build/Debug/Stage16HPassphrase")
+        try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+        func descendants<T: NSView>(_ view: NSView, _: T.Type) -> [T] {
+            (view as? T).map { [$0] } ?? view.subviews.flatMap { descendants($0, T.self) }
+        }
+        let runtime = CoreRuntime(operationLogs: nil)
+        let identity = CoreSecureChallenge.Identity(name: String(repeating: "fixture_", count: 10), keyType: "ssh-ed25519",
+            fingerprint: "SHA256:" + Data(repeating: 1, count: 32).base64EncodedString().replacingOccurrences(of: "=", with: ""), position: 3, total: 12)
+        let challenge = CoreSecureChallenge(identity: identity, operationID: "presentation", challengeID: String(repeating: "a", count: 32), kind: .sshKeyUnlock, attempt: 2)
+        for width: CGFloat in [580, 1040] { for dark in [false, true] {
+            let host = NSHostingView(rootView: CaptureSecureInputView(runtime: runtime, challenge: challenge, restoring: true)
+                .frame(width: width).background(Color(nsColor: .windowBackgroundColor)))
+            let window = NSWindow(contentRect: .init(x: 0, y: 0, width: width, height: host.fittingSize.height), styleMask: [.borderless], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false; window.contentView = host; host.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+            window.orderFront(nil); try? await Task.sleep(for: .milliseconds(60)); host.layoutSubtreeIfNeeded(); host.displayIfNeeded()
+            precondition(host.fittingSize.width <= width + 1 && host.fittingSize.height < 640)
+            let fields = descendants(host, NSTextField.self).filter { $0.isEditable }
+            precondition(fields.count == 1 && fields[0] is NSSecureTextField && fields[0].stringValue.isEmpty)
+            let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds)!
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            try bitmap.representation(using: .png, properties: [:])!.write(to: output.appendingPathComponent("unlock-\(Int(width))-\(dark ? "dark" : "light").png"))
+            window.close()
+        } }
+        var entry = CaptureSecureEntry()
+        entry.passphrase = "disposable validation input"
+        precondition(entry.consume(for: .sshKeyUnlock) != nil && entry.passphrase.isEmpty && entry.confirmation.isEmpty)
+        entry.passphrase = "disposable validation input"; entry.clear()
+        precondition(entry.passphrase.isEmpty && entry.confirmation.isEmpty)
+        precondition(capture.contains(".onChange(of: runtime.secureChallenge)") && capture.contains(".onDisappear { entry.clear()"))
+        print("PASS: Selection static description/no secure disclosure; Capture/Preview remain expandable; matching caption scope retained")
+        print("PASS: identity-bound SecureField, long name/fingerprint and retry layout at 580/1040pt Light/Dark; transient input clearing (4 renders)")
+    }
+
+    static func bundledAgeErrorChecks() throws {
+        let capture = CaptureFailure.runtime(.coreFailure("age_unavailable"))
+        precondition(capture.technicalReason == "age_unavailable" && capture.message.contains("bundled") && capture.message.contains("reinstall Macseed"))
+        let condition = CoreRestorePreparation.Condition(domain: CoreRestorePreparation.secureDomain, code: "age_unavailable",
+            status: "external_action_required", selectedItemIndex: nil, scope: "operation")
+        let prerequisite = RestorePrerequisiteView(condition: condition, label: "Secure Transfer")
+        precondition(prerequisite.message.contains("bundled") && prerequisite.message.contains("Refresh Preview"))
+        precondition(!capture.message.contains("Homebrew") && !prerequisite.message.contains("Homebrew"))
+        let source = try String(contentsOfFile: "Sources/RestoreModel.swift", encoding: .utf8)
+        precondition(source.contains("case \"secure_comparison_unavailable\": message = \"Secure comparison could not use the bundled tool"))
+        print("PASS: existing Capture failure and Rebuild prerequisite/error surfaces explain missing/damaged bundled tool without external-install advice")
+    }
+
+    static func secureStartupErrorChecks() throws {
+        var finish = OperationLogRecord(.finish)
+        finish.processLaunched = true; finish.terminalValid = true; finish.eventType = "failed"
+        finish.exitCode = 2; finish.signalled = false; finish.runtimeError = "secure_comparison_failed"
+        finish.verificationStatus = "not_run"; finish.detailStatus = "not_run"; finish.incomplete = false
+        precondition(OperationLogSanitizer.valid(finish))
+        let rows = OperationLogSummaryPresentation.rows(finish: finish, active: false, records: [finish])
+        precondition(rows.first { $0.id == "process" }?.value == "Failed" && rows.first { $0.id == "verification" }?.value == "Not Run")
+        let id = UUID()
+        var header = OperationLogRecord(.header); header.storageID = id; header.operation = .secureRestoreCompare; header.operationID = UUID()
+        var report = DiagnosticReportBuilder(id: id, environment: .current())
+        report.receive(header); report.receive(finish)
+        precondition(report.snapshot().text.contains("Reason: secure_comparison_failed"))
+        precondition(!report.snapshot().text.contains("secure_payload_invalid"))
+        let view = try String(contentsOfFile: "Sources/RestoreView.swift", encoding: .utf8)
+        precondition(view.contains("Can't Prepare Rebuild") && view.contains("if let failure = model.failure { Text(failure) }"))
+        print("PASS: existing Can't Prepare Rebuild surface and log/report retain startup reason, failed process and Verification Not Run")
+    }
+
+    static func prelaunchRequestChecks() throws {
+        var rejected = OperationLogRecord(.finish)
+        rejected.processLaunched = false; rejected.terminalValid = false; rejected.signalled = false
+        rejected.runtimeError = "request_too_large"; rejected.verificationStatus = "not_run"; rejected.detailStatus = "not_run"; rejected.incomplete = true
+        precondition(OperationLogSanitizer.valid(rejected) && rejected.failedBeforeLaunch)
+        let rows = OperationLogSummaryPresentation.rows(finish: rejected, active: false, records: [rejected])
+        precondition(rows.first { $0.id == "process" }?.value == "Failed Before Launch")
+        precondition(rows.first { $0.id == "verification" }?.value == "Not Run")
+        var legacy = rejected; legacy.processLaunched = nil
+        precondition(OperationLogPresentation.outcome(legacy) == "Failed Before Launch")
+        legacy.runtimeError = "interrupted"
+        precondition(OperationLogPresentation.outcome(legacy) == "Interrupted or Unknown")
+        var launched = rejected; launched.processLaunched = true; launched.runtimeError = "incomplete_stream"; launched.exitCode = 2
+        precondition(OperationLogSanitizer.valid(launched) && OperationLogPresentation.outcome(launched) == "Interrupted or Unknown")
+        var contradiction = launched; contradiction.processLaunched = false
+        precondition(!OperationLogSanitizer.valid(contradiction) && !contradiction.failedBeforeLaunch)
+        let id = UUID()
+        var header = OperationLogRecord(.header); header.storageID = id; header.operation = .secureRestoreCompare; header.operationID = UUID()
+        var builder = DiagnosticReportBuilder(id: id, environment: .current(), date: Date())
+        builder.receive(header); builder.receive(rejected)
+        let report = builder.snapshot().text
+        precondition(report.contains("Process Result: Failed Before Launch") && report.contains("Reason: request_too_large"))
+        precondition(report.contains("Terminal validity: Not applicable (not launched)") && report.contains("Verification status: not_run"))
+        var interruptedBuilder = DiagnosticReportBuilder(id: id, environment: .current(), date: Date())
+        interruptedBuilder.receive(header); interruptedBuilder.receive(launched)
+        precondition(interruptedBuilder.snapshot().text.contains("Process Result: Unknown"))
+        print("PASS: existing log/diagnostic presentation distinguishes encoder rejection, legacy request_too_large, actual launched interruption and contradictory evidence")
+    }
+
+    @MainActor static func secureComparisonChecks() async throws {
+        let secureID = CoreRestorePreparation.secureDomain
+        let selected = CoreRestoreSelection(categories: ["ssh-configuration"], items: ["homebrew-packages": ["first", "second", "matched"]])
+        let catalog = CoreRestoreInspection.Inventory(groups: [
+            .init(id: "Homebrew", domains: ["homebrew-packages"]), .init(id: "SSH Configuration", domains: ["ssh-configuration"])], inventory: [
+                .init(domain: "homebrew-packages", label: "Homebrew Packages", selectionMode: "items", availability: "available", reason: nil,
+                    items: ["first", "second", "matched"].map { .init(itemID: $0, label: $0) }),
+                .init(domain: "ssh-configuration", label: "SSH Configuration", selectionMode: "category", availability: "available", reason: nil, items: [])])
+        let raw: [String: Any] = ["prepared_plan_id": String(repeating: "a", count: 64), "plan_diagnostics": ["bundle": String(repeating: "b", count: 64)],
+            "selection": ["categories": selected.categories, "items": selected.items], "selected_groups": ["Homebrew", "SSH Configuration"],
+            "selected_categories": selected.categories, "selected_item_counts": ["homebrew-packages": 3],
+            "include_secure": true, "secure_restore_status": "selected_pending",
+            "plan": [["domain": "homebrew-packages", "item_id": "first", "action": "install", "disposition": "planned"],
+                     ["domain": "homebrew-packages", "item_id": "second", "action": "install", "disposition": "planned"],
+                     ["domain": "homebrew-packages", "item_id": "matched", "action": "none", "disposition": "satisfied"],
+                     ["domain": "ssh-configuration", "item_id": "scope", "action": "restore", "disposition": "planned"],
+                     ["domain": secureID, "item_id": CoreRestorePreparation.secureItem, "action": "validate_and_import", "disposition": "pending_unlock", "reason": "secure_unlock_required"]],
+            "readiness": ["ready": true, "ready_scope": "environment", "conditions": [["domain": secureID, "code": "secure_bridge_required", "status": "external_action_required", "scope": "execution_launch"]], "reentry": "restore_prepare"],
+            "has_planned_changes": true, "has_executable_changes": true, "warning_count": 0, "error_count": 0]
+        let unresolved = try JSONDecoder().decode(CoreRestorePreparation.self, from: JSONSerialization.data(withJSONObject: raw))
+        let pending = RestoreTaskPresentation(preview: .init(unresolved, catalog: catalog), plan: unresolved)
+        precondition(RestorePreviewMetrics.counts(pending.domains).changes == 3 && !unresolved.secureComparedReady)
+        precondition(pending.domains.first { $0.id == secureID }!.items.allSatisfy { !$0.item.action.contains("All saved") && !$0.item.action.contains("Some saved") })
+        let output = URL(fileURLWithPath: "build/Debug/Stage16HSecureCompare")
+        try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+        _ = NSApplication.shared
+        for decision: CoreSecureComparison.Decision in [.allMatch, .importRequired, .conflict] {
+            var plan = unresolved
+            let comparison = CoreSecureComparison(decision: decision, targetState: decision == .conflict ? nil : String(repeating: "c", count: 64),
+                sourceFingerprint: String(repeating: "b", count: 64), preparedPlanID: plan.preparedPlanID,
+                selection: selected, includeSecure: true, comparisonOperationID: "comparison-fixture")
+            try comparison.validate(plan: plan, operationID: "comparison-fixture")
+            for field in ["prepared_plan_id", "source_fingerprint", "comparison_operation_id", "target_state", "include_secure", "selection"] {
+                var invalid = try JSONSerialization.jsonObject(with: JSONEncoder().encode(comparison)) as! [String: Any]
+                switch field {
+                case "include_secure": invalid[field] = false
+                case "selection": invalid[field] = ["categories": [], "items": [:]]
+                default: invalid[field] = "invalid"
+                }
+                do {
+                    let decoded = try JSONDecoder().decode(CoreSecureComparison.self, from: JSONSerialization.data(withJSONObject: invalid))
+                    try decoded.validate(plan: plan, operationID: "comparison-fixture")
+                    preconditionFailure("Malformed comparison binding accepted")
+                } catch { }
+            }
+            plan.secureComparison = comparison
+            let tasks = RestoreTaskPresentation(preview: .init(plan, catalog: catalog), plan: plan)
+            let counts = RestorePreviewMetrics.counts(tasks.domains)
+            precondition(counts.matching == (decision == .allMatch ? 2 : 1))
+            precondition(counts.changes == (decision == .importRequired ? 4 : 3))
+            precondition(counts.attention == (decision == .conflict ? 1 : 0))
+            let secure = tasks.domains.first { $0.id == secureID }!
+            let explanation: String
+            switch decision {
+            case .allMatch: explanation = "All saved SSH identities already match this Mac. Nothing to restore."
+            case .importRequired: explanation = "Some saved SSH identities are missing. Rebuild can import them without overwriting existing keys."
+            case .conflict: explanation = "An existing SSH identity conflicts with the saved version. No keys will be overwritten."
+            }
+            let destinationDetail = decision == .conflict ? ""
+                : " Identities use ~/.ssh with their saved names. SSH configuration is unchanged; review IdentityFile if it expects another location."
+            precondition(secure.items.count == 1 && secure.items[0].item.title == "Encrypted SSH identity package"
+                && secure.items[0].item.action == explanation + destinationDetail)
+            precondition(RestorePreviewMetrics.badges(secure).map(\.1) == [1])
+            let advanced = RestorePreviewHierarchy.sections(tasks.domains).first { $0.group == .advanced }!
+            precondition(advanced.rows.allSatisfy { $0.id != secureID } && RestorePreviewMetrics.counts(advanced.rows).changes == 1)
+            let ids = RestorePreviewHierarchy.disclosureIDs(tasks.domains, settings: [])
+            for width: CGFloat in [580, 1040] { for dark in [false, true] {
+                let host = NSHostingView(rootView: VStack(spacing: 20) {
+                    RestorePreviewMetrics(domains: tasks.domains)
+                    TaskDomainList(domains: tasks.domains, restoreSettingsPreview: true, restorePreviewHierarchy: true, expansion: .constant(ids))
+                }.padding(16).frame(width: width).background(Color(nsColor: .windowBackgroundColor)))
+                let window = NSWindow(contentRect: .init(x: 0, y: 0, width: width, height: host.fittingSize.height), styleMask: [.borderless], backing: .buffered, defer: false)
+                window.isReleasedWhenClosed = false; window.contentView = host; host.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+                window.orderFront(nil); try? await Task.sleep(for: .milliseconds(60)); host.layoutSubtreeIfNeeded(); host.displayIfNeeded()
+                precondition(host.fittingSize.width <= width + 1 && host.fittingSize.height.isFinite)
+                let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds)!
+                host.cacheDisplay(in: host.bounds, to: bitmap)
+                try bitmap.representation(using: .png, properties: [:])!.write(to: output.appendingPathComponent("\(decision.rawValue)-\(Int(width))-\(dark ? "dark" : "light").png"))
+                window.close()
+            } }
+        }
+        let source = try String(contentsOfFile: "Sources/RestoreView.swift")
+        precondition(source.contains("[.preparing, .rebuilding].contains(model.state) ? runtime.secureChallenge"))
+        precondition(source.contains("secureTransferGroup: secureTransferGroup"))
+        print("PASS: authenticated match/import/conflict projection; ordinary counts unchanged, one secure pill, no zero pills, strict binding/incomplete gate")
+        print("PASS: existing sibling-group Preview and shared metric components at 580/1040pt Light/Dark (12 renders)")
+    }
+
+    @MainActor static func secureRestoreChecks() async throws {
+        let secureID = CoreRestorePreparation.secureDomain
+        let catalog = CoreRestoreInspection.Inventory(groups: [
+            .init(id: "Homebrew", domains: ["homebrew-packages"]), .init(id: "SSH Configuration", domains: ["ssh-configuration"])], inventory: [
+                .init(domain: "homebrew-packages", label: "Homebrew Packages", selectionMode: "items", availability: "available", reason: nil,
+                    items: ["first", "second", "matched"].map { .init(itemID: $0, label: $0) }),
+                .init(domain: "ssh-configuration", label: "SSH Configuration", selectionMode: "category", availability: "available", reason: nil, items: [])])
+        let selected = CoreRestoreSelection(categories: ["ssh-configuration"], items: ["homebrew-packages": ["first", "second", "matched"]])
+        let ordinaryRows: [[String: Any]] = [
+            ["domain": "homebrew-packages", "item_id": "first", "action": "install", "disposition": "planned"],
+            ["domain": "homebrew-packages", "item_id": "second", "action": "install", "disposition": "planned"],
+            ["domain": "homebrew-packages", "item_id": "matched", "action": "none", "disposition": "satisfied"],
+            ["domain": "ssh-configuration", "item_id": "scope", "action": "restore", "disposition": "planned"]]
+        func plan(selectedSecure: Bool = true, blocked: Bool = false) throws -> CoreRestorePreparation {
+            var rows = ordinaryRows
+            var conditions: [[String: Any]] = []
+            if selectedSecure {
+                rows.append(["domain": secureID, "item_id": CoreRestorePreparation.secureItem, "action": "validate_and_import", "disposition": "pending_unlock", "reason": "secure_unlock_required"])
+                conditions.append(["domain": secureID, "code": "secure_bridge_required", "status": "external_action_required", "scope": "execution_launch"])
+                if blocked { conditions.append(["domain": secureID, "code": "age_unavailable", "status": "external_action_required", "scope": "operation"]) }
+            }
+            let raw: [String: Any] = ["prepared_plan_id": String(repeating: "a", count: 64),
+                "selection": ["categories": selected.categories, "items": selected.items], "selected_groups": ["Homebrew", "SSH Configuration"],
+                "selected_categories": selected.categories, "selected_item_counts": ["homebrew-packages": 3],
+                "include_secure": selectedSecure, "secure_restore_status": selectedSecure ? "selected_pending" : "not_selected", "plan": rows,
+                "readiness": ["ready": !blocked, "ready_scope": "environment", "conditions": conditions, "reentry": "restore_prepare"],
+                "has_planned_changes": true, "has_executable_changes": true, "warning_count": 0, "error_count": 0]
+            var result = try JSONDecoder().decode(CoreRestorePreparation.self, from: JSONSerialization.data(withJSONObject: raw))
+            if selectedSecure && !blocked {
+                result.secureComparison = CoreSecureComparison(decision: .importRequired, targetState: String(repeating: "c", count: 64),
+                    sourceFingerprint: String(repeating: "b", count: 64), preparedPlanID: result.preparedPlanID,
+                    selection: selected, includeSecure: true, comparisonOperationID: "comparison-fixture")
+            }
+            return result
+        }
+        let prepared = try plan(), preview = RestorePreviewPresentation(prepared, catalog: catalog)
+        try prepared.validate(expected: selected, catalog: catalog, expectedIncludeSecure: true)
+        let tasks = RestoreTaskPresentation(preview: preview, plan: prepared)
+        let counts = RestorePreviewMetrics.counts(tasks.domains)
+        precondition(counts.changes == 4 && counts.matching == 1 && counts.attention == 0)
+        let secure = tasks.domains.first { $0.id == secureID }!
+        precondition(RestorePreviewMetrics.badges(secure).map(\.1) == [1])
+        let advanced = RestorePreviewHierarchy.sections(tasks.domains).first { $0.group == .advanced }!
+        precondition(advanced.rows.allSatisfy { $0.id != secureID } && RestorePreviewMetrics.counts(advanced.rows).changes == 1)
+        let blockedPlan = try plan(blocked: true)
+        let blockedTasks = RestoreTaskPresentation(preview: .init(blockedPlan, catalog: catalog), plan: blockedPlan)
+        precondition(RestorePreviewMetrics.counts(blockedTasks.domains).changes == 3 && RestorePreviewMetrics.counts(blockedTasks.domains).attention == 1)
+        precondition(RestorePrerequisiteSummaryPresentation(conditions: prepared.readiness.conditions, ready: true).blockers.isEmpty)
+        precondition(RestorePrerequisiteSummaryPresentation(conditions: blockedPlan.readiness.conditions, ready: false).blockers.count == 1)
+        let off = try plan(selectedSecure: false)
+        let offTasks = RestoreTaskPresentation(preview: .init(off, catalog: catalog), plan: off)
+        precondition(offTasks.domains.map(\.id) == tasks.domains.filter { $0.id != secureID }.map(\.id))
+        precondition(RestoreExecutionCategories.orderedRows(tasks.domains).map(\.id) == RestoreExecutionCategories.orderedRows(offTasks.domains).map(\.id) + [secureID])
+        let ids = RestorePreviewHierarchy.disclosureIDs(tasks.domains, settings: [])
+        precondition(ids.contains(secureID) && ids.contains(CaptureHierarchy.sectionID(.advanced)))
+        precondition(WorkflowExpansion.toggled([], available: ids) == ids)
+
+        func event(_ type: String, _ data: [String: Any], sequence: Int = 1) throws -> CoreEvent {
+            try CoreEvent(line: JSONSerialization.data(withJSONObject: ["protocol_version": 1, "operation_id": "secure-fixture", "sequence": sequence, "type": type, "data": data]))
+        }
+        let operation = try event("operation_record", ["domain": secureID, "item_id": CoreRestorePreparation.secureItem, "action": "validate_and_import", "outcome": "success", "reason": "match"])
+        let verified = try event("verification_record", ["domain": secureID, "item_id": CoreRestorePreparation.secureItem, "predicate": "identity_set_matches_package", "conformity": "verified", "support": "supported", "observed_at": "2026-11-04T00:00:00Z"], sequence: 2)
+        let coverage = try event("coverage_record", ["domain": secureID, "item_id": CoreRestorePreparation.secureItem, "disposition": "resolved", "source_status": "observed_present"], sequence: 3)
+        let waiting = try event("secure_challenge_waiting", ["kind": "bundle_unlock", "attempt": 1])
+        for evidence in [[], [operation], [verified], [operation, verified], [operation, coverage]] {
+            let projected = RestoreTaskPresentation(preview: preview, plan: prepared, events: evidence, executing: true, operationProgress: true)
+            let item = projected.domains.first { $0.id == secureID }!.items[0]
+            precondition(!RestoreResultDetails.verified(item) && item.state != .completed)
+        }
+        let receipts = [operation, verified, coverage]
+        let completed = RestoreTaskPresentation(preview: preview, plan: prepared, events: receipts + receipts, executing: true, operationProgress: true)
+        let resultDomain = completed.domains.first { $0.id == secureID }!
+        precondition(RestoreResultDetails.verified(resultDomain.items[0]))
+        precondition(RestoreFinalDomain.counts(resultDomain).map(\.1) == [1])
+        precondition(RestoreResultSummary(domains: [resultDomain]).issues.isEmpty)
+        let progress = RestoreTaskPresentation(preview: preview, plan: prepared, events: [waiting], executing: true, operationProgress: true)
+        precondition(progress.domains.first { $0.id == secureID }!.executionStatusTitle == "Awaiting Secure Input")
+        let later = try event("phase_started", ["phase": "bootstrap"], sequence: 4)
+        let row = RestoreProgressRow.freeze(preview: preview, plan: prepared).first { $0.id == secureID }!
+        precondition(row.project(events: receipts + [later]).status == .complete)
+        let changed = try event("verification_record", ["domain": secureID, "item_id": "opaque:fixture", "conformity": "mismatch"], sequence: 5)
+        precondition(!CoreSecureRestoreEvidence(events: receipts + [changed]).verified)
+        var entry = CaptureSecureEntry(passphrase: "disposable input", confirmation: "")
+        precondition(entry.valid(for: .bundleUnlock) && !entry.valid(for: .importConfirmation))
+        _ = entry.consume(for: .bundleUnlock); precondition(entry.passphrase.isEmpty)
+
+        let source = try String(contentsOfFile: "Sources/RestoreView.swift")
+        precondition(!source.contains("Secure Transfer is not available in this build."))
+        let selection = source.components(separatedBy: "struct RestoreSelectionContent:")[1].components(separatedBy: "struct RestorePresentationSection:")[0]
+        precondition(selection.contains("CaptureGroupedContent(rows: areas") && selection.contains("ordinaryTitle: \"Standard Setup\""))
+        precondition(selection.contains("secureTransferGroup: secureTransferGroup") && selection.contains("model.selectSecureTransfer($0)"))
+        let dialog = try String(contentsOfFile: "Sources/CaptureView.swift")
+        precondition(dialog.contains("runtime.respond(to: challenge, with: .confirmImport)") && dialog.contains("if !confirmingImport {"))
+        let groups = try String(contentsOfFile: "Sources/TaskComponents.swift")
+        precondition(groups.contains("counts: restorePreviewHierarchy && domain.id != CoreRestorePreparation.secureDomain ? [] : RestorePreviewMetrics.badges(domain)"))
+        let group = groups.components(separatedBy: "private var previewGroups:")[1].components(separatedBy: "private func previewAccordion")[0]
+        precondition(group.contains("if let advanced { previewAccordion(.advanced, rows: advanced.rows) }") && group.contains("if let secure { domainRow(secure) }"))
+        print("PASS: Secure Restore hierarchy, independent scope, 3+1 planned/green preservation, genuine blocker, zero-pill omission, FD consent reuse, strict receipt projection and one logical Result count")
+
+        _ = NSApplication.shared
+        let output = URL(fileURLWithPath: "build/Debug/Stage16HSecureRestore")
+        try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+        for width: CGFloat in [580, 1040] { for dark in [false, true] {
+            for phase in ["mixed-preview", "flat-progress"] {
+                let content = Group {
+                    if phase == "mixed-preview" {
+                        VStack(spacing: 20) {
+                            RestorePreviewMetrics(domains: tasks.domains)
+                            TaskDomainList(domains: tasks.domains, restoreSettingsPreview: true, restorePreviewHierarchy: true, expansion: .constant(ids))
+                        }
+                    } else { RestoreRebuildProgressContent(tasks: progress, activity: "Preparing secure import…", stopping: false) }
+                }.padding(16).frame(width: width).background(Color(nsColor: .windowBackgroundColor))
+                let host = NSHostingView(rootView: content)
+                let window = NSWindow(contentRect: .init(x: 0, y: 0, width: width, height: host.fittingSize.height), styleMask: [.borderless], backing: .buffered, defer: false)
+                window.isReleasedWhenClosed = false; window.contentView = host; host.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+                window.orderFront(nil); try? await Task.sleep(for: .milliseconds(60)); host.layoutSubtreeIfNeeded(); host.displayIfNeeded()
+                precondition(host.fittingSize.width <= width + 1 && host.fittingSize.height.isFinite)
+                let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds)!
+                host.cacheDisplay(in: host.bounds, to: bitmap)
+                try bitmap.representation(using: .png, properties: [:])!.write(to: output.appendingPathComponent("\(phase)-\(Int(width))-\(dark ? "dark" : "light").png"))
+                window.close()
+            }
+        } }
+        print("PASS: Existing Preview/count-pill and flat Progress components render at 580/1040pt Light/Dark")
+    }
+    @MainActor static func captureDisclosureChecks() throws {
+        let ids = ["homebrew-packages", "macos-finder", "vscode-extensions", "vscode-settings",
+                   "git-configuration", "ssh-configuration", CaptureHierarchy.secureTransferID]
+        let ordinary = CaptureHierarchy.disclosureIDs(ids, scope: .ordinary)
+        let experienced = CaptureHierarchy.disclosureIDs(ids, scope: .advanced)
+        precondition(ordinary.isDisjoint(with: experienced))
+        precondition(ordinary.isSuperset(of: ["macos-settings", "macos-finder", CaptureHierarchy.sectionID(.vscode), CaptureHierarchy.Group.vscode.id, "vscode-extensions"]))
+        precondition(experienced == [CaptureHierarchy.sectionID(.advanced), "git-configuration", "ssh-configuration", CaptureHierarchy.secureTransferID])
+        for scope in [ordinary, experienced] {
+            let other = scope == ordinary ? experienced : ordinary
+            let all = CaptureHierarchy.toggled(other, ids: scope)
+            precondition(WorkflowExpansion.allExpanded(all, available: scope))
+            precondition(CaptureHierarchy.toggled(all, ids: scope) == other)
+            for id in scope {
+                let mixed = all.subtracting([id])
+                precondition(!WorkflowExpansion.allExpanded(mixed, available: scope))
+                precondition(CaptureHierarchy.toggled(mixed, ids: scope) == all)
+            }
+        }
+        precondition(CaptureHierarchy.disclosureIDs([CaptureHierarchy.secureTransferID], scope: .ordinary).isEmpty)
+        precondition(CaptureHierarchy.disclosureIDs([CaptureHierarchy.secureTransferID], scope: .advanced) == [CaptureHierarchy.secureTransferID])
+        let presentation = try String(contentsOfFile: "Sources/CapturePresentation.swift")
+        let grouping = presentation.components(separatedBy: "struct CaptureGroupedContent<")[1].components(separatedBy: "struct CaptureTaskPresentation")[0]
+        precondition(grouping.components(separatedBy: "WorkspaceCardSurface()").count - 1 == 2,
+                     "Exactly one ordinary and one experienced surface, with no per-sibling card")
+        precondition(grouping.contains("if !advanced.isEmpty && secureTransferGroup != nil { Divider().padding(.horizontal, 16) }")
+            && !grouping.components(separatedBy: "private func accordion")[1].contains("secureTransferGroup"))
+        let view = try String(contentsOfFile: "Sources/CaptureView.swift")
+        let review = view.components(separatedBy: "case .review:")[1].components(separatedBy: "case .confirmation:")[0]
+        let reviewHeading = review.components(separatedBy: "WorkflowList {")[0]
+        precondition(reviewHeading.contains("Text(\"Review and select\").font(.headline)") && !reviewHeading.contains("Button("))
+        precondition(review.components(separatedBy: "Review and select").count - 1 == 1)
+        precondition(review.contains("ordinaryTitle: \"Standard Setup\"") && review.components(separatedBy: "CaptureExpandButton(").count - 1 == 2)
+        let tasks = try String(contentsOfFile: "Sources/TaskComponents.swift")
+        let confirmationHeading = tasks.components(separatedBy: "if captureHierarchy {")[1].components(separatedBy: "} else if !restorePreviewHierarchy {")[0]
+        precondition(confirmationHeading.contains("Text(title).font(.headline)") && !confirmationHeading.contains("Button")
+            && !confirmationHeading.contains("WorkflowList"))
+        let confirmation = view.components(separatedBy: "case .confirmation:")[1].components(separatedBy: "case .result:")[0]
+        precondition(confirmation.contains("Text(\"Save this environment?\")")
+            && confirmation.components(separatedBy: "title: \"Included in this capture\"").count - 1 == 1)
+        let confirmationGroups = tasks.components(separatedBy: "} else if captureHierarchy {")[1].components(separatedBy: "} else {")[0]
+        for content in [review, confirmationGroups] {
+            precondition(content.components(separatedBy: "ordinaryTitle: \"Standard Setup\"").count - 1 == 1)
+            precondition(content.components(separatedBy: "CaptureExpandButton(").count - 1 == 2)
+            precondition(content.contains("title: \"Standard Setup\"") && content.contains("title: \"For Experienced Users\""))
+        }
+        precondition(grouping.components(separatedBy: "WorkspaceSectionHeader(title: \"For Experienced Users\")").count - 1 == 1)
+        precondition(grouping.contains("if !ordinary.isEmpty {") && grouping.contains("if !advanced.isEmpty || secureTransferGroup != nil {"))
+        print("PASS: Plain Capture workflow headings, Standard Setup/For Experienced Users labels, exactly two scoped controls, empty-section omission and shared surfaces")
+    }
+
+    @MainActor static func secureSelectionChecks() async throws {
+        _ = NSApplication.shared
+        // Keep ownership of every native fixture window through the last assertion.
+        var windows: [NSWindow] = []
+        defer { windows.forEach { $0.close() } }
+        func descendants<T: NSView>(_ view: NSView, _: T.Type) -> [T] {
+            (view as? T).map { [$0] } ?? view.subviews.flatMap { descendants($0, T.self) }
+        }
+        func host<V: View>(_ content: V, width: CGFloat) -> (NSHostingView<some View>, NSWindow) {
+            let view = NSHostingView(rootView: content.frame(width: width).background(Color(nsColor: .windowBackgroundColor)))
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: 500), styleMask: [.titled], backing: .buffered, defer: false)
+            windows.append(window)
+            window.isReleasedWhenClosed = false; window.contentView = view; window.orderFront(nil)
+            return (view, window)
+        }
+        func settle(_ view: NSView) async {
+            try? await Task.sleep(for: .milliseconds(40))
+            view.setFrameSize(view.fittingSize); view.layoutSubtreeIfNeeded()
+        }
+        func boxes(_ view: NSView) -> [NSButton] {
+            descendants(view, NSButton.self).filter { $0.target is NativeSelectionCheckbox.Coordinator }
+        }
+        func activate(_ button: NSButton) {
+            // performClick spins an animated tracking loop that can stop the
+            // async main run loop. Dispatch the same native target/action directly.
+            precondition(button.isEnabled && NSApp.sendAction(button.action!, to: button.target, from: button))
+        }
+        let identities: [CoreCaptureSecureInventory.Identity] = (0..<2).map { index in
+            let id = String(repeating: index == 0 ? "a" : "b", count: 64)
+            let label = index == 0 ? "fixture_key" : "fixture_" + String(repeating: "W", count: 72)
+            let fingerprint = "SHA256:" + Data(repeating: UInt8(index + 1), count: 32).base64EncodedString().replacingOccurrences(of: "=", with: "")
+            return CoreCaptureSecureInventory.Identity(itemID: id, label: label, keyType: "ssh-ed25519",
+                fingerprint: fingerprint, validation: "candidate_requires_pair_validation")
+        }
+        let inventory = CoreCaptureSecureInventory(status: "present", reason: nil, items: identities)
+        try inventory.validate()
+        let output = URL(fileURLWithPath: "build/Debug/Stage16HSecureSiblings")
+        try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+        for (width, dark): (CGFloat, Bool) in [(580, false), (1040, false), (580, true), (1040, true)] {
+            let state = SecureSelectionFixture()
+            let (view, window) = host(SecureSelectionFixtureView(state: state, inventory: inventory), width: width)
+            view.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+            await settle(view)
+            let collapsedHeight = view.fittingSize.height
+            func master() -> NSButton { boxes(view).first { $0.accessibilityLabel() == "Select Secure Transfer" }! }
+            func advancedMaster() -> NSButton { boxes(view).first { $0.accessibilityLabel() == "Select Advanced" }! }
+            precondition(boxes(view).count == 2 && master().state == .off && state.selected.isEmpty && !state.advancedSelected)
+            let advancedFrame = advancedMaster().convert(advancedMaster().bounds, to: view)
+            let secureFrame = master().convert(master().bounds, to: view)
+            precondition(abs(secureFrame.minX - advancedFrame.minX) < 1 && (48...49).contains(secureFrame.minY - advancedFrame.minY),
+                         "Sibling group masters align with 48pt rows and one standard divider")
+            activate(master()); await settle(view)
+            precondition(master().state == .on && state.selected.count == 2 && !state.expanded && !state.advancedSelected)
+            func clickDisclosure(_ checkbox: NSButton) {
+                let row = checkbox.convert(checkbox.bounds, to: view)
+                let point = view.convert(NSPoint(x: 22, y: row.midY), to: nil)
+                for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+                    let event = NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                        windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 1)!
+                    NSApp.sendEvent(event)
+                }
+            }
+            clickDisclosure(master())
+            await settle(view)
+            precondition(state.expanded && state.selected.count == 2 && boxes(view).count == 4 && !state.groupsExpanded.contains("advanced"))
+            clickDisclosure(advancedMaster()); await settle(view)
+            precondition(state.expanded && state.groupsExpanded.contains(CaptureHierarchy.sectionID(.advanced)) && state.selected.count == 2)
+            activate(advancedMaster()); await settle(view)
+            precondition(state.advancedSelected && state.selected.count == 2)
+            clickDisclosure(advancedMaster()); await settle(view)
+            precondition(state.expanded && !state.groupsExpanded.contains(CaptureHierarchy.sectionID(.advanced)) && boxes(view).count == 4)
+            func item(_ index: Int) -> NSButton { boxes(view).first { $0.accessibilityLabel() == "Include SSH identity " + identities[index].label }! }
+            activate(item(0)); await settle(view)
+            precondition(master().state == .mixed && state.selected == [identities[1].id] && state.expanded)
+            activate(master()); await settle(view)
+            precondition(master().state == .on && state.selected.count == 2)
+            activate(master()); await settle(view)
+            precondition(master().state == .off && state.selected.isEmpty && state.advancedSelected)
+            activate(item(0)); await settle(view)
+            precondition(master().state == .mixed)
+            activate(item(1)); await settle(view)
+            precondition(master().state == .on)
+            let (itemReference, itemWindow) = host(CaptureItemSelectionRow(title: "Fixture item", included: .constant(false))
+                .padding(.leading, 16 + CaptureChildRowGrid.leadingInset + CaptureReviewPresentation.hierarchyStep * 2).padding(.trailing, 16), width: width)
+            await settle(itemReference)
+            let expectedItemX = boxes(itemReference)[0].convert(boxes(itemReference)[0].bounds, to: itemReference).minX
+            for index in 0..<2 {
+                let checkbox = item(index)
+                precondition(abs(checkbox.convert(checkbox.bounds, to: view).minX - expectedItemX) < 1, "Identity checkbox uses the normal nested-item column")
+                precondition(checkbox.accessibilityLabel() == "Include SSH identity " + identities[index].label)
+            }
+            itemWindow.orderOut(nil)
+            let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds)!
+            view.cacheDisplay(in: view.bounds, to: bitmap)
+            let scale = CGFloat(bitmap.pixelsWide) / view.bounds.width
+            let background = bitmap.colorAt(x: 0, y: 0)!.usingColorSpace(.sRGB)!
+            let first = item(0).convert(item(0).bounds, to: view)
+            let startX = Int(ceil(first.maxX * scale))
+            let nameStart = (startX..<min(bitmap.pixelsWide, startX + Int(40 * scale))).first { x in
+                (Int(first.minY * scale)..<Int(first.maxY * scale)).contains { y in
+                    let color = bitmap.colorAt(x: x, y: y)!.usingColorSpace(.sRGB)!
+                    return abs(color.redComponent - background.redComponent) > 0.2
+                }
+            }
+            precondition(nameStart != nil && CGFloat(nameStart! - startX) / scale <= 12, "Rendered name must be close to its checkbox")
+            precondition(abs(view.fittingSize.width - width) < 1, "Long names/fingerprints must wrap within the available width")
+            try bitmap.representation(using: .png, properties: [:])!.write(to: output.appendingPathComponent("selection-\(Int(width))-\(dark ? "dark" : "light").png"))
+            clickDisclosure(master()); await settle(view)
+            precondition(!state.expanded && state.selected.count == 2 && boxes(view).count == 2 && view.fittingSize.height == collapsedHeight)
+            print("PASS: Sibling groups, independent native masters/disclosures, preserved tri-state and identity geometry at \(Int(width))pt \(dark ? "Dark" : "Light")")
+            window.orderOut(nil)
+        }
+        let source = try String(contentsOfFile: "Sources/CapturePresentation.swift")
+        let secureSource = source.components(separatedBy: "struct CaptureSecureTransferView:")[1].components(separatedBy: "extension SelectionState")[0]
+        precondition(!secureSource.contains("Button(") && !secureSource.contains("Toggle("), "No duplicate bulk-selection controls")
+        let groupedSource = source.components(separatedBy: "struct CaptureGroupedContent<")[1].components(separatedBy: "struct CaptureTaskPresentation")[0]
+        let accordionSource = groupedSource.components(separatedBy: "private func accordion")[1]
+        precondition(!accordionSource.contains("secureTransferGroup") && groupedSource.contains("capture.container.secure-transfer"))
+        precondition(groupedSource.range(of: "capture.container.advanced")!.lowerBound < groupedSource.range(of: "capture.container.secure-transfer")!.lowerBound)
+        let secureDomain = TaskDomainPresentation(id: CaptureHierarchy.secureTransferID, title: "Secure Transfer", symbol: "lock.shield",
+            items: [TaskItemPresentation(id: identities[0].id, item: DisplayItem(id: identities[0].id, title: identities[0].label, status: .ready,
+                action: "The SSH key pair will be validated and encrypted during saving."), state: .planned)])
+        for domains in [[secureDomain], [TaskDomainPresentation(id: "ssh-configuration", title: "SSH Configuration", symbol: "key", items: []), secureDomain]] {
+            let (view, window) = host(TaskDomainList(domains: domains, stateTitles: [.planned: "Ready to Save"], compactReadyItems: true,
+                captureHierarchy: true, expansion: .constant([CaptureHierarchy.secureTransferID])), width: 580)
+            await settle(view)
+            precondition(boxes(view).isEmpty && view.fittingSize.height > 96, "Secure-only and mixed Confirmation keep prepared items read-only and reachable")
+            window.orderOut(nil)
+        }
+        let metricsSource = source.components(separatedBy: "struct CaptureReviewMetrics:")[1].components(separatedBy: "struct CaptureConfirmationContents")[0]
+        let domainPosition = metricsSource.range(of: "if summary.domainCount > 0 {")!.lowerBound
+        let securePosition = metricsSource.range(of: "if summary.secureIdentityCount > 0 {")!.lowerBound
+        let attentionPosition = metricsSource.range(of: "if summary.attentionCount > 0 {")!.lowerBound
+        precondition(domainPosition < securePosition && securePosition < attentionPosition)
+        for width: CGFloat in [580, 1040] {
+            for (secure, attention) in [(0, 0), (2, 0), (0, 1), (2, 1)] {
+                let summary = CaptureSummaryPresentation(domainCount: 3, itemCount: 8, attentionCount: attention, unsupportedCount: 0, secureIdentityCount: secure)
+                let (view, window) = host(CaptureReviewMetrics(summary: summary), width: width)
+                await settle(view)
+                precondition(view.fittingSize.height == (width == 580 && secure > 0 && attention > 0 ? 260 : 80),
+                             "Conditional metrics retain the existing responsive layout")
+                if secure > 0 && attention > 0 {
+                    let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds)!
+                    view.cacheDisplay(in: view.bounds, to: bitmap)
+                    try bitmap.representation(using: .png, properties: [:])!.write(to: output.appendingPathComponent("metrics-\(Int(width)).png"))
+                }
+                window.orderOut(nil)
+            }
+        }
+        print("PASS: Selected Domains → selected SSH identities → genuine Needs Attention; conditional visibility and responsive order")
+    }
+
+    @MainActor static func secureCaptureChecks() async throws {
+        _ = NSApplication.shared
+        var input = CaptureSecureEntry()
+        precondition(!input.valid(for: .bundleEncrypt) && !input.valid(for: .sshKeyUnlock))
+        input.passphrase = "disposable presentation input"
+        precondition(input.valid(for: .sshKeyUnlock) && !input.valid(for: .bundleEncrypt))
+        input.confirmation = input.passphrase
+        precondition(input.valid(for: .bundleEncrypt) && !input.valid(for: .bundleUnlock) && !input.valid(for: .importConfirmation))
+        guard case .secret(let bytes) = input.consume(for: .bundleEncrypt) else { preconditionFailure("Missing response") }
+        precondition(bytes == Data("disposable presentation input".utf8) && input.passphrase.isEmpty && input.confirmation.isEmpty)
+        for invalid in ["", "line\nbreak", "tab\tvalue", "nul\0value", String(repeating: "é", count: 65)] {
+            input.passphrase = invalid; input.confirmation = invalid
+            precondition(!input.valid(for: .bundleEncrypt) && input.consume(for: .bundleEncrypt) == nil)
+            input.clear(); precondition(input.passphrase.isEmpty && input.confirmation.isEmpty)
+        }
+        input.passphrase = String(repeating: "é", count: 64); input.confirmation = input.passphrase
+        precondition(input.valid(for: .bundleEncrypt))
+        input.clear()
+        func descendants<T: NSView>(_ view: NSView, _: T.Type) -> [T] {
+            (view as? T).map { [$0] } ?? view.subviews.flatMap { descendants($0, T.self) }
+        }
+        let runtime = CoreRuntime(operationLogs: nil)
+        for kind in [CoreSecureChallenge.Kind.bundleEncrypt, .sshKeyUnlock] {
+            let challenge = CoreSecureChallenge(operationID: UUID().uuidString, challengeID: UUID().uuidString.replacingOccurrences(of: "-", with: ""), kind: kind, attempt: 2)
+            let host = NSHostingView(rootView: CaptureSecureInputView(runtime: runtime, challenge: challenge))
+            host.setFrameSize(host.fittingSize); host.layoutSubtreeIfNeeded()
+            try await Task.sleep(for: .milliseconds(30))
+            host.layoutSubtreeIfNeeded()
+            let fields = descendants(host, NSTextField.self).filter { $0.isEditable }
+            precondition(fields.count == (kind == .bundleEncrypt ? 2 : 1) && fields.allSatisfy { $0 is NSSecureTextField },
+                         "All native secret inputs must be secure fields")
+        }
+        let identity = CoreCaptureSecureInventory.Identity(itemID: String(repeating: "a", count: 64), label: "fixture_key", keyType: "ssh-ed25519",
+            fingerprint: "SHA256:" + Data(repeating: 1, count: 32).base64EncodedString().replacingOccurrences(of: "=", with: ""), validation: "candidate_requires_pair_validation")
+        let inventory = CoreCaptureSecureInventory(status: "present", reason: nil, items: [identity])
+        try inventory.validate()
+        var selection: (String, Bool)?
+        let host = NSHostingView(rootView: CaptureSecureTransferView(inventory: inventory, editable: true,
+            select: { selection = ($0, $1) }, expansion: .constant(true)).frame(width: 900))
+        host.setFrameSize(host.fittingSize); host.layoutSubtreeIfNeeded()
+        try await Task.sleep(for: .milliseconds(30))
+        host.layoutSubtreeIfNeeded()
+        let checkboxes = descendants(host, NSButton.self).filter { $0.target is NativeSelectionCheckbox.Coordinator }
+        precondition(checkboxes.count == 2 && checkboxes.allSatisfy { $0.state == .off } && selection == nil,
+                     "Secure Transfer master and identity must default off; controls: \(checkboxes.count)")
+        checkboxes.first { $0.accessibilityLabel() == "Include SSH identity " + identity.label }!.performClick(nil)
+        precondition(selection?.0 == identity.id && selection?.1 == true)
+        precondition(CaptureHierarchy.group(for: CaptureHierarchy.secureTransferID) != .advanced)
+        let source = try String(contentsOfFile: "Sources/CaptureView.swift")
+        precondition(source.contains("secureTransferGroup: AnyView(CaptureSecureTransferView(inventory: model.secureInventory")
+            && source.contains(".id(challenge.id)") && source.contains(".interactiveDismissDisabled()")
+            && source.contains(".onChange(of: runtime.secureChallenge)")
+            && source.contains(".onDisappear { entry.clear(); runtime.cancelSecureChallenge(challenge) }"))
+        print("PASS: Native secure fields, confirmation/UTF-8 limits, transient input clearing, explicit default-off identity checkbox and existing Advanced placement")
+    }
+
     @MainActor static func homebrewSetupChecks() async {
         _ = NSApplication.shared
         let suite = "org.macseed.homebrew-test.presentation." + UUID().uuidString
@@ -802,23 +1469,24 @@ private struct WorkflowAnchorFrames: PreferenceKey {
         let review = capture.components(separatedBy: "case .review:")[1].components(separatedBy: "case .confirmation:")[0]
         let globalHeading = review.components(separatedBy: "WorkflowList {")[0]
         precondition(!globalHeading.contains("Controls(") && !globalHeading.contains("Button("))
-        precondition(review.contains("advancedFooter: AnyView(CaptureSecureTransferView("))
+        precondition(review.contains("secureTransferGroup: AnyView(CaptureSecureTransferView("))
         let grouping = capturePresentation.components(separatedBy: "struct CaptureGroupedContent<")[1].components(separatedBy: "struct CaptureTaskPresentation")[0]
         precondition(grouping.components(separatedBy: "WorkspaceCardSurface()").count - 1 == 2)
-        precondition(grouping.contains("capture.container.ordinary") && grouping.contains("capture.container.advanced"))
+        precondition(grouping.contains("capture.container.ordinary") && grouping.contains("capture.container.experienced"))
         precondition(grouping.contains("CaptureHierarchy.ordinaryGroups") && !capturePresentation.contains("Compatibility & Dependencies"))
         precondition(!capturePresentation.contains("compatibilityID") && !grouping.contains("rows.filter"))
         precondition(grouping.contains("members(rows)") && !grouping.contains("NativeSelectionCheckbox"))
-        precondition(grouping.range(of: "members(rows)\n                    if group == .advanced, let advancedFooter { advancedFooter }") != nil,
-            "Secure Transfer follows the ordered Advanced rows without a detached card or divider")
+        precondition(grouping.contains("capture.container.experienced") && !grouping.components(separatedBy: "private func accordion")[1].contains("secureTransferGroup"),
+            "Secure Transfer is a sibling group below Advanced, independent of its disclosure")
         precondition(grouping.contains("tint: group == .advanced ? advancedTint : .blue")
             && grouping.contains("titleTint: group == .advanced ? advancedTint : .primary"))
         precondition(grouping.contains("colorScheme == .dark ? Color(red: 0.95, green: 0.52, blue: 0.34) : Color(red: 0.72, green: 0.26, blue: 0.13)"))
         precondition(WorkspacePresentationTaxonomy.Group.advanced.domains == ["git-configuration", "git-repositories", "workspace-folders", "ssh-configuration", "shell-zsh", "vscode-workspaces"])
         let secure = capturePresentation.components(separatedBy: "struct CaptureSecureTransferView:")[1].components(separatedBy: "extension SelectionState")[0]
-        precondition(secure.contains("WorkspaceCategoryTitle(") && secure.contains("Color.clear.frame(width: 28, height: 28)"))
-        precondition(secure.contains("CaptureRowColumns(") && secure.contains("TaskDisclosureStyle()"))
-        precondition(secure.contains("CaptureStatusText(title: \"Unavailable\"") && !secure.contains("NativeSelectionCheckbox") && !secure.contains("Divider()"))
+        precondition(secure.contains("CaptureGroupHeader(title: \"Secure Transfer\"") && secure.contains("Color.clear.frame(width: 28, height: 28)"))
+        precondition(secure.contains("selection: AnyView(master), expanded: expansion ?? $expanded"))
+        precondition(secure.contains("if inventory.items.isEmpty { return \"Unavailable\" }") && secure.contains("ForEach(inventory.items)")
+            && secure.contains("NativeSelectionCheckbox") && !secure.contains("Divider()"))
         let header = capturePresentation.components(separatedBy: "struct CaptureGroupHeader:")[1].components(separatedBy: "struct CaptureGroupedContent<")[0]
         precondition(header.contains("CaptureAccordionStyle(selection: selection,")
             && header.contains("selectionLeadingInset: nested ? CaptureReviewPresentation.hierarchyStep : 0)")
@@ -3689,6 +4357,16 @@ private struct WorkflowAnchorFrames: PreferenceKey {
     }
 
     @MainActor static func main() async {
+        if CommandLine.arguments.contains("--external-identities-only") { try! await externalIdentityChecks(); return }
+        if CommandLine.arguments.contains("--bundled-age-only") { try! bundledAgeErrorChecks(); return }
+        if CommandLine.arguments.contains("--secure-passphrase-only") || CommandLine.arguments.contains("--secure-dialog-only") { try! await securePassphraseChecks(); return }
+        if CommandLine.arguments.contains("--secure-startup-only") { try! secureStartupErrorChecks(); return }
+        if CommandLine.arguments.contains("--prelaunch-request-only") { try! prelaunchRequestChecks(); return }
+        if CommandLine.arguments.contains("--secure-compare-only") { try! await secureComparisonChecks(); return }
+        if CommandLine.arguments.contains("--secure-restore-only") { try! await secureRestoreChecks(); return }
+        if CommandLine.arguments.contains("--capture-disclosure-only") { try! captureDisclosureChecks(); return }
+        if CommandLine.arguments.contains("--secure-selection-only") { try! await secureSelectionChecks(); return }
+        if CommandLine.arguments.contains("--secure-capture-only") { try! await secureCaptureChecks(); return }
         if CommandLine.arguments.contains("--homebrew-setup-only") { await homebrewSetupChecks(); return }
         if CommandLine.arguments.contains("--operation-log-only") { operationLogChecks(); return }
         if CommandLine.arguments.contains("--sidebar-layout-only") { await sidebarLayoutChecks(); return }

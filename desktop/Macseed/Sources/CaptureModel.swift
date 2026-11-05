@@ -26,16 +26,25 @@ enum CaptureFailure: Error, Equatable {
             case "invalid_workspace_selection": "The Workspace selection could not be validated. Scan again and review the selected folders and repositories."
             case "workspace_dependency_missing": "A selected workspace descriptor or checkout needs its folders and base or parent repositories selected. Review Selection and include those dependencies, or deselect the dependent item."
             case "workspace_path_conflict": "Selected Workspace paths conflict or use ambiguous aliases. Review the selection and deselect the conflicting items before trying again."
+            case "external_identity_unsafe", "external_identity_pair_missing", "external_identity_pair_invalid", "external_identity_name_invalid", "external_identity_invalid_request", "external_identity_changed":
+                "A manually added SSH pair is missing, unsafe or changed. Scan again and add a supported matching private/public pair."
+            case "external_identity_duplicate": "An SSH identity or destination name is duplicated. Review the selected pairs."
             case "invalid_secure_selection": "The selected SSH identities are no longer available. Scan again and review the selection."
             case "secure_bridge_required", "secure_bridge_unavailable": "Secure Capture is unavailable in this session. Review the SSH identity selection."
-            case "age_unavailable": "Secure Capture requires age. Install it before trying again."
-            case "secure_export_failed", "secure_input_invalid", "secure_timeout": "Secure Capture could not complete. Review the SSH identity selection before trying again."
+            case "age_unavailable": "The bundled Secure Transfer tool is missing or damaged. Rebuild or reinstall Macseed, then try again."
+            case "secure_timeout", "secure_channel_timeout": "Secure input timed out. Scan again before another attempt."
+            case "secure_key_unlock_rejected": "The SSH key could not be unlocked within Core's attempt limit. Scan again before another attempt."
+            case "secure_export_failed", "secure_input_invalid", "secure_channel_invalid", "secure_tool_failed", "secure_payload_invalid":
+                "Secure Capture could not complete. Review the SSH identity selection before trying again."
             default: "Capture could not complete. Scan this Mac again before another attempt."
             }
         case .runtime(.runtimeUnavailable), .runtime(.pythonUnavailable), .runtime(.invalidRuntimeConfiguration), .runtime(.writableCoreRequired):
             "Capture is unavailable in this build. Check the app setup before scanning again."
         case .runtime(.requestTooLarge):
             "The item selection is too large to save in this build. Scan again and choose whole categories or a smaller item selection."
+        case .runtime(.secureChannelTimeout): "Secure input timed out. Scan again before another attempt."
+        case .runtime(.secureChannelInvalid), .runtime(.secureChannelDisconnected):
+            "The secure connection failed. Scan again before another attempt."
         case .runtime: "Capture communication failed. Scan this Mac again before another attempt."
         }
     }
@@ -152,6 +161,12 @@ enum CaptureSelectionScope: CaseIterable {
     @Published private(set) var inventory: [CoreCaptureInventoryRow] = []
     @Published private(set) var selectedCategories: Set<String> = []
     @Published private(set) var selectedItems: [String: Set<String>] = [:]
+    @Published private(set) var secureInventory: CoreCaptureSecureInventory = .unavailable
+    @Published private(set) var selectedSecureIdentities: Set<String> = []
+    @Published private(set) var addingIdentity = false
+    @Published private(set) var identityError: String?
+    private var externalSources: [String: String] = [:]
+    private var externalCandidates: [String: CoreCaptureSecureInventory.Identity] = [:]
     @Published private(set) var preparation: CoreCapturePreparation?
     @Published private(set) var destination: URL?
     @Published private(set) var publication: CoreCapturePublication?
@@ -166,7 +181,7 @@ enum CaptureSelectionScope: CaseIterable {
     private var replacementSHA256: String?
     private var work: Task<Void, Never>?
     init(runtime: CoreRuntime, location: CoreLocation? = nil) { self.runtime = runtime; self.location = location }
-    var busy: Bool { [.scanning, .preparing, .saving].contains(state) }
+    var busy: Bool { addingIdentity || [.scanning, .preparing, .saving].contains(state) }
     var categories: [CaptureCategory] { inventory.map { CaptureCategory(row: $0) } }
     var macOSSettings: CaptureMacOSSettingsGroup { CaptureMacOSSettingsGroup(categories: categories, selected: selectedCategories) }
     func selectMacOSSettings(included: Bool) {
@@ -177,7 +192,8 @@ enum CaptureSelectionScope: CaseIterable {
         // for large inventories; partial domains retain their exact item IDs.
         let wholeItems = Set(categories.filter { $0.itemSelectable && selectionState($0) == .all }.map(\.id))
         return CoreCaptureSelection(categories: selectedCategories.union(wholeItems).sorted(),
-                                    items: selectedItems.filter { !$0.value.isEmpty && !wholeItems.contains($0.key) }.mapValues { $0.sorted() }, secureIdentities: [])
+                                    items: selectedItems.filter { !$0.value.isEmpty && !wholeItems.contains($0.key) }.mapValues { $0.sorted() },
+                                    secureIdentities: selectedSecureIdentities.sorted())
     }
     var selectedDomainCount: Int { selectedCategories.count + selectedItems.filter { !$0.value.isEmpty }.count }
     var selectedItemCount: Int { selectedItems.values.reduce(0) { $0 + $1.count } }
@@ -190,7 +206,73 @@ enum CaptureSelectionScope: CaseIterable {
             ? "\(selected) \(domains) selected"
             : "\(selected) of \(available) \(domains) selected"
         let items = selectedItemCount == 1 ? "item" : "items"
-        return "\(areaSummary) · \(selectedItemCount) \(items) selected"
+        return "\(areaSummary) · \(selectedItemCount) \(items) selected" + secureSummary(selectedSecureIdentities.count)
+    }
+    private func secureSummary(_ count: Int) -> String {
+        count == 0 ? "" : " · \(count) SSH \(count == 1 ? "identity" : "identities") selected"
+    }
+    func selectSecureIdentity(_ id: String, included: Bool) {
+        guard state == .review, !runtime.isActive, secureInventory.status == "present",
+              secureInventory.items.contains(where: { $0.itemID == id }) else { return }
+        preparation = nil
+        if included { selectedSecureIdentities.insert(id) } else { selectedSecureIdentities.remove(id) }
+    }
+    func selectAllSecureIdentities(included: Bool) {
+        for identity in secureInventory.items { selectSecureIdentity(identity.id, included: included) }
+    }
+    var manualIdentityIDs: Set<String> { Set(externalSources.keys) }
+    private var selectedExternalPaths: [String] { selectedSecureIdentities.sorted().compactMap { externalSources[$0] } }
+    var externalDestinationExplanation: String? {
+        selectedSecureIdentities.isDisjoint(with: manualIdentityIDs) ? nil
+            : "Manually added identities will be restored into ~/.ssh using the displayed key names. SSH configuration is not rewritten; review IdentityFile if it expects another location."
+    }
+    func addSSHIdentity(_ url: URL) {
+        guard state == .review, !busy, !runtime.isActive else { return }
+        guard url.isFileURL, secureInventory.items.count < 32 else {
+            identityError = "Choose a private SSH key file. Secure Transfer supports up to 32 identities."; return
+        }
+        preparation = nil; identityError = nil; addingIdentity = true
+        let request = CoreRequest(.captureIdentityInspect, externalIdentityPaths: [url.path])
+        runtime.start(request, location: location)
+        work = Task {
+            defer { addingIdentity = false }
+            await runtime.waitForCompletion()
+            guard runtime.operationID == request.operationID else { identityError = "The identity check was invalidated. Add the identity again."; return }
+            guard runtime.state == .completed, let result = runtime.latestResult else {
+                identityError = Self.externalIdentityMessage(runtime.state == .cancelled ? "cancelled" : runtime.error.flatMap { CaptureFailure.runtime($0).technicalReason })
+                return
+            }
+            do {
+                struct Inspection: Decodable { let identity: CoreCaptureSecureInventory.Identity }
+                let identity = try result.decodeData(Inspection.self).identity
+                try CoreCaptureSecureInventory(status: "present", reason: nil, items: [identity]).validate()
+                guard identity.source == "manual" else { throw CoreRuntimeError.malformedEvent }
+                guard !secureInventory.items.contains(where: { $0.label.caseInsensitiveCompare(identity.label) == .orderedSame || $0.fingerprint == identity.fingerprint }) else {
+                    identityError = "This identity or destination name is already listed. Use the existing row or choose a different pair."; return
+                }
+                externalSources[identity.id] = url.path; externalCandidates[identity.id] = identity
+                secureInventory = CoreCaptureSecureInventory(status: "present", reason: nil, items: secureInventory.items + [identity])
+                // Adding a candidate is not authorization to transfer it.
+            } catch { identityError = "The SSH identity could not be validated. Choose a supported matching private/public pair." }
+        }
+    }
+    func removeSSHIdentity(_ id: String) {
+        guard state == .review, !busy, !runtime.isActive, externalSources[id] != nil else { return }
+        externalSources[id] = nil; externalCandidates[id] = nil
+        selectedSecureIdentities.remove(id); preparation = nil; identityError = nil
+        let items = secureInventory.items.filter { $0.id != id }
+        secureInventory = .init(status: items.isEmpty ? "unavailable" : "present", reason: nil, items: items)
+    }
+    private static func externalIdentityMessage(_ reason: String?) -> String {
+        switch reason {
+        case "external_identity_pair_missing": "The private key and its matching .pub file must both exist in the selected folder. Macseed will not generate a public key."
+        case "external_identity_name_invalid": "Use a key name of up to 80 ASCII letters, digits, dots, underscores or hyphens, starting with a letter or digit. Select the private file, not .pub; SSH configuration and control names are reserved."
+        case "external_identity_unsafe": "The pair or its folder is unsafe. Use regular files you own, private key mode 600, public key mode 600 or 644, and folders without unsafe links or shared write access."
+        case "external_identity_changed": "The SSH pair changed during inspection. Check the files and add the identity again."
+        case "external_identity_duplicate": "This identity or destination name is already listed. Choose a different pair."
+        case "cancelled", "interrupted": "The SSH identity check was cancelled."
+        default: "The SSH pair could not be validated. Choose a supported OpenSSH private key with its matching .pub file."
+        }
     }
     var confirmationAreas: [CaptureConfirmationArea] {
         guard let prepared = preparation, let selection = prepared.publicationSelection else { return [] }
@@ -222,9 +304,9 @@ enum CaptureSelectionScope: CaseIterable {
     }
     var confirmationSummary: String {
         guard let summary = preparation?.summary else { return "" }
-        return "\(summary.selectedDomains) \(summary.selectedDomains == 1 ? "domain" : "domains") selected · \(summary.selectedItems) \(summary.selectedItems == 1 ? "item" : "items") selected"
+        return "\(summary.selectedDomains) \(summary.selectedDomains == 1 ? "domain" : "domains") selected · \(summary.selectedItems) \(summary.selectedItems == 1 ? "item" : "items") selected" + secureSummary(summary.secureIdentityCount)
     }
-    var canCreate: Bool { state == .review && selectedDomainCount > 0 && !runtime.isActive }
+    var canCreate: Bool { state == .review && (selectedDomainCount > 0 || !selectedSecureIdentities.isEmpty) && !runtime.isActive }
     func selectionState(_ category: CaptureCategory) -> SelectionState {
         guard category.selectable else { return .none }
         if !category.itemSelectable { return selectedCategories.contains(category.id) ? .all : .none }
@@ -271,6 +353,8 @@ enum CaptureSelectionScope: CaseIterable {
     func scan() {
         guard !busy, !runtime.isActive else { return }
         inventory = []; selectedCategories = []; selectedItems = [:]; preparation = nil; destination = nil
+        secureInventory = .unavailable; selectedSecureIdentities = []
+        externalSources = [:]; externalCandidates = [:]; identityError = nil
         replacementSHA256 = nil; publication = nil; resultNotices = []; publicationEvidence = .notOccurred; publicationMayHaveStarted = false; failure = nil
         run(CoreRequest(.capturePrepare(selection: nil)), state: .scanning, expected: nil)
     }
@@ -292,7 +376,7 @@ enum CaptureSelectionScope: CaseIterable {
         }
         preparation = nil; failure = nil
         let expected = selection
-        run(CoreRequest(.capturePrepare(selection: expected)), state: .preparing, expected: expected)
+        run(CoreRequest(.capturePrepare(selection: expected), externalIdentityPaths: selectedExternalPaths), state: .preparing, expected: expected)
     }
     func editSelection() {
         guard state == .confirmation || canReviewSelection, !runtime.isActive else { return }
@@ -307,7 +391,7 @@ enum CaptureSelectionScope: CaseIterable {
             fail(.invalidDestination); return
         }
         publicationEvidence = .unknown; publicationMayHaveStarted = false; failure = nil; publication = nil
-        run(CoreRequest(.captureExecute(selection: selection, destination: destination.path, preparedID: preparation.preparedCaptureID, replacementSHA256: replacementSHA256)), state: .saving, expected: selection)
+        run(CoreRequest(.captureExecute(selection: selection, destination: destination.path, preparedID: preparation.preparedCaptureID, replacementSHA256: replacementSHA256), externalIdentityPaths: selectedExternalPaths), state: .saving, expected: selection)
     }
     private func run(_ request: CoreRequest, state next: CaptureFlowState, expected: CoreCaptureSelection?) {
         savingAttempted = next == .saving
@@ -335,6 +419,9 @@ enum CaptureSelectionScope: CaseIterable {
                         let prepared = try result.decodeData(CoreCapturePreparation.self)
                         try prepared.validate(expected: expected)
                         inventory = prepared.inventory
+                        let remaining = externalCandidates.values.filter { candidate in !prepared.secureIdentities.items.contains { $0.id == candidate.id } }
+                        secureInventory = remaining.isEmpty ? prepared.secureIdentities : .init(status: "present", reason: nil,
+                            items: prepared.secureIdentities.items + remaining.sorted { $0.label < $1.label })
                         if next == .scanning {
                             selectedCategories = []; selectedItems = [:]; self.state = .review
                             for category in categories(in: .ordinary) where category.selectable { selectCategory(category.id, included: true) }
@@ -359,7 +446,8 @@ enum CaptureSelectionScope: CaseIterable {
     }
     var resultPresentation: CaptureResultPresentation? {
         guard state == .result, publicationEvidence == .occurred, let publication, publication.publicationOccurred else { return nil }
-        return CaptureResultPresentation(publication: publication, notices: resultNotices)
+        return CaptureResultPresentation(publication: publication, notices: resultNotices,
+                                         secureIdentityCount: preparation?.summary.secureIdentityCount ?? 0)
     }
     private func captureNotices() -> [DisplayCategory] {
         // Only Core's selected-category event facts contribute result warnings.
@@ -389,12 +477,19 @@ enum CaptureSelectionScope: CaseIterable {
     func done() {
         guard state == .result, !runtime.isActive else { return }
         inventory = []; selectedCategories = []; selectedItems = [:]; preparation = nil; destination = nil
+        secureInventory = .unavailable; selectedSecureIdentities = []
+        externalSources = [:]; externalCandidates = [:]; identityError = nil
         replacementSHA256 = nil; publication = nil; resultNotices = []; publicationEvidence = .notOccurred
         publicationMayHaveStarted = false; failure = nil; operationID = nil
         savingAttempted = false
         state = .idle
     }
-    func cancelReview() { guard state == .review, !runtime.isActive else { return }; state = .idle; preparation = nil; destination = nil }
+    func cancelReview() {
+        guard state == .review, !runtime.isActive else { return }
+        state = .idle; preparation = nil; destination = nil
+        secureInventory = .unavailable; selectedSecureIdentities = []
+        externalSources = [:]; externalCandidates = [:]; identityError = nil
+    }
     func waitForCompletion() async { await work?.value }
 }
 

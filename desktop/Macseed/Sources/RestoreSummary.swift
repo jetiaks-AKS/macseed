@@ -82,7 +82,7 @@ struct RestorePrerequisiteSummaryPresentation {
     }
     var blockers: [CoreRestorePreparation.Condition] {
         let actionable = conditions.filter { ["external_action_required", "unsupported"].contains($0.status)
-            && !$0.isItemLocal && !$0.isPreviewOnlyLimitation }
+            && !$0.isItemLocal && !$0.isPreviewOnlyLimitation && !$0.isSecureLaunchRequirement }
         var seen = Set<String>()
         return actionable.filter { condition in
             // An aggregate inspection consequence is not another root cause.

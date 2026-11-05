@@ -102,8 +102,42 @@ See [Core interface](core/APPLICATION-INTERFACE.md) and [CLI](toolkit/CLI.md).
 
 ## Secure identities
 
-Core/CLI secure migration is implemented; the Desktop Secure SSH Capture/Restore
-bridge and real application qualification remain unfinished (Stage 16H).
+**Stage 16H SSH Identities — COMPLETED (2026-11-05).** Core/CLI secure migration
+and native Secure Capture/Restore are implemented and manually accepted in the
+supported identity scope. Desktop Capture offers explicit, default-off identities
+in Secure Transfer, beside Advanced under For Experienced Users, and uses the
+existing Core engine through native secure fields and a separate inherited FD.
+Desktop Restore selects the whole encrypted package, defaults off, and requires
+authenticated read-only comparison through the existing Preview button. Matching
+identities count as Already Match; missing identities as one planned requirement;
+conflicts block import. Preview requests only the Bundle passphrase and compares
+validated package/file state byte-for-byte, without unlocking individual keys.
+This does not establish cryptographic validity of encrypted private keys. Actual
+Rebuild requests the Bundle passphrase afresh, cryptographically validates every
+private/public pair and obtains separate import confirmation. Protected-key prompts
+identify the actual validated name, type and public fingerprint through transient
+FD-only context. Exact-byte proof may avoid redundant key prompts within that
+operation; passphrases are never cached or reused between operations. Existing
+no-clobber import and verified evidence feed native Rebuild results. Desktop uses
+verified bundled age without a separate age/Homebrew installation; CLI behavior
+is unchanged. [Desktop](DESKTOP.md#secure-interactions) records accepted manual
+E2E evidence; [Stage 17](DISTRIBUTION.md) still owns distribution and clean-Mac qualification.
+
+Desktop **Add SSH Identity…** also admits explicitly chosen safe SSH pairs outside
+`~/.ssh`, including a user-owned directory outside HOME. The adjacent `.pub` is
+required; there is no recursive search, automatic selection or source modification.
+Candidates join the same default-off selection and can be removed without deleting
+files. Capture Review/confirmation explains that all pairs restore to
+`~/.ssh/<validated-name>` in the receiving HOME. Source locations are not restored,
+and custom target paths are not supported. Existing Secure Migration v1 and `.mbt`
+formats remain unchanged; names and bytes stay authenticated inside `secure.age`.
+Prepare binds source evidence; Execute revalidates sources and cryptographic pairs.
+Preview still unlocks only the Bundle, compares exact intended targets without
+mutation and counts Secure Transfer as one requirement. The existing importer
+preserves no-clobber, explicit consent, target freshness and verified evidence.
+SSH Configuration is not rewritten: review `IdentityFile` if it expects another
+location. This reminder does not infer private Host-profile relationships.
+See [source safety and compatibility](toolkit/SSH-IDENTITY-MIGRATION.md#manually-selected-desktop-sources).
 
 SSH Configuration is reconstructable Host-profile data. SSH identities are
 separately selected existing private/public pairs handled by Secure Migration,
@@ -117,6 +151,28 @@ keys. Failed import stops dependent restoration, including clones; later failure
 do not undo already imported identities. Applications supply a separate secret
 channel; CLI uses terminal input. Package limits and standalone commands belong
 to [Secure SSH Identity Migration](toolkit/SSH-IDENTITY-MIGRATION.md).
+
+### SSH Environment Completion — Developer Environment Closure
+
+**NEXT / PLANNED — not implemented.** Complete practical SSH Configuration support
+across Discovery, Capture, Preview, Restore and Verification, prioritizing
+`IdentityFile`, `IdentitiesOnly`, `AddKeysToAgent`, `UseKeychain` and other safely
+portable SSH directives. This extends the bounded configuration contract without
+reopening completed Stage 16H identity transfer.
+
+Add optional per-identity restore destinations, defaulting to `~/.ssh`. Configuration
+belongs in the existing Rebuild **SELECTION** screen through a compact **Customize…**
+sheet and native macOS folder picker. Accepting defaults requires no extra steps.
+Preserve **SELECTION = configure; PREVIEW = read-only validation; REBUILD = execute**:
+no destination editing in Preview, new top-level screen or separate SSH manager.
+
+Validate `IdentityFile` references against the actual selected identity destinations.
+Never silently rewrite SSH configuration; every proposed correction requires explicit
+authorization. Resolve false Needs Attention results while preserving genuine
+unsupported, conflicting and unsafe findings. Keep Secure Migration v1 Bundle
+compatibility. A later joint SSH Configuration + identity E2E must cover default and
+custom destinations, Verification and repeated no-op. No part of this checkpoint is
+implemented by this completion/documentation task.
 
 ## Results
 

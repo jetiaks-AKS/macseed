@@ -163,6 +163,16 @@ verification_reason() {
     done
 }
 
+verification_report_subject() {
+    GV_REPORT_SUBJECT="$2"
+    # Application execution persists this text in Core logs as well as emitting
+    # separately redacted structured records. Keep private identity names out of
+    # the text path; CLI labels and the original Verification records are unchanged.
+    if [[ "${MACSEED_APPLICATION_EXECUTION:-false}" == true && "$1" == ssh-identities && "$2" != secure-selection ]]; then
+        GV_REPORT_SUBJECT='selected identity'
+    fi
+}
+
 verification_report() {
     verification_verdict
     section "Global Verification"
@@ -176,13 +186,15 @@ verification_report() {
     for ((i=0; i<${#GV_V[@]}; i+=6)); do
         [[ "${GV_V[i+3]}" != verified ]] || continue
         verification_reason "v:$i"
-        info "${GV_V[i]} / ${GV_V[i+1]} / ${GV_V[i+2]}: ${GV_V[i+3]} (${GV_V[i+4]}); $GV_REASON${GV_PHASE:+; phase=$GV_PHASE}"
+        verification_report_subject "${GV_V[i]}" "${GV_V[i+1]}"
+        info "${GV_V[i]} / $GV_REPORT_SUBJECT / ${GV_V[i+2]}: ${GV_V[i+3]} (${GV_V[i+4]}); $GV_REASON${GV_PHASE:+; phase=$GV_PHASE}"
     done
     for ((i=0; i<${#GV_C[@]}; i+=4)); do
-        detail "Coverage: ${GV_C[i]} / ${GV_C[i+1]}: ${GV_C[i+2]}, source=${GV_C[i+3]}"
+        verification_report_subject "${GV_C[i]}" "${GV_C[i+1]}"
+        detail "Coverage: ${GV_C[i]} / $GV_REPORT_SUBJECT: ${GV_C[i+2]}, source=${GV_C[i+3]}"
         if [[ "${GV_C[i+2]}" == unresolved ]]; then
             verification_reason "c:$i"
-            info "${GV_C[i]} / ${GV_C[i+1]}: unresolved selected reference; $GV_REASON${GV_PHASE:+; phase=$GV_PHASE}"
+            info "${GV_C[i]} / $GV_REPORT_SUBJECT: unresolved selected reference; $GV_REASON${GV_PHASE:+; phase=$GV_PHASE}"
         fi
     done
     for ((i=0; i<${#GV_D[@]}; i+=4)); do
@@ -192,11 +204,12 @@ verification_report() {
         esac
     done
     for ((i=0; i<${#GV_O[@]}; i+=5)); do
+        verification_report_subject "${GV_O[i]}" "${GV_O[i+1]}"
         case "${GV_O[i+3]}" in
             failure|skipped|cancelled|not_run)
-                info "Operation: ${GV_O[i]} / ${GV_O[i+1]} / ${GV_O[i+2]}: ${GV_O[i+3]}${GV_O[i+4]:+; reason=${GV_O[i+4]}}" ;;
+                info "Operation: ${GV_O[i]} / $GV_REPORT_SUBJECT / ${GV_O[i+2]}: ${GV_O[i+3]}${GV_O[i+4]:+; reason=${GV_O[i+4]}}" ;;
             success)
-                [[ "$GV_MISMATCH" -eq 0 ]] || info "Operation: ${GV_O[i]} / ${GV_O[i+1]} / ${GV_O[i+2]}: success; final differences detected" ;;
+                [[ "$GV_MISMATCH" -eq 0 ]] || info "Operation: ${GV_O[i]} / $GV_REPORT_SUBJECT / ${GV_O[i+2]}: success; final differences detected" ;;
         esac
     done
     if [[ "$GV_ORIGIN" == workflow ]] && ((${#GV_O[@]} == 0)); then info 'Apply: not run'; fi

@@ -33,10 +33,12 @@ Prepared IDs are 64 lowercase hexadecimal characters.
 |---|---|---|
 | `capabilities` | Omit `parameters` | Returns `protocol_version`, `product_version`, `operations` |
 | `bundle_inspect` | `path` | Returns Bundle summary and Core-owned `restore_selection` inventory; no Apply |
-| `capture_prepare` | `selection` | Private staged observation and prepared selection |
-| `capture_execute` | `selection`, `destination`, `expected_prepared_capture_id`, optional `replacement_sha256` | Fresh observation and Bundle publication |
+| `capture_identity_inspect` | `external_identities: true` | One explicit SSH source pair; safe candidate metadata only, no unlock |
+| `capture_prepare` | `selection`, optional `external_identities: true` | Private staged observation and prepared selection |
+| `capture_execute` | `selection`, `destination`, `expected_prepared_capture_id`, optional `replacement_sha256`, `external_identities: true` | Fresh observation and Bundle publication |
 | `restore_prepare` | `path`, `disabled_groups`, `include_secure`, optional `selection`, `installer_preparations` | Bundle validation, Preview and prerequisites; no publication or Apply |
-| `restore_execute` | `path`, `disabled_groups`, `include_secure`, `expected_prepared_plan_id`, optional `selection` | Fresh preparation, local-state publication and restoration |
+| `restore_execute` | `path`, `disabled_groups`, `include_secure`, `expected_prepared_plan_id`, optional `selection`, `secure_comparison` | Fresh preparation, local-state publication and restoration |
+| `secure_restore_compare` | `path`, `disabled_groups`, `include_secure: true`, `expected_prepared_plan_id`, optional `selection` | Authenticated read-only comparison of the selected encrypted package; separate secure FD required |
 | `environment_compare` | `generated_dir`, `blueprint_path` **or** `bundle_path` | Explicit read-only reference-to-current-Mac comparison |
 
 <a id="capture-destination-replacement"></a>
@@ -96,6 +98,42 @@ Prepare returns `prepared_capture_id`, `inventory`, `secure_identities`, canonic
 SSH candidates expose safe names, key types, public fingerprints and
 `candidate_requires_pair_validation`; Prepare does not unlock keys.
 Inventory limits are 2048 items per domain and 1 MiB internally.
+
+### Explicit external SSH sources
+
+`features.external_ssh_identities` advertises version `1`, destination
+`ssh_directory` and `max_items: 32`. This additive Protocol V1 capability does not
+change the secret channel, 4096-byte request limit or encrypted package version.
+`capture_identity_inspect` requires exactly one source and returns `identity` with
+the existing safe candidate fields plus `source: "manual"`. It does not run
+Discovery or request a passphrase. Ordinary Capture requests remain unchanged.
+
+Paths never appear in request JSON. The native transport writes
+`external-ssh-sources.json` (`0600`, single regular owned file) inside its existing
+private operation directory (`0700`). Its exact object contains `version: 1`,
+`operation_id` matching the active request, and `paths`: 1–32 unique absolute paths,
+each at most 1024 UTF-8 bytes, without control characters; total file limit 64 KiB.
+Core opens this file only when `external_identities: true` is present. Its source
+reader rejects unsafe files/parents and aliases; private intermediate metadata
+stays in existing operation staging and is cleaned with that lifecycle.
+
+Prepare/Execute supply only explicitly selected manual references, merge them
+with the unchanged standard scanner, and reject duplicate case-insensitive target
+names/public fingerprints or more than 32 candidates. Source observation errors
+remain blocking. IDs, file/content/parent evidence and paths bind the prepared hash;
+public events strip private fields. Full pair validation remains in the existing
+application export engine. Changed preparation fails before publication; changes
+during encryption fail export. Fixed v1 destination names and bytes are encrypted
+and authenticated, with no unencrypted source/destination inventory extension.
+
+Safe inspection errors distinguish `external_identity_pair_missing`,
+`external_identity_pair_invalid`, `external_identity_name_invalid`,
+`external_identity_unsafe`, `external_identity_changed`,
+`external_identity_duplicate` and `external_identity_invalid_request` without
+paths or private material. [Secure Migration](../toolkit/SSH-IDENTITY-MIGRATION.md#manually-selected-desktop-sources)
+owns source eligibility, destination restrictions and v1 compatibility.
+
+### Effective ordinary selection
 
 When selected Cask and App Store requirements have a confirmed shared application
 identity, Prepare applies Cask-first precedence. `selection` remains the canonical
@@ -308,6 +346,70 @@ Environment Status compares these extensions read-only through the same qualifie
 inspector and the existing Verification/Comparison collector; see
 [Phase 6](../toolkit/CONFIGURATION.md#topology-environment-status--phase-6).
 Ordinary legacy Bundle behavior is unchanged.
+
+### Authenticated secure Preview comparison
+
+`secure_restore_compare` is an additive Protocol V1 operation. It recomputes ordinary
+preparation and rejects a different expected plan before requesting secrets. It then
+runs `application-compare` through the existing owned secure process relay, decryptor,
+manifest/archive validation, shared pair readers and `target_plan`. The comparison
+branch returns before import consent or any Apply code; it creates no target files,
+Bootstrap/Blueprint publication, import journal or mutation receipt. Plaintext is
+bounded by existing package limits, staged privately and cleaned on handled success,
+failure, cancellation and timeout. Existing process supervision owns cleanup;
+uncatchable OS termination cannot promise cleanup or memory/swap erasure.
+
+Successful result fields are exactly `decision` (`all_match`, `import_required`,
+`conflict`), `target_state`, `source_fingerprint`, `prepared_plan_id`, `selection`,
+`include_secure: true`, and `comparison_operation_id`. Source fingerprint matches
+`plan_diagnostics.bundle`. `selection` echoes the validated request representation
+(or canonical selection when omitted), including whole-domain shorthand for fully
+selected item domains. Native Prepare and Compare share the same compact request;
+Prepare's canonical expansion is still validated against the exact inspected scope.
+The receipt retains that compact representation for Execute, which accepts either
+its validated request selection or the matching canonical plan selection. Partial
+whitelists stay explicit. The global 4096-byte request limit is unchanged; a scope
+that still exceeds it fails before launch, never truncates or widens selection.
+
+Executable decisions carry a 64-hex digest of the relevant
+owned target metadata and bytes, observed before and after strict comparison;
+conflict carries null because a safe executable target observation is unavailable.
+No names, key counts, paths or key bytes leave the worker. Phase is `secure_compare`.
+Only `bundle_unlock` is permitted: zero SSH-key unlock or import-confirmation
+challenges. Preview verifies authenticated decryption, manifest hashes, names,
+public-key format and readable private-key envelope through OpenSSH, presence,
+permissions and race-safe exact saved/target bytes. Equal files establish state
+equality, not cryptographic validity of an encrypted private/public pair.
+Failures/cancellation emit no comparison result and explicitly report no publication
+or target mutation. They are incomplete comparison, not target conflict.
+The child receives a canonical private staging parent, preserving strict checks on
+the package entry itself. Comparison startup failures before decryption report
+`secure_comparison_failed`; they do not establish an invalid encrypted payload.
+Decrypted archive/pair validation retains `secure_payload_invalid`.
+
+Native clients bind the result to the active operation and preparation, and discard
+it on selection/source/plan replacement, cancellation or new session. `pending_unlock`
+alone is not a planned-change observation. Map the authenticated package once into
+existing Preview metrics: match, planned missing identities (subject to readiness),
+or conflict. A matching secure-only selection has no executable work.
+
+Native Execute sends this result as optional `secure_comparison`. Core validates
+its source, exact selection and prepared-ID binding before publication, rejects a
+conflict or secure-only no-op, and passes only the target digest to the existing
+importer. The importer decrypts and validates afresh, rechecks target state before
+consent and after consent, and preserves all no-clobber and post-import validation.
+Execute always derives the private key's public key with OpenSSH and verifies
+pair equality before import. Within that worker, successful cryptographic proof is
+bound to the exact private and public bytes (at most 32 pairs); repeated target
+checks still re-read bytes, ownership, modes, links and observation state. This
+avoids duplicate unlocks for unchanged pairs, including post-import checks. Proof
+is cleared at completion; no passphrase or proof crosses operations. New operations
+and distinct protected keys require fresh unlock; rejected input may retry.
+Existing clients without the additive comparison
+retain the original fresh-import contract; a comparison is never mutation authority.
+A changed bound target fails with `secure_target_changed`. Ordinary Execute and
+Checkpoint 3 importer/Stop evidence remain unchanged.
+
 
 ### Explicit PKG installer preparation
 
@@ -1067,6 +1169,20 @@ health; a stored preference does not prove a visual effect. Observations are
 sequential. SSH `identity_pair_matches_package` describes local importer evidence
 at observation time, not network authentication, agent or Keychain readiness.
 
+Secure Restore additionally projects the validated importer receipt before the
+post-import Stop checkpoint as one `secure-ssh-identities` / `encrypted_identity_set`
+requirement: operation `validate_and_import`, resolved/unresolved coverage, and
+verification predicate `identity_set_matches_package`. These existing record types
+contain no key names or counts. They remain in terminal verification details when
+Stop prevents Bootstrap or later work fails, without upgrading whole-run
+Verification status. Per-key production Verification remains unchanged; clients
+count the selected package once, never sum aggregate and per-key records. Positive
+package verification requires successful/no-op import, resolved coverage and
+supported, timestamped verified conformity. Phase completion or exit zero is
+insufficient. Application execution also replaces identity names with a generic
+label in textual Core Verification logs; CLI labels and structured evidence are
+unchanged. This does not change the secret-channel protocol.
+
 Compare returns `read_only=true`, `publication_occurred=false`,
 `target_mutation_may_have_started=false`, `comparison`, `comparison_records`,
 `verification`, `records`, `extra`. Comparison rows contain `record_id`, `domain`,
@@ -1125,17 +1241,35 @@ IDs derive deterministically from source records; timestamps remain actual obser
 
 The client passes one endpoint of an anonymous connected Unix stream socket pair
 as an inherited FD greater than 2, using `--secure-fd N`. This is launch metadata,
-not a JSON field. It is required only for Execute with selected identities.
+not a JSON field. It is required for Execute with selected identities and for
+`secure_restore_compare`; ordinary `restore_prepare` still accepts no secret channel.
 Core validates the channel and restricts inheritance; ordinary Bootstrap children
 do not receive it. Secrets must not enter JSONL, argv, environment, Generated
 Configuration, logs or persistent secret-response files.
 
 Frames use a four-byte unsigned big-endian length followed by 1–2048 body bytes.
-Challenge JSON metadata contains `type=challenge`, `protocol_version=1`,
+Challenge JSON has exact base fields `type=challenge`, `protocol_version`,
 `operation_id`, fresh 32-hex `challenge_id`, `kind`, `attempt` (1–3).
+Bundle and import-consent challenges use version 1 and only these fields.
+`ssh_key_unlock` requires secure-channel version 2 plus exactly one `identity`
+object containing `name`, `key_type`, `fingerprint` and, optionally, both
+`position` and `total`. Names are 1–80 ASCII `[A-Za-z0-9_.-]` characters, start
+alphanumeric and do not end in `.pub`. Types are `ssh-ed25519`, `ssh-rsa` or
+`ecdsa-sha2-nistp256/384/521`; fingerprints are canonical `SHA256:` plus 43 Base64
+characters encoding 32 bytes. Position/total must be integers with
+`1 <= position <= total <= 32`. Core obtains these from the actual validated pair,
+never UI order. Duplicate/extra fields, legacy context-free SSH challenges, wrong
+operations, replayed nonces and changed identity during a retry fail closed.
+Retries require the same kind/context and the next attempt number.
+
+This is a narrow secret-channel compatibility boundary: update Core and Desktop
+together. Older strict v1 clients reject v2 SSH challenges; current clients reject
+context-free SSH challenges. Ordinary Protocol V1 requests/events are unchanged.
 Restore kinds are bundle_unlock/ssh_key_unlock/import_confirmation; Capture kinds
-are bundle_encrypt/ssh_key_unlock. A response is 16 decoded challenge-ID bytes,
-followed by:
+are bundle_encrypt/ssh_key_unlock. Read-only comparison permits only bundle_unlock.
+Identity context travels only through this authenticated FD and the active native
+unlock dialog, never JSONL, logs, reports, operation history, error/debug strings,
+argv or environment. Responses remain 16 decoded challenge-ID bytes, followed by:
 
 - `S` and a nonempty UTF-8 passphrase of at most 128 bytes without control characters;
 - `Y` alone for import confirmation;

@@ -467,7 +467,12 @@ bootstrap_application_readiness_timed() (
             echo secure_bridge_required
             return 2
         fi
-        if ! command -v age >/dev/null 2>&1; then
+        if [[ "${MACSEED_DESKTOP_BUNDLE+x}" == x ]]; then
+            if ! python3 -B modules/migration/age_runtime.py --check; then
+                echo age_unavailable
+                return 2
+            fi
+        elif ! command -v age >/dev/null 2>&1; then
             local age_directory old_ifs="$IFS"
             IFS=:
             for age_directory in $PATH; do
@@ -481,7 +486,7 @@ bootstrap_application_readiness_timed() (
             echo age_required
             return 2
         fi
-        if ! age --version >/dev/null 2>&1; then
+        if [[ "${MACSEED_DESKTOP_BUNDLE+x}" != x ]] && ! age --version >/dev/null 2>&1; then
             echo age_unavailable
             return 2
         fi

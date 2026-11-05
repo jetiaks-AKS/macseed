@@ -33,8 +33,8 @@ indirect enum CoreJSON: Codable, Equatable, Sendable {
 
 enum CoreOperation: String, Codable, CaseIterable, Sendable {
     case capabilities, bundleInspect = "bundle_inspect"
-    case capturePrepare = "capture_prepare", captureExecute = "capture_execute"
-    case restorePrepare = "restore_prepare", restoreExecute = "restore_execute"
+    case capturePrepare = "capture_prepare", captureExecute = "capture_execute", captureIdentityInspect = "capture_identity_inspect"
+    case restorePrepare = "restore_prepare", restoreExecute = "restore_execute", secureRestoreCompare = "secure_restore_compare"
     case environmentCompare = "environment_compare"
 }
 
@@ -73,10 +73,12 @@ struct CoreCaptureInventoryRow: Decodable, Sendable {
 enum CoreCommand: Sendable {
     case capabilities
     case bundleInspect(path: String)
+    case captureIdentityInspect
     case capturePrepare(selection: CoreCaptureSelection?)
     case captureExecute(selection: CoreCaptureSelection, destination: String, preparedID: String, replacementSHA256: String? = nil)
     case restorePrepare(path: String, disabledGroups: [String], includeSecure: Bool, selection: CoreRestoreSelection? = nil, installerPreparations: [String]? = nil)
-    case restoreExecute(path: String, disabledGroups: [String], includeSecure: Bool, preparedID: String, selection: CoreRestoreSelection? = nil)
+    case restoreExecute(path: String, disabledGroups: [String], includeSecure: Bool, preparedID: String, selection: CoreRestoreSelection? = nil, secureComparison: CoreSecureComparison? = nil)
+    case secureRestoreCompare(path: String, preparedID: String, selection: CoreRestoreSelection)
     case environmentCompare(generatedDirectory: String, blueprintPath: String?)
     case environmentCompareBundle(path: String)
 
@@ -84,17 +86,20 @@ enum CoreCommand: Sendable {
         switch self {
         case .capabilities: .capabilities
         case .bundleInspect: .bundleInspect
+        case .captureIdentityInspect: .captureIdentityInspect
         case .capturePrepare: .capturePrepare
         case .captureExecute: .captureExecute
         case .restorePrepare: .restorePrepare
         case .restoreExecute: .restoreExecute
+        case .secureRestoreCompare: .secureRestoreCompare
         case .environmentCompare, .environmentCompareBundle: .environmentCompare
         }
     }
     var requiresSecretBridge: Bool {
         switch self {
         case .captureExecute(let selection, _, _, _): !selection.secureIdentities.isEmpty
-        case .restoreExecute(_, _, let secure, _, _): secure
+        case .restoreExecute(_, _, let secure, _, _, _): secure
+        case .secureRestoreCompare: true
         default: false
         }
     }
@@ -109,6 +114,7 @@ enum CoreCommand: Sendable {
         switch self {
         case .capabilities: return nil
         case .bundleInspect(let path): return .object(["path": .string(path)])
+        case .captureIdentityInspect: return .object([:])
         case .capturePrepare(let value): return .object(["selection": try selection(value)])
         case .captureExecute(let value, let destination, let id, let replacement):
             var parameters: [String: CoreJSON] = ["selection": try selection(value), "destination": .string(destination), "expected_prepared_capture_id": .string(id)]
@@ -119,9 +125,13 @@ enum CoreCommand: Sendable {
             if let installers { values["installer_preparations"] = .array(installers.map(CoreJSON.string)) }
             if let selection { values["selection"] = try JSONDecoder().decode(CoreJSON.self, from: JSONEncoder().encode(selection)) }
             return .object(values)
-        case .restoreExecute(let path, let groups, let secure, let id, let selection):
+        case .secureRestoreCompare(let path, let id, let selection):
+            return .object(["path": .string(path), "disabled_groups": .array([]), "include_secure": .bool(true),
+                "expected_prepared_plan_id": .string(id), "selection": try JSONDecoder().decode(CoreJSON.self, from: JSONEncoder().encode(selection))])
+        case .restoreExecute(let path, let groups, let secure, let id, let selection, let comparison):
             var values = restore(path, groups, secure)
             values["expected_prepared_plan_id"] = .string(id)
+            if let comparison { values["secure_comparison"] = try JSONDecoder().decode(CoreJSON.self, from: JSONEncoder().encode(comparison)) }
             if let selection { values["selection"] = try JSONDecoder().decode(CoreJSON.self, from: JSONEncoder().encode(selection)) }
             return .object(values)
         case .environmentCompareBundle(let path):
@@ -135,9 +145,13 @@ enum CoreCommand: Sendable {
 struct CoreRequest: Sendable {
     let command: CoreCommand
     let operationID: String
-    init(_ command: CoreCommand, operationID: String = UUID().uuidString) {
+    // Capture-session references only. Never serialized into the ordinary request
+    // or logs; the transport owns a private per-operation reference file.
+    let externalIdentityPaths: [String]
+    init(_ command: CoreCommand, operationID: String = UUID().uuidString, externalIdentityPaths: [String] = []) {
         self.command = command
         self.operationID = operationID
+        self.externalIdentityPaths = externalIdentityPaths
     }
     func encoded() throws -> Data {
         guard operationID.range(of: "^[A-Za-z0-9_-]{1,64}$", options: .regularExpression) != nil else {
@@ -146,6 +160,14 @@ struct CoreRequest: Sendable {
         var fields: [String: CoreJSON] = ["protocol_version": .integer(1), "operation_id": .string(operationID),
                                           "operation": .string(command.operation.rawValue)]
         if let parameters = try command.parameters() { fields["parameters"] = parameters }
+        if !externalIdentityPaths.isEmpty {
+            guard [.capturePrepare, .captureExecute, .captureIdentityInspect].contains(command.operation),
+                  externalIdentityPaths.count <= 32, Set(externalIdentityPaths).count == externalIdentityPaths.count,
+                  externalIdentityPaths.allSatisfy({ $0.hasPrefix("/") && $0.utf8.count <= 1024 && !$0.unicodeScalars.contains(where: { $0.value < 32 || $0.value == 127 }) }),
+                  var parameters = fields["parameters"]?.object else { throw CoreRuntimeError.invalidRequest }
+            parameters["external_identities"] = .bool(true)
+            fields["parameters"] = .object(parameters)
+        } else if command.operation == .captureIdentityInspect { throw CoreRuntimeError.invalidRequest }
         let data = try JSONEncoder().encode(CoreJSON.object(fields))
         guard data.count <= 4096 else { throw CoreRuntimeError.requestTooLarge }
         return data
@@ -157,6 +179,7 @@ enum CoreRuntimeError: Error, Equatable, Sendable {
     case invalidRequest, requestTooLarge, secureBridgeUnavailable, launchFailed(Int32), ioFailed(Int32)
     case malformedEvent, incompatibleProtocol(Int), operationMismatch, sequenceOrder, invalidLifecycle
     case eventTooLarge, incompleteStream, missingTerminal, exitMismatch, interrupted, coreFailure(String)
+    case secureChannelInvalid, secureChannelTimeout, secureChannelDisconnected
     var message: String {
         switch self {
         case .runtimeUnavailable: "Macseed Core runtime is unavailable."

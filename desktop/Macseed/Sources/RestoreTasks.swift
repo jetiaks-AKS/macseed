@@ -61,6 +61,7 @@ struct TaskDomainPresentation: Identifiable {
     let symbol: String
     let items: [TaskItemPresentation]
     var activityState: TaskRowState? = nil
+    var activityTitle: String? = nil
     var previewOnly = false
     var resultCategoryIssue = false
     var resultProblemDomains: Set<String> = []
@@ -85,6 +86,7 @@ struct TaskDomainPresentation: Identifiable {
         return id.hasPrefix("homebrew-") ? "Couldn’t read Homebrew state." : "Couldn’t read the current state of this category."
     }
     var executionStatusTitle: String {
+        if let activityTitle { return activityTitle }
         if activityState == .working && (RestoreOperationSummary(domains: [self]).attention > 0 || confirmedFinalState == .attention) { return "Working · Needs Attention" }
         return executionStatus.rawValue
     }
@@ -138,6 +140,9 @@ struct RestoreTaskPresentation {
     }
     func confirmationMessages(_ plan: CoreRestorePreparation) -> [String] {
         var messages = Self.scopeWarningMessages(plan)
+        if plan.includeSecure {
+            messages.append("Secure Transfer will unlock and import the encrypted SSH identity package without overwriting existing identities. A separate import confirmation is required during Rebuild.")
+        }
         if automaticAttentionCount > 0 {
             messages.append("\(automaticAttentionCount) automatic requirements need attention. Review the category details; blocked items will remain unchanged.")
         }
@@ -195,6 +200,9 @@ struct RestoreTaskPresentation {
             }.map { item -> TaskItemPresentation in
                 let index = Int(item.id.replacingOccurrences(of: "restore-", with: ""))
                 let entry = index.flatMap { plan.plan.indices.contains($0) ? plan.plan[$0] : nil }
+                if entry?.isSecureImport == true {
+                    return Self.secureItem(item, events: events, result: result, executing: executing)
+                }
                 func belongs(_ row: [String: CoreJSON]) -> Bool {
                     row["domain"]?.string == entry?.domain && row["item_id"]?.string == entry?.itemID
                 }
@@ -331,6 +339,17 @@ struct RestoreTaskPresentation {
             if items.isEmpty { continue }
             var domain = TaskDomainPresentation(id: domainID, title: category.title,
                 symbol: Self.symbol(category.id), items: items, activityState: operationProgress ? Self.executionState(items, activity: result == nil ? activityState : nil) : activityState, previewOnly: !executing && result == nil)
+            if domainID == CoreRestorePreparation.secureDomain {
+                // The importer emits package and per-key receipts. They describe one
+                // selected requirement; never turn each receipt into another row/count.
+                if executing || result != nil {
+                    domain.activityState = nil
+                    domain.confirmedFinalState = items.first?.state
+                    if executing && result == nil { domain.activityTitle = active?.action }
+                }
+                output.append(domain)
+                continue
+            }
             if operationProgress {
                 let entries = category.items.compactMap { item -> CoreRestorePreparation.Row? in
                     guard let index = Int(item.id.replacingOccurrences(of: "restore-", with: "")), plan.plan.indices.contains(index) else { return nil }
@@ -438,6 +457,52 @@ struct RestoreTaskPresentation {
         }
         domains = output
     }
+    private static func secureItem(_ item: DisplayItem, events: [CoreEvent], result: RestoreExecutionPresentation?, executing: Bool) -> TaskItemPresentation {
+        let evidence = CoreSecureRestoreEvidence(events: events, payload: result?.structuredEvidence)
+        let outcome = evidence.operation?["outcome"]?.string
+        let reason = evidence.operation?["reason"]?.string ?? item.reason
+        let noMutation = result != nil && result?.outcome != .interrupted
+            && result?.structuredEvidence?["target_mutation_may_have_started"]?.boolean == false
+            && result?.structuredEvidence?["unknown_consequences"]?.boolean == false && (evidence.operation == nil || outcome == "cancelled")
+        let cancelled = outcome == "cancelled"
+        let preview = !executing && result == nil
+        let state: TaskRowState
+        var labels: [String] = []
+        let message: String
+        if preview {
+            state = item.status == .matching ? .matching : item.status == .ready ? .planned : item.status == .unverified ? .unverified : .attention
+            message = item.action
+        } else if evidence.verified {
+            state = outcome == "noop" ? .matching : .completed
+            labels = [outcome == "noop" ? "Already Matches" : "Applied", "Verified"]
+            message = outcome == "noop" ? "The identity package already matches; verified without changes." : "SSH identities imported and verified."
+        } else if reason == "target_conflict" || evidence.contradictoryObservation || evidence.observation?["conformity"]?.string == "mismatch" {
+            state = .attention; labels = ["Needs Attention"]
+            message = reason == "target_conflict" ? "An existing SSH identity conflicts with this package and was preserved." : "The imported identity package could not be verified."
+        } else if outcome == "failure" {
+            state = .failed; labels = ["Failed"]; message = "Secure Transfer failed. Review the operation evidence before trying again."
+        } else if noMutation || cancelled {
+            state = .notRun; labels = ["Unverified"]
+            message = cancelled ? "Secure input was cancelled. The Rebuild result determines whether any target changes began." : "Secure Transfer was not run."
+        } else if result != nil {
+            state = .unverified; labels = ["Unverified"]
+            if outcome == "success" { labels.insert("Applied", at: 0) }
+            message = "The final state of the encrypted identity package could not be confirmed."
+        } else if evidence.available {
+            state = .awaitingVerification; message = "Awaiting Verification"
+        } else if events.contains(where: { $0.phase == "secure_import" || $0.type == "secure_challenge_waiting" }) {
+            state = .working; message = "Secure Transfer is in progress."
+        } else { state = .waiting; message = "Waiting" }
+        let destinationDetail = evidence.verified || (preview && [.matching, .planned].contains(state))
+            ? " Identities use ~/.ssh with their saved names. SSH configuration is unchanged; review IdentityFile if it expects another location." : ""
+        return TaskItemPresentation(id: item.id,
+            item: DisplayItem(id: item.id, title: item.title, status: item.status, action: message + destinationDetail, reason: reason), state: state,
+            executionAction: "Validate And Import", resultLabels: labels,
+            resultEvidenceAvailable: evidence.available, verificationEvidenceAvailable: evidence.observation != nil,
+            resultVerificationComplete: preview ? nil : evidence.verified, resultNotRun: noMutation,
+            previewProblem: item.status == .attention ? item.reason : nil,
+            sourceDomain: CoreRestorePreparation.secureDomain, sourceItemID: CoreRestorePreparation.secureItem)
+    }
     static func scopeProblemExplained(reason: String?, hasItemProblems: Bool, independentProblem: Bool) -> Bool {
         hasItemProblems && !independentProblem && ["module_failed", "module_warning"].contains(reason ?? "")
     }
@@ -482,7 +547,7 @@ struct RestoreTaskPresentation {
         case "macOS Settings", "vscode-settings": "gearshape"
         case "vscode-extensions": "puzzlepiece.extension"
         case "shell-zsh": "terminal"
-        case "ssh-configuration": "lock.shield"
+        case "ssh-configuration", CoreRestorePreparation.secureDomain: "lock.shield"
         default: "square.stack"
         }
     }
@@ -678,6 +743,9 @@ enum RestoreResultDetails {
             && result.structuredEvidence?["verification"]?.object?["status"]?.string == "not_run"
     }
     static func stoppedItem(_ item: TaskItemPresentation) -> TaskItemPresentation? {
+        // Secure import is verified before ordinary Bootstrap starts. Keep that
+        // bounded receipt even when Stop prevents the later whole-run Verify.
+        if item.sourceDomain == CoreRestorePreparation.secureDomain { return item }
         // A stopped run did not inspect the remaining selection. Keep reported
         // work and independent problems, not absence of evidence for every row.
         if item.assistedAppStore != nil && item.resultEvidenceAvailable != true { return nil }
@@ -727,6 +795,7 @@ enum RestoreResultDetails {
     }
     static func title(_ domain: TaskDomainPresentation) -> String {
         if domain.resultCategoryIssue { return "Needs Attention" }
+        if domain.id == CoreRestorePreparation.secureDomain, !domain.items.isEmpty, domain.items.allSatisfy(unchanged) { return "Already Matches" }
         let statuses = Set(domain.items.flatMap { labels($0) })
         if statuses.contains("Failed") { return "Failed" }
         if statuses.contains("Needs Attention") { return "Needs Attention" }
@@ -750,6 +819,7 @@ enum RestoreResultDetails {
         return [item.resultTitle == "Outcome Unknown" ? "Outcome Unknown" : "Unverified"]
     }
     static func explanation(_ item: TaskItemPresentation) -> String? {
+        if item.sourceDomain == CoreRestorePreparation.secureDomain && verified(item) { return item.item.action }
         if item.hasResultProblemDetails, let explanation = item.resultExplanation { return explanation }
         if item.resultNotRun { return "This selected requirement was not run." }
         if hasChange(item) && !verified(item) { return "The action completed, but its result was not independently verified." }
@@ -920,6 +990,8 @@ struct RestoreResultSummary {
         for finding in result.findings {
             let domain = String(finding.id.split(separator: ":").first ?? "")
             if domain == "app-store" || finding.id == "result-incomplete" { continue }
+            if domain == CoreRestorePreparation.secureDomain,
+               represented.contains(CoreRestorePreparation.secureDomain + ":" + CoreRestorePreparation.secureItem) { continue }
             if ["bootstrap_failed", "cancelled", "secure_cancelled"].contains(finding.reason ?? "") { continue }
             if representedScopes.contains(domain) || represented.contains(where: { finding.id.hasPrefix($0 + ":") }) { continue }
             if automatic.contains(where: { $0.id == domain || $0.items.contains(where: { $0.sourceDomain == domain }) }),

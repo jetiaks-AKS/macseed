@@ -151,29 +151,30 @@ struct RestoreSelectionContent: View {
     var expandAll: Binding<Bool>? = nil
     @RestoreViewState<Set<String>> private var expanded = []
     private var areas: [CoreRestoreInspection.Area] { RestoreSelectionPresentation.ordered(model.selectionAreas) }
+    private func disclosureIDs(advanced: Bool) -> Set<String> {
+        RestoreSelectionPresentation.disclosureIDs(areas, advanced: advanced)
+    }
     private var treeExpansion: Binding<Set<String>> {
         if let expansion { return expansion }
         if let expandAll {
             return Binding(get: { expandAll.wrappedValue
-                ? RestoreSelectionPresentation.disclosureIDs(areas, advanced: false).union(RestoreSelectionPresentation.disclosureIDs(areas, advanced: true)) : [] },
+                ? disclosureIDs(advanced: false).union(disclosureIDs(advanced: true)) : [] },
                 set: { expandAll.wrappedValue = !$0.isEmpty })
         }
         return $expanded
     }
     var body: some View {
         WorkflowList {
-            HStack {
-                Spacer()
-                CaptureExpandButton(ids: RestoreSelectionPresentation.disclosureIDs(areas, advanced: false),
-                    title: "Ordinary Categories", expanded: treeExpansion).padding(.trailing, 42)
-            }
             CaptureGroupedContent(rows: areas, expanded: treeExpansion,
                 selection: { group, rows in
                     AnyView(RestoreGroupControls(model: model, areas: rows, title: group.section.title))
                 }, vscodeSelection: AnyView(RestoreGroupControls(model: model,
                     areas: areas.filter { WorkspacePresentationTaxonomy.group(for: $0.id) == .vscode }, title: "VS Code")),
-                advancedControls: AnyView(CaptureExpandButton(ids: RestoreSelectionPresentation.disclosureIDs(areas, advanced: true),
-                    title: "Advanced", expanded: treeExpansion)),
+                ordinaryTitle: "Standard Setup",
+                ordinaryControls: AnyView(CaptureExpandButton(ids: disclosureIDs(advanced: false), title: "Standard Setup", expanded: treeExpansion)),
+                advancedControls: AnyView(CaptureExpandButton(ids: disclosureIDs(advanced: true),
+                    title: "For Experienced Users", expanded: treeExpansion)),
+                secureTransferGroup: secureTransferGroup,
                 summary: { RestoreSelectionPresentation.summary($0, model: model) },
                 attention: { rows in rows.contains { !$0.selectable || $0.reason != nil } ? "Saved Requirements Need Attention" : nil }) { area in
                     RestoreAreaSelectionView(model: model, area: area,
@@ -182,6 +183,18 @@ struct RestoreSelectionContent: View {
                 }
             if !model.canPreview { Text("Choose requirements for this rebuild.").foregroundStyle(.secondary) }
         }
+    }
+    private var secureTransferGroup: AnyView? {
+        guard model.inspection?.secureComponent == true else { return nil }
+        return AnyView(VStack(alignment: .leading, spacing: 0) {
+            CaptureGroupHeader(title: "Secure Transfer", summary: model.includeSecure ? "Selected" : "Off", symbol: "lock.shield",
+                selection: AnyView(NativeSelectionCheckbox("", isOn: Binding(get: { model.includeSecure }, set: { model.selectSecureTransfer($0) }), accessibilityTitle: "Select Secure Transfer")
+                    .disabled(model.state != .review || model.runtime.isActive)),
+                expanded: nil)
+            Text("Encrypted SSH identities. Preview checks which keys already match this Mac. Missing keys can be imported during Rebuild without overwriting existing keys.")
+                .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                .padding(.leading, 16 + CaptureChildRowGrid.leadingInset).padding(.trailing, 16).padding(.bottom, 12)
+        })
     }
 }
 
@@ -428,6 +441,7 @@ struct RestorePrerequisiteView: View {
         case "vscode_cli_required", "vscode_cli_unavailable": "Make the Visual Studio Code command-line tool available, then Refresh Preview."
         case "vscode_cli_ambiguous": "Resolve the multiple Visual Studio Code installations, then Refresh Preview."
         case "git_required", "git_unavailable": "Make Git available, then Refresh Preview."
+        case "age_required", "age_unavailable": "The bundled Secure Transfer tool is missing or damaged. Rebuild or reinstall Macseed, then Refresh Preview."
         case "workspace_restore_not_enabled": CoreRestorePreparation.workspacePreviewReasons[condition.code]!
         case "mas_required", "mas_unavailable": "Make the App Store command-line tool available, then Refresh Preview."
         case "internet_required": "Connect this Mac to the internet, then Refresh Preview."
@@ -494,11 +508,6 @@ struct RestoreView: View {
                         Button("Change…", action: chooseBundle).disabled(model.busy || runtime.isActive)
                     }
                 }
-                if model.inspection?.secureComponent == true {
-                    Label("Secure Transfer is not available in this build.", systemImage: "lock.shield")
-                    Text("This saved environment contains encrypted identity material. Private SSH identities will not be restored; ordinary SSH Configuration remains separate.")
-                        .font(.callout).foregroundStyle(.secondary)
-                }
                 if model.state == .review {
                     Text("Choose what to rebuild").font(.headline)
                     RestoreSelectionContent(model: model, expansion: selectionExpansion, expandAll: categoryExpansion)
@@ -558,6 +567,10 @@ struct RestoreView: View {
             }
         }
         .modifier(OperationLogPresenter(runtime: runtime))
+        .sheet(item: Binding(get: { runtime.operationID == model.operationID && [.preparing, .rebuilding].contains(model.state) ? runtime.secureChallenge : nil }, set: { _ in })) { challenge in
+            CaptureSecureInputView(runtime: runtime, challenge: challenge, restoring: true, comparing: model.state == .preparing).id(challenge.id)
+                .interactiveDismissDisabled()
+        }
         .sheet(isPresented: Binding(get: { model.installerConsent }, set: { if !$0 { model.cancelInstallerPreparation() } })) {
             VStack(alignment: .leading, spacing: 16) {
                 Text("Prepare installers?").font(.title2)
@@ -875,6 +888,7 @@ struct RestoreExecutionCategories: View {
     // Flatten the accepted presentation order without changing original row evidence.
     static func orderedRows(_ domains: [TaskDomainPresentation], appStore: AppStoreRestorePresentation? = nil) -> [TaskDomainPresentation] {
         var result = RestorePreviewHierarchy.sections(domains).flatMap(\.rows)
+        if let secure = domains.first(where: { $0.id == CoreRestorePreparation.secureDomain }) { result.append(secure) }
         if let appStore, !appStore.items.isEmpty {
             let row = TaskDomainPresentation(id: "app-store", title: "App Store Applications", symbol: "app", items: [])
             result.insert(row, at: 0)
@@ -1127,6 +1141,7 @@ struct RestoreFinalDomain: View {
         switch RestoreResultDetails.title(domain) {
         case "Needs Attention": .attention
         case "Complete": .completed
+        case "Already Matches": .matching
         case "Failed": .failed
         case "Skipped": .skipped
         case "Not Run": .notRun

@@ -3,6 +3,1231 @@ import AppKit
 import SwiftUI
 
 @main struct RestoreTests {
+    private final class SecureExpansion: ObservableObject { @Published var ids: Set<String> = [] }
+    private struct SecureFrames: PreferenceKey {
+        static var defaultValue: [String: CGRect] = [:]
+        static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) { value.merge(nextValue(), uniquingKeysWith: { _, new in new }) }
+    }
+    private struct SecureRestoreHost: View {
+        @ObservedObject var expansion: SecureExpansion
+        let model: RestoreModel
+        let runtime: CoreRuntime
+        var body: some View {
+            VStack(spacing: 0) {
+                WorkflowContentViewport(pinned: true) {
+                    RestoreView(model: model, runtime: runtime, categoryExpansion: .constant(true), selectionExpansion: $expansion.ids,
+                        showsRebuildActions: false, showsPreviewActions: false, showsSelectionActions: false,
+                        showsPreparationActions: false, showsResultActions: false).padding(16)
+                }
+                Divider()
+                footer.modifier(WorkspaceFooterPadding())
+                    .background(GeometryReader { Color.clear.preference(key: SecureFrames.self, value: ["footer": $0.frame(in: .named("restore"))]) })
+            }.coordinateSpace(name: "restore")
+        }
+        @ViewBuilder var footer: some View {
+            if model.state == .review {
+                RestoreSelectionActions(status: model.selectionSummary, canPreview: model.canPreview, preview: {})
+            } else if model.state == .result, let result = model.executionResult {
+                RestoreResultActions(result: result, refresh: {}, done: {}, logRuntime: runtime)
+            } else {
+                RestorePreviewActions(back: {}, refresh: {}, rebuild: {}, canRebuild: model.canRebuild, showsRebuild: model.hasAutomaticSelection)
+            }
+        }
+    }
+    @MainActor static func secureRestoreLayout(_ model: RestoreModel, _ runtime: CoreRuntime, phase: String) async throws {
+        guard !CommandLine.arguments.contains("--no-renders") else { return }
+        _ = NSApplication.shared
+        let output = URL(fileURLWithPath: "build/Debug/Stage16HSecureRestore")
+        func descendants<T: NSView>(_ view: NSView, _: T.Type) -> [T] {
+            (view as? T).map { [$0] } ?? view.subviews.flatMap { descendants($0, T.self) }
+        }
+        for width: CGFloat in [580, 1040] { for dark in [false, true] {
+            let expansion = SecureExpansion()
+            var footer = CGRect.zero
+            let host = NSHostingView(rootView: SecureRestoreHost(expansion: expansion, model: model, runtime: runtime)
+                .onPreferenceChange(SecureFrames.self) { footer = $0["footer"] ?? .zero }
+                .frame(width: width, height: 640).background(Color(nsColor: .windowBackgroundColor)))
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: 640), styleMask: [.titled], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false; window.contentView = host
+            host.appearance = NSAppearance(named: dark ? .darkAqua : .aqua); window.makeKeyAndOrderFront(nil)
+            defer { window.close() }
+            func settle() async { try? await Task.sleep(for: .milliseconds(60)); host.layoutSubtreeIfNeeded(); host.displayIfNeeded() }
+            await settle()
+            let selection = model.selection, included = model.includeSecure, prepared = model.preparation?.preparedPlanID
+            let scrolls = descendants(host, NSScrollView.self)
+            precondition(scrolls.count == 1)
+            let scroll = scrolls[0], document = scroll.documentView!, before = footer
+            let boxes = descendants(host, NSButton.self).filter { $0.target is NativeSelectionCheckbox.Coordinator }
+            if model.state == .review {
+                let secure = boxes.first { $0.accessibilityLabel() == "Select Secure Transfer" }
+                precondition((secure != nil) == (model.inspection?.secureComponent == true))
+                if let secure, let advanced = boxes.first(where: { $0.accessibilityLabel() == "Select Advanced" }) {
+                    let a = advanced.convert(advanced.bounds, to: host), s = secure.convert(secure.bounds, to: host)
+                    precondition(abs(a.minX - s.minX) < 1 && (48...49).contains(s.minY - a.minY))
+                    for _ in 0..<2 {
+                        precondition(NSApp.sendAction(secure.action!, to: secure.target, from: secure)); await settle()
+                        precondition(model.selection == selection && expansion.ids.isEmpty)
+                    }
+                    for _ in 0..<2 {
+                        precondition(NSApp.sendAction(advanced.action!, to: advanced.target, from: advanced)); await settle()
+                        precondition(model.includeSecure == included && expansion.ids.isEmpty)
+                    }
+                    let point = host.convert(NSPoint(x: 38, y: s.midY), to: nil)
+                    for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+                        window.sendEvent(NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                            windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 1)!)
+                    }
+                    await settle()
+                    precondition(expansion.ids.isEmpty, "Secure Selection has no disclosure target")
+                }
+                expansion.ids = RestoreSelectionPresentation.disclosureIDs(model.selectionAreas, advanced: false)
+                    .union(RestoreSelectionPresentation.disclosureIDs(model.selectionAreas, advanced: true))
+                await settle()
+            }
+            scroll.contentView.scroll(to: NSPoint(x: 0, y: max(0, document.frame.height - scroll.contentView.bounds.height)))
+            scroll.reflectScrolledClipView(scroll.contentView); await settle()
+            precondition(footer == before && footer.height > 0, "Fixed footer: before \(before), after \(footer)")
+            precondition(document.frame.width <= scroll.contentView.bounds.width + 1)
+            precondition(abs(scroll.contentView.bounds.minY - max(0, document.frame.height - scroll.contentView.bounds.height)) < 1)
+            precondition(model.selection == selection && model.includeSecure == included && model.preparation?.preparedPlanID == prepared)
+            let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds)!
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            try bitmap.representation(using: .png, properties: [:])!.write(to: output.appendingPathComponent("\(phase)-\(Int(width))-\(dark ? "dark" : "light").png"))
+            print("PASS: Secure Restore \(phase), native layout/scroll/fixed actions at \(Int(width))pt \(dark ? "Dark" : "Light")")
+        } }
+    }
+    private final class SecureClock: @unchecked Sendable {
+        private let lock = NSLock()
+        private var offset: TimeInterval = 0
+        func now() -> TimeInterval { lock.lock(); defer { lock.unlock() }; return ProcessInfo.processInfo.systemUptime + offset }
+        func expire() { lock.lock(); offset += 121; lock.unlock() }
+    }
+
+    @MainActor static func securePassphraseChecks(repository: URL, python: URL) async throws {
+        setbuf(stdout, nil)
+        let fm = FileManager.default
+        let root = URL(fileURLWithPath: "/private/tmp/macseed-passphrase-" + UUID().uuidString)
+        try fm.createDirectory(at: root, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+        defer { try? fm.removeItem(at: root) }
+        guard let age = ["/opt/homebrew/bin/age", "/usr/local/bin/age"].first(where: fm.isExecutableFile(atPath:)) else { preconditionFailure("Existing age required") }
+        let keySecret = Data(("fixture-key-" + UUID().uuidString).utf8), bundleSecret = Data(("fixture-bundle-" + UUID().uuidString).utf8)
+        let setup = Process(), input = Pipe()
+        setup.executableURL = python
+        setup.arguments = ["-B", repository.appendingPathComponent("desktop/Macseed/Tests/SecureRestoreFixture.py").path, repository.path, root.path, age, "--capture-source", "--passphrase-source"]
+        setup.environment = ["HOME": root.path, "PATH": "/usr/bin:/bin", "TMPDIR": root.path, "PYTHONDONTWRITEBYTECODE": "1"]
+        setup.standardInput = input; setup.standardOutput = FileHandle.nullDevice; setup.standardError = FileHandle.nullDevice
+        try setup.run(); try input.fileHandleForWriting.write(contentsOf: keySecret + Data([10]) + bundleSecret)
+        try input.fileHandleForWriting.close(); setup.waitUntilExit()
+        precondition(setup.terminationStatus == 0, "Disposable source setup failed")
+        let core = root.appendingPathComponent("core"), source = root.appendingPathComponent("home"), target = root.appendingPathComponent("target"), bin = root.appendingPathComponent("bin")
+        let ssh = target.appendingPathComponent(".ssh")
+        try fm.createDirectory(at: target, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+        let logs = OperationLogStore(directory: root.appendingPathComponent("operations")), runtime = CoreRuntime(operationLogs: logs)
+        let bundledOnly = CommandLine.arguments.contains("--bundled-age-only")
+        let application = root.appendingPathComponent("Fixture.app")
+        let resources = application.appendingPathComponent("Contents/Resources")
+        let embeddedAge = application.appendingPathComponent("Contents/Helpers/age")
+        if bundledOnly {
+            let preparation = Process()
+            preparation.executableURL = python
+            preparation.arguments = ["-B", repository.appendingPathComponent("desktop/Macseed/prepare-age.py").path, resources.path, "arm64"]
+            preparation.standardOutput = FileHandle.nullDevice; preparation.standardError = FileHandle.nullDevice
+            try preparation.run(); preparation.waitUntilExit(); precondition(preparation.terminationStatus == 0)
+            let descriptor: [String: Any] = ["Version": 1, "Mode": "development", "CoreRoot": core.path, "PythonExecutable": python.path]
+            try PropertyListSerialization.data(fromPropertyList: descriptor, format: .xml, options: 0).write(to: resources.appendingPathComponent("CoreRuntime.plist"))
+            try fm.removeItem(at: bin.appendingPathComponent("age"))
+            try fm.removeItem(at: bin.appendingPathComponent("brew"))
+        }
+        func location(_ home: URL) throws -> CoreLocation {
+            if !bundledOnly { return CoreLocation(root: core, python: python, home: home, temporaryBase: root, toolDirectories: [bin]) }
+            let resolved = try CoreLocationResolver(resources: resources).resolve()
+            precondition(resolved.applicationBundle?.path == application.path)
+            let value = CoreLocation(root: resolved.root, python: resolved.python, home: home, temporaryBase: root,
+                                     toolDirectories: [bin], applicationBundle: resolved.applicationBundle)
+            precondition(value.environment(temporary: root)["MACSEED_DESKTOP_BUNDLE"] == application.path)
+            precondition(!value.environment(temporary: root)["PATH"]!.contains("/opt/homebrew"))
+            return value
+        }
+        var capture = CaptureModel(runtime: runtime, location: try location(source))
+        let restore = RestoreModel(runtime: runtime, location: try location(target))
+        var identities: [CoreCaptureSecureInventory.Identity] = []
+        func snapshot(_ directory: URL) throws -> [String: Data] {
+            var values: [String: Data] = [:]
+            for url in [directory] + ((fm.enumerator(at: directory, includingPropertiesForKeys: nil)?.allObjects as? [URL]) ?? []) {
+                var info = stat(); precondition(lstat(url.path, &info) == 0)
+                var data = Data("\(info.st_dev):\(info.st_ino):\(info.st_mode):\(info.st_uid):\(info.st_nlink):\(info.st_size):\(info.st_mtimespec.tv_sec):\(info.st_mtimespec.tv_nsec):\(info.st_ctimespec.tv_sec):\(info.st_ctimespec.tv_nsec)".utf8)
+                if info.st_mode & S_IFMT == S_IFREG { data += try Data(contentsOf: url) }
+                values[url.path] = data
+            }
+            return values
+        }
+        func staging() throws -> Set<String> {
+            let prefixes = ["ssh-migrate-", "macseed-evidence-", "macseed-capture-", "macseed-restore-", "macseed-secure-"]
+            return Set(try [root, URL(fileURLWithPath: "/private/tmp")].flatMap { base in
+                try fm.contentsOfDirectory(atPath: base.path).filter { name in prefixes.contains { name.hasPrefix($0) } }.map { base.path + "/" + $0 }
+            })
+        }
+        func interact(_ mode: String = "valid", preview: Bool = false) async throws -> [CoreSecureChallenge] {
+            let deadline = Date().addingTimeInterval(120)
+            var seen = Set<String>(), challenges: [CoreSecureChallenge] = []
+            while capture.busy || restore.busy || runtime.isActive {
+                precondition(Date() < deadline, "Secure fixture timed out")
+                if let challenge = runtime.secureChallenge, seen.insert(challenge.challengeID).inserted {
+                    precondition(challenge.operationID == runtime.operationID)
+                    if preview { precondition(challenge.kind == .bundleUnlock, "Preview requested a key passphrase or import consent") }
+                    challenges.append(challenge)
+                    var response = CoreSecureResponse.secret(bundleSecret)
+                    if challenge.kind == .sshKeyUnlock {
+                        guard let identity = challenge.identity, let expected = identities.first(where: { $0.label == identity.name }) else { preconditionFailure("Missing authoritative identity context") }
+                        precondition(identity.keyType == expected.keyType && identity.fingerprint == expected.fingerprint && identity.typeLabel == "Ed25519")
+                        let position = identities.map(\.label).sorted().firstIndex(of: identity.name)! + 1
+                        precondition(identity.position == position && identity.total == identities.count && identity.name != "id_plain")
+                        let secret = identity.name == "id_second" ? Data(keySecret.reversed()) : keySecret
+                        response = .secret(mode == "reject" || (mode == "retry" && challenge.attempt == 1) ? Data("incorrect-fixture-passphrase".utf8) : secret)
+                        if challenge.attempt > 1 { precondition(challenges.dropLast().last?.identity == challenge.identity) }
+                    } else {
+                        precondition(challenge.identity == nil)
+                        if challenge.kind == .importConfirmation {
+                            if mode == "race" { try install(); try Data("preserve changed target".utf8).write(to: ssh.appendingPathComponent("id_disposable")) }
+                            response = .confirmImport
+                        }
+                    }
+                    if mode == "cancel" { response = .cancel }
+                    precondition(runtime.respond(to: challenge, with: response))
+                    precondition(runtime.secureChallenge == nil)
+                }
+                try? await Task.sleep(for: .milliseconds(10))
+            }
+            await capture.waitForCompletion(); await restore.waitForCompletion()
+            precondition(runtime.secureChallenge == nil)
+            if let last = challenges.last { precondition(!runtime.respond(to: last, with: .secret(bundleSecret))) }
+            return challenges
+        }
+        func createBundle(_ name: String) async throws -> URL {
+            let before = try snapshot(source), temporary = try staging()
+            capture.scan(); await capture.waitForCompletion()
+            precondition(capture.state == .review && capture.selectedSecureIdentities.isEmpty)
+            identities = capture.secureInventory.items
+            for category in capture.categories where category.selectable { capture.selectCategory(category.id, included: category.id == "homebrew-packages") }
+            for identity in identities { capture.selectSecureIdentity(identity.id, included: true) }
+            let bundle = root.appendingPathComponent(name + ".mbt")
+            capture.prepare(destination: bundle); await capture.waitForCompletion()
+            precondition(capture.state == .confirmation)
+            capture.create(); let challenges = try await interact()
+            precondition(capture.state == .result && capture.publicationEvidence == .occurred && capture.publication?.bundle.secureComponent == true, "Secure Capture failed")
+            precondition(challenges.filter { $0.kind == .sshKeyUnlock }.count == identities.count - 1 && challenges.last?.kind == .bundleEncrypt)
+            precondition(try! snapshot(source) == before && staging() == temporary)
+            return bundle
+        }
+        func choose(_ bundle: URL, secure: Bool = true) async {
+            restore.choose(bundle); await restore.waitForCompletion()
+            precondition(restore.state == .review && !restore.includeSecure)
+            for area in restore.eligibleAreas { restore.selectArea(area.id, included: false) }
+            restore.selectSecureTransfer(secure)
+        }
+        func clearTarget() throws { if fm.fileExists(atPath: ssh.path) { try fm.removeItem(at: ssh) } }
+        func install() throws {
+            try fm.createDirectory(at: ssh, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+            for identity in identities { for suffix in ["", ".pub"] {
+                let destination = ssh.appendingPathComponent(identity.label + suffix)
+                try Data(contentsOf: source.appendingPathComponent(".ssh/" + identity.label + suffix)).write(to: destination)
+                try fm.setAttributes([.posixPermissions: suffix.isEmpty ? 0o600 : 0o644], ofItemAtPath: destination.path)
+            } }
+        }
+        func preview(_ decision: CoreSecureComparison.Decision?, mode: String = "valid") async throws {
+            let before = try snapshot(target), config = try snapshot(core.appendingPathComponent("config")), temporary = try staging()
+            restore.refreshPreview(); let challenges = try await interact(mode, preview: true)
+            precondition(challenges.map(\.kind) == [.bundleUnlock])
+            precondition(try! snapshot(target) == before && snapshot(core.appendingPathComponent("config")) == config && staging() == temporary, "Preview changed target/configuration or leaked plaintext")
+            if let decision {
+                precondition(restore.state == .preview && restore.preparation?.secureComparison?.decision == decision, "Wrong secure comparison result")
+                let tasks = RestoreTaskPresentation(preview: restore.preview!, plan: restore.preparation!)
+                let secure = tasks.domains.first { $0.id == CoreRestorePreparation.secureDomain }!
+                let counts = RestorePreviewMetrics.counts([secure])
+                precondition(counts.matching == (decision == .allMatch ? 1 : 0) && counts.changes == (decision == .importRequired ? 1 : 0) && counts.attention == (decision == .conflict ? 1 : 0))
+                precondition(RestorePreviewMetrics.badges(secure).map(\.1) == [1])
+                precondition(restore.canRebuild == (decision == .importRequired))
+            } else { precondition(restore.preparation == nil && restore.preview == nil && !restore.canRebuild) }
+            precondition(!runtime.events.contains { $0.type == "secure_publication_started" || $0.type == "operation_record" })
+            let raw = try JSONEncoder().encode(runtime.events.map(\.fields))
+            precondition(identities.allSatisfy { raw.range(of: Data($0.label.utf8)) == nil && raw.range(of: Data($0.fingerprint.utf8)) == nil })
+        }
+        func execute(_ mode: String = "valid") async throws -> [CoreSecureChallenge] {
+            let before = try snapshot(target), temporary = try staging()
+            precondition(restore.canRebuild)
+            restore.requestRebuild(); restore.confirmRebuild()
+            let challenges = try await interact(mode)
+            precondition(restore.state == .result && challenges.first?.kind == .bundleUnlock)
+            let evidence = CoreSecureRestoreEvidence(events: restore.categoryPresentationEvents)
+            if mode == "reject" {
+                precondition(challenges.filter { $0.kind == .sshKeyUnlock }.map(\.attempt) == [1, 2, 3])
+                precondition(!challenges.contains { $0.kind == .importConfirmation } && !evidence.verified && restore.executionResult?.outcome == .failedBeforeMutation)
+                precondition(try! snapshot(target) == before)
+            } else if mode == "race" {
+                precondition(!evidence.verified && restore.executionResult?.outcome != .clean)
+                precondition(try! Data(contentsOf: ssh.appendingPathComponent("id_disposable")) == Data("preserve changed target".utf8))
+            } else {
+                precondition(evidence.verified && restore.executionResult?.outcome == .clean, "Importer evidence/Verification missing")
+                precondition(challenges.filter { $0.kind == .importConfirmation }.count == 1)
+                for identity in identities { for suffix in ["", ".pub"] {
+                    precondition(try! Data(contentsOf: ssh.appendingPathComponent(identity.label + suffix)) == Data(contentsOf: source.appendingPathComponent(".ssh/" + identity.label + suffix)))
+                } }
+            }
+            precondition(try! staging() == temporary, "Execute leaked staging")
+            let raw = try JSONEncoder().encode(runtime.events.map(\.fields))
+            precondition(identities.allSatisfy { raw.range(of: Data($0.label.utf8)) == nil && raw.range(of: Data($0.fingerprint.utf8)) == nil })
+            return challenges
+        }
+        let bundle = try await createBundle("two-keys")
+        precondition(identities.count == 2)
+        print("PASS: production Secure Capture with protected + plain Ed25519; authoritative per-key context; source unchanged")
+        if bundledOnly {
+            await choose(bundle); try await preview(.importRequired)
+            _ = try await execute()
+            await choose(bundle); try await preview(.allMatch)
+            print("PASS: bundled v1.3.2 Capture -> missing Preview -> verified import -> matching Preview, without external age or Homebrew on controlled PATH")
+            let fake = bin.appendingPathComponent("age"), marker = root.appendingPathComponent("age-hijacked")
+            let fakeBody = "#!/bin/sh\ntouch '" + marker.path + "'\nexit 99\n"
+            func installFake() throws {
+                if fm.fileExists(atPath: fake.path) { try fm.removeItem(at: fake) }
+                try Data(fakeBody.utf8).write(to: fake); try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: fake.path)
+            }
+            try installFake()
+            let inheritedPath = ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin"
+            setenv("PATH", bin.path + ":/opt/homebrew/bin:" + inheritedPath, 1)
+            defer { setenv("PATH", inheritedPath, 1) }
+            await choose(bundle); try await preview(.allMatch)
+            precondition(!fm.fileExists(atPath: marker.path))
+            print("PASS: fake age earlier in inherited AND controlled PATH cannot hijack Desktop decryption")
+            // Previous external-age route is used only to create a compatibility
+            // Bundle. It never supplies the packaged executable or Desktop resolver.
+            try fm.removeItem(at: fake); try fm.createSymbolicLink(at: fake, withDestinationURL: URL(fileURLWithPath: age))
+            capture = CaptureModel(runtime: runtime, location: CoreLocation(root: core, python: python, home: source, temporaryBase: root, toolDirectories: [bin]))
+            let legacy = try await createBundle("previous-external-age")
+            await choose(legacy); try await preview(.allMatch)
+            try installFake()
+            capture = CaptureModel(runtime: runtime, location: try location(source))
+            print("PASS: production Bundle encrypted by the previous external-age route decrypts with bundled age")
+            let originalAge = try Data(contentsOf: embeddedAge)
+            for invalid in ["missing", "corrupt"] {
+                if invalid == "missing" { try fm.removeItem(at: embeddedAge) }
+                else { var corrupt = originalAge; corrupt[corrupt.count - 1] ^= 1; try corrupt.write(to: embeddedAge); try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: embeddedAge.path) }
+                let before = try snapshot(target)
+                await choose(bundle); restore.refreshPreview(); let challenges = try await interact()
+                precondition(challenges.isEmpty && restore.state == .failed && restore.technicalReason == "secure_comparison_unavailable" && !restore.canRebuild)
+                precondition(try! snapshot(target) == before)
+                capture.scan(); await capture.waitForCompletion()
+                precondition(capture.state == .review)
+                for category in capture.categories where category.selectable { capture.selectCategory(category.id, included: false) }
+                for identity in capture.secureInventory.items { capture.selectSecureIdentity(identity.id, included: true) }
+                capture.prepare(destination: root.appendingPathComponent(invalid + ".mbt")); await capture.waitForCompletion()
+                precondition(capture.state == .failed && capture.failure?.technicalReason == "age_unavailable")
+                runtime.start(CoreRequest(.capabilities), location: try location(target)); await runtime.waitForCompletion()
+                precondition(runtime.termination?.terminal?.type == "completed")
+                precondition(!fm.fileExists(atPath: marker.path))
+                try originalAge.write(to: embeddedAge); try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: embeddedAge.path)
+            }
+            print("PASS: missing/corrupt bundled age blocks secure work before prompts; ordinary scan/capabilities continue; no external fallback")
+            let forbidden = [keySecret, bundleSecret, Data("-----BEGIN OPENSSH PRIVATE KEY-----".utf8)] + identities.flatMap { [Data($0.label.utf8), Data($0.fingerprint.utf8)] }
+            for entry in try await logs.history() {
+                let report = try await DiagnosticReportBuilder.generate(id: entry.id, environment: .current()) { id, cursor in try await logs.page(id, after: cursor) }
+                precondition(forbidden.allSatisfy { report.utf8.range(of: $0) == nil })
+            }
+            for base in [logs.directory, core.appendingPathComponent("logs")] {
+                for case let file as URL in fm.enumerator(at: base, includingPropertiesForKeys: [.isRegularFileKey])?.allObjects ?? [] {
+                    if (try? file.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true {
+                        let raw = try Data(contentsOf: file); precondition(forbidden.allSatisfy { raw.range(of: $0) == nil })
+                    }
+                }
+            }
+            print("PASS: bundled workflow credentials/key context absent from logs and diagnostics; Preview target/config snapshots and staging checks preserved")
+            return
+        }
+        await choose(bundle)
+        try fm.createDirectory(at: URL(fileURLWithPath: "build/Debug/Stage16HSecureRestore"), withIntermediateDirectories: true)
+        try await secureRestoreLayout(restore, runtime, phase: "passphrase-selection")
+        try await preview(.importRequired)
+        try install(); try await preview(.allMatch)
+        try Data(contentsOf: source.appendingPathComponent(".ssh/id_plain.pub")).write(to: ssh.appendingPathComponent("id_disposable.pub"))
+        try await preview(.conflict)
+        try install(); try fm.removeItem(at: ssh.appendingPathComponent("id_disposable.pub")); try await preview(.conflict)
+        try install(); try fm.setAttributes([.posixPermissions: 0o644], ofItemAtPath: ssh.appendingPathComponent("id_disposable").path); try await preview(.conflict)
+        print("PASS: missing/matching/different/partial/unsafe Preview: Bundle prompt 1, key prompts 0, one metric/pill, no target/config writes or plaintext residue")
+        try clearTarget(); await choose(bundle); try await preview(nil, mode: "cancel")
+        print("PASS: cancelled Preview clears comparison and never presents confirmed result text")
+        await choose(bundle); try await preview(.importRequired)
+        let rejected = try await execute("reject")
+        precondition(rejected.filter { $0.kind == .sshKeyUnlock }.allSatisfy { $0.identity == rejected[1].identity })
+        print("PASS: Execute requires crypto validation; three wrong key passphrases cannot import or produce Verified")
+        await choose(bundle); try await preview(.importRequired)
+        let retried = try await execute("retry")
+        precondition(retried.map(\.kind) == [.bundleUnlock, .sshKeyUnlock, .sshKeyUnlock, .importConfirmation])
+        print("PASS: Execute retry keeps exact name/type/fingerprint/position; one correct unlock; unchanged key encryption; authoritative import Verification")
+        try clearTarget(); await choose(bundle); try await preview(.importRequired)
+        let fresh = try await execute()
+        precondition(fresh.map(\.kind) == [.bundleUnlock, .sshKeyUnlock, .importConfirmation])
+        print("PASS: new operation re-prompts; exact-byte validation evidence is operation-local, no password cache")
+        try clearTarget(); await choose(bundle); try await preview(.importRequired); _ = try await execute("race")
+        print("PASS: target change at confirmation defeats cached proof; conflict bytes preserved, no false Verified")
+        try clearTarget()
+        for suffix in ["", ".pub"] { try fm.copyItem(at: root.appendingPathComponent("disposable_second" + suffix), to: source.appendingPathComponent(".ssh/id_second" + suffix)) }
+        let multiple = try await createBundle("three-keys")
+        await choose(multiple); try await preview(.importRequired)
+        let distinct = try await execute()
+        let keys = distinct.filter { $0.kind == .sshKeyUnlock }
+        precondition(keys.count == 2 && Set(keys.compactMap { $0.identity?.fingerprint }).count == 2 && keys.map(\.attempt) == [1, 1])
+        print("PASS: two distinct protected keys use different passphrases/context; plain key never prompts; no repeated post-import unlock")
+        let forbidden = [keySecret, Data(keySecret.reversed()), bundleSecret, Data("-----BEGIN OPENSSH PRIVATE KEY-----".utf8)] + identities.flatMap { [Data($0.label.utf8), Data($0.fingerprint.utf8)] }
+        for entry in try await logs.history() {
+            let report = try await DiagnosticReportBuilder.generate(id: entry.id, environment: .current()) { id, cursor in try await logs.page(id, after: cursor) }
+            precondition(forbidden.allSatisfy { report.utf8.range(of: $0) == nil })
+        }
+        for base in [logs.directory, core.appendingPathComponent("logs")] {
+            for case let file as URL in fm.enumerator(at: base, includingPropertiesForKeys: [.isRegularFileKey])?.allObjects ?? [] {
+                if (try? file.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true {
+                    let raw = try Data(contentsOf: file); precondition(forbidden.allSatisfy { raw.range(of: $0) == nil })
+                }
+            }
+        }
+        print("PASS: no credentials, transient key context or private bytes in Core/Desktop logs, JSONL interaction events or diagnostics")
+    }
+
+    @MainActor static func secureStartupChecks(repository: URL, python: URL) async throws {
+        setbuf(stdout, nil)
+        let fm = FileManager.default, name = "macseed-secure-startup-" + UUID().uuidString
+        let root = URL(fileURLWithPath: "/private/tmp/" + name)
+        let alias = FileManager.default.temporaryDirectory.appendingPathComponent(name)
+        try fm.createDirectory(at: root, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+        defer { try? fm.removeItem(at: root) }
+        try fm.createDirectory(at: alias, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+        defer { try? fm.removeItem(at: alias) }
+        guard let age = ["/opt/homebrew/bin/age", "/usr/local/bin/age"].first(where: fm.isExecutableFile(atPath:)) else { preconditionFailure("Existing age required; no installation attempted") }
+        let keySecret = Data(("fixture-key-" + UUID().uuidString).utf8), bundleSecret = Data(("fixture-bundle-" + UUID().uuidString).utf8)
+        let setup = Process(), input = Pipe()
+        setup.executableURL = python
+        setup.arguments = ["-B", repository.appendingPathComponent("desktop/Macseed/Tests/SecureRestoreFixture.py").path, repository.path, root.path, age, "--capture-source"]
+        setup.environment = ["HOME": root.path, "PATH": "/usr/bin:/bin", "TMPDIR": root.path, "PYTHONDONTWRITEBYTECODE": "1"]
+        setup.standardInput = input; setup.standardOutput = FileHandle.nullDevice; setup.standardError = FileHandle.nullDevice
+        try setup.run(); try input.fileHandleForWriting.write(contentsOf: keySecret + Data([10]) + bundleSecret)
+        try input.fileHandleForWriting.close(); setup.waitUntilExit()
+        precondition(setup.terminationStatus == 0, "Disposable Capture source setup failed")
+        let core = root.appendingPathComponent("core"), source = root.appendingPathComponent("home"), target = root.appendingPathComponent("target"), bin = root.appendingPathComponent("bin")
+        try fm.createDirectory(at: target, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+        let logs = OperationLogStore(directory: root.appendingPathComponent("operations")), runtime = CoreRuntime(operationLogs: logs)
+        let capture = CaptureModel(runtime: runtime, location: CoreLocation(root: core, python: python, home: source, temporaryBase: root, toolDirectories: [bin]))
+        // Use the actual native /var temporary spelling that earlier /private/tmp
+        // fixtures missed. HOME stays canonical, as required by migration.
+        let restore = RestoreModel(runtime: runtime, location: CoreLocation(root: core, python: python, home: target, temporaryBase: alias, toolDirectories: [bin]))
+        let canonicalTemporary = realpath(alias.path, nil)!
+        precondition(String(cString: canonicalTemporary) != alias.path, "Fixture must exercise the native temporary-directory alias")
+        free(canonicalTemporary)
+        func snapshot(_ directory: URL) throws -> [String: Data] {
+            var values: [String: Data] = [:]
+            for url in [directory] + ((fm.enumerator(at: directory, includingPropertiesForKeys: nil)?.allObjects as? [URL]) ?? []) {
+                var info = stat(); precondition(lstat(url.path, &info) == 0)
+                var data = Data("\(info.st_dev):\(info.st_ino):\(info.st_mode):\(info.st_uid):\(info.st_nlink):\(info.st_size):\(info.st_mtimespec.tv_sec):\(info.st_mtimespec.tv_nsec):\(info.st_ctimespec.tv_sec):\(info.st_ctimespec.tv_nsec)".utf8)
+                if info.st_mode & S_IFMT == S_IFREG { data += try Data(contentsOf: url) }
+                values[url.path] = data
+            }
+            return values
+        }
+        func staging() throws -> Set<String> {
+            Set(try fm.contentsOfDirectory(atPath: "/private/tmp").filter { $0.hasPrefix("ssh-migrate-") || $0.hasPrefix("macseed-evidence-") || $0.hasPrefix("macseed-capture-") })
+                .union(try fm.contentsOfDirectory(atPath: alias.path))
+        }
+        func interact() async -> [CoreSecureChallenge] {
+            let deadline = Date().addingTimeInterval(90)
+            var seen = Set<String>(), challenges: [CoreSecureChallenge] = []
+            while capture.busy || restore.busy || runtime.isActive {
+                if Date() > deadline {
+                    capture.cancel(); restore.cancel(); runtime.cancel(); await runtime.waitForCompletion()
+                    preconditionFailure("Secure startup fixture timed out")
+                }
+                if let challenge = runtime.secureChallenge, seen.insert(challenge.challengeID).inserted {
+                    precondition(challenge.operationID == runtime.operationID && challenge.attempt == 1)
+                    precondition(challenge.kind != .importConfirmation, "Preview must never request import consent")
+                    challenges.append(challenge)
+                    precondition(runtime.respond(to: challenge, with: .secret(challenge.kind == .sshKeyUnlock ? keySecret : bundleSecret)))
+                    precondition(runtime.secureChallenge == nil)
+                }
+                try? await Task.sleep(for: .milliseconds(10))
+            }
+            await capture.waitForCompletion(); await restore.waitForCompletion()
+            precondition(runtime.secureChallenge == nil)
+            if let last = challenges.last { precondition(!runtime.respond(to: last, with: .secret(bundleSecret))) }
+            return challenges
+        }
+        let sourceBefore = try snapshot(source)
+        func createBundle(secure: Bool) async throws -> URL {
+            capture.scan(); await capture.waitForCompletion()
+            precondition(capture.state == .review && capture.selectedSecureIdentities.isEmpty && capture.secureInventory.items.count == 1)
+            for category in capture.categories where category.selectable { capture.selectCategory(category.id, included: category.id == "homebrew-packages") }
+            if secure { capture.selectSecureIdentity(capture.secureInventory.items[0].id, included: true) }
+            let bundle = root.appendingPathComponent(secure ? "captured.mbt" : "ordinary.mbt")
+            capture.prepare(destination: bundle); await capture.waitForCompletion()
+            precondition(capture.state == .confirmation, "Production Capture preparation failed")
+            capture.create(); let challenges = await interact()
+            precondition(capture.state == .result && capture.publicationEvidence == .occurred && capture.publication?.bundle.secureComponent == secure)
+            precondition(secure ? challenges.map(\.kind) == [.sshKeyUnlock, .bundleEncrypt] : challenges.isEmpty)
+            let after = try snapshot(source); precondition(after == sourceBefore)
+            return bundle
+        }
+        let bundle = try await createBundle(secure: true)
+        print("PASS: Bundle created through native production Secure Capture/Execute, protected-key unlock and age encryption")
+        restore.choose(bundle); await restore.waitForCompletion()
+        precondition(restore.state == .review && !restore.includeSecure && restore.inspection?.secureComponent == true)
+        restore.selectSecureTransfer(true)
+        func preview(_ expected: CoreSecureComparison.Decision?, failure: String? = nil) async throws {
+            let before = try snapshot(target), temporary = try staging()
+            restore.refreshPreview(); let challenges = await interact()
+            let after = try snapshot(target), remaining = try staging()
+            precondition(before == after, "Preview changed target bytes or metadata")
+            precondition(temporary == remaining, "Preview leaked private staging")
+            precondition(runtime.termination?.processLaunched == true && runtime.termination?.terminal != nil)
+            if let expected {
+                precondition(restore.state == .preview && restore.preparation?.secureComparison?.decision == expected, "Production comparison failed: \(restore.technicalReason ?? "unknown")")
+                precondition(challenges.allSatisfy { $0.kind == .bundleUnlock } && !challenges.isEmpty)
+                precondition(runtime.events.contains { $0.type == "secure_challenge_waiting" })
+                let plan = restore.preparation!, tasks = RestoreTaskPresentation(preview: restore.preview!, plan: plan)
+                let secure = tasks.domains.first { $0.id == CoreRestorePreparation.secureDomain }!, counts = RestorePreviewMetrics.counts([secure])
+                precondition(counts.matching == (expected == .allMatch ? 1 : 0) && counts.changes == (expected == .importRequired ? 1 : 0) && counts.attention == (expected == .conflict ? 1 : 0))
+                precondition(RestorePreviewMetrics.badges(secure).map(\.1) == [1])
+            } else {
+                precondition(restore.state == .failed && restore.technicalReason == failure, "Unexpected early failure code")
+                precondition(challenges.isEmpty && !runtime.events.contains { $0.type == "secure_challenge_waiting" })
+                precondition(runtime.events.contains { $0.type == "phase_started" && $0.phase == "secure_compare" })
+                precondition(runtime.mutationMayHaveStarted == false && runtime.publicationOccurred == false)
+                if failure == "secure_comparison_failed" { precondition(restore.failure?.contains("temporary-folder access") == true) }
+            }
+            precondition(!runtime.events.contains { $0.type == "secure_publication_started" || $0.type == "operation_record" })
+        }
+        if CommandLine.arguments.contains("--expect-aliased-failure") {
+            try await preview(nil, failure: "secure_payload_invalid")
+            print("REPRODUCED: aliased native temporary parent fails before bundle_unlock with secure_payload_invalid; target unchanged")
+            return
+        }
+        try await preview(.importRequired)
+        print("PASS: system temporary alias reaches the real Bundle challenge; missing target -> Changes Planned +1; no writes/plaintext residue")
+        let ssh = target.appendingPathComponent(".ssh")
+        try fm.createDirectory(at: ssh, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+        for suffix in ["", ".pub"] { try fm.copyItem(at: source.appendingPathComponent(".ssh/id_disposable" + suffix), to: ssh.appendingPathComponent("id_disposable" + suffix)) }
+        try await preview(.allMatch)
+        print("PASS: matching target -> Already Match +1; target bytes/metadata unchanged; no import consent or retained challenge")
+        try Data("disposable-conflict".utf8).write(to: ssh.appendingPathComponent("id_disposable.pub"))
+        try await preview(.conflict)
+        print("PASS: conflicting target -> Needs Attention +1; conflict preserved; private staging cleaned")
+        restore.back(); restore.selectSecureTransfer(false); restore.refreshPreview()
+        let off = await interact()
+        precondition(off.isEmpty && restore.state == .preview && runtime.operation == .restorePrepare && restore.preparation?.includeSecure == false)
+        let ordinary = try await createBundle(secure: false)
+        restore.choose(ordinary); await restore.waitForCompletion(); restore.selectSecureTransfer(true)
+        precondition(!restore.includeSecure && restore.inspection?.secureComponent == false)
+        restore.refreshPreview(); let absent = await interact()
+        precondition(absent.isEmpty && restore.state == .preview && runtime.operation == .restorePrepare)
+        print("PASS: Secure OFF and Bundle without secure.age retain ordinary Preview without Compare or password prompts")
+        restore.choose(bundle); await restore.waitForCompletion(); restore.selectSecureTransfer(true)
+        let launcher = core.appendingPathComponent("scripts/ssh-identity-migrate.sh"), originalLauncher = try Data(contentsOf: core.appendingPathComponent("scripts/ssh-identity-migrate.sh"))
+        try Data("#!/bin/sh\nexit 2\n".utf8).write(to: launcher)
+        try await preview(nil, failure: "secure_comparison_failed")
+        try originalLauncher.write(to: launcher)
+        let df = bin.appendingPathComponent("df")
+        try Data("#!/bin/sh\nexit 2\n".utf8).write(to: df); try fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: df.path)
+        try await preview(nil, failure: "secure_comparison_failed")
+        try fm.removeItem(at: df)
+        print("PASS: early child exit and unavailable private staging report comparison failure before challenge, not malformed payload")
+        let adapter = core.appendingPathComponent("modules/core/application-interface/secure.py"), originalAdapter = try String(contentsOf: core.appendingPathComponent("modules/core/application-interface/secure.py"), encoding: .utf8)
+        let marker = "                elif compare:\n"
+        precondition(originalAdapter.components(separatedBy: marker).count == 2)
+        for injection in ["package.rename(package.with_suffix('.original')); package.symlink_to(package.with_suffix('.original'))", "os.link(package, package.with_suffix('.linked'))", "os.chmod(package, 0o644)"] {
+            try originalAdapter.replacingOccurrences(of: marker, with: marker + "                    " + injection + "\n").write(to: adapter, atomically: false, encoding: .utf8)
+            try await preview(nil, failure: "secure_comparison_failed")
+        }
+        try originalAdapter.write(to: adapter, atomically: false, encoding: .utf8)
+        print("PASS: symlink, hardlink and unsafe package mode still reject before decryption; strict input checks retained")
+        let secrets = [keySecret, bundleSecret, Data("id_disposable".utf8), Data(bundle.path.utf8), Data("-----BEGIN OPENSSH PRIVATE KEY-----".utf8)]
+        for entry in try await logs.history() {
+            let report = try await DiagnosticReportBuilder.generate(id: entry.id, environment: .current()) { id, cursor in try await logs.page(id, after: cursor) }
+            precondition(secrets.allSatisfy { report.utf8.range(of: $0) == nil })
+        }
+        for base in [logs.directory, core.appendingPathComponent("logs")] {
+            for case let file as URL in fm.enumerator(at: base, includingPropertiesForKeys: [.isRegularFileKey])?.allObjects ?? [] {
+                if (try? file.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true {
+                    let raw = try Data(contentsOf: file); precondition(secrets.allSatisfy { raw.range(of: $0) == nil })
+                }
+            }
+        }
+        print("PASS: no fixture credentials, identity names, key material or Bundle paths in logs/diagnostics")
+    }
+
+    @MainActor static func secureRequestBudgetChecks(repository: URL, python: URL) async throws {
+        setbuf(stdout, nil)
+        let fm = FileManager.default
+        let root = URL(fileURLWithPath: "/private/tmp/macseed-request-budget-" + UUID().uuidString)
+        try fm.createDirectory(at: root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        defer { try? fm.removeItem(at: root) }
+        guard let age = ["/opt/homebrew/bin/age", "/usr/local/bin/age"].first(where: fm.isExecutableFile(atPath:)) else { preconditionFailure("Existing age required; no installation attempted") }
+        let keySecret = Data(("fixture-key-" + UUID().uuidString).utf8), bundleSecret = Data(("fixture-bundle-" + UUID().uuidString).utf8)
+        let setup = Process(), input = Pipe()
+        setup.executableURL = python
+        setup.arguments = ["-B", repository.appendingPathComponent("desktop/Macseed/Tests/SecureRestoreFixture.py").path, repository.path, root.path, age, "--large-selection"]
+        setup.environment = ["HOME": root.path, "PATH": "/usr/bin:/bin", "TMPDIR": root.path, "PYTHONDONTWRITEBYTECODE": "1"]
+        setup.standardInput = input; setup.standardOutput = FileHandle.nullDevice; setup.standardError = FileHandle.nullDevice
+        try setup.run(); try input.fileHandleForWriting.write(contentsOf: keySecret + Data([10]) + bundleSecret)
+        try input.fileHandleForWriting.close(); setup.waitUntilExit()
+        precondition(setup.terminationStatus == 0, "Disposable large Bundle setup failed")
+        let core = root.appendingPathComponent("core"), home = root.appendingPathComponent("home"), bin = root.appendingPathComponent("bin"), bundle = root.appendingPathComponent("large.mbt")
+        let logs = OperationLogStore(directory: root.appendingPathComponent("operations")), runtime = CoreRuntime(operationLogs: logs)
+        let location = CoreLocation(root: core, python: python, home: home, temporaryBase: root, toolDirectories: [bin])
+        let model = RestoreModel(runtime: runtime, location: location)
+        func snapshot() throws -> [String: Data] {
+            var values: [String: Data] = [:]
+            for url in [home] + ((fm.enumerator(at: home, includingPropertiesForKeys: nil)?.allObjects as? [URL]) ?? []) {
+                var info = stat(); precondition(lstat(url.path, &info) == 0)
+                var data = Data("\(info.st_dev):\(info.st_ino):\(info.st_mode):\(info.st_uid):\(info.st_nlink):\(info.st_size):\(info.st_mtimespec.tv_sec):\(info.st_mtimespec.tv_nsec):\(info.st_ctimespec.tv_sec):\(info.st_ctimespec.tv_nsec)".utf8)
+                if info.st_mode & S_IFMT == S_IFREG { data += try Data(contentsOf: url) }
+                values[url.path] = data
+            }
+            return values
+        }
+        func rawSize(_ request: CoreRequest) throws -> Int {
+            let value: CoreJSON = .object(["protocol_version": .integer(1), "operation_id": .string(request.operationID),
+                "operation": .string(request.command.operation.rawValue), "parameters": try request.command.parameters()!])
+            return try JSONEncoder().encode(value).count
+        }
+        func interact(cancel: Bool = false) async -> [CoreSecureChallenge] {
+            // Native Preview runs Prepare and Compare sequentially; both perform
+            // authoritative inspection of all 93 selected requirements.
+            let deadline = Date().addingTimeInterval(180)
+            var seen = Set<String>(), challenges: [CoreSecureChallenge] = []
+            while model.busy || runtime.isActive {
+                precondition(Date() < deadline, "Focused request-budget operation timed out")
+                if let challenge = runtime.secureChallenge, seen.insert(challenge.challengeID).inserted {
+                    challenges.append(challenge)
+                    precondition(challenge.kind != .importConfirmation, "Read-only/cancelled fixture must not reach import consent")
+                    if cancel { runtime.cancelSecureChallenge(challenge) }
+                    else { runtime.respond(to: challenge, with: .secret(challenge.kind == .bundleUnlock ? bundleSecret : keySecret)) }
+                }
+                try? await Task.sleep(for: .milliseconds(10))
+            }
+            await model.waitForCompletion()
+            precondition(runtime.secureChallenge == nil)
+            return challenges
+        }
+        model.choose(bundle); await model.waitForCompletion()
+        precondition(model.state == .review && !model.includeSecure)
+        for area in model.eligibleAreas { model.selectArea(area.id, included: ["workspace-folders", "git-repositories"].contains(area.id)) }
+        let packages = model.areas.first { $0.id == "homebrew-packages" }!.items.map(\.id).sorted()
+        precondition(packages.count == 5)
+        for item in packages.prefix(3) { model.selectItem("homebrew-packages", item: item, included: true) }
+        let canonical = model.canonicalSelection, compact = model.selection
+        precondition(canonical.items.values.reduce(0) { $0 + $1.count } == 93)
+        precondition(canonical.items.values.flatMap { $0 }.allSatisfy { $0.count == 72 && $0.hasPrefix("restore:") })
+        precondition(compact.categories == ["git-repositories", "workspace-folders"] && compact.items == ["homebrew-packages": Array(packages.prefix(3))])
+        let before = try snapshot()
+        model.refreshPreview(); let ordinary = await interact()
+        precondition(model.state == .preview && ordinary.isEmpty && runtime.operation == .restorePrepare, "Ordinary fixture Preview failed: \(model.technicalReason ?? "unknown")")
+        precondition(model.preparation?.selection == canonical && model.preparation?.includeSecure == false)
+        model.back(); model.selectSecureTransfer(true); model.refreshPreview()
+        let challenges = await interact()
+        precondition(model.state == .preview, "Large Preview failed: \(model.technicalReason ?? "unknown")")
+        let plan = model.preparation!, comparison = plan.secureComparison!
+        precondition(plan.selection == canonical && comparison.selection == compact && comparison.decision == .importRequired)
+        try comparison.validate(plan: plan, operationID: runtime.operationID!, requestSelection: compact)
+        precondition(challenges.allSatisfy { $0.kind == .bundleUnlock } && !challenges.isEmpty)
+        precondition(runtime.termination?.processLaunched == true && runtime.events.first?.type == "started")
+        precondition(runtime.events.contains { $0.type == "phase_started" && $0.phase == "secure_compare" })
+        precondition(runtime.termination?.terminal?.type == "completed")
+        let after = try snapshot(); precondition(after == before, "Large Preview modified target HOME")
+        let compare = CoreRequest(.secureRestoreCompare(path: bundle.path, preparedID: plan.preparedPlanID, selection: compact), operationID: runtime.operationID!)
+        let oldCompare = CoreRequest(.secureRestoreCompare(path: bundle.path, preparedID: plan.preparedPlanID, selection: canonical), operationID: compare.operationID)
+        let oldBytes = try rawSize(oldCompare), newBytes = try compare.encoded().count
+        let fullSelectionBytes = try JSONEncoder().encode(canonical).count, compactSelectionBytes = try JSONEncoder().encode(compact).count
+        precondition(oldBytes > 4096 && newBytes <= 4096)
+        let execute = CoreRequest(.restoreExecute(path: bundle.path, disabledGroups: [], includeSecure: true, preparedID: plan.preparedPlanID, selection: compact, secureComparison: comparison), operationID: compare.operationID)
+        let oldReceipt = CoreSecureComparison(decision: comparison.decision, targetState: comparison.targetState, sourceFingerprint: comparison.sourceFingerprint, preparedPlanID: comparison.preparedPlanID, selection: canonical, includeSecure: true, comparisonOperationID: comparison.comparisonOperationID)
+        let oldExecute = CoreRequest(.restoreExecute(path: bundle.path, disabledGroups: [], includeSecure: true, preparedID: plan.preparedPlanID, selection: compact, secureComparison: oldReceipt), operationID: compare.operationID)
+        let executeBytes = try execute.encoded().count
+        print("PASS: real Core inventory: 93 selected / 95 available, two complete item domains, explicit 3-of-5 subset, Advanced scope, Secure opt-in")
+        print("SIZE: Compare \(oldBytes) -> \(newBytes) bytes; selection \(fullSelectionBytes) -> \(compactSelectionBytes); Execute \(try rawSize(oldExecute)) -> \(executeBytes); limit 4096")
+        print("PASS: ordinary Prepare unchanged; production Compare launched, started, challenged Bundle over FD and completed; canonical scope exact; no target writes")
+        let secure = RestoreTaskPresentation(preview: model.preview!, plan: plan).domains.first { $0.id == CoreRestorePreparation.secureDomain }!
+        precondition(RestorePreviewMetrics.counts([secure]).changes == 1 && RestorePreviewMetrics.badges(secure).map(\.1) == [1])
+        // Launch Execute only to its first unlock, then cancel. No SSH import,
+        // package installation or repository clone is permitted in this fixture.
+        precondition(model.canRebuild, "Large selected plan should be executable in this fixture")
+        model.requestRebuild(); model.confirmRebuild(); let executionChallenges = await interact(cancel: true)
+        precondition(executionChallenges.first?.kind == .bundleUnlock && runtime.termination?.processLaunched == true)
+        precondition(!runtime.events.contains { $0.phase == "bootstrap" || $0.type == "secure_publication_started" })
+        let afterCancel = try snapshot(); precondition(afterCancel == before)
+        print("PASS: compact secure receipt accepted by production Execute through fresh preparation/binding; cancel before import preserves HOME")
+        // Explicit partial lists cannot be widened to whole domains to fit the budget.
+        let huge = CoreRestoreSelection(categories: [], items: ["workspace-folders": Array(canonical.items["workspace-folders"]!.dropLast()),
+            "git-repositories": Array(canonical.items["git-repositories"]!.dropLast()), "homebrew-packages": Array(packages.prefix(3))])
+        let unsupported = CoreRequest(.secureRestoreCompare(path: bundle.path, preparedID: plan.preparedPlanID, selection: huge))
+        precondition(try! rawSize(unsupported) > 4096)
+        runtime.start(unsupported, location: location); await runtime.waitForCompletion()
+        precondition(runtime.error == .requestTooLarge && runtime.events.isEmpty && runtime.termination?.processLaunched == false)
+        let rejected = try await logs.history().first { $0.header.operationID?.uuidString == unsupported.operationID }!.finish!
+        precondition(rejected.failedBeforeLaunch && OperationLogPresentation.outcome(rejected) == "Failed Before Launch")
+        precondition(rejected.verificationStatus == "not_run" && rejected.runtimeError == "request_too_large")
+        print("PASS: genuinely oversized partial whitelist rejected before spawn; no Core events, Failed Before Launch, Verification Not Run")
+        let subset = CoreRestoreSelection(categories: compact.categories, items: ["homebrew-packages": Array(packages.prefix(2))])
+        for request in [CoreRequest(.secureRestoreCompare(path: bundle.path, preparedID: plan.preparedPlanID, selection: subset)),
+                        CoreRequest(.secureRestoreCompare(path: bundle.path, preparedID: String(repeating: "f", count: 64), selection: compact))] {
+            runtime.start(request, location: location); await runtime.waitForCompletion()
+            precondition(runtime.termination?.processLaunched == true && runtime.termination?.terminal?.code == "stale_plan" && runtime.secureChallenge == nil)
+        }
+        let original = try Data(contentsOf: bundle)
+        try (original + Data(repeating: 0, count: 512)).write(to: bundle)
+        runtime.start(compare, location: location); await runtime.waitForCompletion()
+        precondition(runtime.termination?.terminal?.code == "stale_plan" && runtime.secureChallenge == nil)
+        try original.write(to: bundle)
+        print("PASS: changed selection, prepared ID and Bundle still reject before secure input")
+        let adapter = core.appendingPathComponent("modules/core/application-interface/core.py"), originalAdapter = try Data(contentsOf: core.appendingPathComponent("modules/core/application-interface/core.py"))
+        try Data("import sys\nsys.exit(2)\n".utf8).write(to: adapter)
+        let interrupted = CoreRequest(.secureRestoreCompare(path: bundle.path, preparedID: plan.preparedPlanID, selection: compact))
+        runtime.start(interrupted, location: location); await runtime.waitForCompletion()
+        try originalAdapter.write(to: adapter)
+        precondition(runtime.events.isEmpty && runtime.termination?.processLaunched == true && runtime.termination?.terminal == nil)
+        let interruptedFinish = try await logs.history().first { $0.header.operationID?.uuidString == interrupted.operationID }!.finish!
+        precondition(!interruptedFinish.failedBeforeLaunch && OperationLogPresentation.outcome(interruptedFinish) == "Interrupted or Unknown")
+        print("PASS: launched process without valid terminal evidence remains Interrupted or Unknown")
+        let secrets = [keySecret, bundleSecret, Data(bundle.path.utf8), Data("id_disposable".utf8), Data("-----BEGIN OPENSSH PRIVATE KEY-----".utf8)]
+        for entry in try await logs.history() {
+            let report = try await DiagnosticReportBuilder.generate(id: entry.id, environment: .current()) { id, cursor in try await logs.page(id, after: cursor) }
+            precondition(secrets.allSatisfy { report.utf8.range(of: $0) == nil })
+            if entry.header.operationID?.uuidString == unsupported.operationID {
+                precondition(report.text.contains("Process Result: Failed Before Launch") && report.text.contains("Reason: request_too_large") && report.text.contains("Terminal validity: Not applicable (not launched)"))
+            }
+        }
+        for base in [logs.directory, core.appendingPathComponent("logs")] {
+            for case let file as URL in fm.enumerator(at: base, includingPropertiesForKeys: [.isRegularFileKey])?.allObjects ?? [] {
+                if (try? file.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true {
+                    let raw = try Data(contentsOf: file)
+                    precondition(secrets.allSatisfy { raw.range(of: $0) == nil })
+                }
+            }
+        }
+        print("PASS: request contents, Bundle path, identity names, key material and passphrases absent from logs/reports")
+    }
+
+    @MainActor static func secureComparisonChecks(repository: URL, python: URL) async throws {
+        setbuf(stdout, nil)
+        let fm = FileManager.default
+        let root = URL(fileURLWithPath: "/private/tmp/macseed-native-secure-compare-" + UUID().uuidString)
+        try fm.createDirectory(at: root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        defer { try? fm.removeItem(at: root) }
+        guard let age = ["/opt/homebrew/bin/age", "/usr/local/bin/age"].first(where: fm.isExecutableFile(atPath:)) else {
+            preconditionFailure("Existing age required; no installation attempted")
+        }
+        let keySecret = Data(("fixture-key-" + UUID().uuidString).utf8), bundleSecret = Data(("fixture-bundle-" + UUID().uuidString).utf8)
+        let setup = Process(), input = Pipe()
+        setup.executableURL = python
+        setup.arguments = ["-B", repository.appendingPathComponent("desktop/Macseed/Tests/SecureRestoreFixture.py").path, repository.path, root.path, age, "--two-identities"]
+        setup.environment = ["HOME": root.path, "PATH": "/usr/bin:/bin", "TMPDIR": root.path, "PYTHONDONTWRITEBYTECODE": "1"]
+        setup.standardInput = input; setup.standardOutput = FileHandle.nullDevice; setup.standardError = FileHandle.nullDevice
+        try setup.run(); try input.fileHandleForWriting.write(contentsOf: keySecret + Data([10]) + bundleSecret)
+        try input.fileHandleForWriting.close(); setup.waitUntilExit()
+        precondition(setup.terminationStatus == 0, "Disposable setup failed")
+        let core = root.appendingPathComponent("core"), home = root.appendingPathComponent("home"), bin = root.appendingPathComponent("bin")
+        let bundle = root.appendingPathComponent("secure.mbt"), ordinary = root.appendingPathComponent("ordinary.mbt"), ssh = home.appendingPathComponent(".ssh")
+        let logs = OperationLogStore(directory: root.appendingPathComponent("operations")), clock = SecureClock()
+        let runtime = CoreRuntime(operationLogs: logs, secureClock: { clock.now() })
+        let location = CoreLocation(root: core, python: python, home: home, temporaryBase: root, toolDirectories: [bin])
+        let model = RestoreModel(runtime: runtime, location: location)
+        let output = URL(fileURLWithPath: "build/Debug/Stage16HSecureRestore")
+        try fm.createDirectory(at: output, withIntermediateDirectories: true)
+        func snapshot() throws -> [String: Data] {
+            var result: [String: Data] = [:]
+            for base in [home, core.appendingPathComponent("config")] {
+                let urls = [base] + ((fm.enumerator(at: base, includingPropertiesForKeys: nil)?.allObjects as? [URL]) ?? [])
+                for url in urls {
+                    var value = stat()
+                    precondition(lstat(url.path, &value) == 0)
+                    let stamp = "\(value.st_dev):\(value.st_ino):\(value.st_mode):\(value.st_uid):\(value.st_nlink):\(value.st_size):\(value.st_mtimespec.tv_sec):\(value.st_mtimespec.tv_nsec):\(value.st_ctimespec.tv_sec):\(value.st_ctimespec.tv_nsec)"
+                    var bytes = Data(stamp.utf8)
+                    if value.st_mode & S_IFMT == S_IFREG { bytes += try Data(contentsOf: url) }
+                    result[url.path] = bytes
+                }
+            }
+            return result
+        }
+        func stages() throws -> Set<String> {
+            Set(try fm.contentsOfDirectory(atPath: "/private/tmp").filter { $0.hasPrefix("ssh-migrate-") || $0.hasPrefix("macseed-evidence-") })
+        }
+        func choose(_ source: URL? = nil, secure: Bool = true, workspace: Bool = false) async {
+            model.choose(source ?? bundle); await model.waitForCompletion()
+            precondition(model.state == .review && !model.includeSecure && model.preparation == nil)
+            for area in model.eligibleAreas { model.selectArea(area.id, included: workspace && area.id == "workspace-folders") }
+            model.selectSecureTransfer(secure)
+        }
+        func interact(_ mode: String = "valid", preparing: Bool = true) async -> [CoreSecureChallenge] {
+            var seen = Set<String>(), challenges: [CoreSecureChallenge] = []
+            var wrongKinds = Set<CoreSecureChallenge.Kind>()
+            let deadline = Date().addingTimeInterval(65)
+            while (preparing ? model.state == .preparing : model.state == .rebuilding) || runtime.isActive {
+                precondition(Date() < deadline, "Focused operation exceeded deadline")
+                if let challenge = runtime.secureChallenge, seen.insert(challenge.challengeID).inserted {
+                    challenges.append(challenge)
+                    if preparing { precondition(challenge.kind != .importConfirmation && runtime.operation == .secureRestoreCompare) }
+                    if mode == "cancel" { runtime.cancelSecureChallenge(challenge) }
+                    else if mode == "timeout" { clock.expire() }
+                    else if challenge.kind == .importConfirmation {
+                        if mode == "change-at-confirm" { try! install(second: false) }
+                        runtime.respond(to: challenge, with: .confirmImport)
+                    }
+                    else if mode == "reject" || (mode == "retry" && wrongKinds.insert(challenge.kind).inserted) {
+                        runtime.respond(to: challenge, with: .secret(Data("incorrect-fixture-input".utf8)))
+                    } else { runtime.respond(to: challenge, with: .secret(challenge.kind == .bundleUnlock ? bundleSecret : keySecret)) }
+                }
+                try? await Task.sleep(for: .milliseconds(12))
+            }
+            await model.waitForCompletion()
+            precondition(runtime.secureChallenge == nil)
+            return challenges
+        }
+        @discardableResult func preview(_ decision: CoreSecureComparison.Decision?, mode: String = "valid", label: String) async throws -> [CoreSecureChallenge] {
+            let before = try snapshot(), temporary = try stages()
+            model.refreshPreview()
+            let challenges = await interact(mode)
+            let after = try snapshot()
+            precondition(after == before, "Preview modified target/configuration: \(label)")
+            let remaining = try stages()
+            precondition(remaining == temporary, "Preview leaked private staging: \(label)")
+            if let decision {
+                precondition(model.state == .preview && model.preparation?.secureComparison?.decision == decision, "Wrong comparison: \(label), state \(model.state), reason \(model.technicalReason ?? "none")")
+                let plan = model.preparation!, tasks = RestoreTaskPresentation(preview: model.preview!, plan: plan)
+                let secure = tasks.domains.first { $0.id == CoreRestorePreparation.secureDomain }!
+                let counts = RestorePreviewMetrics.counts([secure])
+                precondition(counts.matching == (decision == .allMatch ? 1 : 0))
+                precondition(counts.changes == (decision == .importRequired ? 1 : 0))
+                precondition(counts.attention == (decision == .conflict ? 1 : 0))
+                precondition(RestorePreviewMetrics.badges(secure).map(\.1) == [1])
+                precondition(challenges.allSatisfy { $0.kind == .bundleUnlock } && !challenges.isEmpty)
+                precondition(!runtime.events.contains { $0.type == "secure_publication_started" || $0.type == "operation_record" })
+            } else {
+                precondition(model.state == .failed || model.state == .cancelled)
+                precondition(model.preparation == nil && model.preview == nil && !model.canRebuild)
+            }
+            print("PASS: \(label); target content/metadata and configuration unchanged; private staging cleaned")
+            return challenges
+        }
+        func clearTarget() throws { if fm.fileExists(atPath: ssh.path) { try fm.removeItem(at: ssh) } }
+        func install(_ first: Bool = true, second: Bool = true) throws {
+            try fm.createDirectory(at: ssh, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+            for (enabled, source, name) in [(first, "disposable_identity", "id_disposable"), (second, "disposable_second", "id_second")] where enabled {
+                for suffix in ["", ".pub"] {
+                    let target = ssh.appendingPathComponent(name + suffix)
+                    try Data(contentsOf: root.appendingPathComponent(source + suffix)).write(to: target)
+                    try fm.setAttributes([.posixPermissions: suffix.isEmpty ? 0o600 : 0o644], ofItemAtPath: target.path)
+                }
+            }
+        }
+        if CommandLine.arguments.contains("--secure-compare-binding-only") {
+            await choose()
+            try await preview(.importRequired, label: "Fresh comparison for Core binding checks")
+            let bound = model.preparation!, before = try snapshot()
+            let staleRequests: [CoreCommand] = [
+                .secureRestoreCompare(path: bundle.path, preparedID: String(repeating: "f", count: 64), selection: model.canonicalSelection),
+                .secureRestoreCompare(path: bundle.path, preparedID: bound.preparedPlanID,
+                    selection: .init(categories: [], items: ["workspace-folders": model.areas.first { $0.id == "workspace-folders" }!.items.map(\.id)]))]
+            for request in staleRequests {
+                runtime.start(CoreRequest(request), location: location); await runtime.waitForCompletion()
+                precondition(runtime.termination?.terminal?.code == "stale_plan" && runtime.secureChallenge == nil)
+            }
+            let original = try Data(contentsOf: bundle)
+            try (original + Data(repeating: 0, count: 512)).write(to: bundle)
+            runtime.start(CoreRequest(.secureRestoreCompare(path: bundle.path, preparedID: bound.preparedPlanID, selection: model.canonicalSelection)), location: location)
+            await runtime.waitForCompletion()
+            precondition(runtime.termination?.terminal?.code == "stale_plan" && runtime.secureChallenge == nil)
+            try original.write(to: bundle)
+            let after = try snapshot(); precondition(after == before)
+            print("PASS: Core comparison rejects changed prepared ID, selection and Bundle before any unlock or target mutation")
+            await choose(workspace: true)
+            try await preview(.importRequired, label: "Mixed ordinary plus secure planned work")
+            let counts = RestorePreviewMetrics.counts(RestoreTaskPresentation(preview: model.preview!, plan: model.preparation!).domains)
+            precondition(counts.changes == 2 && counts.matching == 0 && counts.attention == 0)
+            model.requestRebuild(); model.confirmRebuild(); let challenges = await interact(preparing: false)
+            precondition(challenges.filter { $0.kind == .importConfirmation }.count == 1)
+            precondition(model.executionResult?.outcome == .clean && CoreSecureRestoreEvidence(events: model.categoryPresentationEvents).verified)
+            precondition(fm.fileExists(atPath: home.appendingPathComponent("Projects").path))
+            print("PASS: authenticated missing-state digest permits explicit import and Verification before dependent ordinary work")
+            try clearTarget()
+            await choose(); try await preview(.importRequired, label: "Fresh comparison before confirmation-time target change")
+            model.requestRebuild(); model.confirmRebuild(); _ = await interact("change-at-confirm", preparing: false)
+            precondition(runtime.termination?.terminal?.code == "secure_target_changed")
+            precondition(!runtime.events.contains { $0.type == "secure_publication_started" })
+            precondition(!fm.fileExists(atPath: ssh.appendingPathComponent("id_second").path))
+            precondition(try! Data(contentsOf: ssh.appendingPathComponent("id_disposable")) == Data(contentsOf: root.appendingPathComponent("disposable_identity")))
+            print("PASS: confirmation-time target change rejects import and preserves the changed target")
+            return
+        }
+        await choose(ordinary, workspace: true)
+        precondition(!model.includeSecure)
+        model.refreshPreview(); let absent = await interact()
+        precondition(absent.isEmpty && runtime.operation == .restorePrepare && model.state == .preview)
+        await choose(secure: false, workspace: true)
+        model.refreshPreview(); let off = await interact()
+        precondition(off.isEmpty && runtime.operation == .restorePrepare && model.preparation?.secureComparison == nil)
+        print("PASS: absent secure.age / Secure OFF retain ordinary preparation without a secure operation or prompt")
+        await choose()
+        let retry = try await preview(.importRequired, mode: "retry", label: "Automatic Preview, missing identities, Bundle-only retry")
+        precondition(retry.filter { $0.attempt == 2 }.count == 1 && model.canRebuild)
+        try await secureRestoreLayout(model, runtime, phase: "compare-missing")
+        let oldComparison = model.preparation!.secureComparison!
+        model.back(); model.selectSecureTransfer(false)
+        precondition(model.preparation == nil && model.preview == nil)
+        model.selectSecureTransfer(true)
+        try await preview(.importRequired, label: "Fresh Preview replaces comparison operation binding")
+        precondition(model.preparation!.secureComparison!.comparisonOperationID != oldComparison.comparisonOperationID)
+        // Changing the target after Preview must fail closed through the real importer.
+        try install()
+        model.requestRebuild(); model.confirmRebuild(); _ = await interact(preparing: false)
+        precondition(runtime.termination?.terminal?.code == "secure_target_changed")
+        precondition(!runtime.events.contains { $0.type == "secure_publication_started" })
+        print("PASS: changed target rejected by Execute before secure mutation")
+        await choose()
+        try await preview(.allMatch, label: "All identities match: one green requirement and secure-only no-op")
+        precondition(!model.canRebuild && !model.preparation!.hasComparedExecutableChanges)
+        model.requestRebuild(); precondition(model.state == .preview)
+        try await secureRestoreLayout(model, runtime, phase: "compare-match")
+        await choose(workspace: true)
+        try await preview(.allMatch, label: "Mixed ordinary work retains selected matching secure scope")
+        precondition(model.canRebuild)
+        model.requestRebuild(); model.confirmRebuild(); let mixed = await interact(preparing: false)
+        precondition(mixed.first?.kind == .bundleUnlock && runtime.termination?.terminal?.type == "completed")
+        precondition(fm.fileExists(atPath: home.appendingPathComponent("Projects").path))
+        print("PASS: mixed Execute re-unlocks and verifies all-match identities before ordinary work")
+        try clearTarget(); try install(second: false)
+        await choose()
+        try await preview(.importRequired, label: "Partial match plus missing identities counts once")
+        try clearTarget(); try install()
+        // A valid, different pair uses the same strict target_plan conflict semantics.
+        for suffix in ["", ".pub"] {
+            try Data(contentsOf: root.appendingPathComponent("disposable_second" + suffix)).write(to: ssh.appendingPathComponent("id_disposable" + suffix))
+        }
+        await choose(); try await preview(.conflict, label: "Different target pair is one genuine blocker")
+        precondition(!model.canRebuild)
+        try await secureRestoreLayout(model, runtime, phase: "compare-conflict")
+        try clearTarget(); try install(); try fm.removeItem(at: ssh.appendingPathComponent("id_disposable.pub"))
+        await choose(); try await preview(.conflict, label: "Partial target pair blocks without mutation")
+        try clearTarget(); try install(); try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: ssh.path)
+        await choose(); try await preview(.conflict, label: "Unsafe target permissions block without mutation")
+        try clearTarget()
+        for mode in ["cancel", "reject", "timeout"] {
+            await choose()
+            let challenges = try await preview(nil, mode: mode, label: "Incomplete comparison: \(mode)")
+            if mode == "reject" { precondition(challenges.map(\.attempt) == [1, 2, 3]) }
+            precondition(!model.canRebuild)
+        }
+        let adapter = core.appendingPathComponent("modules/core/application-interface/secure.py")
+        let original = try String(contentsOf: adapter)
+        try original.replacingOccurrences(of: "                        metadata(channel, message)", with: "                        if compare:\n                            channel.shutdown(socket.SHUT_RDWR)\n                            raise SecureError('secure_channel_invalid')\n                        metadata(channel, message)").write(to: adapter, atomically: true, encoding: .utf8)
+        await choose(); try await preview(nil, label: "Unexpected secure FD closure")
+        try original.write(to: adapter, atomically: true, encoding: .utf8)
+        let adapterCore = core.appendingPathComponent("modules/core/application-interface/core.py"), originalCore = try String(contentsOf: core.appendingPathComponent("modules/core/application-interface/core.py"))
+        try originalCore.replacingOccurrences(of: "comparison_operation_id=operation_id)", with: "comparison_operation_id='other-operation')").write(to: adapterCore, atomically: true, encoding: .utf8)
+        await choose(); try await preview(nil, label: "Mismatched comparison identity is discarded")
+        try originalCore.write(to: adapterCore, atomically: true, encoding: .utf8)
+        await choose(); try await preview(.importRequired, label: "Fresh comparison before stale source")
+        let bytes = try Data(contentsOf: bundle)
+        try (bytes + Data(repeating: 0, count: 512)).write(to: bundle)
+        model.requestRebuild(); model.confirmRebuild(); let stale = await interact(preparing: false)
+        precondition(stale.isEmpty && runtime.termination?.terminal?.code == "stale_plan")
+        try bytes.write(to: bundle)
+        print("PASS: changed Bundle rejected before Execute unlock")
+        await choose(); try await preview(.importRequired, label: "Fresh comparison before stale prepared ID")
+        let plan = model.preparation!, before = try snapshot()
+        runtime.start(CoreRequest(.restoreExecute(path: bundle.path, disabledGroups: [], includeSecure: true,
+            preparedID: String(repeating: "f", count: 64), selection: model.selection, secureComparison: plan.secureComparison)), location: location)
+        await runtime.waitForCompletion()
+        precondition(runtime.termination?.terminal?.code == "stale_plan" && runtime.secureChallenge == nil)
+        let afterStale = try snapshot()
+        precondition(afterStale == before)
+        await choose(ordinary, workspace: true); precondition(model.preparation == nil)
+        print("PASS: stale prepared ID rejected; choosing another Bundle clears comparison")
+        try fm.removeItem(at: bin.appendingPathComponent("age"))
+        await choose(); try await preview(nil, label: "Missing age is incomplete, not a fabricated conflict or planned import")
+        let secrets = [keySecret, bundleSecret, Data("id_disposable".utf8), Data("id_second".utf8), Data("-----BEGIN OPENSSH PRIVATE KEY-----".utf8)]
+        for entry in try await logs.history() {
+            let report = try await DiagnosticReportBuilder.generate(id: entry.id, environment: .current()) { id, cursor in try await logs.page(id, after: cursor) }
+            precondition(secrets.allSatisfy { report.utf8.range(of: $0) == nil })
+        }
+        for base in [logs.directory, core.appendingPathComponent("logs")] {
+            for case let file as URL in fm.enumerator(at: base, includingPropertiesForKeys: [.isRegularFileKey])?.allObjects ?? [] {
+                if (try? file.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true {
+                    let raw = try Data(contentsOf: file)
+                    precondition(secrets.allSatisfy { raw.range(of: $0) == nil })
+                }
+            }
+        }
+        print("PASS: Core logs, native operation history and diagnostic reports contain no fixture secrets or SSH identity names")
+    }
+
+    @MainActor static func secureRestoreChecks(repository: URL, python: URL) async throws {
+        setbuf(stdout, nil)
+        let fm = FileManager.default
+        let root = URL(fileURLWithPath: "/private/tmp/macseed-native-secure-restore-" + UUID().uuidString)
+        try fm.createDirectory(at: root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        defer { try? fm.removeItem(at: root) }
+        let agePaths = ["/opt/homebrew/bin/age", "/usr/local/bin/age"]
+        guard let age = agePaths.first(where: fm.isExecutableFile(atPath:)) else { preconditionFailure("Existing age is required; no installation is attempted") }
+        let keySecret = Data(("fixture-key-" + UUID().uuidString).utf8), bundleSecret = Data(("fixture-bundle-" + UUID().uuidString).utf8)
+        let setup = Process(), input = Pipe(), output = Pipe()
+        setup.executableURL = python
+        setup.arguments = ["-B", repository.appendingPathComponent("desktop/Macseed/Tests/SecureRestoreFixture.py").path, repository.path, root.path, age]
+        setup.environment = ["HOME": root.path, "PATH": "/usr/bin:/bin", "PYTHONDONTWRITEBYTECODE": "1", "TMPDIR": root.path]
+        setup.standardInput = input; setup.standardOutput = FileHandle.nullDevice; setup.standardError = output
+        try setup.run(); try input.fileHandleForWriting.write(contentsOf: keySecret + Data([10]) + bundleSecret); try input.fileHandleForWriting.close()
+        let setupDiagnostic = output.fileHandleForReading.readDataToEndOfFile(); setup.waitUntilExit()
+        precondition(setup.terminationStatus == 0, "Disposable setup failed (no private diagnostic output): \(setup.terminationStatus), \(setupDiagnostic.count) bytes")
+        let core = root.appendingPathComponent("core"), home = root.appendingPathComponent("home"), bin = root.appendingPathComponent("bin")
+        let bundle = root.appendingPathComponent("secure.mbt"), ordinary = root.appendingPathComponent("ordinary.mbt")
+        let clock = SecureClock(), logs = OperationLogStore(directory: root.appendingPathComponent("operations"))
+        let runtime = CoreRuntime(operationLogs: logs, secureClock: { clock.now() })
+        let location = CoreLocation(root: core, python: python, home: home, temporaryBase: root, toolDirectories: [bin])
+        let model = RestoreModel(runtime: runtime, location: location)
+        func choose(_ url: URL = bundle, secure: Bool = true, workspace: Bool = false) async {
+            model.choose(url); await model.waitForCompletion()
+            precondition(model.state == .review && !model.includeSecure, "Inspection/default-OFF failed")
+            model.selectSecureTransfer(true)
+            precondition(model.includeSecure == (url == bundle))
+            model.toggleAll(); precondition(model.includeSecure == (url == bundle))
+            for area in model.eligibleAreas { model.selectArea(area.id, included: workspace && area.id == "workspace-folders") }
+            model.selectSecureTransfer(secure)
+            precondition(model.includeSecure == (secure && url == bundle))
+        }
+        var preparedBytes: Data?
+        let preparationObserver = runtime.$latestResult.sink { event in
+            if runtime.operation == .restorePrepare, let data = event?.fields["data"] { preparedBytes = try? JSONEncoder().encode(data) }
+        }
+        defer { preparationObserver.cancel() }
+        func prepare(expectFailure: Bool = false) async {
+            precondition(model.canPreview)
+            model.refreshPreview()
+            var seen = Set<String>()
+            while model.state == .preparing || runtime.isActive {
+                if let challenge = runtime.secureChallenge, seen.insert(challenge.challengeID).inserted {
+                    precondition(challenge.kind != .importConfirmation)
+                    runtime.respond(to: challenge, with: .secret(challenge.kind == .bundleUnlock ? bundleSecret : keySecret))
+                }
+                try? await Task.sleep(for: .milliseconds(10))
+            }
+            await model.waitForCompletion()
+            precondition(model.state == (expectFailure ? .failed : .preview), "Secure Preview failed")
+        }
+        func tasks() -> RestoreTaskPresentation {
+            RestoreTaskPresentation(preview: model.executionPreview!, plan: model.executionPlan!,
+                events: model.categoryPresentationEvents, result: model.executionResult, operationProgress: true)
+        }
+        func execute(_ mode: String = "success") async -> [CoreSecureChallenge] {
+            precondition(model.canRebuild, "Executable secure plan was blocked")
+            model.requestRebuild(); precondition(model.state == .confirming)
+            model.confirmRebuild()
+            var challenges: [CoreSecureChallenge] = [], seen = Set<String>(), stopped = false
+            let deadline = Date().addingTimeInterval(60)
+            while model.busy && Date() < deadline {
+                if let challenge = runtime.secureChallenge, seen.insert(challenge.id).inserted {
+                    challenges.append(challenge)
+                    if let previous = challenges.dropLast().last { precondition(!runtime.respond(to: previous, with: .secret(bundleSecret))) }
+                    if mode == "timeout" { clock.expire() }
+                    else if mode == "force-input" { model.requestForceStop(); model.confirmStop() }
+                    else if mode == "stop-input" { model.requestStop(); model.confirmStop() }
+                    else {
+                        let response: CoreSecureResponse
+                        if mode == "cancel" || (mode == "cancel-confirm" && challenge.kind == .importConfirmation) { response = .cancel }
+                        else if challenge.kind == .importConfirmation { response = .confirmImport }
+                        else {
+                            let wrong = mode == "rejected" || (mode == "retry" && challenge.attempt == 1)
+                            response = .secret(wrong ? Data("incorrect-disposable-input".utf8) : challenge.kind == .bundleUnlock ? bundleSecret : keySecret)
+                        }
+                        precondition(runtime.respond(to: challenge, with: response))
+                    }
+                }
+                if mode == "stop-after-import", !stopped, fm.fileExists(atPath: core.appendingPathComponent("fixture-waiting").path) {
+                    precondition(CoreSecureRestoreEvidence(events: model.categoryPresentationEvents).verified)
+                    precondition(model.executionActivities.first { $0.id == CoreRestorePreparation.secureDomain }?.status == .complete)
+                    model.requestStop(); model.confirmStop(); stopped = true
+                    try? fm.removeItem(at: core.appendingPathComponent("fixture-gate"))
+                }
+                try? await Task.sleep(for: .milliseconds(10))
+            }
+            if model.busy { runtime.cancel(); await model.waitForCompletion(); preconditionFailure("Native secure Restore fixture deadline exceeded") }
+            await model.waitForCompletion()
+            precondition(model.state == .result && runtime.secureChallenge == nil)
+            if let last = challenges.last { precondition(!runtime.respond(to: last, with: .secret(bundleSecret))) }
+            return challenges
+        }
+        await choose(ordinary, secure: false, workspace: true)
+        precondition(model.inspection?.secureComponent == false && !model.includeSecure)
+        try await secureRestoreLayout(model, runtime, phase: "absent-selection")
+        await prepare()
+        precondition(!model.preparation!.includeSecure && model.preparation!.plan.allSatisfy { $0.domain != CoreRestorePreparation.secureDomain })
+        await choose(secure: false, workspace: true); await prepare()
+        precondition(model.confirmationMessages.allSatisfy { !$0.contains("Secure") })
+        precondition(RestoreTaskPresentation(preview: model.preview!, plan: model.preparation!).domains.allSatisfy { $0.id != CoreRestorePreparation.secureDomain })
+        print("PASS: No secure package and explicit OFF preserve ordinary preparation, confirmation and task scope")
+
+        for mode in ["cancel", "cancel-confirm", "rejected", "stop-input", "timeout", "force-input"] {
+            await choose(); precondition(model.selectedAreaCount == 0 && model.canPreview)
+            await prepare()
+            let counts = RestorePreviewMetrics.counts(RestoreTaskPresentation(preview: model.preview!, plan: model.preparation!).domains)
+            precondition(counts.changes == 1 && counts.attention == 0 && counts.matching == 0)
+            let challenges = await execute(mode)
+            precondition(!fm.fileExists(atPath: home.appendingPathComponent(".ssh/id_disposable").path))
+            precondition(tasks().domains.count == 1 && !RestoreResultDetails.verified(tasks().domains[0].items[0]))
+            if ["timeout", "force-input"].contains(mode) {
+                precondition(model.executionResult?.outcome != .clean)
+                if mode == "timeout" { precondition(runtime.error == .secureChannelTimeout && model.executionResult?.outcome == .interrupted) }
+            } else if mode == "rejected" {
+                precondition(challenges.map(\.attempt) == [1, 2, 3] && model.executionResult?.outcome == .failedBeforeMutation)
+            } else {
+                precondition(model.executionResult?.outcome == .stoppedBeforeMutation)
+                precondition(model.executionResult?.structuredEvidence?["target_mutation_may_have_started"]?.boolean == false)
+            }
+            if mode == "timeout" || mode == "cancel" { try await secureRestoreLayout(model, runtime, phase: mode + "-result") }
+            print("PASS: Native secure Restore \(mode), challenge clearing and no false Verified")
+        }
+
+        await choose()
+        try await secureRestoreLayout(model, runtime, phase: "selection")
+        await prepare()
+        try await secureRestoreLayout(model, runtime, phase: "preview")
+        let plan = model.preparation!, catalog = model.inspection!.restoreSelection!
+        let planBytes = preparedBytes!
+        try secureRestoreContractChecks(planBytes, plan: plan, catalog: catalog)
+        let challenges = await execute("retry")
+        // Core re-reads target pairs after publication, reusing exact-byte crypto
+        // evidence only within this operation; no duplicate successful unlock.
+        precondition(Array(challenges.prefix(5).map(\.kind)) == [.bundleUnlock, .bundleUnlock, .sshKeyUnlock, .sshKeyUnlock, .importConfirmation])
+        precondition(challenges.count == 5 && challenges.filter { $0.kind == .importConfirmation }.count == 1)
+        precondition(model.executionResult?.outcome == .clean, "Verified import did not complete: \(runtime.termination?.terminal?.code ?? "no code")")
+        let imported = home.appendingPathComponent(".ssh/id_disposable")
+        let sourceBytes = try Data(contentsOf: root.appendingPathComponent("disposable_identity"))
+        precondition(try! Data(contentsOf: imported) == sourceBytes)
+        for (path, permissions) in [(home.appendingPathComponent(".ssh"), 0o700), (imported, 0o600)] {
+            precondition((try! fm.attributesOfItem(atPath: path.path)[.posixPermissions] as! NSNumber).intValue == permissions)
+        }
+        precondition(tasks().domains.count == 1 && RestoreFinalDomain.counts(tasks().domains[0]).map(\.1) == [1])
+        precondition(RestoreResultDetails.verified(tasks().domains[0].items[0]))
+        precondition(RestoreResultSummary(domains: tasks().domains, result: model.executionResult!, appStore: nil).issues.isEmpty)
+        try await secureRestoreLayout(model, runtime, phase: "verified-result")
+        print("PASS: Production native FD → Bundle/key retry → explicit import confirmation → no-clobber import and verified one-requirement Result")
+
+        await choose(); await prepare()
+        precondition(model.preparation?.secureComparison?.decision == .allMatch && !model.canRebuild)
+        await choose(workspace: true); await prepare(); _ = await execute()
+        let matchedSecure = tasks().domains.first { $0.id == CoreRestorePreparation.secureDomain }!
+        precondition(model.executionResult?.outcome == .clean && matchedSecure.items[0].resultLabels == ["Already Matches", "Verified"])
+        precondition(RestoreResultDetails.title(matchedSecure) == "Already Matches")
+        precondition(RestoreResultSummary(domains: tasks().domains, result: model.executionResult!, appStore: nil).issues.isEmpty)
+        precondition(try! Data(contentsOf: imported) == sourceBytes)
+        try await secureRestoreLayout(model, runtime, phase: "noop-result")
+        // A conflicting, bounded target is preserved by the production importer.
+        try Data("preserved disposable conflict\n".utf8).write(to: imported)
+        await choose(); await prepare()
+        precondition(model.preparation?.secureComparison?.decision == .conflict && !model.canRebuild)
+        precondition(try! Data(contentsOf: imported) == Data("preserved disposable conflict\n".utf8))
+        let conflictPreview = RestoreTaskPresentation(preview: model.preview!, plan: model.preparation!)
+        precondition(RestorePreviewMetrics.counts(conflictPreview.domains).attention == 1)
+        try fm.removeItem(at: home.appendingPathComponent("Projects"))
+        print("PASS: Already-matching no-op and strict target-conflict preservation; one Result count")
+
+        try fm.removeItem(at: home.appendingPathComponent(".ssh"))
+        let adapter = core.appendingPathComponent("modules/core/application-interface/core.py")
+        let original = try String(contentsOf: adapter, encoding: .utf8)
+        let boundary = "                    state[\"secure_restore_status\"] = \"completed\"\n                checkpoint()"
+        precondition(original.components(separatedBy: boundary).count == 2)
+        try write(original.replacingOccurrences(of: boundary, with: """
+                            state["secure_restore_status"] = "completed"
+                            if (ROOT / 'fixture-failure').exists():
+                                raise ExecuteFailed('bootstrap_failed')
+                            if (ROOT / 'fixture-gate').exists():
+                                import time
+                                (ROOT / 'fixture-waiting').touch()
+                                while (ROOT / 'fixture-gate').exists():
+                                    time.sleep(.01)
+                        checkpoint()
+        """), adapter)
+        try write("", core.appendingPathComponent("fixture-gate"))
+        await choose(workspace: true); await prepare(); _ = await execute("stop-after-import")
+        precondition(model.executionResult?.outcome == .stoppedAfterMutation)
+        precondition(!fm.fileExists(atPath: home.appendingPathComponent("Projects").path))
+        let stopped = RestoreResultDetails.domains(tasks().domains, result: model.executionResult)
+        let secure = stopped.first { $0.id == CoreRestorePreparation.secureDomain }!
+        precondition(RestoreResultDetails.verified(secure.items[0]) && RestoreFinalDomain.counts(secure).map(\.1) == [1])
+        try await secureRestoreLayout(model, runtime, phase: "stopped-result")
+        try fm.removeItem(at: home.appendingPathComponent(".ssh"))
+        try write("", core.appendingPathComponent("fixture-failure"))
+        await choose(workspace: true); await prepare(); _ = await execute()
+        precondition(model.executionResult?.outcome == .partial)
+        precondition(CoreSecureRestoreEvidence(payload: model.executionResult?.structuredEvidence).verified)
+        precondition(!fm.fileExists(atPath: home.appendingPathComponent("Projects").path))
+        try await secureRestoreLayout(model, runtime, phase: "partial-result")
+        try fm.removeItem(at: core.appendingPathComponent("fixture-failure"))
+        try write(original, adapter)
+        await choose(workspace: true); await prepare(); _ = await execute()
+        precondition(model.executionResult?.outcome == .clean && fm.fileExists(atPath: home.appendingPathComponent("Projects").path))
+        let events = model.categoryPresentationEvents
+        precondition(events.first { $0.type == "verification_record" && $0.data?["item_id"]?.string == CoreRestorePreparation.secureItem }!.sequence
+            < events.first { $0.type == "execution_event" && $0.data?["domain"]?.string == "workspace" && $0.data?["state"]?.string == "started" }!.sequence)
+        print("PASS: Stop and injected later failure retain verified import; partial outcome, dependent Workspace not run, and fresh Rebuild proceeds after import")
+
+        try fm.removeItem(at: home.appendingPathComponent(".ssh"))
+        await choose(); await prepare()
+        let originalBundle = try Data(contentsOf: bundle)
+        try (originalBundle + Data(repeating: 0, count: 512)).write(to: bundle)
+        let stale = await execute()
+        precondition(stale.isEmpty && runtime.termination?.terminal?.code == "stale_plan")
+        try originalBundle.write(to: bundle)
+        try fm.removeItem(at: bin.appendingPathComponent("age"))
+        await choose(); await prepare(expectFailure: true)
+        precondition(!model.canRebuild && model.preparation == nil && model.preview == nil)
+        print("PASS: Stale plan before unlock, missing-age genuine blocker and no double counting")
+
+        let history = try await logs.history()
+        let secrets = [keySecret, bundleSecret, sourceBytes, Data("id_disposable".utf8)]
+        for entry in history {
+            let report = try await DiagnosticReportBuilder.generate(id: entry.id, environment: .current()) { id, cursor in try await logs.page(id, after: cursor) }
+            precondition(secrets.allSatisfy { report.utf8.range(of: $0) == nil })
+        }
+        for base in [logs.directory, core.appendingPathComponent("logs")] {
+            guard let files = fm.enumerator(at: base, includingPropertiesForKeys: [.isRegularFileKey]) else { continue }
+            for case let file as URL in files.allObjects {
+                if (try? file.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true {
+                    let bytes = try Data(contentsOf: file); precondition(secrets.allSatisfy { bytes.range(of: $0) == nil })
+                }
+            }
+        }
+        print("PASS: Native Operation Log, diagnostic reports and disposable Core logs contain no fixture secrets/private key contents/key names")
+    }
+
+    static func secureRestoreContractChecks(_ data: Data, plan: CoreRestorePreparation, catalog: CoreRestoreInspection.Inventory) throws {
+        let raw = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+        try plan.validate(expected: plan.selection, catalog: catalog, expectedIncludeSecure: true)
+        for scenario in ["selection", "status", "missing-row", "duplicate-row", "action", "name", "launch", "scope"] {
+            var value = raw, rows = raw["plan"] as! [[String: Any]], readiness = raw["readiness"] as! [String: Any]
+            var conditions = readiness["conditions"] as! [[String: Any]]
+            let index = rows.firstIndex { $0["domain"] as? String == CoreRestorePreparation.secureDomain }!
+            switch scenario {
+            case "selection": value["include_secure"] = false
+            case "status": value["secure_restore_status"] = "completed"
+            case "missing-row": rows.remove(at: index)
+            case "duplicate-row": rows.append(rows[index])
+            case "action": rows[index]["action"] = "install"
+            case "name": rows[index]["display_name"] = "unauthenticated identity"
+            case "launch": conditions.removeAll { $0["code"] as? String == "secure_bridge_required" }
+            default: let index = conditions.firstIndex { $0["code"] as? String == "secure_bridge_required" }!; conditions[index]["scope"] = "operation"
+            }
+            value["plan"] = rows; readiness["conditions"] = conditions; value["readiness"] = readiness
+            do {
+                let invalid = try JSONDecoder().decode(CoreRestorePreparation.self, from: JSONSerialization.data(withJSONObject: value))
+                try invalid.validate(expected: plan.selection, catalog: catalog, expectedIncludeSecure: true)
+                preconditionFailure("Malformed secure preparation accepted: \(scenario)")
+            } catch {}
+        }
+        print("PASS: Typed secure preparation accepts the production contract and rejects eight malformed/binding cases")
+    }
     static var finalUXFixtures: Bool {
         CommandLine.arguments.contains("--final-restore-ux-only") || CommandLine.arguments.contains("--selection-preview-only") || CommandLine.arguments.contains("--preview-appstore-layout-only")
     }
@@ -1209,6 +2434,21 @@ import SwiftUI
     }
 
     @MainActor static func main() async throws {
+        if CommandLine.arguments.contains("--secure-passphrase-only") || CommandLine.arguments.contains("--bundled-age-only") {
+            try await securePassphraseChecks(repository: URL(fileURLWithPath: CommandLine.arguments[1]), python: URL(fileURLWithPath: CommandLine.arguments[2])); return
+        }
+        if CommandLine.arguments.contains("--secure-startup-only") {
+            try await secureStartupChecks(repository: URL(fileURLWithPath: CommandLine.arguments[1]), python: URL(fileURLWithPath: CommandLine.arguments[2])); return
+        }
+        if CommandLine.arguments.contains("--secure-request-budget-only") {
+            try await secureRequestBudgetChecks(repository: URL(fileURLWithPath: CommandLine.arguments[1]), python: URL(fileURLWithPath: CommandLine.arguments[2])); return
+        }
+        if CommandLine.arguments.contains("--secure-compare-only") || CommandLine.arguments.contains("--secure-compare-binding-only") {
+            try await secureComparisonChecks(repository: URL(fileURLWithPath: CommandLine.arguments[1]), python: URL(fileURLWithPath: CommandLine.arguments[2])); return
+        }
+        if CommandLine.arguments.contains("--secure-restore-only") {
+            try await secureRestoreChecks(repository: URL(fileURLWithPath: CommandLine.arguments[1]), python: URL(fileURLWithPath: CommandLine.arguments[2])); return
+        }
         let homebrewSetupOnly = CommandLine.arguments.contains("--homebrew-setup-only")
         let selectionAccordionOnly = CommandLine.arguments.contains("--selection-accordion-only") || homebrewSetupOnly
         let refreshCancellationOnly = CommandLine.arguments.contains("--appstore-refresh-cancel-only")

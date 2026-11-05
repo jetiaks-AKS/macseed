@@ -9,11 +9,16 @@ struct CoreLocation: Sendable {
     let home: URL
     let temporaryBase: URL
     let toolDirectories: [URL]
+    // Set by the app resolver even if age is missing. Nil is for injected/Core CLI
+    // fixtures only; production Desktop never falls back to external age.
+    let applicationBundle: URL?
     var launcher: URL { root.appendingPathComponent("modules/core/application-interface/core.sh") }
 
     init(root: URL, python: URL, home: URL = URL(fileURLWithPath: NSHomeDirectory()),
          temporaryBase: URL = FileManager.default.temporaryDirectory, kind: CoreLocationKind = .development,
-         toolDirectories: [URL] = [URL(fileURLWithPath: "/opt/homebrew/bin"), URL(fileURLWithPath: "/usr/local/bin")]) {
+         toolDirectories: [URL] = [URL(fileURLWithPath: "/opt/homebrew/bin"), URL(fileURLWithPath: "/usr/local/bin")],
+         applicationBundle: URL? = nil) {
+        self.applicationBundle = applicationBundle
         self.toolDirectories = toolDirectories
         self.kind = kind
         self.root = root
@@ -21,7 +26,7 @@ struct CoreLocation: Sendable {
         self.home = home
         self.temporaryBase = temporaryBase
     }
-    func validate(for command: CoreCommand) throws {
+    func validate(for command: CoreCommand, secureTransportAvailable: Bool = false) throws {
         let files = [launcher, root.appendingPathComponent("modules/core/application-interface/core.py"),
                      root.appendingPathComponent("config/toolkit.conf"), root.appendingPathComponent("bootstrap.sh")]
         guard files.allSatisfy({ FileManager.default.isReadableFile(atPath: $0.path) }) else {
@@ -30,7 +35,7 @@ struct CoreLocation: Sendable {
         guard python.lastPathComponent == "python3", FileManager.default.isExecutableFile(atPath: python.path) else {
             throw CoreRuntimeError.pythonUnavailable
         }
-        if command.requiresSecretBridge { throw CoreRuntimeError.secureBridgeUnavailable }
+        if command.requiresSecretBridge && !secureTransportAvailable { throw CoreRuntimeError.secureBridgeUnavailable }
         // Current Core writes logs/config under its own root. Never try to write into
         // signed resources; workflow runtime placement must be qualified separately.
         if ![CoreOperation.capabilities, .bundleInspect].contains(command.operation),
@@ -43,6 +48,11 @@ struct CoreLocation: Sendable {
         let path = ([python.deletingLastPathComponent().path] + toolDirectories.map(\.path) + ["/usr/bin", "/bin", "/usr/sbin", "/sbin"]).joined(separator: ":")
         var environment = ["HOME": home.path, "PATH": path,
          "TMPDIR": temporary.path, "LC_ALL": "en_US.UTF-8", "PYTHONDONTWRITEBYTECODE": "1"]
+        if let applicationBundle {
+            // Public launch metadata, not a secret or a PATH override. Core checks
+            // the fixed nested path, file safety, architecture and pinned bytes.
+            environment["MACSEED_DESKTOP_BUNDLE"] = applicationBundle.path
+        }
         let parent = ProcessInfo.processInfo.environment
         if parent["MACSEED_PERFORMANCE_TRACE"] == "1" {
             environment["MACSEED_PERFORMANCE_TRACE"] = "1"
@@ -85,6 +95,7 @@ struct CoreLocationResolver {
             root = try contained("CorePath")
             python = try contained("PythonPath")
         } else { throw CoreRuntimeError.invalidRuntimeConfiguration }
-        return CoreLocation(root: root, python: python, kind: mode == "bundled" ? .bundledResource : .development)
+        return CoreLocation(root: root, python: python, kind: mode == "bundled" ? .bundledResource : .development,
+                            applicationBundle: resources.deletingLastPathComponent().deletingLastPathComponent())
     }
 }

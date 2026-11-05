@@ -37,6 +37,7 @@ struct OperationLogRecord: Codable, Sendable {
     var signalNumber: Int32?
     var signalled: Bool?
     var terminalValid: Bool?
+    var processLaunched: Bool?
     var runtimeError: String?
     var verificationStatus: String?
     var detailStatus: String?
@@ -44,6 +45,13 @@ struct OperationLogRecord: Codable, Sendable {
     var incomplete: Bool?
 
     init(_ kind: Kind, time: Date = Date()) { schema = 1; self.kind = kind; self.time = time }
+    var failedBeforeLaunch: Bool {
+        // request_too_large is emitted only by the client encoder, including in
+        // older logs without explicit launch evidence. Other missing facts stay unknown.
+        kind == .finish && (processLaunched == false || (processLaunched == nil && runtimeError == "request_too_large")) && terminalValid == false
+            && eventType == nil && exitCode == nil && signalNumber == nil && signalled != true
+            && runtimeError != nil && verificationStatus == "not_run" && detailStatus == "not_run"
+    }
 }
 
 struct OperationLogRead: Sendable {
@@ -99,9 +107,9 @@ struct OperationLogSanitizer {
         "diagnostic_record", "result", "completed", "failed", "cancelled", "secret_required", "secret_accepted"]
     // Closed vocabularies: a token-shaped arbitrary string is still private data.
     static let vocabularies: [String: Set<String>] = [
-        "phase": ["discovery", "preparation", "validation", "publication", "bundle_creation", "bundle_validation", "bootstrap", "verification", "comparison", "secure_export", "secure_import", "preview", "execute", "readiness", "capture", "scope", "observation", "apply", "post_apply", "orchestration"],
-        "domain": ["orchestration", "verification", "workspace", "workspace-folders", "git-repositories", "vscode-workspaces", "git-configuration", "homebrew-packages", "homebrew-casks", "app-store", "vscode-extensions", "vscode-settings", "shell-zsh", "ssh-configuration", "ssh-identities", "ssh-prerequisites", "secure-migration", "launcher", "macos-finder", "macos-dock", "macos-windows", "macos-keyboard", "macos-trackpad", "macos-screenshots"],
-        "action": ["execute", "inspect", "install", "reinstall", "configure", "restore", "clone", "create_workspace", "add_worktree", "switch_branch", "checkout", "verify", "compare", "skip", "noop", "import", "export", "create"],
+        "phase": ["discovery", "preparation", "validation", "publication", "bundle_creation", "bundle_validation", "bootstrap", "verification", "comparison", "secure_export", "secure_import", "secure_compare", "preview", "execute", "readiness", "capture", "scope", "observation", "apply", "post_apply", "orchestration"],
+        "domain": ["orchestration", "verification", "workspace", "workspace-folders", "git-repositories", "vscode-workspaces", "git-configuration", "homebrew-packages", "homebrew-casks", "app-store", "vscode-extensions", "vscode-settings", "shell-zsh", "ssh-configuration", "ssh-identities", "secure-ssh-identities", "ssh-prerequisites", "secure-migration", "launcher", "macos-finder", "macos-dock", "macos-windows", "macos-keyboard", "macos-trackpad", "macos-screenshots"],
+        "action": ["execute", "inspect", "install", "reinstall", "configure", "restore", "clone", "create_workspace", "add_worktree", "switch_branch", "checkout", "verify", "compare", "skip", "noop", "import", "validate_and_import", "export", "create"],
         "state": ["started", "completed", "failed", "blocked", "conflict", "interrupted", "skipped", "running", "warning", "changed", "already_satisfied", "graceful_stop_accepted", "graceful_stop_unavailable"],
         "status": ["complete", "partial", "not_run", "unavailable", "invalid", "truncated", "present", "absent", "unsupported", "observation_error", "satisfied", "safely_satisfiable", "external_action_required", "not_selected", "completed", "failed", "cancelled"],
         "outcome": ["success", "failure", "warning", "skipped", "noop", "not_run", "cancelled"],
@@ -114,8 +122,8 @@ struct OperationLogSanitizer {
         "source_status": ["present", "absent", "unavailable", "observation_error", "unsupported", "valid", "invalid", "observed_present", "observed_absent", "partial", "unobserved", "unknown"],
         "severity": ["info", "warning", "error"],
         "comparison_kind": ["matching", "missing", "differing", "unverified", "unsupported", "unresolved", "extra", "unknown_difference"],
-        "predicate": ["exists", "installed", "configured", "matching", "repository", "branch", "remote", "identity", "settings", "folder_exists", "package_installed", "configuration_matches", "identity_pair_matches_package", "directory", "file_content", "stored_preference", "direct_global_value", "supported_config_match", "worktree", "origin", "revision", "topology", "folder_relationships"],
-        "scope": ["operation", "item"],
+        "predicate": ["exists", "installed", "configured", "matching", "repository", "branch", "remote", "identity", "settings", "folder_exists", "package_installed", "configuration_matches", "identity_pair_matches_package", "identity_set_matches_package", "directory", "file_content", "stored_preference", "direct_global_value", "supported_config_match", "worktree", "origin", "revision", "topology", "folder_relationships"],
+        "scope": ["operation", "item", "execution_launch"],
         "tool": ["homebrew", "other"],
         "probe": ["version", "prefix", "inventory", "metadata", "capability", "read"],
         "primitive": ["payload", "metadata", "historical_metadata", "lifecycle", "requirements", "rosetta", "replacement", "launchctl", "login_item", "pkgutil"],
@@ -128,8 +136,10 @@ struct OperationLogSanitizer {
         "progress_observation_failed", "observation_failed", "observation_error", "prerequisite_unmet", "unsupported_predicate", "confirmed_mismatch", "unknown_difference",
         "reference_changed", "reference_unavailable", "comparison_unavailable", "capture_failed", "capture_discovery_failed", "capture_inventory_invalid", "capture_validation_failed",
         "capture_source_unavailable", "invalid_workspace_selection", "workspace_dependency_missing", "workspace_path_conflict",
+        "external_identity_unsafe", "external_identity_name_invalid", "external_identity_pair_missing", "external_identity_pair_invalid", "external_identity_changed", "external_identity_duplicate", "external_identity_invalid_request",
         "invalid_destination", "destination_exists", "destination_changed", "secure_bridge_required", "age_unavailable", "secure_bridge_unavailable", "secure_timeout",
-        "secure_import_failed", "secure_export_failed", "secure_input_invalid", "invalid_secure_selection", "readiness_failed", "cask_authorization_required",
+        "secure_comparison_failed", "secure_comparison_unavailable", "secure_target_changed", "secure_import_failed", "secure_export_failed", "secure_input_invalid", "invalid_secure_selection", "readiness_failed", "cask_authorization_required",
+        "secure_unlock_rejected", "secure_target_conflict", "target_conflict", "match", "decrypt_failed", "post_validation_failed", "unsafe_target", "secure_channel_timeout", "secure_channel_invalid", "secure_key_unlock_rejected", "secure_tool_failed", "secure_payload_invalid",
         "cask_execution_requirements_unsupported", "cask_target_conflict", "cask_rosetta_required", "rosetta", "installation_required", "cask_observation_failed", "cask_not_ready", "homebrew_unavailable", "homebrew_broken",
         "homebrew_platform_incompatible", "formula_dependency_unavailable", "dependency_unavailable", "unsupported_capability", "authorization_denied", "authorization_unavailable",
         "provider_conflict", "manual_installation_required", "launcher_destination_conflict", "launcher_inspection_failed", "launcher_install_failed", "launcher_verification_failed",
@@ -262,6 +272,9 @@ struct OperationLogSanitizer {
         case .invalidRequest: return "invalid_request"
         case .requestTooLarge: return "request_too_large"
         case .secureBridgeUnavailable: return "secure_bridge_unavailable"
+        case .secureChannelInvalid: return "secure_input_invalid"
+        case .secureChannelTimeout: return "secure_timeout"
+        case .secureChannelDisconnected: return "incomplete_stream"
         case .launchFailed: return "launch_failed"
         case .ioFailed: return "io_failed"
         case .malformedEvent: return "malformed_event"
@@ -281,6 +294,10 @@ struct OperationLogSanitizer {
         guard record.schema == 1, record.time.timeIntervalSince1970.isFinite,
               record.evidence?.count ?? 0 <= 20,
               record.droppedEvents == nil || record.droppedEvents! >= 0 else { return false }
+        if record.processLaunched != nil && record.kind != .finish { return false }
+        if record.processLaunched == false && (record.terminalValid != false || record.eventType != nil
+            || record.exitCode != nil || record.signalNumber != nil || record.signalled == true
+            || record.verificationStatus != "not_run" || record.detailStatus != "not_run") { return false }
         let runtimeCodes: Set<String> = ["runtime_unavailable", "invalid_runtime_configuration", "python_unavailable", "writable_core_required", "request_too_large", "launch_failed", "io_failed", "malformed_event", "incompatible_protocol", "operation_mismatch", "sequence_order", "invalid_lifecycle", "event_too_large", "incomplete_stream", "missing_terminal", "exit_mismatch", "interrupted"]
         guard record.runtimeError == nil || reasons.contains(record.runtimeError!) || runtimeCodes.contains(record.runtimeError!) else { return false }
         for facts in [record.facts].compactMap({ $0 }) + (record.evidence ?? []) {
@@ -729,7 +746,7 @@ final class OperationLogSession: @unchecked Sendable {
             ingress.lock(); pendingRecords -= 1; ingress.unlock()
         }
     }
-    func finish(_ outcome: CoreProcessOutcome?, error: CoreRuntimeError?) async -> OperationLogStatus {
+    func finish(_ outcome: CoreProcessOutcome?, error: CoreRuntimeError?, processLaunched: Bool? = nil) async -> OperationLogStatus {
         await withCheckedContinuation { continuation in
             ingress.lock(); accepting = false
             store.queue.async { [self] in
@@ -740,6 +757,7 @@ final class OperationLogSession: @unchecked Sendable {
                 if outcome?.signalled == true { record.signalNumber = outcome?.exitCode } else { record.exitCode = outcome?.exitCode }
                 record.eventType = outcome?.terminal?.type
                 record.terminalValid = outcome?.terminal != nil && outcome?.error == nil
+                record.processLaunched = outcome?.processLaunched ?? processLaunched
                 record.runtimeError = OperationLogSanitizer.runtimeCode(error)
                 record.verificationStatus = sanitizer.verificationStatus ?? "not_run"; record.detailStatus = sanitizer.detailStatus ?? "not_run"
                 ingress.lock(); record.droppedEvents = dropped; ingress.unlock()

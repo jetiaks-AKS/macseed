@@ -113,6 +113,10 @@ import SwiftUI
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
         defer { try? FileManager.default.removeItem(at: root) }
         let python = URL(fileURLWithPath: CommandLine.arguments[2])
+        if CommandLine.arguments.contains("--secure-capture-only") {
+            try await secureCaptureChecks(root: root, repository: URL(fileURLWithPath: CommandLine.arguments[1]), python: python)
+            return
+        }
         let core = root.appendingPathComponent("fake-core")
         try FileManager.default.createDirectory(at: core.appendingPathComponent("modules/core/application-interface"), withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: core.appendingPathComponent("config"), withIntermediateDirectories: true)
@@ -131,7 +135,10 @@ import SwiftUI
         assert request['operation'] in ('capture_prepare', 'capture_execute')
         with open('requests.jsonl', 'a') as stream: stream.write(json.dumps(request) + '\\n')
         params = request['parameters']; selection = params['selection']; mode = pathlib.Path('mode').read_text()
-        assert selection is None or selection['secure_identities'] == []
+        secure_path = pathlib.Path('secure-inventory.json')
+        secure = json.loads(secure_path.read_text()) if secure_path.exists() else dict(status='unavailable', items=[])
+        assert selection is None or set(selection['secure_identities']) <= {item['item_id'] for item in secure['items']}
+        if request['operation'] == 'capture_execute': assert selection['secure_identities'] == []
         sequence = 0; published = False
         def emit(kind, data=None):
             global sequence
@@ -162,8 +169,9 @@ import SwiftUI
             if selection:
                 summary['selected_domains'] = len(selection['categories']) + len(selection['items'])
                 summary['selected_items'] = sum(map(len, selection['items'].values())) + sum(len(row['items']) for row in rows if row['domain'] in selection['categories'])
+                summary['secure_identity_count'] = len(selection['secure_identities'])
             emit('result', dict(prepared_capture_id='a'*64, inventory=[] if mode == 'empty_inventory' else rows,
-                 selection=selection, summary=summary, secure_identities=dict(status='unavailable', items=[])))
+                 selection=selection, summary=summary, secure_identities=secure))
             emit('completed'); sys.exit(0)
         assert params['expected_prepared_capture_id'] == 'a'*64
         if mode == 'stale_prepared_capture': emit('failed', dict(code=mode, publication_occurred=False)); sys.exit(2)
@@ -184,6 +192,14 @@ import SwiftUI
         """, core.appendingPathComponent("fixture.py"))
         let runtime = CoreRuntime(operationLogs: nil)
         let model = CaptureModel(runtime: runtime, location: CoreLocation(root: core, python: python, home: root, temporaryBase: root, toolDirectories: []))
+        if CommandLine.arguments.contains("--capture-disclosure-only") {
+            try await captureDisclosureChecks(model: model, runtime: runtime, core: core)
+            return
+        }
+        if CommandLine.arguments.contains("--secure-selection-only") {
+            try await secureSelectionChecks(model: model, core: core)
+            return
+        }
         if CommandLine.arguments.contains("--capture-result-only") {
             try await captureResultChecks(model: model, runtime: runtime, core: core, root: root)
             return
@@ -545,8 +561,90 @@ import SwiftUI
         precondition(!BuildFeatures.sampleExperience)
         #endif
         print("PASS: Prepare/protocol failure, cancellation, stale binding, no-clobber and no false success/fallback after failure/interruption/publication")
+        try await secureSelectionChecks(model: model, core: core)
         try await realCore(root: root, repository: URL(fileURLWithPath: CommandLine.arguments[1]), python: python)
+        try await secureCaptureChecks(root: root, repository: URL(fileURLWithPath: CommandLine.arguments[1]), python: python)
     }
+    @MainActor static func secureSelectionChecks(model: CaptureModel, core: URL) async throws {
+        let path = core.appendingPathComponent("inventory.json"), securePath = core.appendingPathComponent("secure-inventory.json")
+        let original = try Data(contentsOf: path)
+        defer { try? original.write(to: path); try? FileManager.default.removeItem(at: securePath) }
+        try write("success", core.appendingPathComponent("mode"))
+        let rows = [row("homebrew-packages", mode: "items", items: ["fixture-package"]),
+                    row("ssh-configuration", mode: "category"), row("git-configuration", mode: "category")]
+        try JSONSerialization.data(withJSONObject: rows).write(to: path)
+        let ids = [String(repeating: "a", count: 64), String(repeating: "b", count: 64)]
+        let identities: [Object] = ids.enumerated().map { index, id in
+            ["item_id": id, "label": "fixture_key_\(index)", "key_type": "ssh-ed25519", "validation": "candidate_requires_pair_validation",
+             "fingerprint": "SHA256:" + Data(repeating: UInt8(index + 1), count: 32).base64EncodedString().replacingOccurrences(of: "=", with: "")]
+        }
+        try JSONSerialization.data(withJSONObject: ["status": "present", "items": identities]).write(to: securePath)
+        model.scan(); await model.waitForCompletion()
+        func check(_ state: SelectionState, _ status: String) {
+            let view = CaptureSecureTransferView(inventory: model.secureInventory, selected: model.selectedSecureIdentities)
+            precondition(view.selectionState == state && view.selectionStatus == status)
+        }
+        precondition(model.state == .review && model.selectedSecureIdentities.isEmpty)
+        check(.none, "Off")
+        let ordinary = model.selection
+        model.selectAllSecureIdentities(included: true)
+        check(.all, "All Selected")
+        precondition(model.selection.secureIdentities == ids && model.selection.categories == ordinary.categories && model.selection.items == ordinary.items)
+        precondition(model.selectedDomainCount == 1 && model.selectedItemCount == 1)
+        model.selectSecureIdentity(ids[0], included: false)
+        check(.mixed, "1 of 2 selected")
+        for _ in 0..<2 {
+            model.toggleAll(in: .advanced)
+            precondition(model.selectedSecureIdentities == [ids[1]], "Advanced bulk controls must preserve partial secure selection")
+        }
+        model.selectCategory("ssh-configuration", included: true)
+        precondition(model.selectedSecureIdentities == [ids[1]])
+        model.selectAllSecureIdentities(included: true)
+        check(.all, "All Selected")
+        model.selectAllSecureIdentities(included: false)
+        check(.none, "Off")
+        precondition(model.selectedCategories.contains("ssh-configuration"), "Clearing identities must preserve SSH Configuration")
+        model.toggleAll(in: .advanced); model.toggleAll(in: .advanced)
+        check(.none, "Off")
+        model.selectSecureIdentity(ids[0], included: true)
+        check(.mixed, "1 of 2 selected")
+        model.selectSecureIdentity(ids[1], included: true)
+        check(.all, "All Selected")
+        for _ in 0..<2 {
+            model.toggleAll(in: .advanced)
+            precondition(model.selectedSecureIdentities == Set(ids), "Advanced bulk controls must preserve all secure selection")
+        }
+        model.prepare(destination: core.appendingPathComponent("selection-only.mbt")); await model.waitForCompletion()
+        precondition(model.state == .confirmation && model.preparation?.selection?.secureIdentities == ids)
+        model.selectAllSecureIdentities(included: false)
+        precondition(model.preparation != nil && model.selectedSecureIdentities == Set(ids), "Confirmation must remain read-only")
+        model.editSelection()
+        precondition(model.preparation == nil)
+        model.selectAllSecureIdentities(included: false)
+        precondition(model.preparation == nil && model.selectedSecureIdentities.isEmpty)
+        model.prepare(destination: core.appendingPathComponent("fresh-selection-only.mbt")); await model.waitForCompletion()
+        precondition(model.preparation?.selection?.secureIdentities.isEmpty == true && model.preparation?.summary.secureIdentityCount == 0)
+        model.editSelection()
+        model.selectAllSecureIdentities(included: true)
+        for category in model.categories { model.selectCategory(category.id, included: false) }
+        precondition(model.canCreate && model.selectedDomainCount == 0 && model.selectedItemCount == 0)
+        precondition(model.bulkState(in: .advanced) == .none && model.selection.secureIdentities == ids)
+        let advancedDisclosures = CaptureHierarchy.disclosureIDs(model.categories.map(\.id), scope: .advanced)
+        precondition(!advancedDisclosures.contains(CaptureHierarchy.secureTransferID))
+        let expanded: Set<String> = [CaptureHierarchy.secureTransferID]
+        let toggled = CaptureHierarchy.toggled(expanded, ids: advancedDisclosures)
+        precondition(toggled.contains(CaptureHierarchy.secureTransferID) && model.selection.secureIdentities == ids)
+        model.prepare(destination: core.appendingPathComponent("secure-only-selection.mbt")); await model.waitForCompletion()
+        precondition(model.state == .confirmation && model.preparation?.summary.selectedDomains == 0
+            && model.preparation?.summary.selectedItems == 0 && model.preparation?.summary.secureIdentityCount == 2)
+        model.scan(); await model.waitForCompletion()
+        check(.none, "Off")
+        let summary = CaptureSummaryPresentation.review(categories: model.categories, domainCount: model.selectedDomainCount,
+            itemCount: model.selectedItemCount, selectedDomains: Set(model.selection.categories), secureIdentityCount: model.selectedSecureIdentities.count)
+        precondition(summary.attentionCount == 0, "Unselected identities must not fabricate attention")
+        print("PASS: Secure master OFF-PARTIAL-ALL, independent Advanced/SSH Configuration/disclosure, secure-only preparation, fresh Scan reset and ordinary counts")
+    }
+
     @MainActor static func waitUntil(_ runtime: CoreRuntime, predicate: (CoreRuntime) -> Bool) async {
         for _ in 0..<200 {
             if predicate(runtime) { return }
@@ -1124,6 +1222,210 @@ import SwiftUI
     @MainActor final class AccordionExpansion: ObservableObject {
         @Published var ids = Set<String>()
     }
+    @MainActor static func captureDisclosureChecks(model: CaptureModel, runtime: CoreRuntime, core: URL) async throws {
+        // Only injected inventory/prepare responses. Never Execute or read real identities.
+        let rows = [row("homebrew-packages", mode: "items", items: (0..<24).map { "fixture-package-\($0)" }),
+                    row("macos-finder", mode: "category"), row("vscode-extensions", mode: "items", items: ["fixture.extension"]),
+                    row("vscode-settings", mode: "category"), row("git-configuration", mode: "items", items: (0..<12).map { "Fixture setting \($0)" }),
+                    row("ssh-configuration", mode: "category")]
+        try JSONSerialization.data(withJSONObject: rows).write(to: core.appendingPathComponent("inventory.json"))
+        let identities: [Object] = (0..<2).map { index -> Object in
+            let id = String(repeating: index == 0 ? "a" : "b", count: 64)
+            let name = index == 0 ? "fixture_key" : "fixture_" + String(repeating: "W", count: 72)
+            let fingerprint = "SHA256:" + Data(repeating: UInt8(index + 1), count: 32).base64EncodedString().replacingOccurrences(of: "=", with: "")
+            return ["item_id": id, "label": name,
+             "key_type": "ssh-ed25519", "validation": "candidate_requires_pair_validation",
+             "fingerprint": fingerprint]
+        }
+        try JSONSerialization.data(withJSONObject: ["status": "present", "items": identities]).write(to: core.appendingPathComponent("secure-inventory.json"))
+        model.scan(); await model.waitForCompletion()
+        precondition(model.state == .review && model.selectedSecureIdentities.isEmpty)
+        _ = NSApplication.shared
+        var windows: [NSWindow] = []
+        defer { windows.forEach { $0.close() } }
+        let output = URL(fileURLWithPath: "build/Debug/Stage16HCaptureHeaders")
+        try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+        struct LiveCapture: View {
+            @ObservedObject var expansion: AccordionExpansion
+            let model: CaptureModel
+            let runtime: CoreRuntime
+            var body: some View {
+                VStack(spacing: 0) {
+                    WorkflowContentViewport(pinned: true) {
+                        CaptureView(model: model, runtime: runtime, showsActions: false, categoryTreeExpansion: $expansion.ids)
+                            .padding(16)
+                    }
+                    Divider()
+                    CaptureActionsView(model: model, runtime: runtime).modifier(WorkspaceFooterPadding())
+                        .background(GeometryReader { Color.clear.preference(key: AccordionFrames.self, value: ["footer": $0.frame(in: .named("capture"))]) })
+                }.coordinateSpace(name: "capture")
+            }
+        }
+        func descendants<T: NSView>(_ view: NSView, _: T.Type) -> [T] {
+            (view as? T).map { [$0] } ?? view.subviews.flatMap { descendants($0, T.self) }
+        }
+        func exercise(width: CGFloat, dark: Bool, phase: String, expectedOrdinary: Bool = true, expectedAdvanced: Bool = true, expectedSecure: Bool = true) async throws {
+            let expansion = AccordionExpansion()
+            var frames: [String: CGRect] = [:]
+            let host = NSHostingView(rootView: LiveCapture(expansion: expansion, model: model, runtime: runtime)
+                .onPreferenceChange(AccordionFrames.self) { frames = $0 }
+                .frame(width: width, height: 740).background(Color(nsColor: .windowBackgroundColor)))
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: 740), styleMask: [.titled], backing: .buffered, defer: false)
+            windows.append(window); window.isReleasedWhenClosed = false; window.contentView = host
+            host.appearance = NSAppearance(named: dark ? .darkAqua : .aqua); window.makeKeyAndOrderFront(nil)
+            func settle() async {
+                try? await Task.sleep(for: .milliseconds(60)); host.layoutSubtreeIfNeeded(); host.displayIfNeeded()
+            }
+            await settle()
+            let scrolls = descendants(host, NSScrollView.self)
+            precondition(scrolls.count == 1, "Capture must have one content viewport")
+            let scroll = scrolls[0], document = scroll.documentView!
+            // Measure the existing header component, then click its actual native
+            // control in the document. No test replacement for disclosure actions.
+            let headerProbe = NSHostingView(rootView: HStack(alignment: .firstTextBaseline, spacing: 12) {
+                WorkspaceSectionHeader(title: "For Experienced Users")
+                CaptureExpandButton(ids: ["fixture"], title: "Fixture", expanded: .constant([])).padding(.trailing, 42)
+            }.frame(width: width - 32))
+            let headerHeight = headerProbe.fittingSize.height
+            var expertY = headerHeight / 2
+            let ordinaryY = headerHeight / 2
+            func scrollTo(_ y: CGFloat) async {
+                let limit = max(0, document.frame.height - scroll.contentView.bounds.height)
+                scroll.contentView.scroll(to: NSPoint(x: 0, y: min(max(0, y), limit)))
+                scroll.reflectScrolledClipView(scroll.contentView); await settle()
+            }
+            func click(x: CGFloat, y: CGFloat) async {
+                await scrollTo(y - scroll.contentView.bounds.height / 2)
+                let point = document.convert(NSPoint(x: x, y: y), to: nil)
+                for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+                    window.sendEvent(NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                        windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 1)!)
+                }
+                await settle()
+            }
+            func ordinaryAction() async {
+                let height = document.frame.height
+                await click(x: document.bounds.width - 75, y: ordinaryY)
+                expertY += document.frame.height - height
+            }
+            func experiencedAction() async { await click(x: document.bounds.width - 75, y: expertY) }
+            func snapshot(_ suffix: String) throws {
+                let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds)!
+                host.cacheDisplay(in: host.bounds, to: bitmap)
+                try bitmap.representation(using: .png, properties: [:])!.write(to: output.appendingPathComponent("\(phase)-\(Int(width))-\(dark ? "dark" : "light")-\(suffix).png"))
+            }
+            try snapshot("collapsed")
+            let selected = model.selection, domainCount = model.selectedDomainCount, itemCount = model.selectedItemCount
+            let prepared = model.preparation?.preparedCaptureID, operation = model.operationID
+            let requests = try Data(contentsOf: core.appendingPathComponent("requests.jsonl"))
+            let sourceIDs: [String]
+            if let preparation = model.preparation, let selection = preparation.publicationSelection {
+                let tasks = CaptureTaskPresentation(categories: preparation.inventory.map { CaptureCategory(row: $0) }, selection: selection,
+                    phase: .confirmation, secureIdentities: preparation.secureIdentities.items)
+                sourceIDs = tasks.domains.map(\.id) + CaptureSettingsPresentation.children(tasks.domains).map(\.id)
+                precondition(tasks.domains.contains { $0.id == CaptureHierarchy.secureTransferID } == expectedSecure)
+                precondition(tasks.domains.contains { CaptureHierarchy.group(for: $0.id) == .advanced } == expectedAdvanced)
+                precondition(tasks.domains.allSatisfy { $0.items.allSatisfy { $0.state == .planned } })
+                if expectedSecure {
+                    precondition(tasks.domains.first { $0.id == CaptureHierarchy.secureTransferID }!.items.contains { $0.item.title == "fixture_key" })
+                }
+            } else { sourceIDs = model.categories.map(\.id) + [CaptureHierarchy.secureTransferID] }
+            let leaves = model.state == .review ? model.categories.filter { !CaptureCategorySelectionView.hasDisclosure($0) }.map(\.id) : []
+            let ordinary = CaptureHierarchy.disclosureIDs(sourceIDs, scope: .ordinary).subtracting(leaves)
+            let experienced = CaptureHierarchy.disclosureIDs(sourceIDs, scope: .advanced).subtracting(leaves)
+            if expectedOrdinary {
+                let count = Set(sourceIDs.filter { CaptureSelectionScope.ordinary.contains($0) || $0 == "macos-settings" }.map { CaptureHierarchy.group(for: $0) }).count
+                expertY += headerHeight + 24 + CGFloat(count) * 48 + CGFloat(max(0, count - 1)) / window.backingScaleFactor
+            }
+            if expectedOrdinary {
+                await ordinaryAction()
+                precondition(expansion.ids == ordinary, "Ordinary native action must open only its tree: \(expansion.ids)")
+                // A category chevron changes only its own ID; the mixed scope reopens all.
+                let height = document.frame.height
+                await click(x: 22, y: ordinaryY + headerHeight / 2 + 12 + 24)
+                expertY += document.frame.height - height
+                precondition(expansion.ids == ordinary.subtracting([CaptureHierarchy.sectionID(.applicationsTools)]))
+                await ordinaryAction(); precondition(expansion.ids == ordinary)
+                await ordinaryAction(); precondition(expansion.ids.isEmpty)
+            }
+            if !experienced.isEmpty {
+                await experiencedAction()
+                precondition(expansion.ids == experienced, "Experienced native action must include Secure Transfer: \(expansion.ids)")
+                let groupY = expertY + headerHeight / 2 + 12 + 24
+                if expectedAdvanced {
+                    await click(x: 22, y: groupY)
+                    precondition(expansion.ids == experienced.subtracting([CaptureHierarchy.sectionID(.advanced)]))
+                }
+                if expectedSecure {
+                    await click(x: 22, y: groupY + (expectedAdvanced ? 48 + 1 / window.backingScaleFactor : 0))
+                    precondition(!expansion.ids.contains(CaptureHierarchy.secureTransferID))
+                    precondition(!expectedAdvanced || !expansion.ids.contains(CaptureHierarchy.sectionID(.advanced)))
+                }
+                await experiencedAction(); precondition(expansion.ids == experienced)
+                if expectedOrdinary {
+                    await ordinaryAction(); precondition(expansion.ids == ordinary.union(experienced))
+                    await experiencedAction(); precondition(expansion.ids == ordinary)
+                    await experiencedAction(); precondition(expansion.ids == ordinary.union(experienced))
+                    await ordinaryAction(); precondition(expansion.ids == experienced)
+                }
+                await experiencedAction(); precondition(expansion.ids.isEmpty)
+            }
+            if expectedAdvanced && expectedSecure && model.state == .review {
+                let boxes = descendants(host, NSButton.self)
+                let advanced = boxes.first { $0.accessibilityLabel() == "Select Advanced" }!
+                let secure = boxes.first { $0.accessibilityLabel() == "Select Secure Transfer" }!
+                let first = advanced.convert(advanced.bounds, to: host), second = secure.convert(secure.bounds, to: host)
+                precondition(abs(first.minX - second.minX) < 1 && (48...49).contains(second.minY - first.minY),
+                             "Sibling rows share one divider without card spacing")
+            }
+            if expectedOrdinary { await ordinaryAction() }
+            if !experienced.isEmpty { await experiencedAction() }
+            let footerBefore = frames["footer"]!
+            await scrollTo(document.frame.height)
+            if expectedOrdinary {
+                precondition(abs(scroll.contentView.bounds.minY - max(0, document.frame.height - scroll.contentView.bounds.height)) < 1,
+                             "Expanded content is reachable; compact selections need no scrolling")
+                // Reaching and clicking the ordinary header after scrolling proves
+                // it belongs to the document, not a pinned overlay outside the list.
+                await ordinaryAction(); precondition(expansion.ids == experienced)
+                await ordinaryAction(); precondition(expansion.ids == ordinary.union(experienced))
+                await scrollTo(document.frame.height)
+            }
+            precondition(frames["footer"] == footerBefore, "Bottom action bar remains fixed")
+            let viewport = scroll.convert(scroll.bounds, to: host)
+            precondition(viewport.maxY <= footerBefore.minY + 1 && viewport.maxX <= host.bounds.maxX + 1)
+            precondition(document.frame.width <= scroll.contentView.bounds.width + 1, "No horizontal clipping")
+            if model.state == .confirmation {
+                precondition(!descendants(host, NSButton.self).contains { $0.target is NativeSelectionCheckbox.Coordinator })
+            }
+            precondition(model.selection == selected && model.selectedDomainCount == domainCount && model.selectedItemCount == itemCount)
+            precondition(model.preparation?.preparedCaptureID == prepared && model.operationID == operation && !runtime.isActive && runtime.secureChallenge == nil)
+            let currentRequests = try Data(contentsOf: core.appendingPathComponent("requests.jsonl"))
+            precondition(currentRequests == requests, "Disclosure must never call Core")
+            try snapshot("expanded-bottom")
+            window.orderOut(nil)
+            print("PASS: \(phase) native controls, nested/mixed scopes, selection/preparation unchanged, scrolling and fixed footer at \(Int(width))pt \(dark ? "Dark" : "Light")")
+        }
+        for (width, dark): (CGFloat, Bool) in [(580, false), (1040, false), (580, true), (1040, true)] {
+            try await exercise(width: width, dark: dark, phase: "review")
+        }
+        model.toggleAll(in: .advanced)
+        model.selectAllSecureIdentities(included: true)
+        model.prepare(destination: core.appendingPathComponent("disclosure.mbt")); await model.waitForCompletion()
+        precondition(model.state == .confirmation)
+        for (width, dark): (CGFloat, Bool) in [(580, false), (1040, false), (580, true), (1040, true)] {
+            try await exercise(width: width, dark: dark, phase: "confirmation")
+        }
+        model.editSelection()
+        for category in model.categories { model.selectCategory(category.id, included: false) }
+        precondition(model.canCreate && model.selectedDomainCount == 0 && model.selectedItemCount == 0)
+        model.prepare(destination: core.appendingPathComponent("secure-only-disclosure.mbt")); await model.waitForCompletion()
+        precondition(model.state == .confirmation && model.preparation?.summary.selectedDomains == 0)
+        try await exercise(width: 580, dark: false, phase: "secure-only", expectedOrdinary: false, expectedAdvanced: false)
+        model.editSelection(); model.selectAllSecureIdentities(included: false); model.selectCategory("homebrew-packages", included: true)
+        model.prepare(destination: core.appendingPathComponent("ordinary-only-disclosure.mbt")); await model.waitForCompletion()
+        try await exercise(width: 580, dark: false, phase: "ordinary-only", expectedAdvanced: false, expectedSecure: false)
+    }
     private struct AccordionFrames: PreferenceKey {
         static var defaultValue: [String: CGRect] = [:]
         static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) { value.merge(nextValue(), uniquingKeysWith: { _, new in new }) }
@@ -1270,14 +1572,13 @@ import SwiftUI
             guard let minX = xs.min(), let maxX = xs.max(), let minY = ys.min(), let maxY = ys.max() else { return nil }
             return CGRect(x: minX, y: minY, width: maxX - minX + 1, height: maxY - minY + 1)
         }
-        let unavailable = CaptureCategory(row: try JSONDecoder().decode(CoreCaptureInventoryRow.self,
-            from: JSONSerialization.data(withJSONObject: row("ssh-configuration", mode: "category", status: "unavailable", reason: "source_unavailable"))))
-        let sibling = bitmap(CaptureCategorySelectionView(model: model, category: unavailable, expansion: .constant(false), leadingInset: CaptureChildRowGrid.leadingInset))
+        let sibling = bitmap(CaptureGroupHeader(title: "Advanced", summary: "Unavailable", symbol: "wrench.and.screwdriver",
+            selection: AnyView(Color.clear.frame(width: 28, height: 28)), expanded: .constant(false)))
         let secure = bitmap(CaptureSecureTransferView(expansion: .constant(false)))
         let siblingIcon = bounds(sibling, from: 0, to: Int(width / 2), blue: true)!
         let secureIcon = bounds(secure, from: 0, to: Int(width / 2), blue: true)!
         precondition(abs(siblingIcon.midX - secureIcon.midX) <= 2 && abs(siblingIcon.midY - secureIcon.midY) <= 2,
-            "Secure Transfer's blue icon must share the sibling icon column and baseline: \(siblingIcon), \(secureIcon)")
+            "Secure Transfer's icon must share the sibling group column and baseline: \(siblingIcon), \(secureIcon)")
         precondition(sibling.pixelsHigh == 48 && secure.pixelsHigh == sibling.pixelsHigh)
         let textStart = Int(width - 16 - 26 - TaskRowLayout.statusWidth + CaptureStatusText.textInset) - 2
         let textEnd = Int(width - 16 - 26)
@@ -1497,6 +1798,273 @@ import SwiftUI
         precondition(model.state == .failed && model.failure?.technicalReason == "stale_prepared_capture")
         precondition(!FileManager.default.fileExists(atPath: stale.path))
         print("PASS: Swift → production Capture overlap: effective confirmation/publication, unresolved preservation, strict rejection and changed-decision stale protection")
+    }
+
+    @MainActor static func secureCaptureChecks(root: URL, repository: URL, python: URL) async throws {
+        let paths = (ProcessInfo.processInfo.environment["PATH"] ?? "").split(separator: ":").map(String.init) + ["/opt/homebrew/bin", "/usr/local/bin"]
+        guard let age = paths.map({ URL(fileURLWithPath: $0).appendingPathComponent("age") }).first(where: { FileManager.default.isExecutableFile(atPath: $0.path) }) else {
+            preconditionFailure("Focused Secure Capture qualification requires existing age; no installation is attempted")
+        }
+        let base = root.appendingPathComponent("secure-capture"), core = base.appendingPathComponent("core")
+        let home = base.appendingPathComponent("home"), bin = base.appendingPathComponent("bin")
+        for directory in [core.appendingPathComponent("config"), core.appendingPathComponent("scripts"), home.appendingPathComponent(".ssh"), bin] {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        }
+        for name in ["modules", "bootstrap.sh", "config/toolkit.conf", "scripts/ssh-identity-migrate.sh"] {
+            try FileManager.default.copyItem(at: repository.appendingPathComponent(name), to: core.appendingPathComponent(name))
+        }
+        // As in the existing Capture API harness, unrelated collectors are inert in
+        // this disposable checkout. Capture, secure export, Bundle and Preview stay production.
+        let bootstrap = core.appendingPathComponent("bootstrap.sh")
+        let source = try String(contentsOf: bootstrap, encoding: .utf8)
+        let marker = "source modules/discovery/workspace.sh\n"
+        precondition(source.components(separatedBy: marker).count == 2)
+        let disabled = ["discover_git", "discover_ssh_configuration", "discover_zsh", "export_vscode_settings", "discover_workspace",
+                        "export_finder_settings", "export_dock_settings", "export_windows_settings", "export_keyboard_settings", "export_trackpad_settings", "export_screenshots_settings"]
+        try write(source.replacingOccurrences(of: marker, with: marker + disabled.map { "\($0)() { return 1; }\n" }.joined()), bootstrap)
+        let brewSource = core.appendingPathComponent("modules/discovery/homebrew.sh")
+        try write(try String(contentsOf: brewSource, encoding: .utf8).replacingOccurrences(of: "export_brew_packages()", with: "fixture_export_brew_packages()")
+            + "\nexport_brew_packages() { fixture_export_brew_packages || return $?; return 1; }\n", brewSource)
+        try write("""
+        #!/bin/bash
+        case "$*" in
+          'list --formula'|'list --formula --full-name'|'list --formula --installed-on-request') echo fixture-formula;;
+          --version) echo 'Homebrew 7.0.7';;
+          help\\ *) echo "$2 --formula --cask --full-name --json --appdir";;
+          'info --json=v2 --installed --cask') echo '{"casks":[]}';;
+          'list --cask') exit 0;;
+          --prefix) echo /opt/homebrew;;
+          *) exit 99;;
+        esac
+        """, bin.appendingPathComponent("brew"), executable: true)
+        for tool in ["code", "mas", "sudo", "defaults", "killall", "curl"] {
+            try write("#!/bin/sh\nexit 99\n", bin.appendingPathComponent(tool), executable: true)
+        }
+        try write("#!/bin/sh\necho 26.7.1\n", bin.appendingPathComponent("sw_vers"), executable: true)
+        try FileManager.default.createSymbolicLink(at: bin.appendingPathComponent("age"), withDestinationURL: age)
+        let keySecret = Data(("disposable-key-" + UUID().uuidString).utf8)
+        let bundleSecret = Data(("disposable-bundle-" + UUID().uuidString).utf8)
+        func tool(_ executable: URL, arguments: [String], input: Data = Data()) throws {
+            let process = Process(), stdin = Pipe(), stderr = Pipe()
+            process.executableURL = executable; process.arguments = arguments
+            process.environment = ["HOME": home.path, "PATH": [bin.path, python.deletingLastPathComponent().path, "/usr/bin", "/bin"].joined(separator: ":"),
+                                   "PYTHONDONTWRITEBYTECODE": "1", "TMPDIR": root.path]
+            process.standardInput = stdin; process.standardOutput = FileHandle.nullDevice; process.standardError = stderr
+            try process.run(); try stdin.fileHandleForWriting.write(contentsOf: input); try stdin.fileHandleForWriting.close()
+            _ = stderr.fileHandleForReading.readDataToEndOfFile(); process.waitUntilExit()
+            precondition(process.terminationStatus == 0, "Disposable Secure Capture helper failed: \(process.terminationStatus)")
+        }
+        let setup = base.appendingPathComponent("keys.py")
+        try write("""
+        import sys,subprocess
+        from pathlib import Path
+        sys.path.insert(0,sys.argv[1])
+        from secret_input import tool
+        ssh=Path(sys.argv[2]);secret=sys.stdin.buffer.read()
+        subprocess.run(['/usr/bin/ssh-keygen','-q','-t','ed25519','-N','','-f',str(ssh/'fixture_plain')],check=True)
+        status,_,_=tool(['/usr/bin/ssh-keygen','-q','-t','ed25519','-f',str(ssh/'fixture_protected')],secret,secret_repeats=2)
+        assert status==0
+        """, setup)
+        try tool(python, arguments: ["-B", setup.path, core.appendingPathComponent("modules/migration").path, home.appendingPathComponent(".ssh").path], input: keySecret)
+        let initialHome = try snapshot(home)
+        let logs = OperationLogStore(directory: base.appendingPathComponent("operations"))
+        let runtime = CoreRuntime(operationLogs: logs)
+        let location = CoreLocation(root: core, python: python, home: home, temporaryBase: root, toolDirectories: [bin])
+        let model = CaptureModel(runtime: runtime, location: location)
+        func scan(_ labels: Set<String>, ordinary: Bool = false) async {
+            model.scan(); await model.waitForCompletion()
+            precondition(model.state == .review && model.secureInventory.items.count == 2 && model.selectedSecureIdentities.isEmpty)
+            model.toggleAll(in: .advanced)
+            precondition(model.selectedSecureIdentities.isEmpty, "Advanced bulk selection must not opt in identities")
+            for category in model.categories where category.selectable { model.selectCategory(category.id, included: ordinary && category.id == "homebrew-packages") }
+            model.selectSecureIdentity("unknown", included: true)
+            precondition(model.selectedSecureIdentities.isEmpty)
+            for identity in model.secureInventory.items where labels.contains(identity.label) { model.selectSecureIdentity(identity.id, included: true) }
+            precondition(model.selectedSecureIdentities.count == labels.count)
+        }
+        func prepare(_ name: String) async -> URL {
+            let target = base.appendingPathComponent(name + ".mbt")
+            model.prepare(destination: target); await model.waitForCompletion()
+            precondition(model.state == .confirmation, "Secure prepare failed: \(String(describing: model.failure))")
+            precondition(runtime.secureChallenge == nil && model.preparation?.summary.secureIdentityCount == model.selectedSecureIdentities.count)
+            return target
+        }
+        func execute(_ mode: String = "success") async -> [CoreSecureChallenge] {
+            model.create()
+            var challenges: [CoreSecureChallenge] = [], seen = Set<String>()
+            let deadline = Date().addingTimeInterval(50)
+            while model.busy && Date() < deadline {
+                if let challenge = runtime.secureChallenge, seen.insert(challenge.id).inserted {
+                    challenges.append(challenge)
+                    if let previous = challenges.dropLast().last {
+                        precondition(!runtime.respond(to: previous, with: .secret(bundleSecret)), "Stale UI response accepted")
+                    }
+                    let response: CoreSecureResponse
+                    if mode == "cancel" { response = .cancel }
+                    else if challenge.kind == .sshKeyUnlock {
+                        response = .secret(mode == "wrong-limit" || (mode == "retry" && challenge.attempt == 1) ? Data("wrong-disposable-input".utf8) : keySecret)
+                    } else { precondition(challenge.kind == .bundleEncrypt); response = .secret(bundleSecret) }
+                    precondition(runtime.respond(to: challenge, with: response))
+                    precondition(runtime.secureChallenge == nil)
+                }
+                try? await Task.sleep(for: .milliseconds(10))
+            }
+            if model.busy { model.cancel(); await model.waitForCompletion(); preconditionFailure("Secure Capture exceeded fixture deadline") }
+            await model.waitForCompletion()
+            precondition(runtime.secureChallenge == nil)
+            if let last = challenges.last { precondition(!runtime.respond(to: last, with: .secret(bundleSecret))) }
+            return challenges
+        }
+        await scan(["fixture_protected"], ordinary: true)
+        let publishedTarget = await prepare("protected")
+        let prepared = model.preparation!
+        let prepareData = try JSONEncoder().encode(runtime.latestResult!.fields["data"]!)
+        try secureCaptureContractChecks(prepareData, expected: prepared.selection!)
+        let challenges = await execute("retry")
+        precondition(challenges.map(\.kind) == [.sshKeyUnlock, .sshKeyUnlock, .bundleEncrypt] && challenges.map(\.attempt) == [1, 2, 1])
+        precondition(model.state == .result && model.publication?.bundle.secureComponent == true && model.publicationEvidence == .occurred)
+        precondition(model.resultPresentation?.scope.contains("1 SSH identity encrypted") == true)
+        precondition(model.resultPresentation?.attention.map(\.id) == ["homebrew-packages"], "Partial ordinary coverage must remain visible")
+        let publicationData = try JSONEncoder().encode(runtime.latestResult!.fields["data"]!)
+        var wrongPublication = try JSONSerialization.jsonObject(with: publicationData) as! Object
+        var wrongBundle = wrongPublication["bundle"] as! Object; wrongBundle["secure_component"] = false; wrongPublication["bundle"] = wrongBundle
+        let invalidPublication = try JSONDecoder().decode(CoreCapturePublication.self, from: JSONSerialization.data(withJSONObject: wrongPublication))
+        do { try invalidPublication.validate(preparation: prepared, destination: publishedTarget); preconditionFailure("Missing secure publication accepted") } catch {}
+        let verify = base.appendingPathComponent("verify-export.py")
+        try write("""
+        import os,sys,tarfile,tempfile
+        from pathlib import Path
+        sys.path.insert(0,sys.argv[1]);import bundle
+        sys.path.insert(0,sys.argv[2]);from secret_input import decrypt
+        source=Path(sys.argv[3]);home=Path(sys.argv[4]);secret=sys.stdin.buffer.read()
+        class Input:
+            def ask(self,kind,attempt):
+                assert kind=='bundle_unlock';return secret
+        with tempfile.TemporaryDirectory(dir=source.parent) as temporary:
+            stage=Path(temporary)/'stage';stage.mkdir(mode=0o700)
+            bundle.unpack(source,stage,str(home))
+            with (stage/'secure.age').open('rb') as encrypted,tempfile.TemporaryFile(dir=temporary) as plain:
+                decrypt(encrypted.fileno(),plain,Input());plain.seek(0)
+                with tarfile.open(fileobj=plain) as archive:
+                    assert set(archive.getnames())=={'manifest','keys/fixture_protected','keys/fixture_protected.pub'}
+                    for suffix in ('','.pub'):
+                        assert archive.extractfile('keys/fixture_protected'+suffix).read()==(home/'.ssh'/('fixture_protected'+suffix)).read_bytes()
+        """, verify)
+        try tool(python, arguments: ["-B", verify.path, core.appendingPathComponent("modules/bundle").path,
+                                     core.appendingPathComponent("modules/migration").path, publishedTarget.path, home.path], input: bundleSecret)
+        let homeAfterExport = try snapshot(home)
+        precondition(homeAfterExport == initialHome)
+        print("PASS: Native Secure Capture → real protected-key retry → age export → validated publication; decrypted fixture contains only the explicitly selected pair; partial ordinary coverage retained")
+
+        await scan(["fixture_plain"])
+        _ = await prepare("secure-only")
+        precondition(model.canCreate == false && model.preparation?.summary.selectedDomains == 0)
+        let plainChallenges = await execute()
+        precondition(plainChallenges.map(\.kind) == [.bundleEncrypt] && model.state == .result)
+        await scan([] , ordinary: true)
+        _ = await prepare("ordinary")
+        let ordinaryChallenges = await execute()
+        precondition(ordinaryChallenges.isEmpty && model.state == .result && model.publication?.bundle.secureComponent == false)
+        for mode in ["cancel", "wrong-limit"] {
+            await scan(["fixture_protected"])
+            let target = await prepare(mode)
+            let values = await execute(mode)
+            precondition(!FileManager.default.fileExists(atPath: target.path) && model.publicationEvidence == .notOccurred)
+            if mode == "cancel" { precondition(model.state == .cancelled && values.count == 1) }
+            else { precondition(model.state == .failed && values.map(\.attempt) == [1, 2, 3] && model.failure?.technicalReason == "secure_key_unlock_rejected") }
+        }
+        await scan(["fixture_plain"])
+        let stale = await prepare("stale")
+        try FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(5)], ofItemAtPath: home.appendingPathComponent(".ssh/fixture_plain").path)
+        let staleChallenges = await execute()
+        precondition(staleChallenges.isEmpty && model.failure?.technicalReason == "stale_prepared_capture" && !FileManager.default.fileExists(atPath: stale.path))
+        await scan(["fixture_plain"])
+        let occupied = await prepare("occupied")
+        try write("retained fixture", occupied)
+        let occupiedChallenges = await execute()
+        precondition(occupiedChallenges.isEmpty && model.failure?.technicalReason == "invalid_destination")
+        let occupiedBytes = try String(contentsOf: occupied, encoding: .utf8); precondition(occupiedBytes == "retained fixture")
+        await scan(["fixture_plain"])
+        model.prepare(destination: occupied, replacementConfirmed: true); await model.waitForCompletion()
+        precondition(model.state == .confirmation)
+        try write("changed fixture", occupied)
+        model.create(); precondition(model.failure == .invalidDestination)
+        await scan(["fixture_plain"])
+        _ = await prepare("age-unavailable")
+        try FileManager.default.removeItem(at: bin.appendingPathComponent("age"))
+        let noAgeChallenges = await execute()
+        precondition(noAgeChallenges.isEmpty && model.failure?.technicalReason == "age_unavailable")
+        let homeAfterChecks = try snapshot(home)
+        precondition(homeAfterChecks == initialHome, "Capture must preserve disposable source key bytes")
+        let history = try await logs.history()
+        precondition(!history.isEmpty && history.allSatisfy { $0.finish != nil })
+        let privateValues = [keySecret, bundleSecret] + prepared.secureIdentities.items.flatMap { [Data($0.label.utf8), Data($0.fingerprint.utf8)] }
+        for bytes in try snapshot(logs.directory).values { precondition(privateValues.allSatisfy { bytes.range(of: $0) == nil }) }
+        for entry in history {
+            let report = try await DiagnosticReportBuilder.generate(id: entry.id, environment: .current()) { id, cursor in try await logs.page(id, after: cursor) }
+            precondition(privateValues.allSatisfy { report.utf8.range(of: $0) == nil })
+        }
+        print("PASS: Secure-only and ordinary Capture, default-off/bulk isolation, cancellation, three wrong attempts, stale source, destination/no-clobber and missing age; no secrets/names/fingerprints in persisted logs or reports")
+        try await secureCaptureInvalidationCheck(root: base, repository: repository, python: python)
+    }
+
+    static func secureCaptureContractChecks(_ data: Data, expected: CoreCaptureSelection) throws {
+        let original = try JSONSerialization.jsonObject(with: data) as! Object
+        for scenario in ["count", "duplicate", "label", "type", "fingerprint", "validation", "empty"] {
+            var value = original, secure = original["secure_identities"] as! Object
+            var items = secure["items"] as! [Object]
+            switch scenario {
+            case "count": var summary = value["summary"] as! Object; summary["secure_identity_count"] = 0; value["summary"] = summary
+            case "duplicate": items.append(items[0])
+            case "label": items[0]["label"] = "unsafe\n"
+            case "type": items[0]["key_type"] = "unsupported"
+            case "fingerprint": items[0]["fingerprint"] = "not-a-public-fingerprint"
+            case "validation": items[0]["validation"] = "verified"
+            default: items = []
+            }
+            secure["items"] = items; value["secure_identities"] = secure
+            do {
+                let decoded = try JSONDecoder().decode(CoreCapturePreparation.self, from: JSONSerialization.data(withJSONObject: value))
+                try decoded.validate(expected: expected); preconditionFailure("Invalid secure inventory accepted: \(scenario)")
+            } catch {}
+        }
+    }
+
+    @MainActor static func secureCaptureInvalidationCheck(root: URL, repository: URL, python: URL) async throws {
+        let core = root.appendingPathComponent("timeout-core"), adapter = core.appendingPathComponent("modules/core/application-interface")
+        try FileManager.default.createDirectory(at: adapter, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: core.appendingPathComponent("config"), withIntermediateDirectories: true)
+        try FileManager.default.copyItem(at: repository.appendingPathComponent("modules/core/application-interface/core.sh"), to: adapter.appendingPathComponent("core.sh"))
+        try FileManager.default.copyItem(at: repository.appendingPathComponent("modules/migration/secret_input.py"), to: adapter.appendingPathComponent("secret_input.py"))
+        try write("TOOLKIT_VERSION=fixture\n", core.appendingPathComponent("config/toolkit.conf"))
+        try write("", core.appendingPathComponent("bootstrap.sh"))
+        try write("""
+        import json,sys,time,uuid
+        from secret_input import inherited_socket,metadata
+        request=json.load(sys.stdin);channel=inherited_socket(int(sys.argv[3]))
+        def emit(sequence,kind,data=None):
+            print(json.dumps(dict(protocol_version=1,operation_id=request['operation_id'],sequence=sequence,type=kind,**({'data':data} if data else {}))),flush=True)
+        emit(1,'started');emit(2,'phase_started',{'phase':'secure_packaging'})
+        metadata(channel,dict(type='challenge',protocol_version=1,operation_id=request['operation_id'],challenge_id=uuid.uuid4().hex,kind='bundle_encrypt',attempt=1))
+        time.sleep(.2)
+        emit(3,'failed',dict(code='secure_channel_timeout',publication_occurred=False));channel.close();sys.exit(2)
+        """, adapter.appendingPathComponent("core.py"))
+        let runtime = CoreRuntime(operationLogs: nil)
+        let request = CoreRequest(.captureExecute(selection: .init(categories: [], items: [:], secureIdentities: [String(repeating: "a", count: 64)]),
+            destination: root.appendingPathComponent("unused.mbt").path, preparedID: String(repeating: "b", count: 64)))
+        runtime.start(request, location: CoreLocation(root: core, python: python, home: root, temporaryBase: root, toolDirectories: []))
+        await waitUntil(runtime) { $0.secureChallenge != nil }
+        let challenge = runtime.secureChallenge!
+        await runtime.waitForCompletion()
+        precondition(runtime.state == .failed && runtime.secureChallenge == nil && runtime.publicationOccurred == false)
+        precondition(runtime.error == .coreFailure("secure_channel_timeout"))
+        precondition(!runtime.respond(to: challenge, with: .secret(Data("late".utf8))))
+        let restore = CoreRequest(.restoreExecute(path: root.appendingPathComponent("unused.mbt").path, disabledGroups: [], includeSecure: true,
+            preparedID: String(repeating: "a", count: 64)))
+        runtime.start(restore, location: CoreLocation(root: core, python: python, home: root, temporaryBase: root, toolDirectories: []))
+        await runtime.waitForCompletion()
+        precondition(runtime.error == .secureBridgeUnavailable && runtime.secureChallenge == nil)
+        print("PASS: Core timeout invalidates native input, late submission is rejected and secure Restore remains disabled")
     }
 
     static func overlapContractRejections(_ prepared: CoreCapturePreparation) throws {

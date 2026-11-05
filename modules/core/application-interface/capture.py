@@ -15,6 +15,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'bundle'))
 import bundle
 from reporting import item, opaque
 from secure import terminate, export_secure
+from age_runtime import DESKTOP_BUNDLE, executable as age_executable
+from external_sources import ExternalSourceError, operation_paths, read_pair as external_pair
 
 MAX_ITEMS = 2048
 MAX_INVENTORY = 1024 * 1024
@@ -172,6 +174,33 @@ def scan(root, stage, event):
     return rows, secure, environment
 
 
+def external_inventory(root, stage, paths):
+    request = stage / 'external-request.json'
+    output = stage / 'external-result.json'
+    bundle.write_file(request, json.dumps(paths, ensure_ascii=False).encode())
+    with output.open('xb') as stream:
+        os.fchmod(stream.fileno(), 0o600)
+        status = run(root, ['./scripts/ssh-identity-migrate.sh', 'application-external-list', '--sources', str(request)], os.environ, stream)
+    if status != 0 or output.stat().st_size > MAX_INVENTORY:
+        raise CaptureError('external_identity_pair_invalid')
+    value = json.loads(output.read_bytes())
+    if 'error' in value:
+        allowed = {'external_identity_unsafe', 'external_identity_name_invalid', 'external_identity_pair_missing',
+                   'external_identity_pair_invalid', 'external_identity_changed', 'external_identity_duplicate', 'external_identity_invalid_request'}
+        raise CaptureError(value['error'] if value['error'] in allowed else 'external_identity_pair_invalid')
+    return value['items']
+
+
+def add_external(secure, entries):
+    if secure['status'] == 'observation_error':
+        raise CaptureError('secure_inventory_failed')
+    combined = secure['items'] + entries
+    if (len(combined) > 32 or len({e['label'].casefold() for e in combined}) != len(combined)
+            or len({e['fingerprint'] for e in combined}) != len(combined)):
+        raise CaptureError('external_identity_duplicate')
+    return {'status': 'present', 'reason': None, 'items': combined}
+
+
 def included_settings(stage, row):
     if row['status'] != 'present':
         return []
@@ -237,8 +266,20 @@ def capture(root, operation, parameters, channel, event):
         with PrivateTemporaryDirectory(prefix='macseed-capture-', dir='/private/tmp') as temporary:
             stage = Path(temporary)
             os.chmod(stage, 0o700)
+            paths = operation_paths(parameters['_operation_id']) if parameters.get('external_identities') else []
+            if operation == 'capture_identity_inspect':
+                if len(paths) != 1:
+                    raise CaptureError('external_identity_invalid_request')
+                entry = external_inventory(root, stage, paths)[0]
+                event('result', {'identity': {k: v for k, v in entry.items() if not k.startswith('_')}})
+                event('completed')
+                return 0
             rows, secure, environment = scan(root, stage, event)
+            if paths:
+                secure = add_external(secure, external_inventory(root, stage, paths))
             result, chosen, identities = prepared(stage, rows, secure, parameters['selection'])
+            if identities and DESKTOP_BUNDLE in os.environ and not age_executable():
+                raise CaptureError('age_unavailable')
             if operation == 'capture_prepare':
                 event('result', result)
                 event('completed')
@@ -248,7 +289,7 @@ def capture(root, operation, parameters, channel, event):
                 raise CaptureError('stale_prepared_capture')
             if identities and channel is None:
                 raise CaptureError('secure_bridge_required')
-            if identities and not __import__('shutil').which('age'):
+            if identities and not age_executable():
                 raise CaptureError('age_unavailable')
             blueprint(stage, chosen)
             # The selected Blueprint/input validators and portability checks remain production-owned.
@@ -264,6 +305,9 @@ def capture(root, operation, parameters, channel, event):
             else:
                 event('secure_packaging', {'status': 'not_selected'})
             destination(parameters['destination'], parameters.get('replacement_sha256'))
+            for identity in identities:
+                if identity.get('source') == 'manual' and external_pair(identity['_source_path'])[3] != identity['_stamp']:
+                    raise CaptureError('stale_prepared_capture')
             event('phase_started', {'phase': 'bundle_creation'})
             previous = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGINT, signal.SIGTERM})
             try:
@@ -284,6 +328,8 @@ def capture(root, operation, parameters, channel, event):
     except CaptureError as exc:
         event('failed', {'code': exc.code, 'publication_occurred': published})
         return 2
+    except ExternalSourceError as exc:
+        raise CaptureError(exc.code) from None
     except SecureError as exc:
         event('failed', {'code': exc.code, 'publication_occurred': published})
         return 130 if exc.code == 'secure_cancelled' else 2

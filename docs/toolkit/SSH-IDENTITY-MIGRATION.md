@@ -43,6 +43,50 @@ nistp256/nistp384/nistp521 private files with matching `.pub`. Required modes ar
 `0600` private, `0600` or `0644` public, `0700` for `~/.ssh`. Symlinks, hard links,
 FIDO keys, DSA, certificates, agent state, known_hosts and Keychain are outside v1.
 
+### Manually selected Desktop sources
+
+Desktop **Add SSH Identity…** accepts one explicitly chosen private file and its
+adjacent `<name>.pub`, including files outside `~/.ssh` or outside HOME. It never
+searches recursively, generates a public key or changes source permissions.
+The standard `~/.ssh` scanner and standalone CLI selection remain unchanged.
+
+Core requires canonical absolute paths (at most 1024 UTF-8 bytes), user-owned
+regular files with one link, private mode `0600`, public mode `0600` or `0644`,
+and at most 1 MiB per file. Every parent is opened without following links;
+ancestors must belong to root/current user and prohibit group/other writes.
+Root-owned sticky `1777` ancestors are allowed, but the immediate parent must be
+user-owned without shared write access. Aliases, traversal, symlinks, hard links,
+devices, sockets and FIFOs fail closed. File identities/content and parent identity
+are checked during observation and bound to preparation, then rechecked at export
+and before publication. Source files are never modified.
+
+Names contain 1–80 ASCII letters, digits, dots, underscores or hyphens, starting
+with a letter/digit. `.pub` names and SSH control names (`config`, `known_hosts`,
+`known_hosts2`, `authorized_keys`, `authorized_keys2`, `environment`, `rc`) are
+rejected case-insensitively. At most 32 combined candidates are allowed; duplicate
+destination names (case-insensitive) or public fingerprints are rejected. Add and
+Prepare validate the public pair metadata without unlocking; Execute reuses full
+cryptographic pair validation, including protected-key challenges.
+
+The destination is always `~/.ssh/<validated-name>` in the receiving HOME.
+The existing encrypted v1 manifest authenticates the name and pair bytes; source
+paths never enter the Bundle. There is **no format change**, custom target mapping
+or new importer: legacy Bundles keep their semantics, and older v1 CLI importers
+read these packages with the same destination policy. Missing `.ssh` is handled by
+the existing importer; partial/differing/unsafe pairs block the transfer and target
+changes invalidate Preview. No source-directory reconstruction is attempted.
+
+SSH Configuration is not rewritten. Capture explains the destination before
+publication; existing Preview/Result detail reminds users to review `IdentityFile`
+if it expects another location. This is not evidence of a particular Host-profile
+mismatch or restored network authentication. No host relationships are inferred.
+Source references live only in the Capture session and private operation staging;
+they are excluded from ordinary JSONL, logs, diagnostics, Blueprint and settings.
+Keychain, agents, GPG, tokens, arbitrary files/directories and other sensitive-data
+types remain outside this contract.
+
+### Encrypted representation
+
 The package is age passphrase ciphertext containing a tar with strict version-1
 manifest. Member order is `manifest`, then ordered `keys/<name>` and
 `keys/<name>.pub` pairs. Manifest magic is `toolkit-ssh-identities`, `version=1`,

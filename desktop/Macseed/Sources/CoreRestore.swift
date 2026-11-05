@@ -1,5 +1,38 @@
 import Foundation
 
+// One logical package requirement, projected from Core's validated importer receipt.
+// Neither an exit code nor a phase-completed event proves imported-state conformity.
+struct CoreSecureRestoreEvidence {
+    let operation: [String: CoreJSON]?
+    let observation: [String: CoreJSON]?
+    let coverage: [String: CoreJSON]?
+    let contradictoryObservation: Bool
+    init(events: [CoreEvent] = [], payload: [String: CoreJSON]? = nil) {
+        let details = payload?["verification"]?.object?["details"]?.object
+        func records(_ type: String, _ bucket: String) -> [[String: CoreJSON]] {
+            let saved: [[String: CoreJSON]]
+            if case .array(let rows) = details?[bucket] { saved = rows.compactMap(\.object) } else { saved = [] }
+            return (events.filter { $0.type == type }.compactMap(\.data) + saved)
+                .filter { $0["domain"]?.string == CoreRestorePreparation.secureDomain }
+        }
+        func package(_ row: [String: CoreJSON]) -> Bool { row["item_id"]?.string == CoreRestorePreparation.secureItem }
+        operation = records("operation_record", "operation_records").last {
+            package($0) && $0["action"]?.string == "validate_and_import"
+        }
+        let observations = records("verification_record", "verification_records")
+        observation = observations.last { package($0) && $0["predicate"]?.string == "identity_set_matches_package" }
+        coverage = records("coverage_record", "coverage_records").last(where: package)
+        contradictoryObservation = observations.contains { !package($0) && $0["conformity"]?.string != "verified" }
+    }
+    var verified: Bool {
+        ["success", "noop"].contains(operation?["outcome"]?.string ?? "") && operation?["reason"]?.string == "match"
+            && observation?["conformity"]?.string == "verified" && observation?["support"]?.string == "supported"
+            && observation?["observed_at"]?.string?.isEmpty == false && !contradictoryObservation
+            && coverage?["disposition"]?.string == "resolved" && coverage?["source_status"]?.string == "observed_present"
+    }
+    var available: Bool { operation != nil || observation != nil || coverage != nil }
+}
+
 // Existing Protocol V1 projections only. No Bundle parsing or planning in Swift.
 struct CoreRestoreInspection: Decodable {
     let formatVersion: Int
@@ -56,7 +89,44 @@ struct CoreRestoreInspection: Decodable {
     }
 }
 
+struct CoreSecureComparison: Codable, Equatable, Sendable {
+    enum Decision: String, Codable, Sendable { case allMatch = "all_match", importRequired = "import_required", conflict }
+    let decision: Decision
+    let targetState: String?
+    let sourceFingerprint: String
+    let preparedPlanID: String
+    let selection: CoreRestoreSelection
+    let includeSecure: Bool
+    let comparisonOperationID: String
+    enum CodingKeys: String, CodingKey {
+        case decision, selection, targetState = "target_state", sourceFingerprint = "source_fingerprint"
+        case preparedPlanID = "prepared_plan_id", includeSecure = "include_secure", comparisonOperationID = "comparison_operation_id"
+    }
+    func validate(plan: CoreRestorePreparation, operationID: String, requestSelection: CoreRestoreSelection? = nil) throws {
+        func digest(_ value: String?) -> Bool { value?.range(of: "^[0-9a-f]{64}$", options: .regularExpression) != nil }
+        guard plan.includeSecure, includeSecure, selection == (requestSelection ?? plan.selection), preparedPlanID == plan.preparedPlanID,
+              sourceFingerprint == plan.planDiagnostics?["bundle"], digest(sourceFingerprint), digest(preparedPlanID),
+              comparisonOperationID == operationID, operationID.range(of: "^[A-Za-z0-9_-]{1,64}$", options: .regularExpression) != nil,
+              decision == .conflict ? targetState == nil : digest(targetState) else { throw CoreRuntimeError.malformedEvent }
+    }
+}
+
 struct CoreRestorePreparation: Decodable {
+    var secureComparison: CoreSecureComparison? = nil
+    var secureComparedReady: Bool { secureExecutable && secureComparison.map { [.allMatch, .importRequired].contains($0.decision) } == true }
+    var hasComparedExecutableChanges: Bool {
+        includeSecure ? (secureComparison?.decision == .importRequired || plan.contains { !$0.isSecureImport && $0.disposition == "planned" }) : hasExecutableChanges
+    }
+    static let secureDomain = "secure-ssh-identities"
+    static let secureItem = "encrypted_identity_set"
+    var secureExecutable: Bool {
+        includeSecure && secureRestoreStatus == "selected_pending" && readiness.ready && errorCount == 0
+            && plan.filter(\.isSecureImport).count == 1
+            && readiness.conditions.filter(\.isSecureLaunchRequirement).count == 1
+            && readiness.conditions.filter { $0.domain == Self.secureDomain }.allSatisfy {
+                $0.isSecureLaunchRequirement || ["satisfied", "safely_satisfiable"].contains($0.status)
+            }
+    }
     static let workspacePreviewReasons: [String: String] = [
         "workspace_restore_not_enabled": "Rebuild Preview completed. Rebuild for Git worktree topology is not yet available.",
         "workspace_git_unsupported": "Unsupported: Git is unavailable or the required inspection capability is not qualified.",
@@ -200,6 +270,12 @@ struct CoreRestorePreparation: Decodable {
         }
     }
     struct Row: Decodable {
+        var isSecureImport: Bool {
+            domain == CoreRestorePreparation.secureDomain && itemID == CoreRestorePreparation.secureItem
+                && action == "validate_and_import" && disposition == "pending_unlock" && reason == "secure_unlock_required"
+                && displayName == nil && selectionItemID == nil && diagnostic == nil && installerPreparationID == nil
+                && headKind == nil && authorizationRequired == nil
+        }
         let domain: String
         let itemID: String
         let action: String
@@ -230,6 +306,11 @@ struct CoreRestorePreparation: Decodable {
         enum CodingKeys: String, CodingKey { case ready, readyScope = "ready_scope", conditions, reentry }
     }
     struct Condition: Decodable, Identifiable {
+        var isSecureLaunchRequirement: Bool {
+            domain == CoreRestorePreparation.secureDomain && code == "secure_bridge_required"
+                && status == "external_action_required" && scope == "execution_launch"
+                && selectedItemIndex == nil && diagnostic == nil
+        }
         let domain: String
         let code: String
         let status: String
@@ -260,7 +341,7 @@ struct CoreRestorePreparation: Decodable {
             && ["cask_execution_requirements_unsupported", "cask_target_conflict", "cask_rosetta_required"].contains(row.reason ?? "")
             && readiness.conditions.contains { $0.isItemLocal && $0.domain == row.domain && $0.code == row.reason }
     }
-    func validate(expected: CoreRestoreSelection, catalog: CoreRestoreInspection.Inventory) throws {
+    func validate(expected: CoreRestoreSelection, catalog: CoreRestoreInspection.Inventory, expectedIncludeSecure: Bool = false) throws {
         let effective = effectiveSelection ?? selection
         if effectiveSelection != nil || applicationDuplicates != nil {
             let duplicates = applicationDuplicates ?? []
@@ -280,7 +361,7 @@ struct CoreRestorePreparation: Decodable {
             }
         }
         guard preparedPlanID.range(of: "^[0-9a-f]{64}$", options: .regularExpression) != nil,
-              !includeSecure, secureRestoreStatus == "not_selected",
+              includeSecure == expectedIncludeSecure, secureRestoreStatus == (includeSecure ? "selected_pending" : "not_selected"),
               Set(selectedGroups).count == selectedGroups.count,
               selection == expected,
               Set(selectedGroups) == Set(catalog.groups.filter { !Set($0.domains).isDisjoint(with: Set(expected.categories).union(expected.items.keys)) }.map(\.id)),
@@ -304,16 +385,19 @@ struct CoreRestorePreparation: Decodable {
               }) else { throw CoreRuntimeError.malformedEvent }
         let domains = Set(effective.categories).union(effective.items.keys)
         guard plan.allSatisfy({ row in
-            (row.diagnostic?.valid ?? true) && domains.contains(row.domain) && (row.selectionItemID == nil || effective.items[row.domain]?.contains(row.selectionItemID!) == true)
+            (includeSecure && row.isSecureImport) || ((row.diagnostic?.valid ?? true) && domains.contains(row.domain) && (row.selectionItemID == nil || effective.items[row.domain]?.contains(row.selectionItemID!) == true))
         }), effective.items.allSatisfy({ selectedItemCounts[$0.key] == $0.value.count }),
         selectedItemCounts.allSatisfy({ (effective.items[$0.key]?.count ?? 0) == $0.value }) else { throw CoreRuntimeError.malformedEvent }
         guard readiness.conditions.allSatisfy({ condition in
-            (condition.diagnostic?.valid ?? true) && (condition.scope == nil || condition.scope == "operation" ||
+            (condition.diagnostic?.valid ?? true) && (condition.scope == nil || condition.scope == "operation" || (includeSecure && condition.isSecureLaunchRequirement) ||
                 (condition.isItemLocal && (condition.selectedItemIndex ?? 0) <= (selectedItemCounts[condition.domain] ?? 0)))
-        }), executableChanges == nil || hasExecutableChanges == plan.contains(where: { $0.disposition == "planned" }) else {
+        }), executableChanges == nil || hasExecutableChanges == (includeSecure || plan.contains(where: { $0.disposition == "planned" })) else {
             throw CoreRuntimeError.malformedEvent
         }
-        if readiness.ready && readiness.conditions.contains(where: { ["external_action_required", "unsupported"].contains($0.status) && !$0.isItemLocal }) {
+        guard plan.filter({ $0.domain == Self.secureDomain }).count == (includeSecure ? 1 : 0),
+              readiness.conditions.filter(\.isSecureLaunchRequirement).count == (includeSecure ? 1 : 0),
+              includeSecure || !readiness.conditions.contains(where: { $0.domain == Self.secureDomain }) else { throw CoreRuntimeError.malformedEvent }
+        if readiness.ready && readiness.conditions.contains(where: { ["external_action_required", "unsupported"].contains($0.status) && !$0.isItemLocal && !(includeSecure && $0.isSecureLaunchRequirement) }) {
             throw CoreRuntimeError.malformedEvent
         }
     }

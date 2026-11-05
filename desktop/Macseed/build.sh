@@ -70,7 +70,7 @@ build_app() {
     if [[ "$configuration" == Debug ]]; then compiler_options+=(-D DEBUG -Onone -g); else compiler_options+=(-O); fi
     xcrun swiftc "${compiler_options[@]}" -parse-as-library Sources/*.swift -o "$output_dir/Macseed.app/Contents/MacOS/Macseed"
     cp Info.plist "$output_dir/Macseed.app/Contents/Info.plist"
-    ./prepare-runtime.sh "$output_dir/Macseed.app/Contents/Resources"
+    ./prepare-runtime.sh "$output_dir/Macseed.app/Contents/Resources" "$architecture"
     cp Resources/Macseed.icns "$output_dir/Macseed.app/Contents/Resources/Macseed.icns"
     /usr/bin/plutil -lint "$output_dir/Macseed.app/Contents/Info.plist"
     if [[ "$run_tests" == true ]]; then

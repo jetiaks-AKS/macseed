@@ -44,8 +44,10 @@ enum CaptureHierarchy {
         for group in Group.allCases where groups.contains(group) {
             result.insert(sectionID(group))
             if group == .vscode { result.insert(group.id) }
-            if group == .advanced { result.insert(secureTransferID) }
         }
+        // Experienced disclosure includes the secure sibling without adding it
+        // to Advanced's ordinary selection taxonomy or counters.
+        if scope == .advanced && ids.contains(secureTransferID) { result.insert(secureTransferID) }
         return result
     }
     static func childDisclosureIDs(_ ids: [String], group: Group) -> Set<String> {
@@ -196,23 +198,34 @@ struct CaptureGroupHeader: View {
     var attention: String? = nil
     var nested = false
     var selection: AnyView? = nil
-    @Binding var expanded: Bool
+    var expanded: Binding<Bool>?
+    private var label: some View {
+        CaptureRowColumns(title: HStack(spacing: selection == nil ? 8 : 12) {
+            Image(systemName: symbol).foregroundStyle(tint)
+                .frame(width: selection == nil ? 20 : TaskRowLayout.iconWidth).accessibilityHidden(true)
+            Text(title).font(nested ? .body.weight(.medium) : .headline).foregroundStyle(titleTint)
+        }, status: CaptureGroupStatus(summary: summary, attention: attention))
+            .padding(.trailing, 26)
+    }
     var body: some View {
-        DisclosureGroup(isExpanded: $expanded) { EmptyView() } label: {
-            CaptureRowColumns(title: HStack(spacing: selection == nil ? 8 : 12) {
-                Image(systemName: symbol).foregroundStyle(tint)
-                    .frame(width: selection == nil ? 20 : TaskRowLayout.iconWidth).accessibilityHidden(true)
-                Text(title).font(nested ? .body.weight(.medium) : .headline).foregroundStyle(titleTint)
-            }, status: CaptureGroupStatus(summary: summary, attention: attention))
-                .padding(.trailing, 26)
-        }.disclosureGroupStyle(CaptureAccordionStyle(selection: selection,
-            selectionLeadingInset: nested ? CaptureReviewPresentation.hierarchyStep : 0))
-            .padding(.leading, 16).padding(.trailing, 16)
-            .accessibilityIdentifier("capture.disclosure." + title)
+        Group {
+            if let expanded {
+                DisclosureGroup(isExpanded: expanded) { EmptyView() } label: { label }
+                    .disclosureGroupStyle(CaptureAccordionStyle(selection: selection,
+                        selectionLeadingInset: nested ? CaptureReviewPresentation.hierarchyStep : 0))
+                    .accessibilityIdentifier("capture.disclosure." + title)
+            } else {
+                HStack(spacing: 12) {
+                    Color.clear.frame(width: 12).accessibilityHidden(true)
+                    if let selection { selection.frame(width: 28, height: 28) }
+                    label
+                }.frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
+            }
+        }.padding(.leading, 16).padding(.trailing, 16)
     }
 }
 
-// Layout only: two principal surfaces, original rows exactly once. The same
+// Layout only: ordinary sections and independent expert groups, original rows exactly once. The same
 // projection serves editable Review and authoritative read-only saved scope.
 struct CaptureGroupedContent<Row: Identifiable, RowContent: View>: View where Row.ID == String {
     @Environment(\.colorScheme) private var colorScheme
@@ -220,8 +233,10 @@ struct CaptureGroupedContent<Row: Identifiable, RowContent: View>: View where Ro
     @Binding var expanded: Set<String>
     var selection: ((CaptureHierarchy.Group, [Row]) -> AnyView?)? = nil
     var vscodeSelection: AnyView? = nil
+    var ordinaryTitle: String? = nil
+    var ordinaryControls: AnyView? = nil
     var advancedControls: AnyView? = nil
-    var advancedFooter: AnyView? = nil
+    var secureTransferGroup: AnyView? = nil
     let summary: ([Row]) -> String
     let attention: ([Row]) -> String?
     @ViewBuilder let rowContent: (Row) -> RowContent
@@ -233,6 +248,12 @@ struct CaptureGroupedContent<Row: Identifiable, RowContent: View>: View where Ro
         let ordinary = sections.filter { CaptureHierarchy.ordinaryGroups.contains($0.group) }
         VStack(alignment: .leading, spacing: 12) {
             if !ordinary.isEmpty {
+                if let ordinaryTitle {
+                    HStack(alignment: .firstTextBaseline, spacing: 12) {
+                        WorkspaceSectionHeader(title: ordinaryTitle)
+                        if let ordinaryControls { ordinaryControls.padding(.trailing, 42) }
+                    }
+                }
                 VStack(spacing: 0) {
                     ForEach(ordinary, id: \.group.id) { section in
                         accordion(section.group, rows: section.rows)
@@ -241,14 +262,18 @@ struct CaptureGroupedContent<Row: Identifiable, RowContent: View>: View where Ro
                 }.modifier(WorkspaceCardSurface()).accessibilityIdentifier("capture.container.ordinary")
             }
             let advanced = sections.first { $0.group == .advanced }?.rows ?? []
-            if !advanced.isEmpty || advancedFooter != nil {
+            if !advanced.isEmpty || secureTransferGroup != nil {
                 HStack(alignment: .firstTextBaseline, spacing: 12) {
                     WorkspaceSectionHeader(title: "For Experienced Users")
                     if let advancedControls { advancedControls.padding(.trailing, 42) }
                 }
-                accordion(.advanced, rows: advanced)
-                    .background(.quaternary.opacity(0.2), in: RoundedRectangle(cornerRadius: 8))
-                    .modifier(WorkspaceCardSurface()).accessibilityIdentifier("capture.container.advanced")
+                VStack(alignment: .leading, spacing: 0) {
+                    if !advanced.isEmpty { accordion(.advanced, rows: advanced) }
+                    if !advanced.isEmpty && secureTransferGroup != nil { Divider().padding(.horizontal, 16) }
+                    if let secureTransferGroup { secureTransferGroup }
+                }
+                .background(.quaternary.opacity(0.2), in: RoundedRectangle(cornerRadius: 8))
+                .modifier(WorkspaceCardSurface()).accessibilityIdentifier("capture.container.experienced")
             }
             if let unknown = sections.first(where: { $0.group == .otherFindings }) {
                 WorkspaceSectionHeader(title: unknown.group.title)
@@ -271,7 +296,6 @@ struct CaptureGroupedContent<Row: Identifiable, RowContent: View>: View where Ro
                     if expanded.contains(group.id) { members(rows) }
                 } else {
                     members(rows)
-                    if group == .advanced, let advancedFooter { advancedFooter }
                 }
             }
         }
@@ -291,7 +315,8 @@ struct CaptureTaskPresentation {
     enum Phase { case confirmation, progress, result }
     let domains: [TaskDomainPresentation]
     init(categories: [CaptureCategory], selection: CoreCaptureSelection, phase: Phase,
-         capturedDomains: Set<String>? = nil, publication: CoreCapturePublication? = nil, notices: [DisplayCategory] = []) {
+         capturedDomains: Set<String>? = nil, publication: CoreCapturePublication? = nil, notices: [DisplayCategory] = [],
+         secureIdentities: [CoreCaptureSecureInventory.Identity] = []) {
         let selected = phase == .result ? publication?.bundle.capturedDomains ?? capturedDomains ?? [] : Set(selection.categories).union(selection.items.keys)
         var output: [TaskDomainPresentation] = []
         let ordered = phase != .progress ? CaptureReviewRow.project(categories).flatMap(\.categories) : categories
@@ -337,6 +362,14 @@ struct CaptureTaskPresentation {
                     symbol: isMacOS ? "slider.horizontal.3" : category.symbol, items: items, activityState: phase == .result ? (!warnings.isEmpty ? .attention : state) : nil))
             }
         }
+        if phase == .confirmation, !selection.secureIdentities.isEmpty {
+            let items = secureIdentities.filter { selection.secureIdentities.contains($0.itemID) }.map { identity in
+                TaskItemPresentation(id: identity.itemID, item: DisplayItem(id: identity.itemID, title: identity.label,
+                    status: .ready, action: "The SSH key pair will be validated and encrypted during saving."), state: .planned)
+            }
+            output.append(TaskDomainPresentation(id: CaptureHierarchy.secureTransferID, title: "Secure Transfer",
+                symbol: "lock.shield", items: items))
+        }
         domains = output
     }
 }
@@ -347,6 +380,7 @@ struct CaptureSummaryPresentation {
     let attentionCount: Int
     let unsupportedCount: Int
     var captured = false
+    var secureIdentityCount = 0
     var metrics: [OperationMetric] {
         var values = [OperationMetric(title: captured ? "Captured Domains" : "Selected Domains", count: domainCount, symbol: "square.stack", tone: .neutral),
                       OperationMetric(title: captured ? "Captured Items" : "Selected Items", count: itemCount, symbol: "checklist", tone: .neutral)]
@@ -355,10 +389,12 @@ struct CaptureSummaryPresentation {
         return values
     }
     var scope: String { "\(domainCount) domains · \(itemCount) items " + (captured ? "captured" : "selected") }
-    static func review(categories: [CaptureCategory], domainCount: Int, itemCount: Int, selectedDomains: Set<String>? = nil) -> Self {
+    static func review(categories: [CaptureCategory], domainCount: Int, itemCount: Int, selectedDomains: Set<String>? = nil,
+                       secureIdentityCount: Int = 0) -> Self {
         Self(domainCount: domainCount, itemCount: itemCount,
              attentionCount: categories.filter { $0.row.status == "observation_error" || (!$0.notices.isEmpty && (selectedDomains?.contains($0.id) ?? true)) }.count,
-             unsupportedCount: categories.filter { $0.row.status == "unsupported" || !["category", "items"].contains($0.row.selectionMode) }.count)
+             unsupportedCount: categories.filter { $0.row.status == "unsupported" || !["category", "items"].contains($0.row.selectionMode) }.count,
+             secureIdentityCount: secureIdentityCount)
     }
 }
 
@@ -466,19 +502,91 @@ struct CaptureNoticeDetails: View {
 }
 
 struct CaptureSecureTransferView: View {
+    var inventory: CoreCaptureSecureInventory = .unavailable
+    var selected: Set<String> = []
+    var editable = false
+    var select: (String, Bool) -> Void = { _, _ in }
+    var selectAll: (Bool) -> Void = { _ in }
     var expansion: Binding<Bool>? = nil
+    var addIdentity: (() -> Void)? = nil
+    var removeIdentity: (String) -> Void = { _ in }
+    var manualIDs: Set<String> = []
+    var checkingIdentity = false
+    var identityError: String? = nil
+    var cancelIdentity: () -> Void = {}
     @CapturePresentationState<Bool> private var expanded = false
+    private var selectedCount: Int { inventory.items.filter { selected.contains($0.id) }.count }
+    var selectionState: SelectionState {
+        selectedCount == 0 ? .none : selectedCount == inventory.items.count ? .all : .mixed
+    }
+    var selectionStatus: String {
+        if inventory.status == "observation_error" { return "Needs Attention" }
+        if inventory.items.isEmpty { return "Unavailable" }
+        switch selectionState {
+        case .none: return "Off"
+        case .mixed: return "\(selectedCount) of \(inventory.items.count) selected"
+        case .all: return "All Selected"
+        }
+    }
     var body: some View {
-        HStack(spacing: 12) {
-            Color.clear.frame(width: 28, height: 28).padding(.leading, CaptureReviewPresentation.hierarchyStep).accessibilityHidden(true)
-            DisclosureGroup(isExpanded: expansion ?? $expanded) {
-                Text("Private SSH identity transfer is not available in this build. No private SSH identities will be captured. Ordinary SSH Configuration is separate and remains selectable.")
-                    .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true).padding(.bottom, 8)
-            } label: {
-                CaptureRowColumns(title: WorkspaceCategoryTitle(id: CaptureHierarchy.secureTransferID, title: "Secure Transfer", fallbackSymbol: "lock.shield"),
-                    status: CaptureStatusText(title: "Unavailable", secondary: true))
-            }.disclosureGroupStyle(TaskDisclosureStyle())
-        }.padding(.leading, 16 + CaptureChildRowGrid.leadingInset).padding(.trailing, 16)
+        VStack(alignment: .leading, spacing: 0) {
+            CaptureGroupHeader(title: "Secure Transfer", summary: selectionStatus, symbol: "lock.shield",
+                selection: AnyView(master), expanded: expansion ?? $expanded)
+            if expansion?.wrappedValue ?? expanded {
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(inventory.status == "observation_error" ? "SSH identity candidates could not be read. Scan again before selecting identities."
+                        : inventory.items.isEmpty ? "No eligible SSH identity pairs were found. Ordinary SSH Configuration is separate and remains selectable."
+                        : "Choose SSH identity pairs to encrypt. Transfer is off until you select an identity. Candidates are fully validated during saving; ordinary SSH Configuration is separate.")
+                        .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                        .padding(.leading, CaptureReviewPresentation.hierarchyStep * 2).padding(.bottom, 8)
+                    if let addIdentity {
+                        HStack {
+                            Button("Add SSH Identity…", action: addIdentity).disabled(!editable)
+                                .accessibilityIdentifier("capture.addSSHIdentity")
+                            if checkingIdentity {
+                                Text("Checking…").font(.caption).foregroundStyle(.secondary)
+                                Button("Cancel", action: cancelIdentity)
+                            }
+                        }.padding(.leading, CaptureReviewPresentation.hierarchyStep * 2).padding(.bottom, 8)
+                    }
+                    if let identityError {
+                        Text(identityError).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                            .padding(.leading, CaptureReviewPresentation.hierarchyStep * 2).padding(.bottom, 8)
+                    }
+                    if !manualIDs.isEmpty {
+                        Text("Manually added pairs restore to ~/.ssh using these names. SSH configuration is not rewritten; review IdentityFile if it expects another location.")
+                            .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                            .padding(.leading, CaptureReviewPresentation.hierarchyStep * 2).padding(.bottom, 8)
+                    }
+                    ForEach(inventory.items) { identity in
+                        HStack(alignment: .top, spacing: 8) {
+                            NativeSelectionCheckbox("", state: selected.contains(identity.id) ? .all : .none,
+                                accessibilityTitle: "Include SSH identity " + identity.label) { select(identity.id, $0) }
+                                .frame(width: 20, height: 28)
+                                .disabled(!editable)
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(identity.label).font(.callout.weight(.medium))
+                                    .fixedSize(horizontal: false, vertical: true)
+                                    .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
+                                Text(identity.keyType + (manualIDs.contains(identity.id) ? " · Manually Added" : "")).font(.caption).foregroundStyle(.secondary)
+                                Text(identity.fingerprint).font(.caption.monospaced()).foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }.frame(maxWidth: .infinity, alignment: .leading)
+                            if manualIDs.contains(identity.id) {
+                                Button("Remove") { removeIdentity(identity.id) }.buttonStyle(.link).disabled(!editable)
+                                    .accessibilityLabel("Remove manually added SSH identity " + identity.label)
+                            }
+                        }.padding(.leading, CaptureReviewPresentation.hierarchyStep * 2).padding(.vertical, 2)
+                    }
+                }.padding(.leading, 16 + CaptureChildRowGrid.leadingInset).padding(.trailing, 16)
+            }
+        }
+    }
+    @ViewBuilder private var master: some View {
+        if !inventory.items.isEmpty {
+            NativeSelectionCheckbox("", state: selectionState, accessibilityTitle: "Select Secure Transfer", setIncluded: selectAll)
+                .disabled(!editable)
+        } else { Color.clear.frame(width: 28, height: 28).accessibilityHidden(true) }
     }
 }
 
@@ -538,7 +646,7 @@ struct CaptureMetricCard: View {
 struct CaptureReviewMetrics: View {
     let summary: CaptureSummaryPresentation
     var body: some View {
-        if summary.domainCount > 0 || summary.attentionCount > 0 {
+        if summary.domainCount > 0 || summary.attentionCount > 0 || summary.secureIdentityCount > 0 {
             WorkspaceThreeMetrics { cards }
         }
     }
@@ -546,6 +654,10 @@ struct CaptureReviewMetrics: View {
         if summary.domainCount > 0 {
             WorkspaceMetricCard(title: "\(summary.domainCount) Selected Domains", value: nil, symbol: "square.stack", tint: .blue,
                 explanation: "\(summary.itemCount) Selected Items")
+        }
+        if summary.secureIdentityCount > 0 {
+            WorkspaceMetricCard(title: "\(summary.secureIdentityCount) Selected SSH \(summary.secureIdentityCount == 1 ? "Identity" : "Identities")",
+                value: nil, symbol: "lock.shield", tint: .blue, explanation: "Encrypted during saving")
         }
         if summary.attentionCount > 0 {
             CaptureMetricCard(title: "Needs Attention", count: summary.attentionCount, symbol: "exclamationmark.triangle", attention: true)
@@ -638,11 +750,12 @@ struct CaptureResultPresentation {
     let attention: [DisplayCategory]
     var affectedCount: Int { attention.count }
     var attentionSummary: String { "\(affectedCount) affected \(affectedCount == 1 ? "category" : "categories")" }
-    init(publication: CoreCapturePublication, notices: [DisplayCategory]) {
+    init(publication: CoreCapturePublication, notices: [DisplayCategory], secureIdentityCount: Int = 0) {
         destination = URL(fileURLWithPath: publication.destination)
         let domains = publication.bundle.capturedDomains.count
         let items = publication.bundle.itemCount
         scope = "\(domains) \(domains == 1 ? "domain" : "domains") · \(items) \(items == 1 ? "item" : "items") saved"
+            + (publication.bundle.secureComponent ? " · \(secureIdentityCount) SSH \(secureIdentityCount == 1 ? "identity" : "identities") encrypted" : "")
         var grouped: [DisplayCategory] = []
         for notice in notices where publication.bundle.capturedDomains.contains(notice.id) {
             let index = grouped.firstIndex { $0.id == notice.id }

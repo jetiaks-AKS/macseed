@@ -11,6 +11,27 @@ The format is based on the principles of **Keep a Changelog**.
 
 ### Added
 
+* Completed Stage 16H SSH Identities: accepted automatic and manual external
+  Capture → Rebuild → Verification, exact bytes, permissions/fingerprints and
+  repeated Preview/no-op. Verified bundled age v1.3.2 removes the Desktop
+  age/Homebrew prerequisite; custom restore destinations remain future work.
+* Native **Add SSH Identity…** for explicitly chosen safe SSH pairs outside `~/.ssh`.
+  Candidates start unchecked and use the existing encrypted Capture/Restore flow,
+  restoring under `~/.ssh` with validated names and unchanged v1 package compatibility.
+  Source paths stay private; source freshness and destination no-clobber checks remain required.
+
+* Native Secure SSH Capture with explicit, default-off identity selection in
+  Secure Transfer beside Advanced, public fingerprints and native passphrase fields.
+  The existing Core engine validates selected pairs and exports `secure.age` through
+  a separate secret FD; stale preparation, cancellation and publication evidence
+  retain their safety boundaries.
+* Native Secure SSH Restore with independent, default-off whole-package selection,
+  existing Rebuild Preview/Result counts, FD-only unlock and explicit import consent.
+  Validated import evidence survives the following Stop boundary; conflicts preserve
+  existing identities. The existing Preview button authenticates and compares the
+  package without importing: matching, missing and conflicting identities count as
+  one requirement, with secure-only no-op gating and fresh Execute target checks.
+  Complete 1.0 qualification remains open.
 * Optional native Homebrew setup guidance, shared by first launch, General Settings
   and Rebuild prerequisites. Read-only checks distinguish missing, usable and
   uncertain/broken installations. Supported Macs can download the official package
@@ -44,7 +65,7 @@ The format is based on the principles of **Keep a Changelog**.
   Prepare/Execute and read-only Saved Environment Status, with explicit selection,
   confirmation, structured progress, Verification-aware results and fresh-plan
   re-entry. The development runtime references a checkout; packaged distribution
-  and Desktop Secure SSH integration remain open.
+  and clean-Mac qualification remain open.
 * Desktop Capture scans/selects supported state, prepares the chosen destination,
   publishes a `.mbt` Saved Environment and offers Reveal in Finder. Confirmed
   replacement validates the new Bundle before atomic publication, preserving the
@@ -110,7 +131,7 @@ The format is based on the principles of **Keep a Changelog**.
   Fresh scans select eligible ordinary requirements only; ordinary and Advanced
   selection/expansion controls live within one ordinary accordion and separate Advanced
   container, initially collapsed. Workspace Folders stays directly reachable in
-  Advanced; long item labels wrap, and Secure Transfer stays unavailable there.
+  Advanced; long item labels wrap. Secure Transfer now has its own sibling group.
   Confirmation retains the selected scope. Capture Result now shows
   one Save Complete card with exact saved counts and Bundle location, plus an
   adjacent Needs Attention card and only affected selected categories when needed.

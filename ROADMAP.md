@@ -49,10 +49,10 @@ open/deferred gates, and no completed slice alone establishes release readiness.
 | 16B — Native shell and design | Completed | Approved Minimal Premium, navigation, shared components and Debug fixtures |
 | 16C — Runtime and capabilities | Development runtime implemented; hardening open | Owned Core processes and validated transport; packaged writable workspace not implemented, packaged qualification open |
 | 16D — Environment Status | Completed | Read-only comparison; Saved Environment reference and Restore handoff accepted |
-| 16E — Capture | Completed in supported scope | Real inventory/selection, preparation and publication; secure interaction remains 16H |
+| 16E — Capture | Completed in supported scope | Real inventory/selection, preparation and publication; secure identities completed under 16H |
 | 16F — Restore preparation | Completed in supported scope | Inspection, selection, prerequisites and fresh Preview |
 | 16G — Restore execution | Implemented; qualification open | Core Rebuild/Verification and Assisted App Store Restore; continuing Cask and interruption/re-entry qualification |
-| 16H — Secure SSH interactions | Optional; release-scope decision pending | Desktop FD/challenge bridge and secure Capture/Restore qualification are missing; not automatically required for 1.0 |
+| 16H — Secure SSH Identities | COMPLETED, 2026-11-05 | Accepted automatic and manual external SSH Capture → Rebuild → Verification, byte matching, permissions/fingerprints and repeated Preview/no-op; encrypted `secure.age`, opt-in/default-off, bundled age, fixed `~/.ssh` destinations. Stage 17 remains separate |
 | 16I — Verification and completion | UI implemented/manually accepted; qualification open | Final category/item Result, disjoint confirmed cards and Process/Verification separation; remaining completion edge cases open |
 | 16J — Logging & Diagnostics | Completed | Typed persistent logs, history, Important/All and immutable Diagnostic Report preview/copy/save |
 | 16K — Desktop integration hardening | Partially complete | Bundle-backed Status completed; runtime, transport, security, accessibility and packaged-state hardening remain |
@@ -114,22 +114,22 @@ Installer handoff and installation qualification remain open separately from Cas
 
 Continue toward Macseed 1.0 in this order, preserving accepted UI and real-Mac gates:
 
-1. **Documentation reconciliation:** align owner status, remaining tasks and evidence
+1. **[SSH Environment Completion — Developer Environment Closure](#ssh-environment-completion--developer-environment-closure): NEXT / PLANNED.**
+   Complete SSH Configuration and optional identity destination integration under
+   the approved Selection/Preview/Rebuild contract. Do not start it automatically.
+2. **Documentation reconciliation:** align owner status, remaining tasks and evidence
    boundaries with the comprehensive audit; do not reopen completed checkpoints.
-2. **Remaining native Workspace qualification:** use the retained selected Bundle
+3. **Remaining native Workspace qualification:** use the retained selected Bundle
    after proving native HOME/Core/journal/preferences isolation. Qualify counts,
    read-only matching and explicit Missing/Different handoff without Apply.
-3. **Bounded Stage 3C reconciliation:** extend existing durable journals, Stop and
+4. **Bounded Stage 3C reconciliation:** extend existing durable journals, Stop and
    safety fences with operation-owned evidence, reconciliation and safe re-entry
    under the [Core contract](docs/core/APPLICATION-INTERFACE.md#stage-3c-reconciliation-boundary).
    Uncertain or foreign evidence stays blocked; no automatic journal clearing or rollback.
-4. **Optional Secure SSH Desktop decision:** explicitly include or defer 16H for
-   the first release. Include the bridge/privacy/PTY implementation and qualification
-   only if selected; ordinary 1.0 does not automatically depend on it.
 5. **Remaining Stage 16 qualification:** close the [supported-domain gates](TODO.md#remaining-supported-domain-restore-qualification),
    Homebrew Setup Installer gate, lifecycle/recovery, completion (16I), integration,
    accessibility and runtime hardening (16K). Account for the 23 Graceful Stop tests
-   outside canonical coverage. Recovery gates depend on step 3; preserve accepted
+   outside canonical coverage. Recovery gates depend on step 4; preserve accepted
    Assisted Restore behavior and distinguish mandatory gates from optional scope.
 6. **Fresh end-to-end Capture → Rebuild → Verify → Check → no-op:** use current
    supported scope, confirmed backup protection and independent evidence. This
@@ -227,6 +227,20 @@ clean Apple Silicon and read-only Status against the same Saved Environment;
 qualify Intel separately before claiming support. Validate
 operation logs, interruption evidence and exact report preview/export/privacy in
 the packaged application. [Distribution](docs/DISTRIBUTION.md) owns these gates.
+
+## SSH Environment Completion — Developer Environment Closure
+
+**NEXT / PLANNED — not implemented.** Following completed Stage 16H SSH Identities,
+complete practical SSH Configuration across Discovery → Capture → Preview →
+Restore → Verification, then integrate optional per-identity restore destinations
+(default `~/.ssh`) in the existing Rebuild Selection Customize… sheet. Preview
+remains read-only; no new screen or SSH manager. Validate `IdentityFile` against
+selected destinations, require explicit authorization for configuration corrections,
+retain genuine unsafe/unsupported/conflicting findings and Secure Migration v1
+compatibility, and later qualify joint E2E with custom destinations and repeated no-op.
+[Capture / Restore](docs/CAPTURE-RESTORE.md#ssh-environment-completion--developer-environment-closure)
+owns the contract; [TODO](TODO.md#ssh-environment-completion--developer-environment-closure)
+owns unfinished actions. Stage 17 and the other remaining gates are unchanged.
 
 ## Early Access / Alpha
 

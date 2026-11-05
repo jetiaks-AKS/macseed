@@ -10,9 +10,9 @@ enum DiagnosticReportPrivacy {
         "secure_publication_started", "execution_event", "operation_record", "verification_record", "coverage_record",
         "diagnostic_record", "result", "completed", "failed", "cancelled", "secret_required", "secret_accepted"]
     static let vocabularies: [String: Set<String>] = [
-        "phase": ["discovery", "preparation", "validation", "publication", "bundle_creation", "bundle_validation", "bootstrap", "verification", "comparison", "secure_export", "secure_import", "preview", "execute", "readiness", "capture", "scope", "observation", "apply", "post_apply", "orchestration"],
-        "domain": ["orchestration", "verification", "workspace", "workspace-folders", "git-repositories", "vscode-workspaces", "git-configuration", "homebrew-packages", "homebrew-casks", "app-store", "vscode-extensions", "vscode-settings", "shell-zsh", "ssh-configuration", "ssh-identities", "ssh-prerequisites", "secure-migration", "launcher", "macos-finder", "macos-dock", "macos-windows", "macos-keyboard", "macos-trackpad", "macos-screenshots"],
-        "action": ["execute", "inspect", "install", "reinstall", "configure", "restore", "clone", "create_workspace", "add_worktree", "switch_branch", "checkout", "verify", "compare", "skip", "noop", "import", "export", "create"],
+        "phase": ["discovery", "preparation", "validation", "publication", "bundle_creation", "bundle_validation", "bootstrap", "verification", "comparison", "secure_export", "secure_import", "secure_compare", "preview", "execute", "readiness", "capture", "scope", "observation", "apply", "post_apply", "orchestration"],
+        "domain": ["orchestration", "verification", "workspace", "workspace-folders", "git-repositories", "vscode-workspaces", "git-configuration", "homebrew-packages", "homebrew-casks", "app-store", "vscode-extensions", "vscode-settings", "shell-zsh", "ssh-configuration", "ssh-identities", "secure-ssh-identities", "ssh-prerequisites", "secure-migration", "launcher", "macos-finder", "macos-dock", "macos-windows", "macos-keyboard", "macos-trackpad", "macos-screenshots"],
+        "action": ["execute", "inspect", "install", "reinstall", "configure", "restore", "clone", "create_workspace", "add_worktree", "switch_branch", "checkout", "verify", "compare", "skip", "noop", "import", "validate_and_import", "export", "create"],
         "state": ["started", "completed", "failed", "blocked", "conflict", "interrupted", "skipped", "running", "warning", "changed", "already_satisfied", "graceful_stop_accepted", "graceful_stop_unavailable"],
         "status": ["complete", "partial", "not_run", "unavailable", "invalid", "truncated", "present", "absent", "unsupported", "observation_error", "satisfied", "safely_satisfiable", "external_action_required", "not_selected", "completed", "failed", "cancelled"],
         "outcome": ["success", "failure", "warning", "skipped", "noop", "not_run", "cancelled"],
@@ -25,8 +25,8 @@ enum DiagnosticReportPrivacy {
         "source_status": ["present", "absent", "unavailable", "observation_error", "unsupported", "valid", "invalid", "observed_present", "observed_absent", "partial", "unobserved", "unknown"],
         "severity": ["info", "warning", "error"],
         "comparison_kind": ["matching", "missing", "differing", "unverified", "unsupported", "unresolved", "extra", "unknown_difference"],
-        "predicate": ["exists", "installed", "configured", "matching", "repository", "branch", "remote", "identity", "settings", "folder_exists", "package_installed", "configuration_matches", "identity_pair_matches_package", "directory", "file_content", "stored_preference", "direct_global_value", "supported_config_match", "worktree", "origin", "revision", "topology", "folder_relationships"],
-        "scope": ["operation", "item"],
+        "predicate": ["exists", "installed", "configured", "matching", "repository", "branch", "remote", "identity", "settings", "folder_exists", "package_installed", "configuration_matches", "identity_pair_matches_package", "identity_set_matches_package", "directory", "file_content", "stored_preference", "direct_global_value", "supported_config_match", "worktree", "origin", "revision", "topology", "folder_relationships"],
+        "scope": ["operation", "item", "execution_launch"],
         "tool": ["homebrew", "other"],
         "probe": ["version", "prefix", "inventory", "metadata", "capability", "read"],
         "primitive": ["payload", "metadata", "historical_metadata", "lifecycle", "requirements", "rosetta", "replacement", "launchctl", "login_item", "pkgutil"],
@@ -40,7 +40,8 @@ enum DiagnosticReportPrivacy {
         "reference_changed", "reference_unavailable", "comparison_unavailable", "capture_failed", "capture_discovery_failed", "capture_inventory_invalid", "capture_validation_failed",
         "capture_source_unavailable", "invalid_workspace_selection", "workspace_dependency_missing", "workspace_path_conflict",
         "invalid_destination", "destination_exists", "destination_changed", "secure_bridge_required", "age_unavailable", "secure_bridge_unavailable", "secure_timeout",
-        "secure_import_failed", "secure_export_failed", "secure_input_invalid", "invalid_secure_selection", "readiness_failed", "cask_authorization_required",
+        "secure_comparison_failed", "secure_comparison_unavailable", "secure_target_changed", "secure_import_failed", "secure_export_failed", "secure_input_invalid", "invalid_secure_selection", "readiness_failed", "cask_authorization_required",
+        "secure_unlock_rejected", "secure_target_conflict", "target_conflict", "match", "decrypt_failed", "post_validation_failed", "unsafe_target", "secure_channel_timeout", "secure_channel_invalid", "secure_key_unlock_rejected", "secure_tool_failed", "secure_payload_invalid",
         "cask_execution_requirements_unsupported", "cask_target_conflict", "cask_rosetta_required", "rosetta", "installation_required", "cask_observation_failed", "cask_not_ready", "homebrew_unavailable", "homebrew_broken",
         "homebrew_platform_incompatible", "formula_dependency_unavailable", "dependency_unavailable", "unsupported_capability", "authorization_denied", "authorization_unavailable",
         "provider_conflict", "manual_installation_required", "launcher_destination_conflict", "launcher_inspection_failed", "launcher_install_failed", "launcher_verification_failed",
@@ -174,6 +175,7 @@ struct DiagnosticReportBuilder {
             var safe = OperationLogRecord(.finish, time: record.time)
             safe.exitCode = record.exitCode; safe.signalled = record.signalled; safe.signalNumber = record.signalNumber
             safe.terminalValid = record.terminalValid
+            safe.processLaunched = record.processLaunched
             safe.eventType = ["completed", "failed", "cancelled"].contains(record.eventType ?? "") ? record.eventType : nil
             safe.runtimeError = DiagnosticReportPrivacy.code(record.runtimeError, key: "reason")
             safe.verificationStatus = DiagnosticReportPrivacy.code(record.verificationStatus, key: "status")
@@ -212,7 +214,8 @@ struct DiagnosticReportBuilder {
     func snapshot() -> DiagnosticReportSnapshot {
         let valid = finish?.terminalValid == true
         let process: String
-        if valid {
+        if finish?.failedBeforeLaunch == true { process = "Failed Before Launch" }
+        else if valid {
             switch finish?.eventType {
             case "completed": process = "Completed"
             case "cancelled": process = "Cancelled"
@@ -236,7 +239,8 @@ struct DiagnosticReportBuilder {
         if let value = header?.desktopVersion { lines.append("App version (operation): " + value) }
         if let value = header?.desktopBuild { lines.append("App build (operation): " + value) }
         if let value = header?.coreVersion { lines.append("Core version (operation): " + value) }
-        lines += ["", "Process Result: " + process, "Terminal validity: " + (finish?.terminalValid.map { $0 ? "Valid" : "Invalid" } ?? "Unknown")]
+        let terminalValidity = finish?.failedBeforeLaunch == true ? "Not applicable (not launched)" : (finish?.terminalValid.map { $0 ? "Valid" : "Invalid" } ?? "Unknown")
+        lines += ["", "Process Result: " + process, "Terminal validity: " + terminalValidity]
         if let value = finish?.exitCode { lines.append("Exit code: \(value)") }
         if let value = finish?.signalled { lines.append("Signalled: \(value ? "true" : "false")") }
         if let value = finish?.signalNumber { lines.append("Signal: \(value)") }
@@ -264,10 +268,12 @@ struct DiagnosticReportBuilder {
     }
     private static func operation(_ value: CoreOperation) -> String {
         switch value {
+        case .captureIdentityInspect: return "Capture / SSH Identity Inspection"
         case .capturePrepare: return "Capture / Prepare"
         case .captureExecute: return "Capture / Execute"
         case .bundleInspect: return "Rebuild / Inspect"
         case .restorePrepare: return "Rebuild / Prepare"
+        case .secureRestoreCompare: return "Rebuild / Secure Comparison"
         case .restoreExecute: return "Rebuild / Execute"
         case .environmentCompare: return ProductTask.status.title
         case .capabilities: return "Capabilities"

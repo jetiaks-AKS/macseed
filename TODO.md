@@ -44,13 +44,26 @@ without weakening assertions, skipping tests or changing workflows merely to obt
 
 <a id="secure-ssh-desktop-16h"></a>
 
-## Optional Secure SSH Desktop (16H)
+## SSH Environment Completion — Developer Environment Closure
 
-- [ ] **Optional Secure SSH Desktop (16H), subject to an explicit first-release scope decision:**
-  implement/qualify the inherited FD/challenge
-  bridge, opt-in Capture encryption and Restore unlock/import confirmation over
-  the existing engine; qualify age/OpenSSH PTY behavior. Extend privacy/report
-  fixtures for secure operations without exporting keys, names or secret input.
+**NEXT / PLANNED — not implemented.** Stage 16H identity completion and accepted
+manual evidence belong to [Roadmap](ROADMAP.md#stage-16--native-macseed-desktop)
+and [Desktop](docs/DESKTOP.md#secure-interactions). Follow the
+[workflow contract](docs/CAPTURE-RESTORE.md#ssh-environment-completion--developer-environment-closure):
+
+- [ ] Complete practical SSH Configuration Discovery, Capture, Preview, Restore and
+  Verification, prioritizing `IdentityFile`, `IdentitiesOnly`, `AddKeysToAgent`,
+  `UseKeychain` and other safely portable directives.
+- [ ] Add optional per-identity destinations in existing Rebuild Selection through
+  a compact Customize… sheet and native folder picker; default `~/.ssh` requires
+  no extra steps. Keep Preview read-only and Rebuild responsible for execution;
+  no destination editing in Preview, top-level screen or SSH manager.
+- [ ] Validate `IdentityFile` against selected destinations; require explicit
+  authorization for every proposed SSH configuration correction, never silent rewriting.
+- [ ] Correct false Needs Attention results without hiding unsupported, conflicting
+  or unsafe configurations, retaining Secure Migration v1 Bundle compatibility.
+- [ ] Later qualify joint SSH Configuration + identities E2E, including default/custom
+  destinations, Verification and repeated no-op.
 
 ## Remaining supported-domain Restore qualification
 
@@ -205,7 +218,9 @@ broader Git and macOS 27 gates below remain separate from that completed repair 
   child environment. Current bundled workflow roots are rejected.
 - [ ] Implement and qualify checkout-independent bundled Core/Python and secure-tool
   placement; do not assume developer tools or system Python on a clean Mac.
-- [ ] Sign the app/nested runtime with Developer ID and configure Hardened Runtime.
+- [ ] Sign nested age/runtime before the outer app with Developer ID and configure
+  Hardened Runtime; bind post-signing helper integrity to verified upstream bytes
+  and the release identity without weakening runtime validation.
 - [ ] Complete notarization, stapling, DMG and downloaded-app Gatekeeper checks.
 - [ ] Qualify packaged Capture → Restore → Verify and read-only Saved Environment
   Status on clean Apple Silicon.

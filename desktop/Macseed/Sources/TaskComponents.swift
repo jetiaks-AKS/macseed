@@ -354,7 +354,7 @@ struct OperationSummaryHeader: View {
 // identities and evidence remain intact; these groups never enter Core requests.
 enum RestorePreviewHierarchy {
     static func sections(_ domains: [TaskDomainPresentation]) -> [WorkspacePresentationTaxonomy.Projection<TaskDomainPresentation>] {
-        CaptureHierarchy.project(WorkspacePresentationTaxonomy.project(domains).flatMap(\.rows))
+        CaptureHierarchy.project(WorkspacePresentationTaxonomy.project(domains.filter { $0.id != CoreRestorePreparation.secureDomain }).flatMap(\.rows))
     }
     static func disclosureIDs(_ domains: [TaskDomainPresentation], settings: [TaskDomainPresentation]) -> Set<String> {
         var ids = TaskDomainList.disclosureIDs(domains, settings: settings)
@@ -369,6 +369,7 @@ enum RestorePreviewHierarchy {
             symbol: CaptureHierarchy.symbol(group), items: rows.flatMap(\.items), previewOnly: true)
     }
     static func titleInset(_ id: String) -> CGFloat {
+        if id == CoreRestorePreparation.secureDomain { return 24 }
         let group = CaptureHierarchy.group(for: id)
         guard group != .otherFindings else { return 0 }
         return CaptureChildRowGrid.leadingInset + 12 * (group == .vscode ? 2 : 1)
@@ -409,7 +410,9 @@ struct TaskDomainList: View {
     }
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
-            if !restorePreviewHierarchy {
+            if captureHierarchy {
+                Text(title).font(.headline).accessibilityAddTraits(.isHeader)
+            } else if !restorePreviewHierarchy {
                 HStack {
                     Text(title).font(.headline).accessibilityAddTraits(.isHeader)
                     Spacer()
@@ -428,9 +431,13 @@ struct TaskDomainList: View {
                     if restorePreviewHierarchy {
                         previewGroups
                     } else if captureHierarchy {
-                        CaptureGroupedContent(rows: domains, expanded: treeExpansion,
+                        CaptureGroupedContent(rows: domains.filter { $0.id != CaptureHierarchy.secureTransferID }, expanded: treeExpansion,
+                            ordinaryTitle: "Standard Setup",
+                            ordinaryControls: AnyView(CaptureExpandButton(ids: captureDisclosureIDs(in: .ordinary),
+                                title: "Standard Setup", expanded: treeExpansion)),
                             advancedControls: AnyView(CaptureExpandButton(ids: captureDisclosureIDs(in: .advanced),
-                                title: "Advanced", expanded: treeExpansion)),
+                                title: "For Experienced Users", expanded: treeExpansion)),
+                            secureTransferGroup: captureSecureTransferGroup,
                             summary: { $0.isEmpty ? "Not Included" : captureResultLayout ? "Saved" : "Ready to Save" },
                             attention: { $0.contains { [TaskRowState.attention, .unverified, .failed, .partial].contains($0.state) } ? "Needs Attention" : nil }) { domain in
                             if domain.id == "macos-settings", !settingsCategories.isEmpty {
@@ -492,12 +499,18 @@ struct TaskDomainList: View {
                 }
             }.modifier(WorkspaceCardSurface()).accessibilityIdentifier("restore.preview.ordinary")
         }
-        if let advanced = sections.first(where: { $0.group == .advanced }) {
+        let advanced = sections.first(where: { $0.group == .advanced })
+        let secure = domains.first(where: { $0.id == CoreRestorePreparation.secureDomain })
+        if advanced != nil || secure != nil {
             VStack(alignment: .leading, spacing: 12) {
                 WorkspaceSectionHeader(title: "For Experienced Users")
-                previewAccordion(.advanced, rows: advanced.rows)
-                    .background(.quaternary.opacity(0.2), in: RoundedRectangle(cornerRadius: 8))
-                    .modifier(WorkspaceCardSurface()).accessibilityIdentifier("restore.preview.advanced")
+                VStack(spacing: 0) {
+                    if let advanced { previewAccordion(.advanced, rows: advanced.rows) }
+                    if advanced != nil && secure != nil { Divider().padding(.horizontal, 16) }
+                    if let secure { domainRow(secure) }
+                }
+                .background(.quaternary.opacity(0.2), in: RoundedRectangle(cornerRadius: 8))
+                .modifier(WorkspaceCardSurface()).accessibilityIdentifier("restore.preview.advanced")
             }
         }
         if let other = sections.first(where: { $0.group == .otherFindings }) {
@@ -551,6 +564,17 @@ struct TaskDomainList: View {
         }
     }
 
+    private var captureSecureTransferGroup: AnyView? {
+        guard let domain = domains.first(where: { $0.id == CaptureHierarchy.secureTransferID }) else { return nil }
+        return AnyView(VStack(alignment: .leading, spacing: 0) {
+            CaptureGroupHeader(title: domain.title, summary: captureResultLayout ? "Saved" : "Ready to Save", symbol: domain.symbol,
+                expanded: WorkflowExpansion.binding(domain.id, in: treeExpansion))
+            if expandedIDs.contains(domain.id) {
+                domainContents(domain).padding(.leading, 16 + CaptureChildRowGrid.leadingInset).padding(.trailing, 16)
+            }
+        })
+    }
+
     private func captureSettings(_ domain: TaskDomainPresentation) -> some View {
         VStack(spacing: 0) {
             ForEach(settingsCategories) { child in
@@ -568,10 +592,7 @@ struct TaskDomainList: View {
     }
 
     @ViewBuilder private var expandAllButton: some View {
-        if captureHierarchy {
-            CaptureExpandButton(ids: captureDisclosureIDs(in: .ordinary), title: "Ordinary Categories", expanded: treeExpansion)
-                .padding(.trailing, 42)
-        } else if !availableIDs.isEmpty {
+        if !availableIDs.isEmpty {
             Button(WorkflowExpansion.allExpanded(expandedIDs, available: availableIDs) ? "Collapse All" : "Expand All") {
                 setExpanded(WorkflowExpansion.toggled(expandedIDs, available: availableIDs))
             }.buttonStyle(.plain).foregroundStyle(.secondary)
@@ -579,7 +600,6 @@ struct TaskDomainList: View {
     }
     private func captureDisclosureIDs(in scope: CaptureSelectionScope) -> Set<String> {
         CaptureHierarchy.disclosureIDs(domains.map(\.id) + settingsCategories.map(\.id), scope: scope)
-            .subtracting([CaptureHierarchy.secureTransferID])
     }
 
     private func domainRow(_ domain: TaskDomainPresentation) -> some View {
@@ -593,9 +613,10 @@ struct TaskDomainList: View {
             if restoreSettingsPreview {
                 RestorePreviewRow(title: domainTitle(domain),
                     status: RestorePreviewCategoryStatus(domain: domain, stateTitles: stateTitles),
-                    counts: restorePreviewHierarchy ? [] : RestorePreviewMetrics.badges(domain),
+                    counts: restorePreviewHierarchy && domain.id != CoreRestorePreparation.secureDomain ? [] : RestorePreviewMetrics.badges(domain),
                     titleInset: restorePreviewHierarchy ? RestorePreviewHierarchy.titleInset(domain.id) : 0,
-                    expanded: expandedIDs.contains(domain.id)).padding(.vertical, 6)
+                    expanded: expandedIDs.contains(domain.id),
+                    statusWidth: restorePreviewHierarchy && domain.id == CoreRestorePreparation.secureDomain ? nil : TaskRowLayout.statusWidth).padding(.vertical, 6)
             } else { ViewThatFits(in: .horizontal) {
                 HStack(spacing: TaskRowLayout.columnSpacing) { domainTitle(domain); Spacer(); domainStatus(domain) }
                 VStack(alignment: .leading, spacing: 8) { domainTitle(domain); domainStatus(domain).frame(maxWidth: .infinity, alignment: restoreSettingsPreview || captureResultLayout ? .trailing : .leading) }
@@ -729,7 +750,7 @@ struct TaskDomainItems: View {
     private func details(_ item: TaskItemPresentation, suppressExplanation: Bool) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(itemTitles[item.id] ?? item.item.title)
-            if !suppressExplanation, !item.item.action.isEmpty, item.state != .matching {
+            if !suppressExplanation, !item.item.action.isEmpty, item.state != .matching || (restorePreview && item.sourceDomain == CoreRestorePreparation.secureDomain) {
                 Text(item.assistedAppStore?.message ?? item.item.action).font(.caption).foregroundStyle(.secondary)
             }
             if let url = item.assistedAppStore?.productURL { AppStoreProductButton(url: url) }
