@@ -407,7 +407,7 @@ struct HomebrewDependencySection: View {
     @ObservedObject var model: HomebrewSetupModel
     @Environment(\.openWindow) private var openWindow
     var body: some View {
-        GroupBox("Tools & Dependencies") {
+        GroupBox("External Dependencies") {
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
                     VStack(alignment: .leading, spacing: 3) {

@@ -58,6 +58,7 @@ open/deferred gates, and no completed slice alone establishes release readiness.
 | 16K — Desktop integration hardening | Partially complete | Bundle-backed Status completed; runtime, transport, security, accessibility and packaged-state hardening remain |
 | Native UI Alignment / Visual Unification | Completed/visually accepted, 2026-11-02 | Consistent Home/workflow naming, native Sidebar/Settings/About, Capture accordion and publication Result, Restore selection/Preview and flat outcome-specific Progress/Result, static Status diagnostic sections and adaptive count columns |
 | Restore Cancellation Safety | Implemented; partially qualified | Operation-wide checkpoint Graceful Stop and separate Force Stop; automated tests and controlled real-Mac Early Cancelled/Partial Stopped checks; Stage 3C and broader installer quiescence open |
+| Settings Tools & Dependencies | Implemented locally; visual acceptance pending | Existing Homebrew controls moved out of General; read-only diagnostics reuse the bundled age validator; General and Operation Logs retain their behavior |
 | Unified UI Scenario Catalog | Deferred tooling | Existing Debug fixtures retained; optional Lite catalog after functional priorities |
 
 Stage 16J is complete. It preserves two independent
@@ -241,6 +242,15 @@ compatibility, and later qualify joint E2E with custom destinations and repeated
 [Capture / Restore](docs/CAPTURE-RESTORE.md#ssh-environment-completion--developer-environment-closure)
 owns the contract; [TODO](TODO.md#ssh-environment-completion--developer-environment-closure)
 owns unfinished actions. Stage 17 and the other remaining gates are unchanged.
+
+## Future whole-application updates
+
+**Approved future direction; not implemented.** After Stage 17 signing/distribution,
+qualify a separate Settings Updates tab with manual and explicitly configured
+automatic modes. Signed, verified atomic replacement updates all bundled components
+together and defers during owned operations. Framework selection remains separate;
+[Distribution](docs/DISTRIBUTION.md#future-whole-application-updates) owns the contract.
+This does not start implementation or change the current checkpoint order.
 
 ## Early Access / Alpha
 

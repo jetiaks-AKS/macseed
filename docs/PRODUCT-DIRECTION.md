@@ -61,7 +61,16 @@ The accepted native navigation is **Home**, **Capture**, **Rebuild**
 and **Check**. Home, Sidebar and workflow headers share the approved
 names/descriptions; the tagline is **A smarter way to capture, rebuild, and check your Mac setup.**
 Compact General Settings and standard About are available from native application menus,
-with Settings also at the bottom of the sidebar and About in General. The
+with Settings also at the bottom of the sidebar and About in General. Settings now
+has General, Tools & Dependencies, and Operation Logs tabs; Tools & Dependencies
+reuses Homebrew controls and adds read-only bundled age diagnostics. This Settings
+checkpoint is implemented locally; its native visual acceptance remains pending.
+A separate Updates tab is approved future functionality: manual check/review and
+confirmed installation, configurable background checking, and automatic installation
+only with an explicit approved preference and safe lifecycle. Whole-app replacement,
+operation deferral and Stage 17 dependencies belong to the
+[distribution contract](DISTRIBUTION.md#future-whole-application-updates); no updater
+or placeholder tab is implemented. The
 [Desktop UI contract](DESKTOP.md#macseed-native-ui--design--interaction-contract)
 owns the implemented copy, measurements and interaction rules.
 

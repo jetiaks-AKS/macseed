@@ -2,6 +2,7 @@
 from dataclasses import dataclass
 import errno
 import hashlib
+import json
 import os
 from pathlib import Path
 import platform
@@ -39,6 +40,13 @@ class BundledAgeInspection:
     executable: str = None
     version: str = None
     architecture: str = None
+
+    def diagnostic(self):
+        # Public tool metadata only: no paths, exceptions or security internals.
+        result = {'schema_version': 1, 'status': self.status}
+        if self.status == 'available':
+            result.update(version=self.version, architecture=self.architecture)
+        return result
 
 
 def inspect_bundle(bundle, architecture=None):
@@ -122,4 +130,9 @@ def executable():
 
 
 if __name__ == '__main__':
+    # Both modes are read-only; neither launches age. Diagnostic mode always
+    # requires an explicit app bundle and never consults PATH or the CLI fallback.
+    if len(sys.argv) == 3 and sys.argv[1] == '--inspect-bundle':
+        print(json.dumps(inspect_bundle(sys.argv[2]).diagnostic(), separators=(',', ':')))
+        sys.exit(0)
     sys.exit(0 if sys.argv[1:] == ['--check'] and executable() else 2)

@@ -10,7 +10,7 @@ if [[ $# -gt 2 || ( $# -eq 2 && "$2" != --test ) ]]; then
 fi
 # One inventory drives execution and the optional CI summary. Counts are suite
 # invocations, never assertions; compilation and execution are separate stages.
-suites=(PresentationTests HomebrewSetupTests HomebrewPackageTests HomebrewLaunchTests DiagnosticReportTests OperationLogViewTests OperationLogTests
+suites=(PresentationTests SettingsTests HomebrewSetupTests HomebrewPackageTests HomebrewLaunchTests DiagnosticReportTests OperationLogViewTests OperationLogTests
     CoreRuntimeTests EnvironmentStatusTests CaptureTests RestoreTests)
 restore_subsets=(--final-restore-ux-only --assisted-appstore-only)
 stages=("$configuration app build")
@@ -95,6 +95,7 @@ if [[ "${2:-}" == --test ]]; then
             -o "$output_dir/$suite"
         test_arguments=()
         case "$suite" in
+            SettingsTests) test_arguments+=("$core_root" "$python_runtime" "$output_dir/Macseed.app") ;;
             CoreRuntimeTests|EnvironmentStatusTests|CaptureTests|RestoreTests) test_arguments+=("$core_root" "$python_runtime") ;;
         esac
         case "$suite" in CaptureTests|RestoreTests) test_arguments+=(--no-renders) ;; esac

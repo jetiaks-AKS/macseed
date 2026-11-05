@@ -662,15 +662,45 @@ General Settings owns one persistent Appearance enum: System (default), Light,
 Dark. System removes the override; Light/Dark set application appearance as the
 single owner. Windows, SwiftUI content, Settings and native dialogs inherit it,
 without separate color-scheme overrides. This has no Core/Blueprint/Bundle meaning.
-Operation Logs opens the shared viewer/history; Diagnostic Report belongs to the
-selected operation. General is **440 pt** wide and vertically content-sized, retaining
-the Appearance control and Operation Logs tab. Obsolete development instructions
-are absent; DEBUG functionality is unchanged.
+Settings has three native tabs: **General**, **Tools & Dependencies**, and
+**Operation Logs**. General retains Appearance and **About Macseed…**. The existing
+window stays **440 pt** wide and vertically content-sized. Operation Logs still
+opens the shared viewer/history and returns tab selection to General; Diagnostic
+Report belongs to the selected operation. Obsolete development instructions are
+absent; DEBUG functionality is unchanged.
+
+**Tools & Dependencies — implemented locally; native visual acceptance pending.**
+External Dependencies contains the existing Homebrew section, with the same model,
+Setup…/Install…/Details… action, Check Again, messages and persisted startup-reminder
+preference. Placement does not change startup, installation, repair or consent.
+Built-in Tools contains age and its read-only Check Again action. A successful
+check shows **Bundled · verified version · architecture** and **Available**; failures
+are **Missing**, **Invalid**, or **Unable to Verify**, with concise guidance.
+
+The age check resolves the app through `CoreLocationResolver` and invokes the
+existing Core `age_runtime.py --inspect-bundle` through the bounded native reader.
+It projects the same path/ownership/mode/link/architecture/integrity decision used
+by secure execution; the authenticated bytes bind the displayed release version.
+It does not launch age, download/install/update anything, change the app or fall
+back to external PATH/Homebrew. Invalid/missing runtime inspection yields Unable
+to Verify, never assumed availability. One check runs on first opening the tools
+content; further checks require Check Again. Checks run off the main actor, are
+bounded, coalesce while busy, and never run from SwiftUI body recomputation.
+No hash/version policy is duplicated in Swift. Current development-bundle trust
+and future signed-code qualification remain owned by
+[Distribution](DISTRIBUTION.md#bundled-age--required-for-desktop-10).
+
+A separate **Updates** tab is approved future functionality, not an implemented
+control or placeholder. It will offer manual release checking/review and confirmed
+installation, configurable background checking, and automatic installation only
+under an explicit approved preference and safe lifecycle. The
+[whole-app update contract](DISTRIBUTION.md#future-whole-application-updates)
+owns signing, atomic replacement, component scope and operation deferral.
 
 ### Homebrew setup — implemented, visually accepted
 
-Homebrew setup is a single native SwiftUI window shared by first launch, General's
-**Tools & Dependencies**, and selected Rebuild prerequisites. The approved Home and
+Homebrew setup is a single native SwiftUI window shared by first launch, Settings'
+**Tools & Dependencies** tab, and selected Rebuild prerequisites. The approved Home and
 workflow contents remain unchanged. A synchronous main-thread entry pumps its run
 loop while a bounded read-only check runs asynchronously, then starts the regular
 SwiftUI app outside any suspended concurrency job. This avoids holding MainActor

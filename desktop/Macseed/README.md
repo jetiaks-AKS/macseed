@@ -122,19 +122,27 @@ Use the existing entrypoint for an authorized Desktop validation checkpoint:
 ```
 
 `build.sh` is the single inventory owner. It compiles each executable once and runs
-these eleven suites sequentially:
+these twelve suites sequentially:
 
 1. PresentationTests
-2. HomebrewSetupTests
-3. HomebrewPackageTests
-4. HomebrewLaunchTests
-5. DiagnosticReportTests
-6. OperationLogViewTests
-7. OperationLogTests
-8. CoreRuntimeTests
-9. EnvironmentStatusTests
-10. CaptureTests
-11. RestoreTests
+2. SettingsTests
+3. HomebrewSetupTests
+4. HomebrewPackageTests
+5. HomebrewLaunchTests
+6. DiagnosticReportTests
+7. OperationLogViewTests
+8. OperationLogTests
+9. CoreRuntimeTests
+10. EnvironmentStatusTests
+11. CaptureTests
+12. RestoreTests
+
+`SettingsTests <core-root> <python> <app-bundle>` copies the selected build's age
+helper into a disposable app fixture and verifies read-only diagnostics, failure
+boundaries, recheck coalescing and reused Homebrew controls. It never executes age
+or installs tools. Settings layout checks run in full `PresentationTests` and are
+also available through `--settings-tools-only`; native visual acceptance remains
+separate.
 
 `HomebrewSetupTests` uses injected observations/external actions and disposable fake
 executables. `HomebrewLaunchTests` covers the synchronous entry stack, an actually

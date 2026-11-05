@@ -230,6 +230,18 @@ broader Git and macOS 27 gates below remain separate from that completed repair 
 - [ ] Manually verify Diagnostic Report Save panel cancellation/error handling and
   user-driven scrolling; programmatic byte-identity/TextKit tests are not these gates.
 
+## Settings and future application updates
+
+- [ ] Manually accept the implemented Tools & Dependencies tab in the native app:
+  General Appearance/About, moved Homebrew controls/reminders, bundled age status
+  and Check Again, Operation Logs, and Light/Dark compact layout.
+- [ ] After Stage 17 distribution/signing is ready, choose and qualify the updater
+  framework and a separate Updates tab under the
+  [whole-app contract](docs/DISTRIBUTION.md#future-whole-application-updates): manual
+  check/review/confirmed install; configurable background checking; explicit opt-in
+  automatic installation; signed, verified atomic replacement of all bundled
+  components; safe deferral during owned operations. No updater is implemented.
+
 ## Early Access / Macseed 1.0
 
 - [ ] Run real Capture/Restore/Status validation with approximately 10–20 technical external

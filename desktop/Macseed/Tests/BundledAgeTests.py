@@ -109,6 +109,37 @@ class BundledAgeTests(unittest.TestCase):
                     target.addfile(tarfile.TarInfo({'extra': 'age/extra', 'traversal': '../outside', 'duplicate': 'age/age'}[fault]))
             with self.subTest(fault=fault), self.assertRaises(ValueError): prepare.unpack(output.getvalue(), 'arm64')
 
+    def test_settings_diagnostic_identity_and_read_only(self):
+        before = (self.binary.read_bytes(), self.binary.stat().st_mtime_ns, self.binary.stat().st_mode)
+        result = runtime.inspect_bundle(str(self.bundle))
+        self.assertEqual(result.diagnostic(), {'schema_version': 1, 'status': 'available', 'version': 'v1.3.2', 'architecture': 'arm64'})
+        self.assertEqual(result.executable, runtime.bundled_executable(str(self.bundle)))
+        self.assertEqual(before, (self.binary.read_bytes(), self.binary.stat().st_mtime_ns, self.binary.stat().st_mode))
+        raw = subprocess.check_output([sys.executable, '-I', '-B', str(Path(runtime.__file__)), '--inspect-bundle', str(self.bundle)])
+        self.assertEqual(__import__('json').loads(raw), result.diagnostic())
+        self.assertNotIn(str(self.bundle).encode(), raw)
+
+    def test_settings_failures_share_runtime_boundary(self):
+        for fault in ('missing', 'corrupt', 'wrong_architecture', 'mode', 'symlink', 'hardlink'):
+            with self.subTest(fault=fault):
+                if self.binary.exists() or self.binary.is_symlink(): self.binary.unlink()
+                self.binary.write_bytes(self.raw); self.binary.chmod(0o755)
+                if fault == 'missing': self.binary.unlink()
+                if fault == 'corrupt': self.binary.write_bytes(b'not trusted code')
+                if fault == 'wrong_architecture': self.binary.write_bytes(prepare.unpack(prepare.read_archive(CACHE / 'age-v1.3.2-darwin-amd64.tar.gz', 'x86_64'), 'x86_64')[0])
+                if fault == 'mode': self.binary.chmod(0o777)
+                if fault in ('symlink', 'hardlink'):
+                    outside = self.root / fault; self.binary.rename(outside)
+                    if fault == 'symlink': self.binary.symlink_to(outside)
+                    else: os.link(outside, self.binary)
+                observed = runtime.inspect_bundle(str(self.bundle))
+                self.assertEqual(observed.diagnostic(), {'schema_version': 1, 'status': 'missing' if fault == 'missing' else 'invalid'})
+                self.assertIsNone(runtime.executable())
+        with patch.object(runtime.os, 'open', side_effect=PermissionError(13, 'fixture permission error')):
+            self.assertEqual(runtime.inspect_bundle(str(self.bundle)).status, 'unable_to_verify')
+            self.assertIsNone(runtime.executable())
+        self.assertEqual(runtime.inspect_bundle(str(self.bundle), 'unsupported').status, 'unable_to_verify')
+
     def test_cli_keeps_path_resolution(self):
         tools = self.root / 'cli'; tools.mkdir()
         external = tools / 'age'; external.write_text('#!/bin/sh\nexit 0\n'); external.chmod(0o755)

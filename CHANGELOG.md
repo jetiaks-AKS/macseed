@@ -20,6 +20,9 @@ The format is based on the principles of **Keep a Changelog**.
   restoring under `~/.ssh` with validated names and unchanged v1 package compatibility.
   Source paths stay private; source freshness and destination no-clobber checks remain required.
 
+* Native Settings **Tools & Dependencies** tab, reusing Homebrew controls and
+  startup reminders with read-only status/rechecks for the bundled age runtime.
+
 * Native Secure SSH Capture with explicit, default-off identity selection in
   Secure Transfer beside Advanced, public fingerprints and native passphrase fields.
   The existing Core engine validates selected pairs and exports `secure.age` through
@@ -32,7 +35,7 @@ The format is based on the principles of **Keep a Changelog**.
   package without importing: matching, missing and conflicting identities count as
   one requirement, with secure-only no-op gating and fresh Execute target checks.
   Complete 1.0 qualification remains open.
-* Optional native Homebrew setup guidance, shared by first launch, General Settings
+* Optional native Homebrew setup guidance, shared by first launch, Settings Tools & Dependencies
   and Rebuild prerequisites. Read-only checks distinguish missing, usable and
   uncertain/broken installations. Supported Macs can download the official package
   with progress/cancellation and required checksum, pinned publisher and Apple

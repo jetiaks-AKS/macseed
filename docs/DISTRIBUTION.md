@@ -99,6 +99,24 @@ upstream input and release signing identity, without disabling validation. Never
 modify a signed app to update age at runtime. Core/Python still use the development
 checkout; autonomous packaging is not implemented by this checkpoint.
 
+## Future whole-application updates
+
+**Approved direction; not implemented.** A future Settings **Updates** tab will
+support manual **Check for Updates…**, release review and user-confirmed
+installation. Background checking will be configurable; automatic installation
+requires an explicit approved user preference and a safe lifecycle. The exact
+framework and implementation will be selected and qualified separately after
+Stage 17 distribution/signing is ready. No placeholder tab or controls exist now.
+
+Use a signed, verified update mechanism with atomic replacement of the entire
+`Macseed.app`: native Desktop, bundled Core, Python/runtime, age and other packaged
+components form one release. Never independently replace signed age within an
+installed app, and never update external user-managed Homebrew, Git or other tools
+as part of an app update. Installation must defer until active Capture, Rebuild,
+Secure Transfer and every other owned Core operation are safely finished; checking
+for a release is not permission to interrupt them. Stage 17 owns final signed-code
+integrity qualification; Settings diagnostics reuse that single runtime policy.
+
 ## Acceptance flow
 
 ```text

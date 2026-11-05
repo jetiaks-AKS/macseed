@@ -107,6 +107,72 @@ private struct WorkflowAnchorFrames: PreferenceKey {
         print("PASS: manual identity rows, long names and fingerprints render in Light/Dark at 580/1040 pt (4 renders)")
     }
 
+    @MainActor static func settingsToolsChecks() async throws {
+        _ = NSApplication.shared
+        let source = try String(contentsOfFile: "Sources/FoundationSettings.swift")
+        let tabs = ["General", "Tools & Dependencies", "Operation Logs"]
+        var previous = source.startIndex
+        precondition(source.components(separatedBy: ".tabItem").count == 4)
+        for title in tabs {
+            let found = source.range(of: "Label(\"" + title + "\"", range: previous..<source.endIndex)!
+            previous = found.upperBound
+        }
+        let general = source.components(separatedBy: "struct FoundationGeneralSettings:")[1].components(separatedBy: "struct FoundationToolsSettings:")[0]
+        precondition(general.contains("DesktopAppearance.allCases") && general.contains("About Macseed…") && !general.contains("HomebrewDependencySection"))
+        let tools = source.components(separatedBy: "struct FoundationToolsSettings:")[1].components(separatedBy: "struct BundledAgeObservation:")[0]
+        precondition(tools.contains("HomebrewDependencySection(model: homebrew)") && tools.contains("GroupBox(\"Built-in Tools\")"))
+        precondition(source.contains("await age.checkIfNeeded()") && tools.contains("await age.check()") && !tools.contains("await homebrew.check()"))
+        precondition(source.contains("OperationLogWindowController.shared.open(runtime: CoreRuntime.shared, target: nil)") && source.contains("selectedTab = \"general\""))
+        precondition(!source.contains("Label(\"Updates\"") && !source.contains("v1.3.2") && !source.contains("SHA256"))
+        let brewSource = try String(contentsOfFile: "Sources/HomebrewSetup.swift")
+        let section = brewSource.components(separatedBy: "struct HomebrewDependencySection:")[1].components(separatedBy: "struct HomebrewPrerequisiteAction:")[0]
+        precondition(section.contains("GroupBox(\"External Dependencies\")") && section.contains("await model.check()") && section.contains("model.beginSetup(returningTo: NSApp.keyWindow)"))
+        precondition(section.contains("$model.remindersEnabled") && section.contains("openWindow(id: \"homebrew-setup\")"))
+        let suite = "macseed.settings.presentation." + UUID().uuidString
+        let preferences = UserDefaults(suiteName: suite)!
+        defer { preferences.removePersistentDomain(forName: suite) }
+        let output = URL(fileURLWithPath: "build/Debug/SettingsTools")
+        try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+        let homebrew = HomebrewSetupModel(host: .init(architecture: .appleSilicon, majorVersion: 27, version: "27.2"),
+            preferences: preferences, detect: { .usable }, packageStagingBase: output.appendingPathComponent("unused-packages"))
+        await homebrew.check()
+        var next = BundledAgeObservation(status: .available, version: "v1.3.2", architecture: "arm64")
+        var checks = 0
+        let age = BundledAgeSettingsModel { checks += 1; return next }
+        await age.check()
+        func render<V: View>(_ view: V, name: String, width: CGFloat, dark: Bool) async throws {
+            let host = NSHostingView(rootView: view.frame(width: width).background(Color(nsColor: .windowBackgroundColor)))
+            host.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+            let fitting = host.fittingSize
+            precondition(abs(fitting.width - width) < 1 && fitting.height > 80 && fitting.height < 530, "Settings must retain compact native geometry")
+            let window = NSWindow(contentRect: .init(origin: .zero, size: fitting), styleMask: [.titled], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false; window.contentView = host
+            window.orderFront(nil)
+            try await Task.sleep(for: .milliseconds(60))
+            host.layoutSubtreeIfNeeded(); host.displayIfNeeded()
+            precondition(host.fittingSize.width <= width + 1)
+            let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds)!
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            try bitmap.representation(using: .png, properties: [:])!.write(to: output.appendingPathComponent("\(name)-\(Int(width))-\(dark ? "dark" : "light").png"))
+            window.close()
+        }
+        for dark in [false, true] {
+            for width: CGFloat in [440, 620] {
+                try await render(FoundationGeneralSettings(showAbout: {}).defaultAppStorage(preferences), name: "general", width: width, dark: dark)
+                try await render(FoundationToolsSettings(homebrew: homebrew, age: age), name: "tools-available", width: width, dark: dark)
+            }
+            try await render(FoundationSettingsView(homebrew: homebrew, showAbout: {}).defaultAppStorage(preferences), name: "tabs", width: 440, dark: dark)
+        }
+        precondition(checks == 1, "SwiftUI body/reappearance must not repeat validation")
+        next = .init(status: .invalid); await age.check()
+        for dark in [false, true] { for width: CGFloat in [440, 620] {
+            try await render(FoundationToolsSettings(homebrew: homebrew, age: age), name: "tools-invalid", width: width, dark: dark)
+        } }
+        precondition(checks == 2)
+        print("PASS: three native Settings tabs; General Appearance/About; moved shared Homebrew controls/reminders; unchanged Logs action; no updater placeholders")
+        print("PASS: Light/Dark native Settings renders at 440/620 pt; healthy/invalid age; compact geometry; no body-driven repeated checks (14 renders)")
+    }
+
     @MainActor static func securePassphraseChecks() async throws {
         if !CommandLine.arguments.contains("--secure-dialog-only") { try await secureComparisonChecks() }
         let source = try String(contentsOfFile: "Sources/RestoreView.swift", encoding: .utf8)
@@ -750,7 +816,7 @@ private struct WorkflowAnchorFrames: PreferenceKey {
             observation = .usable; await model.check()
             let available = await size()
             precondition(available.width == initial.width && available.height < initial.height)
-            let settings = NSHostingView(rootView: FoundationGeneralSettings(homebrew: model, showAbout: {}).frame(width: 440))
+            let settings = NSHostingView(rootView: FoundationGeneralSettings(showAbout: {}).frame(width: 440))
             settings.appearance = NSAppearance(named: appearance)
             precondition(settings.fittingSize.width == 440, "Preserve approved Settings width")
             observation = .absent; await model.check()
@@ -4358,6 +4424,7 @@ private struct WorkflowAnchorFrames: PreferenceKey {
 
     @MainActor static func main() async {
         if CommandLine.arguments.contains("--external-identities-only") { try! await externalIdentityChecks(); return }
+        if CommandLine.arguments.contains("--settings-tools-only") { try! await settingsToolsChecks(); return }
         if CommandLine.arguments.contains("--bundled-age-only") { try! bundledAgeErrorChecks(); return }
         if CommandLine.arguments.contains("--secure-passphrase-only") || CommandLine.arguments.contains("--secure-dialog-only") { try! await securePassphraseChecks(); return }
         if CommandLine.arguments.contains("--secure-startup-only") { try! secureStartupErrorChecks(); return }
@@ -4390,6 +4457,7 @@ private struct WorkflowAnchorFrames: PreferenceKey {
         if CommandLine.arguments.contains("--restore-macos-only") { await restoreMacOSChecks(); return }
         if CommandLine.arguments.contains("--workflow-scroll-only") { try! await workflowStatusScrollChecks(); return }
         if CommandLine.arguments.count == 1 {
+            try! await settingsToolsChecks()
             await homebrewSetupChecks()
             try! await summaryMetricVisibilityChecks()
             await sidebarLayoutChecks()

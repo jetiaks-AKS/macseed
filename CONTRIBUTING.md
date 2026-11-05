@@ -139,7 +139,7 @@ on a single local machine, where temporary-directory observations can overlap.
 The required `validate` check retains `if: always()` and dependencies
 `[lint, regression, desktop]`; all three must report `success`. Failure,
 cancellation, skipped or missing execution cannot pass the gate.
-The existing eleven suites and two Restore subsets retain their fixture isolation
+The twelve suites and two Restore subsets retain their fixture isolation
 and native assertions; [build.sh](desktop/Macseed/build.sh) owns the inventory.
 Capture/Restore keep `--no-renders`. The runner's selected
 Xcode, SDK, Swift and Xcode-resolved Python are checked before execution. Safe GUI
