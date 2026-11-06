@@ -3344,7 +3344,21 @@ private struct CaptureRefinementHost: View {
         }
         let source = try! String(contentsOfFile: "Sources/RestoreView.swift")
         let appScreen = source.components(separatedBy: "struct AppStoreRestoreScreen:")[1].components(separatedBy: "struct AppStoreRestoreActions:")[0]
-        precondition(!appScreen.contains("Button(") && appScreen.contains("No App Store applications selected"))
+        // Refresh cancellation belongs beside its progress; navigation stays in the footer.
+        let cancelRefreshPattern = #"if\s+model\.isRefreshingAppStore\s*\{\s*Button\s*\(\s*"Cancel Refresh"\s*\)"#
+            + #"\s*\{\s*model\.cancelAppStoreRefresh\s*\(\s*\)\s*\}"#
+            + #"\s*\.disabled\s*\(\s*!model\.canCancelAppStoreRefresh\s*\)\s*\}"#
+        guard let cancelRefresh = appScreen.range(of: cancelRefreshPattern, options: .regularExpression) else {
+            preconditionFailure("App Store refresh must retain its operation-gated Cancel Refresh action")
+        }
+        let remainingScreen = appScreen.replacingCharacters(in: cancelRefresh, with: "")
+        let buttonPattern = #"\bButton\s*[({]"#
+        precondition(remainingScreen.range(of: buttonPattern, options: .regularExpression) == nil,
+            "Cancel Refresh is the only inline action; navigation and refresh stay in the footer")
+        precondition(appScreen.contains("No App Store applications selected"))
+        let appActions = source.components(separatedBy: "struct AppStoreRestoreActions:")[1]
+        precondition(appActions.contains("model.closeAppStore()") && appActions.contains("model.refreshAppStore()")
+            && !appActions.contains("model.cancelAppStoreRefresh()"), "Footer retains Back/Refresh without duplicate cancellation")
         precondition(appScreen.contains("Text(\"App Store Applications\")") && !appScreen.contains("selected applications"))
         let metricsSource = source.components(separatedBy: "struct AppStoreRestoreMetrics:")[1].components(separatedBy: "struct AppStoreRestoreList:")[0]
         precondition(metricsSource.contains("!summary.installed.isEmpty") && metricsSource.contains("summary.attentionCount > 0"))
