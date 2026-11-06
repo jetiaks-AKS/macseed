@@ -312,6 +312,8 @@ rm -rf "$HOME/.ssh"
 expect 'none/boolean v2 also cannot create configuration' 1 bootstrap_ssh_configuration
 [[ ! -e "$HOME/.ssh" ]] && pass 'all extended creation remains gated' || fail 'extended creation bypassed gate'
 
+# These are literal SSH syntax fixtures, not shell-expanded HOME paths.
+# shellcheck disable=SC2088
 for reference in 'relative' '~someone/key' '$HOME/key' '${HOME}/key' '%d/.ssh/key' '~/a/../key' '~/./key' '~/a//key' '~/key/' '/' '~/key*' '~/key?' '~/key;command' '"~/key"' '~/key#comment'; do
     reset_fixture
     source_config "$valid_profile"" IdentityFile $reference"$'\n'

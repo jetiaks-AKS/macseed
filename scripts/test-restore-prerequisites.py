@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 """Batch A: real Restore entrypoint/consumers, disposable HOME, local Git transport."""
 import importlib.util
+import io
+import json
 import os
 from pathlib import Path
 import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
 import unittest
 
@@ -173,8 +176,26 @@ git(){
         self.prepare(ssh=True, repository=True)
         snapshot = self.stage / "generated/ssh/config.snapshot"
         snapshot.write_bytes(snapshot.read_bytes() + b"    ProxyCommand malicious\n")
+        with tarfile.open(self.archive) as archive:
+            files = {member.name: archive.extractfile(member).read() for member in archive.getmembers()}
         self.archive.unlink()
-        bundle.pack(self.stage, self.archive, "/Users/source")
+        with self.assertRaisesRegex(bundle.Invalid, "invalid SSH snapshot"):
+            bundle.pack(self.stage, self.archive, "/Users/source")
+        self.assertFalse(self.archive.exists())
+        # Independently exercise Restore's trust boundary with a malformed
+        # snapshot whose manifest size/digest are valid, bypassing only packing.
+        name = 'generated/ssh/config.snapshot'
+        files[name] = snapshot.read_bytes()
+        manifest = json.loads(files['manifest.json'])
+        manifest['files'][name] = {'size': len(files[name]), 'sha256': bundle.digest(files[name])}
+        files['manifest.json'] = json.dumps(manifest).encode()
+        with tarfile.open(self.archive, 'w', format=tarfile.USTAR_FORMAT) as archive:
+            for name, raw in sorted(files.items()):
+                member = tarfile.TarInfo(name)
+                member.size, member.mode = len(raw), 0o600
+                archive.addfile(member, io.BytesIO(raw))
+        with self.assertRaisesRegex(bundle.Invalid, "invalid SSH snapshot"):
+            bundle.validate_archive(self.archive)
         result = self.restore()
         self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
         self.assertFalse(self.events.exists())

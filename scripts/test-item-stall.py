@@ -129,7 +129,20 @@ class RestoreStallTests(unittest.TestCase):
         else:
             f.cask_fixture(mixed=True)
         module = f.project / 'modules/core/application-interface/item_execution.py'
-        module.write_text(module.read_text().replace('STALL_SECONDS = 180', 'STALL_SECONDS = 1.5'))
+        # Accelerate only the deliberately hung item, including its supervisor.
+        # A global 1.5s limit also stalls normal independent work on slow runners.
+        module.write_text(module.read_text() + '''
+_fixture_original_run = ItemExecutor.run
+def _fixture_run(self, command, capture=False):
+    previous = self.interval
+    if 'fixture-cask' in command and any(action in command for action in ('install', 'reinstall')):
+        self.interval = 1.5
+    try:
+        return _fixture_original_run(self, command, capture)
+    finally:
+        self.interval = previous
+ItemExecutor.run = _fixture_run
+''')
         blueprint = f.stage / 'blueprint.conf'
         blueprint.write_text(blueprint.read_text().replace('[homebrew-casks]\nfixture-cask\n', '[homebrew-casks]\nfixture-cask\nlater-cask\n'))
         (f.stage / 'generated/brew-casks.conf').write_bytes(b'fixture-cask\nlater-cask\n')
@@ -159,6 +172,8 @@ elif a[0]=='install' and a[-1]=='fixture-cask':
  p=subprocess.Popen([sys.executable,'-B','-c','import signal,time; signal.signal(signal.SIGTERM,signal.SIG_IGN); time.sleep(60)'],start_new_session=True)
  Path(os.environ['STALL_PID']).write_text(str(p.pid)); time.sleep(60)
 elif a[0]=='install' and a[-1]=='later-cask':
+ # Exceed the hung item's accelerated timeout; normal work keeps its real limit.
+ time.sleep(3)
  later.touch(); app=Path(os.environ['TEST_CASK_TARGET']).parent/'Later.app'; (app/'Contents/MacOS').mkdir(parents=True)
  (app/'Contents/Info.plist').write_bytes(plistlib.dumps({'CFBundleIdentifier':'org.example.Later','CFBundleExecutable':'Later'}))
  binary=app/'Contents/MacOS/Later'; binary.write_text('#!/bin/sh\\n'); binary.chmod(0o700)
@@ -180,6 +195,7 @@ else: sys.exit(2)
         self.assertNotEqual(final['verification']['verdict'], 'selected_requirements_verified')
         records = final['verification']['details']
         self.assertTrue(any(r['item_id']=='fixture-cask' and r['action']==('reinstall' if repair else 'install') and r['reason']=='item_stalled_timeout' for r in records['operation_records']))
+        self.assertTrue(any(r['item_id']=='later-cask' and r['action']=='install' and r['outcome']=='success' for r in records['operation_records']), records)
         self.assertTrue(any(r['item_id']=='later-cask' and r['conformity']=='verified' for r in records['verification_records']))
         self.assertTrue(any(r['item_id']=='fixture-cask' and r['conformity']!='verified' for r in records['verification_records']))
         self.assertTrue(Path(f.environment['LATER_STATE']).exists())

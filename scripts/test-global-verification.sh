@@ -602,7 +602,11 @@ assert test "$GV_MISMATCH" -eq 4
 assert record_is jq installed mismatch
 assert test "$GV_UNVERIFIED" -eq 0
 assert test "$GV_UNSUPPORTED" -eq 0
-assert test "$GV_UNRESOLVED" -eq 1
+# Excluded SSH source profiles and the unobserved secure identity set are
+# independent unresolved scopes, even when comparable configuration matches.
+assert test "$GV_UNRESOLVED" -eq 2
+assert has_code partial_source_coverage
+assert grep -q 'excluded-profiles: unresolved selected reference; partial_source_coverage' "$TEST_ROOT/batch2-report"
 assert has_code operation_failed
 assert has_code prerequisite_unmet
 assert grep -q 'SSH identity evidence is from this Restore importer' "$TEST_ROOT/batch2-report"
