@@ -4851,6 +4851,7 @@ private struct CaptureRefinementHost: View {
     }
 
     @MainActor static func main() async {
+        if CommandLine.arguments.contains("--workflow-contracts-only") { workflowContractChecks(); return }
         if CommandLine.arguments.contains("--preview-column-geometry-only") { previewColumnGeometryChecks(); return }
         if CommandLine.arguments.contains("--preview-cleanup-only") {
             try! previewCleanupChecks()
@@ -5102,7 +5103,13 @@ private struct CaptureRefinementHost: View {
         precondition(DesktopAppearance.light.appearanceName == .aqua)
         precondition(DesktopAppearance.dark.appearanceName == .darkAqua)
         print("PASS: Appearance defaults to System, persists all modes and maps to AppKit appearance")
+        workflowContractChecks()
+        sampleInteractionChecks()
+    }
+
+    @MainActor static func workflowContractChecks() {
         #if DEBUG
+        setbuf(stdout, nil)
         precondition(BuildFeatures.sampleExperience)
         var sources = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Sources")
         if !FileManager.default.fileExists(atPath: sources.appendingPathComponent("EnvironmentStatusView.swift").path) {
@@ -5111,6 +5118,8 @@ private struct CaptureRefinementHost: View {
             sources = URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL
                 .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Sources")
         }
+        let components = try! String(contentsOf: sources.appendingPathComponent("TaskComponents.swift"), encoding: .utf8)
+        let workspaceSource = try! String(contentsOf: sources.appendingPathComponent("ProductionWorkspace.swift"), encoding: .utf8)
         let content = try! String(contentsOf: sources.appendingPathComponent("ContentView.swift"), encoding: .utf8)
         let statusView = try! String(contentsOf: sources.appendingPathComponent("EnvironmentStatusView.swift"), encoding: .utf8)
         precondition(statusView.contains("Check This Mac") && statusView.contains("Choose Saved Environment…"))
@@ -5295,8 +5304,27 @@ private struct CaptureRefinementHost: View {
         // Views may reference the operation type for logs, but only the model
         // constructs Execute requests and starts the Core operation.
         precondition(!restoreView.contains(".restoreExecute(") && !restoreView.contains("runtime.start("))
-        precondition(restoreView.contains("model.confirmRebuild()") && restoreModel.contains("CoreRequest(.restoreExecute(")
-                     && restoreModel.contains("runtime.start(request, location: location)") && restoreModel.contains("includeSecure: false"))
+        let confirmRebuild = restoreModel.components(separatedBy: "func confirmRebuild()")[1]
+            .components(separatedBy: "func requestStop()")[0]
+        let executePattern = #"CoreRequest\s*\(\s*\.restoreExecute\s*\(\s*path\s*:\s*source\.path\s*,\s*disabledGroups\s*:\s*\[\s*\]\s*,"#
+            + #"\s*includeSecure\s*:\s*includeSecure\s*,\s*preparedID\s*:\s*plan\.preparedPlanID\s*,"#
+            + #"\s*selection\s*:\s*selection\s*,\s*secureComparison\s*:\s*plan\.secureComparison\s*\)\s*\)"#
+        precondition(restoreView.contains("model.confirmRebuild()")
+            && confirmRebuild.range(of: executePattern, options: .regularExpression) != nil
+            && confirmRebuild.contains("runtime.start(request, location: location)"),
+            "Confirmed Rebuild must dispatch the selected scope and its prepared secure comparison through the model")
+        let executeGuard = confirmRebuild.components(separatedBy: "let request =")[0].filter { !$0.isWhitespace }
+        precondition(executeGuard.contains("guardstate==.confirming,!runtime.isActive")
+            && executeGuard.contains("plan.selection==canonicalSelection,plan.includeSecure==includeSecure")
+            && executeGuard.contains("!includeSecure||plan.secureComparedReadyelse{return}"),
+            "Execute must reject a busy runtime, stale selection or unready selected Secure Transfer")
+        let defaultRestoreRuntime = CoreRuntime()
+        let defaultRestore = RestoreModel(runtime: defaultRestoreRuntime)
+        precondition(!defaultRestore.includeSecure, "Secure Transfer must remain off by default")
+        defaultRestore.selectSecureTransfer(true)
+        precondition(!defaultRestore.includeSecure && defaultRestoreRuntime.state == .idle,
+            "Secure Transfer cannot be enabled before reviewing an inspected secure bundle")
+        print("PASS: Model-owned Execute, default-off Secure Transfer, explicit selection and prepared comparison guards")
         precondition(!restoreModel.contains("areas selected ·") && !restoreModel.contains("items selected"))
         precondition(restoreModel.contains("Everything selected") && restoreModel.contains("Some items excluded") && restoreModel.contains("Nothing selected"))
         precondition(restoreView.contains("RestoreSelectionActions(status: model.selectionSummary, canPreview: model.canPreview"))
@@ -5343,7 +5371,10 @@ private struct CaptureRefinementHost: View {
 
         precondition(capturePresentation.contains("model.selectItem(category.id") && capturePresentation.contains("model.selectCategory(category.id"))
         let workspace = try! String(contentsOf: sources.appendingPathComponent("ProductionWorkspace.swift"), encoding: .utf8)
-        precondition(workspace.contains("CaptureView(model: capture, runtime: runtime, showsActions: false)"))
+        let captureViewPattern = #"CaptureView\s*\(\s*model\s*:\s*capture\s*,\s*runtime\s*:\s*runtime\s*,\s*showsActions\s*:\s*false\s*,"#
+            + #"\s*experiencedVisibility\s*:\s*\$captureExperiencedVisible\s*\)"#
+        precondition(workspace.range(of: captureViewPattern, options: .regularExpression) != nil,
+            "Workspace owns Capture actions and preserves the Advanced disclosure binding")
         precondition(workspace.range(of: "CaptureActionsView(model:")!.lowerBound > workspace.range(of: ".modifier(WorkspaceContentGeometry())")!.lowerBound)
         precondition(!captureView.contains("individual items") && captureView.contains("panel.nameFieldStringValue = \"Saved Environment\""))
         let reviewStart = captureView.range(of: "            case .review:")!
@@ -5415,6 +5446,11 @@ private struct CaptureRefinementHost: View {
         precondition(try! referenceModel.reference!.command.parameters()!.object?["blueprint_path"] == .null)
         precondition(referenceModel.reference?.generatedDirectory == directory && referenceRuntime.state == .idle)
         print("PASS: Product reference wording, concise workflow explanations, collapsed categories and optional Blueprint semantics")
+        #endif
+    }
+
+    @MainActor static func sampleInteractionChecks() {
+        #if DEBUG
         if CommandLine.arguments.contains("--native-controls") {
             _ = NSApplication.shared
             let previousAppearance = NSApp.appearance
