@@ -112,6 +112,124 @@ class CompareTests(unittest.TestCase):
         self.assertEqual(packed.returncode, 0, packed.stderr.decode())
         return output
 
+    def ssh_reference(self, payload, *, version=1, partial=False):
+        self.write_blueprint(categories=('ssh-configuration',), packages='')
+        directory = self.generated / 'ssh'
+        directory.mkdir(exist_ok=True, mode=0o700)
+        source = directory / 'config.snapshot'
+        source.write_bytes((f'# toolkit-ssh-snapshot: {version}\n# status: {"partial" if partial else "ready"}\n'
+                            f'# excluded-profiles: {1 if partial else 0}\n\n').encode() + payload)
+        source.chmod(0o600)
+        (self.home / '.ssh').mkdir(exist_ok=True, mode=0o700)
+        for name in ('ssh', 'ssh-add', 'security', 'age'):
+            self.mock(name, 'echo "unexpected secure tool" >> "$TEST_MUTATIONS"; exit 99')
+        return self.home / '.ssh/config'
+
+    def test_ssh_supported_profile_conformity(self):
+        payload = b'Host example\n    HostName example.invalid\n    User git\n'
+        target = self.ssh_reference(payload)
+        cases = (
+            (payload, 'matching'),
+            (b'# user comment\nHost example\n User git\n HostName example.invalid\n', 'matching'),
+            (payload + b'Host unrelated\n HostName unrelated.invalid\n', 'matching'),
+            (b'Host unrelated\n HostName unrelated.invalid\n', 'missing'),
+            (payload.replace(b'User git', b'User other'), 'differing'),
+            (payload + b' Include other\n', 'unverified'),
+            (payload + b' Compression yes\n', 'unverified'),
+            (payload + b'Host example\n HostName another.invalid\n', 'unverified'),
+        )
+        for raw, kind in cases:
+            with self.subTest(kind=kind, raw=raw):
+                target.write_bytes(raw)
+                target.chmod(0o600)
+                data = self.comparison()
+                self.assertEqual(len(data['comparison_records']), 1)
+                self.assertEqual(data['comparison_records'][0]['comparison_kind'], kind)
+                self.assertEqual(data['comparison']['counts'][kind], 1)
+        target.chmod(0o644)
+        data = self.comparison()
+        self.assertEqual(data['comparison']['counts']['unverified'], 1)
+        self.assertEqual(data['comparison_records'][0]['reason'], 'external_management')
+
+    def test_ssh_case_variant_aliases_remain_unverified(self):
+        for source_alias, target_alias in ((b'example', b'Example'), (b'Example', b'example')):
+            payload = b'Host ' + source_alias + b'\n    HostName example.invalid\n'
+            target = self.ssh_reference(payload)
+            variant = payload.replace(b'Host ' + source_alias, b'Host ' + target_alias)
+            for raw, kind in ((payload, 'matching'), (variant, 'unverified'),
+                              (variant.replace(b'example.invalid', b'other.invalid'), 'unverified'),
+                              (variant + b'    Compression yes\n', 'unverified'),
+                              (payload + variant, 'unverified')):
+                with self.subTest(source_alias=source_alias, raw=raw):
+                    target.write_bytes(raw)
+                    target.chmod(0o600)
+                    data = self.comparison()
+                    self.assertEqual(len(data['comparison_records']), 1)
+                    self.assertEqual(data['comparison']['counts'][kind], 1)
+                    self.assertEqual(data['comparison']['counts']['missing'], 0)
+                    if kind == 'unverified':
+                        self.assertEqual(data['comparison_records'][0]['reason'], 'unsupported_predicate')
+                        self.assertEqual(data['comparison']['verdict'], 'incomplete')
+
+    def test_ssh_partial_coverage_remains_incomplete(self):
+        payload = b'Host example\n    HostName example.invalid\n'
+        target = self.ssh_reference(payload, partial=True)
+        target.write_bytes(payload)
+        target.chmod(0o600)
+        data = self.comparison()
+        self.assertEqual(data['comparison']['counts']['matching'], 1)
+        self.assertEqual(data['comparison']['counts']['unresolved'], 1)
+        self.assertEqual(data['comparison']['verdict'], 'incomplete')
+        self.assertEqual([r['code'] for r in data['records']['diagnostics']], ['partial_source_coverage'])
+        self.assertEqual([r['conformity'] for r in data['records']['verification_records']], ['verified'])
+        coverage = [r for r in data['records']['coverage_records'] if r['domain'] == 'ssh-configuration']
+        self.assertEqual(sorted(r['disposition'] for r in coverage), ['resolved', 'unresolved'])
+        unresolved = next(r for r in coverage if r['disposition'] == 'unresolved')
+        self.assertEqual(data['records']['diagnostics'][0]['record_id'], unresolved['record_id'])
+        target.write_bytes(payload.replace(b'example.invalid', b'different.invalid'))
+        data = self.comparison()
+        self.assertEqual(data['comparison']['counts']['differing'], 1)
+        self.assertEqual(data['comparison']['counts']['unresolved'], 1)
+        self.assertEqual([r['code'] for r in data['records']['diagnostics']].count('partial_source_coverage'), 1)
+        self.assertEqual([r['conformity'] for r in data['records']['verification_records']], ['mismatch'])
+        self.assertTrue(data['comparison']['also_incomplete'])
+
+    def test_ssh_v2_references_are_not_identity_evidence(self):
+        payload = (b'Host example\n    HostName example.invalid\n    IdentityFile ~/.ssh/key\n'
+                   b'    IdentityFile /external/other\n    IdentitiesOnly yes\n'
+                   b'    AddKeysToAgent no\n    UseKeychain yes\n')
+        target = self.ssh_reference(payload, version=2)
+        target.write_bytes(payload)
+        target.chmod(0o600)
+        # Opening the reference would hang/fail: configuration observation must
+        # never inspect key material, including public/private pairing.
+        os.mkfifo(self.home / '.ssh/key')
+        saved = self.make_bundle()
+        data = self.comparison(bundle_path=str(saved))
+        self.assertEqual(data['comparison']['counts']['matching'], 1)
+        self.assertEqual(data['comparison']['counts']['unresolved'], 1)
+        self.assertEqual(data['comparison']['verdict'], 'incomplete')
+        self.assertIn('prerequisite_unmet', [r['code'] for r in data['records']['diagnostics']])
+        self.assertNotIn('/external', json.dumps(data))
+        target.write_bytes(payload.replace(b'~/.ssh/key', b'~/.ssh/renamed'))
+        data = self.comparison(bundle_path=str(saved))
+        self.assertEqual(data['comparison']['counts']['differing'], 1)
+        self.assertTrue(data['comparison']['also_incomplete'])
+
+    def test_ssh_none_and_unsupported_target_coverage(self):
+        payload = b'Host example\n    HostName example.invalid\n    IdentityFile none\n'
+        target = self.ssh_reference(payload, version=2)
+        target.write_bytes(payload)
+        target.chmod(0o600)
+        data = self.comparison()
+        self.assertEqual(data['comparison']['counts']['matching'], 1)
+        self.assertEqual(data['comparison']['counts']['unresolved'], 0)
+        target.write_bytes(payload + b'Host unrelated\n HostName unrelated.invalid\n ProxyJump jump\n')
+        data = self.comparison()
+        self.assertEqual(data['comparison']['counts']['matching'], 1)
+        self.assertEqual(data['comparison']['counts']['unresolved'], 1)
+        self.assertIn('unsupported_predicate', [r['code'] for r in data['records']['diagnostics']])
+
     def test_bundle_reference_selection_and_read_only(self):
         path = self.make_bundle(secure=True)
         data = self.comparison(bundle_path=str(path))

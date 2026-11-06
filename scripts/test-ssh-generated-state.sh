@@ -81,7 +81,7 @@ source_config $'Host first\n HostName first.invalid\n Port 9\n ServerAliveInterv
 expect 'numeric values and unsupported profile Discovery' 1 discover_ssh_configuration
 snapshot_status partial 2 && [[ "$SSH_SNAPSHOT_EXCLUDED" == 1 ]] && pass 'numeric comparisons retain both eligible profiles' || fail 'numeric comparisons excluded an eligible profile'
 
-for directive in 'IdentityFile ~/.ssh/id_test' 'IdentitiesOnly yes' 'UseKeychain yes' 'AddKeysToAgent yes' 'Compression yes' 'ProxyJump jump' 'ProxyCommand command' 'LocalForward 1 2' 'RemoteForward 1 2' 'DynamicForward 1' 'ForwardAgent yes' 'RemoteCommand command' 'LocalCommand command' 'SetEnv X=Y' 'SendEnv X' 'UnknownDirective value' 'Port 0' 'ServerAliveCountMax 100' 'ConnectTimeout 301' 'Port 22 # note' 'User "admin"' 'User admin\path' 'User=admin' 'Port 22' ; do
+for directive in 'IdentityFile relative' 'IdentitiesOnly ask' 'UseKeychain true' 'AddKeysToAgent confirm' 'Compression yes' 'ProxyJump jump' 'ProxyCommand command' 'LocalForward 1 2' 'RemoteForward 1 2' 'DynamicForward 1' 'ForwardAgent yes' 'RemoteCommand command' 'LocalCommand command' 'SetEnv X=Y' 'SendEnv X' 'UnknownDirective value' 'Port 0' 'ServerAliveCountMax 100' 'ConnectTimeout 301' 'Port 22 # note' 'User "admin"' 'User admin\path' 'User=admin' 'Port 22' ; do
     reset_fixture
     source_config "$valid_profile"" $directive"$'\n'
     [[ "$directive" != 'Port 22' ]] || source_config "$valid_profile"$' Port 22\n Port 22\n'
@@ -90,7 +90,7 @@ for directive in 'IdentityFile ~/.ssh/id_test' 'IdentitiesOnly yes' 'UseKeychain
 done
 
 reset_fixture
-source_config "$valid_profile"$'\nHost excluded\n HostName excluded.invalid\n IdentityFile ~/.ssh/id_test\n'
+source_config "$valid_profile"$'\nHost excluded\n HostName excluded.invalid\n ProxyJump jump\n'
 expect 'partial source Discovery' 1 discover_ssh_configuration
 snapshot_status partial 1 && pass 'partial status' || fail 'partial status'
 
@@ -124,6 +124,13 @@ rm -rf "$HOME/.ssh"
 expect 'Preview absent target' 0 preview_ssh_configuration
 [[ "$PLAN" == 'Would restore SSH configuration: 1 eligible profiles' ]] && pass 'Preview aggregate plan' || fail 'Preview plan'
 [[ ! -e "$HOME/.ssh" ]] && pass 'Preview did not mutate target' || fail 'Preview mutated target'
+relative_home_bootstrap() (
+    cd "$TEST_ROOT" || exit 2
+    export HOME=home
+    bootstrap_ssh_configuration
+)
+expect 'relative HOME rejected before Apply' 2 relative_home_bootstrap
+[[ ! -e "$HOME/.ssh" ]] && pass 'relative HOME did not create target' || fail 'relative HOME mutated target'
 expect 'Bootstrap clean target' 0 bootstrap_ssh_configuration
 [[ "$MODULE_CHANGED" == true && "$(stat -f '%Lp' "$HOME/.ssh")" == 700 && "$(stat -f '%Lp' "$HOME/.ssh/config")" == 600 ]] && pass 'created modes and change accounting' || fail 'created modes/accounting'
 MODULE_CHANGED=false
@@ -147,7 +154,7 @@ chmod 700 "$HOME/.ssh"
 reset_fixture
 source_config "$valid_profile"
 expect 'new snapshot for malformed tests' 0 discover_ssh_configuration
-for replacement in '# toolkit-ssh-snapshot: 2' '# status: bogus' '# excluded-profiles: x'; do
+for replacement in '# toolkit-ssh-snapshot: 3' '# status: bogus' '# excluded-profiles: x'; do
     cp "$SSH_SNAPSHOT_FILE" "$TEST_ROOT/good"
     sed "1s/.*/$replacement/" "$TEST_ROOT/good" > "$SSH_SNAPSHOT_FILE"
     chmod 600 "$SSH_SNAPSHOT_FILE"
@@ -273,6 +280,127 @@ unset -f ssh_config_parse_original
 cmp -s "$SSH_SNAPSHOT_FILE" "$TEST_ROOT/directory-race-last-good" &&
     pass 'SSH directory race preserves prior snapshot' ||
     fail 'SSH directory race published snapshot'
+
+# Extended requirements are captured as v2 without touching referenced files.
+reset_fixture
+source_config "$valid_profile"$' IdentityFile ~/.ssh/first\n IdentityFile /external/second\n IdentitiesOnly yes\n AddKeysToAgent no\n UseKeychain yes\n'
+expect 'extended grammar Discovery' 0 discover_ssh_configuration
+snapshot_status ready 1 && [[ "$SSH_SNAPSHOT_VERSION" == 2 && "$SSH_IDENTITY_PORTABLE" == 1 && "$SSH_IDENTITY_UNRESOLVED" == 1 ]] && pass 'v2 reference classes' || fail 'v2 reference classes'
+p="$(mktemp)"
+ssh_snapshot_validate "$p"
+[[ "$(sed -n '/IdentityFile/p' "$p")" == $'    IdentityFile ~/.ssh/first\n    IdentityFile /external/second' ]] && pass 'IdentityFile order and paths retained' || fail 'IdentityFile order or path changed'
+cp "$p" "$HOME/.ssh/config"
+rm -f "$p"
+expect 'matching extended config retains unresolved dependencies' 1 preview_ssh_configuration
+[[ "$SSH_TARGET_CONFORMITY" == exact && ! -e "$HOME/.ssh/first" ]] && pass 'reference is not identity proof' || fail 'reference treated as identity proof'
+rm -rf "$HOME/.ssh"
+expect 'v2 Preview cannot plan automatic creation' 1 preview_ssh_configuration
+expect 'v2 Bootstrap blocked before directory creation' 1 bootstrap_ssh_configuration
+[[ ! -e "$HOME/.ssh" && "$MODULE_CHANGED" == false ]] && pass 'v2 no-write boundary' || fail 'v2 wrote target'
+
+reset_fixture
+source_config "$valid_profile"$' IdentityFile none\n IdentitiesOnly no\n AddKeysToAgent yes\n UseKeychain no\n'
+expect 'none sentinel and explicit booleans' 0 discover_ssh_configuration
+snapshot_status ready 1 && [[ "$SSH_IDENTITY_PORTABLE" == 0 && "$SSH_IDENTITY_UNRESOLVED" == 0 ]] && pass 'none is not a filename or agent proof' || fail 'none counted as file dependency'
+p="$(mktemp)"; ssh_snapshot_validate "$p"; cp "$p" "$HOME/.ssh/config"; rm -f "$p"
+expect 'exact v2 without file dependencies is a no-op' 0 bootstrap_ssh_configuration
+[[ "$MODULE_CHANGED" == false ]] && pass 'extended no-op does not mutate' || fail 'extended no-op mutation'
+# Native macOS parser on an explicit inert fixture; no connections or key access.
+/usr/bin/ssh -G -F "$HOME/.ssh/config" example > "$TEST_ROOT/native-options" 2> "$TEST_ROOT/native-error"
+[[ $? -eq 0 && "$(sed -n 's/^identityfile /identityfile /p' "$TEST_ROOT/native-options")" == 'identityfile none' ]] && pass 'native OpenSSH none semantics' || fail 'native OpenSSH none semantics'
+rm -rf "$HOME/.ssh"
+expect 'none/boolean v2 also cannot create configuration' 1 bootstrap_ssh_configuration
+[[ ! -e "$HOME/.ssh" ]] && pass 'all extended creation remains gated' || fail 'extended creation bypassed gate'
+
+for reference in 'relative' '~someone/key' '$HOME/key' '${HOME}/key' '%d/.ssh/key' '~/a/../key' '~/./key' '~/a//key' '~/key/' '/' '~/key*' '~/key?' '~/key;command' '"~/key"' '~/key#comment'; do
+    reset_fixture
+    source_config "$valid_profile"" IdentityFile $reference"$'\n'
+    expect 'unsafe or unresolved syntax excluded' 1 discover_ssh_configuration
+    snapshot_status unsupported 0 && pass 'unsafe reference has no supported profile' || fail 'unsafe reference accepted'
+done
+for duplicate in $' IdentityFile none\n IdentityFile ~/.ssh/key\n' $' IdentityFile ~/.ssh/key\n IdentityFile ~/.ssh/key\n' $' IdentitiesOnly yes\n IdentitiesOnly no\n' $' UseKeychain yes\n UseKeychain yes\n' $' AddKeysToAgent yes\n AddKeysToAgent no\n'; do
+    reset_fixture
+    source_config "$valid_profile$duplicate"
+    expect 'duplicate or mixed settings excluded' 1 discover_ssh_configuration
+done
+reset_fixture
+source_config $'Host Example\n HostName one.invalid\nHost example\n HostName two.invalid\n'
+expect 'case-colliding aliases fail closed' 1 discover_ssh_configuration
+snapshot_status unsupported 0 && pass 'ambiguous aliases excluded together' || fail 'ambiguous alias accepted'
+
+reset_fixture
+source_config "$valid_profile"$' User admin\n Port 22\n'
+expect 'legacy source still produces v1' 0 discover_ssh_configuration
+snapshot_status ready 1 && [[ "$SSH_SNAPSHOT_VERSION" == 1 ]] && pass 'legacy version retained' || fail 'legacy version changed'
+source_config $'# preserve this comment\nHost unrelated\n HostName unrelated.invalid\nHost example\n Port 22\n User admin\n HostName example.invalid\n'
+cp "$HOME/.ssh/config" "$TEST_ROOT/semantic-target"
+expect 'semantic match preserves publication restriction' 1 preview_ssh_configuration
+[[ "$SSH_TARGET_STATUS" == different && "$SSH_TARGET_CONFORMITY" == profiles_match ]] && pass 'profile conformity distinct from exact bytes' || fail 'semantic match not recognized'
+expect 'semantic match does not authorize replacement' 1 bootstrap_ssh_configuration
+cmp -s "$HOME/.ssh/config" "$TEST_ROOT/semantic-target" && [[ "$MODULE_CHANGED" == false ]] && pass 'semantic target preserved byte for byte' || fail 'semantic target changed'
+source_config $'Host unrelated\n HostName unrelated.invalid\n'
+expect 'missing selected Host' 1 preview_ssh_configuration
+[[ "$SSH_TARGET_CONFORMITY" == missing_profiles ]] && pass 'missing profile distinguished' || fail 'missing profile classification'
+source_config "$valid_profile"$' User other\n Port 22\n'
+expect 'conflicting selected Host' 1 preview_ssh_configuration
+[[ "$SSH_TARGET_CONFORMITY" == conflicting_profiles ]] && pass 'conflicting profile distinguished' || fail 'conflicting profile classification'
+source_config "$valid_profile"$' User admin\n Port 22\n Include other\n'
+expect 'ambiguous target preserved' 1 preview_ssh_configuration
+[[ "$SSH_TARGET_CONFORMITY" == unsupported ]] && pass 'Include is not evaluated' || fail 'Include treated as comparable'
+
+reset_fixture
+source_config "$valid_profile"
+expect 'snapshot for Host spelling comparison' 0 discover_ssh_configuration
+for alias_case in same case-only case-differing case-unsupported collision; do
+    expected_status=1; expected_conformity=unsupported
+    case "$alias_case" in
+        same)
+            source_config $'Host example\n    HostName example.invalid\n'
+            expected_status=0; expected_conformity=exact ;;
+        case-only) source_config $'Host Example\n    HostName example.invalid\n' ;;
+        case-differing) source_config $'Host Example\n    HostName other.invalid\n' ;;
+        case-unsupported) source_config $'Host Example\n    HostName example.invalid\n    Compression yes\n' ;;
+        collision) source_config $'Host example\n    HostName example.invalid\nHost Example\n    HostName example.invalid\n' ;;
+    esac
+    cp "$HOME/.ssh/config" "$TEST_ROOT/alias-target-before"
+    expect "Host spelling Preview: $alias_case" "$expected_status" preview_ssh_configuration
+    [[ "$SSH_TARGET_CONFORMITY" == "$expected_conformity" ]] && pass 'Host spelling conformity' || fail 'Host spelling conformity'
+    expect "Host spelling Bootstrap: $alias_case" "$expected_status" bootstrap_ssh_configuration
+    cmp -s "$HOME/.ssh/config" "$TEST_ROOT/alias-target-before" && [[ "$MODULE_CHANGED" == false ]] && pass 'Host spelling preserves target' || fail 'Host spelling changed target'
+done
+
+reset_fixture
+source_config "$valid_profile"$' IdentityFile ~/.ssh/first\n IdentityFile ~/.ssh/second\n'
+expect 'ordered reference source' 0 discover_ssh_configuration
+/usr/bin/ssh -G -F "$HOME/.ssh/config" example > "$TEST_ROOT/native-options" 2> "$TEST_ROOT/native-error"
+[[ $? -eq 0 && "$(sed -n 's/^identityfile .*\///p' "$TEST_ROOT/native-options")" == $'first\nsecond' ]] && pass 'native OpenSSH ordered file semantics' || fail 'native OpenSSH ordered file semantics'
+source_config "$valid_profile"$' IdentityFile ~/.ssh/second\n IdentityFile ~/.ssh/first\n'
+expect 'reordered IdentityFile differs' 1 preview_ssh_configuration
+[[ "$SSH_TARGET_CONFORMITY" == conflicting_profiles ]] && pass 'identity order matters' || fail 'identity order ignored'
+# A v1 label cannot admit extended payload, even if that payload is otherwise valid.
+sed -i '' '1s/: 2/: 1/' "$SSH_SNAPSHOT_FILE"
+p="$(mktemp)"; expect 'extended payload cannot masquerade as v1' 2 ssh_snapshot_validate "$p"; rm -f "$p"
+
+reset_fixture
+source_config "$valid_profile"
+expect 'snapshot before target metadata hazards' 0 discover_ssh_configuration
+p="$(mktemp)"; ssh_snapshot_validate "$p"; cp "$p" "$HOME/.ssh/config"; rm -f "$p"
+ln "$HOME/.ssh/config" "$TEST_ROOT/linked-config"
+expect 'hardlinked target preserved' 1 bootstrap_ssh_configuration
+[[ "$SSH_TARGET_CONFORMITY" == unsafe && "$MODULE_CHANGED" == false ]] && pass 'hardlink is unsafe, not matching' || fail 'hardlink accepted'
+rm "$HOME/.ssh/config" "$TEST_ROOT/linked-config"
+mkfifo "$HOME/.ssh/config"
+expect 'FIFO target rejected without blocking' 1 preview_ssh_configuration
+[[ "$SSH_TARGET_CONFORMITY" == unsafe ]] && pass 'FIFO is not an observation of absence' || fail 'FIFO classification'
+
+reset_fixture
+source_config "$valid_profile"$' IdentityFile ~/.ssh/key\n\nHost excluded\n HostName excluded.invalid\n ProxyJump jump\n'
+expect 'extended partial source remains partial' 1 discover_ssh_configuration
+snapshot_status partial 1 && [[ "$SSH_SNAPSHOT_VERSION" == 2 && "$SSH_SNAPSHOT_EXCLUDED" == 1 ]] && pass 'v2 retains excluded coverage' || fail 'v2 coverage lost'
+source_config "$valid_profile"
+for ((identity=1; identity<=33; identity++)); do printf ' IdentityFile ~/.ssh/key%s\n' "$identity" >> "$HOME/.ssh/config"; done
+expect 'identity reference list is bounded' 1 discover_ssh_configuration
+snapshot_status unsupported 0 && pass 'oversized reference list excluded' || fail 'oversized reference list accepted'
 
 [[ $FAILURES -eq 0 ]] || exit 1
 echo 'SSH generated-state tests passed'

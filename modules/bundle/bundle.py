@@ -33,6 +33,7 @@ WORKSPACE_EXTENSIONS = {
     "generated/workspace/vscode-workspaces.json": "vscode-workspaces",
 }
 _workspace_contract = None
+_ssh_contract = None
 CATEGORIES = {
     "ssh-configuration": "ssh/config.snapshot",
     "vscode-settings": "vscode/settings.json",
@@ -87,6 +88,23 @@ def workspace_contract():
         _workspace_contract = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(_workspace_contract)
     return _workspace_contract
+
+
+def validate_ssh(files):
+    """Keep SSH grammar with its domain; Bundle v1 advertises v2 requirements."""
+    raw = files.get('generated/ssh/config.snapshot')
+    if raw is None:
+        return {}
+    global _ssh_contract
+    if _ssh_contract is None:
+        spec = importlib.util.spec_from_file_location('ssh_configuration', ROOT / 'modules/ssh/config.py')
+        _ssh_contract = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(_ssh_contract)
+    try:
+        version, _, _, _ = _ssh_contract.snapshot(raw)
+    except (ValueError, UnicodeError) as exc:
+        raise Invalid('invalid SSH snapshot') from exc
+    return {'ssh-configuration': 2} if version == 2 else {}
 
 
 def workspace_extension_present(files):
@@ -509,7 +527,7 @@ def pack(stage, output, home, replacement_sha256=None, *, apply_precedence=True)
     if zsh is not None and not zsh.startswith(b"MBT-ZSHRC-1\nstatus=eligible\n"):
         raise Invalid("selected Zsh snapshot is not eligible")
     portable_paths(files, home)
-    features = validate_workspace(files, exact=True)
+    features = validate_workspace(files, exact=True) | validate_ssh(files)
     secure = stage / "secure.age"
     if secure.exists() or secure.is_symlink():
         files["secure.age"] = checked_file(secure, 33 * 1024 * 1024)
@@ -630,7 +648,8 @@ def validate_archive(path, with_provenance=False):
         expected.add('generated/workspace/topology.json')
     required_features = manifest.get('required_features', {})
     if (not isinstance(required_features, dict) or
-            any(key not in WORKSPACE_EXTENSIONS.values() or type(value) is not int or value != 1
+            any(type(value) is not int or
+                (value != 2 if key == 'ssh-configuration' else key not in WORKSPACE_EXTENSIONS.values() or value != 1)
                 for key, value in required_features.items())):
         raise Unsupported('unsupported Bundle capabilities')
     if 'generated/homebrew-casks.json' in files:
@@ -658,8 +677,8 @@ def validate_archive(path, with_provenance=False):
         record = manifest["files"][name]
         if record != {"size": len(data), "sha256": digest(data)}:
             raise Invalid("Bundle integrity mismatch")
-    if required_features != validate_workspace(files, exact=True):
-        raise Invalid('Bundle Workspace capabilities do not match payload')
+    if required_features != (validate_workspace(files, exact=True) | validate_ssh(files)):
+        raise Invalid('Bundle capabilities do not match payload')
     return (files, provenance) if with_provenance else files
 
 
@@ -1010,6 +1029,7 @@ def main():
             raise Invalid("selected Zsh snapshot is not eligible")
         portable_paths(files, args[1])
         validate_workspace(files, exact=True)
+        validate_ssh(files)
     elif command == 'capture-preview' and len(args) == 2:
         stage = Path(args[0])
         write_file(stage / '.capture-preview.conf', capture_preview(stage, args[1]))

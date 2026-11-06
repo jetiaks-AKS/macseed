@@ -56,6 +56,57 @@ class BundleTests(unittest.TestCase):
     def pack(self):
         bundle.pack(self.stage, self.bundle, "/Users/source")
 
+    def test_ssh_snapshot_versions_and_bundle_capability(self):
+        selection = self.stage / 'blueprint.conf'
+        selection.write_bytes(selection.read_bytes().replace(b'ssh-configuration="false"', b'ssh-configuration="true"'))
+        snapshot = self.stage / 'generated/ssh/config.snapshot'
+        legacy = b'# toolkit-ssh-snapshot: 1\n# status: ready\n# excluded-profiles: 0\n\nHost example\n    HostName example.invalid\n'
+        bundle.write_file(snapshot, legacy)
+        self.pack()
+        files = bundle.validate_archive(self.bundle)
+        self.assertEqual(files['generated/ssh/config.snapshot'], legacy)
+        self.assertEqual(bundle.validate_ssh(files), {})
+        self.bundle.unlink()
+        extended = legacy.replace(b'snapshot: 1', b'snapshot: 2') + b'    IdentityFile ~/.ssh/key\n'
+        snapshot.write_bytes(extended)
+        self.pack()
+        files = bundle.validate_archive(self.bundle)
+        self.assertEqual(files['generated/ssh/config.snapshot'], extended)
+        self.assertEqual(bundle.validate_ssh(files), {'ssh-configuration': 2})
+        with tarfile.open(self.bundle) as archive:
+            manifest = json.load(archive.extractfile('manifest.json'))
+        self.assertEqual(manifest['version'], 1)
+        self.assertEqual(manifest['required_features'], {'ssh-configuration': 2})
+        # Required capability cannot be omitted, downgraded or invented. The
+        # baseline reader's known-capability allowlist rejects this new key.
+        for features in ({}, {'ssh-configuration': 1}, {'ssh-configuration': True}, {'unknown': 1}):
+            manifest['required_features'] = features
+            files['manifest.json'] = json.dumps(manifest).encode()
+            changed = self.root / 'changed.mbt'
+            with tarfile.open(changed, 'w', format=tarfile.USTAR_FORMAT) as archive:
+                for name, raw in sorted(files.items()):
+                    info = tarfile.TarInfo(name)
+                    info.size, info.mode = len(raw), 0o600
+                    archive.addfile(info, io.BytesIO(raw))
+            with self.subTest(features=features), self.assertRaises(bundle.Invalid):
+                bundle.validate_archive(changed)
+
+    def test_ssh_snapshot_malformed_or_misversioned_payload_is_rejected(self):
+        selection = self.stage / 'blueprint.conf'
+        selection.write_bytes(selection.read_bytes().replace(b'ssh-configuration="false"', b'ssh-configuration="true"'))
+        path = self.stage / 'generated/ssh/config.snapshot'
+        header = b'# toolkit-ssh-snapshot: 1\n# status: ready\n# excluded-profiles: 0\n\n'
+        payload = b'Host example\n    HostName example.invalid\n'
+        for raw in (header + payload + b'    IdentityFile ~/.ssh/key\n',
+                    header.replace(b'snapshot: 1', b'snapshot: 3') + payload,
+                    header + payload + b'    Port 22\n    Port 23\n',
+                    header.replace(b'snapshot: 1', b'snapshot: 2') + payload + b'    IdentityFile %d/key\n'):
+            path.unlink(missing_ok=True)
+            bundle.write_file(path, raw)
+            with self.subTest(raw=raw), self.assertRaises(bundle.Invalid):
+                self.pack()
+            self.assertFalse(self.bundle.exists())
+
     def run_pty(self, command, answers, *, cwd, env):
         master, slave = pty.openpty()
         settings = termios.tcgetattr(slave)

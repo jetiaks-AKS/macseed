@@ -1068,22 +1068,71 @@ never removes keys or changes Capture semantics.
 `ssh/config.snapshot` is a `0600` versioned snapshot of canonical supported Host
 profiles. Discovery reads only `~/.ssh/config` as data and publishes atomically;
 read/parse failure preserves the previous snapshot. `Include`, `Match`, global
-settings and ambiguous Host patterns exclude the entire source. An unsupported
-directive in an independent Host block excludes that block.
+settings and ambiguous Host patterns exclude the entire source. Each profile has
+one literal `Host` and required `HostName`. Duplicate aliases, including case
+collisions, are ambiguous. Unsupported directives, invalid values, duplicate
+scalar settings or missing `HostName` exclude their independent Host block.
+Configuration input is bounded to 1 MiB; syntax remains ASCII, while full-line
+comments may contain Unicode and are omitted from snapshots.
 
-Supported profiles have one literal `Host`, required `HostName`, and optional
-`User`, `Port`, `ServerAliveInterval`, `ServerAliveCountMax`, `TCPKeepAlive`,
-`ConnectTimeout`. Category is `ssh-configuration`. Preview exposes only profile
-counts/warnings, not addresses, users or aliases.
+Supported directives are `Host`, `HostName`, `User`, `Port`,
+`ServerAliveInterval`, `ServerAliveCountMax`, `TCPKeepAlive`, `ConnectTimeout`,
+`IdentityFile`, `IdentitiesOnly`, `AddKeysToAgent` and `UseKeychain`. The last three
+accept explicit `yes`/`no` only; agent lifetimes, `ask` and `confirm` are excluded.
+Existing numeric bounds are unchanged. Quoting, inline comments, equals syntax,
+wildcards, commands and other directives, including `AddressFamily` and
+`Compression`, remain outside this grammar.
 
-Bootstrap creates `~/.ssh` (`0700`) and `config` (`0600`) only if target config is
-absent, using no-clobber publication and byte/metadata verification. Differing
-existing files, symlinks and foreign ownership are preserved. Keys, certificates,
-known_hosts, authorized_keys, Keychain, agent and credential references are not
-part of SSH configuration restoration; connection/authentication is not tested.
-Explicit identity transfer belongs to Secure Migration. Partial supported Host
-snapshots can verify matching target profiles without weakening Preview/Apply
-conflict rules.
+Up to 32 `IdentityFile` entries per profile retain their order and spelling.
+Accepted file references are `~/path` (portable relative to receiving HOME) and
+`/absolute/path` (recognized
+but portability unresolved), at most 1024 ASCII bytes, with nonempty components
+containing only letters, digits, dots, underscores and hyphens. Dot/dot-dot
+components, repeated/trailing slashes, relative paths, foreign-user homes,
+variables and percent tokens are rejected; paths are never expanded or rewritten.
+A lone `IdentityFile none` suppresses default identity-file loading, not agent
+authentication. Mixed `none`/file lists and repeated file references are excluded.
+See [OpenSSH semantics](https://man.openbsd.org/ssh_config) and
+[Apple Keychain/agent options](https://developer.apple.com/library/archive/technotes/tn2449/_index.html).
+
+Snapshots using only the original grammar remain **v1**. Accepted extended
+directives produce **v2**. New Core reads both versions and rejects malformed,
+noncanonical or unknown versions, including extended directives labelled v1.
+Bundle remains `MBT-BUNDLE-1`; v2 SSH snapshots require the manifest capability
+`"ssh-configuration": 2`, validated against the actual snapshot. Older Core rejects
+that capability rather than silently ignoring new requirements. `secure.age v1`
+and accepted Stage 16H identity transfer are unchanged.
+
+Preview, Verification and Environment Comparison share the domain-owned reader.
+They distinguish exact file bytes, matching selected supported profiles, missing
+profiles, conflicting profiles, unsupported/ambiguous syntax and unsafe/unavailable
+observation. Independent literal Host order, scalar directive order, whitespace
+and comments do not change selected-profile conformity; IdentityFile order does.
+An unsupported selected target profile is unverified, not missing. Independent
+unsupported target blocks and excluded source profiles retain unresolved coverage,
+even when every comparable selected profile matches.
+
+File conformity and permission to Apply are separate. Legacy v1 Bootstrap still
+creates `~/.ssh` (`0700`) and `config` (`0600`) only on confirmed absence, with the
+existing no-clobber publication and byte/metadata verification. Every differing
+existing file is preserved, including a semantic match: Preview can show matching
+profiles alongside a publication conflict, and Restore readiness remains blocked.
+Target inspection retains the existing owner/mode restrictions and rejects links.
+
+**Slice 1 boundary:** automatic creation from v2 is blocked. Exact existing v2
+configuration can be a no-op only without file-reference dependencies. Every
+non-`none` IdentityFile remains an unresolved dependency, including a portable
+reference whose configuration text matches. No referenced key is opened, searched,
+validated, moved or selected for Secure Transfer. Comparison can confirm supported
+configuration while retaining an incomplete overall verdict; it proves neither
+remote authentication nor agent/Keychain readiness. No `ssh-add` or Keychain
+mutation is performed. Ordinary records expose aggregate statuses/reasons, not
+Host aliases, users, addresses or identity paths.
+
+SSH config merge, identity linkage/correction consent, custom destinations, Git
+dependency ordering and Secure Transfer in Check remain deferred. SSH Environment
+Completion is not complete; [Capture / Restore](../CAPTURE-RESTORE.md#ssh-environment-completion--developer-environment-closure)
+owns the later workflow boundary.
 
 ## Selected-state consumers
 

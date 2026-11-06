@@ -175,6 +175,46 @@ class RestorePrepareTests(unittest.TestCase):
         self.assertFalse((self.root / 'boundary').exists())
         self.assertFalse((self.home / 'Library/Application Support/Macseed/Homebrew/active.json').exists())
 
+    def test_ssh_semantic_match_does_not_authorize_publication(self):
+        target = self.ssh_prerequisite_fixture()
+        original = b'# user content\nHost bundle-host\n User git\n HostName example.invalid\n'
+        target.write_bytes(original)
+        target.chmod(0o600)
+        self.pack()
+        plan = self.plan_result()
+        rows = [row for row in plan['plan'] if row['domain'] == 'ssh-configuration']
+        self.assertTrue(any(row['item_id'] == 'config' and row['disposition'] == 'satisfied' for row in rows), rows)
+        self.assertTrue(any(row['item_id'] == 'publication' and row['disposition'] == 'conflict' for row in rows), rows)
+        self.assertFalse(plan['readiness']['ready'])
+        result, events = self.execute(plan['prepared_plan_id'])
+        self.assertEqual(result.returncode, 2, events)
+        self.assertFalse(events[-1]['data']['publication_started'])
+        self.assertEqual(target.read_bytes(), original)
+
+    def test_ssh_v2_blocks_creation_and_retains_unresolved_dependencies(self):
+        target = self.ssh_prerequisite_fixture()
+        source = self.stage / 'generated/ssh/config.snapshot'
+        source.write_bytes(source.read_bytes().replace(b'snapshot: 1', b'snapshot: 2') +
+                           b'    IdentityFile ~/.ssh/key\n    IdentitiesOnly yes\n')
+        self.pack()
+        plan = self.plan_result()
+        rows = [row for row in plan['plan'] if row['domain'] == 'ssh-configuration']
+        self.assertFalse(any(row['disposition'] == 'planned' for row in rows), rows)
+        self.assertTrue(any(row['reason'] == 'extended_ssh_read_only' for row in rows), rows)
+        self.assertTrue(any(row['reason'] == 'identity_dependencies_unresolved' for row in rows), rows)
+        self.assertFalse(plan['readiness']['ready'])
+        result, events = self.execute(plan['prepared_plan_id'])
+        self.assertEqual(result.returncode, 2, events)
+        self.assertFalse(events[-1]['data']['publication_started'])
+        self.assertFalse(target.exists())
+        self.assertEqual(list(target.parent.iterdir()), [])
+        target.write_bytes(self.ssh_payload + b'    IdentityFile ~/.ssh/key\n    IdentitiesOnly yes\n')
+        target.chmod(0o600)
+        plan = self.plan_result()
+        self.assertFalse(plan['readiness']['ready'])
+        self.assertTrue(any(row['domain'] == 'ssh-configuration' and row['item_id'] == 'config'
+                            and row['disposition'] == 'satisfied' for row in plan['plan']))
+
     def test_ssh_selection_rebinds_prepared_scope_and_preserves_repairs(self):
         self.repair_cask_fixture()
         blueprint = self.stage / 'blueprint.conf'
