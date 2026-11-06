@@ -1,16 +1,17 @@
 # Macseed
 
-**Capture → Rebuild → Verify**
+**A smarter way to capture, rebuild, and check your Mac setup.**
 
-Macseed captures the supported parts of a working Mac, reconstructs them on
-another Mac, and reports what matches the selected environment. It reduces
-manual setup while preserving existing user state when safe convergence is
-not possible.
+Macseed captures supported Mac environment state, rebuilds it on a new or existing
+Mac, and checks what matches. Its user-facing workflows are **Capture / Rebuild /
+Check**; the engineering lifecycle is **Capture → Rebuild → Verify**. It reduces
+manual setup while preserving existing user state when safe convergence is not possible.
 
 Applications are installed again, repositories are cloned from remotes, and
 supported settings are restored. Macseed does not clone a Mac or transfer
 arbitrary user files, application databases, caches or sessions. Explicitly
-selected SSH identities can travel in an encrypted payload.
+selected SSH identities can travel in an encrypted payload. Macseed does not replace
+Migration Assistant or Time Machine.
 
 ## Use Macseed today
 
@@ -27,25 +28,28 @@ Clone the repository on each Mac. Before `bs` is installed, run the equivalent
 `./bootstrap.sh --workflow`, `--capture`, `--restore <bundle>` or `--compare`
 from its root. See the [CLI Quick Start](docs/getting-started/QUICKSTART.md).
 
-Supported state includes Homebrew and App Store applications, VS Code,
-Git and SSH configuration, standalone Zsh configuration, Workspace structure
-and repositories, and selected macOS settings. Capture produces one private
-`.mbt` Bundle; its normal configuration is **not encrypted**. Review it and
+Supported state includes Homebrew and App Store applications and tools, supported
+macOS settings, and VS Code settings and extensions. Optional developer capabilities
+include Git and SSH configuration, standalone Zsh configuration, Workspace structure
+and repositories. Capture produces one private, reusable Saved Environment
+(`.mbt` Bundle); its normal configuration is **not encrypted**. Review it and
 transfer it privately. Only the optional SSH identity payload is encrypted.
 
-Global Verification reports selected requirements after Apply. Explicit
-Environment Comparison reports differences and supported extras without
+Global Verification reports selected requirements after Apply. Read-only
+Environment Comparison (Check) reports differences and supported extras without
 removing anything. See [Capture / Restore](docs/CAPTURE-RESTORE.md) for boundaries.
 
 ## Project status
 
-The current Core/CLI version is **3.4.0**, including Global Verification,
+The currently released product is **Core/CLI 3.4.0**, including Global Verification,
 Environment Comparison and the completed Protocol V1 application interface.
 Macseed Core owns the behavior shared by its clients.
 
-A native SwiftUI **Macseed Desktop** is the next stage; `Macseed.app` is not
-implemented yet. The CLI remains supported. The first complete Desktop product
-release is planned as **Macseed 1.0**, preserving the toolkit/CLI release history.
+Native SwiftUI **Macseed Desktop** is implemented and in active development on
+[develop](https://github.com/jetiaks-AKS/macseed/tree/develop). It is not yet a
+signed, qualified public release. **Macseed Desktop 1.0** is planned as the first
+complete application release. The CLI remains supported, and existing toolkit/CLI
+release history is preserved.
 
 ## Documentation
 
