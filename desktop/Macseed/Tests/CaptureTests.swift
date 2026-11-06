@@ -113,6 +113,10 @@ import SwiftUI
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
         defer { try? FileManager.default.removeItem(at: root) }
         let python = URL(fileURLWithPath: CommandLine.arguments[2])
+        if CommandLine.arguments.contains("--secure-invalidation-only") {
+            try await secureCaptureInvalidationCheck(root: root, repository: URL(fileURLWithPath: CommandLine.arguments[1]), python: python)
+            return
+        }
         if CommandLine.arguments.contains("--secure-capture-only") {
             try await secureCaptureChecks(root: root, repository: URL(fileURLWithPath: CommandLine.arguments[1]), python: python)
             return
@@ -2035,7 +2039,9 @@ import SwiftUI
         try FileManager.default.createDirectory(at: adapter, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: core.appendingPathComponent("config"), withIntermediateDirectories: true)
         try FileManager.default.copyItem(at: repository.appendingPathComponent("modules/core/application-interface/core.sh"), to: adapter.appendingPathComponent("core.sh"))
-        try FileManager.default.copyItem(at: repository.appendingPathComponent("modules/migration/secret_input.py"), to: adapter.appendingPathComponent("secret_input.py"))
+        for name in ["secret_input.py", "age_runtime.py"] {
+            try FileManager.default.copyItem(at: repository.appendingPathComponent("modules/migration/" + name), to: adapter.appendingPathComponent(name))
+        }
         try write("TOOLKIT_VERSION=fixture\n", core.appendingPathComponent("config/toolkit.conf"))
         try write("", core.appendingPathComponent("bootstrap.sh"))
         try write("""
@@ -2044,27 +2050,36 @@ import SwiftUI
         request=json.load(sys.stdin);channel=inherited_socket(int(sys.argv[3]))
         def emit(sequence,kind,data=None):
             print(json.dumps(dict(protocol_version=1,operation_id=request['operation_id'],sequence=sequence,type=kind,**({'data':data} if data else {}))),flush=True)
-        emit(1,'started');emit(2,'phase_started',{'phase':'secure_packaging'})
-        metadata(channel,dict(type='challenge',protocol_version=1,operation_id=request['operation_id'],challenge_id=uuid.uuid4().hex,kind='bundle_encrypt',attempt=1))
+        restore=request['operation']=='restore_execute'
+        emit(1,'started');emit(2,'phase_started',{'phase':'secure_import' if restore else 'secure_packaging'})
+        metadata(channel,dict(type='challenge',protocol_version=1,operation_id=request['operation_id'],challenge_id=uuid.uuid4().hex,kind='bundle_unlock' if restore else 'bundle_encrypt',attempt=1))
         time.sleep(.2)
         emit(3,'failed',dict(code='secure_channel_timeout',publication_occurred=False));channel.close();sys.exit(2)
         """, adapter.appendingPathComponent("core.py"))
         let runtime = CoreRuntime(operationLogs: nil)
-        let request = CoreRequest(.captureExecute(selection: .init(categories: [], items: [:], secureIdentities: [String(repeating: "a", count: 64)]),
+        let capture = CoreRequest(.captureExecute(selection: .init(categories: [], items: [:], secureIdentities: [String(repeating: "a", count: 64)]),
             destination: root.appendingPathComponent("unused.mbt").path, preparedID: String(repeating: "b", count: 64)))
-        runtime.start(request, location: CoreLocation(root: core, python: python, home: root, temporaryBase: root, toolDirectories: []))
-        await waitUntil(runtime) { $0.secureChallenge != nil }
-        let challenge = runtime.secureChallenge!
-        await runtime.waitForCompletion()
-        precondition(runtime.state == .failed && runtime.secureChallenge == nil && runtime.publicationOccurred == false)
-        precondition(runtime.error == .coreFailure("secure_channel_timeout"))
-        precondition(!runtime.respond(to: challenge, with: .secret(Data("late".utf8))))
         let restore = CoreRequest(.restoreExecute(path: root.appendingPathComponent("unused.mbt").path, disabledGroups: [], includeSecure: true,
             preparedID: String(repeating: "a", count: 64)))
-        runtime.start(restore, location: CoreLocation(root: core, python: python, home: root, temporaryBase: root, toolDirectories: []))
-        await runtime.waitForCompletion()
-        precondition(runtime.error == .secureBridgeUnavailable && runtime.secureChallenge == nil)
-        print("PASS: Core timeout invalidates native input, late submission is rejected and secure Restore remains disabled")
+        var previousChallenge: CoreSecureChallenge?
+        for request in [capture, restore] {
+            runtime.start(request, location: CoreLocation(root: core, python: python, home: root, temporaryBase: root, toolDirectories: []))
+            await waitUntil(runtime) { $0.secureChallenge != nil }
+            let challenge = runtime.secureChallenge!
+            precondition(challenge.operationID == request.operationID)
+            precondition(challenge.kind == (request.command.operation == .restoreExecute ? .bundleUnlock : .bundleEncrypt))
+            if let previousChallenge {
+                precondition(!runtime.respond(to: previousChallenge, with: .secret(Data("late".utf8))),
+                    "A timed-out Capture reply must not answer the following Restore challenge")
+                precondition(runtime.secureChallenge == challenge)
+            }
+            await runtime.waitForCompletion()
+            precondition(runtime.state == .failed && runtime.secureChallenge == nil && runtime.publicationOccurred == false)
+            precondition(runtime.error == .coreFailure("secure_channel_timeout"))
+            precondition(!runtime.respond(to: challenge, with: .secret(Data("late".utf8))))
+            previousChallenge = challenge
+        }
+        print("PASS: Capture/Restore timeout invalidates native input; late replies cannot cross operation boundaries")
     }
 
     static func overlapContractRejections(_ prepared: CoreCapturePreparation) throws {

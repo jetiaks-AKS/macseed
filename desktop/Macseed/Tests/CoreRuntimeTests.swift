@@ -266,10 +266,15 @@ private final class SecureTestClock: @unchecked Sendable {
         let environment = success.environment(temporary: directory)
         precondition(environment["HOME"] == directory.path && environment["BLUEPRINT_FILE"] == nil && environment["PYTHONPATH"] == nil)
         performanceTraceEnvironment(success, temporary: directory)
-        // Capture now supplies the native bridge; Restore remains unintegrated.
-        let refused = await run(success, command: .restoreExecute(path: "/sample.mbt", disabledGroups: [], includeSecure: true,
-                                                               preparedID: String(repeating: "a", count: 64)))
-        precondition(refused.error == .secureBridgeUnavailable && refused.events.isEmpty)
+        // CoreRuntime supplies the native bridge for Capture and Restore. The
+        // transport must still reject secure Restore when no handler is supplied.
+        let refused = await CoreTransport().run(request: CoreRequest(.restoreExecute(path: "/sample.mbt", disabledGroups: [], includeSecure: true,
+                                                               preparedID: String(repeating: "a", count: 64))), location: success) { _ in
+            preconditionFailure("Secure Restore emitted an event without a secure handler")
+        }
+        precondition(refused.error == .secureBridgeUnavailable && refused.processLaunched == false
+            && refused.terminal == nil && refused.exitCode == nil,
+            "Secure Restore without a handler must fail before launching Core")
         print("PASS: Resolver containment, controlled environment, missing runtime without sample fallback and secure boundary")
 
         if CommandLine.arguments.count == 3 {
