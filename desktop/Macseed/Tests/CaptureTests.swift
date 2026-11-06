@@ -1805,13 +1805,16 @@ import SwiftUI
     }
 
     @MainActor static func secureCaptureChecks(root: URL, repository: URL, python: URL) async throws {
-        let paths = (ProcessInfo.processInfo.environment["PATH"] ?? "").split(separator: ":").map(String.init) + ["/opt/homebrew/bin", "/usr/local/bin"]
-        guard let age = paths.map({ URL(fileURLWithPath: $0).appendingPathComponent("age") }).first(where: { FileManager.default.isExecutableFile(atPath: $0.path) }) else {
-            preconditionFailure("Focused Secure Capture qualification requires existing age; no installation is attempted")
-        }
+        // build.sh places this harness beside the app whose authenticated helper
+        // it qualifies. Never search external tools or prepare/download age here.
+        let builtApplication = URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL
+            .deletingLastPathComponent().appendingPathComponent("Macseed.app")
         let base = root.appendingPathComponent("secure-capture"), core = base.appendingPathComponent("core")
         let home = base.appendingPathComponent("home"), bin = base.appendingPathComponent("bin")
-        for directory in [core.appendingPathComponent("config"), core.appendingPathComponent("scripts"), home.appendingPathComponent(".ssh"), bin] {
+        let application = base.appendingPathComponent("Fixture.app")
+        let embeddedAge = application.appendingPathComponent("Contents/Helpers/age")
+        for directory in [core.appendingPathComponent("config"), core.appendingPathComponent("scripts"), home.appendingPathComponent(".ssh"), bin,
+                          embeddedAge.deletingLastPathComponent()] {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         }
         for name in ["modules", "bootstrap.sh", "config/toolkit.conf", "scripts/ssh-identity-migrate.sh"] {
@@ -1845,19 +1848,25 @@ import SwiftUI
             try write("#!/bin/sh\nexit 99\n", bin.appendingPathComponent(tool), executable: true)
         }
         try write("#!/bin/sh\necho 26.7.1\n", bin.appendingPathComponent("sw_vers"), executable: true)
-        try FileManager.default.createSymbolicLink(at: bin.appendingPathComponent("age"), withDestinationURL: age)
+        let location = CoreLocation(root: core, python: python, home: home, temporaryBase: root, toolDirectories: [bin], applicationBundle: application)
         let keySecret = Data(("disposable-key-" + UUID().uuidString).utf8)
         let bundleSecret = Data(("disposable-bundle-" + UUID().uuidString).utf8)
-        func tool(_ executable: URL, arguments: [String], input: Data = Data()) throws {
+        func tool(_ executable: URL, arguments: [String], input: Data = Data(), applicationBundle: URL? = nil) throws {
             let process = Process(), stdin = Pipe(), stderr = Pipe()
             process.executableURL = executable; process.arguments = arguments
-            process.environment = ["HOME": home.path, "PATH": [bin.path, python.deletingLastPathComponent().path, "/usr/bin", "/bin"].joined(separator: ":"),
-                                   "PYTHONDONTWRITEBYTECODE": "1", "TMPDIR": root.path]
+            process.environment = location.environment(temporary: root)
+            if let applicationBundle { process.environment?["MACSEED_DESKTOP_BUNDLE"] = applicationBundle.path }
             process.standardInput = stdin; process.standardOutput = FileHandle.nullDevice; process.standardError = stderr
             try process.run(); try stdin.fileHandleForWriting.write(contentsOf: input); try stdin.fileHandleForWriting.close()
             _ = stderr.fileHandleForReading.readDataToEndOfFile(); process.waitUntilExit()
             precondition(process.terminationStatus == 0, "Disposable Secure Capture helper failed: \(process.terminationStatus)")
         }
+        // Authenticate the original app path before copying; production validates
+        // the disposable copy again on every secure operation, including decrypt.
+        try tool(python, arguments: ["-B", core.appendingPathComponent("modules/migration/age_runtime.py").path, "--check"],
+                 applicationBundle: builtApplication)
+        try FileManager.default.copyItem(at: builtApplication.appendingPathComponent("Contents/Helpers/age"), to: embeddedAge)
+        try tool(python, arguments: ["-B", "-c", "import shutil; assert shutil.which('age') is None, 'Secure Capture fixture must have no external age on PATH'"])
         let setup = base.appendingPathComponent("keys.py")
         try write("""
         import sys,subprocess
@@ -1873,7 +1882,6 @@ import SwiftUI
         let initialHome = try snapshot(home)
         let logs = OperationLogStore(directory: base.appendingPathComponent("operations"))
         let runtime = CoreRuntime(operationLogs: logs)
-        let location = CoreLocation(root: core, python: python, home: home, temporaryBase: root, toolDirectories: [bin])
         let model = CaptureModel(runtime: runtime, location: location)
         func scan(_ labels: Set<String>, ordinary: Bool = false) async {
             model.scan(); await model.waitForCompletion()
@@ -1993,11 +2001,22 @@ import SwiftUI
         precondition(model.state == .confirmation)
         try write("changed fixture", occupied)
         model.create(); precondition(model.failure == .invalidDestination)
-        await scan(["fixture_plain"])
-        _ = await prepare("age-unavailable")
-        try FileManager.default.removeItem(at: bin.appendingPathComponent("age"))
-        let noAgeChallenges = await execute()
-        precondition(noAgeChallenges.isEmpty && model.failure?.technicalReason == "age_unavailable")
+        for failure in ["missing", "corrupt", "symlink"] {
+            await scan(["fixture_plain"])
+            let target = await prepare("age-" + failure)
+            try FileManager.default.removeItem(at: embeddedAge)
+            if failure == "corrupt" {
+                try write("corrupt bundled age", embeddedAge)
+                try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: embeddedAge.path)
+            } else if failure == "symlink" {
+                try FileManager.default.createSymbolicLink(at: embeddedAge, withDestinationURL: builtApplication.appendingPathComponent("Contents/Helpers/age"))
+            }
+            let noAgeChallenges = await execute()
+            precondition(noAgeChallenges.isEmpty && model.failure?.technicalReason == "age_unavailable")
+            precondition(model.publicationEvidence == .notOccurred && !FileManager.default.fileExists(atPath: target.path))
+            if failure != "missing" { try FileManager.default.removeItem(at: embeddedAge) }
+            try FileManager.default.copyItem(at: builtApplication.appendingPathComponent("Contents/Helpers/age"), to: embeddedAge)
+        }
         let homeAfterChecks = try snapshot(home)
         precondition(homeAfterChecks == initialHome, "Capture must preserve disposable source key bytes")
         let history = try await logs.history()
@@ -2008,7 +2027,7 @@ import SwiftUI
             let report = try await DiagnosticReportBuilder.generate(id: entry.id, environment: .current()) { id, cursor in try await logs.page(id, after: cursor) }
             precondition(privateValues.allSatisfy { report.utf8.range(of: $0) == nil })
         }
-        print("PASS: Secure-only and ordinary Capture, default-off/bulk isolation, cancellation, three wrong attempts, stale source, destination/no-clobber and missing age; no secrets/names/fingerprints in persisted logs or reports")
+        print("PASS: Secure-only and ordinary Capture without external age; default-off/bulk isolation, cancellation, three wrong attempts, stale source, destination/no-clobber and missing/corrupt/linked bundled age; no secrets/names/fingerprints in persisted logs or reports")
         try await secureCaptureInvalidationCheck(root: base, repository: repository, python: python)
     }
 
