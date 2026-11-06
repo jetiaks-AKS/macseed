@@ -735,7 +735,7 @@ not qualify real macOS 27 visual effects or remaining native Restore gates.
 ### External process waiting and Git clone (R5)
 
 Application process bounds and the shared durable-admission fence are implemented;
-the [D1–D4/R5 repair queue is accepted](../../ROADMAP.md#current-practical-execution-order)
+the [D1–D4/R5 repair queue is accepted](../../ROADMAP.md#homebrew-and-restore-resilience)
 within its documented implementation and automated integration boundaries.
 This is not native lifecycle qualification. Existing ProcessTree birth identities,
 private sessions, private directory checks and atomic/fsynced journal publication

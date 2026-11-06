@@ -2,17 +2,20 @@
 
 **A smarter way to capture, rebuild, and check your Mac setup.**
 
-Macseed captures the supported parts of a working Mac, reconstructs them on
-another Mac, and reports what matches the selected environment. It reduces
-manual setup while preserving existing user state when safe convergence is
-not possible. Its engineering lifecycle is **Capture → Rebuild → Verify**.
+Macseed is a **Mac setup reconstruction and verification utility**. Capture saves
+a reusable description of supported environment state, Rebuild reconstructs it on
+a new or existing Mac, and Check shows what matches and what still needs attention.
+These three workflows are equally important. Macseed reduces manual setup while
+preserving existing user state when safe convergence is not possible. Its
+engineering lifecycle is **Capture → Rebuild → Verify**.
 Macseed favors a smaller set of valuable, complete and reliable capabilities
 over broad shallow coverage.
 
 Applications are installed again, repositories are cloned from remotes, and
 supported settings are restored. Macseed does not clone a Mac or transfer
-arbitrary user files, application databases, caches or sessions. Explicitly
-selected SSH identities can travel in an encrypted payload.
+arbitrary user files, application databases, caches, sessions or local project data.
+Explicitly selected SSH identities can travel in an encrypted payload. Macseed
+does not replace Migration Assistant or Time Machine.
 
 ## Use Macseed today
 
@@ -29,15 +32,24 @@ Clone the repository on each Mac. Before `bs` is installed, run the equivalent
 `./bootstrap.sh --workflow`, `--capture`, `--restore <bundle>` or `--compare`
 from its root. See the [CLI Quick Start](docs/getting-started/QUICKSTART.md).
 
-Supported state includes Homebrew and App Store applications, VS Code,
-Git and SSH configuration, standalone Zsh configuration, Workspace structure
-and repositories, and selected macOS settings. Capture produces one private
-`.mbt` Bundle; its normal configuration is **not encrypted**. Review it and
-transfer it privately. Only the optional SSH identity payload is encrypted.
+Supported state is grouped by how people use it:
 
-Global Verification reports selected requirements after Apply. Explicit
-Environment Comparison reports differences and supported extras without
-removing anything. See [Capture / Restore](docs/CAPTURE-RESTORE.md) for boundaries.
+- **Standard Setup:** applications and tools, supported macOS settings, and
+  VS Code settings and extensions.
+- **For Experienced Users:** optional Git configuration, repositories and supported
+  worktrees, Workspace folder structure, supported SSH host settings, encrypted SSH
+  identity migration, standalone Zsh configuration and supported VS Code workspace
+  relationships. Folders and workspace references do not transfer project files;
+  repository restoration does not copy local changes.
+
+Capture produces one private `.mbt` Saved Environment. Its normal configuration is
+**not encrypted**; review it and transfer it privately. Only the optional SSH
+identity payload is encrypted.
+
+Global Verification reports selected requirements after Apply. **Check** compares
+a Saved Environment read-only, explaining confirmed matches, differences and
+coverage gaps. **Review in Rebuild** is an explicit handoff; it does not apply
+changes or remove extras. See [Capture / Restore](docs/CAPTURE-RESTORE.md) for boundaries.
 
 ## Project status
 

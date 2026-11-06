@@ -1,9 +1,10 @@
 # Macseed Vision
 
-Macseed helps people build and maintain a supported working environment on a new
-or existing Mac with less manual setup and a result they can inspect. Fresh
-application/tool installation, supported macOS settings and **reusable Saved
-Environments** are its primary value. The product tagline is
+Macseed is a Mac setup reconstruction and verification utility. It helps people
+save a reusable description of supported environment state, rebuild it on a new
+or existing Mac, and check the result. Applications and tools, supported macOS
+and VS Code settings, and **reusable Saved Environments** provide everyday value.
+The product tagline is
 **A smarter way to capture, rebuild, and check your Mac setup.** The engineering lifecycle is
 **Capture → Rebuild → Verify**.
 Users choose what matters, review the changes, and see which selected
@@ -19,7 +20,9 @@ Comparison never automatically selects differences or starts Restore.
 
 Everyday value centers on applications, tools and reliably supported macOS settings.
 Developer workflows remain optional advanced capabilities within their qualified
-Git, Workspace, SSH and Shell contracts. Existing VS Code Settings/Extensions are
+Git, Workspace, SSH and Shell contracts. Advanced describes optional scope and
+user familiarity; these capabilities follow the same safety and verification
+standards. Existing VS Code Settings/Extensions are
 optional application extras; they do not imply a universal adapter catalog.
 These priorities preserve the scope of existing supported capabilities.
 The approved [Product Direction](PRODUCT-DIRECTION.md) records the capability
@@ -51,8 +54,8 @@ Comparison helps explain differences; it does not imply cleanup or removal.
 ## Boundaries
 
 Macseed reconstructs supported configuration, installs applications, and clones
-repositories. It is not a full Mac clone, backup, Migration Assistant replacement,
-arbitrary file migrator or application-session copier. Documents, libraries,
+repositories. It is not a full Mac clone, backup, Migration Assistant or Time
+Machine replacement, arbitrary file migrator or application-session copier. Documents, libraries,
 databases and runtime state belong to dedicated transfer or backup tools.
 Reconstruct what can be safely reacquired; transfer unique portable state only
 under a bounded safe contract; leave caches, logs, temporary/derived state and

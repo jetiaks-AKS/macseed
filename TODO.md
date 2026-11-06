@@ -33,7 +33,7 @@ SSH/filter/LFS support, and bounded Core acceptance does not close Workspace or 
 
 ## Consolidated test/CI stabilization
 
-The [successful CI #127 baseline](ROADMAP.md#current-practical-execution-order)
+The [successful CI #127 baseline](ROADMAP.md#product-direction-native-ui-alignment-and-later-ci-baselines)
 supersedes the earlier CI #123/#124 failure notes. The Capture event-count repair
 is already present in `a1fa2a5`; it checks exact inventory correspondence rather
 than a fixed count. Those historical failures are not current open defects.

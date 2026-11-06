@@ -234,6 +234,22 @@ the same standard About presentation; neither introduces a sidebar destination.
 See [native appearance and Settings](#native-appearance-and-settings) for controls
 and metadata boundaries.
 
+### Contextual capability guidance
+
+Capture Review and Rebuild Selection show at most one short capability explanation
+inside an existing expanded category, using `.callout` secondary text and the current content
+indentation. Workspace Folders explains structure-only restoration, Git Repositories /
+Worktrees excludes transferring local changes. Capture describes saving supported
+setup; Rebuild describes reconstructing it. Capture also explains that VS Code
+Workspace excludes project files, separates supported SSH host profiles from keys
+in Secure Transfer, and describes For Experienced Users inside its expanded content.
+Rebuild adds no explanation or disclosure to its For Experienced Users heading,
+SSH Configuration or VS Code Workspace.
+Existing whole-category, availability, Secure Transfer and App Store guidance stays
+in place. Collapsed row geometry, selection and later workflow screens are unchanged.
+The contextual guidance is visually accepted in principle; final wording and
+typography are refined within that scope, without closing broader qualification gates.
+
 ### Capture Review — implemented structure and geometry
 
 The Capture section disclosure is visually accepted; the local Confirmation
@@ -1403,7 +1419,7 @@ remaining 16I/16K, Stage 3C recovery or packaged clean-Mac gates. Completed
 | User-confirmed VS Code installation | Previously missing extensions were installed. No retained date/build/log or independent inventory measurement was established; reinstall is not pending, while independent inventory/Preview and Extension Pack dependency closure remain open. |
 | Partial and stale-plan results | Confirmed independent work can coexist with a Tailscale mismatch and Rebuild Needs Attention. A real stale plan was rejected before mutation with neutral Not Run categories, then fresh Preview/Rebuild succeeded. These do not establish all interruption/completeness cases. |
 
-The [accepted D1–D4/R5 baseline](../ROADMAP.md#current-practical-execution-order)
+The [accepted D1–D4/R5 baseline](../ROADMAP.md#homebrew-and-restore-resilience)
 closes its implementation/automated integration queue, not native process/installer
 quiescence, recovery, broad Git capability or release readiness. Keep those gates in
 [TODO](../TODO.md), without reopening accepted UI work.

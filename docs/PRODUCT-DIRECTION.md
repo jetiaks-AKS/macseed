@@ -1,7 +1,9 @@
-# Macseed — Product Direction and Delivery Sequence
+# Macseed — Product Direction
+
+<a id="macseed--product-direction-and-delivery-sequence"></a>
 
 - **Decision date:** 2026-10-29
-- **Revision:** 2026-11-06 — identity completion and next functional checkpoint reconciled
+- **Revision:** 2026-11-06 — Macseed 1.0 positioning and Roadmap ownership clarified
 - **Status:** Native UI baseline visually accepted; later refinements and release qualification retain their own gates
 - **Repository:** `jetiaks-AKS/macseed`
 - **Working branch:** `develop`
@@ -14,9 +16,15 @@
 
 ## 1. Product promise
 
-Macseed is a focused native macOS utility for **capturing, rebuilding, comparing and safely reapplying essential, supported working-environment state**. It should reduce setup work on a clean Mac while remaining useful on an existing Mac months or years later.
+Macseed is a **Mac setup reconstruction and verification utility**. Users save a
+reusable description of supported environment state, rebuild it on a new or
+existing Mac, and check what matches. The native Desktop makes these workflows
+approachable while the official CLI remains supported.
 
-Its principal value is **fresh application/tool installation, supported macOS preference restoration and reusable Saved Environments**—not the number of developer-oriented domains supported.
+The approved 1.0 scope combines **applications and tools, supported macOS and
+VS Code settings, and reusable Saved Environments** with optional advanced Git,
+Workspace, SSH and Shell capabilities. Advanced describes user needs and scope;
+it carries the same safety and verification standards as Standard Setup.
 
 **Tagline:** A smarter way to capture, rebuild, and check your Mac setup.
 
@@ -28,7 +36,7 @@ Macseed must remain maintainable by a small developer project. Prefer a reliable
 
 1. **Capture:** Observe the supported current environment, let the user explicitly select meaningful items and categories, and save a private `.mbt` Saved Environment.
 2. **Rebuild (Restore):** On either a clean or an already-used Mac, inspect a selected `.mbt`, narrow its captured requirements, show a fresh non-mutating Preview, obtain confirmation, apply only safely actionable changes and verify the supported result. Matching state must be a no-op. An unsafe or ambiguous reinstall/repair must be declined, not forced.
-3. **Check (Environment Status):** Compare a selected Saved Environment with the current Mac read-only. Explain confirmed matches, differences, missing items, unsupported coverage and observation uncertainty. Offer the already implemented handoff to Restore; the user must still inspect, select, preview and confirm. Reusing the *same* Saved Environment at a later date is a first-class workflow.
+3. **Check (Environment Status):** Compare a selected Saved Environment with the current Mac read-only. Explain confirmed matches, differences, missing items, unsupported coverage and observation uncertainty. Offer the already implemented **Review in Rebuild** handoff; the user must still inspect, select, preview and confirm. Reusing the *same* Saved Environment at a later date is a first-class workflow.
 
 **Current implementation boundary:** Bundle-backed Status supports the bounded Workspace Topology comparison contract. [Roadmap](../ROADMAP.md#complete-workspace--git-worktree-restoration) records Phase 6 and accepted bounded Core E2E evidence, with same-Bundle native GUI, full SIGTERM recovery and packaged qualification still open. The [implemented handoff](DESKTOP.md#bundle-handoff) passes only the Bundle reference, without selecting differences or starting Prepare/Preview/Execute. Restore owns inspection, selection, Preview and confirmation; the same Bundle preserves its existing session. Status compares the complete saved reference, independently of Restore's local selection.
 
@@ -47,7 +55,7 @@ Macseed must remain maintainable by a small developer project. Prefer a reliable
 | Git configuration, repositories, linked worktrees | **Advanced — for experienced users** | Keep and qualify current supported scope. Do not reopen unlimited Git topology or transport coverage. |
 | SSH configuration / selected SSH identities | **Advanced / Secure Transfer — for experienced users** | Keep SSH configuration in Advanced and Capture identities in its independent Secure Transfer sibling. Keep the limited Host contract and separately encrypted, strictly opt-in/default-off identity migration. Stage 16H SSH Identities is completed and manually accepted with native Secure Capture, whole-package Restore and bundled age v1.3.2; all identities currently restore to `~/.ssh`. SSH Configuration/destination completion is next, not implemented. |
 | Zsh / Shell | **Advanced — for experienced users** | Retain bounded `.zshrc` contract and its explicit exclusions; do not modify user configurations just to satisfy Discovery. |
-| `.code-workspace` descriptors | **HIDE / FREEZE for 1.0:** no ordinary promotion; explicit Advanced Capture and Restore selection, default OFF | Preserve Core, tests, Bundle V1, legacy selected-descriptor Restore, Verification and Status. No feature expansion or dependency auto-selection; only supported names/folder relationships. |
+| `.code-workspace` descriptors | **Advanced, default OFF; scope frozen for 1.0:** no ordinary promotion; explicit Capture and Restore selection | Preserve Core, tests, Bundle V1, legacy selected-descriptor Restore, Verification and Status. No feature expansion or dependency auto-selection; only supported names/folder relationships. |
 | Workspace Folders (structure only) | **Collapsed Advanced compatibility selector, default OFF; no ordinary promotion** | Preserve the Core domain, explicit folder-only Capture, descriptor dependencies and folder-only Bundle Restore selectors. Both accepted selection screens expose folders in Advanced. No general file-content migration. |
 | Workspace file content transfer | **Deferred possible optional capability**, not required for 1.0 | Only after value, safety, provenance, conflict, permissions, privacy, and transport/storage contract assessment. No general folder migrator/backup. |
 | Universal secrets / passwords / Keychain copy | **Out of scope** | Use existing Apple/third-party mechanisms. SSH identity transfer is a bounded separate exception, not a general vault. |
@@ -122,7 +130,9 @@ remain intact. No new adapter, dependency engine, automatic Apply or extra wizar
 follows from visual acceptance. Remaining capability/runtime/packaging qualification
 is tracked separately in Roadmap and TODO.
 
-## 5. Delivery sequence and gates
+<a id="5-delivery-sequence-and-gates"></a>
+
+## 5. Historical checkpoints and qualification boundaries
 
 The checkpoint IDs below preserve the approved historical slices. [Roadmap's current
 execution order](../ROADMAP.md#current-practical-execution-order) owns the remaining
@@ -203,7 +213,7 @@ Possible Saved Environment history/profiles, confirmed-difference preselection f
 
 - **One bounded checkpoint at a time:** read/audit contracts → address the selected scope → focused tests → inspect diffs → record accepted evidence → move to next checkpoint.
 - **CI strategy:** use proportional focused verification for each implementation slice and canonical validation at closure. CI #127 is the published baseline, not validation of subsequent changes. Never omit changed-behavior tests or treat historical failures as active debt without evidence.
-- **Documentation truth:** [Roadmap](../ROADMAP.md) records outcomes/stage status, [TODO](../TODO.md) concrete open actions, [Desktop](DESKTOP.md) as-implemented UX and planned changes clearly separated, [Changelog](../CHANGELOG.md) only completed release-visible work. This document records product decisions and their agreed sequence; Roadmap tracks execution.
+- **Documentation truth:** [Roadmap](../ROADMAP.md) records outcomes/stage status, [TODO](../TODO.md) concrete open actions, [Desktop](DESKTOP.md) as-implemented UX and planned changes clearly separated, [Changelog](../CHANGELOG.md) only completed release-visible work. This document records product decisions; Roadmap alone owns the current execution sequence.
 - **Git:** work on `develop`; preserve `main`, released history and all local commits. Avoid force-push, destructive reset and unreviewed cross-cutting changes. A documentation-only local commit may be kept unpushed and later published with validated implementation to avoid unnecessary hosted CI cycles.
 - **Privacy and safety:** no implicit deletions; Bundle ordinary metadata is private but not encrypted; SSH private identity migration requires explicit consent and its separate encrypted contract. Do not weaken idempotency, failure-state honesty or conflict preservation for UI convenience.
 
