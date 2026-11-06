@@ -3133,7 +3133,7 @@ private struct CaptureRefinementHost: View {
                 TaskDomainPresentation(id: $0, title: CaptureCategory.title(for: $0), symbol: WorkspaceCategoryStyle.symbol($0), items: [item($0, .matching)])
             }
         // Measure the status view supplied to the production row, not its tint:
-        // Match count pills are green too, including in a nonmatching category.
+        // status indicators and count pills can share semantic colors.
         let markerColor = Color(red: 1, green: 0, blue: 1)
         // Match the renderer's color conversion, not assumed raw RGB components.
         let markerBitmap = NSBitmapImageRep(cgImage: ImageRenderer(content: markerColor.frame(width: 8, height: 8)).cgImage!)
@@ -3217,25 +3217,30 @@ private struct CaptureRefinementHost: View {
                 }
                 previous = current
             }
-            // The mixed category's only green element is its Match badge. Test
+            // The mixed category's only blue element is its Planned badge. Test
             // that rail separately so it can never masquerade as a status origin.
+            let badges = RestorePreviewMetrics.badges(casks)
+            precondition(badges.map(\.0) == ["Planned", "Attention"] && badges.map(\.1) == [1, 1],
+                "Preview badges contain actionable counts; matches remain in the summary")
+            precondition(RestorePreviewMetrics.counts([casks]).matching == 14)
             let badgeProbe = RestorePreviewRow(title: Text(casks.title),
                 status: marked(RestorePreviewCategoryStatus(domain: casks, stateTitles: [:])),
-                counts: RestorePreviewMetrics.badges(casks), expanded: true)
+                counts: badges, expanded: true)
                 .padding(.horizontal, 32).frame(width: width)
                 .environment(\.restoreTrailingSamples, references)
             let badgeBitmap = NSBitmapImageRep(cgImage: ImageRenderer(content: badgeProbe).cgImage!)
+            try! badgeBitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: "build/Debug/Preview-badge-probe-\(Int(width)).png"))
             var badgeOrigins: [Int] = []
             for y in 0..<badgeBitmap.pixelsHigh {
                 for x in 0..<badgeBitmap.pixelsWide {
                     guard let c = badgeBitmap.colorAt(x: x, y: y)?.usingColorSpace(.sRGB), c.alphaComponent > 0.9 else { continue }
-                    if c.greenComponent > 0.2 && c.greenComponent > c.redComponent * 1.3 && c.greenComponent > c.blueComponent * 1.2 {
+                    if c.blueComponent > 0.5 && c.blueComponent > c.redComponent * 1.3 && c.blueComponent > c.greenComponent * 1.2 {
                         badgeOrigins.append(x)
                     }
                 }
             }
             precondition(!badgeOrigins.isEmpty && CGFloat(badgeOrigins.min()! - previous["category:" + casks.id]!) > TaskRowLayout.iconWidth,
-                "Match badge must occupy its own rail, outside the status indicator at \(width)")
+                "Planned badge must occupy its own rail, outside the status indicator at \(width)")
             // Keep rendering the complete production hierarchy as well as the
             // instrumented rows; markers above do not alter production views.
             let probe = TaskDomainList(domains: domains, restoreSettingsPreview: true, settingsCategories: settings,
@@ -3244,7 +3249,7 @@ private struct CaptureRefinementHost: View {
             let renderer = ImageRenderer(content: probe)
             let bitmap = NSBitmapImageRep(cgImage: renderer.cgImage!)
             try! bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: "build/Debug/RestorePreview-status-grid-\(Int(width)).png"))
-            print("PASS: Preview \(width) pt: 8/75/77 status markers align through expansion; Match badge is measured separately")
+            print("PASS: Preview \(width) pt: 8/75/77 status markers align through expansion; Planned badge is measured separately")
         }
         let source = try! String(contentsOfFile: "Sources/TaskComponents.swift")
         let previewHeader = source.components(separatedBy: "if restoreSettingsPreview {\n                RestorePreviewRow")[1].components(separatedBy: "} else { ViewThatFits")[0]
@@ -4832,6 +4837,7 @@ private struct CaptureRefinementHost: View {
     }
 
     @MainActor static func main() async {
+        if CommandLine.arguments.contains("--preview-column-geometry-only") { previewColumnGeometryChecks(); return }
         if CommandLine.arguments.contains("--preview-cleanup-only") {
             try! previewCleanupChecks()
             restorePreviewNoticesChecks()
