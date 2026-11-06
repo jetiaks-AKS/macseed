@@ -1,6 +1,8 @@
 import AppKit
 import SwiftUI
 
+private typealias ProductionWorkspaceState<Value> = SwiftUI.State<Value>
+
 // Capture, Restore Prepare and Status consume structured Core data.
 struct ProductionWorkspace: View {
     @ObservedObject var runtime: CoreRuntime
@@ -8,6 +10,9 @@ struct ProductionWorkspace: View {
     @SwiftUI.StateObject private var capture: CaptureModel
     @SwiftUI.StateObject private var restore: RestoreModel
     @SwiftUI.StateObject private var navigation = ProductionNavigation()
+    // Workflow-local presentation state survives the Scan/Review/Confirmation
+    // viewport transitions without becoming a saved preference or selection.
+    @ProductionWorkspaceState private var captureExperiencedVisible = false
     #if DEBUG
     @ObservedObject private var scenarios = RestoreDebugScenarios.shared
     private var syntheticRestore: Bool { scenarios.selected != .real }
@@ -60,7 +65,8 @@ struct ProductionWorkspace: View {
                             if task == .status {
                                 EnvironmentStatusView(model: status, runtime: runtime, showsActions: status.state != .result)
                             } else if task == .capture {
-                                CaptureView(model: capture, runtime: runtime, showsActions: false)
+                                CaptureView(model: capture, runtime: runtime, showsActions: false,
+                                    experiencedVisibility: $captureExperiencedVisible)
                             } else {
                                 #if DEBUG
                                 if syntheticRestore { RestoreDebugScenarioView(scenario: scenarios.selected) }
@@ -154,6 +160,9 @@ struct ProductionWorkspace: View {
             if task == .status, status.reference == nil, let source = restore.source, !busy {
                 status.selectBundle(source)
             }
+        }
+        .onChange(of: capture.state) { _, state in
+            if state == .idle || state == .scanning { captureExperiencedVisible = false }
         }
         .task { if !syntheticRestore && runtime.state == .idle { runtime.checkCapabilities() } }
         #if DEBUG

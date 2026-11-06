@@ -400,15 +400,16 @@ if os.path.lexists(os.path.join(root, 'cancelled-protected.age')):
     print('FAIL cancelled protected export published'); sys.exit(1)
 print('PASS repeated protected list/export candidate validation')
 protected_package = os.path.join(root, 'protected.age')
+# Exact-byte validation proof is reused within one CLI invocation only.
 if invoke(['export', '--output', protected_package],
           [(b'SSH key passphrase', phrase), (b'Select numbers', b'1'),
-           (b'SSH key passphrase', phrase), (b'Type export', b'export')], protected_home):
+           (b'Type export', b'export')], protected_home) or last_output.count(b'SSH key passphrase:') != 1:
     print('FAIL protected identity export'); sys.exit(1)
 protected_target = os.path.join(root, 'protected-target')
 os.mkdir(protected_target, 0o700)
 if invoke(['import', '--input', protected_package],
-          [(b'SSH key passphrase', phrase), (b'Type import', b'import'),
-           (b'SSH key passphrase', phrase)], protected_target):
+          [(b'SSH key passphrase', phrase), (b'Type import', b'import')], protected_target) or \
+        last_output.count(b'SSH key passphrase:') != 1:
     print('FAIL protected identity import'); sys.exit(1)
 print('PASS protected identity mock export/import')
 if set(glob.glob('/private/tmp/ssh-migrate-*')) != temp_before:
@@ -417,7 +418,7 @@ os.environ['MIGRATION_TEST_HANG'] = os.path.join(root, 'age-started')
 interrupted_package = os.path.join(root, 'interrupted.age')
 interrupted_status = invoke(['export', '--output', interrupted_package],
        [(b'SSH key passphrase', phrase), (b'Select numbers', b'1'),
-        (b'SSH key passphrase', phrase), (b'Type export', b'export')], protected_home)
+        (b'Type export', b'export')], protected_home)
 time.sleep(.5)
 if interrupted_status != 130:
     print('FAIL interrupted export status'); sys.exit(1)
@@ -469,16 +470,16 @@ if real_age:
     real_protected_package = os.path.join(root, 'real-protected.age')
     if invoke(['export', '--output', real_protected_package],
               [(b'SSH key passphrase', phrase), (b'Select numbers', b'1'),
-               (b'SSH key passphrase', phrase), (b'Type export', b'export'),
+               (b'Type export', b'export'),
                (b'Enter passphrase', age_phrase), (b'Confirm passphrase', age_phrase)], protected_home):
         print('FAIL real age protected identity export'); sys.exit(1)
-    if last_output.count(b'SSH key passphrase:') != 2:
-        print('FAIL standalone export did not independently revalidate selected key'); sys.exit(1)
+    if last_output.count(b'SSH key passphrase:') != 1:
+        print('FAIL standalone export did not reuse exact-byte validation within the invocation'); sys.exit(1)
     real_protected_target = os.path.join(root, 'real-protected-target')
     os.mkdir(real_protected_target, 0o700)
     if invoke(['import', '--input', real_protected_package],
               [(b'Enter passphrase', age_phrase), (b'SSH key passphrase', phrase),
-               (b'Type import', b'import'), (b'SSH key passphrase', phrase)], real_protected_target):
+               (b'Type import', b'import')], real_protected_target) or last_output.count(b'SSH key passphrase:') != 1:
         print('FAIL real age protected identity import'); sys.exit(1)
     for suffix in ('', '.pub'):
         with open(protected + suffix, 'rb') as source_file:

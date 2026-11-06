@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import pty
 import select
+import shlex
 import shutil
 import signal
 import subprocess
@@ -192,14 +193,26 @@ class IdentityEvidence(unittest.TestCase):
                 self.endpoint.unlink()
 
     def test_unlock_failure(self):
-        # Existing reader recognizes incorrect-passphrase stderr and exhausts 3 attempts.
+        # Keep real public-metadata inspection; only private-key unlock fails.
+        real_keygen = shutil.which('ssh-keygen')
+        self.assertIsNotNone(real_keygen)
+        attempts = self.root / 'unlock-attempts'
+        self.env['EVIDENCE_TEST_UNLOCK_ATTEMPTS'] = str(attempts)
         keygen = self.tools / 'ssh-keygen'
-        keygen.write_text('#!/bin/sh\necho "incorrect passphrase" >&2\nexit 255\n')
+        keygen.write_text('#!/bin/sh\n'
+                          'if [ "$1" = -y ]; then\n'
+                          '  echo x >> "$EVIDENCE_TEST_UNLOCK_ATTEMPTS"\n'
+                          '  echo "incorrect passphrase" >&2\n'
+                          '  exit 255\n'
+                          'fi\n'
+                          f'exec {shlex.quote(real_keygen)} "$@"\n')
         keygen.chmod(0o700)
         status, raw, output = self.imported()
         self.assertEqual(status, 2)
         self.assertIn(b'after 3 attempts', output)
+        self.assertEqual(attempts.read_text().splitlines(), ['x', 'x', 'x'])
         self.assertIn(b'\tunresolved\t0\tfailure\tinput_invalid', raw)
+        self.assertFalse((self.home / '.ssh').exists())
 
     def test_post_validation_rollback(self):
         site = self.root / 'site'

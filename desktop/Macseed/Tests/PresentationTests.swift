@@ -50,7 +50,399 @@ private struct WorkflowAnchorFrames: PreferenceKey {
     }
 }
 
+private final class CaptureRefinementState: ObservableObject {
+    @Published var experiencedVisible = false
+}
+
+private struct CaptureRefinementHost: View {
+    @ObservedObject var state: CaptureRefinementState
+    let model: CaptureModel
+    let runtime: CoreRuntime
+    var body: some View {
+        CaptureView(model: model, runtime: runtime, showsActions: false,
+            categoryTreeExpansion: .constant(CaptureHierarchy.disclosureIDs(
+                model.categories.map(\.id) + [CaptureHierarchy.secureTransferID], scope: .advanced)),
+            experiencedVisibility: $state.experiencedVisible)
+    }
+}
+
 @main struct PresentationTests {
+    @MainActor static func capturePreviewRefinementChecks(captureOnly: Bool = false) async throws {
+        setbuf(stdout, nil)
+        _ = NSApplication.shared
+        let root = URL(fileURLWithPath: "/private/tmp/macseed-preview-refinement-" + UUID().uuidString)
+        let output = URL(fileURLWithPath: "build/Debug/CapturePreviewRefinement")
+        let fm = FileManager.default
+        try fm.createDirectory(at: output, withIntermediateDirectories: true)
+        for folder in ["modules/core/application-interface", "config", "home", "tmp"] {
+            try fm.createDirectory(at: root.appendingPathComponent(folder), withIntermediateDirectories: true)
+        }
+        defer { try? fm.removeItem(at: root) }
+        for path in ["bootstrap.sh", "config/toolkit.conf", "modules/core/application-interface/core.py"] {
+            try Data().write(to: root.appendingPathComponent(path))
+        }
+        try "#!/bin/bash\nexec /usr/bin/python3 -B fixture.py\n".write(
+            to: root.appendingPathComponent("modules/core/application-interface/core.sh"), atomically: false, encoding: .utf8)
+        // Structured disposable inventory only. No Discovery, encryption or publication.
+        try """
+        import json, sys
+        request = json.load(sys.stdin)
+        assert request['operation'] == 'capture_prepare'
+        selection = request['parameters']['selection']
+        rows = [dict(domain=domain, status='present', selection_mode='items',
+                     items=[dict(item_id='fixture', label=label)])
+                for domain, label in [('homebrew-packages','Ordinary fixture'),('git-configuration','Advanced fixture')]]
+        identities = [dict(item_id='a'*64, label='fixture_key', key_type='ssh-ed25519',
+            fingerprint='SHA256:'+'A'*43, validation='candidate_requires_pair_validation')]
+        summary = dict(selected_domains=0, selected_items=0, secure_identity_count=0)
+        if selection:
+            summary = dict(selected_domains=len(selection['categories'])+len(selection['items']),
+                selected_items=sum(map(len,selection['items'].values()))
+                    + sum(len(row['items']) for row in rows if row['domain'] in selection['categories']),
+                secure_identity_count=len(selection['secure_identities']))
+        result = dict(prepared_capture_id='b'*64, inventory=rows, selection=selection, summary=summary,
+            secure_identities=dict(status='present', items=identities))
+        for sequence, (kind, data) in enumerate([('started',{}),('result',result),('completed',{})],1):
+            print(json.dumps(dict(protocol_version=1, operation_id=request['operation_id'],
+                sequence=sequence, type=kind, data=data)), flush=True)
+        """.write(to: root.appendingPathComponent("fixture.py"), atomically: false, encoding: .utf8)
+        let runtime = CoreRuntime(operationLogs: nil)
+        let model = CaptureModel(runtime: runtime, location: .init(root: root, python: URL(fileURLWithPath: "/usr/bin/python3"),
+            home: root.appendingPathComponent("home"), temporaryBase: root.appendingPathComponent("tmp"), toolDirectories: []))
+        model.scan(); await model.waitForCompletion()
+        precondition(model.state == .review && model.selectedSecureIdentities.isEmpty)
+        let visibility = CaptureRefinementState()
+        precondition(!visibility.experiencedVisible)
+        var windows: [NSWindow] = []
+        defer { windows.forEach { $0.close() } }
+        func host<V: View>(_ content: V, width: CGFloat = 721, dark: Bool = false) -> NSHostingView<some View> {
+            let view = NSHostingView(rootView: content.frame(width: width).background(Color(nsColor: .windowBackgroundColor)))
+            view.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+            let window = NSWindow(contentRect: .init(x: 0, y: 0, width: width, height: 900),
+                styleMask: [.titled], backing: .buffered, defer: false)
+            windows.append(window); window.isReleasedWhenClosed = false
+            window.contentView = view; window.orderFront(nil)
+            return view
+        }
+        func settle(_ view: NSView) async throws {
+            try await Task.sleep(for: .milliseconds(80))
+            view.setFrameSize(view.fittingSize); view.layoutSubtreeIfNeeded(); view.displayIfNeeded()
+        }
+        func selectionBoxes(_ view: NSView) -> [NSButton] {
+            let own = (view as? NSButton).map { $0.target is NativeSelectionCheckbox.Coordinator ? [$0] : [] } ?? []
+            return own + view.subviews.flatMap(selectionBoxes)
+        }
+        func save(_ view: NSView, _ name: String) throws {
+            let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds)!
+            view.cacheDisplay(in: view.bounds, to: bitmap)
+            try bitmap.representation(using: .png, properties: [:])!.write(to: output.appendingPathComponent(name + ".png"))
+        }
+        let review = host(CaptureRefinementHost(state: visibility, model: model, runtime: runtime))
+        try await settle(review)
+        let hiddenHeight = review.fittingSize.height
+        try save(review, "capture-default-collapsed")
+        precondition(selectionBoxes(review).count == 1, "Only Standard Setup has visible selection controls")
+        // The collapsed experienced heading is the final row. Click its title,
+        // then the leading chevron, through the same native event path as a user.
+        let headingY = hiddenHeight - 16
+        func clickHeading(x: CGFloat) {
+            let window = review.window!
+            let point = review.convert(NSPoint(x: x, y: review.isFlipped ? headingY : review.bounds.height - headingY), to: nil)
+            for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+                window.sendEvent(NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                    windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: type == .leftMouseDown ? 1 : 0)!)
+            }
+        }
+        let originalSelection = model.selection
+        clickHeading(x: 80); try await settle(review)
+        precondition(visibility.experiencedVisible, "Clicking the section title expands the experienced container")
+        precondition(selectionBoxes(review).contains { $0.accessibilityLabel() == "Select Secure Transfer" })
+        precondition(selectionBoxes(review).count >= 5, "Advanced and Secure Transfer child checkboxes are visible")
+        precondition(review.fittingSize.height > hiddenHeight + 80 && model.selection == originalSelection)
+        precondition(model.selectedSecureIdentities.isEmpty, "Visibility is never Secure Transfer opt-in")
+        model.selectItem("git-configuration", item: "fixture", included: true)
+        model.selectSecureIdentity(String(repeating: "a", count: 64), included: true)
+        let selected = model.selection
+        precondition(CaptureReviewPresentation.experiencedSelectionSummary(model) == "1 advanced category selected · 1 SSH identity selected")
+        clickHeading(x: 80); try await settle(review)
+        precondition(!visibility.experiencedVisible && model.selection == selected && selectionBoxes(review).count == 1)
+        precondition(review.fittingSize.height < hiddenHeight + 45, "Only the small selection indicator remains; no hidden container space")
+        try save(review, "capture-hidden-selections")
+        clickHeading(x: 4); try await settle(review)
+        precondition(visibility.experiencedVisible && model.selection == selected, "The leading disclosure chevron preserves selection and opt-in")
+        model.prepare(destination: root.appendingPathComponent("fixture.mbt")); await model.waitForCompletion()
+        precondition(model.state == .confirmation && model.selection == selected && visibility.experiencedVisible,
+            "Disposable Prepare must retain selection and visibility: \(model.state), \(String(describing: model.failure))")
+        model.editSelection(); try await settle(review)
+        precondition(model.state == .review && model.selection == selected && visibility.experiencedVisible)
+        try save(review, "capture-visible")
+        let captureSource = try String(contentsOfFile: "Sources/CaptureView.swift")
+        let workspaceSource = try String(contentsOfFile: "Sources/ProductionWorkspace.swift")
+        precondition(captureSource.contains("experiencedVisible = false") && !captureSource.contains("@AppStorage"))
+        precondition(workspaceSource.contains("experiencedVisibility: $captureExperiencedVisible")
+            && workspaceSource.contains("captureExperiencedVisible = false"))
+        print("PASS: Capture starts collapsed; title/chevron expand and collapse; no empty container; selections/opt-in unchanged; hidden counts; Back/Next retain workflow state")
+        if captureOnly { return }
+
+        func item(_ id: String, _ state: TaskRowState) -> TaskItemPresentation {
+            .init(id: id, item: .init(id: id, title: id, status: state == .matching ? .matching : state == .planned ? .ready : .attention,
+                action: state == .matching ? "" : "Existing explanation"), state: state)
+        }
+        func domain(_ id: String, _ items: [TaskItemPresentation]) -> TaskDomainPresentation {
+            .init(id: id, title: CaptureCategory.title(for: id), symbol: WorkspaceCategoryStyle.symbol(id), items: items)
+        }
+        let matching = (0..<103).map { item("matching-only-\($0)", .matching) }
+        let mixed = [domain("homebrew-casks", Array(matching.prefix(50)) + [item("planned-app", .planned), item("attention-app", .attention)]),
+            domain("macos-settings", [matching[50], item("planned-setting", .planned)]),
+            domain("git-configuration", Array(matching.dropFirst(51))),
+            domain("ssh-configuration", [item("attention-ssh", .unverified)])]
+        let settings = [domain("macos-finder", [matching[50]]), domain("macos-dock", [item("planned-setting", .planned)])]
+        let ready = RestorePrerequisiteSummaryPresentation(conditions: [], ready: true)
+        let installedItem = TaskItemPresentation(id: "manual-app", item: .init(id: "manual-app", title: "Manual application", status: .matching, action: ""),
+            state: .matching, assistedAppStore: .init(appID: "123456", status: .installed))
+        let installed = AppStoreRestorePresentation(domains: [domain("app-store", [installedItem])])
+        let counts = RestorePreviewMetrics.counts(mixed)
+        precondition(counts.matching == 103 && counts.changes == 2 && counts.attention == 2)
+        let summarySource = try String(contentsOfFile: "Sources/RestoreView.swift")
+            .components(separatedBy: "struct RestorePreviewMetrics: View {")[1]
+            .components(separatedBy: "// Called only from")[0]
+        precondition(summarySource.contains("if counts.matching > 0 { Self.metric(\"Already Match\"")
+            && summarySource.contains("if counts.changes > 0") && summarySource.contains("if counts.attention > 0")
+            && !summarySource.contains("no action needed."))
+        let preview = RestorePreviewContent(title: "Needs Attention", state: .attention, domains: mixed, alreadyMatches: false,
+            previewEvaluated: true, prerequisites: ready, areas: [], settingsCategories: settings,
+            categoryExpansion: .constant(true), appStore: installed, reviewAppStore: {}, showsActions: false)
+        precondition(preview.visibleDomains.map(\.id) == ["homebrew-casks", "macos-settings", "ssh-configuration"])
+        precondition(preview.visibleSettings.map(\.id) == ["macos-dock"])
+        precondition(RestorePreviewVisibility.items(mixed[0].items).map(\.id) == ["planned-app", "attention-app"])
+        precondition(RestorePreviewMetrics.badges(mixed[0]).map { "\($0.0):\($0.1)" } == ["Planned:1", "Attention:1"])
+        precondition(preview.allMatchCount == nil && preview.prerequisitesSatisfied && !preview.showsPrerequisites
+            && preview.manualInventory?.allInstalled == true && preview.manualWork == nil)
+        for state in [TaskRowState.attention, .unverified, .failed, .partial, .skipped, .waiting, .notRun, .planned] {
+            precondition(RestorePreviewVisibility.includes(domain("problem", [item("retained", state)])))
+        }
+        var diagnosticMatch = matching[0]; diagnosticMatch.previewProblem = "Observation failed"
+        precondition(!RestorePreviewVisibility.isMatching(diagnosticMatch))
+        let allMatching = [domain("git-configuration", matching)]
+        var noOp = RestorePreviewContent(title: "", state: .matching, domains: allMatching, alreadyMatches: true,
+            previewEvaluated: true, prerequisites: ready, areas: [], appStore: installed, reviewAppStore: {}, showsActions: false)
+        precondition(noOp.allMatchCount == 104 && noOp.visibleDomains.isEmpty && !noOp.canRebuild)
+        noOp.previewEvaluated = false
+        precondition(noOp.allMatchCount == nil && !noOp.prerequisitesSatisfied)
+        noOp.previewEvaluated = true; noOp.needsRefresh = true
+        precondition(noOp.allMatchCount == nil && !noOp.prerequisitesSatisfied)
+        noOp.needsRefresh = false; noOp.retrying = true
+        precondition(noOp.allMatchCount == nil)
+        noOp.retrying = false
+        var pendingItem = installedItem
+        pendingItem.assistedAppStore = .init(appID: "123456", status: .unverified)
+        noOp.appStore = AppStoreRestorePresentation(domains: [domain("app-store", [pendingItem])])
+        precondition(noOp.allMatchCount == nil && noOp.manualWork != nil)
+        noOp.appStore = installed
+        let empty = RestorePreviewContent(title: "", state: .matching, domains: [], alreadyMatches: true,
+            previewEvaluated: true, prerequisites: ready, areas: [], appStore: .init(domains: []), showsActions: false)
+        precondition(empty.allMatchCount == nil && empty.manualInventory == nil && empty.visibleDomains.isEmpty)
+        let failed = RestorePreviewContent(title: "Failed", state: .failed, domains: allMatching, alreadyMatches: true,
+            previewEvaluated: true, prerequisites: .init(conditions: [], ready: false), areas: [], showsActions: false)
+        precondition(failed.allMatchCount == nil && !failed.prerequisitesSatisfied)
+        precondition(mixed.flatMap(\.items).count == 107 && matching.count == 103, "Filtering never changes the input inventory")
+        print("PASS: 103/2/2 full counts retained; matching-only categories/settings/leaves hidden; blue/orange badges and all problem states retained")
+        print("PASS: all-match requires completed positive evidence; zero/failed/stale/pending manual states remain distinct")
+
+        let confirmation = [domain("git-configuration", (0..<5).map { item("git-\($0)", .planned) }),
+            domain("workspace-folders", (0..<7).map { item("folder-\($0)", .planned) }),
+            domain("ssh-configuration", [item("ssh-warning", .attention)]),
+            TaskDomainPresentation(id: CaptureHierarchy.secureTransferID, title: "Secure Transfer", symbol: "lock.shield",
+                items: [item("first-identity", .planned), item("second-identity", .planned)])]
+        let confirmationIDs = CaptureHierarchy.disclosureIDs(confirmation.map(\.id), scope: .advanced)
+        let shared = try String(contentsOfFile: "Sources/TaskComponents.swift")
+        let secure = shared.components(separatedBy: "private var captureSecureTransferGroup:")[1].components(separatedBy: "private func captureSettings")[0]
+        precondition(secure.contains("if !captureResultLayout") && secure.contains("domainRow(domain)"))
+        precondition(shared.contains("CaptureRowColumns(title: domainTitle(domain), status: domainStatus(domain))")
+            && shared.contains("CaptureStatusText.textInset"))
+        precondition(shared.contains(#"return "\(domain.items.count) SSH \(domain.items.count == 1 ? "identity" : "identities")""#))
+        let reviewSource = try String(contentsOfFile: "Sources/CapturePresentation.swift")
+        precondition(reviewSource.contains("if experiencedVisibility?.wrappedValue == false, let hiddenSelectionSummary")
+            && reviewSource.contains("Text(hiddenSelectionSummary)"))
+        for width: CGFloat in [721, 921] {
+            var anchors: [String: CGRect] = [:]
+            let columns = VStack(spacing: 0) {
+                ForEach(confirmation) { row in
+                    CaptureRowColumns(title: Text(row.title), status: VStack(alignment: .leading, spacing: 3) {
+                        TaskStatusLabel(state: row.state, title: row.state == .planned ? "Ready to Save" : nil)
+                            .background(GeometryReader { proxy in Color.clear.preference(key: WorkflowAnchorFrames.self,
+                                value: [row.id + ".status": proxy.frame(in: .named("confirmation-columns"))]) })
+                        Text("\(row.items.count) included").font(.caption).padding(.leading, CaptureStatusText.textInset)
+                            .background(GeometryReader { proxy in Color.clear.preference(key: WorkflowAnchorFrames.self,
+                                value: [row.id + ".count": proxy.frame(in: .named("confirmation-columns"))]) })
+                    })
+                }
+            }.coordinateSpace(name: "confirmation-columns").onPreferenceChange(WorkflowAnchorFrames.self) { anchors = $0 }
+            let measured = host(columns, width: width); try await settle(measured)
+            precondition(anchors.count == confirmation.count * 2)
+            for suffix in [".status", ".count"] {
+                let positions = confirmation.map { anchors[$0.id + suffix]!.minX }
+                precondition(positions.max()! - positions.min()! < 1, "Every category uses one status/count column")
+            }
+        }
+        for dark in [false, true] { for width: CGFloat in [721, 921] {
+            let view = host(preview, width: width, dark: dark); try await settle(view)
+            precondition(view.fittingSize.width <= width + 1)
+            let filtered = host(TaskDomainItems(domain: mixed[0], restorePreview: true, hideMatchingPreviewItems: true), width: width, dark: dark)
+            let actions = host(TaskDomainItems(domain: domain("homebrew-casks", Array(mixed[0].items.suffix(2))),
+                restorePreview: true), width: width, dark: dark)
+            try await settle(filtered); try await settle(actions)
+            precondition(abs(filtered.fittingSize.height - actions.fittingSize.height) < 1,
+                "50 matching leaves reserve no space; planned and attention rows retain their full layout")
+            try save(view, "preview-mixed-\(Int(width))-\(dark)")
+            let capture = host(TaskDomainList(domains: confirmation, stateTitles: [.planned: "Ready to Save"], compactReadyItems: true,
+                captureHierarchy: true, expansion: .constant(confirmationIDs)), width: width, dark: dark)
+            try await settle(capture)
+            let collapsed = host(TaskDomainList(domains: confirmation, stateTitles: [.planned: "Ready to Save"],
+                compactReadyItems: true, captureHierarchy: true, expansion: .constant([])), width: width, dark: dark)
+            try await settle(collapsed)
+            precondition(capture.fittingSize.height > collapsed.fittingSize.height + 40,
+                "Secure Transfer identities and ordinary details retain independent expansion")
+            try save(capture, "capture-confirmation-\(Int(width))-\(dark)")
+        } }
+        let matched = host(noOp); try await settle(matched)
+        precondition(matched.fittingSize.height < 500, "All-match Preview omits empty automatic/advanced containers")
+        try save(matched, "preview-all-matching-manual-inventory")
+        let manualOnly = RestorePreviewContent(title: "", state: .matching, domains: [], alreadyMatches: true,
+            previewEvaluated: true, prerequisites: ready, areas: [], appStore: installed, reviewAppStore: {}, showsActions: false)
+        precondition(manualOnly.allMatchCount == 1 && manualOnly.manualInventory != nil && manualOnly.manualWork == nil)
+        let manualView = host(manualOnly); try await settle(manualView)
+        precondition(abs(manualView.fittingSize.height - matched.fittingSize.height) < 2,
+            "Fully installed inventory is counted without reserving a manual section")
+        try save(manualView, "preview-manual-only")
+        let restoreSource = try String(contentsOfFile: "Sources/RestoreView.swift")
+        let leading = restoreSource.components(separatedBy: "private var listLeadingContent:")[1].components(separatedBy: "struct RestorePreparationActions:")[0]
+        precondition(leading.range(of: "prerequisiteDetails")!.lowerBound < leading.range(of: "Manual Installation")!.lowerBound)
+        precondition(!leading.contains("domains.isEmpty") && !leading.contains("pinnedList"))
+        precondition(restoreSource.contains("Button(retrying ? \"Checking…\" : \"Fix Issues…\") { checkAgain?() }"))
+        print("PASS: native mixed/all-match/manual-only presentation and expandable Capture identities; Light/Dark at 721/921 pt; conditional prerequisite/manual order")
+    }
+
+    @MainActor static func previewCleanupChecks() throws {
+        setbuf(stdout, nil)
+        _ = NSApplication.shared
+        func item(_ id: String, _ state: TaskRowState) -> TaskItemPresentation {
+            .init(id: id, item: .init(id: id, title: id,
+                status: state == .matching ? .matching : state == .planned ? .ready : .unverified,
+                action: state == .planned ? "Will install" : state == .matching ? "" : "Installer preparation required"), state: state)
+        }
+        func domain(_ id: String, _ items: [TaskItemPresentation]) -> TaskDomainPresentation {
+            .init(id: id, title: CaptureCategory.title(for: id), symbol: WorkspaceCategoryStyle.symbol(id), items: items, previewOnly: true)
+        }
+        let bridge = CoreRestorePreparation.Condition(domain: CoreRestorePreparation.secureDomain,
+            code: "secure_bridge_required", status: "external_action_required", selectedItemIndex: nil, scope: "execution_launch")
+        let matching = [domain("homebrew-casks", (0..<115).map { item("matching-\($0)", .matching) }),
+            domain(CoreRestorePreparation.secureDomain, [item(CoreRestorePreparation.secureItem, .matching)])]
+        func content(_ conditions: [CoreRestorePreparation.Condition], ready: Bool = true) -> RestorePreviewContent {
+            RestorePreviewContent(title: "", state: .matching, domains: matching, alreadyMatches: true,
+                previewEvaluated: true, prerequisites: .init(conditions: conditions, ready: ready), areas: [], showsActions: false)
+        }
+        let matched = content([bridge])
+        precondition(bridge.isSecureLaunchRequirement && bridge.status != "satisfied")
+        precondition(matched.prerequisitesSatisfied && !matched.showsPrerequisites && matched.allMatchCount == 116 && !matched.canRebuild,
+            "Execution-launch bridge metadata must not manufacture a prerequisite error after all-match comparison")
+        precondition(content([]).allMatchCount == 116 && !content([]).showsPrerequisites)
+        let satisfied = CoreRestorePreparation.Condition(domain: "homebrew-casks", code: "homebrew_available",
+            status: "satisfied", selectedItemIndex: nil, scope: "operation")
+        precondition(!content([satisfied]).showsPrerequisites && content([satisfied]).allMatchCount == 116)
+        let blocked = CoreRestorePreparation.Condition(domain: "homebrew-packages", code: "homebrew_unavailable",
+            status: "external_action_required", selectedItemIndex: nil, scope: "operation")
+        let problem = content([bridge, blocked], ready: false)
+        precondition(problem.showsPrerequisites && problem.allMatchCount == nil
+            && problem.prerequisites.manualConditions.map(\.code) == ["homebrew_unavailable"])
+        precondition(content([], ready: false).showsPrerequisites && content([], ready: false).allMatchCount == nil,
+            "Unexplained false readiness remains unconfirmed, never success")
+        var incomplete = matched; incomplete.previewEvaluated = false
+        precondition(incomplete.allMatchCount == nil)
+        incomplete = matched; incomplete.needsRefresh = true
+        precondition(incomplete.allMatchCount == nil)
+        incomplete = matched; incomplete.retryMessage = "Automation access denied."
+        precondition(incomplete.showsPrerequisites && incomplete.allMatchCount == nil)
+        let empty = RestorePreviewContent(title: "", state: .matching, domains: [], alreadyMatches: true,
+            previewEvaluated: true, prerequisites: .init(conditions: [], ready: true), areas: [], showsActions: false)
+        precondition(empty.allMatchCount == nil && !empty.showsPrerequisites)
+
+        var app = item("manual-app", .matching); app.assistedAppStore = .init(appID: "123456", status: .installed)
+        var installed = matched; installed.appStore = .init(domains: [domain("app-store", [app])])
+        precondition(installed.manualInventory?.items.count == 1 && installed.manualWork == nil && installed.allMatchCount == 117)
+        var manualOnly = empty
+        for status in [AssistedAppStoreItem.Status.missing, .unverified] {
+            app.assistedAppStore = .init(appID: "123456", status: status)
+            manualOnly.appStore = .init(domains: [domain("app-store", [app])])
+            precondition(manualOnly.manualWork?.attentionCount == 1 && manualOnly.allMatchCount == nil && manualOnly.visibleDomains.isEmpty)
+        }
+        manualOnly.reviewAppStore = {}
+
+        let changes = domain("homebrew-casks", [item("jordanbaird-ice", .planned), item("tailscale-app", .attention)])
+        let expanded = RestorePreviewCategoryStatus(domain: changes, stateTitles: [:], parentState: .attention, expanded: true)
+        precondition(expanded.isRedundant)
+        precondition(!RestorePreviewCategoryStatus(domain: changes, stateTitles: [:], parentState: .attention).isRedundant)
+        precondition(!RestorePreviewCategoryStatus(domain: changes, stateTitles: [:], parentState: .planned, expanded: true).isRedundant)
+        precondition(!RestorePreviewCategoryStatus(domain: changes, stateTitles: [:], expanded: true).isRedundant,
+            "Main headers never lose status text")
+        for state in [TaskRowState.unverified, .failed, .partial, .waiting] {
+            let distinct = domain("homebrew-casks", [item("distinct", state)])
+            precondition(!RestorePreviewCategoryStatus(domain: distinct, stateTitles: [:], parentState: distinct.state, expanded: true).isRedundant)
+        }
+        let pkg = CoreRestorePreparation.Condition(domain: "homebrew-casks", code: "cask_execution_requirements_unsupported",
+            status: "unsupported", selectedItemIndex: 2, scope: "item", diagnostic: .init(primitive: "pkgutil", condition: "preparation_required"))
+        let mixed = RestorePreviewContent(title: "", state: .attention,
+            domains: [domain("homebrew-casks", matching[0].items + changes.items)], alreadyMatches: false,
+            previewEvaluated: true, prerequisites: .init(conditions: [pkg], ready: true, hasInstallerPreparations: true), areas: [],
+            categoryExpansion: .constant(true), showsActions: false, checkAgain: {})
+        precondition(mixed.showsPrerequisites && mixed.showsFixIssues && mixed.visibleDomains.count == 1)
+        precondition(RestorePreviewMetrics.badges(changes).map(\.0) == ["Planned", "Attention"])
+        let source = try String(contentsOfFile: "Sources/RestoreView.swift")
+        precondition(!source.contains("Prerequisites could not be confirmed") && !source.contains("All prerequisites satisfied"))
+        precondition(source.contains("if showsPrerequisites { prerequisiteDetails }") && source.contains("if let appStore = manualWork"))
+        precondition(source.contains("Button(retrying ? \"Checking…\" : \"Fix Issues…\") { checkAgain?() }"))
+        precondition(source.contains("Your approval may be required. No applications will be installed yet."))
+        let metrics = source.components(separatedBy: "struct RestorePreviewMetrics: View {")[1].components(separatedBy: "// Called only from")[0]
+        precondition(metrics.contains("if counts.matching > 0 { Self.metric(\"Already Match\"")
+            && metrics.contains("if counts.changes > 0 { Self.metric(\"Changes Planned\"")
+            && metrics.contains("if counts.attention > 0 { Self.metric(\"Need Attention\"")
+            && metrics.contains("WorkspaceThreeMetrics { cards(counts) }") && !metrics.contains("no action needed."))
+        precondition(source.contains("WorkspaceMetricCard(title: \"Everything Already Matches\", value: \"\\(count) ")
+            && source.contains("All selected items already match this Mac.\\nNo changes needed."))
+        let output = URL(fileURLWithPath: "build/Debug/PreviewCleanup")
+        try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+        func render(_ content: RestorePreviewContent, _ name: String) throws -> CGFloat {
+            let host = NSHostingView(rootView: content.frame(width: 721).background(Color(nsColor: .windowBackgroundColor)))
+            let window = NSWindow(contentRect: .init(x: 0, y: 0, width: 721, height: 900), styleMask: [.titled], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
+            defer { window.close() }
+            RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.05))
+            host.setFrameSize(host.fittingSize); host.layoutSubtreeIfNeeded(); host.displayIfNeeded()
+            let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds)!
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            try bitmap.representation(using: .png, properties: [:])!.write(to: output.appendingPathComponent(name + ".png"))
+            return host.fittingSize.height
+        }
+        let matchedHeight = try render(matched, "all-matching-secure-bridge")
+        let installedHeight = try render(installed, "all-matching-installed-apps")
+        precondition(matchedHeight < 250 && abs(matchedHeight - installedHeight) < 1,
+            "Satisfied prerequisites and installed manual inventory reserve no section space")
+        let manualHeight = try render(manualOnly, "manual-only-unverified")
+        precondition(manualHeight > matchedHeight, "Pending manual work keeps its section; all-match has only one card")
+        _ = try render(mixed, "mixed-global-fix-issues")
+        for (matches, changes, attention) in [(103, 2, 2), (115, 0, 1)] {
+            let rows = [domain("homebrew-casks", (0..<matches).map { item("match-\($0)", .matching) }
+                + (0..<changes).map { item("planned-\($0)", .planned) }
+                + (0..<attention).map { item("attention-\($0)", .attention) })]
+            let counts = RestorePreviewMetrics.counts(rows)
+            precondition(counts.matching == matches && counts.changes == changes && counts.attention == attention)
+            let cards = RestorePreviewContent(title: "", state: .attention, domains: rows, alreadyMatches: false,
+                previewEvaluated: true, prerequisites: .init(conditions: [], ready: true), areas: [], showsActions: false)
+            _ = try render(cards, "cards-\(matches)-\(changes)-\(attention)")
+        }
+        print("PASS: dynamic nonzero green/blue/orange cards; one full-width all-match card; genuine blockers/incomplete states and action-focused filtering retained")
+    }
+
     @MainActor static func externalIdentityChecks() async throws {
         setbuf(stdout, nil)
         _ = NSApplication.shared
@@ -343,7 +735,7 @@ private struct WorkflowAnchorFrames: PreferenceKey {
                 : " Identities use ~/.ssh with their saved names. SSH configuration is unchanged; review IdentityFile if it expects another location."
             precondition(secure.items.count == 1 && secure.items[0].item.title == "Encrypted SSH identity package"
                 && secure.items[0].item.action == explanation + destinationDetail)
-            precondition(RestorePreviewMetrics.badges(secure).map(\.1) == [1])
+            precondition(RestorePreviewMetrics.badges(secure).map(\.1) == (decision == .allMatch ? [] : [1]))
             let advanced = RestorePreviewHierarchy.sections(tasks.domains).first { $0.group == .advanced }!
             precondition(advanced.rows.allSatisfy { $0.id != secureID } && RestorePreviewMetrics.counts(advanced.rows).changes == 1)
             let ids = RestorePreviewHierarchy.disclosureIDs(tasks.domains, settings: [])
@@ -367,6 +759,18 @@ private struct WorkflowAnchorFrames: PreferenceKey {
         precondition(source.contains("secureTransferGroup: secureTransferGroup"))
         print("PASS: authenticated match/import/conflict projection; ordinary counts unchanged, one secure pill, no zero pills, strict binding/incomplete gate")
         print("PASS: existing sibling-group Preview and shared metric components at 580/1040pt Light/Dark (12 renders)")
+    }
+
+    static func secureRestoreAvailabilityChecks(_ source: String) {
+        precondition(!source.contains("Secure Transfer is not available"))
+        let selection = source.components(separatedBy: "private var secureTransferGroup: AnyView?")[1]
+            .components(separatedBy: "struct RestorePresentationSection:")[0]
+        precondition(selection.contains("guard model.inspection?.secureComponent == true else { return nil }"))
+        precondition(selection.contains("model.selectSecureTransfer($0)")
+                     && selection.contains(".disabled(model.state != .review || model.runtime.isActive)"))
+        precondition(selection.contains("without overwriting existing keys"))
+        precondition(source.contains("Read-only preview — no changes are made."))
+        print("PASS: Secure Transfer availability, explicit selection, busy guard, no-clobber explanation and read-only Preview")
     }
 
     @MainActor static func secureRestoreChecks() async throws {
@@ -517,6 +921,10 @@ private struct WorkflowAnchorFrames: PreferenceKey {
         precondition(CaptureHierarchy.disclosureIDs([CaptureHierarchy.secureTransferID], scope: .advanced) == [CaptureHierarchy.secureTransferID])
         let presentation = try String(contentsOfFile: "Sources/CapturePresentation.swift")
         let grouping = presentation.components(separatedBy: "struct CaptureGroupedContent<")[1].components(separatedBy: "struct CaptureTaskPresentation")[0]
+        precondition(grouping.contains("DisclosureGroup(isExpanded: experiencedVisibility)")
+            && grouping.contains(".disclosureGroupStyle(HeaderDisclosureStyle())") && !grouping.contains("Toggle("))
+        precondition(grouping.contains("if experiencedVisibility?.wrappedValue != false, let advancedControls"),
+            "Experienced Expand All is available only while the container is expanded")
         precondition(grouping.components(separatedBy: "WorkspaceCardSurface()").count - 1 == 2,
                      "Exactly one ordinary and one experienced surface, with no per-sibling card")
         precondition(grouping.contains("if !advanced.isEmpty && secureTransferGroup != nil { Divider().padding(.horizontal, 16) }")
@@ -1067,7 +1475,7 @@ private struct WorkflowAnchorFrames: PreferenceKey {
         let view = try! String(contentsOfFile: "Sources/RestoreView.swift", encoding: .utf8)
         precondition(!view.contains("DisclosureGroup(\"Technical reason\")") && !view.contains("DisclosureGroup(\"Technical Details\")"))
         precondition(view.contains("RestoreRebuildProgressContent(tasks:") && view.contains("RestoreResultContent(result:"))
-        precondition(view.contains("TaskDomainList(domains: domains.map"))
+        precondition(view.contains("TaskDomainList(domains: visibleDomains.map"))
         precondition(view.contains("Text(item.title)") && view.contains("Text(item.action)"))
 
         precondition(TaskRowState.aggregate([.completed, .skipped]) == .partial)
@@ -1080,7 +1488,7 @@ private struct WorkflowAnchorFrames: PreferenceKey {
         let components = try! String(contentsOfFile: "Sources/TaskComponents.swift", encoding: .utf8)
         precondition(!components.contains("ProgressView(value:"))
         precondition(components.contains("Log unavailable"))
-        precondition(!components.contains("Technical Details") && components.contains("ForEach(domain.items)"))
+        precondition(!components.contains("Technical Details") && components.contains("ForEach(hideMatchingPreviewItems ? RestorePreviewVisibility.items(domain.items) : domain.items)"))
         print("PASS: Reusable task states, elapsed metadata, metric cards and unavailable View Log")
 
         print("PASS: Compact Restore summary counts/area aggregation, collapsed details, concrete names/reasons, prerequisites and result deduplication with Unverified evidence")
@@ -3786,8 +4194,9 @@ private struct WorkflowAnchorFrames: PreferenceKey {
         for (name, conditions, canFix, size) in scenarios {
             let summary = RestorePrerequisiteSummaryPresentation(conditions: conditions, ready: conditions.isEmpty, hasInstallerPreparations: canFix)
             let preview = RestorePreviewContent(title: "", state: .planned, domains: [domain], alreadyMatches: false,
-                prerequisites: summary, areas: areas, categoryExpansion: .constant(true), showsActions: false, checkAgain: {})
+                previewEvaluated: true, prerequisites: summary, areas: areas, categoryExpansion: .constant(true), showsActions: false, checkAgain: {})
             precondition(preview.showsFixIssues == canFix)
+            precondition(preview.showsPrerequisites == (canFix || conditions.contains { $0.code == ssh.code || $0.code == brew.code }))
             var anchors: [String: CGRect] = [:]
             let content = HStack(spacing: 0) {
                 Color(nsColor: .controlBackgroundColor).frame(width: 223)
@@ -4423,6 +4832,18 @@ private struct WorkflowAnchorFrames: PreferenceKey {
     }
 
     @MainActor static func main() async {
+        if CommandLine.arguments.contains("--preview-cleanup-only") {
+            try! previewCleanupChecks()
+            restorePreviewNoticesChecks()
+            return
+        }
+        if CommandLine.arguments.contains("--capture-preview-refinement-only") {
+            try! await capturePreviewRefinementChecks()
+            try! captureDisclosureChecks()
+            restorePreviewNoticesChecks()
+            restorePreviewGroupingChecks()
+            return
+        }
         if CommandLine.arguments.contains("--external-identities-only") { try! await externalIdentityChecks(); return }
         if CommandLine.arguments.contains("--settings-tools-only") { try! await settingsToolsChecks(); return }
         if CommandLine.arguments.contains("--bundled-age-only") { try! bundledAgeErrorChecks(); return }
@@ -4430,8 +4851,16 @@ private struct WorkflowAnchorFrames: PreferenceKey {
         if CommandLine.arguments.contains("--secure-startup-only") { try! secureStartupErrorChecks(); return }
         if CommandLine.arguments.contains("--prelaunch-request-only") { try! prelaunchRequestChecks(); return }
         if CommandLine.arguments.contains("--secure-compare-only") { try! await secureComparisonChecks(); return }
+        if CommandLine.arguments.contains("--secure-availability-only") {
+            secureRestoreAvailabilityChecks(try! String(contentsOfFile: "Sources/RestoreView.swift"))
+            return
+        }
         if CommandLine.arguments.contains("--secure-restore-only") { try! await secureRestoreChecks(); return }
-        if CommandLine.arguments.contains("--capture-disclosure-only") { try! captureDisclosureChecks(); return }
+        if CommandLine.arguments.contains("--capture-disclosure-only") {
+            try! await capturePreviewRefinementChecks(captureOnly: true)
+            try! captureDisclosureChecks()
+            return
+        }
         if CommandLine.arguments.contains("--secure-selection-only") { try! await secureSelectionChecks(); return }
         if CommandLine.arguments.contains("--secure-capture-only") { try! await secureCaptureChecks(); return }
         if CommandLine.arguments.contains("--homebrew-setup-only") { await homebrewSetupChecks(); return }
@@ -4457,6 +4886,8 @@ private struct WorkflowAnchorFrames: PreferenceKey {
         if CommandLine.arguments.contains("--restore-macos-only") { await restoreMacOSChecks(); return }
         if CommandLine.arguments.contains("--workflow-scroll-only") { try! await workflowStatusScrollChecks(); return }
         if CommandLine.arguments.count == 1 {
+            try! await capturePreviewRefinementChecks()
+            try! previewCleanupChecks()
             try! await settingsToolsChecks()
             await homebrewSetupChecks()
             try! await summaryMetricVisibilityChecks()
@@ -4840,7 +5271,7 @@ private struct WorkflowAnchorFrames: PreferenceKey {
         precondition(restoreView.contains(".disclosureGroupStyle(TaskDisclosureStyle())"))
         precondition(content.contains(".frame(width: TaskRowLayout.iconWidth)") && restoreView.contains("WorkspaceCategoryIcon(symbol: symbol)"))
         precondition(restoreView.contains("ItemDetails(items: notices).padding(.leading, RestoreRowGrid.titleInset + hierarchyIndent)"))
-        precondition(restoreView.contains("Secure Transfer is not available") && restoreView.contains("Read-only preview — no changes are made."))
+        secureRestoreAvailabilityChecks(restoreView)
         // Views may reference the operation type for logs, but only the model
         // constructs Execute requests and starts the Core operation.
         precondition(!restoreView.contains(".restoreExecute(") && !restoreView.contains("runtime.start("))
@@ -4850,26 +5281,26 @@ private struct WorkflowAnchorFrames: PreferenceKey {
         precondition(restoreModel.contains("Everything selected") && restoreModel.contains("Some items excluded") && restoreModel.contains("Nothing selected"))
         precondition(restoreView.contains("RestoreSelectionActions(status: model.selectionSummary, canPreview: model.canPreview"))
         precondition(restoreView.contains(".disabled(!canPreview)"))
-        precondition(restoreView.contains("TaskDomainList(domains: domains.map"))
+        precondition(restoreView.contains("TaskDomainList(domains: visibleDomains.map"))
         // Keep the callback check bound to this initializer while allowing formatting changes.
         let prerequisiteSummaryPattern = #"RestorePrerequisiteSummaryView\s*\(\s*summary\s*:\s*prerequisites\s*,\s*areas\s*:\s*areas\s*,"#
             + #"\s*homebrewRecheck\s*:\s*reviewModel\s*\.\s*map\s*\{\s*model\s+in\s*\{"#
-            + #"\s*model\s*\.\s*refreshPreview\s*\(\s*\)\s*\}\s*\}\s*\)"#
+            + #"\s*model\s*\.\s*refreshPreview\s*\(\s*\)\s*\}\s*\}\s*,\s*showsHeading\s*:\s*false\s*\)"#
         precondition(restoreView.range(of: prerequisiteSummaryPattern, options: .regularExpression) != nil,
                      "Preview prerequisites must retain their summary/areas and recheck Homebrew through model.refreshPreview()")
         precondition(restoreView.contains("var showsFixIssues: Bool { prerequisites.canFixIssues }"))
         precondition(restoreView.contains("if showsFixIssues {") && !restoreView.contains("prerequisites.blockers"))
         let taskSource = try! String(contentsOf: sources.appendingPathComponent("TaskComponents.swift"), encoding: .utf8)
-        precondition(taskSource.contains("private var expanded = []") && taskSource.contains("ForEach(domain.items)"))
+        precondition(taskSource.contains("private var expanded = []") && taskSource.contains("ForEach(hideMatchingPreviewItems ? RestorePreviewVisibility.items(domain.items) : domain.items)"))
         let previewContent = restoreView.components(separatedBy: "struct RestorePreviewContent: View")[1]
         let previewBody = previewContent.components(separatedBy: "private var previewHeading:")[0]
-        let taskListStart = previewBody.range(of: "TaskDomainList(domains: domains.map")!.lowerBound
-        precondition(previewBody.range(of: "prerequisiteHeader")!.lowerBound < taskListStart
-            && previewBody.range(of: "prerequisiteDetails")!.lowerBound < taskListStart,
-            "Preview prerequisites precede the task list in both viewport modes")
-        precondition(previewBody.contains("leadingContent: listLeadingContent")
-            && previewContent.contains("if pinnedList && hasDetails { prerequisiteDetails }"),
-            "Pinned Preview retains prerequisite details at the start of the list")
+        let leadingContent = previewContent.components(separatedBy: "private var listLeadingContent:")[1]
+            .components(separatedBy: "struct RestorePreparationActions:")[0]
+        precondition(previewBody.contains("TaskDomainList(domains: visibleDomains.map")
+            && previewBody.contains("leadingContent: listLeadingContent")
+            && leadingContent.range(of: "prerequisiteDetails")!.lowerBound < leadingContent.range(of: "Manual Installation")!.lowerBound
+            && !leadingContent.contains("pinnedList"),
+            "Both viewport modes keep prerequisites before manual and automatic tasks inside the scrolling list")
         precondition(restoreView.contains("Rebuild this Mac?") && restoreView.contains("Stop rebuilding?") && restoreView.contains("Stopping it may leave some changes already applied to this Mac."))
         precondition(restoreView.contains("model.confirmStop()") && restoreView.contains("model.checkCurrentState()"))
         precondition(restoreModel.contains("plan.preparedPlanID, selection: selection") && restoreModel.contains("invalidate(); state = .result"))

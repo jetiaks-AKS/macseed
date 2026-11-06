@@ -518,11 +518,12 @@ struct RestoreView: View {
                     let tasks = RestoreTaskPresentation(preview: preview, plan: prepared)
                     let needsAttention = model.previewNeedsRefresh || preview.needsAttention(prepared)
                     RestorePreviewContent(
-                        title: needsAttention ? "Needs Attention" : prepared.hasExecutableChanges ? (model.ready ? "Ready to Rebuild" : "Changes planned") : model.appStoreSelected ? "No automatic changes required" : "Everything already matches",
-                        state: needsAttention ? .attention : prepared.hasExecutableChanges ? .planned : .matching,
+                        title: needsAttention ? "Needs Attention" : prepared.hasComparedExecutableChanges ? (model.ready ? "Ready to Rebuild" : "Changes planned") : model.appStoreSelected ? "No automatic changes required" : "Everything already matches",
+                        state: needsAttention ? .attention : prepared.hasComparedExecutableChanges ? .planned : .matching,
                         domains: tasks.automaticDomains,
                         scopeWarnings: RestoreTaskPresentation.scopeWarningMessages(prepared),
-                        alreadyMatches: !model.appStoreSelected && !prepared.hasPlannedChanges && prepared.plan.allSatisfy { $0.disposition == "satisfied" },
+                        alreadyMatches: !prepared.hasComparedExecutableChanges,
+                        previewEvaluated: model.source != nil && [.preview, .confirming].contains(model.state) && prepared.errorCount == 0,
                         prerequisites: RestorePrerequisiteSummaryPresentation(conditions: prepared.readiness.conditions, ready: prepared.readiness.ready, hasInstallerPreparations: !model.installerPreparationRows.isEmpty),
                         areas: model.areas,
                         settingsCategories: RestoreSettingsPresentation.children(tasks.automaticDomains, categories: preview.categories),
@@ -634,6 +635,7 @@ struct RestorePreviewContent: View {
     let domains: [TaskDomainPresentation]
     var scopeWarnings: [String] = []
     let alreadyMatches: Bool
+    var previewEvaluated = false
     let prerequisites: RestorePrerequisiteSummaryPresentation
     let areas: [CoreRestoreInspection.Area]
     var settingsCategories: [TaskDomainPresentation] = []
@@ -652,6 +654,29 @@ struct RestorePreviewContent: View {
     var canRebuild = false
     var reviewModel: RestoreModel? = nil
     var showsFixIssues: Bool { prerequisites.canFixIssues }
+    var visibleDomains: [TaskDomainPresentation] { domains.filter(RestorePreviewVisibility.includes) }
+    var visibleSettings: [TaskDomainPresentation] { settingsCategories.filter(RestorePreviewVisibility.includes) }
+    var manualInventory: AppStoreRestorePresentation? { appStore.flatMap { $0.items.isEmpty ? nil : $0 } }
+    var manualWork: AppStoreRestorePresentation? { manualInventory.flatMap { $0.allInstalled ? nil : $0 } }
+    var unexplainedReadiness: Bool { !prerequisites.ready && prerequisites.conditions.isEmpty }
+    var showsPrerequisites: Bool {
+        showsFixIssues || !prerequisites.manualConditions.isEmpty || unexplainedReadiness || retryMessage != nil
+    }
+    var prerequisitesSatisfied: Bool {
+        previewEvaluated && !needsRefresh && !retrying && prerequisites.ready && !prerequisites.needsAttention
+            // The secure bridge is an execution-launch requirement, not a failed
+            // environment observation. Secure comparison still owns item status.
+            && prerequisites.conditions.allSatisfy { $0.status == "satisfied" || $0.isSecureLaunchRequirement }
+    }
+    var allMatchCount: Int? {
+        let items = domains.flatMap(\.items)
+        guard alreadyMatches, state == .matching, prerequisitesSatisfied, retryMessage == nil, scopeWarnings.isEmpty, !canRebuild,
+              items.allSatisfy(RestorePreviewVisibility.isMatching),
+              domains.allSatisfy({ !RestorePreviewVisibility.includes($0) }),
+              manualInventory == nil || manualInventory?.allInstalled == true else { return nil }
+        let count = items.count + (manualInventory?.items.count ?? 0)
+        return count > 0 ? count : nil
+    }
     @Environment(\.workflowListViewport) private var pinnedList
     var body: some View {
         VStack(alignment: .leading, spacing: pinnedList ? 12 : 20) {
@@ -661,39 +686,31 @@ struct RestorePreviewContent: View {
                     .font(.callout).foregroundStyle(.secondary)
             }
             Text("Automatic Rebuild").font(.headline)
-            RestorePreviewMetrics(domains: domains)
-            ForEach(scopeWarnings, id: \.self) { Text($0).font(.callout).foregroundStyle(.orange) }
-            if alreadyMatches { Text("Selected requirements already match this Mac.") }
-            if let message = prerequisites.operationAvailabilityMessage {
-                Label(message, systemImage: "info.circle")
-                    .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            }
-            if pinnedList {
-                if showsFixIssues {
-                    prerequisiteHeader
-                }
+            if let count = allMatchCount {
+                WorkspaceMetricCard(title: "Everything Already Matches", value: "\(count) \(count == 1 ? "item" : "items")",
+                    symbol: "checkmark.circle", tint: RestoreStatusTone.success.color,
+                    explanation: "All selected items already match this Mac.\nNo changes needed.")
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("restore.preview.allMatching")
             } else {
-                prerequisiteDetails
-                if showsFixIssues {
-                    VStack(alignment: .leading, spacing: 6) {
-                        fixIssuesButton
-                        fixIssuesExplanation
-                    }
-                }
+                RestorePreviewMetrics(domains: domains)
             }
-            TaskDomainList(domains: domains.map { domain in
-                var previewDomain = domain
-                previewDomain.previewOnly = true
-                return previewDomain
-            }, leadingContent: listLeadingContent,
-                restoreSettingsPreview: true, restorePreviewHierarchy: true, settingsCategories: settingsCategories, itemTitles: itemTitles,
-                expansion: categoryExpansion.map { binding in Binding(get: { binding.wrappedValue ? RestorePreviewHierarchy.disclosureIDs(domains, settings: settingsCategories) : [] }, set: { binding.wrappedValue = !$0.isEmpty }) },
-                settingsExpansion: categoryExpansion, prerequisiteReasons: prerequisites.sharedReasons)
-                .environment(\.restoreTrailingSamples, appStore.map { [RestoreTrailingSample(title: $0.categoryStatus, disclosure: false)] } ?? [])
+            ForEach(scopeWarnings, id: \.self) { Text($0).font(.callout).foregroundStyle(.orange) }
+            if !visibleDomains.isEmpty || listLeadingContent != nil {
+                TaskDomainList(domains: visibleDomains.map { domain in
+                    var previewDomain = domain
+                    previewDomain.previewOnly = true
+                    return previewDomain
+                }, leadingContent: listLeadingContent,
+                    restoreSettingsPreview: true, restorePreviewHierarchy: true, settingsCategories: visibleSettings, itemTitles: itemTitles,
+                    expansion: categoryExpansion.map { binding in Binding(get: { binding.wrappedValue ? RestorePreviewHierarchy.disclosureIDs(visibleDomains, settings: visibleSettings) : [] }, set: { binding.wrappedValue = !$0.isEmpty }) },
+                    settingsExpansion: categoryExpansion, prerequisiteReasons: prerequisites.sharedReasons)
+                .environment(\.restoreTrailingSamples, manualWork.map { [RestoreTrailingSample(title: $0.categoryStatus, disclosure: false)] } ?? [])
                 // Use the workspace's outer padding for the native scrollbar;
                 // keep the scroll content and its status column at their existing width.
                 .contentMargins(.trailing, pinnedList ? 18 : 0, for: .scrollContent)
                 .padding(.trailing, pinnedList ? -18 : 0)
+            }
             if showsActions {
                 RestorePreviewActions(back: back, refresh: refresh, rebuild: rebuild, canRebuild: canRebuild, showsRebuild: appStore == nil || !domains.isEmpty, reviewModel: reviewModel)
             }
@@ -722,29 +739,38 @@ struct RestorePreviewContent: View {
         Button(retrying ? "Checking…" : "Fix Issues…") { checkAgain?() }
             .disabled(checkAgain == nil || needsRefresh || retrying)
     }
-    private var prerequisiteHeader: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            fixIssuesButton
-            fixIssuesExplanation
-        }.frame(maxWidth: .infinity, alignment: .leading)
-    }
     private var fixIssuesExplanation: some View {
         Text("Macseed will guide you through available fixes. Your approval may be required. No applications will be installed yet.")
             .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
     }
     private var prerequisiteDetails: some View {
         VStack(alignment: .leading, spacing: 12) {
+            WorkspaceSectionHeader(title: "Prerequisites", prominent: true)
+            if showsFixIssues {
+                VStack(alignment: .leading, spacing: 6) {
+                    fixIssuesButton
+                    fixIssuesExplanation
+                }
+            }
             RestorePrerequisiteSummaryView(summary: prerequisites, areas: areas,
-                homebrewRecheck: reviewModel.map { model in { model.refreshPreview() } })
+                homebrewRecheck: reviewModel.map { model in { model.refreshPreview() } }, showsHeading: false)
+            if unexplainedReadiness {
+                Text(previewEvaluated ? "Prerequisite readiness was not confirmed. Refresh Preview."
+                    : "Preview evaluation is incomplete. Refresh Preview.")
+                    .font(.callout).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
+            }
             if let retryMessage { Text(retryMessage).font(.callout).foregroundStyle(.secondary) }
-        }
+        }.accessibilityIdentifier("restore.preview.prerequisites")
     }
     private var listLeadingContent: AnyView? {
-        let hasDetails = !prerequisites.manualConditions.isEmpty || retryMessage != nil
-        guard appStore != nil || (pinnedList && hasDetails) else { return nil }
+        guard showsPrerequisites || prerequisites.operationAvailabilityMessage != nil || manualWork != nil else { return nil }
         return AnyView(VStack(alignment: .leading, spacing: 12) {
-            if pinnedList && hasDetails { prerequisiteDetails }
-            if let appStore {
+            if showsPrerequisites { prerequisiteDetails }
+            if let message = prerequisites.operationAvailabilityMessage {
+                Label(message, systemImage: "info.circle")
+                    .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+            if let appStore = manualWork {
                 WorkspaceSectionHeader(title: "Manual Installation", prominent: true)
                 AppStoreRestoreCard(summary: appStore, review: reviewAppStore)
             }
@@ -1400,7 +1426,7 @@ struct RestorePreviewMetrics: View {
     }
     static func badges(_ domain: TaskDomainPresentation) -> [(String, Int)] {
         let counts = Self.counts([domain])
-        return [("Match", counts.matching), ("Planned", counts.changes), ("Attention", counts.attention)]
+        return [("Planned", counts.changes), ("Attention", counts.attention)]
             .filter { $0.1 > 0 }
     }
     var body: some View {
@@ -1589,6 +1615,10 @@ struct AppStoreRestoreScreen: View {
             if let source = model.source { Label(source.lastPathComponent, systemImage: "shippingbox").font(.callout) }
             if model.state == .preparing {
                 ProgressView(model.appStoreRefreshState == .cancelling ? "Cancelling refresh…" : "Refreshing status…")
+                if model.isRefreshingAppStore {
+                    Button("Cancel Refresh") { model.cancelAppStoreRefresh() }
+                        .disabled(!model.canCancelAppStoreRefresh)
+                }
             } else if model.appStoreRefreshState == .cancelled {
                 Text("Refresh cancelled").font(.callout).foregroundStyle(.secondary)
             } else if let failure = model.failure {
@@ -1613,10 +1643,6 @@ struct AppStoreRestoreActions: View {
         HStack {
             Button("Back to Rebuild") { model.closeAppStore() }.disabled(model.busy || model.runtime.isActive)
             Spacer()
-            if model.isRefreshingAppStore {
-                Button("Cancel Refresh") { model.cancelAppStoreRefresh() }
-                    .disabled(!model.canCancelAppStoreRefresh)
-            }
             Button(model.state == .preparing ? "Refreshing…" : "Refresh Status") { model.refreshAppStore() }
                 .disabled(!model.canPreview)
         }

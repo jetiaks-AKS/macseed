@@ -71,8 +71,11 @@ struct CaptureView: View {
     @ObservedObject var runtime: CoreRuntime
     var showsActions = true
     var categoryTreeExpansion: Binding<Set<String>>? = nil
+    var experiencedVisibility: Binding<Bool>? = nil
+    @CaptureViewState private var experiencedVisible = false
     @CaptureViewState<Set<String>> private var expandedCategories = CaptureHierarchy.initialExpansion
     private var treeExpansion: Binding<Set<String>> { categoryTreeExpansion ?? $expandedCategories }
+    private var experiencedExpansion: Binding<Bool> { experiencedVisibility ?? $experiencedVisible }
     private var progressText: String {
         if runtime.stopping { return "Stopping Capture…" }
         if runtime.secureChallenge != nil { return "Waiting for secure input…" }
@@ -155,6 +158,8 @@ struct CaptureView: View {
                         ordinaryTitle: "Standard Setup",
                         ordinaryControls: AnyView(CaptureExpandButton(ids: disclosureIDs(in: .ordinary), title: "Standard Setup", expanded: treeExpansion)),
                         advancedControls: AnyView(CaptureExpandButton(ids: disclosureIDs(in: .advanced), title: "For Experienced Users", expanded: treeExpansion)),
+                        experiencedVisibility: experiencedExpansion,
+                        hiddenSelectionSummary: CaptureReviewPresentation.experiencedSelectionSummary(model),
                         secureTransferGroup: AnyView(CaptureSecureTransferView(inventory: model.secureInventory, selected: model.selectedSecureIdentities,
                             editable: !runtime.isActive, select: { model.selectSecureIdentity($0, included: $1) },
                             selectAll: { model.selectAllSecureIdentities(included: $0) },
@@ -243,7 +248,10 @@ struct CaptureView: View {
                     .interactiveDismissDisabled()
             }
             .onChange(of: model.state) { _, state in
-                if state == .scanning { treeExpansion.wrappedValue = CaptureHierarchy.initialExpansion }
+                if state == .scanning {
+                    treeExpansion.wrappedValue = CaptureHierarchy.initialExpansion
+                    experiencedExpansion.wrappedValue = false
+                }
             }
     }
     private var selectionSummary: CaptureSummaryPresentation {

@@ -63,6 +63,14 @@ enum CaptureHierarchy {
 // Presentation over the existing model maps, never a dependency graph or selection store.
 @MainActor enum CaptureReviewPresentation {
     static let hierarchyStep: CGFloat = 12
+    static func experiencedSelectionSummary(_ model: CaptureModel) -> String? {
+        let categories = model.categories.filter { CaptureHierarchy.group(for: $0.id) == .advanced && model.selectionState($0) != .none }.count
+        let identities = model.selectedSecureIdentities.count
+        var parts: [String] = []
+        if categories > 0 { parts.append("\(categories) advanced \(categories == 1 ? "category" : "categories") selected") }
+        if identities > 0 { parts.append("\(identities) SSH \(identities == 1 ? "identity" : "identities") selected") }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
     static func bulkCategories(_ categories: [CaptureCategory], group: CaptureHierarchy.Group) -> [CaptureCategory] {
         // Explicit bulk selection covers the same domains as the group summary;
         // the existing model filters eligibility without inferring dependencies.
@@ -236,6 +244,8 @@ struct CaptureGroupedContent<Row: Identifiable, RowContent: View>: View where Ro
     var ordinaryTitle: String? = nil
     var ordinaryControls: AnyView? = nil
     var advancedControls: AnyView? = nil
+    var experiencedVisibility: Binding<Bool>? = nil
+    var hiddenSelectionSummary: String? = nil
     var secureTransferGroup: AnyView? = nil
     let summary: ([Row]) -> String
     let attention: ([Row]) -> String?
@@ -264,16 +274,33 @@ struct CaptureGroupedContent<Row: Identifiable, RowContent: View>: View where Ro
             let advanced = sections.first { $0.group == .advanced }?.rows ?? []
             if !advanced.isEmpty || secureTransferGroup != nil {
                 HStack(alignment: .firstTextBaseline, spacing: 12) {
-                    WorkspaceSectionHeader(title: "For Experienced Users")
-                    if let advancedControls { advancedControls.padding(.trailing, 42) }
+                    VStack(alignment: .leading, spacing: 4) {
+                        let heading = WorkspaceSectionHeader(title: "For Experienced Users")
+                        if let experiencedVisibility {
+                            DisclosureGroup(isExpanded: experiencedVisibility) { EmptyView() } label: { heading }
+                                .disclosureGroupStyle(HeaderDisclosureStyle())
+                                .accessibilityIdentifier("capture.experienced.disclosure")
+                                .help("Show Advanced and Secure Transfer. Collapsing keeps your selections.")
+                        } else {
+                            heading
+                        }
+                        if experiencedVisibility?.wrappedValue == false, let hiddenSelectionSummary {
+                            Text(hiddenSelectionSummary).font(.caption).foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .accessibilityIdentifier("capture.experienced.hiddenSelection")
+                        }
+                    }
+                    if experiencedVisibility?.wrappedValue != false, let advancedControls { advancedControls.padding(.trailing, 42) }
                 }
-                VStack(alignment: .leading, spacing: 0) {
-                    if !advanced.isEmpty { accordion(.advanced, rows: advanced) }
-                    if !advanced.isEmpty && secureTransferGroup != nil { Divider().padding(.horizontal, 16) }
-                    if let secureTransferGroup { secureTransferGroup }
+                if experiencedVisibility?.wrappedValue != false {
+                    VStack(alignment: .leading, spacing: 0) {
+                        if !advanced.isEmpty { accordion(.advanced, rows: advanced) }
+                        if !advanced.isEmpty && secureTransferGroup != nil { Divider().padding(.horizontal, 16) }
+                        if let secureTransferGroup { secureTransferGroup }
+                    }
+                    .background(.quaternary.opacity(0.2), in: RoundedRectangle(cornerRadius: 8))
+                    .modifier(WorkspaceCardSurface()).accessibilityIdentifier("capture.container.experienced")
                 }
-                .background(.quaternary.opacity(0.2), in: RoundedRectangle(cornerRadius: 8))
-                .modifier(WorkspaceCardSurface()).accessibilityIdentifier("capture.container.experienced")
             }
             if let unknown = sections.first(where: { $0.group == .otherFindings }) {
                 WorkspaceSectionHeader(title: unknown.group.title)

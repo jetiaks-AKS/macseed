@@ -195,7 +195,7 @@ this contract does not authorize another workflow's redesign.
 
 | Status | Scope |
 |---|---|
-| **Implemented — Visually Accepted** | The entire current Capture UI, explicitly approved by the user on **2026-11-01**: Unified Accordion, all group and VS Code master checkboxes, 0/12/24/36 pt hierarchical indentation, shared ordinary and independent Advanced Expand/Collapse controls, VS Code presentation, Advanced styling, read-only Confirmation and the final minimal Result layout. Existing native foundation and scoped selection contracts remain accepted. |
+| **Implemented — Visually Accepted** | The Capture baseline, explicitly approved by the user on **2026-11-01**: Unified Accordion, all group and VS Code master checkboxes, 0/12/24/36 pt hierarchical indentation, shared ordinary and independent Advanced Expand/Collapse controls, VS Code presentation, Advanced styling, read-only Confirmation and the final minimal Result layout. Existing native foundation and scoped selection contracts remain accepted. |
 | **Implemented — Visually Accepted** | Restore Selection, Preview, Progress and Result, explicitly approved by the user on **2026-11-01**. Acceptance includes the Bundle-scoped accordion and defaults, detailed read-only Preview, flat Progress/Result lists, completed Result labels/filtering and the corrected Stopped Result described below. |
 | **Implemented — Visually Accepted** | Environment Status: static section headings, expandable diagnostic categories, full matching/difference/attention visibility and adaptive numeric-badge columns. Explicit final approval: **2026-11-02**. |
 | **Implemented — Visually Accepted** | Home, Sidebar, compact General Settings, native About and consistent workflow naming/descriptions throughout the native UI. Explicit final approval: **2026-11-02**. |
@@ -241,6 +241,14 @@ See [native appearance and Settings](#native-appearance-and-settings) for contro
 and metadata boundaries.
 
 ### Capture Review — implemented structure and geometry
+
+The Capture section disclosure is visually accepted; the local Confirmation
+alignment refinement awaits visual acceptance. Review's **For Experienced Users** heading has a leading disclosure
+chevron; clicking the heading expands or collapses the entire Advanced/Secure
+Transfer container without changing selection. It starts collapsed, with hidden
+selected categories and identities summarized below the heading. Expansion is
+workflow-local, survives Back/Next and resets for a new scan; it is neither a
+saved preference nor Secure Transfer consent.
 
 Both Review and Confirmation use **Standard Setup** and **For Experienced Users**
 as sibling category section names. `CaptureGroupedContent` renders one ordinary
@@ -341,9 +349,10 @@ Review and Confirmation each have **two section-level Expand All / Collapse All
 controls** when both sections are present. The ordinary control sits beside
 **Standard Setup** on both screens and affects only Applications & Tools, macOS
 Settings, Application Extras and their applicable nested disclosures.
-The **For Experienced Users** control affects both Advanced and Secure Transfer,
+The **For Experienced Users** Expand/Collapse control affects both Advanced and Secure Transfer,
 including applicable nested disclosures. Both headers and controls live inside
-`WorkflowList`, scroll with their content and retain the 42 pt trailing inset.
+`WorkflowList` and scroll with their content. Review shows that control while the
+experienced section is expanded. Section controls retain the 42 pt trailing inset.
 There are no pinned, floating or per-category bulk disclosure controls.
 
 **Review and select** and **Included in this capture** remain plain informational
@@ -374,6 +383,9 @@ status dimensions, domain disclosure style and workflow viewport.
 settings details. **Included in this capture** preserves compact wrapping names
 for applications/extensions and compact macOS preference labels, with Ready to Save
 summaries and separate independent warnings. There are **no selection checkboxes**.
+Every domain, including Secure Transfer, uses the same status/count column and
+trailing disclosure column. Secure Transfer shows the prepared SSH identity count
+and retains its expandable identity list.
 Only groups included in the effective prepared selection appear. Ordinary categories
 share one container; included Advanced and Secure Transfer share the second. Empty
 sections and their controls are omitted, including the ordinary section for a
@@ -444,19 +456,27 @@ and Result re-entry preserve explicit selection; new inspection establishes defa
 Selection changes invalidate preparation; cancellation compares with those defaults.
 Inspection supplies aggregate macOS domains, not an invented per-setting inventory.
 
-### Rebuild Preview — Visually Accepted
+### Rebuild Preview
 
+The established layout remains accepted; the local action-focused filtering and
+prerequisite/manual-section cleanup await visual acceptance.
 `RestorePreviewContent` retains **Rebuild Preview**, its read-only notice and the
 **Automatic Rebuild** summary caption. The existing cards appear when their count
 is nonzero: green **Already Match**, blue **Changes Planned**, amber **Need Attention**.
+There is no additional inline matching summary or zero-count card.
 `RestorePreviewMetrics` counts automatic Core plan rows once; these are Preview
 observations/plans, not completed work or Verification. Manual App Store requirements
 are excluded from those metrics.
 
-The scrolling content contains **Prerequisites** when applicable, **Manual
-Installation** when effective App Store scope is present, then **Automatic Rebuild
-Tasks** when automatic domains exist. Fix Issues and its approval explanation remain
-available when supported. Prerequisites retain category names, Action Required,
+The scrolling content starts with **Prerequisites** only when user attention is
+required, followed by **Manual Installation** only for missing/unverified App Store
+requirements, then nonempty **Automatic Rebuild Tasks** and **For Experienced Users**
+groups. Fix Issues remains a global action with its existing approval explanation.
+Satisfied/empty prerequisites have no section or reserved space; stale, pending
+and unknown evaluation never imply success. The execution-launch secure bridge
+requirement is not a failed environment evaluation. Operation availability keeps
+its existing explanation independently of prerequisite issues.
+Prerequisites retain category names, Action Required,
 specific reasons and their own disclosures; there is no standalone duplicate Action
 Required label or general Tasks heading. Blockers and operation availability remain
 Core-owned and visible.
@@ -465,17 +485,29 @@ Core-owned and visible.
 Applications & Tools (Homebrew Applications / Packages), macOS Settings with its
 existing preference details, and Application Extras → VS Code → Extensions / Settings.
 Advanced uses the same domain order as Selection in a separate container. Only the
-effective selected plan appears; empty groups are hidden and unknown rows retain
+effective selected plan supplies the display; matching-only leaves, subcategories
+and groups are hidden without changing that plan. Empty groups are hidden and unknown rows retain
 Other Findings. No dependency is added for visual symmetry. App Store stays solely
-in Manual Installation, linking to the separate [manual screen](#assisted-app-store-restore).
+in Manual Installation when installation/review is required, even when no automatic
+tasks are visible, linking to the separate [manual screen](#assisted-app-store-restore).
+Confirmed **All Installed** inventories remain in the model but are hidden in Preview.
+
+One full-width green **Everything Already Matches** summary card uses the existing
+positive card styling, a dynamic item count and “All selected items already match
+this Mac. No changes needed.” It requires completed Preview evidence, a nonzero
+evaluated selection, no pending actions/problems and confirmed manual requirements.
+Its count includes the evaluated automatic and manual items. The existing no-op
+Rebuild gate remains unchanged; empty, failed and incomplete Preview cannot show it.
 
 Aggregate numeric badges appear only on Applications & Tools, macOS Settings,
-Application Extras and Advanced; nested categories retain meaningful status labels
-without badges. Group totals aggregate original plan rows, not child totals added
+Application Extras and Advanced. Expanded intermediate categories omit a generic
+status only when it repeats their parent and visible leaves; collapsed or distinct
+conditions retain status text. Leaf actions/errors remain explicit. Group totals aggregate original plan rows, not child totals added
 again. All expandable automatic rows have far-right chevrons. Expand All / Collapse
-All sits beside Automatic Rebuild Tasks and controls its group, VS Code, domain and
+All sits beside Automatic Rebuild Tasks (or For Experienced Users when it is the
+only visible group) and controls its group, VS Code, domain and
 macOS child disclosures together; it does not control Prerequisites or the manual
-screen. Detailed planned actions, matching items, unsupported/unavailable findings,
+screen. Detailed planned actions and unsupported/unavailable findings,
 diagnostic explanations and item checks keep their existing renderers.
 
 Preview has no selection or master checkboxes and no Capture-specific Ready to Save /
@@ -1036,9 +1068,9 @@ ordinary disclosure control scrolls with its list; Advanced's control stays with
 its divider heading. Capture Result uses outcome cards and affected-category
 explanations, not a category tree.
 Manual Installation and Automatic Rebuild Tasks share Preview's list viewport.
-Preview keeps operation availability, the available Fix Issues action and its
-approval guidance above the list. The list contains the single Prerequisites heading
-and specific issues when present. A compact read-only notice sits beside the
+Preview keeps the global Fix Issues action and its approval guidance in the
+conditional Prerequisites section at the start of the scrolling list. Operation
+availability and required Manual Installation remain independently visible. A compact read-only notice sits beside the
 Rebuild Preview heading; Selection has no duplicate read-only notice.
 Headers and progress remain live while the list scrolls. Screens without a list
 retain their ordinary content layout. The supported minimum window stays 1000 × 700.
@@ -1048,8 +1080,8 @@ insets and monospaced caption digits). Each tree reserves a common count rail an
 an independent rightmost disclosure position. Category status text, icons, colors and
 horizontal anchors remain unchanged; counts wrap below if space is limited.
 Manual Installation uses the same Preview status column as Automatic Rebuild Tasks.
-Matching Preview and Status leaves share a plain green checkmark with the accessible
-name Already Matches; category statuses retain their text. Compact Capture Result
+Matching-only Preview leaves are hidden; Status retains its plain green checkmark
+with the accessible name Already Matches. Category statuses retain their text. Compact Capture Result
 outcome cards and affected-category explanations wrap within the detail width.
 Leaf rows have no disclosure indicator without an expansion action. Selection
 checkboxes appear only for supported selection; checkbox/label hit targets remain
@@ -1122,25 +1154,28 @@ domains remain available for reselection; excluding SSH removes its prerequisite
 without weakening checks when selected. Back retains selection but requires fresh
 Prepare. Failed/cancelled/interrupted refreshes clear old Preview evidence.
 
-**Rebuild Preview — implemented and Visually Accepted.** Automatic
+**Rebuild Preview — implemented; current refinement awaits visual acceptance.** Automatic
 Restore Tasks uses one ordinary accordion for Applications & Tools, macOS Settings
 and Application Extras → VS Code, plus an experienced container below
 For Experienced Users. Advanced and selected Secure Transfer are sibling rows in
-that container. Only domains in the effective plan appear; unknown domains
+that container. Only relevant nonmatching domains from the effective plan appear; unknown domains
 retain Other Findings. Domain actions, statuses, diagnostics and nested macOS
 preference details retain their existing renderers. Numeric badges appear only on
 the four ordinary/Advanced main groups and the selected Secure Transfer sibling,
-aggregating original plan rows once; nested domains retain their status labels.
+aggregating original plan rows once; expanded intermediate rows omit only redundant
+generic statuses, retaining collapsed/distinct states and explicit leaf labels.
 The Secure Transfer extension has separate Stage 16H manual E2E acceptance;
 the historical ordinary Preview visual acceptance is unchanged. Automatic task disclosures use the far-right indicator without
 moving titles or status columns. Preview has no selection controls. Expand All /
-Collapse All sits beside Automatic Rebuild Tasks and retains its group, VS Code
+Collapse All sits beside Automatic Rebuild Tasks, or For Experienced Users when
+no ordinary tasks are visible, and retains its group, VS Code
 and macOS child scope. Prerequisites retain their category statuses, explanations
 and disclosures; the duplicate overall status and general Tasks heading are omitted.
 Section spacing is compact; Manual Installation, summary cards and footer remain.
 
-Summary cards are **Already Match → Changes Planned → Need Attention**.
-Nonzero Match/Planned/Attention badges use green/blue/amber in that order and count
+Nonzero summary cards are **Already Match → Changes Planned → Need Attention**.
+Nonzero Planned/Attention category badges use blue/amber; green numeric category badges are
+omitted. They count
 Core plan items once: child counts are not added again to their parent. Manual App
 Store requirements never inflate automatic metrics. Prerequisite summaries identify
 affected areas/counts; lower domains own concrete items and short reasons.
@@ -1155,15 +1190,14 @@ Desktop supports topology-aware Rebuild Preview and confirmed Rebuild through Co
 Clone, Add Worktree and HEAD changes use existing progress and Verification-aware
 Result presentation. Dependent actions show Conditional until Core can inspect the
 created base; conflicts and Unsupported/Unverified requirements stay visible.
-Rebuild requires ready prerequisites and executable changes. An all-matching plan
-shows No Changes Required; it does not start Execute. Partial/unknown outcomes do
+Rebuild requires ready prerequisites and executable changes. A completed all-matching
+Preview shows Everything Already Matches; it does not start Execute. Partial/unknown outcomes do
 not become full Success. Graceful Stop and fresh-plan re-entry retain the existing
 lifecycle. See the [Workspace contract](toolkit/CONFIGURATION.md#topology-restore-execute--phase-4).
 
 ### Prerequisites and consent
 
-All-satisfied prerequisites use a concise Ready summary with optional disclosure;
-redundant ready rows without actions are hidden. Independent actionable/manual
+All-satisfied or unneeded prerequisites have no Preview section. Independent actionable/manual
 conditions remain visible. Group only compatible domain/scope/reason/action records,
 without changing item counts or hiding independent problems. Core reports all cask
 conditions and the first operation-wide blocker in other domains; resolving one
@@ -1237,8 +1271,10 @@ Unresolved overlap retains both requirements; App Store-only selection stays val
 Identity, cache/provenance and protected App Store target rules are owned by
 [Configuration](toolkit/CONFIGURATION.md#other-application-generated-inputs).
 
-Preview puts one App Store card under **Manual Installation**, after applicable
-Prerequisites and before **Automatic Rebuild Tasks**. There is no general Tasks
+Preview puts one App Store card under **Manual Installation** only for missing or
+unverified requirements, after applicable Prerequisites and before **Automatic
+Rebuild Tasks**. A fully installed inventory and its review action are hidden here.
+There is no general Tasks
 heading. Expand All / Collapse All sits beside Automatic Rebuild Tasks and changes
 only its local automatic disclosure tree. Manual/automatic rows share status geometry;
 width references contain distinct status/disclosure combinations, not copies of the

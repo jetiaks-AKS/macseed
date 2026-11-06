@@ -172,11 +172,12 @@ struct RestorePrerequisiteSummaryView: View {
     let summary: RestorePrerequisiteSummaryPresentation
     let areas: [CoreRestoreInspection.Area]
     var homebrewRecheck: (() -> Void)? = nil
+    var showsHeading = true
     var body: some View {
         if !summary.manualConditions.isEmpty {
             VStack(alignment: .leading, spacing: 6) {
                 if !summary.manualConditions.isEmpty {
-                    Text("Prerequisites").font(.headline)
+                    if showsHeading { Text("Prerequisites").font(.headline) }
                     ForEach(summary.manualDomains, id: \.self) { domain in
                         RestoreBlockingPrerequisiteAreaView(
                             title: areas.first { $0.id == domain }?.label ?? "Selected work",
