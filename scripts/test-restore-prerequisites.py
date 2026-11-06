@@ -218,14 +218,24 @@ fi
 
     def test_ssh_configuration_conflict_preserves_target_and_stops_clone(self):
         self.prepare(ssh=True, repository=True)
+        # This is a prerequisite refusal check, never a clone E2E: even a
+        # regression must not reach the fixture's real local Git transport.
+        self.spies.write_text(self.spies.read_text() + '''
+git(){
+    if [[ "${1:-}" == clone ]]; then echo unexpected_clone >> "$AUDIT_EVENTS"; return 99; fi
+    /usr/bin/git "$@"
+}
+''')
         (self.home / ".ssh").mkdir(mode=0o700)
         target = self.home / ".ssh/config"
-        target.write_text("# existing configuration\n")
+        original = "Host bundle-host\n    HostName conflicting.invalid\n"
+        target.write_text(original)
         target.chmod(0o600)
         result = self.restore()
         self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
-        self.assertEqual(target.read_text(), "# existing configuration\n")
-        self.assertNotIn("clone", self.events.read_text())
+        self.assertIn("Selected SSH configuration is not ready", result.stdout)
+        self.assertEqual(target.read_text(), original)
+        self.assertNotIn("unexpected_clone", self.events.read_text())
 
     @unittest.skipUnless(shutil.which("age"), "real age required")
     def test_confirmed_secure_import_precedes_repository_transport(self):

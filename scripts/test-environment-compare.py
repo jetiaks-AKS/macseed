@@ -17,6 +17,180 @@ from unittest.mock import patch
 
 sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / 'modules/ssh'))
+import ssh_merge
+
+
+class SSHMergeTests(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.home = Path(temporary.name).resolve() / 'home'
+        self.directory = self.home / '.ssh'
+        self.directory.mkdir(parents=True, mode=0o700)
+        self.path = self.directory / 'config'
+        self.original = b'# existing comment\r\nHost existing\r\n\tUser fixture\r\n HostName existing.invalid\r\n Port 2222\r\n# final comment'
+        self.path.write_bytes(self.original); self.path.chmod(0o600)
+        self.expected = b'Host added\n    HostName added.invalid\n'
+
+    def publish(self):
+        return ssh_merge.publish(self.expected, str(self.home), ssh_merge.evidence(str(self.home)))
+
+    def test_merge_preserves_bytes_behavior_metadata_and_repeat(self):
+        subprocess.run(['/usr/bin/xattr', '-w', 'com.macseed.fixture', 'preserve', str(self.path)], check=True)
+        before = self.path.stat()
+        native = ['/usr/bin/ssh', '-G', '-F', str(self.path), 'existing']
+        options = subprocess.check_output(native, env=dict(os.environ, HOME=str(self.home)), stderr=subprocess.DEVNULL)
+        self.assertEqual(ssh_merge.plan(self.expected, str(self.home)), ('merge', 1))
+        self.assertEqual(list(self.directory.iterdir()), [self.path])
+        self.assertTrue(self.publish())
+        self.assertEqual(self.path.read_bytes(), self.original + b'\n' + self.expected)
+        self.assertEqual(subprocess.check_output(native, env=dict(os.environ, HOME=str(self.home)), stderr=subprocess.DEVNULL), options)
+        after = self.path.stat()
+        self.assertEqual((after.st_uid, after.st_gid, after.st_mode), (before.st_uid, before.st_gid, before.st_mode))
+        self.assertEqual(subprocess.check_output(['/usr/bin/xattr', '-p', 'com.macseed.fixture', str(self.path)]), b'preserve\n')
+        retained = list(self.directory.glob('.macseed-ssh-predecessor-*'))
+        self.assertEqual(len(retained), 1)
+        self.assertEqual((retained[0] / 'swap').read_bytes(), self.original)
+        self.assertEqual((retained[0] / 'swap').stat().st_ino, before.st_ino)
+        self.assertEqual(ssh_merge.plan(self.expected, str(self.home)), ('noop', 0))
+        self.assertFalse(self.publish())
+        self.assertEqual(self.path.stat().st_ino, after.st_ino)
+        self.assertEqual(list(self.directory.glob('.macseed-ssh-predecessor-*')), retained)
+
+    def test_multiple_missing_with_existing_match_and_comments_only(self):
+        selected = (b'Host existing\n    HostName existing.invalid\n    User fixture\n    Port 2222\n' +
+                    self.expected + b'Host second\n    HostName second.invalid\n')
+        merged, count = ssh_merge.candidate(selected, self.original)
+        self.assertEqual(count, 2)
+        self.assertEqual(merged, self.original + b'\n' + self.expected + b'Host second\n    HostName second.invalid\n')
+        self.assertEqual(ssh_merge.candidate(self.expected, b'# comment'), (b'# comment\n' + self.expected, 1))
+
+    def test_conflicting_ambiguous_and_unsupported_profiles_refused(self):
+        for raw in (self.expected.replace(b'added.invalid', b'other.invalid'),
+                    self.expected.replace(b'Host added', b'Host Added'),
+                    self.expected * 2, self.expected + self.expected.replace(b'Host added', b'Host Added'),
+                    b'Include other\n', b'Match all\n', b'Host *\n HostName wildcard.invalid\n',
+                    b'User global\n', self.original + b'\n Compression yes\n'):
+            with self.subTest(raw=raw), self.assertRaises((ValueError, OSError)):
+                ssh_merge.candidate(self.expected, raw)
+        with self.assertRaises(ValueError):
+            ssh_merge.candidate(self.expected + b'    IdentityFile ~/.ssh/key\n', self.original)
+
+    def test_links_permissions_ownership_acl_and_metadata_refused(self):
+        self.path.chmod(0o644)
+        with self.assertRaises(ValueError): self.publish()
+        self.path.chmod(0o600)
+        self.directory.chmod(0o755)
+        with self.assertRaises(ValueError): self.publish()
+        self.directory.chmod(0o700)
+        other = self.home / 'other'
+        os.link(self.path, other)
+        with self.assertRaises(ValueError): self.publish()
+        other.unlink()
+        self.path.rename(other); self.path.symlink_to(other)
+        with self.assertRaises((ValueError, OSError)): self.publish()
+        self.path.unlink(); other.rename(self.path)
+        with patch.object(ssh_merge.os, 'getuid', return_value=os.getuid() + 1), self.assertRaises(ValueError):
+            self.publish()
+        subprocess.run(['/bin/chmod', '+a', 'everyone allow read', str(self.path)], check=True)
+        with self.assertRaises(ValueError): self.publish()
+        self.assertEqual(self.path.read_bytes(), self.original)
+
+    def test_unsafe_ancestor_and_unqualified_filesystem_refused(self):
+        self.home.chmod(0o777)
+        with self.assertRaises(ValueError): self.publish()
+        self.home.chmod(0o700)
+        alias = self.home.parent / 'alias'
+        alias.symlink_to(self.home, target_is_directory=True)
+        with self.assertRaises((ValueError, OSError)):
+            ssh_merge.plan(self.expected, str(alias))
+        with patch.object(ssh_merge, 'swap_supported', side_effect=ssh_merge.Refused('publication_unavailable')):
+            with self.assertRaises(ValueError): self.publish()
+        self.assertEqual(list(self.directory.iterdir()), [self.path])
+
+    def test_stale_bytes_and_identical_inode_replacement_refused(self):
+        for raw in (self.original + b'\n# edit\n', self.original):
+            previous = ssh_merge.evidence(str(self.home))
+            replacement = self.directory / 'editor-save'
+            replacement.write_bytes(raw); replacement.chmod(0o600); replacement.replace(self.path)
+            with self.assertRaises(ValueError):
+                ssh_merge.publish(self.expected, str(self.home), previous)
+            self.assertEqual(self.path.read_bytes(), raw)
+            self.assertEqual(list(self.directory.iterdir()), [self.path])
+
+    def test_publication_failure_retains_predecessor_and_blocks_retry(self):
+        with patch.object(ssh_merge, 'rename', side_effect=OSError('fixture failure')):
+            with self.assertRaises(ssh_merge.PublicationUncertain) as failure: self.publish()
+        self.assertTrue(failure.exception.changed)
+        pending = list(self.directory.glob('.macseed-ssh-pending-*'))
+        self.assertEqual(len(pending), 1)
+        self.assertEqual((pending[0] / 'observed').read_bytes(), self.original)
+        self.assertEqual(self.path.read_bytes(), self.original)
+        with self.assertRaises(ValueError): ssh_merge.plan(self.expected, str(self.home))
+        self.assertEqual(ssh_merge.config.assess(self.expected, str(self.home))[1], 'publication_uncertain')
+
+    def test_staging_failure_retains_pending_without_touching_config(self):
+        with patch.object(ssh_merge, 'write_private', side_effect=OSError('fixture failure')):
+            with self.assertRaises(ssh_merge.PublicationUncertain) as failure: self.publish()
+        self.assertTrue(failure.exception.changed)
+        self.assertEqual(self.path.read_bytes(), self.original)
+        self.assertEqual(len(list(self.directory.glob('.macseed-ssh-pending-*'))), 1)
+        with self.assertRaises(ValueError): ssh_merge.plan(self.expected, str(self.home))
+
+    def test_last_gap_directory_replacement_preserves_both_locations(self):
+        rename = ssh_merge.rename
+        moved = self.home / 'moved-ssh'
+        concurrent = b'Host editor\n HostName editor.invalid\n'
+        def racing_rename(source_fd, source, target_fd, target, flag):
+            if flag == 2:
+                self.directory.rename(moved)
+                self.directory.mkdir(mode=0o700)
+                self.path.write_bytes(concurrent); self.path.chmod(0o600)
+            return rename(source_fd, source, target_fd, target, flag)
+        with patch.object(ssh_merge, 'rename', side_effect=racing_rename):
+            with self.assertRaises(ssh_merge.PublicationUncertain): self.publish()
+        self.assertEqual(self.path.read_bytes(), concurrent)
+        self.assertEqual(list(self.directory.iterdir()), [self.path])
+        pending = next(moved.glob('.macseed-ssh-pending-*'))
+        self.assertEqual((pending / 'observed').read_bytes(), self.original)
+        self.assertEqual((pending / 'swap').read_bytes(), self.original)
+        self.assertEqual((moved / 'config').read_bytes(), self.original + b'\n' + self.expected)
+
+    def test_last_gap_edit_is_retained_and_never_rolled_back(self):
+        rename = ssh_merge.rename
+        concurrent = b'# editor content\nHost editor\n HostName editor.invalid\n'
+        def racing_rename(source_fd, source, target_fd, target, flag):
+            if flag == 2:
+                replacement = self.directory / 'editor-save'
+                replacement.write_bytes(concurrent); replacement.chmod(0o600); replacement.replace(self.path)
+            return rename(source_fd, source, target_fd, target, flag)
+        with patch.object(ssh_merge, 'rename', side_effect=racing_rename):
+            with self.assertRaises(ssh_merge.PublicationUncertain): self.publish()
+        pending = next(self.directory.glob('.macseed-ssh-pending-*'))
+        self.assertEqual((pending / 'observed').read_bytes(), self.original)
+        self.assertEqual((pending / 'swap').read_bytes(), concurrent)
+        self.assertEqual(self.path.read_bytes(), self.original + b'\n' + self.expected)
+        self.assertEqual(ssh_merge.config.assess(self.expected, str(self.home))[1], 'publication_uncertain')
+
+    def test_interruption_after_swap_retains_actual_predecessor(self):
+        script = '''import os, sys
+sys.path.insert(0, sys.argv[1])
+import ssh_merge
+rename = ssh_merge.rename
+def interrupted(*args):
+    rename(*args)
+    os._exit(73)
+ssh_merge.rename = interrupted
+ssh_merge.publish(b'Host added\\n    HostName added.invalid\\n', sys.argv[2], ssh_merge.evidence(sys.argv[2]))
+'''
+        result = subprocess.run([sys.executable, '-B', '-c', script, str(ROOT / 'modules/ssh'), str(self.home)],
+                                env=dict(os.environ, HOME=str(self.home)), capture_output=True, timeout=10)
+        self.assertEqual(result.returncode, 73, result.stderr)
+        pending = next(self.directory.glob('.macseed-ssh-pending-*'))
+        self.assertEqual((pending / 'swap').read_bytes(), self.original)
+        self.assertEqual(self.path.read_bytes(), self.original + b'\n' + self.expected)
+        with self.assertRaises(ValueError): ssh_merge.plan(self.expected, str(self.home))
 
 
 class CompareTests(unittest.TestCase):
@@ -229,6 +403,25 @@ class CompareTests(unittest.TestCase):
         self.assertEqual(data['comparison']['counts']['matching'], 1)
         self.assertEqual(data['comparison']['counts']['unresolved'], 1)
         self.assertIn('unsupported_predicate', [r['code'] for r in data['records']['diagnostics']])
+
+    def test_ssh_merge_and_uncertain_publication_check(self):
+        payload = b'Host added\n    HostName added.invalid\n'
+        target = self.ssh_reference(payload)
+        original = b'# preserved\nHost existing\n  HostName existing.invalid\n'
+        target.write_bytes(original); target.chmod(0o600)
+        home = str(self.home.resolve())
+        ssh_merge.publish(payload, home, ssh_merge.evidence(home))
+        data = self.comparison()
+        self.assertEqual(data['comparison']['counts']['matching'], 1)
+        self.assertEqual(data['comparison']['counts']['unresolved'], 0)
+        self.assertTrue(target.read_bytes().startswith(original))
+        pending = target.parent / '.macseed-ssh-pending-fixture'
+        pending.mkdir(mode=0o700)
+        data = self.comparison()
+        self.assertEqual(data['comparison']['counts']['unverified'], 1)
+        self.assertEqual(data['comparison']['counts']['unresolved'], 1)
+        self.assertEqual(data['comparison']['verdict'], 'incomplete')
+        self.assertEqual(data['comparison_records'][0]['reason'], 'operation_failed')
 
     def test_bundle_reference_selection_and_read_only(self):
         path = self.make_bundle(secure=True)

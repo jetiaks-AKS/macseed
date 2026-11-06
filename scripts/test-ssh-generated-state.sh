@@ -2,6 +2,7 @@
 
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TEST_ROOT="$(mktemp -d)" || exit 2
+TEST_ROOT="$(cd "$TEST_ROOT" && pwd -P)" || exit 2
 trap 'rm -rf "$TEST_ROOT"' EXIT INT TERM
 export HOME="$TEST_ROOT/home"
 SSH_SNAPSHOT_FILE="$TEST_ROOT/config/generated/ssh/config.snapshot"
@@ -13,9 +14,11 @@ source "$PROJECT_ROOT/modules/discovery/ssh.sh"
 source "$PROJECT_ROOT/modules/blueprint/blueprint.sh"
 success() { :; }; warning() { WARNINGS=$((WARNINGS + 1)); }; error() { :; }
 preview_action() { PLAN="$1"; }
+preview_record() { PREVIEW_RECORDS+="$*"$'\n'; }
 FAILURES=0
 WARNINGS=0
 PLAN=""
+PREVIEW_RECORDS=""
 MODULE_CHANGED=false
 pass() { printf 'PASS: %s\n' "$1"; }
 fail() { printf 'FAIL: %s\n' "$1"; FAILURES=$((FAILURES + 1)); }
@@ -23,7 +26,7 @@ expect() { local label="$1" expected="$2"; shift 2; "$@"; local got=$?; [[ $got 
 reset_fixture() {
     rm -rf "$HOME/.ssh" "$TEST_ROOT/config"
     mkdir -p "$TEST_ROOT/config/generated/ssh"
-    WARNINGS=0; PLAN=""; MODULE_CHANGED=false
+    WARNINGS=0; PLAN=""; PREVIEW_RECORDS=""; MODULE_CHANGED=false
 }
 source_config() {
     mkdir -p "$HOME/.ssh"
@@ -136,9 +139,9 @@ expect 'Bootstrap clean target' 0 bootstrap_ssh_configuration
 MODULE_CHANGED=false
 expect 'second identical Bootstrap' 0 bootstrap_ssh_configuration
 [[ "$MODULE_CHANGED" == false ]] && pass 'second run no-op' || fail 'second run mutated'
-printf '# target owner content\n' > "$HOME/.ssh/config"
+printf 'Host example\n HostName conflicting.invalid\n' > "$HOME/.ssh/config"
 expect 'different target preserved' 1 bootstrap_ssh_configuration
-[[ "$(cat "$HOME/.ssh/config")" == '# target owner content' ]] && pass 'conflict bytes preserved' || fail 'conflict overwritten'
+[[ "$(cat "$HOME/.ssh/config")" == $'Host example\n HostName conflicting.invalid' ]] && pass 'conflict bytes preserved' || fail 'conflict overwritten'
 rm -f "$HOME/.ssh/config"
 ln -s "$TEST_ROOT/prior" "$HOME/.ssh/config"
 expect 'target symlink refused' 1 bootstrap_ssh_configuration
@@ -336,19 +339,41 @@ expect 'legacy source still produces v1' 0 discover_ssh_configuration
 snapshot_status ready 1 && [[ "$SSH_SNAPSHOT_VERSION" == 1 ]] && pass 'legacy version retained' || fail 'legacy version changed'
 source_config $'# preserve this comment\nHost unrelated\n HostName unrelated.invalid\nHost example\n Port 22\n User admin\n HostName example.invalid\n'
 cp "$HOME/.ssh/config" "$TEST_ROOT/semantic-target"
-expect 'semantic match preserves publication restriction' 1 preview_ssh_configuration
+expect 'semantic match Preview is a no-op' 0 preview_ssh_configuration
 [[ "$SSH_TARGET_STATUS" == different && "$SSH_TARGET_CONFORMITY" == profiles_match ]] && pass 'profile conformity distinct from exact bytes' || fail 'semantic match not recognized'
-expect 'semantic match does not authorize replacement' 1 bootstrap_ssh_configuration
+expect 'semantic match does not replace target' 0 bootstrap_ssh_configuration
 cmp -s "$HOME/.ssh/config" "$TEST_ROOT/semantic-target" && [[ "$MODULE_CHANGED" == false ]] && pass 'semantic target preserved byte for byte' || fail 'semantic target changed'
 source_config $'Host unrelated\n HostName unrelated.invalid\n'
-expect 'missing selected Host' 1 preview_ssh_configuration
+expect 'missing selected Host plans an addition' 0 preview_ssh_configuration
 [[ "$SSH_TARGET_CONFORMITY" == missing_profiles ]] && pass 'missing profile distinguished' || fail 'missing profile classification'
+[[ "$SSH_MERGE_ACTION" == merge && "$SSH_MERGE_COUNT" == 1 ]] && pass 'missing profile addition planned' || fail 'missing profile addition not planned'
 source_config "$valid_profile"$' User other\n Port 22\n'
 expect 'conflicting selected Host' 1 preview_ssh_configuration
 [[ "$SSH_TARGET_CONFORMITY" == conflicting_profiles ]] && pass 'conflicting profile distinguished' || fail 'conflicting profile classification'
 source_config "$valid_profile"$' User admin\n Port 22\n Include other\n'
 expect 'ambiguous target preserved' 1 preview_ssh_configuration
 [[ "$SSH_TARGET_CONFORMITY" == unsupported ]] && pass 'Include is not evaluated' || fail 'Include treated as comparable'
+
+reset_fixture
+source_config "$valid_profile"
+expect 'snapshot before matching target ACL' 0 discover_ssh_configuration
+source_config $'Host example\n    HostName example.invalid\n'
+cp "$HOME/.ssh/config" "$TEST_ROOT/acl-before"
+chmod +a 'everyone allow read' "$HOME/.ssh/config"
+expect 'matching target ACL blocks Preview' 1 preview_ssh_configuration
+[[ "$PREVIEW_RECORDS" == *'publication none blocked external_management'* ]] && pass 'matching bytes do not hide unsafe metadata' || fail 'unsafe metadata missing from Preview'
+expect 'matching target ACL blocks Bootstrap' 1 bootstrap_ssh_configuration
+cmp -s "$HOME/.ssh/config" "$TEST_ROOT/acl-before" && [[ "$MODULE_CHANGED" == false ]] && pass 'ACL target remains unchanged' || fail 'ACL target changed'
+chmod -N "$HOME/.ssh/config"
+
+reset_fixture
+source_config "$valid_profile"$'Host excluded\n HostName excluded.invalid\n ProxyJump jump\n'
+expect 'partial source for merge boundary' 1 discover_ssh_configuration
+source_config $'Host unrelated\n HostName unrelated.invalid\n'
+cp "$HOME/.ssh/config" "$TEST_ROOT/partial-merge-before"
+expect 'partial source cannot plan existing-file additions' 1 preview_ssh_configuration
+expect 'partial source cannot publish existing-file additions' 1 bootstrap_ssh_configuration
+cmp -s "$HOME/.ssh/config" "$TEST_ROOT/partial-merge-before" && [[ "$MODULE_CHANGED" == false ]] && pass 'partial source preserves existing target' || fail 'partial source changed existing target'
 
 reset_fixture
 source_config "$valid_profile"

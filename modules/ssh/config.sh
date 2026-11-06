@@ -11,6 +11,10 @@ SSH_SNAPSHOT_VERSION=1
 SSH_IDENTITY_PORTABLE=0
 SSH_IDENTITY_UNRESOLVED=0
 SSH_CONFIG_HELPER="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/config.py"
+SSH_MERGE_HELPER="${SSH_CONFIG_HELPER%/*}/ssh_merge.py"
+SSH_MERGE_ACTION=""
+SSH_MERGE_COUNT=0
+SSH_TARGET_EVIDENCE=""
 SSH_SOURCE_PARTIAL=false
 
 ssh_configuration_scope_selected() {
@@ -49,8 +53,8 @@ ssh_snapshot_write() {
     return "$result"
 }
 
-# File equality is the existing publication policy. Profile conformity is a
-# separate observation shared by Preview, Verification and Comparison.
+# Conformity is shared with Verification/Comparison. Merge eligibility is
+# stricter and must independently preserve the complete existing target.
 ssh_target_inspect() {
     local assessment result
     SSH_TARGET_STATUS=error; SSH_TARGET_CONFORMITY=unavailable; SSH_TARGET_EXCLUDED=0
@@ -63,9 +67,10 @@ ssh_target_inspect() {
 }
 
 ssh_configuration_inspect() {
-    local payload="$1" result
+    local payload="$1" result merge
     SSH_SOURCE_PARTIAL=false
     SSH_TARGET_STATUS=""; SSH_TARGET_CONFORMITY=""; SSH_TARGET_EXCLUDED=0
+    SSH_MERGE_ACTION=""; SSH_MERGE_COUNT=0; SSH_TARGET_EVIDENCE=""
     ssh_snapshot_validate "$payload"
     result=$?
     if [[ $result -eq 1 ]] && ! blueprint_exists; then return 3; fi
@@ -82,15 +87,32 @@ ssh_configuration_inspect() {
     ssh_target_inspect "$payload"
     result=$?
     [[ $result -ne 2 ]] || { error "Failed to inspect SSH target"; return 2; }
-    if [[ $result -eq 1 || "$SSH_TARGET_STATUS" == different ]]; then
+    if [[ $result -eq 1 || "$SSH_TARGET_CONFORMITY" == publication_uncertain ]]; then
         warning "Existing SSH configuration is preserved"
         return 1
     fi
     # Extended snapshots are comparison-only in this slice. Exact existing
     # files need no write, but file references remain unvalidated dependencies.
-    if [[ "$SSH_SNAPSHOT_VERSION" == 2 && "$SSH_TARGET_STATUS" == absent-* ]] ||
+    if [[ "$SSH_SNAPSHOT_VERSION" == 2 && "$SSH_TARGET_STATUS" != identical ]] ||
        (( SSH_IDENTITY_PORTABLE + SSH_IDENTITY_UNRESOLVED > 0 )); then
         warning "Extended SSH requirements need dependency qualification before restoration"
+        return 1
+    fi
+    [[ "$SSH_SNAPSHOT_VERSION" != 2 ]] || return 0
+    merge="$(python3 -B "$SSH_MERGE_HELPER" plan "$payload" "$HOME")"
+    result=$?
+    if [[ $result -ne 0 ]]; then
+        SSH_MERGE_ACTION=refused
+        warning "SSH configuration is not eligible for automatic additions"
+        return 1
+    fi
+    read -r SSH_MERGE_ACTION SSH_MERGE_COUNT SSH_TARGET_EVIDENCE <<< "$merge"
+    if [[ -n "${MACSEED_SSH_EXPECTED_EVIDENCE:-}" && "$MACSEED_SSH_EXPECTED_EVIDENCE" != "$SSH_TARGET_EVIDENCE" ]]; then
+        error "SSH target changed after preparation"
+        return 2
+    fi
+    if [[ "$SSH_SOURCE_PARTIAL" == true && "$SSH_MERGE_ACTION" == merge ]]; then
+        warning "Partial SSH sources cannot add profiles to an existing configuration"
         return 1
     fi
     return 0
@@ -100,7 +122,10 @@ preview_ssh_configuration() {
     local payload result
     payload="$(mktemp)" || return 2
     ssh_configuration_inspect "$payload"; result=$?
-    if [[ "$SSH_TARGET_CONFORMITY" == exact || "$SSH_TARGET_CONFORMITY" == profiles_match ]]; then
+    if [[ $result -eq 0 && "$SSH_MERGE_ACTION" == merge ]]; then
+        preview_record ssh-configuration missing-profiles create planned missing_profiles
+        preview_action "Would add SSH configuration: $SSH_MERGE_COUNT missing profiles"
+    elif [[ "$SSH_TARGET_CONFORMITY" == exact || "$SSH_TARGET_CONFORMITY" == profiles_match ]]; then
         preview_record ssh-configuration config none satisfied
     elif [[ $result -eq 0 && "$SSH_TARGET_STATUS" == absent-* ]]; then
         preview_record ssh-configuration config create planned
@@ -115,10 +140,14 @@ preview_ssh_configuration() {
             missing_profiles) preview_record ssh-configuration config none conflict missing_profiles ;;
             conflicting_profiles) preview_record ssh-configuration config none conflict target_conflict ;;
             unsupported) preview_record ssh-configuration config none warning unsupported_predicate ;;
+            publication_uncertain) preview_record ssh-configuration publication none blocked ssh_publication_uncertain ;;
             *) preview_record ssh-configuration config none blocked observation_failed ;;
         esac
     fi
-    if [[ $result -eq 1 && "$SSH_TARGET_STATUS" == different && "$SSH_TARGET_CONFORMITY" == profiles_match ]]; then
+    if [[ $result -eq 1 && "$SSH_MERGE_ACTION" == refused &&
+          ( "$SSH_TARGET_CONFORMITY" == exact || "$SSH_TARGET_CONFORMITY" == profiles_match ) ]]; then
+        preview_record ssh-configuration publication none blocked external_management
+    elif [[ $result -eq 1 && "$SSH_TARGET_STATUS" == different && "$SSH_TARGET_CONFORMITY" == profiles_match ]]; then
         preview_record ssh-configuration publication none conflict target_conflict
     fi
     if [[ "$SSH_SNAPSHOT_VERSION" == 2 && "$SSH_TARGET_STATUS" == absent-* ]]; then
@@ -144,7 +173,7 @@ preview_ssh_configuration() {
 }
 
 bootstrap_ssh_configuration() {
-    local payload result target="$HOME/.ssh/config" directory="$HOME/.ssh" temporary
+    local payload result target="$HOME/.ssh/config" directory="$HOME/.ssh" temporary publication
     payload="$(mktemp)" || return 2
     ssh_configuration_inspect "$payload"; result=$?
     if [[ $result -ne 0 ]]; then
@@ -153,7 +182,25 @@ bootstrap_ssh_configuration() {
         fi
         rm -f "$payload"; [[ $result -ne 3 ]] || return 0; return "$result"
     fi
-    if [[ "$SSH_TARGET_STATUS" == identical ]]; then
+    if [[ "$SSH_MERGE_ACTION" == merge ]]; then
+        publication="$(python3 -B "$SSH_MERGE_HELPER" publish "$payload" "$HOME" "$SSH_TARGET_EVIDENCE")"
+        result=$?
+        rm -f "$payload"
+        if [[ "$publication" == published || "$publication" == 'publication_uncertain 1' ]]; then
+            MODULE_CHANGED=true
+        fi
+        if [[ $result -ne 0 ]]; then
+            declare -F verification_operation_hook >/dev/null && verification_operation_hook ssh-configuration config create failure ssh_publication_uncertain
+            error "SSH addition was not verified; preserve any .macseed-ssh-pending-* directory for manual review"
+            return 2
+        fi
+        unset MACSEED_SSH_EXPECTED_EVIDENCE
+        declare -F verification_operation_hook >/dev/null && verification_operation_hook ssh-configuration missing-profiles create success
+        success "Missing SSH profiles added; predecessor retained in .macseed-ssh-predecessor-*"
+        return 0
+    fi
+    if [[ "$SSH_TARGET_STATUS" == identical || "$SSH_MERGE_ACTION" == noop ]]; then
+        unset MACSEED_SSH_EXPECTED_EVIDENCE
         declare -F verification_operation_hook >/dev/null && verification_operation_hook ssh-configuration config create noop
         rm -f "$payload"; success "SSH configuration already matches"
         [[ "$SSH_SOURCE_PARTIAL" != true ]] || return 1
@@ -256,6 +303,9 @@ verify_ssh_configuration() {
                 verification_result ssh-configuration config supported_config_match 1 '' absent ;;
             unsupported) verification_unsupported ssh-configuration config supported_config_match ;;
             unsafe) verification_result ssh-configuration config supported_config_match 2 external_management ;;
+            publication_uncertain)
+                verification_result ssh-configuration config supported_config_match 2 operation_failed
+                verification_coverage ssh-configuration publication unresolved unobserved ;;
             *) verification_result ssh-configuration config supported_config_match 2 ;;
         esac
     fi

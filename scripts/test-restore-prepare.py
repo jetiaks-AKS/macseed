@@ -34,7 +34,7 @@ class RestorePrepareTests(unittest.TestCase):
         shutil.copy2(ROOT / "bootstrap.sh", self.project / "bootstrap.sh")
         (self.project / "config").mkdir()
         shutil.copy2(ROOT / "config/toolkit.conf", self.project / "config/toolkit.conf")
-        self.home = self.root / "home"
+        self.home = self.root.resolve() / "home"
         self.home.mkdir()
         self.private_temp = self.root / "private-tmp"
         self.private_temp.mkdir(mode=0o700)
@@ -155,7 +155,7 @@ class RestorePrepareTests(unittest.TestCase):
 
     def test_selected_prerequisite_conflict_blocks_casks_before_publication(self):
         target = self.ssh_prerequisite_fixture()
-        original = b'Host existing-host\n    HostName preserved.invalid\n'
+        original = b'Host bundle-host\n    HostName conflicting.invalid\n'
         target.write_bytes(original)
         target.chmod(0o600)
         self.pack()
@@ -175,7 +175,7 @@ class RestorePrepareTests(unittest.TestCase):
         self.assertFalse((self.root / 'boundary').exists())
         self.assertFalse((self.home / 'Library/Application Support/Macseed/Homebrew/active.json').exists())
 
-    def test_ssh_semantic_match_does_not_authorize_publication(self):
+    def test_ssh_semantic_match_is_noop_without_publication(self):
         target = self.ssh_prerequisite_fixture()
         original = b'# user content\nHost bundle-host\n User git\n HostName example.invalid\n'
         target.write_bytes(original)
@@ -184,12 +184,57 @@ class RestorePrepareTests(unittest.TestCase):
         plan = self.plan_result()
         rows = [row for row in plan['plan'] if row['domain'] == 'ssh-configuration']
         self.assertTrue(any(row['item_id'] == 'config' and row['disposition'] == 'satisfied' for row in rows), rows)
-        self.assertTrue(any(row['item_id'] == 'publication' and row['disposition'] == 'conflict' for row in rows), rows)
-        self.assertFalse(plan['readiness']['ready'])
-        result, events = self.execute(plan['prepared_plan_id'])
-        self.assertEqual(result.returncode, 2, events)
-        self.assertFalse(events[-1]['data']['publication_started'])
+        self.assertFalse(any(row['disposition'] != 'satisfied' for row in rows), rows)
+        self.assertTrue(plan['readiness']['ready'])
         self.assertEqual(target.read_bytes(), original)
+
+    def test_ssh_merge_prepare_execute_repeat_and_stale_evidence(self):
+        self.allow_application_bootstrap()
+        blueprint = self.stage / 'blueprint.conf'
+        blueprint.write_text(blueprint.read_text().replace('ssh-configuration="false"', 'ssh-configuration="true"')
+                             .replace('Projects\n', ''))
+        payload = b'Host added\n    HostName added.invalid\n'
+        bundle.write_file(self.stage / 'generated/ssh/config.snapshot',
+                          b'# toolkit-ssh-snapshot: 1\n# status: ready\n# excluded-profiles: 0\n\n' + payload)
+        directory = self.home / '.ssh'
+        directory.mkdir(mode=0o700)
+        target = directory / 'config'
+        original = b'# user formatting\nHost existing\n  HostName existing.invalid\n'
+        target.write_bytes(original); target.chmod(0o600)
+        self.pack()
+        plan = self.plan_result()
+        self.assertTrue(plan['readiness']['ready'], plan)
+        self.assertTrue(any(row['domain'] == 'ssh-configuration' and row['item_id'] == 'missing-profiles'
+                            and row['disposition'] == 'planned' for row in plan['plan']))
+        self.assertEqual(list(directory.iterdir()), [target])
+        # Same eligibility and profile semantics, but changed comments/inode:
+        # the previous decision must still be invalidated before publication.
+        for replacement in (original + b'# external edit\n', original):
+            before = self.plan_result()
+            temporary = directory / 'editor-save'
+            temporary.write_bytes(replacement); temporary.chmod(0o600)
+            temporary.replace(target)
+            result, events = self.execute(before['prepared_plan_id'])
+            self.assertEqual(result.returncode, 2, events)
+            self.assertEqual(events[-1]['data']['code'], 'stale_plan')
+            self.assertFalse(events[-1]['data']['publication_started'])
+            self.assertEqual(target.read_bytes(), replacement)
+        plan = self.plan_result()
+        result, events = self.execute(plan['prepared_plan_id'])
+        self.assertEqual(result.returncode, 0, events)
+        self.assertEqual(target.read_bytes(), original + payload)
+        retained = list(directory.glob('.macseed-ssh-predecessor-*'))
+        self.assertEqual(len(retained), 1)
+        self.assertEqual((retained[0] / 'swap').read_bytes(), original)
+        repeated = self.plan_result()
+        self.assertTrue(repeated['readiness']['ready'])
+        self.assertFalse(any(row['domain'] == 'ssh-configuration' and row['disposition'] == 'planned'
+                             for row in repeated['plan']))
+        before = target.stat()
+        result, events = self.execute(repeated['prepared_plan_id'])
+        self.assertEqual(result.returncode, 0, events)
+        self.assertEqual((target.stat().st_ino, target.stat().st_mtime_ns), (before.st_ino, before.st_mtime_ns))
+        self.assertEqual(list(directory.glob('.macseed-ssh-predecessor-*')), retained)
 
     def test_ssh_v2_blocks_creation_and_retains_unresolved_dependencies(self):
         target = self.ssh_prerequisite_fixture()
@@ -224,7 +269,7 @@ class RestorePrepareTests(unittest.TestCase):
         directory = self.home / '.ssh'
         directory.mkdir(mode=0o700)
         target = directory / 'config'
-        original = b'Host existing\n HostName preserved.invalid\n'
+        original = b'Host captured\n HostName conflicting.invalid\n'
         target.write_bytes(original); target.chmod(0o600)
         self.pack()
         selected = {'categories': ['homebrew-casks', 'ssh-configuration'], 'items': {}}
@@ -264,7 +309,7 @@ class RestorePrepareTests(unittest.TestCase):
         directory = self.home / '.ssh'
         directory.mkdir(mode=0o700)
         target = directory / 'config'
-        target.write_bytes(b'Host existing\n HostName preserved.invalid\n'); target.chmod(0o600)
+        target.write_bytes(b'Host captured\n HostName conflicting.invalid\n'); target.chmod(0o600)
         self.pack()
         selected = self.plan_result(selection={'categories': ['homebrew-casks', 'ssh-configuration'], 'items': {}})
         self.assertFalse(selected['readiness']['ready'])

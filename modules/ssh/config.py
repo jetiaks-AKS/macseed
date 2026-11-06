@@ -124,6 +124,17 @@ def payload(profiles):
         for host, entries in profiles.items()).encode('ascii')
 
 
+def profile_values(entries):
+    return ({key: value for key, value in entries if key != 'identityfile'},
+            [value for key, value in entries if key == 'identityfile'])
+
+
+def pending_publication(directory):
+    # Only our direct sibling names; never inspect identities or their contents.
+    with os.scandir(directory) as entries:
+        return any(entry.name.startswith('.macseed-ssh-pending-') for entry in entries)
+
+
 def snapshot(raw):
     lines = raw.split(b'\n', 4)
     if len(lines) != 5 or lines[0] not in (b'# toolkit-ssh-snapshot: 1', b'# toolkit-ssh-snapshot: 2'):
@@ -201,6 +212,8 @@ def assess(expected, home):
         ds = os.fstat(dfd)
         if ds.st_uid != os.getuid() or stat.S_IMODE(ds.st_mode) != 0o700:
             raise Unsafe('unsafe SSH directory')
+        if pending_publication(dfd):
+            return 'external', 'publication_uncertain', 0
         try:
             actual = read_file('config', directory=dfd, private=True)
         except FileNotFoundError:
@@ -218,10 +231,7 @@ def assess(expected, home):
                              for host in source):
             conformity = 'unsupported'
         else:
-            def values(entries):
-                return ({key: value for key, value in entries if key != 'identityfile'},
-                        [value for key, value in entries if key == 'identityfile'])
-            if any(values(entries) != values(target[host]) for host, entries in source.items() if host in target):
+            if any(profile_values(entries) != profile_values(target[host]) for host, entries in source.items() if host in target):
                 conformity = 'conflicting_profiles'
             elif any(host not in target for host in source):
                 conformity = 'missing_profiles'

@@ -1085,8 +1085,7 @@ wildcards, commands and other directives, including `AddressFamily` and
 
 Up to 32 `IdentityFile` entries per profile retain their order and spelling.
 Accepted file references are `~/path` (portable relative to receiving HOME) and
-`/absolute/path` (recognized
-but portability unresolved), at most 1024 ASCII bytes, with nonempty components
+`/absolute/path` (recognized but portability unresolved), at most 1024 ASCII bytes, with nonempty components
 containing only letters, digits, dots, underscores and hyphens. Dot/dot-dot
 components, repeated/trailing slashes, relative paths, foreign-user homes,
 variables and percent tokens are rejected; paths are never expanded or rewritten.
@@ -1112,14 +1111,67 @@ An unsupported selected target profile is unverified, not missing. Independent
 unsupported target blocks and excluded source profiles retain unresolved coverage,
 even when every comparable selected profile matches.
 
-File conformity and permission to Apply are separate. Legacy v1 Bootstrap still
-creates `~/.ssh` (`0700`) and `config` (`0600`) only on confirmed absence, with the
-existing no-clobber publication and byte/metadata verification. Every differing
-existing file is preserved, including a semantic match: Preview can show matching
-profiles alongside a publication conflict, and Restore readiness remains blocked.
-Target inspection retains the existing owner/mode restrictions and rejects links.
+File conformity and permission to Apply are separate. Legacy v1 creation on
+confirmed absence retains its no-clobber publication and byte/metadata verification
+(`~/.ssh` `0700`, `config` `0600`). Existing fully supported configurations can
+receive **only missing literal Host profiles from a complete v1 source**. Matching
+selected profiles are no-op, including differences in scalar order, comments and
+formatting. Different settings for an existing Host, case-only alias differences,
+duplicate aliases, any unsupported target block, Include/Match, wildcards and
+global settings block automatic additions. Partial sources cannot merge into an
+existing file; their excluded coverage remains unresolved.
 
-**Slice 1 boundary:** automatic creation from v2 is blocked. Exact existing v2
+The candidate retains the entire original file as an unchanged byte prefix,
+followed by a line boundary when necessary and canonical missing blocks in source
+order. The shared parser validates the candidate and proves that its ordered
+profiles equal the original profiles plus exactly the missing profiles. Existing
+directives, comments, whitespace and Host order are preserved. The saved snapshot
+never replaces the existing file wholesale; no system SSH file is modified.
+This preservation proof covers the supported per-Host model; it does not evaluate
+system configuration, external defaults or identity availability.
+
+Existing-file mutation requires an absolute path without symlink ancestors,
+trusted root/current-user ancestors, current-user HOME, private `.ssh`, and a
+single-link current-user-owned `0600` config. Writable shared ancestors are refused
+except root-owned sticky directories. Ancestor ACLs must be deny-only; target and
+`.ssh` ACLs and nonzero file flags are outside the mutation contract. Ownership,
+group and permissions are retained. Extended attributes are bounded (32 entries,
+32 KiB each, 8 KiB total names), copied using native file descriptors and checked
+for equality; inability to inspect or preserve metadata blocks publication.
+
+Publication requires Darwin volume support for atomic `RENAME_SWAP` and exclusive
+rename; there is no overwrite-rename or concatenation fallback. A new private
+sibling directory `.macseed-ssh-pending-<id>` holds `observed` (the inspected
+predecessor copy) and `swap` (the validated candidate). Files are flushed with
+`fsync`/`F_FULLFSYNC`; directory entries are synced before exchange. Immediately
+before mutation, pinned ancestors, the target's identity/content/metadata and the
+recovery directory are rechecked. Atomic exchange moves the **actual displaced
+target** to `swap`. Both resulting files and their metadata are verified before
+the directory is renamed exclusively to `.macseed-ssh-predecessor-<id>`. Successful
+predecessors are retained; repeat/no-op creates no additional backup.
+
+Atomic exchange is **not inode compare-and-swap**. A concurrent edit in the last
+check/exchange gap can make the candidate visible while preserving the concurrent
+file at `swap`. The post-check then fails, keeps both files and the pending marker,
+and never attempts automatic rollback. Failure, interruption or uncertain identity
+retains artifacts for manual inspection; pending markers block further Apply and
+produce unverified/unresolved Verification and Check coverage. If an external actor
+moves `.ssh`, retained artifacts remain with the pinned original directory. A crash
+before completion marking can require manual review of an otherwise valid merge.
+This is bounded predecessor retention, not transaction resume or Stage 3C recovery;
+do not remove pending artifacts until the visible config and both retained files
+have been inspected.
+
+Preview performs no publication and reports an eligible addition as planned.
+Core binds SSH file bytes (including comments), identity, metadata and ancestor
+identity into the prepared plan, recomputes that evidence for Execute, and passes
+the existing-target binding through to the production domain consumer. Changed
+evidence rejects the old decision before mutation; the publication reader performs
+its own fresh checks. CLI and Desktop use the same consumer. Verification can
+confirm the selected profiles while leaving unrelated supported profiles intact;
+neither merge success nor conformity proves connectivity or authentication.
+
+**Extended requirements boundary:** automatic creation/merge from v2 is blocked. Exact existing v2
 configuration can be a no-op only without file-reference dependencies. Every
 non-`none` IdentityFile remains an unresolved dependency, including a portable
 reference whose configuration text matches. No referenced key is opened, searched,
@@ -1129,7 +1181,7 @@ remote authentication nor agent/Keychain readiness. No `ssh-add` or Keychain
 mutation is performed. Ordinary records expose aggregate statuses/reasons, not
 Host aliases, users, addresses or identity paths.
 
-SSH config merge, identity linkage/correction consent, custom destinations, Git
+Conflict correction, identity linkage/correction consent, custom destinations, Git
 dependency ordering and Secure Transfer in Check remain deferred. SSH Environment
 Completion is not complete; [Capture / Restore](../CAPTURE-RESTORE.md#ssh-environment-completion--developer-environment-closure)
 owns the later workflow boundary.

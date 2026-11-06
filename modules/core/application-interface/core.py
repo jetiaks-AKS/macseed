@@ -40,6 +40,12 @@ PREPARED_PLAN_ID = re.compile(r"[0-9a-f]{64}\Z", re.ASCII)
 ROOT = Path(__file__).resolve().parents[3]
 
 
+def ssh_observation():
+    sys.path.insert(0, str(ROOT / 'modules/ssh'))
+    from ssh_merge import evidence
+    return evidence(os.environ['HOME'])
+
+
 class RecoveryRequired(Exception):
     pass
 
@@ -219,6 +225,8 @@ def prepared_restore(path, disabled_groups, include_secure, selection=None, inst
             topology_files = files
             preview_blueprint = private / 'preview.blueprint'
         requested_selection = restore_selection.canonical(stage)
+        ssh_evidence = (ssh_observation()
+                        if 'ssh-configuration' in requested_selection['categories'] else None)
         duplicates = bundle.deduplicate_applications(stage)
         stage_identity = restore_fingerprint(stage)
         preparation_context = pkg_preparation.context(source_identity, stage_identity)
@@ -458,6 +466,10 @@ def prepared_restore(path, disabled_groups, include_secure, selection=None, inst
                                         if key != 'external_tools'}
         identity = {"bundle": source_identity, "stage": stage_identity,
                     "disabled_groups": sorted(disabled_groups), "summary": identity_summary}
+        if ssh_evidence is not None:
+            if ssh_observation() != ssh_evidence:
+                raise PreviewFailed()
+            identity['ssh_observation'] = ssh_evidence
         if topology_preview is not None:
             identity['workspace_observation'] = topology_preview['fingerprint']
         if duplicates:
@@ -474,6 +486,8 @@ def prepared_restore(path, disabled_groups, include_secure, selection=None, inst
                       "parameters": {"disabled_groups": sorted(disabled_groups), "include_secure": include_secure},
                       "plan": identity_summary["plan"], "readiness": identity_summary["readiness"],
                       "modules": identity_summary["modules"]}
+        if ssh_evidence is not None:
+            components['ssh_observation'] = ssh_evidence
         if topology_preview is not None:
             components['workspace_observation'] = topology_preview['fingerprint']
         summary["plan_diagnostics"] = {key: hashlib.sha256(json.dumps(value, sort_keys=True,
@@ -776,6 +790,19 @@ def restore_execute(operation_id, path, disabled_groups, include_secure, expecte
                 if bundle.RECOVERY.exists() or bundle.RECOVERY.is_symlink():
                     raise RecoveryRequired()
                 workspace_environment = {}
+                ssh_environment = {}
+                if categories.get('ssh-configuration'):
+                    current_ssh = ssh_observation()
+                    bound_ssh = hashlib.sha256(json.dumps(current_ssh, sort_keys=True,
+                                                         separators=(',', ':')).encode()).hexdigest()
+                    if bound_ssh != plan['plan_diagnostics']['ssh_observation']:
+                        raise ExecuteFailed('stale_plan')
+                    # Bind existing config through Bootstrap too. Fresh creation
+                    # keeps its no-clobber path; Secure Import may create .ssh.
+                    if any(row['domain'] == 'ssh-configuration' and
+                           (row['item_id'] == 'missing-profiles' or row['disposition'] == 'satisfied')
+                           for row in plan['plan']):
+                        ssh_environment['MACSEED_SSH_EXPECTED_EVIDENCE'] = current_ssh
                 if topology:
                     from topology_execution import create_context
                     try:
@@ -817,6 +844,8 @@ def restore_execute(operation_id, path, disabled_groups, include_secure, expecte
                              "SSH_SNAPSHOT_FILE", "ZSH_SNAPSHOT_FILE"):
                     environment.pop(name, None)
                 environment.update(workspace_environment)
+                environment.pop('MACSEED_SSH_EXPECTED_EVIDENCE', None)
+                environment.update(ssh_environment)
                 environment['MACSEED_WORKSPACE_CLONE_REQUIRED'] = str(workspace_clone).lower()
                 if ENABLED:
                     bootstrap_trace_start = monotonic()
