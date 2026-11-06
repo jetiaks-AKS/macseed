@@ -1,11 +1,11 @@
 # Macseed — Product Direction and Delivery Sequence
 
 - **Decision date:** 2026-10-29
-- **Revision:** 2026-11-02 — Native UI Alignment implemented and visually accepted
-- **Status:** All native UI workflows visually accepted; local validation and Git checkpoint readiness remain separate from release qualification
+- **Revision:** 2026-11-06 — identity completion and next functional checkpoint reconciled
+- **Status:** Native UI baseline visually accepted; later refinements and release qualification retain their own gates
 - **Repository:** `jetiaks-AKS/macseed`
 - **Working branch:** `develop`
-- **Baseline at documentation review:** `fa464c48ef1fd42a4e7c79c7856729d516e4cdf7`
+- **Historical baseline at the 2026-11-02 documentation review:** `fa464c48ef1fd42a4e7c79c7856729d516e4cdf7`
 - **Published baseline for GUI realignment:** `ed521e7`; CI #127 successful
 
 **Scope of this document:** Approved product positioning, priorities and deferrals. [Vision](VISION.md) owns enduring product principles; [Roadmap](../ROADMAP.md) owns current stage status and execution order; [TODO](../TODO.md) owns open actions. [Desktop](DESKTOP.md), [Capture / Restore](CAPTURE-RESTORE.md), [Core](core/APPLICATION-INTERFACE.md) and [Configuration](toolkit/CONFIGURATION.md) retain their implementation contracts. This dated decision record does not replace those owners.
@@ -186,13 +186,10 @@ Migration remains the engine; migration defaults off. Broader release qualificat
 remains open; signing/notarization and clean-Mac proof belong to
 [Stage 17](DISTRIBUTION.md).
 
-Follow Roadmap's order: SSH Environment Completion, remaining native Workspace
-qualification, bounded Stage 3C reconciliation, then
-remaining supported-domain, Homebrew Setup Installer, lifecycle, completion (16I)
-and integration/runtime (16K) gates. Existing journals, Stop and fences stay
-implemented; blocked retry is not recovery. Finish with fresh end-to-end
-Capture → Rebuild → Verify → Check → no-op evidence before Stage 17. Do not expand
-feature breadth or repeat accepted gates without a specific remaining evidence need.
+Follow [Roadmap's current execution order](../ROADMAP.md#current-practical-execution-order)
+for the remaining qualification gates. Existing journals, Stop and fences stay
+implemented; blocked retry is not recovery. Do not expand feature breadth or
+repeat accepted gates without a specific remaining evidence need.
 
 ### Checkpoint 7 — Stage 17, Early Access and Macseed 1.0
 
@@ -212,11 +209,11 @@ Possible Saved Environment history/profiles, confirmed-difference preselection f
 
 ## 7. Next action
 
-Native UI Alignment and the subsequent Homebrew Setup implementation are published
-on `develop` through `ac6c5bd`. Visual acceptance, retained local validation and hosted
-qualification remain distinct; CI #127 is a historical accepted baseline.
-[Roadmap](../ROADMAP.md#current-practical-execution-order) records CI #135's Desktop
-compilation failure and the approved remaining 1.0 sequence. Continue with native
-same-Bundle Workspace qualification, bounded reconciliation/safe re-entry and the
-remaining Stage 16 gates. Preserve approved UI and real-Mac acceptance; do not
-automatically begin Stage 17 or expand into workspace content transfer.
+The next approved functional checkpoint is
+**[SSH Environment Completion — Developer Environment Closure](CAPTURE-RESTORE.md#ssh-environment-completion--developer-environment-closure)**,
+currently **PLANNED**, after completed Stage 16H identity migration. Preserve
+Selection = configure, Preview = read-only validation and Rebuild = execute;
+configuration corrections require explicit authorization. Custom destinations
+are not implemented. [Roadmap](../ROADMAP.md#current-practical-execution-order)
+owns current execution order and qualification status. Documentation or CI
+maintenance does not start this checkpoint, Stage 17 or workspace content transfer.

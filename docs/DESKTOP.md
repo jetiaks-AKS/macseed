@@ -6,8 +6,9 @@ Bundle-backed Environment Status and its Restore handoff are implemented. Visual
 accepted Home, Capture, Restore, Environment Status, Settings/About and Stage 16J
 diagnostics are the current foundation. Native UI Alignment is **Visually Accepted**
 by explicit user approval on **2026-11-02**. Stage 16 remains open;
-completed flows do not establish full capability,
-secure interaction or packaged clean-Mac qualification.
+completed flows do not establish full capability, remaining lifecycle or packaged
+clean-Mac qualification. Stage 16H identity acceptance is recorded under
+[Secure interactions](#secure-interactions).
 
 This document owns native presentation, interaction and runtime boundaries.
 [Protocol V1](core/APPLICATION-INTERFACE.md) owns operations, selection, prerequisites,
@@ -115,8 +116,8 @@ accessibility and edge-case qualification does not reopen accepted functional UI
 
 Restore's reference hierarchy is **Domain → Items**. The top attention summary
 owns only affected areas and counts, with warning icons; it has no item-detail
-disclosure. Prerequisites separately explain execution requirements with compact,
-independently expandable rows: Ready when satisfied, visible status when blocked.
+disclosure. [Prerequisites](#prerequisites-and-consent) separately explain execution
+requirements through compact actionable rows; satisfied sections are omitted.
 The lower domain sections own concrete items and short user-facing reasons. Technical
 diagnostics belong in the existing Operation Log, without workflow disclosures or copy
 fallbacks. Across Capture, Restore and Environment Status, keep one short explanation
@@ -158,16 +159,10 @@ keeps **Workspace Folders** directly reachable in Advanced, including folder-onl
 Restore exposes captured folders in Advanced, including folder-only Bundles.
 Neither feature introduces general content transfer.
 
-**Implemented in Capture and Restore Selection:** ordinary eligible requirements
-default ON and all Advanced OFF. Both have native tri-state master checkboxes in
-the four section headers and the VS Code subgroup; macOS keeps six independent
-child selectors. Text Select All / Deselect All buttons are replaced by these
-scoped masters. Capture has separate ordinary and experienced section disclosure
-controls; Restore Selection retains its ordinary and Advanced controls.
-Expansion never changes selection or resets the other scope. Advanced-only Bundles
-remain explicitly selectable; an empty draft does not trigger automatic inclusion.
-Status always compares the complete saved reference, including Advanced, with
-collapsed differences/unsupported/attention preserved in summaries.
+Selection defaults, scoped masters and independent disclosure are defined once in
+the [Capture](#capture-review--selection-and-disclosure) and
+[Restore Selection](#restore-selection--visually-accepted) contracts below.
+Status compares the complete saved reference, including Advanced.
 
 **Workflow boundary:** Capture uses the hierarchy in Review and Confirmation;
 its Result summarizes publication without a category tree. Restore uses the hierarchy
@@ -186,23 +181,27 @@ No new application adapter, placeholder or separate engine is introduced.
 ## Macseed Native UI — Design & Interaction Contract
 
 This section owns the reusable visual and interaction contract, checked against
-the **local implementation on 2026-11-02**. Local source, successful builds and
+the **local implementation on 2026-11-06**. Local source, successful builds and
 fixture screenshots establish implementation evidence, not visual acceptance or
 packaged qualification. Product grouping remains governed by the decisions above;
-this contract does not authorize another workflow's redesign.
+this contract does not authorize another workflow's redesign. The workflow sections
+below own preparation, consent, execution and re-entry; they link here for UI rules.
 
 ### Approval boundaries
 
 | Status | Scope |
 |---|---|
-| **Implemented — Visually Accepted** | The Capture baseline, explicitly approved by the user on **2026-11-01**: Unified Accordion, all group and VS Code master checkboxes, 0/12/24/36 pt hierarchical indentation, shared ordinary and independent Advanced Expand/Collapse controls, VS Code presentation, Advanced styling, read-only Confirmation and the final minimal Result layout. Existing native foundation and scoped selection contracts remain accepted. |
+| **Implemented — Visually Accepted** | The Capture baseline, explicitly approved by the user on **2026-11-01**: Unified Accordion, scoped native masters/disclosures, shared hierarchy, read-only Confirmation and minimal Result. Existing native foundation and scoped selection contracts remain accepted. |
 | **Implemented — Visually Accepted** | Restore Selection, Preview, Progress and Result, explicitly approved by the user on **2026-11-01**. Acceptance includes the Bundle-scoped accordion and defaults, detailed read-only Preview, flat Progress/Result lists, completed Result labels/filtering and the corrected Stopped Result described below. |
 | **Implemented — Visually Accepted** | Environment Status: static section headings, expandable diagnostic categories, full matching/difference/attention visibility and adaptive numeric-badge columns. Explicit final approval: **2026-11-02**. |
 | **Implemented — Visually Accepted** | Home, Sidebar, compact General Settings, native About and consistent workflow naming/descriptions throughout the native UI. Explicit final approval: **2026-11-02**. |
 
 Native UI visual acceptance does not imply completion of future integration,
 end-to-end or release qualification, including packaging and clean-Mac validation.
-Remaining Stage 16/17 gates retain their separately documented status.
+Remaining Stage 16/17 gates retain their separately documented status. Later
+Capture Confirmation alignment, action-focused Preview cleanup and Tools &
+Dependencies changes are implemented locally and still await their own visual
+acceptance; the historical approvals do not automatically cover those refinements.
 
 ### Home and native navigation — Visually Accepted
 
@@ -222,15 +221,10 @@ Review in Rebuild, Verification and other action/state labels remain distinct.
 Workflow-facing progress, errors and footers use Check/Rebuild; item-level restore
 verbs and structured Core operation/diagnostic identifiers retain their meaning.
 
-The main window retains a **1000 × 700 pt content minimum**, **1200 × 800 pt**
-preferred size and **215 pt** native sidebar. Home's centered content caps at
-**1080 pt**. The hero uses a **112 pt** icon, **24 pt** horizontal gap, **32 pt**
-padding and **210 pt** minimum height. `WorkspaceActionLayout` uses three equal
-columns above its **660 pt** breakpoint, **16 pt** gaps and the tallest card's
-measured height; narrower contexts stack the cards. Cards retain **22 pt** padding,
-**16 pt** vertical gaps, **90 × 90 pt** icon slots, top-aligned title/description
-slots with **42 / 56 pt** minimum heights and **26 pt** bottom navigation controls.
-Wrapped text preserves shared content origins, colors and card geometry.
+The main window retains a **1000 × 700 pt content minimum**. Home uses a centered
+hero and three equal-height action cards; narrower contexts stack the cards.
+Wrapped titles/descriptions retain shared origins and usable navigation controls.
+Exact sizes and breakpoints belong to `WorkspaceActionLayout` and focused tests.
 
 The sidebar keeps Home's house and the existing blue/green/violet workflow icons.
 Settings remains below the navigation list, separated by a divider and using the
@@ -276,32 +270,13 @@ disclosures, independently of either master checkbox. Secure-only Capture remain
 available with every ordinary category deselected; Confirmation keeps the prepared
 secure scope read-only in the same shared hierarchy.
 
-The following are implemented point values, not proposed targets. They describe
-Review only. `CaptureReviewPresentation.hierarchyStep` is **12 pt**. Offsets apply
-once to each row's leading content, relative to the existing selection-column
-baseline, rather than accumulating padding on nested containers:
-
-| Review level | Examples | Additional leading offset | Selection-slot origin from container edge |
-|---|---|---:|---:|
-| 1 — Main group | Applications & Tools, macOS Settings, Application Extras, Advanced, Secure Transfer | 0 pt | 40 pt |
-| 2 — Domain / subgroup | Homebrew Packages, Finder, Git Configuration, VS Code | 12 pt | 52 pt |
-| 3 — Child domain / item | Extensions, Settings, package names, Git/folder items, SSH identities | 24 pt | 64 pt |
-| 4 — Nested item | Individual VS Code extensions | 36 pt | 76 pt |
-
-The 40 pt baseline is the existing **16 pt** row edge inset plus
-`CaptureChildRowGrid.leadingInset` (**24 pt**). Group headers reach the same baseline
-with a 12 pt leading chevron slot and 12 pt gap. Native checkbox glyphs sit within
-the slots below; item rows have no icon and retain their compact checkbox/text gap.
-The table does not imply identical text origins for icon-bearing domains and items.
-
-| Geometry | Current implementation |
-|---|---|
-| Leading controls | Group/subgroup: left chevron, checkbox, icon, title. Domain: checkbox, icon, title; its expandable disclosure stays at the far right. Only expandable rows have chevrons. `CaptureAccordionStyle` keeps the leading chevron stationary when the subgroup's selection slot is indented. |
-| Selection and icons | Group/domain checkbox slots are 28 pt wide; normally 28 pt high, with 48 pt slots for macOS category rows. Selection-to-icon and icon-to-title gaps are 12 pt; icons reserve 22 pt. Item checkbox slots are 20 × 28 pt, followed by an 8 pt text gap. |
-| Status rail | `CaptureRowColumns` reserves 200 pt for status, with a 12 pt title/status gap. The existing 26 pt trailing disclosure reservation and 16 pt right inset remain unchanged at every depth. Neutral status text reserves the same 22 pt icon slot plus 7 pt gap as diagnostic statuses. Indentation reduces leading-content space, not the status/disclosure position. |
-| Heights and spacing | Group/domain headers have a 48 pt minimum height, with 6 pt vertical padding inside `CaptureRowColumns`. Item labels have a 28 pt minimum height plus 2 pt padding above/below; long labels can wrap. Accordion member stacks use zero inter-row spacing; dividers retain 16 pt horizontal insets. |
-| Surfaces and list | `WorkspaceCardSurface` uses an 8 pt radius and quaternary border. `CaptureGroupedContent` spaces its principal blocks by 12 pt; `WorkflowList` uses 20 pt between its children. The workspace margin remains 28 pt. Advanced adds a neutral quaternary background at 0.2 opacity. |
-| Advanced separator | `WorkspaceSectionHeader` uses 13 pt semibold text, a 1.5 pt divider, 12 pt top and 4 pt bottom padding. Its disclosure control stays right-aligned on the same heading line. |
+Review and Restore Selection share the 0/12/24/36 pt hierarchy offsets defined by
+`CaptureReviewPresentation.hierarchyStep`. Indentation applies once to leading
+content, never to the status or disclosure columns. Group/subgroup chevrons are
+leading; domain disclosures are trailing; leaves have no disclosure without an
+action. Native checkbox slots remain independent of chevrons. Long labels wrap
+without clipping statuses or moving the trailing controls. Source components and
+focused tests own individual paddings, slot sizes, row heights and surface radii.
 
 Group titles use `.headline`; VS Code and domain titles use `.body.weight(.medium)`;
 item labels use `.body`. Status text is `.callout`, secondary counts/explanations
@@ -393,15 +368,11 @@ secure-only Capture. Both section headers and controls scroll with their content
 using the same disclosure scopes as Review; Back and Create Saved Environment stay
 fixed below the viewport.
 
-Preserve `CaptureIncludedSettingsList`, `CaptureCompactLabel` and
-`SettingsFlowLayout`: the flow places labels left-to-right, wrapping at available
-width, with **5 pt horizontal** and **4 pt row** gaps. Chips use `.callout`,
-**8 pt horizontal / 4 pt vertical** padding and a **5 pt** corner radius;
-included-settings and confirmation-item content retain their **36 pt leading /
-8 pt vertical** padding. Review's existing compact preference labels also retain
-this wrapping behavior. Do not apply the new Review indentation offsets to
-Confirmation, alter its row spacing/statuses or turn compact content into vertical
-item lists. Source membership and warnings remain distinct from selection UI.
+Preserve the compact wrapping labels supplied by `CaptureIncludedSettingsList`,
+`CaptureCompactLabel` and `SettingsFlowLayout`. Review indentation must not turn
+Confirmation into a vertical item list or change its statuses. Source membership
+and warnings remain distinct from selection UI; individual chip geometry belongs
+to source and focused tests.
 
 ### Capture Result — minimal publication outcome
 
@@ -411,8 +382,9 @@ then the Bundle filename, actual destination and **Reveal in Finder**. There is 
 repeated category tree, hidden full inventory or per-category success list.
 
 Publication with selected-scope limitations retains Save Complete and adds a
-separate amber **Needs Attention** card, followed only by affected selected
-categories and concise safe explanations with View Log guidance. Independent
+separate amber **Needs Attention** card counting distinct affected Core domains,
+followed only by affected selected categories and concise safe explanations with
+View Log guidance. Independent
 issues remain separate; duplicate evidence does not create extra issues.
 Unselected SSH observations and unsupported/unavailable inventory are not failed
 saved requirements. Missing selected evidence remains unverified, not an all-clear
@@ -468,26 +440,21 @@ There is no additional inline matching summary or zero-count card.
 observations/plans, not completed work or Verification. Manual App Store requirements
 are excluded from those metrics.
 
-The scrolling content starts with **Prerequisites** only when user attention is
-required, followed by **Manual Installation** only for missing/unverified App Store
-requirements, then nonempty **Automatic Rebuild Tasks** and **For Experienced Users**
-groups. Fix Issues remains a global action with its existing approval explanation.
-Satisfied/empty prerequisites have no section or reserved space; stale, pending
-and unknown evaluation never imply success. The execution-launch secure bridge
-requirement is not a failed environment evaluation. Operation availability keeps
-its existing explanation independently of prerequisite issues.
-Prerequisites retain category names, Action Required,
-specific reasons and their own disclosures; there is no standalone duplicate Action
-Required label or general Tasks heading. Blockers and operation availability remain
-Core-owned and visible.
+The scrolling content orders attention-requiring **Prerequisites**, required
+**Manual Installation**, then nonempty **Automatic Rebuild Tasks** and
+**For Experienced Users**. Satisfied/empty sections reserve no space.
+[Prerequisites and consent](#prerequisites-and-consent) owns readiness, Fix Issues
+and approval guidance; [Assisted App Store Restore](#assisted-app-store-restore)
+owns manual visibility and the separate review screen.
 
 `TaskDomainList` with `restorePreviewHierarchy` uses one ordinary accordion for
 Applications & Tools (Homebrew Applications / Packages), macOS Settings with its
 existing preference details, and Application Extras → VS Code → Extensions / Settings.
-Advanced uses the same domain order as Selection in a separate container. Only the
-effective selected plan supplies the display; matching-only leaves, subcategories
-and groups are hidden without changing that plan. Empty groups are hidden and unknown rows retain
-Other Findings. No dependency is added for visual symmetry. App Store stays solely
+Advanced uses the Selection domain order, beside selected Secure Transfer in the
+experienced container. Only the effective selected plan supplies the display;
+matching-only leaves, subcategories and groups are hidden without changing that plan.
+Empty groups are hidden and unknown rows retain Other Findings. No dependency is
+added for visual symmetry. App Store stays solely
 in Manual Installation when installation/review is required, even when no automatic
 tasks are visible, linking to the separate [manual screen](#assisted-app-store-restore).
 Confirmed **All Installed** inventories remain in the model but are hidden in Preview.
@@ -499,11 +466,13 @@ evaluated selection, no pending actions/problems and confirmed manual requiremen
 Its count includes the evaluated automatic and manual items. The existing no-op
 Rebuild gate remains unchanged; empty, failed and incomplete Preview cannot show it.
 
-Aggregate numeric badges appear only on Applications & Tools, macOS Settings,
-Application Extras and Advanced. Expanded intermediate categories omit a generic
-status only when it repeats their parent and visible leaves; collapsed or distinct
-conditions retain status text. Leaf actions/errors remain explicit. Group totals aggregate original plan rows, not child totals added
-again. All expandable automatic rows have far-right chevrons. Expand All / Collapse
+Nonzero **Planned** and **Attention** badges appear only on Applications & Tools,
+macOS Settings, Application Extras, Advanced and selected Secure Transfer. Green
+Match badges are omitted; matching totals remain in the summary. Expanded
+intermediate categories omit a generic status only when it repeats their parent
+and visible leaves; collapsed or distinct conditions retain status text. Leaf
+actions/errors remain explicit. Group totals aggregate original plan rows once.
+All expandable automatic rows have far-right chevrons. Expand All / Collapse
 All sits beside Automatic Rebuild Tasks (or For Experienced Users when it is the
 only visible group) and controls its group, VS Code, domain and
 macOS child disclosures together; it does not control Prerequisites or the manual
@@ -514,9 +483,8 @@ Preview has no selection or master checkboxes and no Capture-specific Ready to S
 Saved labels. Changes use **Back → Restore Selection → fresh Preview**. Refresh
 performs Core Prepare; Rebuild requires current prepared scope, readiness and explicit
 confirmation, with Core revalidation before mutation. Disclosure never prepares or
-executes work. The native scrollbar remains visible, with a Preview-only 18 pt
-trailing scroll-content margin and compensating −18 pt outer padding in the pinned
-layout, reserving scrollbar space without changing the content grid.
+executes work. The native scrollbar has reserved space without shifting the
+content grid; see [workflow layout](#workflow-layout-and-disclosure).
 
 ### Restore Progress — Visually Accepted
 
@@ -556,7 +524,9 @@ uses `RestoreResultSummary.attentionCaption`: evidenced restore issues, apps to 
 or apps to check, with correct plurals; incomplete issue counts use **Rebuild work
 needs review** rather than an invented number. Needs Attention appears only for
 confirmed attention items, a real uncounted issue or an unknown attention count;
-a clean zero-issue result omits it. The completion/Verification card always remains.
+a clean zero-issue result omits it. Unknown counts stay unnumbered. The completion/
+Verification card always remains; there is no separate Skipped summary card or
+Verification-details panel.
 Confirmed Stopped with Verification not run retains neutral **Not Run** presentation.
 
 `RestoreResultDetails` omits pre-existing matches and empty categories, retaining
@@ -595,31 +565,27 @@ and Core terminal evidence remain unchanged.
 
 ### Restore geometry — shared primitives and intentional differences
 
-These are source-defined dimensions, not a new layout specification. Selection
-shares the Capture geometry above; Preview and Result retain their detailed Restore
-columns rather than adopting Capture's compact confirmation chips or minimal Result.
+<a id="restore-result-columns"></a>
 
-| Element | Current components and measurements |
-|---|---|
-| Selection hierarchy | `CaptureReviewPresentation.hierarchyStep` is 12 pt: relative offsets 0/12/24/36 pt over the 24 pt `CaptureChildRowGrid` baseline. `RestoreAreaSelectionView` uses 28 pt checkbox slots, 12 pt gaps and 22 pt icons. `CaptureRowColumns` retains the 200 pt status rail, 12 pt column gap, 26 pt trailing disclosure reservation and 16 pt container inset. |
-| Selection disclosure | `CaptureGroupHeader` keeps group/subgroup chevrons left and domain disclosures right. Ordinary and Advanced `CaptureExpandButton` controls retain their separate scopes and 42 pt trailing inset. Selection masters are absent from Preview, Progress and Result. |
-| Surfaces and spacing | `WorkspaceCardSurface` has an 8 pt radius and quaternary border; workspace margin is 28 pt. Accordion rows have zero stack spacing and 16 pt divider insets. Advanced has a neutral quaternary background at 0.2 opacity and the existing warm header tint. `WorkspaceSectionHeader` uses 13 pt semibold (15 pt when prominent), 1.5 pt divider, 12 pt top / 4 pt bottom padding. |
-| Cards | `WorkspaceMetricCard` uses a 44 pt circle icon, 12 pt padding/gap and 8 pt radius. `WorkspaceThreeMetrics` uses 80 pt card height, 10 pt gaps and 220 pt minimum width in its horizontal fit, with a vertical fallback. Restore preserves its own titles, counts and explanations. |
-| Preview columns | `RestorePreviewRow`, `RestoreResultColumns`, `RestoreTrailingControls` and `RestoreTrailingReference` share measured Status / Count / Chevron alignment with Manual Installation. Status references use 200 pt; main groups allow natural status width beside their badges. Group leading reservation is 24 pt, plus 12 pt for VS Code; domain title offsets are 36 pt, or 48 pt under VS Code. Headers retain 48 pt minimum height. The automatic list uses 12 pt section spacing. |
-| Progress rows | Existing 48 pt minimum row height, 6 pt vertical / 16 pt horizontal padding, 12 pt horizontal gap and 200 pt status rail; narrow rows use the existing vertical fallback. No expandable tree or progress percentage is introduced. |
-| Result columns | Category headers retain 48 pt minimum height and 6 pt vertical padding. Result indentation remains 52 pt per nested category depth, plus 36 pt for item titles; items retain 28 pt minimum height and 7 pt vertical padding. Status references remain 200 pt, icons 22 pt with 7 pt text gap, chevrons 12 pt; count pills remain at least 32 × 23 pt. Narrow columns stack when the measured trailing lane leaves less than 180 pt for the title. |
+Selection shares Capture's hierarchy, native controls and 200 pt status rail.
+Preview and Result retain the same status measurement reference; main Preview
+groups can use natural status width beside their badges. They use
+`RestorePreviewRow`, `RestoreResultColumns`, `RestoreTrailingControls` and
+`RestoreTrailingReference` for measured **Status | Count | Chevron** alignment.
+Manual Installation shares Preview's status origin. Category, nested and leaf rows
+retain that origin through expansion; indentation affects titles only. Missing
+counts/chevrons retain reserved space. Counts occupy a separate rail, wrapping
+below the status when needed; narrow rows can place trailing controls below the
+title. Status text/icons remain readable and long names or larger text must not
+clip or overlap controls. Progress retains its compact non-expandable rows.
 
-`WorkspaceCategoryTitle` / `WorkspaceCategoryStyle`, native controls, SF Symbols,
-system typography and semantic colors remain shared. Group titles use `.headline`,
-domain/subgroup titles `.body.weight(.medium)`, statuses `.callout` and secondary
-explanations `.caption`. Prerequisites, operation activity, action details and
-independent Verification evidence intentionally make Restore more detailed than
-Capture. Implementation owners are [RestoreView.swift](../desktop/Macseed/Sources/RestoreView.swift),
-[RestoreModel.swift](../desktop/Macseed/Sources/RestoreModel.swift),
-[RestoreTasks.swift](../desktop/Macseed/Sources/RestoreTasks.swift) and
-[TaskComponents.swift](../desktop/Macseed/Sources/TaskComponents.swift), using the
-Capture/shared components linked above. No Core, Bundle or Protocol behavior follows
-from visual acceptance.
+System typography, semantic colors, native checkboxes, SF Symbols and surfaces
+remain shared. Restore keeps detailed prerequisites, execution and independent
+Verification evidence; it does not adopt Capture's compact Confirmation or minimal
+Result. Exact geometry belongs to [RestoreView.swift](../desktop/Macseed/Sources/RestoreView.swift),
+[TaskComponents.swift](../desktop/Macseed/Sources/TaskComponents.swift), the shared
+Capture components and focused [PresentationTests](../desktop/Macseed/Tests/PresentationTests.swift).
+Visual acceptance changes no Core, Bundle or Protocol contract.
 
 ### Environment Status — Visually Accepted
 
@@ -647,18 +613,11 @@ never run comparison or change the reference. Extras, excluded/no-requirement ro
 and extra-only categories retain their existing main-window visibility rules and
 remain in underlying evidence; independently supported problems are not filtered out.
 
-The Status-only `EnvironmentComparisonRowLayout` preserves the original **160–240 pt**
-trailing allocation until its measured badge rail needs more width. It shares the
-widest visible category/child count samples across sibling rows: **152 pt** for the
-status label, **8 pt** gap and the measured rail. Three minimum-width pills need
-**268 pt**, four **306 pt**; longer numbers are measured rather than clipped.
-One/two-badge rows retain the existing allocation when no sibling needs more.
-The caller separately reserves **16 pt** edge insets and **14 + 12 pt** for the
-chevron/gap; items reserve the same **26 pt**. Leading indentation remains **24 pt**
-per depth, reducing to **8 pt** in narrow text space, plus **34 pt** for nested items.
-Category rows retain **6 pt** vertical padding; items retain **7 pt** and a **28 pt**
-minimum height. Count pills keep their shared dimensions, typography and colors.
-Pinned content reserves an **18 pt** native-scrollbar margin without a second scroll view.
+The Status-only `EnvironmentComparisonRowLayout` shares the widest visible badge
+combination across sibling categories and children. Longer numbers expand the
+measured rail rather than clipping. Indentation affects names only; leaves reserve
+the same trailing disclosure space. Pinned content reserves room for the native
+scrollbar without a second scroll view. Source/tests own the numeric geometry.
 
 The [Status evidence/count contract](#status-presentation-and-counts), fixed footer,
 explicit Check Again and Bundle-only Review in Rebuild handoff are unchanged.
@@ -674,11 +633,11 @@ level of detail on all three workflows.
 | Workflow | Accepted presentation responsibility |
 |---|---|
 | **Capture** | Select supported state and create a saved environment; a minimal publication Result is appropriate. |
-| **Restore** | The implemented Selection, Preview, Progress and outcome-specific Result above are **Visually Accepted**. Preserve their detailed execution, prerequisite and Verification presentation; do not replace them with Capture's simplified Result. |
+| **Restore** | Selection, Preview, Progress and outcome-specific Result retain their accepted baseline and separately noted pending refinements. Preserve their detailed execution, prerequisite and Verification presentation; do not replace them with Capture's simplified Result. |
 | **Environment Status** | Visually accepted static sections and full read-only diagnostics: matching state, differences, unsupported/unavailable observations and independent problems remain distinguishable. It has no selection checkboxes and is not reduced to a single success card. |
 
-All three layouts are accepted. Their different selection, execution, prerequisite,
-publication and Verification responsibilities remain intentional; visual acceptance
+The accepted baselines retain distinct selection, execution, prerequisite,
+publication and Verification responsibilities; visual acceptance
 does not extend Core capabilities or close remaining qualification gates.
 
 ## Native appearance and Settings
@@ -745,7 +704,7 @@ Home is suppressed and not created behind it. Healthy, broken, unknown and
 unsupported configurations open normal Home without flashing setup. macOS 14 keeps
 normal Home launch and manual dependency guidance. Public scene launch/restoration
 controls prevent restoration from bypassing the initial gate. Setup becomes key;
-Not Now, native close, or a successful fresh Check Again opens Home. General offers
+Not Now, native close, or a successful fresh Check Again opens Home. Tools & Dependencies offers
 **Setup…** when Available, **Install…** for supported absence, and **Details…** for
 diagnostic states. Setup opened from Settings stays open after Check Again, keeps Home available,
 and returns focus to Settings on Done or native close. Available shows a positive
@@ -947,57 +906,21 @@ uses content states in one workspace, not mandatory wizard pages.
 1. Scan calls `capture_prepare` with `selection: null`. Indeterminate progress uses
    real Core phase messages, without numeric domain progress. Private staging does
    not replace ordinary Generated Configuration/Blueprint or rebuild the source Mac.
-2. Review uses Core inventory status and `selection_mode`. After each fresh Scan,
-   select eligible ordinary requirements; leave Advanced and unknown domains OFF.
-   This changes Desktop defaults only: Scan still observes the complete inventory.
-   Unavailable, observation-error and unsupported
-   rows stay unselected with reasons. Category-only rows have one checkbox and
-   read-only details; item domains support all/none/mixed selection and bulk actions.
-   Whole-category and subset selection never overlap. Empty scope disables saving
-   with **Choose supported state to capture**. Fully selected item domains send
-   whole-category V1 selection; partial domains send IDs. Oversized partial requests
-   fail visibly under the existing V1 limit and need a fresh scan/narrower selection.
-3. Review uses one ordinary bordered accordion containing **Applications & Tools**,
-   **macOS Settings** and **Application Extras**, plus one separate neutral **Advanced**
-   container. All four sections, nested VS Code and domains
-   start collapsed after every fresh Scan. Disclosures are independent; expanding
-   never selects, prepares or calls Core. Headers use a leading chevron, master checkbox, symbol,
-   title and eligible-selection status: All Selected, Partially Selected, Not
-   Selected, or Unavailable for an empty eligible scope. Parents add no requirements
-   or duplicate counts. Unknown domains remain visible as Other Findings and default OFF.
+2. Review follows the [selection/disclosure contract](#capture-review--selection-and-disclosure).
+   Core inventory owns status, eligibility, `selection_mode` and stable IDs. Scan
+   observes the complete inventory even though Advanced/Secure Transfer default off.
+   Whole-category and subset selection never overlap: fully selected item domains
+   use V1 category shorthand; partial selections send exact IDs. Empty scope disables
+   saving with **Choose supported state to capture**. Oversized partial requests
+   fail visibly under the existing V1 limit and require a fresh scan/narrower scope.
+   Unknown domains remain outside bulk selection. Desktop infers no dependency graph;
+   Core validates explicitly selected folder/base/parent dependencies.
 
-   Four section masters and the VS Code subgroup master replace text selection
-   buttons. Two shared disclosure controls cover ordinary and Advanced independently;
-   the [native UI contract](#macseed-native-ui--design--interaction-contract) owns their positions and Review-only geometry.
-   macOS retains six independent Finder, Dock, Windows, Keyboard, Trackpad and
-   Screenshots selectors; preference labels remain read-only. VS Code Extensions
-   retains item selection and Settings whole-category selection. Leading indentation
-   leaves domain statuses and trailing disclosure arrows aligned; long item labels
-   wrap. Review retains one scrolling list and a fixed action footer.
-
-   Unselected optional limitations do not become selection warnings. Selected
-   limitations and real observation errors remain visible; observation errors are
-   marked Scan Incomplete. Global metrics count selected limitations and all
-   observation errors, while a failed Scan retains its existing failure route.
-
-   **VS Code Workspace** retains `vscode-workspaces` and exact item IDs. Advanced
-   directly exposes Workspace Folders, including folder-only Capture. Explicit
-   Advanced master selection includes every eligible Advanced domain and
-   its items, including folders; clicking a mixed master completes that scope. Ordinary
-   actions and disclosure never select dependencies. Core inventory supplies no
-   dependency graph, so Desktop does not infer relationships or hide selectors.
-   Unknown domains stay outside bulk selection. Core Prepare still validates explicit
-   folder/base/parent dependencies and typed conflicts retain Review Selection.
-
-   Confirmation uses the same containers with only the authoritative prepared
-   scope, read-only child rows and Ready to Save section summaries. Result shows publication
-   outcomes and only affected selected categories. No synthetic
-   parent requirements or counts are added. Legacy Bundle and Restore are unchanged.
-   Secure Transfer is Advanced's sibling under For Experienced Users and starts off
-   on every Scan. Its existing master and individual checkboxes use actual Core
-   candidate IDs; Advanced bulk actions never change identities. No secure selection
-   sends `secure_identities: []` as before.
-4. A native save dialog chooses the destination; Desktop normalizes exactly one
+   Unselected optional limitations are not selection warnings. Selected limitations
+   and all real observation errors remain visible; the latter are **Scan Incomplete**.
+   Global metrics count selected limitations and all observation errors; failed Scan
+   retains its failure route. Secure IDs and counts stay separate from ordinary scope.
+3. A native save dialog chooses the destination; Desktop normalizes exactly one
    `.mbt` suffix, then prepares the chosen selection again. Inline confirmation
    shows destination and **Included in this capture**, without repeated aggregate
    counts. Wrapping neutral labels retain independent item/category warnings;
@@ -1007,42 +930,23 @@ uses content states in one workspace, not mandatory wizard pages.
    reapplied only by a new Scan. Whole domains
    remain whole; macOS details name selected subdomains, and VS Code Settings
    describes `settings.json` only. Fresh confirmation reflects newly observed scope.
-5. **Create Saved Environment** sends that preparation's ID. Execute rescans;
+4. **Create Saved Environment** sends that preparation's ID. Execute rescans;
    changed inventory requires fresh Review/confirmation, never a silent retry.
    Existing output requires explicit Replace in the Save Panel. Replacement is
    digest-bound; Core validates the new Bundle before atomic publication, preserving
    the old Bundle on failure. Stale preparation shows **Capture Preparation Is
    Outdated** and **Scan Again**, retaining `stale_prepared_capture` and cautious
    publication evidence. Failed/interrupted attempts also require a fresh scan.
-6. **Save Complete** requires validated successful Bundle publication. One green
-   outcome card contains the exact published domain/item counts. When selected
-   scope has qualified limitations, an adjacent amber **Needs Attention** card counts
-   distinct affected Core domains; cards stack only when the detail width cannot
-   accommodate both. The existing Bundle filename, destination and Reveal in Finder
-   follow immediately. A clean result ends there. A limited result adds only affected
-   category names and safe explanations with View Log guidance, without another
-   summary, repeated count, tree or nested item disclosures. Duplicate structured
-   facts appear once; independent issues remain separate. Unselected SSH observations
-   and unsupported/unavailable inventory do not become saved-scope problems. Missing
-   selected-category observation evidence remains Unverified despite confirmed
-   publication. Capture does not claim application health, target Restore or final
-   Verification. Failure/cancellation after publication retains the reported location
-   and publication fact without success, cleanup or rollback claims.
+5. The [publication Result](#capture-result--minimal-publication-outcome) requires
+   validated inclusion and consistent published domain/item counts. Core supplies no
+   omitted-item inventory/count. Failure/cancellation after publication retains the
+   reported location and publication fact without success, cleanup or rollback claims.
 
-Scan, Checking Your Environment and Saving Your Environment show compact Core
-phases, spinner and cancellation. There is no per-item publication progress, so
-no invented waiting task list. **Included in this capture** retains the authoritative
-prepared selection and independent ordinary/Advanced expansion. Underlying result
-facts still require confirmed domain inclusion and consistent published item counts;
-insufficient evidence never becomes a verified category. Core supplies no omitted-item
-inventory/count. These are capture facts, not target Verification.
-
-A clean Result fits the minimum 1000 × 700 pt window without detail scrolling.
-Only selected limitations add the optional attention section; longer warning lists
-use the existing scroll viewport. Primary actions remain
-outside scrolling content. Reveal in Finder sits beside the saved file; View Log is
-left, Capture Again then Done are right. Capture Again scans
-fresh; Done returns to initial Capture without scanning or switching tasks.
+Scan, Checking Your Environment and Saving Your Environment use real compact phases,
+spinner and cancellation; no per-item publication progress is invented. A clean
+Result fits the minimum window; longer attention lists use the existing viewport.
+View Log, Capture Again and Done remain fixed. Capture Again scans fresh; Done
+returns to initial Capture without scanning or switching tasks.
 
 Accepted real-Mac cases cover full/category/item capture, publication with and
 without warnings, Reveal in Finder, cancellation, stale preparation after source
@@ -1055,52 +959,44 @@ Secure SSH remains within Capture, not a Credentials area/password vault. The
 [16H Capture interaction](#secure-interactions) uses optional, default-off SSH identity
 selection and safe names/types/public fingerprints; identities are encrypted separately.
 Ordinary SSH configuration stays independent; ordinary Bundle data is private but
-unencrypted. Prepare neither unlocks nor proves key pairs. Missing secure tools
-permit guidance or continuing without identities; selecting none permits an
+unencrypted. Prepare neither unlocks nor proves key pairs. Missing/damaged bundled age
+requires rebuild/reinstall guidance, or continuing without identities; selecting none permits an
 ordinary Bundle. Passphrases use a focused native secure sheet.
 
 ## Workflow layout and disclosure
 
-Capture Review, Confirmation and Result; Restore Selection, Preview, Rebuild and
-Result; and Environment Status results keep fixed information, a scrolling workflow
-content region when needed, and the existing fixed action footer. Capture Review's
-ordinary disclosure control scrolls with its list; Advanced's control stays with
-its divider heading. Capture Result uses outcome cards and affected-category
-explanations, not a category tree.
-Manual Installation and Automatic Rebuild Tasks share Preview's list viewport.
-Preview keeps the global Fix Issues action and its approval guidance in the
-conditional Prerequisites section at the start of the scrolling list. Operation
-availability and required Manual Installation remain independently visible. A compact read-only notice sits beside the
-Rebuild Preview heading; Selection has no duplicate read-only notice.
-Headers and progress remain live while the list scrolls. Screens without a list
-retain their ordinary content layout. The supported minimum window stays 1000 × 700.
+Capture, Rebuild and Check retain fixed information, one scrolling content region
+when needed and a fixed action footer. Headers/progress remain live while the list
+scrolls. Screens without a list retain ordinary content layout. The supported
+minimum window is 1000 × 700 pt. Capture section headers and bulk disclosure
+controls scroll with their content; Review's experienced control is visible only
+while its container is open.
 
-Existing count pills share Restore's oval shape (minimum 32 × 23 pt, 6 pt horizontal
-insets and monospaced caption digits). Each tree reserves a common count rail and
-an independent rightmost disclosure position. Category status text, icons, colors and
-horizontal anchors remain unchanged; counts wrap below if space is limited.
-Manual Installation uses the same Preview status column as Automatic Rebuild Tasks.
-Matching-only Preview leaves are hidden; Status retains its plain green checkmark
-with the accessible name Already Matches. Category statuses retain their text. Compact Capture Result
-outcome cards and affected-category explanations wrap within the detail width.
-Leaf rows have no disclosure indicator without an expansion action. Selection
-checkboxes appear only for supported selection; checkbox/label hit targets remain
-separate from disclosure, and verified status checks remain distinct.
-Capture's textual item summaries remain text, and zero counts remain hidden.
+Manual Installation and Automatic Rebuild Tasks share Preview's viewport, following
+conditional Prerequisites. Fix Issues and its approval guidance stay in that section;
+operation availability remains independently visible. Preview's native scrollbar
+has reserved space without moving the content grid. Its read-only notice appears
+once beside the heading; Selection has no such notice.
 
-Expand All / Collapse All operates on stable IDs for its available scope (ordinary
-or experienced independently in Capture; ordinary or Advanced in Restore Selection),
-including Finder, Dock, Windows, Keyboard, Trackpad and Screenshots before their
-views are created. A partially open tree offers Expand All. Collapse All clears
-child disclosure state too. Selection, prerequisites, dialogs and Core operations
-are independent of these local presentation actions.
+Count pills share the existing oval shape (minimum 32 × 23 pt) and monospaced digits. Each tree reserves
+a common count rail and independent rightmost disclosure position, with wrapping
+as defined by the [shared geometry contract](#restore-geometry--shared-primitives-and-intentional-differences).
+Zero counts stay hidden; textual Capture summaries remain text. Check's matching
+leaves retain the accessible Already Matches checkmark, distinct from a checkbox.
+
+Expand All / Collapse All uses stable IDs, including macOS children before their
+views are created. A partially open tree offers Expand All; Collapse All clears
+child expansion. Scope is defined by each workflow's interaction contract above.
+Disclosure never changes selection, prepares work, starts secure input or calls Core.
 
 <a id="restore-a-mac"></a>
 
 ## Rebuild (Restore)
 
-**Choose Bundle → Selection → Preview → Rebuild → Result**. Inspection and
-Verification occur within these states; prerequisites do not add wizard pages.
+**Choose Bundle → Selection → Preview → Rebuild → Result**.
+**Selection = configure; Preview = read-only validation; Rebuild = execute.**
+Inspection and Verification occur within these states; prerequisites do not add
+wizard pages.
 
 ### Selection and fresh Preview
 
@@ -1110,38 +1006,19 @@ input shows **Can't Prepare Restore**, a typed reason and Choose Saved Environme
 neither proves readiness nor exposes private values. Restore requires the advertised
 V1 fine-selection capability; older Core gets an explicit compatibility state.
 
-**Restore Selection — implemented and Visually Accepted.** See the
-[accepted Selection contract](#restore-selection--visually-accepted).
-Core inventory owns modes, eligibility and stable IDs. The inspected Bundle is the
-maximum scope: absent or Capture-excluded requirements and empty presentation groups
-are hidden. Legacy inspection without presence flags requires affirmative captured
-scope evidence. Captured unsupported/unavailable requirements retain their diagnostics.
-Category-only domains remain whole; item domains permit whole/subset scope. Current
-Desktop sends `include_secure: false`; encrypted material is reported separately.
-
-Selection reuses the accepted Capture accordion and its 0/12/24/36 pt hierarchy,
-200 pt status rail and disclosure placement without changing Capture geometry.
-One ordinary container holds **Applications & Tools**, captured **macOS Settings**
-domains and **Application Extras → VS Code → Extensions / Settings**. The separate
-**Advanced** container holds captured Git Configuration, Git Repositories / Worktrees,
-Workspace Folders, SSH Configuration, Shell / Zsh and VS Code Workspace requirements.
-Unknown captured domains retain Other Findings. Group and VS Code tri-state masters
-affect only eligible captured descendants. Ordinary and Advanced Expand/Collapse All
-controls are independent; disclosure changes never change selection or call Core.
-
-Fresh inspection selects eligible ordinary requirements; Advanced and unknown domains
-start unselected. An Advanced-only Bundle needs explicit selection before Preview is
-available. Back, Refresh Preview and re-entry preserve deliberate choices; selection
-edits invalidate preparation through the existing lifecycle. Review cancellation
-compares against these initial defaults. Inspection does not provide individual macOS
-preference keys, so Selection displays only its actual aggregate domains. VS Code
-Workspaces retains per-descriptor stable IDs and safe names;
-missing folder/base/parent dependencies require explicit selection correction.
-Preview retains planned create/change, matching and conflict findings; Result uses
-the [accepted outcome-specific labels and filtering](#restore-result--visually-accepted).
-See the [descriptor contract](toolkit/CONFIGURATION.md#vs-code-workspace-descriptor-restoration--phase-5).
-Fully/partially/not-selected counts describe selectable Core categories,
+The [Selection contract](#restore-selection--visually-accepted) owns defaults,
+hierarchy and controls. Core inventory owns modes, eligibility and stable IDs.
+Legacy inspection without presence flags requires affirmative captured-scope
+evidence. Category-only domains remain whole; item domains permit whole/subset
+scope. Fully/partially/not-selected counts describe selectable Core categories,
 exclude unavailable categories and do not replace Preview item metrics.
+Secure Transfer defaults to `include_secure: false`; explicit opt-in selects the
+whole encrypted package under [Secure interactions](#secure-interactions).
+
+VS Code Workspace uses per-descriptor stable IDs and safe names. Missing
+folder/base/parent dependencies require explicit selection correction; no automatic
+inclusion expands the Bundle ceiling. See the
+[descriptor contract](toolkit/CONFIGURATION.md#vs-code-workspace-descriptor-restoration--phase-5).
 
 Selection status and Preview Rebuild stay in the fixed footer. Preparation shows
 indeterminate **Preparing Rebuild Preview**, explaining that target state is unchanged.
@@ -1154,31 +1031,9 @@ domains remain available for reselection; excluding SSH removes its prerequisite
 without weakening checks when selected. Back retains selection but requires fresh
 Prepare. Failed/cancelled/interrupted refreshes clear old Preview evidence.
 
-**Rebuild Preview — implemented; current refinement awaits visual acceptance.** Automatic
-Restore Tasks uses one ordinary accordion for Applications & Tools, macOS Settings
-and Application Extras → VS Code, plus an experienced container below
-For Experienced Users. Advanced and selected Secure Transfer are sibling rows in
-that container. Only relevant nonmatching domains from the effective plan appear; unknown domains
-retain Other Findings. Domain actions, statuses, diagnostics and nested macOS
-preference details retain their existing renderers. Numeric badges appear only on
-the four ordinary/Advanced main groups and the selected Secure Transfer sibling,
-aggregating original plan rows once; expanded intermediate rows omit only redundant
-generic statuses, retaining collapsed/distinct states and explicit leaf labels.
-The Secure Transfer extension has separate Stage 16H manual E2E acceptance;
-the historical ordinary Preview visual acceptance is unchanged. Automatic task disclosures use the far-right indicator without
-moving titles or status columns. Preview has no selection controls. Expand All /
-Collapse All sits beside Automatic Rebuild Tasks, or For Experienced Users when
-no ordinary tasks are visible, and retains its group, VS Code
-and macOS child scope. Prerequisites retain their category statuses, explanations
-and disclosures; the duplicate overall status and general Tasks heading are omitted.
-Section spacing is compact; Manual Installation, summary cards and footer remain.
-
-Nonzero summary cards are **Already Match → Changes Planned → Need Attention**.
-Nonzero Planned/Attention category badges use blue/amber; green numeric category badges are
-omitted. They count
-Core plan items once: child counts are not added again to their parent. Manual App
-Store requirements never inflate automatic metrics. Prerequisite summaries identify
-affected areas/counts; lower domains own concrete items and short reasons.
+The [read-only Preview contract](#rebuild-preview) owns current grouping, filtering,
+summary cards and disclosure. It renders the effective prepared scope without
+changing selection; manual App Store work stays outside automatic metrics.
 
 Preview exposes reported installs, settings writes, backups, clones/branch actions
 and restarts. Unknown observation is never a planned mutation. No private values,
@@ -1197,8 +1052,13 @@ lifecycle. See the [Workspace contract](toolkit/CONFIGURATION.md#topology-restor
 
 ### Prerequisites and consent
 
-All-satisfied or unneeded prerequisites have no Preview section. Independent actionable/manual
-conditions remain visible. Group only compatible domain/scope/reason/action records,
+All-satisfied or unneeded prerequisites have no Preview section or reserved space.
+Stale, pending and unknown evaluation never imply success. The execution-launch
+secure bridge requirement is not a failed environment evaluation. Core-owned
+operation availability retains its explanation independently of prerequisite issues.
+Visible prerequisite rows keep category names, Action Required, specific reasons
+and their own disclosures; no duplicate overall Action Required label is added.
+Independent actionable/manual conditions remain visible. Group only compatible domain/scope/reason/action records,
 without changing item counts or hiding independent problems. Core reports all cask
 conditions and the first operation-wide blocker in other domains; resolving one
 may reveal another. Do not imply exhaustive readiness.
@@ -1301,53 +1161,11 @@ executable Rebuild; manual issues do not block independent automatic work. Apple
 App Store owns installation/account authorization. MASHelper/XPC and automatic MAS
 installation remain retired, including deployment/registration paths.
 
-Result presents the execution outcome, then **Rebuild Summary**:
-the completion/Verification card always remains; Needs Attention appears only for
-confirmed attention items, a real uncounted issue or an unknown attention count.
-A clean zero-issue result omits Needs Attention. Complete / N Verified and the
-conditional Needs Attention card retain their evidence-based descriptions
-(apps to install, apps to check, restore issues or work needing review). Complete counts unique selected
-requirements that were planned for restoration and now have a visible Verified result;
-pre-existing matches are excluded. Unknown attention counts remain unnumbered.
-For partial, failed, interrupted or stopped execution, the first card says Verification
-instead of Complete; the authoritative outcome heading remains. Confirmed Stopped
-with Verification not run uses neutral Verification / Not Run. Completed execution
-with only manual work remains completed; real failure,
-partial/interrupted/stopped outcomes retain their meaning. No repeated attention
-section or separate Verification-details disclosure is added.
-
-Previously planned requirements remain visible as Verified even without mutation
-receipts. Verification counts final conformity, never inferred writes; item receipts
-and domain-level changes retain their original scope in diagnostics. Missing mutation
-receipts alone do not create Needs Attention. Successful categories display Complete;
-successful items display one Verified label, without duplicate action labels.
-Result keeps Needs Attention, Failed and Unverified, retaining relevant
-Skipped, Not Run and unknown outcomes. Execution details remain in diagnostics.
-A clean result with no changes or issues says no changes were needed.
-Stable requirement identities merge repeated operation/Verification consequences.
-Linked launcher diagnostics describe one current-operation issue; a destination
-conflict does not prove a foreign installation. Manual IDs count once and never as
-automatic successes. Independent category issues remain; uncertain independent issue
-counts omit the number. Unrun requirements and unreported restarts are not failures
-or successes. Models, logs and reports preserve conformity/completeness separately.
-
-Restore Progress and Result render existing domain rows in one flat container,
-without intermediate section headings, following the accepted Restore category order.
-**Details by Category** puts the App Store Applications row first when manual scope
-still needs attention. Result includes previously planned requirements with final
-outcomes, confirmed changes and outstanding or uncertain work. Requirements already
-matching before Restore and empty categories are omitted. Selected
-category-level diagnostics remain even when all their item rows are omitted. Manual
-App Store Result contains only the category, outstanding count, Needs Attention and
-Review App Store Apps; the dedicated screen owns app names and installation actions.
-Result categories start collapsed;
-Progress stays compact and retains its complete selected scope.
-Expand All / Collapse All and the fixed footer remain. Short explanations preserve
-independent problems; technical evidence belongs in View Log.
-Confirmed Stopped with no unknown consequences and Verification not run uses the
-neutral **Verification — Not Run** card and the attempted-work filter, excluding
-untouched requirements and unchecked manual apps. See the complete
-[accepted Result contract](#restore-result--visually-accepted) for outcome boundaries.
+Result uses the [outcome-specific presentation](#restore-result--visually-accepted):
+its App Store row offers Review App Store Apps and outstanding counts; names and
+installation actions remain on this manual screen. Manual IDs count once and never
+as automatic verified successes. Unchecked manual requirements are not confirmed
+problems in a stopped result.
 
 <a id="environment-status"></a>
 
@@ -1427,13 +1245,9 @@ counts; logs/reports retain their existing projections. Unavailable evidence is 
 zero. [Core comparison](core/APPLICATION-INTERFACE.md#verification-and-environment-status)
 owns provenance and provider-specific App Store absence; no cleanup/removal is implied.
 
-A shared lane covers categories, macOS children and leaves, retaining the baseline
-160–240 pt allocation and expanding to the measured visible badge combination as
-documented above. Indentation affects names only; sibling rows share the measured
-status/count alignment. Chevrons use
-a separate trailing rail. Result actions use the fixed footer; Choose/Failure
-controls stay with content, Cancel left below the process card. Whole-tree
-Expand/Collapse includes macOS children before views are created.
+The [Status layout](#environment-status--visually-accepted) owns aligned category,
+child and leaf rails. Result actions use the fixed footer; Choose/Failure controls
+stay with content, and Cancel sits below the process card.
 
 ### Bundle handoff
 
@@ -1521,17 +1335,13 @@ A supported item-local skip can produce **Partial Rebuild** only with
 confirmed independent success, consistent Verification and no unexplained failure.
 The original Core terminal failure remains available.
 
-Result keeps the operation outcome in its heading and the summary documented in
-the [accepted Result presentation](#restore-result--visually-accepted).
-Complete / N Verified counts only visible planned-and-verified automatic requirements,
-once per stable identity; pre-existing matches and manual work are excluded. Needs
-Attention uses an evidence-based caption, not a generic item total. The completion/
-Verification card always remains. Needs Attention appears only for confirmed attention
-items, a real uncounted issue or an unknown attention count; a clean zero-issue result
-omits it. Unknown counts remain unnumbered. There is no separate Skipped summary card or
-Verification-details panel. Confirmed Stopped with Verification not run and no unknown
-consequences uses neutral Verification / Not Run and only reported work or independent
-problems; absence of evidence for untouched requirements is not a failure count.
+The [Result interaction contract](#restore-result--visually-accepted) owns visible
+cards, labels and filtering. Stable requirement identities merge repeated operation
+and Verification consequences. Linked launcher diagnostics describe one current-
+operation issue; a destination conflict does not prove a foreign installation.
+Independent category issues remain visible even without item rows; uncertain counts
+stay unnumbered. Models, logs and reports preserve conformity and completeness
+separately from execution outcomes.
 
 Category/item counters still classify evidenced plan rows into disjoint Success,
 Needs Attention and neutral Skipped. Applied/Already Matches without Verification
@@ -1541,6 +1351,10 @@ neutral skips need an eligible reported reason. Not Run/unestablished rows are n
 failed/skipped and do not manufacture numeric outcomes. Coverage gaps and incomplete
 scope remain visible; global Mismatch/Unverified/Unresolved totals and terminal
 codes stay in model/log/report evidence without becoming extra workflow cards.
+Execution records must match both plan action and item. Unreported auxiliary restart
+rows are hidden/countless only when no specific or unexplained scope failure needs
+them; never infer Apply or Verification. Current failure/block/conflict takes
+priority over earlier Apply without discarding that fact.
 
 Confirmed user Stop/Force Stop intent is kept only for the current operation ID in
 memory: Stopped by User requires a matching handled stop outcome; Force Stop Requested
@@ -1572,20 +1386,12 @@ remains authoritative. User stop with incomplete termination evidence is
 Interrupted/Unknown, not a confirmed Stopped result. Cancellation before execution
 remains Cancelled. No result promises rollback or whole-Mac identity.
 
-## Restore Result columns
-
-Restore Result's **Details by Category** uses one result-only row layout with
-reserved **Status | Count | Chevron** columns across categories, nested settings
-and individual items. Missing counts or chevrons retain their cells; left title
-indentation still indicates hierarchy. Text wraps within its column as width or
-text size changes. Status classification is unchanged; Preview and Capture use the shared workflow
-layout described above while retaining their own status and summary semantics.
-
 ## Recent Restore qualification and performance
 
 Qualification is bounded by selected scope and observed evidence. Accepted Capture,
 Restore/Result, Bundle Status/handoff, shared UI and Operation Logs do not close
-Stage 16H, remaining 16I/16K, Stage 3C recovery or packaged clean-Mac gates.
+remaining 16I/16K, Stage 3C recovery or packaged clean-Mac gates. Completed
+[Stage 16H identity acceptance](#secure-interactions) has its own bounded evidence.
 
 | Retained evidence | What it establishes / does not establish |
 |---|---|
@@ -1631,27 +1437,11 @@ visual effects, authentication or installer recovery.
 
 ## Desktop Visual Unification — Completed
 
-The original Environment Status foundation supplied shared category vocabulary,
-icons, surfaces and disclosures. **Native UI Alignment is now complete and visually
-accepted on 2026-11-02** across Home, Sidebar, Settings/About, Capture, Restore and
-Status. The [native UI contract](#macseed-native-ui--design--interaction-contract)
-records the final workflow-specific layouts and naming; it does not require
-identical trees or reopen accepted screens. No Core selection,
-execution or Verification semantics change with layout. Running Restore rows remain
-compact/non-expandable; terminal rows start collapsed and expose safe plan names
-plus item-local evidence, including stopped/failed outcomes. Expansion runs no Core
-operation. macOS children retain independent disclosure and exact shared labels.
-
-Each terminal item contributes to at most one Success, Needs Attention or Skipped
-counter. Verified takes precedence over Applied; Applied/Already Matches without
-Verification is explicitly unverified. Current failure/block/conflict takes priority
-over earlier Apply without discarding that fact. Execution records match both plan
-action and item. Outcome Unknown and confirmed Not Run create no numeric outcome.
-Unreported auxiliary restart rows are hidden/countless only when no specific or
-unexplained scope failure needs them; never infer Apply or Verification. Category-only
-coverage and independent problems remain visible. Running categories have no redundant
-lower warning banner; Stop uses neutral Stopping Rebuild wording. Long installer waits
-remain a lifecycle limitation, not a reason to alter presentation timeouts.
+**Native UI Alignment was visually accepted on 2026-11-02** across Home, Sidebar,
+Settings/About, Capture, Restore and Status. The [approval boundaries](#approval-boundaries)
+distinguish that baseline from later refinements awaiting acceptance. Current
+interaction contracts above and [Result evidence](#restore-result-contract) own
+behavior; this milestone does not close remaining lifecycle or release gates.
 
 <a id="restore-cancellation-safety"></a>
 
@@ -1742,8 +1532,8 @@ rebuild, without an extra blocking modal. The fresh Preview is the safety gate.
 ## Secure interactions
 
 **Stage 16H SSH Identities — COMPLETED (2026-11-05).** The user accepted the
-following manual E2E results; this final pre-commit check records that evidence
-without repeating the real-user SSH workflows:
+following manual E2E results. This retained evidence does not require repeating
+real-user SSH workflows during documentation maintenance:
 
 | Accepted manual check | Result |
 | --- | --- |

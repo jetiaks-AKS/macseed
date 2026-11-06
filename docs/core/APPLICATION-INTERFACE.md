@@ -15,7 +15,9 @@ modules/core/application-interface/core.sh [--secure-fd N]
 Send one JSON object on stdin and close it. Core emits JSONL events on stdout;
 stderr is not protocol transport. The launcher resolves the repository root;
 production children run from that root. Python 3 must be available. Installed-app
-runtime and writable-state placement are still Stage 16 work.
+runtime packaging and private writable-state placement remain open under
+[Stage 17](../DISTRIBUTION.md); native integration hardening remains
+tracked in [Roadmap](../../ROADMAP.md#stage-16--native-macseed-desktop).
 
 Requests require `protocol_version: 1`, `operation_id` and `operation`.
 All operations except `capabilities` require `parameters`. Only the specified

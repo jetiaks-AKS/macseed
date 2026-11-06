@@ -38,12 +38,13 @@ Uncommitted edits and validation results in one worktree do not automatically ap
 to another. Removing a worktree folder through Finder leaves Git registration
 behind; finish with `git worktree remove` after the checks below.
 
-## Current local example
+<a id="current-local-example"></a>
 
-**Current development environment — local example, not a required repository layout.**
+## Historical local example — 21 October 2026
 
-Snapshot: **21 October 2026, after Assisted worktree removal and milestone
-publication**. Reinspect before relying on this state.
+This dated snapshot records the environment after Assisted worktree removal and
+milestone publication. It is neither a current checkout inventory nor a required
+layout. Reinspect paths, refs, untracked files and Launcher ownership before use.
 
 | Directory | Branch | Purpose |
 |---|---|---|
@@ -51,20 +52,22 @@ publication**. Reinspect before relying on this state.
 | `~/Projects/macseed-develop` | `develop` | Primary permanent development checkout. |
 | `~/Projects/bootstrap-branch-test` | Unconfirmed | Separate old directory; do not classify without inspection. |
 
-`macseed-assisted` has been removed with `git worktree remove`. The retained
-`feat/assisted-appstore-restore` branch points to `0a344696` and is fully integrated
-into `develop`. At the post-cleanup milestone baseline, `develop` and
-`origin/develop` were synchronized at `e75a00f`; later documentation commits advance
-them normally. `main` was unchanged. Recheck live refs before starting work.
+At that snapshot, `macseed-assisted` had been removed with `git worktree remove`.
+The retained `feat/assisted-appstore-restore` branch pointed to `0a344696` and was
+fully integrated into `develop`; `develop` and `origin/develop` were synchronized
+at `e75a00f`, with `main` unchanged. These SHAs are historical evidence, not current
+branch positions. Recheck live refs before starting work.
 
-The shared Git directory is `~/Projects/macseed/.git`. Removing or moving that
-directory without a dedicated migration breaks the other worktrees. An archived
-branch does not make its hosting directory disposable.
+The shared Git directory was `~/Projects/macseed/.git`. Always locate the actual
+shared directory with `git rev-parse --git-common-dir`: removing or moving it
+without a dedicated migration breaks dependent worktrees. An archived branch
+does not make its hosting directory disposable.
 
-The archive worktree retains **13 untracked files** outside its Git commit.
-Historical materials are also preserved in a private archive outside the
-repository. A branch or commit alone does not preserve untracked files; do not
-delete them as part of routine worktree cleanup.
+That archive worktree held **13 untracked files** outside its Git commit; historical
+materials had also been preserved in a private archive outside the repository.
+This is not a current file count or proof that a backup still exists. A branch or
+commit alone does not preserve untracked files; do not delete them during routine
+worktree cleanup.
 
 ## Development sequence
 
@@ -195,9 +198,10 @@ Never remove a checkout while the active Launcher points to it, overwrite anothe
 checkout's symlink by bypassing the installer's protections, or use the archived
 Automatic MAS checkout as the active CLI. See [CLI](../toolkit/CLI.md) for usage.
 
-Confirmed in the snapshot above:
+Confirmed only in the **21 October 2026 snapshot** above:
 `/opt/homebrew/bin/bs` → `~/Projects/macseed-develop/bin/bs`.
-The Launcher has already moved and its ownership check passed.
+The Launcher had moved and its ownership check passed at that time; inspect its
+current target before relying on this historical example.
 
 ## Automatic MAS archive
 

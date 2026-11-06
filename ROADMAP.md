@@ -35,7 +35,7 @@ owns the implemented application contract.
 ## Stage 16 — Native Macseed Desktop
 
 **In progress.** Completed slices do not establish full Restore qualification,
-secure integration or packaged clean-Mac readiness. Slice IDs are historical
+remaining native integration or packaged clean-Mac readiness. Slice IDs are historical
 identifiers, not execution order. The historical Homebrew baseline is `778b816`,
 with subsequent real-Mac qualification (2026-10-17). Assisted App Store Restore is
 completed and integrated into `develop`; later product gates remain open.
@@ -101,8 +101,10 @@ Native UI Alignment is implemented and explicitly visually accepted on 2026-11-0
 It and the subsequent Homebrew Setup implementation are published on `develop`
 through `ac6c5bd`. At that baseline, [CI #135](https://github.com/jetiaks-AKS/macseed/actions/runs/41678025367)
 passed lint and all four regression shards, but Desktop compilation failed before
-tests ran. Visual acceptance, retained local validation and hosted qualification
-remain distinct; no new full-local-PASS or hosted Desktop acceptance is inferred.
+tests ran. Subsequent compilation/assertion repairs passed
+[CI #137](https://github.com/jetiaks-AKS/macseed/actions/runs/41773961712) at `716dbfed`.
+These are historical baselines, not current-HEAD validation. Visual acceptance,
+local tests, hosted CI and release qualification remain distinct.
 
 [Workspace Phase 6 and bounded Core E2E](#complete-workspace--git-worktree-restoration)
 remain accepted: read-only comparison, **6/6 Verification and 6/6 Comparison**,

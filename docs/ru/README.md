@@ -99,11 +99,17 @@ working trees и пользовательские файлы не копирую
 
 Core/CLI 3.4.0 включает Bundle Capture/Restore, Secure Migration, Global
 Verification, `bs compare` и завершённый Protocol V1. В Desktop реализованы
-основные потоки, Result UI и приватная диагностика; Secure SSH bridge, оставшаяся
-проверка recovery/runtime и подписанной поставки на чистом Mac ещё открыты.
+основные потоки, Result UI и приватная диагностика. Stage 16H SSH Identities завершён:
+автоматический и ручной внешний Capture → Rebuild → Verification приняты в
+поддерживаемой области. Перенос требует явного выбора; ключи зашифрованы в
+`secure.age` и восстанавливаются в `~/.ssh` без перезаписи существующих файлов.
+Полное SSH Configuration и пользовательские назначения остаются планом следующего
+функционального этапа — SSH Environment Completion — Developer Environment Closure.
+Recovery/runtime и подписанная самостоятельная поставка на чистом Mac ещё не квалифицированы.
 App Store Restore использует assisted flow; Automatic MAS выведен из активной
-разработки. Desktop CI завершён; следующий этап — Workspace & Git Worktree
-Restoration. Актуальный порядок — в [ROADMAP.md](../../ROADMAP.md).
+разработки. Завершённый этап Desktop CI не подтверждает каждый последующий коммит
+или готовность релиза. Актуальный порядок и границы квалификации — в
+[ROADMAP.md](../../ROADMAP.md); английская документация остаётся основной.
 
 ## Поддержка
 

@@ -18,8 +18,9 @@ builds a Blueprint from the confirmed selection.
 
 Desktop calls the captured `.mbt` a **Saved Environment**: scan, choose supported
 categories/items, choose a new destination, confirm freshly prepared scope and
-save. Category-only domains stay whole; private SSH identities remain outside
-Stage 16E. See [Desktop](DESKTOP.md#capture-this-mac) for presentation and
+save. Category-only domains stay whole; private SSH identities use the separate
+[completed Stage 16H flow](#secure-identities). See
+[Desktop](DESKTOP.md#capture-this-mac) for presentation and
 [Environment Status](DESKTOP.md#environment-status) for implemented Bundle comparison.
 
 Restore installs tools/applications, clones repositories from recorded remotes,
@@ -77,8 +78,10 @@ portable.
 
 ## Prepare, apply and re-entry
 
-Restore validates, narrows and previews staged state before Apply. Preview does
-not decrypt identities or change target configuration. After confirmation,
+Restore validates, narrows and previews staged state before Apply. Ordinary
+`restore_prepare` does not decrypt identities; selected Desktop Secure Transfer
+adds the separate authenticated [read-only comparison](#secure-identities).
+Neither preparation nor comparison changes target configuration. After confirmation,
 supported Restore Execute publishes ordinary local Generated Configuration and
 Blueprint, applies the selected state and reports Verification. Later Workflow
 uses that local state.
