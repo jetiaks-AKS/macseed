@@ -46,6 +46,10 @@ struct RestoreAreaSelectionView: View {
                 }
             }
             if Self.hasDisclosure(area) && (expansion?.wrappedValue ?? expanded) {
+                if let description = Self.selectionDescription(area.id) {
+                    Text(description).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                        .padding(.leading, hierarchyIndent + 40).padding(.vertical, 4)
+                }
                 if area.selectable && area.selectionMode == "items" {
                     ForEach(area.items) { item in
                         CaptureItemSelectionRow(title: item.label, included: Binding(
@@ -62,6 +66,13 @@ struct RestoreAreaSelectionView: View {
         }.padding(.leading, 16 + CaptureChildRowGrid.leadingInset).padding(.trailing, 16)
     }
     static func hasDisclosure(_ area: CoreRestoreInspection.Area) -> Bool { !area.items.isEmpty }
+    static func selectionDescription(_ id: String) -> String? {
+        switch id {
+        case "workspace-folders": "Recreates folder structure only. Files aren't transferred."
+        case "git-repositories": "Recreates supported repositories and worktrees from remotes. Local changes aren't transferred."
+        default: nil
+        }
+    }
     private var header: some View {
         CaptureRowColumns(title: title, status: status)
     }

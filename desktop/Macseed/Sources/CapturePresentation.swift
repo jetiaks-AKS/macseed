@@ -38,6 +38,15 @@ enum CaptureHierarchy {
         ["vscode-extensions": "Extensions", "vscode-settings": "Settings", "git-repositories": "Git Repositories / Worktrees",
          "shell-zsh": "Shell / Zsh", "vscode-workspaces": "VS Code Workspace"][id] ?? fallback
     }
+    static func selectionDescription(_ id: String) -> String? {
+        switch id {
+        case "workspace-folders": "Saves folder structure only. Files aren't included."
+        case "git-repositories": "Saves repository and worktree setup. Local changes aren't transferred."
+        case "ssh-configuration": "Saves supported SSH host profiles. SSH keys use Secure Transfer."
+        case "vscode-workspaces": "Saves supported workspace references, not project files."
+        default: nil
+        }
+    }
     static func disclosureIDs(_ ids: [String], scope: CaptureSelectionScope) -> Set<String> {
         var result = Set(ids.filter { scope.contains($0) || (scope == .ordinary && ["macos-settings", "macOS Settings"].contains($0)) })
         let groups = Set(result.map { Self.group(for: $0) })
@@ -294,6 +303,11 @@ struct CaptureGroupedContent<Row: Identifiable, RowContent: View>: View where Ro
                 }
                 if experiencedVisibility?.wrappedValue != false {
                     VStack(alignment: .leading, spacing: 0) {
+                        if experiencedVisibility != nil {
+                            Text("Git, SSH, shell, and developer workspaces.")
+                                .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                                .padding(.horizontal, 16).padding(.vertical, 8)
+                        }
                         if !advanced.isEmpty { accordion(.advanced, rows: advanced) }
                         if !advanced.isEmpty && secureTransferGroup != nil { Divider().padding(.horizontal, 16) }
                         if let secureTransferGroup { secureTransferGroup }
@@ -455,6 +469,10 @@ struct CaptureCategorySelectionView: View {
                 } else { header.padding(.trailing, 26).frame(minHeight: 48) }
             }
             if Self.hasDisclosure(category) && (expansion?.wrappedValue ?? expanded) {
+                if let description = CaptureHierarchy.selectionDescription(category.id) {
+                    Text(description).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                        .padding(.leading, hierarchyIndent + 40).padding(.vertical, 4)
+                }
                 if category.itemSelectable {
                     ForEach(category.display.items) { item in
                         CaptureItemSelectionRow(title: item.title, included: Binding(
