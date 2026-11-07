@@ -36,7 +36,7 @@ class CaptureTests(unittest.TestCase):
         (self.root / 'bin/sw_vers').write_text('#!/bin/bash\necho 26.7.1\n')
 
 
-    def fixture(self, real=False, workspace=False):
+    def fixture(self, real=False, workspace=False, ssh=False):
         (self.project / 'scripts').mkdir(exist_ok=True)
         shutil.copy2(ROOT / 'scripts/ssh-identity-migrate.sh', self.project / 'scripts/ssh-identity-migrate.sh')
         self.home.chmod(0o700)
@@ -66,7 +66,8 @@ esac
                         'export_trackpad_settings', 'export_screenshots_settings')
             entry.write_text(entry.read_text().replace(marker, marker + '\n'.join(
                 name + '() { return 1; }' for name in disabled
-                if not (workspace and name == 'discover_workspace')) + '\n'))
+                if not (workspace and name == 'discover_workspace')
+                and not (ssh and name == 'discover_ssh_configuration')) + '\n'))
         self.selection = {'categories': ['homebrew-packages'], 'items': {}, 'secure_identities': []}
 
     def invoke_capture(self, operation='capture_prepare', selection=None, extra=None, channel=None, timeout=30):
@@ -92,6 +93,100 @@ esac
         return self.invoke_capture('capture_execute', selection or self.selection,
                                    {'expected_prepared_capture_id': prepared,
                                     'destination': str(destination or self.root / 'captured.mbt')}, timeout=timeout)
+
+    def ssh_fixture(self, suffix=b''):
+        self.fixture(ssh=True)
+        directory = self.home / '.ssh'
+        directory.mkdir(mode=0o700)
+        target = directory / 'config'
+        target.write_bytes(b'Host github\n HostName github.invalid\n User git\n Port 22\n'
+                           b'Host production\n HostName production.invalid\n User deploy\n' + suffix)
+        target.chmod(0o600)
+        return target
+
+    def test_ssh_host_capture_subset_full_empty_and_readonly_check(self):
+        target = self.ssh_fixture()
+        original = target.read_bytes()
+        row = next(row for row in self.prepare()['inventory'] if row['domain'] == 'ssh-configuration')
+        self.assertEqual(row['selection_mode'], 'items')
+        self.assertEqual([entry['label'] for entry in row['items']], ['github', 'production'])
+        chosen = {'categories': [], 'items': {'ssh-configuration': [row['items'][0]['item_id']]}, 'secure_identities': []}
+        prepared = self.prepare(chosen)
+        self.assertEqual(prepared['summary'], dict(selected_domains=1, selected_items=1, secure_identity_count=0))
+        result, events = self.execute(prepared['prepared_capture_id'], chosen)
+        self.assertEqual(result.returncode, 0, events)
+        self.assertEqual(events[-2]['data']['bundle']['selected_item_counts']['ssh-configuration'], 1)
+        archive = self.root / 'captured.mbt'
+        files = bundle.validate_archive(archive)
+        version, status, excluded, profiles = bundle.ssh_snapshot(files['generated/ssh/config.snapshot'])
+        self.assertEqual((version, status, excluded, list(profiles)), (1, 'ready', 0, ['github']))
+        self.assertEqual(profiles['github'], [('hostname', 'github.invalid'), ('user', 'git'), ('port', '22')])
+        self.assertNotIn('secure.age', files)
+        self.assertEqual(target.read_bytes(), original)
+        # Check reads only saved profiles. An omitted Host may differ locally.
+        target.write_bytes(original.replace(b'production.invalid', b'changed.invalid'))
+        before = target.stat()
+        request = dict(protocol_version=1, operation_id='ssh-check', operation='environment_compare',
+                       parameters=dict(bundle_path=str(archive)))
+        result = subprocess.run(['bash', str(self.project / 'modules/core/application-interface/core.sh')],
+                                cwd=self.project, env=self.environment, input=json.dumps(request).encode(), capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stdout)
+        checked = [json.loads(line) for line in result.stdout.splitlines()]
+        rows = [row for row in checked[-2]['data']['comparison_records'] if row['domain'] == 'ssh-configuration']
+        self.assertEqual([row['comparison_kind'] for row in rows], ['matching'])
+        self.assertEqual(target.stat().st_mtime_ns, before.st_mtime_ns)
+        for index, selection in enumerate((dict(categories=['ssh-configuration'], items={}, secure_identities=[]),
+                                          dict(categories=[], items={'ssh-configuration': []}, secure_identities=[]))):
+            with self.subTest(selection=selection):
+                prepared = self.prepare(selection)
+                destination = self.root / f'scope-{index}.mbt'
+                result, events = self.execute(prepared['prepared_capture_id'], selection, destination)
+                self.assertEqual(result.returncode, 0, events)
+                saved = bundle.validate_archive(destination)
+                if index == 0:
+                    self.assertEqual(list(bundle.ssh_snapshot(saved['generated/ssh/config.snapshot'])[3]), ['github', 'production'])
+                else:
+                    self.assertNotIn('generated/ssh/config.snapshot', saved)
+                    self.assertFalse(bundle.parse_blueprint(saved['blueprint.conf'])[1]['ssh-configuration'])
+
+    def test_ssh_host_capture_partial_coverage_and_v2_preserved(self):
+        self.ssh_fixture(b' IdentityFile ~/.ssh/deploy\nHost excluded\n HostName excluded.invalid\n ProxyCommand forbidden\n')
+        row = next(row for row in self.prepare()['inventory'] if row['domain'] == 'ssh-configuration')
+        self.assertEqual(row['reason'], 'source_partial')
+        self.assertEqual(len(row['items']), 2)
+        chosen = dict(categories=[], items={'ssh-configuration': [row['items'][0]['item_id']]}, secure_identities=[])
+        result, events = self.execute(self.prepare(chosen)['prepared_capture_id'], chosen)
+        self.assertEqual(result.returncode, 0, events)
+        files = bundle.validate_archive(self.root / 'captured.mbt')
+        self.assertEqual(bundle.ssh_snapshot(files['generated/ssh/config.snapshot'])[:3], (2, 'partial', 1))
+        self.assertEqual(list(bundle.ssh_snapshot(files['generated/ssh/config.snapshot'])[3]), ['github'])
+        self.assertEqual(bundle.validate_ssh(files), {'ssh-configuration': 2})
+
+    def test_ssh_host_capture_stale_ids_scope_and_ambiguous_source(self):
+        target = self.ssh_fixture()
+        row = next(row for row in self.prepare()['inventory'] if row['domain'] == 'ssh-configuration')
+        chosen = dict(categories=[], items={'ssh-configuration': [row['items'][0]['item_id']]}, secure_identities=[])
+        plan = self.prepare(chosen)['prepared_capture_id']
+        for invalid in ('unknown-host', row['items'][0]['item_id'].upper()):
+            selection = dict(chosen, items={'ssh-configuration': [invalid]})
+            result, events = self.invoke_capture(selection=selection)
+            self.assertEqual(result.returncode, 2, events)
+            self.assertEqual(events[-1]['data']['code'], 'invalid_selection')
+        for selection in (dict(chosen, categories=['ssh-configuration'], items={}),
+                          dict(chosen, items={'ssh-configuration': [row['items'][1]['item_id']]})):
+            result, events = self.execute(plan, selection)
+            self.assertEqual(result.returncode, 2, events)
+            self.assertEqual(events[-1]['data']['code'], 'stale_prepared_capture')
+        target.write_bytes(target.read_bytes().replace(b'production.invalid', b'changed.invalid'))
+        result, events = self.execute(plan, chosen)
+        self.assertEqual(events[-1]['data']['code'], 'stale_prepared_capture')
+        self.assertFalse((self.root / 'captured.mbt').exists())
+        target.write_bytes(target.read_bytes() + b'Host GITHUB\n HostName collision.invalid\n')
+        row = next(row for row in self.prepare()['inventory'] if row['domain'] == 'ssh-configuration')
+        self.assertEqual((row['status'], row['items']), ('unsupported', []))
+        result, events = self.invoke_capture(selection=chosen)
+        self.assertEqual(result.returncode, 2, events)
+        self.assertEqual(events[-1]['data']['code'], 'capture_source_unavailable')
 
     def test_inventory_absence_error_privacy_and_determinism(self):
         self.fixture()

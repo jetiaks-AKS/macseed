@@ -56,14 +56,17 @@ def inventory(files):
     sources = {}
     for domain in (*bundle.SELECTABLE_ITEMS, *bundle.CATEGORIES):
         items = sections.get(domain, [])
+        if domain == 'ssh-configuration' and categories[domain]:
+            items = list(bundle.ssh_snapshot(files['generated/ssh/config.snapshot'])[3])
         if domain == 'workspace-folders':
             items = [value for value in items if folders.get(value) == 'workspace']
         sources[domain] = {identity(domain, source): source for source in items}
         if len(sources[domain]) != len(items):
             raise bundle.Invalid('ambiguous Restore selection inventory')
-        available = bool(items) if domain in bundle.SELECTABLE_ITEMS else categories[domain]
+        item_mode = domain in bundle.SELECTABLE_ITEMS or (domain == 'ssh-configuration' and bool(items))
+        available = bool(items) if item_mode else categories[domain]
         rows.append({'domain': domain, 'label': LABELS[domain],
-                     'selection_mode': 'items' if domain in bundle.SELECTABLE_ITEMS else 'category',
+                     'selection_mode': 'items' if item_mode else 'category',
                      'availability': 'available' if available else 'unavailable',
                      'capture_selected': bool(categories.get(domain, False) or sections.get(domain, [])),
                      'source_present': 'generated/' + (bundle.SELECTABLE_ITEMS.get(domain) or bundle.CATEGORIES[domain]) in files,
@@ -81,9 +84,14 @@ def staged_files(stage):
 
 def canonical(stage):
     sections, categories = bundle.parse_blueprint(bundle.checked_file(stage / 'blueprint.conf'))
-    return {'categories': sorted(domain for domain in bundle.CATEGORIES if categories[domain]),
-            'items': {domain: sorted(identity(domain, value) for value in values)
-                      for domain, values in sorted(sections.items()) if domain in bundle.SELECTABLE_ITEMS and values}}
+    items = {domain: sorted(identity(domain, value) for value in values)
+             for domain, values in sorted(sections.items()) if domain in bundle.SELECTABLE_ITEMS and values}
+    if categories['ssh-configuration']:
+        hosts = bundle.ssh_snapshot(bundle.checked_file(stage / 'generated/ssh/config.snapshot'))[3]
+        if hosts:
+            items['ssh-configuration'] = sorted(identity('ssh-configuration', host) for host in hosts)
+    return {'categories': sorted(domain for domain in bundle.CATEGORIES if categories[domain] and domain not in items),
+            'items': items}
 
 
 def narrow(stage, selection, disabled_groups):
@@ -106,13 +114,19 @@ def narrow(stage, selection, disabled_groups):
     for domain in chosen:
         if domain in subsets:
             values = subsets[domain]
-            if (rows[domain]['selection_mode'] != 'items' or not isinstance(values, list) or not values or
+            if (rows[domain]['selection_mode'] != 'items' or not isinstance(values, list) or
+                    (not values and domain != 'ssh-configuration') or
                     not all(isinstance(value, str) for value in values) or len(set(values)) != len(values) or
                     not set(values).issubset(sources[domain])):
                 raise InvalidSelection()
             selected_items[domain] = {sources[domain][value] for value in values}
-        elif domain in bundle.SELECTABLE_ITEMS:
+        elif rows[domain]['selection_mode'] == 'items':
             selected_items[domain] = set(sources[domain].values())
+    if 'ssh-configuration' in selected_items:
+        if selected_items['ssh-configuration']:
+            bundle.select_ssh_profiles(stage, selected_items['ssh-configuration'])
+        else:
+            chosen.remove('ssh-configuration')
     sections, categories = bundle.parse_blueprint(bundle.checked_file(stage / 'blueprint.conf'))
     flags = {domain: categories[domain] and domain in chosen for domain in bundle.CATEGORY_FLAGS}
     raw = '[categories]\n' + ''.join(f'{domain}="{str(value).lower()}"\n' for domain, value in sorted(flags.items()))

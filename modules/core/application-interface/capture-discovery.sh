@@ -16,8 +16,10 @@ capture_observe() {
     fi
     local file
     file="$BLUEPRINT_GENERATED_DIR/$(python3 -B modules/core/application-interface/capture.py --path "$domain")" || return 2
-    if [[ "$domain" == vscode-workspaces ]]; then
-        python3 -B modules/core/application-interface/capture.py --workspace-row \
+    if [[ "$domain" == vscode-workspaces || "$domain" == ssh-configuration ]]; then
+        local collector=--workspace-row
+        [[ "$domain" != ssh-configuration ]] || collector=--ssh-row
+        python3 -B modules/core/application-interface/capture.py "$collector" \
             "$MACSEED_CAPTURE_INVENTORY" "$file" "$status" "$reason"
         return $?
     fi
@@ -53,13 +55,6 @@ capture_observe() {
                 absent) status=unavailable; reason=source_absent ;;
                 excluded) status=unsupported; reason=source_excluded ;;
             esac
-        elif [[ "$domain" == ssh-configuration ]]; then
-            local payload
-            payload="$(mktemp)" || return 2
-            ssh_snapshot_validate "$payload" "$file" || { status=observation_error; reason=inventory_invalid; }
-            rm -f "$payload"
-            [[ "$SSH_SNAPSHOT_STATUS" != unsupported && "$SSH_SNAPSHOT_STATUS" != external ]] || { status=unsupported; reason=source_excluded; }
-            if [[ "$status" == present && "$SSH_SNAPSHOT_COUNT" -eq 0 ]]; then status=unavailable; reason=no_supported_items; fi
         elif [[ ! -s "$file" ]]; then
             status=unavailable; reason=no_supported_items
         fi

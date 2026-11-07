@@ -68,7 +68,7 @@ def selection_for(selection, rows, secure):
     identities = selection['secure_identities']
     if (not all(isinstance(x, str) for x in whole + identities) or
             len(whole) != len(set(whole)) or len(identities) != len(set(identities)) or
-            set(whole) - set(domains) or set(selection['items']) - set(bundle.SELECTABLE_ITEMS) or
+            set(whole) - set(domains) or set(selection['items']) - set(bundle.ITEM_SELECTION) or
             set(whole) & set(selection['items'])):
         raise CaptureError('invalid_selection')
     chosen = {}
@@ -81,7 +81,8 @@ def selection_for(selection, rows, secure):
         if (not isinstance(wanted, list) or not all(isinstance(x, str) for x in wanted) or
                 len(wanted) != len(set(wanted)) or set(wanted) - set(available)):
             raise CaptureError('invalid_selection')
-        chosen[domain] = sorted(available[x] for x in wanted)
+        if domain != 'ssh-configuration' or wanted:
+            chosen[domain] = sorted(available[x] for x in wanted)
     candidates = {entry['item_id']: entry for entry in secure.get('items', [])}
     if set(identities) - set(candidates) or (identities and secure['status'] != 'present'):
         raise CaptureError('invalid_secure_selection')
@@ -224,7 +225,9 @@ def prepared(stage, rows, secure, selection):
         raw = blueprint_data(chosen)
         try:
             files = bundle.staged_payload(stage, raw)
-        except (bundle.Invalid, OSError) as exc:
+            if chosen.get('ssh-configuration'):
+                bundle.ssh_contract().select_snapshot(files['generated/ssh/config.snapshot'], chosen['ssh-configuration'])
+        except (bundle.Invalid, OSError, ValueError) as exc:
             raise CaptureError('capture_inventory_invalid') from exc
         try:
             bundle.validate_workspace(files, home=os.environ['HOME'])
@@ -292,6 +295,8 @@ def capture(root, operation, parameters, channel, event):
             if identities and not age_executable():
                 raise CaptureError('age_unavailable')
             blueprint(stage, chosen)
+            if chosen.get('ssh-configuration'):
+                bundle.select_ssh_profiles(stage, chosen['ssh-configuration'])
             # The selected Blueprint/input validators and portability checks remain production-owned.
             preview = stage / '.capture-preview.conf'
             bundle.write_file(preview, bundle.capture_preview(stage, os.environ['HOME']))
@@ -366,6 +371,31 @@ def workspace_row(destination_path, source, status, reason):
         output.write(json.dumps(value, sort_keys=True) + '\n')
 
 
+def ssh_row(destination_path, source, status, reason):
+    entries = []
+    if status != 'observation_error':
+        try:
+            contract = bundle.ssh_contract()
+            _, coverage, _, profiles = contract.snapshot(contract.read_snapshot(source))
+            if coverage in ('unsupported', 'external'):
+                status, reason = 'unsupported', 'source_excluded'
+            elif not profiles:
+                status, reason = 'unavailable', 'no_supported_items'
+            elif len(profiles) > MAX_ITEMS:
+                raise ValueError('oversized SSH inventory')
+            else:
+                status, reason = 'present', 'source_partial' if coverage == 'partial' else None
+                entries = [dict(item_id=item('ssh-configuration', host), label=host, _source=host)
+                           for host in profiles]
+        except (OSError, ValueError):
+            status, reason = 'observation_error', 'inventory_invalid'
+    value = dict(domain='ssh-configuration', status=status, reason=reason or None,
+                 selection_mode='items', items=entries)
+    with open(destination_path, 'a', encoding='utf-8') as output:
+        os.chmod(destination_path, 0o600)
+        output.write(json.dumps(value, sort_keys=True) + '\n')
+
+
 def row(destination_path):
     fields = sys.stdin.buffer.read(MAX_INVENTORY + 1).decode().split('\0')
     if fields[-1] != '' or len(fields) < 4:
@@ -393,7 +423,9 @@ def row(destination_path):
 
 
 if __name__ == '__main__':
-    if len(sys.argv) == 6 and sys.argv[1] == '--workspace-row':
+    if len(sys.argv) == 6 and sys.argv[1] == '--ssh-row':
+        ssh_row(*sys.argv[2:])
+    elif len(sys.argv) == 6 and sys.argv[1] == '--workspace-row':
         workspace_row(*sys.argv[2:])
     elif len(sys.argv) == 3 and sys.argv[1] == '--row':
         row(sys.argv[2])

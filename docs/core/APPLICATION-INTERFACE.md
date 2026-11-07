@@ -88,8 +88,8 @@ Then prepare again with the chosen selection, for example:
 {"categories":[],"items":{"homebrew-packages":["git"]},"secure_identities":[]}
 ```
 
-`categories` selects whole domains; `items` selects subsets of Blueprint item
-categories; `secure_identities` selects separate SSH candidates. Duplicates,
+`categories` selects whole domains; `items` selects subsets of item-mode domains,
+including supported SSH Host profiles; `secure_identities` selects separate SSH candidates. Duplicates,
 unknown IDs and overlap between a whole domain and its item subset are invalid.
 Unobserved state cannot be selected for transfer.
 
@@ -101,6 +101,14 @@ Prepare returns `prepared_capture_id`, `inventory`, `secure_identities`, canonic
 SSH candidates expose safe names, key types, public fingerprints and
 `candidate_requires_pair_validation`; Prepare does not unlock keys.
 Inventory limits are 2048 items per domain and 1 MiB internally.
+
+`ssh-configuration` uses `selection_mode: "items"`, with Host aliases as labels and
+opaque IDs derived from the validated Discovery snapshot. Whole-category requests
+select every supported profile; item requests select complete profiles. An empty
+SSH list excludes the domain. Capture binds the full discovered snapshot and exact
+requested selection before reducing private staging for validation/publication.
+`selected_item_counts` includes the saved SSH profile count. Source exclusions
+remain separate from intentional deselection; Secure Transfer is independent.
 
 ### Explicit external SSH sources
 
@@ -214,8 +222,8 @@ absence and explicit exclusion in Selection; missing fields retain rows and
 diagnostics. Selection eligibility and Restore draft selection are unchanged.
 
 Items are supported for formulae, casks, App Store IDs, extensions, eligible
-Workspace folders, repositories and supported Git configuration keys. VS Code
-settings, Zsh, SSH configuration and each of the six macOS domains are whole-domain
+Workspace folders, repositories, supported Git configuration keys and saved SSH
+Host profiles. VS Code settings, Zsh and each of the six macOS domains are whole-domain
 only. Individual macOS preference keys and secure identities are not selectable
 through this inventory.
 
@@ -225,10 +233,11 @@ Prepare and Execute accept optional ordinary `selection`:
 {"categories":["macos-finder"],"items":{"homebrew-packages":["restore:<sha256>"]}}
 ```
 
-Absent/null preserves the legacy group-only path, including its prepared ID.
+Absent/null preserves legacy whole-category scope within enabled groups.
 A non-null object is an explicit whitelist; empty arrays/object select no ordinary
 content. Whole item domains include every eligible captured item. Item subsets
-must be nonempty and use Core-issued IDs. Unknown IDs, unavailable content,
+must use Core-issued IDs and be nonempty, except that an empty SSH profile list
+explicitly excludes SSH Configuration. Unknown IDs, unavailable content,
 duplicates, whole/subset overlap and item selection in category-only domains
 return `invalid_selection`. Disabled groups remain an upper bound; attempting to
 re-enable their content fails. The existing 4096-byte request limit still applies.
@@ -245,6 +254,14 @@ Prepare returns canonical requested `selection`: sorted category-only domain IDs
 and sorted item-ID subsets, expanding whole item domains. New finer selection is
 bound into `prepared_plan_id`; Execute repeats the same validated private staged
 Blueprint narrowing and rejects mismatched/stale plans before publication/mutation.
+SSH narrowing also reduces the private validated snapshot before Preview,
+readiness, Execute publication and Verification. Canonical selection expands saved
+SSH profiles into exact item IDs; legacy snapshots without profiles retain their
+category-only no-requirement/excluded behavior. Aggregate SSH plan and verification
+records describe only that staged scope, never unselected Hosts. Full Bundle bytes,
+the narrowed snapshot and SSH target evidence remain bound to preparation. Selecting
+a subset retains snapshot v1/v2 and existing source-coverage/safety gates; see
+[SSH configuration](../toolkit/CONFIGURATION.md#ssh-configuration).
 Equivalent whitelist representations canonicalize to the same effective scope.
 Legacy requests receive the additive public selection/correlation fields after
 legacy identity calculation. The source Bundle, ordinary generated state,

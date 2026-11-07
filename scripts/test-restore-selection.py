@@ -37,6 +37,173 @@ class SelectionTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, events)
         return events[-2]['data']
 
+    def ssh_fixture(self, *, version=1, partial=False, secure=False):
+        blueprint = self.stage / 'blueprint.conf'
+        blueprint.write_text(blueprint.read_text().replace('ssh-configuration="false"', 'ssh-configuration="true"')
+                             .replace('Projects\n', ''))
+        self.ssh_source = self.stage / 'generated/ssh/config.snapshot'
+        self.ssh_payload = b'Host github\n    HostName github.invalid\n    User git\nHost production\n    HostName production.invalid\n'
+        if version == 2:
+            self.ssh_payload += b'    IdentityFile /old-home/deploy\n    IdentitiesOnly yes\n'
+        bundle.write_file(self.ssh_source, (f'# toolkit-ssh-snapshot: {version}\n# status: {"partial" if partial else "ready"}\n'
+                                         f'# excluded-profiles: {1 if partial else 0}\n\n').encode() + self.ssh_payload)
+        self.fixture.pack(secure=secure)
+        row = next(row for row in self.inspect()['restore_selection']['inventory'] if row['domain'] == 'ssh-configuration')
+        self.assertEqual(row['selection_mode'], 'items')
+        self.assertEqual([item['label'] for item in row['items']], ['github', 'production'])
+        self.ssh_ids = [item['item_id'] for item in row['items']]
+        return self.fixture.home / '.ssh/config'
+
+    def ssh_selection(self, indexes=(0,)):
+        return dict(categories=[], items={'ssh-configuration': sorted(self.ssh_ids[index] for index in indexes)})
+
+    def test_ssh_subset_execute_verify_noop_and_unselected_conflict(self):
+        target = self.ssh_fixture()
+        self.fixture.allow_application_bootstrap()
+        target.parent.mkdir(mode=0o700)
+        original = b'# preserve unrelated bytes\nHost production\n HostName different.invalid\nHost unrelated\n HostName unrelated.invalid\n'
+        target.write_bytes(original); target.chmod(0o600)
+        full = self.prepare(dict(categories=['ssh-configuration'], items={}))
+        self.assertFalse(full['readiness']['ready'])
+        chosen = self.ssh_selection()
+        prepared = self.prepare(chosen)
+        self.assertTrue(prepared['readiness']['ready'], prepared)
+        self.assertEqual(prepared['selection'], chosen)
+        self.assertEqual(prepared['selected_item_counts']['ssh-configuration'], 1)
+        self.assertTrue(any(row['domain'] == 'ssh-configuration' and row['disposition'] == 'planned' for row in prepared['plan']))
+        result, events = self.fixture.execute(prepared['prepared_plan_id'], selection=chosen)
+        self.assertEqual(result.returncode, 0, events)
+        self.assertEqual(target.read_bytes(), original + b'Host github\n    HostName github.invalid\n    User git\n')
+        published = self.fixture.project / 'config/generated/ssh/config.snapshot'
+        self.assertEqual(list(bundle.ssh_snapshot(published.read_bytes())[3]), ['github'])
+        self.assertEqual(events[-2]['data']['verification']['verdict'], 'selected_requirements_verified')
+        before = target.stat()
+        retained = list(target.parent.glob('.macseed-ssh-predecessor-*'))
+        self.assertEqual(len(retained), 1)
+        repeated = self.prepare(chosen)
+        self.assertTrue(repeated['readiness']['ready'])
+        self.assertFalse(any(row['disposition'] == 'planned' for row in repeated['plan']))
+        result, events = self.fixture.execute(repeated['prepared_plan_id'], selection=chosen)
+        self.assertEqual(result.returncode, 0, events)
+        self.assertEqual((target.stat().st_ino, target.stat().st_mtime_ns), (before.st_ino, before.st_mtime_ns))
+        self.assertEqual(list(target.parent.glob('.macseed-ssh-predecessor-*')), retained)
+
+    def test_ssh_full_legacy_empty_and_independent_secure_selection(self):
+        target = self.ssh_fixture(secure=True)
+        explicit = self.prepare(self.ssh_selection((0, 1)))
+        legacy = self.prepare(dict(categories=['ssh-configuration'], items={}))
+        implicit = self.prepare()
+        self.assertEqual(explicit['selection'], self.ssh_selection((0, 1)))
+        self.assertEqual(explicit['prepared_plan_id'], legacy['prepared_plan_id'])
+        self.assertEqual(explicit['selection'], implicit['selection'])
+        self.assertEqual(explicit['plan'], implicit['plan'])
+        self.assertFalse(explicit['include_secure'])
+        result, events = self.fixture.invoke(secure=True, selection=self.ssh_selection())
+        self.assertEqual(result.returncode, 0, events)
+        self.assertTrue(events[-2]['data']['include_secure'])
+        self.assertEqual(events[-2]['data']['selection'], self.ssh_selection())
+        for empty in (dict(categories=[], items={}), self.ssh_selection(())):
+            plan = self.prepare(empty)
+            self.assertEqual(plan['selection'], dict(categories=[], items={}))
+            self.assertEqual(plan['plan'], [])
+            self.assertFalse(plan['include_secure'])
+        self.fixture.allow_application_bootstrap()
+        result, events = self.fixture.execute(explicit['prepared_plan_id'], selection=self.ssh_selection((0, 1)))
+        self.assertEqual(result.returncode, 0, events)
+        self.assertEqual(target.read_bytes(), self.ssh_payload)
+        self.assertFalse((self.fixture.project / 'config/generated/secure.age').exists())
+
+    def test_ssh_selection_stale_ids_bundle_and_target_bindings(self):
+        target = self.ssh_fixture()
+        chosen = self.ssh_selection()
+        plan = self.prepare(chosen)
+        for invalid in ('unknown', self.ssh_ids[0].upper()):
+            result, events = self.fixture.invoke(selection=dict(categories=[], items={'ssh-configuration': [invalid]}))
+            self.assertEqual(result.returncode, 2, events)
+            self.assertEqual(events[-1]['data']['code'], 'invalid_selection')
+        for changed in (self.ssh_selection((1,)), dict(categories=['ssh-configuration'], items={}), self.ssh_selection(())):
+            result, events = self.fixture.execute(plan['prepared_plan_id'], selection=changed)
+            self.assertEqual(events[-1]['data']['code'], 'stale_plan')
+            self.assertFalse(events[-1]['data']['publication_started'])
+        self.fixture.archive.unlink()
+        self.ssh_source.write_bytes(self.ssh_source.read_bytes().replace(b'production.invalid', b'changed.invalid'))
+        self.fixture.pack()
+        result, events = self.fixture.execute(plan['prepared_plan_id'], selection=chosen)
+        self.assertEqual(events[-1]['data']['code'], 'stale_plan')
+        self.assertFalse(events[-1]['data']['publication_started'])
+        fresh = self.prepare(chosen)
+        target.parent.mkdir(mode=0o700)
+        target.write_bytes(b'Host unrelated\n HostName unrelated.invalid\n'); target.chmod(0o600)
+        result, events = self.fixture.execute(fresh['prepared_plan_id'], selection=chosen)
+        self.assertEqual(events[-1]['data']['code'], 'stale_plan')
+        self.assertFalse((self.fixture.project / 'config/generated').exists())
+
+    def test_ssh_subset_conflicts_and_ambiguous_target_remain_blocked(self):
+        target = self.ssh_fixture()
+        target.parent.mkdir(mode=0o700)
+        for raw in (b'Host github\n HostName conflicting.invalid\n',
+                    b'Host GITHUB\n HostName github.invalid\n',
+                    b'Host github\n HostName github.invalid\n ProxyCommand forbidden\n',
+                    b'Host unrelated\n HostName unrelated.invalid\n Compression yes\n',
+                    b'Host github\n HostName github.invalid\nHost GITHUB\n HostName github.invalid\n'):
+            with self.subTest(raw=raw):
+                target.write_bytes(raw); target.chmod(0o600)
+                plan = self.prepare(self.ssh_selection())
+                self.assertFalse(plan['readiness']['ready'], plan)
+                result, events = self.fixture.execute(plan['prepared_plan_id'], selection=self.ssh_selection())
+                self.assertEqual(result.returncode, 2, events)
+                self.assertFalse(events[-1]['data']['publication_started'])
+                self.assertEqual(target.read_bytes(), raw)
+
+    def test_ssh_subset_v2_never_downgrades_or_resolves_identity(self):
+        target = self.ssh_fixture(version=2)
+        for chosen in (self.ssh_selection(), self.ssh_selection((1,))):
+            plan = self.prepare(chosen)
+            self.assertFalse(plan['readiness']['ready'], plan)
+            self.assertTrue(any(row['reason'] == 'extended_ssh_read_only' for row in plan['plan']))
+            unresolved = any(row['reason'] == 'identity_dependencies_unresolved' for row in plan['plan'])
+            self.assertEqual(unresolved, chosen == self.ssh_selection((1,)))
+            result, events = self.fixture.execute(plan['prepared_plan_id'], selection=chosen)
+            self.assertEqual(result.returncode, 2, events)
+            self.assertFalse(events[-1]['data']['publication_started'])
+        self.assertFalse(target.exists())
+        # A subset cannot erase ambiguous source syntax or its v2 capability.
+        files = bundle.validate_archive(self.fixture.archive)
+        self.assertEqual(bundle.validate_ssh(files), {'ssh-configuration': 2})
+        files['generated/ssh/config.snapshot'] += b'Host GITHUB\n    HostName ambiguous.invalid\n'
+        with self.assertRaises(bundle.Invalid):
+            selection_api.inventory(files)
+
+    def test_ssh_subset_preserves_partial_coverage_and_independent_categories(self):
+        target = self.ssh_fixture(partial=True)
+        target.parent.mkdir(mode=0o700)
+        target.write_bytes(b'Host unrelated\n HostName unrelated.invalid\n'); target.chmod(0o600)
+        plan = self.prepare(self.ssh_selection())
+        self.assertFalse(plan['readiness']['ready'])
+        self.assertTrue(any(row['reason'] == 'partial_source_coverage' for row in plan['plan']))
+        # Narrow only private staged SSH data; flags for independent categories survive.
+        blueprint = self.stage / 'blueprint.conf'
+        blueprint.write_text(blueprint.read_text().replace('[workspace-folders]\n', '[workspace-folders]\nProjects\n'))
+        self.fixture.archive.unlink()
+        self.fixture.pack()
+        chosen = dict(categories=['workspace-folders'], items={'ssh-configuration': []})
+        plan = self.prepare(chosen)
+        self.assertTrue(plan['readiness']['ready'])
+        self.assertFalse(any(row['domain'] == 'ssh-configuration' for row in plan['plan']))
+        original, before = target.read_bytes(), target.stat()
+        self.fixture.allow_application_bootstrap()
+        result, events = self.fixture.execute(plan['prepared_plan_id'], selection=chosen)
+        self.assertEqual(result.returncode, 0, events)
+        self.assertTrue((self.fixture.home / 'Projects').is_dir())
+        self.assertEqual(target.read_bytes(), original)
+        self.assertEqual((target.stat().st_ino, target.stat().st_mtime_ns), (before.st_ino, before.st_mtime_ns))
+        self.assertEqual(list(target.parent.iterdir()), [target])
+        sections, categories = bundle.parse_blueprint((self.fixture.project / 'config/blueprint.conf').read_bytes())
+        self.assertFalse(categories['ssh-configuration'])
+        self.assertEqual(sections['workspace-folders'], ['Projects'])
+        records = events[-2]['data']['verification']['details']['verification_records']
+        self.assertFalse(any(row['domain'] == 'ssh-configuration' for row in records))
+
     def test_homebrew_token_labels_from_saved_bundle_keep_identity_and_privacy(self):
         tokens = {'homebrew-casks': ['thaw@beta'],
                   'homebrew-packages': ['openssl@3', 'libsigc++', 'owner/tap/formula@2+extra']}
@@ -135,6 +302,9 @@ class SelectionTests(unittest.TestCase):
             target = self.stage / 'generated' / path
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes( b'PRIVATE_PREFERENCE_VALUE')
+        snapshot = self.stage / 'generated/ssh/config.snapshot'
+        snapshot.write_bytes(b'# toolkit-ssh-snapshot: 1\n# status: empty\n# excluded-profiles: 0\n\n')
+        snapshot.chmod(0o600)
         return sections
 
     def test_all_modes_narrowing_identity_privacy_and_category_flags(self):

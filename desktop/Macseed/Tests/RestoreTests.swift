@@ -1372,7 +1372,39 @@ import Vision
         CommandLine.arguments.contains("--final-restore-ux-only") || CommandLine.arguments.contains("--selection-preview-only") || CommandLine.arguments.contains("--preview-appstore-layout-only")
     }
     static func write(_ value: String, _ path: URL) throws { try value.write(to: path, atomically: false, encoding: .utf8) }
-    @MainActor static func render(_ model: RestoreModel, _ runtime: CoreRuntime, state: String, expanded: Bool = false, settingsOnly: Bool = false) throws {
+    @MainActor static func sshHostSelectionChecks(_ model: RestoreModel, runtime: CoreRuntime) async throws {
+        let ssh = model.areas.first { $0.id == "ssh-configuration" }!
+        let hosts = ssh.items.map(\.id)
+        precondition(model.state == .review && model.selectionState(ssh) == .none && !model.includeSecure)
+        model.selectArea(ssh.id, included: true)
+        precondition(model.selectionState(ssh) == .all && model.selection.categories.contains(ssh.id))
+        for host in hosts.suffix(2) { model.selectItem(ssh.id, item: host, included: false) }
+        precondition(model.selection.items[ssh.id] == Array(hosts.prefix(2)).sorted())
+        let selected = model.selection
+        model.selectItem(ssh.id, item: "unknown", included: true)
+        precondition(model.selection == selected)
+        model.selectSecureTransfer(true)
+        model.selectItem(ssh.id, item: hosts[1], included: false)
+        precondition(model.includeSecure)
+        model.selectItem(ssh.id, item: hosts[1], included: true)
+        model.selectSecureTransfer(false)
+        precondition(model.selection == selected)
+        try render(model, runtime, state: "ssh-host-selection", selectionTree: CaptureHierarchy.disclosureIDs([ssh.id], scope: .advanced))
+        model.refreshPreview(); await model.waitForCompletion()
+        precondition(model.state == .preview && model.preparation?.selection == model.canonicalSelection)
+        precondition(model.preparation?.selectedItemCounts[ssh.id] == 2 && model.canRebuild)
+        model.selectItem(ssh.id, item: hosts[1], included: false)
+        precondition(model.state == .review && model.preparation == nil && model.preview == nil && !model.canRebuild)
+        model.selectItem(ssh.id, item: hosts[0], included: false)
+        precondition(model.selectionState(ssh) == .none && model.selection.items[ssh.id] == nil)
+        precondition(model.selection.categories == ["macos-finder"] && !model.includeSecure)
+        model.selectArea(ssh.id, included: true)
+        precondition(model.selectedItems[ssh.id] == Set(hosts))
+        model.refreshPreview(); await model.waitForCompletion()
+        precondition(model.state == .preview && model.preparation?.selection.items[ssh.id]?.count == 4)
+        print("PASS: Rebuild Host full/subset/empty scope, exact canonical Preview, invalidation, independent Secure Transfer and native disclosure")
+    }
+    @MainActor static func render(_ model: RestoreModel, _ runtime: CoreRuntime, state: String, expanded: Bool = false, settingsOnly: Bool = false, selectionTree: Set<String>? = nil) throws {
         guard !CommandLine.arguments.contains("--no-renders") else { return }
         _ = NSApplication.shared
         NSApp.appearance = NSAppearance(named: .aqua)
@@ -1386,6 +1418,7 @@ import Vision
                         .modifier(WorkspaceCardSurface())
                 } else {
                     RestoreView(model: model, runtime: runtime, categoryExpansion: expanded ? .constant(true) : nil,
+                        selectionExpansion: selectionTree.map { .constant($0) },
                         showsPreviewActions: false, showsSelectionActions: false, showsResultActions: false)
                 }
             }.padding(28).frame(maxWidth: .infinity, alignment: .leading)
@@ -1428,6 +1461,19 @@ import Vision
             window.isReleasedWhenClosed = false; window.contentView = host
             host.frame = window.contentView!.bounds
             host.layoutSubtreeIfNeeded(); host.displayIfNeeded()
+            if state == "ssh-host-selection" {
+                func boxes(_ view: NSView) -> [NSButton] {
+                    if let button = view as? NSButton, button.target is NativeSelectionCheckbox.Coordinator { return [button] }
+                    return view.subviews.flatMap(boxes)
+                }
+                let controls = boxes(host)
+                for name in ["github", "production", "home-server", "test-vps"] {
+                    let box = controls.first { $0.accessibilityLabel() == name }!
+                    precondition(box.state == (["github", "production"].contains(name) ? .on : .off))
+                }
+                precondition(controls.contains { $0.accessibilityLabel() == "Select SSH Configuration" && $0.state == .mixed })
+                precondition(controls.contains { $0.accessibilityLabel() == "Select Secure Transfer" && $0.state == .off })
+            }
             let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds)!
             host.cacheDisplay(in: host.bounds, to: bitmap)
             precondition(bitmap.pixelsWide == Int(CGFloat(width) * window.backingScaleFactor))
@@ -2889,7 +2935,8 @@ import Vision
         }
         let homebrewSetupOnly = CommandLine.arguments.contains("--homebrew-setup-only")
         let secureUIOnly = CommandLine.arguments.contains("--secure-destination-ui-only")
-        let selectionAccordionOnly = CommandLine.arguments.contains("--selection-accordion-only") || homebrewSetupOnly || secureUIOnly
+        let sshHostOnly = CommandLine.arguments.contains("--ssh-host-selection-only")
+        let selectionAccordionOnly = CommandLine.arguments.contains("--selection-accordion-only") || homebrewSetupOnly || secureUIOnly || sshHostOnly
         let refreshCancellationOnly = CommandLine.arguments.contains("--appstore-refresh-cancel-only")
         if !selectionAccordionOnly && !refreshCancellationOnly { try topologyPreviewChecks() }
         if CommandLine.arguments.contains("--topology-preview-only") { return }
@@ -3276,17 +3323,24 @@ import Vision
         inventory += [["domain": "ssh-configuration", "label": "SSH Configuration", "selection_mode": "category", "availability": "available", "reason": NSNull(), "items": []],
                       ["domain": "unavailable-area", "label": "Unavailable area", "selection_mode": "category", "availability": "unavailable", "reason": "no_selectable_content", "items": []]]
         inventory.append(["domain": "empty-items", "label": "Empty items", "selection_mode": "items", "availability": "available", "reason": NSNull(), "items": []])
-        let groups: [[String: Any]] = [["id": "Applications", "domains": applications], ["id": "Workspace", "domains": workspace],
+        var groups: [[String: Any]] = [["id": "Applications", "domains": applications], ["id": "Workspace", "domains": workspace],
                                       ["id": "macOS Settings", "domains": macOS], ["id": "SSH Configuration", "domains": ["ssh-configuration"]], ["id": "Other Core group", "domains": ["homebrew-packages", "unavailable-area", "empty-items"]]]
         if CommandLine.arguments.contains("--restore-macos-only") {
             for index in inventory.indices where macOS.contains(inventory[index]["domain"] as? String ?? "") {
                 inventory[index]["label"] = CaptureCategory.title(for: inventory[index]["domain"] as! String)
             }
         }
-        let inspection: [String: Any] = ["format_version": 1, "selected_categories": macOS + ["ssh-configuration"], "selected_item_counts": [:], "secure_component": !Self.finalUXFixtures,
+        if sshHostOnly {
+            inventory = [["domain": "ssh-configuration", "label": "SSH Configuration", "selection_mode": "items", "availability": "available", "reason": NSNull(),
+                          "capture_selected": true, "source_present": true,
+                          "items": ["github", "production", "home-server", "test-vps"].enumerated().map { ["item_id": "host-\($0.offset)", "label": $0.element] }],
+                         ["domain": "macos-finder", "label": "Finder", "selection_mode": "category", "availability": "available", "reason": NSNull(), "items": []]]
+            groups = [["id": "SSH Configuration", "domains": ["ssh-configuration"]], ["id": "macOS Settings", "domains": ["macos-finder"]]]
+        }
+        let inspection: [String: Any] = ["format_version": 1, "selected_categories": sshHostOnly ? ["ssh-configuration", "macos-finder"] : macOS + ["ssh-configuration"], "selected_item_counts": [:], "secure_component": !Self.finalUXFixtures,
                                         "restore_selection": ["groups": groups, "inventory": inventory]]
         try JSONSerialization.data(withJSONObject: inspection).write(to: core.appendingPathComponent("inspection.json"))
-        let runtime = CoreRuntime(operationLogs: refreshCancellationOnly || secureUIOnly ? nil : .shared)
+        let runtime = CoreRuntime(operationLogs: refreshCancellationOnly || secureUIOnly || sshHostOnly ? nil : .shared)
         let location = CoreLocation(root: core, python: python, home: root, temporaryBase: root, toolDirectories: [])
         let model = RestoreModel(runtime: runtime, location: location)
         let source = root.appendingPathComponent("sample.mbt")
@@ -3296,6 +3350,11 @@ import Vision
             return
         }
         model.choose(source); await model.waitForCompletion()
+        if sshHostOnly {
+            try await sshHostSelectionChecks(model, runtime: runtime)
+            try await realPrepare(repo: repo, python: python, root: root, sshHosts: true)
+            return
+        }
         if homebrewSetupOnly {
             try write("attention", core.appendingPathComponent("mode"))
             model.selectArea("homebrew-packages", included: true)
@@ -4521,12 +4580,13 @@ import Vision
         if !CommandLine.arguments.contains("--fixtures-only") { try await realPrepare(repo: repo, python: python, root: root) }
     }
 
-    @MainActor static func realPrepare(repo: URL, python: URL, root: URL) async throws {
+    @MainActor static func realPrepare(repo: URL, python: URL, root: URL, sshHosts: Bool = false) async throws {
         let setup = root.appendingPathComponent("setup.py")
         try write("""
         import sys, shutil
         from pathlib import Path
         repo=Path(sys.argv[1]); root=Path(sys.argv[2]); core=root/'real-core'; core.mkdir()
+        ssh_hosts=sys.argv[3]=='ssh'
         shutil.copytree(repo/'modules',core/'modules'); shutil.copy2(repo/'bootstrap.sh',core/'bootstrap.sh')
         (core/'config').mkdir(); shutil.copy2(repo/'config/toolkit.conf',core/'config/toolkit.conf')
         home=root/'real-home'; home.mkdir(); tools=root/'tools'; tools.mkdir()
@@ -4537,19 +4597,41 @@ import Vision
         flags={name:False for name in bundle.CATEGORY_FLAGS}
         raw='[categories]\\n'+''.join(name+'="false"\\n' for name in flags)
         raw+=''.join('\\n['+name+']\\n'+('Projects\\nOther\\n' if name=='workspace-folders' else '') for name in bundle.ITEMS)
+        if ssh_hosts:
+            raw=raw.replace('ssh-configuration="false"','ssh-configuration="true"')
+            payload=''.join('Host '+name+'\\n    HostName '+name+'.invalid\\n' for name in ['github','production','home-server','test-vps'])
+            bundle.write_file(stage/'generated/ssh/config.snapshot',('# toolkit-ssh-snapshot: 1\\n# status: ready\\n# excluded-profiles: 0\\n\\n'+payload).encode())
         bundle.write_file(stage/'blueprint.conf',raw.encode())
         bundle.write_file(stage/'generated/workspace/folders.conf',b'Projects|workspace\\nOther|workspace\\n')
         bundle.pack(stage,root/'real.mbt','/Users/fixture-source')
         """, setup)
-        let process = Process(); process.executableURL = python; process.arguments = ["-B", setup.path, repo.path, root.path]
+        let process = Process(); process.executableURL = python; process.arguments = ["-B", setup.path, repo.path, root.path, sshHosts ? "ssh" : "workspace"]
         try process.run(); process.waitUntilExit(); precondition(process.terminationStatus == 0)
         let home = root.appendingPathComponent("real-home")
         let core = root.appendingPathComponent("real-core")
         let original = try Data(contentsOf: root.appendingPathComponent("real.mbt"))
-        let runtime = CoreRuntime()
+        let runtime = CoreRuntime(operationLogs: sshHosts ? nil : .shared)
         let model = RestoreModel(runtime: runtime, location: CoreLocation(root: core, python: python, home: home, temporaryBase: root, toolDirectories: [root.appendingPathComponent("tools")]))
         model.choose(root.appendingPathComponent("real.mbt")); await model.waitForCompletion()
         precondition(model.state == .review, "Real inspection failed: \(model.failure ?? "")")
+        if sshHosts {
+            let ssh = model.areas.first { $0.id == "ssh-configuration" }!
+            precondition(ssh.selectionMode == "items" && ssh.items.map(\.label) == ["github", "production", "home-server", "test-vps"])
+            precondition(model.selectionState(ssh) == .none && !model.includeSecure)
+            for item in ssh.items.prefix(2) { model.selectItem(ssh.id, item: item.id, included: true) }
+            model.refreshPreview(); await model.waitForCompletion()
+            precondition(model.state == .preview && model.ready, "Real SSH Prepare failed: \(model.failure ?? "")")
+            precondition(model.preparation?.selection == model.canonicalSelection && model.preparation?.selectedItemCounts[ssh.id] == 2)
+            precondition(model.preparation?.plan.count == 1 && model.preparation?.plan.first?.domain == ssh.id)
+            precondition(!FileManager.default.fileExists(atPath: home.appendingPathComponent(".ssh").path))
+            precondition(!FileManager.default.fileExists(atPath: core.appendingPathComponent("config/generated").path))
+            let after = try Data(contentsOf: root.appendingPathComponent("real.mbt"))
+            precondition(after == original)
+            model.selectItem(ssh.id, item: ssh.items[2].id, included: true)
+            precondition(model.preparation == nil && model.preview == nil && !model.canRebuild)
+            print("PASS: Swift → validated Bundle Host inventory → exact production SSH Preview subset, no publication or target mutation")
+            return
+        }
         precondition(model.selectedAreaCount == 0 && !model.canPreview && !model.reviewCancellationNeedsConfirmation)
         precondition(model.selectionAreas.map(\.id) == ["workspace-folders"])
         let area = model.areas.first { $0.id == "workspace-folders" }!

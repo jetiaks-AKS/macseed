@@ -46,6 +46,9 @@ CATEGORIES = {
     "macos-screenshots": "macos/screenshots.conf",
 }
 CATEGORY_FLAGS = set(CATEGORIES) | {"git-configuration"}
+# Protocol item selection can narrow a snapshot while retaining its legacy
+# whole-category Blueprint flag and Bundle representation.
+ITEM_SELECTION = SELECTABLE_ITEMS | {"ssh-configuration": CATEGORIES["ssh-configuration"]}
 GROUPS = {
     "Applications": ("homebrew-casks", "app-store", "vscode-extensions"),
     "VS Code Settings": ("vscode-settings",),
@@ -90,20 +93,40 @@ def workspace_contract():
     return _workspace_contract
 
 
-def validate_ssh(files):
-    """Keep SSH grammar with its domain; Bundle v1 advertises v2 requirements."""
-    raw = files.get('generated/ssh/config.snapshot')
-    if raw is None:
-        return {}
+def ssh_contract():
     global _ssh_contract
     if _ssh_contract is None:
         spec = importlib.util.spec_from_file_location('ssh_configuration', ROOT / 'modules/ssh/config.py')
         _ssh_contract = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(_ssh_contract)
+    return _ssh_contract
+
+
+def ssh_snapshot(raw):
     try:
-        version, _, _, _ = _ssh_contract.snapshot(raw)
+        return ssh_contract().snapshot(raw)
     except (ValueError, UnicodeError) as exc:
         raise Invalid('invalid SSH snapshot') from exc
+
+
+def select_ssh_profiles(stage, hosts):
+    """Reduce private staging only; never read or mutate live SSH configuration."""
+    path = stage / 'generated/ssh/config.snapshot'
+    try:
+        selected = ssh_contract().select_snapshot(ssh_contract().read_snapshot(path), hosts)
+    except (ValueError, OSError) as exc:
+        raise Invalid('invalid SSH Host selection') from exc
+    temporary = path.with_name('config.selection')
+    write_file(temporary, selected)
+    temporary.replace(path)
+
+
+def validate_ssh(files):
+    """Keep SSH grammar with its domain; Bundle v1 advertises v2 requirements."""
+    raw = files.get('generated/ssh/config.snapshot')
+    if raw is None:
+        return {}
+    version, _, _, _ = ssh_snapshot(raw)
     return {'ssh-configuration': 2} if version == 2 else {}
 
 
@@ -701,10 +724,13 @@ def inspect_bundle(bundle, home):
     files, provenance = validate_archive(bundle, with_provenance=True)
     target_paths(files, home)
     sections, categories = parse_blueprint(files["blueprint.conf"])
+    counts = {name: len(sections[name]) for name in SELECTABLE_ITEMS if name in sections}
+    if categories['ssh-configuration']:
+        counts['ssh-configuration'] = len(ssh_snapshot(files['generated/ssh/config.snapshot'])[3])
     return {
         "format_version": 1,
         "selected_categories": sorted(name for name, enabled in categories.items() if enabled),
-        "selected_item_counts": {name: len(sections[name]) for name in SELECTABLE_ITEMS if name in sections},
+        "selected_item_counts": counts,
         "secure_component": "secure.age" in files,
         "external_tools": provenance,
     }

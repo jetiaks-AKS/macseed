@@ -20,6 +20,48 @@ import SwiftUI
         ["domain": domain, "selection_mode": mode, "status": status, "reason": reason ?? NSNull(),
          "items": items.map { ["item_id": $0, "label": $0] }]
     }
+    @MainActor static func sshHostSelectionChecks(model: CaptureModel, runtime: CoreRuntime, core: URL, root: URL) async throws {
+        let hosts = ["github", "production", "home-server", "test-vps"]
+        try JSONSerialization.data(withJSONObject: [row("ssh-configuration", mode: "items", items: hosts),
+            row("macos-finder", mode: "category")]).write(to: core.appendingPathComponent("inventory.json"))
+        let keyID = String(repeating: "a", count: 64)
+        let identity: Object = ["item_id": keyID, "label": "fixture_key", "key_type": "ssh-ed25519",
+            "validation": "candidate_requires_pair_validation", "fingerprint": "SHA256:" + Data(repeating: 1, count: 32).base64EncodedString().replacingOccurrences(of: "=", with: "")]
+        try JSONSerialization.data(withJSONObject: ["status": "present", "items": [identity]]).write(to: core.appendingPathComponent("secure-inventory.json"))
+        model.scan(); await model.waitForCompletion()
+        let ssh = model.categories.first { $0.id == "ssh-configuration" }!
+        precondition(ssh.itemSelectable && model.selectionState(ssh) == .none && model.selection.secureIdentities.isEmpty)
+        model.selectCategory(ssh.id, included: true)
+        precondition(model.selectionState(ssh) == .all && model.selection.categories.contains(ssh.id))
+        for host in hosts.suffix(2) { model.selectItem(ssh.id, item: host, included: false) }
+        precondition(model.selection.items[ssh.id] == ["github", "production"])
+        precondition(CaptureReviewPresentation.selectionLabel(ssh, model: model) == "2 of 4 selected")
+        let selected = model.selection
+        model.selectItem(ssh.id, item: "unknown", included: true)
+        precondition(model.selection == selected)
+        model.selectSecureIdentity(keyID, included: true)
+        model.selectItem(ssh.id, item: "production", included: false)
+        precondition(model.selectedSecureIdentities == [keyID])
+        model.selectItem(ssh.id, item: "production", included: true)
+        model.selectSecureIdentity(keyID, included: false)
+        precondition(model.selection == selected)
+        try render(model, runtime, state: "ssh-host-selection", tree: CaptureHierarchy.disclosureIDs([ssh.id], scope: .advanced).subtracting([CaptureHierarchy.secureTransferID]))
+        model.prepare(destination: root.appendingPathComponent("hosts.mbt")); await model.waitForCompletion()
+        precondition(model.state == .confirmation && model.preparation?.summary.selectedItems == 2)
+        precondition(model.preparation?.selection?.items[ssh.id] == ["github", "production"])
+        model.editSelection(); model.selectItem(ssh.id, item: "production", included: false)
+        precondition(model.preparation == nil && model.state == .review)
+        model.selectItem(ssh.id, item: "github", included: false)
+        precondition(model.selectionState(ssh) == .none && model.selection.items[ssh.id] == nil)
+        precondition(model.selection.categories == ["macos-finder"] && model.selection.secureIdentities.isEmpty)
+        model.selectCategory(ssh.id, included: true)
+        precondition(model.selectedItems[ssh.id] == Set(hosts))
+        model.selectItem(ssh.id, item: "home-server", included: false)
+        model.prepare(destination: root.appendingPathComponent("saved-hosts.mbt")); await model.waitForCompletion()
+        model.create(); await model.waitForCompletion()
+        precondition(model.state == .result && model.publication?.bundle.selectedItemCounts[ssh.id] == 3)
+        print("PASS: Capture Host default-off, full/subset/empty scope, invalid IDs, fresh confirmation, publication counts and native checkboxes")
+    }
     @MainActor static func render(_ model: CaptureModel, _ runtime: CoreRuntime, state: String, expanded: Bool = false, settingsOnly: Bool = false, scrollToBottom: Bool = false, tree: Set<String>? = nil, dark: Bool = false) throws {
         guard !CommandLine.arguments.contains("--no-renders") else { return }
         _ = NSApplication.shared
@@ -37,7 +79,8 @@ import SwiftUI
                             CaptureView(model: model, runtime: runtime, showsActions: false,
                                 categoryTreeExpansion: tree.map { .constant($0) } ?? (expanded ? .constant(
                                     CaptureHierarchy.disclosureIDs(model.categories.map(\.id), scope: .ordinary)
-                                        .union(CaptureHierarchy.disclosureIDs(model.categories.map(\.id), scope: .advanced))) : nil))
+                                        .union(CaptureHierarchy.disclosureIDs(model.categories.map(\.id), scope: .advanced))) : nil),
+                                experiencedVisibility: state == "ssh-host-selection" ? .constant(true) : nil)
                         }
                     }.padding(28).frame(maxWidth: .infinity, alignment: .leading)
                 }
@@ -56,6 +99,22 @@ import SwiftUI
             }
             if [.confirmation, .result].contains(model.state) {
                 precondition(checkboxes(host).isEmpty, "Prepared and published scope is read-only")
+            }
+            if state == "ssh-host-selection" {
+                let boxes = checkboxes(host)
+                let selected = model.selection
+                for name in ["github", "production", "home-server", "test-vps"] {
+                    let box = boxes.first { $0.accessibilityLabel() == name }!
+                    precondition(box.state == (["github", "production"].contains(name) ? .on : .off))
+                }
+                for _ in 0..<2 {
+                    let box = checkboxes(host).first { $0.accessibilityLabel() == "home-server" }!
+                    precondition(NSApp.sendAction(box.action!, to: box.target, from: box))
+                    RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.05))
+                    host.layoutSubtreeIfNeeded()
+                }
+                precondition(model.selection == selected && model.selection.secureIdentities.isEmpty)
+                precondition(checkboxes(host).contains { $0.accessibilityLabel() == "Select SSH Configuration" && $0.state == .mixed })
             }
             if state.hasPrefix("policy-review") {
                 let actual = checkboxes(host)
@@ -196,6 +255,10 @@ import SwiftUI
         """, core.appendingPathComponent("fixture.py"))
         let runtime = CoreRuntime(operationLogs: nil)
         let model = CaptureModel(runtime: runtime, location: CoreLocation(root: core, python: python, home: root, temporaryBase: root, toolDirectories: []))
+        if CommandLine.arguments.contains("--ssh-host-selection-only") {
+            try await sshHostSelectionChecks(model: model, runtime: runtime, core: core, root: root)
+            return
+        }
         if CommandLine.arguments.contains("--capture-disclosure-only") {
             try await captureDisclosureChecks(model: model, runtime: runtime, core: core)
             return

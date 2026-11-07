@@ -286,6 +286,17 @@ disclosures, independently of either master checkbox. Secure-only Capture remain
 available with every ordinary category deselected; Confirmation keeps the prepared
 secure scope read-only in the same shared hierarchy.
 
+Within Advanced, SSH Configuration uses the existing parent checkbox and native
+disclosure for Core-provided supported Host profiles in both Capture and Rebuild.
+Each Host has one checkbox and retains its complete directives; the parent selects
+all available profiles and the category shows `N of M selected`. Capture Advanced
+remains off initially. Rebuild lists only saved profiles; selecting the category
+includes all of them. Clearing its last Host excludes SSH Configuration while
+preserving other categories and Secure Transfer. A Host selection change clears
+prepared confirmation/Preview and requires fresh preparation. Snapshot coverage,
+v2 restrictions and IdentityFile dependency gates remain Core-owned; configuration
+conformity makes no authentication or connectivity claim.
+
 Review and Restore Selection share the 0/12/24/36 pt hierarchy offsets defined by
 `CaptureReviewPresentation.hierarchyStep`. Indentation applies once to leading
 content, never to the status or disclosure columns. Group/subgroup chevrons are

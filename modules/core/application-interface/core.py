@@ -233,7 +233,8 @@ def prepared_restore(path, disabled_groups, include_secure, selection=None, inst
             preview_blueprint = private / 'preview.blueprint'
         requested_selection = restore_selection.canonical(stage)
         ssh_evidence = (ssh_observation()
-                        if 'ssh-configuration' in requested_selection['categories'] else None)
+                        if 'ssh-configuration' in requested_selection['categories'] or
+                        'ssh-configuration' in requested_selection['items'] else None)
         duplicates = bundle.deduplicate_applications(stage)
         stage_identity = restore_fingerprint(stage)
         preparation_context = pkg_preparation.context(source_identity, stage_identity)
@@ -466,6 +467,8 @@ def prepared_restore(path, disabled_groups, include_secure, selection=None, inst
             "error_count": sum(item["status"] == "error" for item in modules),
             "preview_detail_level": "selected_requirements",
         }
+        if 'ssh-configuration' in requested_selection['items']:
+            summary['selected_item_counts']['ssh-configuration'] = len(requested_selection['items']['ssh-configuration'])
         # Diagnostic tool provenance is not an exact-version plan requirement.
         # Conditions and normalized planning decisions remain identity-bound.
         identity_summary = dict(summary)

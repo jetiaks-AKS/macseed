@@ -159,6 +159,19 @@ def snapshot(raw):
     return version, status, excluded, profiles
 
 
+def select_snapshot(raw, hosts):
+    """Narrow validated profiles without changing version or source coverage."""
+    _, _, _, profiles = snapshot(raw)
+    if (not hosts or len(set(hosts)) != len(hosts)
+            or not set(hosts).issubset(profiles)):
+        raise Invalid('invalid SSH Host selection')
+    # Retain v2 even if the remaining profiles happen to use only v1 directives.
+    # Intentional exclusions never increase unsupported-source coverage.
+    header = raw.split(b'\n', 4)[:4]
+    return b'\n'.join(header) + b'\n' + payload({
+        host: entries for host, entries in profiles.items() if host in hosts})
+
+
 def stamp(info):
     return (info.st_dev, info.st_ino, info.st_mode, info.st_uid, info.st_nlink,
             info.st_size, info.st_mtime_ns, info.st_ctime_ns)

@@ -1102,6 +1102,20 @@ Bundle remains `MBT-BUNDLE-1`; v2 SSH snapshots require the manifest capability
 that capability rather than silently ignoring new requirements. `secure.age v1`
 and accepted Stage 16H identity transfer are unchanged.
 
+Capture and Rebuild support selecting complete Host profiles through the existing
+item-selection API. Capture enumerates only its validated Discovery snapshot;
+Rebuild enumerates only the validated saved snapshot. A subset produces a private
+snapshot containing exactly those profiles, in source order with every supported
+directive intact. Unknown, duplicate or case-mismatched IDs are rejected before
+publication. There are no per-directive controls or new live-file reads for selection.
+
+Intentional deselection does not increase `excluded-profiles` or turn a complete
+source into partial coverage. Existing partial/unsupported coverage is retained.
+The original snapshot version is retained even when a v2 subset contains only v1
+directives, so selection cannot bypass the v2 mutation gate. Bundle v1 and the
+whole-category Blueprint flag are unchanged; the filtered snapshot is the saved
+and published SSH scope. Check compares that saved scope, not omitted profiles.
+
 Preview, Verification and Environment Comparison share the domain-owned reader.
 They distinguish exact file bytes, matching selected supported profiles, missing
 profiles, conflicting profiles, unsupported/ambiguous syntax and unsafe/unavailable
@@ -1179,7 +1193,8 @@ validated, moved or selected for Secure Transfer. Comparison can confirm support
 configuration while retaining an incomplete overall verdict; it proves neither
 remote authentication nor agent/Keychain readiness. No `ssh-add` or Keychain
 mutation is performed. Ordinary records expose aggregate statuses/reasons, not
-Host aliases, users, addresses or identity paths.
+Host aliases, users, addresses or identity paths. Selection inventory exposes Host
+aliases as labels and opaque item IDs; it never exposes directive values.
 
 Conflict correction, identity linkage/correction consent, custom destinations, Git
 dependency ordering and Secure Transfer in Check remain deferred. SSH Environment
