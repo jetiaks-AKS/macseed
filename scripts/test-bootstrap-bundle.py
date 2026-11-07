@@ -646,6 +646,8 @@ class BundleTests(unittest.TestCase):
              fixture / "modules/migration/age_runtime.py"),
             (migration.parents[1] / "modules/migration/external_sources.py",
              fixture / "modules/migration/external_sources.py"),
+            (migration.parents[1] / "modules/migration/restore_destinations.py",
+             fixture / "modules/migration/restore_destinations.py"),
         ):
             shutil.copy2(original, target)
         shutil.copy2(migration.parents[1] / "modules/verification/ssh-identities.sh",
@@ -790,6 +792,8 @@ class BundleTests(unittest.TestCase):
              fixture / "modules/migration/age_runtime.py"),
             (migration.parents[1] / "modules/migration/external_sources.py",
              fixture / "modules/migration/external_sources.py"),
+            (migration.parents[1] / "modules/migration/restore_destinations.py",
+             fixture / "modules/migration/restore_destinations.py"),
         ):
             shutil.copy2(original, target)
         bootstrap = fixture / "bootstrap.sh"

@@ -113,6 +113,8 @@ struct CoreSecureComparison: Codable, Equatable, Sendable {
 
 struct CoreRestorePreparation: Decodable {
     var secureComparison: CoreSecureComparison? = nil
+    enum SecureDestinationScope: String, Decodable { case defaultLocation = "default", custom, mixed }
+    var secureDestinationScope: SecureDestinationScope? = nil
     var secureComparedReady: Bool { secureExecutable && secureComparison.map { [.allMatch, .importRequired].contains($0.decision) } == true }
     var hasComparedExecutableChanges: Bool {
         includeSecure ? (secureComparison?.decision == .importRequired || plan.contains { !$0.isSecureImport && $0.disposition == "planned" }) : hasExecutableChanges
@@ -330,6 +332,7 @@ struct CoreRestorePreparation: Decodable {
     }
     enum CodingKeys: String, CodingKey {
         case effectiveSelection = "effective_selection", applicationDuplicates = "application_duplicates"
+        case secureDestinationScope = "secure_destination_scope"
         case scopeWarnings = "scope_warnings"
         case planDiagnostics = "plan_diagnostics"
         case selection, preparedPlanID = "prepared_plan_id", selectedGroups = "selected_groups", selectedCategories = "selected_categories"

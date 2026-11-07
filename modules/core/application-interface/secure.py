@@ -17,7 +17,7 @@ import uuid
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'migration'))
 from evidence import read_evidence
 from secret_input import (WAIT_SECONDS, SecureError, inherited_socket,
-                          metadata, receive, response, send, valid_challenge, unique_fields)
+                          metadata, receive, response, send, valid_challenge, valid_identity, unique_fields)
 
 
 def launch_channel(arguments):
@@ -74,7 +74,7 @@ def import_records(raw):
 
 
 def _run_secure(root, package, channel, operation_id, event, mutation, export_selection=None, record=None,
-                  *, compare=False, expected_target_state=None):
+                  *, compare=False, expected_target_state=None, destinations=None, inventory=False):
     child = None
     parent, endpoint = socket.socketpair()
     parent.setblocking(False)
@@ -110,6 +110,9 @@ def _run_secure(root, package, channel, operation_id, event, mutation, export_se
                 endpoint.close()
                 code = None
                 seen_challenges = set()
+                context_sent = False
+                destination_index = 0
+                identities = []
                 previous_challenge = None
                 deadline = time.monotonic() + WAIT_SECONDS
                 phase = 'secure_compare' if compare else 'secure_packaging' if export_selection is not None else 'secure_import'
@@ -135,8 +138,31 @@ def _run_secure(root, package, channel, operation_id, event, mutation, export_se
                         raise
                     except (ValueError, UnicodeError):
                         raise SecureError('secure_channel_invalid') from None
-                    if message == {'type': 'mutation'}:
-                        if compare:
+                    if message == {'type': 'restore_context', 'version': 1}:
+                        if context_sent or export_selection is not None or seen_challenges:
+                            raise SecureError('secure_channel_invalid')
+                        context_sent = True
+                        metadata(parent, {'inventory': inventory, 'bundle_id': destinations['bundle_id'] if destinations else None,
+                                          'count': len(destinations['items']) if destinations else 0})
+                    elif message == {'type': 'restore_destination', 'index': destination_index}:
+                        if not context_sent or destinations is None or destination_index >= len(destinations['items']) or seen_challenges:
+                            raise SecureError('secure_channel_invalid')
+                        metadata(parent, destinations['items'][destination_index])
+                        destination_index += 1
+                    elif isinstance(message, dict) and message.get('type') == 'restore_identity':
+                        item = message.get('identity')
+                        if (not inventory or not context_sent or not seen_challenges or len(identities) >= 32
+                                or set(message) != {'type', 'version', 'identity'} or message['version'] != 1
+                                or not isinstance(item, dict) or set(item) != {'identity_id', 'name', 'key_type', 'fingerprint'}
+                                or not isinstance(item['identity_id'], str) or not re.fullmatch('[0-9a-f]{64}', item['identity_id'])
+                                or not valid_identity({key: item[key] for key in ('name', 'key_type', 'fingerprint')})
+                                or any(row['identity_id'] == item['identity_id'] or row['name'].casefold() == item['name'].casefold()
+                                       or row['fingerprint'] == item['fingerprint'] for row in identities)):
+                            raise SecureError('secure_channel_invalid')
+                        identities.append(item)
+                        send(parent, b'ACK')
+                    elif message == {'type': 'mutation'}:
+                        if compare or (destinations is not None and (not context_sent or destination_index != len(destinations['items']))):
                             raise SecureError('secure_channel_invalid')
                         mutation()
                         send(parent, b'ACK')
@@ -186,6 +212,13 @@ def _run_secure(root, package, channel, operation_id, event, mutation, export_se
                     raise error
                 if status != 0:
                     raise SecureError(failure_code)
+                if destinations is not None and (not context_sent or destination_index != len(destinations['items'])):
+                    raise SecureError('secure_channel_invalid')
+                if inventory:
+                    if not identities:
+                        raise SecureError('secure_payload_invalid')
+                    event('phase_completed', {'phase': phase})
+                    return identities
                 if compare:
                     raw_result = child.stdout.read(1025)
                     if len(raw_result) > 1024:
@@ -217,9 +250,9 @@ def _run_secure(root, package, channel, operation_id, event, mutation, export_se
 
 
 def import_secure(root, package, channel, operation_id, event, mutation, export_selection=None, record=None,
-                  *, expected_target_state=None):
+                  *, expected_target_state=None, destinations=None):
     return _run_secure(root, package, channel, operation_id, event, mutation, export_selection, record,
-                       expected_target_state=expected_target_state)
+                       expected_target_state=expected_target_state, destinations=destinations)
 
 
 def export_secure(root, package, selection, channel, operation_id, event):
@@ -228,7 +261,7 @@ def export_secure(root, package, selection, channel, operation_id, event):
     return _run_secure(root, package, channel, operation_id, event, unexpected_mutation, selection)
 
 
-def compare_secure(root, package, channel, operation_id, event):
+def compare_secure(root, package, channel, operation_id, event, *, destinations=None, inventory=False):
     def unexpected_mutation():
         raise SecureError('secure_channel_invalid')
-    return _run_secure(root, package, channel, operation_id, event, unexpected_mutation, compare=True)
+    return _run_secure(root, package, channel, operation_id, event, unexpected_mutation, compare=True, destinations=destinations, inventory=inventory)

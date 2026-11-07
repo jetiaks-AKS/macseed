@@ -262,7 +262,7 @@ struct CaptureView: View {
         let panel = NSOpenPanel()
         panel.title = "Add SSH Identity"
         panel.prompt = "Add Identity"
-        panel.message = "Choose a private SSH key with its matching .pub file. It will be added unchecked and restored into ~/.ssh using its name."
+        panel.message = "Choose a private SSH key with its matching .pub file. It will be added unchecked and restored into ~/.ssh by default using its name."
         panel.canChooseFiles = true; panel.canChooseDirectories = false
         panel.canCreateDirectories = false; panel.allowsMultipleSelection = false
         panel.resolvesAliases = false; panel.showsHiddenFiles = true
@@ -303,6 +303,7 @@ struct CaptureSecureInputView: View {
     let challenge: CoreSecureChallenge
     var restoring = false
     var comparing = false
+    var customizing = false
     @CaptureViewState private var entry = CaptureSecureEntry()
     private var encrypting: Bool { challenge.kind == .bundleEncrypt }
     private var confirmingImport: Bool { challenge.kind == .importConfirmation }
@@ -346,7 +347,7 @@ struct CaptureSecureInputView: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
             HStack {
-                Button(comparing ? "Cancel Preview" : restoring ? "Cancel Rebuild" : "Cancel Capture", role: .cancel) { entry.clear(); runtime.cancelSecureChallenge(challenge) }
+                Button(customizing ? "Cancel Unlock" : comparing ? "Cancel Preview" : restoring ? "Cancel Rebuild" : "Cancel Capture", role: .cancel) { entry.clear(); runtime.cancelSecureChallenge(challenge) }
                     .keyboardShortcut(.cancelAction)
                 Spacer()
                 Button(confirmingImport ? "Import SSH Identities" : encrypting ? "Encrypt" : "Unlock") {

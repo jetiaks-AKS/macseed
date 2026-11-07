@@ -136,7 +136,7 @@ def send(channel, body):
 
 
 def metadata(channel, value):
-    send(channel, json.dumps(value, separators=(',', ':')).encode('ascii'))
+    send(channel, json.dumps(value, separators=(',', ':'), ensure_ascii=False).encode('utf-8'))
 
 
 def response(body, challenge):
@@ -176,6 +176,25 @@ class Input:
             raise SecureError('secure_channel_invalid')
         metadata(self.channel, challenge)
         return response(receive(self.channel, time.monotonic() + WAIT_SECONDS), challenge)
+
+    def restore_context(self):
+        metadata(self.channel, {'type': 'restore_context', 'version': 1})
+        value = json.loads(receive(self.channel, time.monotonic() + WAIT_SECONDS), object_pairs_hook=unique_fields)
+        if (not isinstance(value, dict) or set(value) != {'inventory', 'bundle_id', 'count'}
+                or type(value['inventory']) is not bool or type(value['count']) is not int
+                or not 0 <= value['count'] <= 32):
+            raise SecureError('secure_channel_invalid')
+        items = []
+        for index in range(value['count']):
+            metadata(self.channel, {'type': 'restore_destination', 'index': index})
+            items.append(json.loads(receive(self.channel, time.monotonic() + WAIT_SECONDS), object_pairs_hook=unique_fields))
+        mapping = dict(version=1, bundle_id=value['bundle_id'], items=items) if items else None
+        return dict(inventory=value['inventory'], mapping=mapping)
+
+    def inventory_item(self, item):
+        metadata(self.channel, dict(type='restore_identity', version=1, identity=item))
+        if receive(self.channel, time.monotonic() + WAIT_SECONDS) != b'ACK':
+            raise SecureError('secure_channel_invalid')
 
     def mutation(self):
         metadata(self.channel, {'type': 'mutation'})

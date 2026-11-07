@@ -1,9 +1,25 @@
 import Foundation
 import AppKit
 import SwiftUI
+import Vision
 
 @main struct RestoreTests {
     private final class SecureExpansion: ObservableObject { @Published var ids: Set<String> = [] }
+    private struct SecureSelectionHost: View {
+        @ObservedObject var expansion: SecureExpansion
+        let model: RestoreModel
+        var body: some View {
+            RestoreSelectionContent(model: model, expansion: $expansion.ids)
+                .padding(16).frame(width: 785).background(Color(nsColor: .windowBackgroundColor))
+        }
+    }
+    private struct SecureExpandHost: View {
+        @ObservedObject var expansion: SecureExpansion
+        let ids: Set<String>
+        var body: some View {
+            CaptureExpandButton(ids: ids, title: "For Experienced Users", expanded: $expansion.ids).frame(width: 120, height: 36)
+        }
+    }
     private struct SecureFrames: PreferenceKey {
         static var defaultValue: [String: CGRect] = [:]
         static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) { value.merge(nextValue(), uniquingKeysWith: { _, new in new }) }
@@ -78,10 +94,10 @@ import SwiftUI
                             windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 1)!)
                     }
                     await settle()
-                    precondition(expansion.ids.isEmpty, "Secure Selection has no disclosure target")
+                    precondition(expansion.ids == [CaptureHierarchy.secureTransferID], "Secure disclosure must not change selection")
                 }
                 expansion.ids = RestoreSelectionPresentation.disclosureIDs(model.selectionAreas, advanced: false)
-                    .union(RestoreSelectionPresentation.disclosureIDs(model.selectionAreas, advanced: true))
+                    .union(RestoreSelectionPresentation.disclosureIDs(model.selectionAreas, advanced: true, secureAvailable: model.inspection?.secureComponent == true))
                 await settle()
             }
             scroll.contentView.scroll(to: NSPoint(x: 0, y: max(0, document.frame.height - scroll.contentView.bounds.height)))
@@ -769,7 +785,7 @@ import SwiftUI
                 precondition(Date() < deadline, "Focused operation exceeded deadline")
                 if let challenge = runtime.secureChallenge, seen.insert(challenge.challengeID).inserted {
                     challenges.append(challenge)
-                    if preparing { precondition(challenge.kind != .importConfirmation && runtime.operation == .secureRestoreCompare) }
+                    if preparing { precondition(challenge.kind != .importConfirmation && [.secureRestoreCompare, .secureRestoreInventory].contains(runtime.operation)) }
                     if mode == "cancel" { runtime.cancelSecureChallenge(challenge) }
                     else if mode == "timeout" { clock.expire() }
                     else if challenge.kind == .importConfirmation {
@@ -802,7 +818,9 @@ import SwiftUI
                 precondition(counts.matching == (decision == .allMatch ? 1 : 0))
                 precondition(counts.changes == (decision == .importRequired ? 1 : 0))
                 precondition(counts.attention == (decision == .conflict ? 1 : 0))
-                precondition(RestorePreviewMetrics.badges(secure).map(\.1) == [1])
+                let badges = RestorePreviewMetrics.badges(secure)
+                precondition(badges.map(\.0) == (decision == .allMatch ? [] : [decision == .conflict ? "Attention" : "Planned"]))
+                precondition(badges.map(\.1) == (decision == .allMatch ? [] : [1]))
                 precondition(challenges.allSatisfy { $0.kind == .bundleUnlock } && !challenges.isEmpty)
                 precondition(!runtime.events.contains { $0.type == "secure_publication_started" || $0.type == "operation_record" })
             } else {
@@ -822,6 +840,84 @@ import SwiftUI
                     try fm.setAttributes([.posixPermissions: suffix.isEmpty ? 0o600 : 0o644], ofItemAtPath: target.path)
                 }
             }
+        }
+        if CommandLine.arguments.contains("--secure-destinations-only") {
+            await choose(secure: false)
+            precondition(model.canCustomizeDestinations && !model.includeSecure)
+            model.customizeDestinations(); let cancelled = await interact("cancel")
+            precondition(cancelled.count == 1 && model.state == .review && model.destinationInventory == nil && !model.includeSecure)
+            model.customizeDestinations(); let rejected = await interact("reject")
+            precondition(rejected.map(\.attempt) == [1, 2, 3] && model.destinationInventory == nil)
+            model.customizeDestinations(); let unlocked = await interact()
+            precondition(unlocked.map(\.kind) == [.bundleUnlock] && model.showingDestinations && !model.includeSecure)
+            precondition(runtime.restoreIdentityInventory == nil && runtime.termination?.restoreIdentityInventory == nil)
+            let inventory = model.destinationInventory!
+            precondition(inventory.items.count == 2 && !fm.fileExists(atPath: ssh.path))
+            let custom = root.appendingPathComponent("custom-private-destination")
+            try fm.createDirectory(at: custom, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+            let identity = inventory.items.first { $0.name == "id_disposable" }!
+            model.setDestination(custom.path, for: identity.id)
+            precondition(model.privateDestinations == nil, "Configuration must not select Secure Transfer")
+            if !CommandLine.arguments.contains("--no-renders") {
+                _ = NSApplication.shared
+                let renderDirectory = URL(fileURLWithPath: "build/Debug/SecureDestinations")
+                try fm.createDirectory(at: renderDirectory, withIntermediateDirectories: true)
+                for dark in [false, true] {
+                    NSApp.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+                    let host = NSHostingView(rootView: RestoreDestinationsView(model: model)
+                        .frame(width: 668, height: 540).background(Color(nsColor: .windowBackgroundColor)))
+                    host.frame = NSRect(x: 0, y: 0, width: 668, height: 540)
+                    let window = NSWindow(contentRect: host.frame, styleMask: [.titled], backing: .buffered, defer: false)
+                    window.isReleasedWhenClosed = false; window.contentView = host
+                    window.orderFront(nil)
+                    try? await Task.sleep(for: .milliseconds(180)); host.layoutSubtreeIfNeeded(); host.displayIfNeeded()
+                    let image = host.bitmapImageRepForCachingDisplay(in: host.bounds)!
+                    host.cacheDisplay(in: host.bounds, to: image)
+                    try image.representation(using: .png, properties: [:])!.write(to: renderDirectory.appendingPathComponent("customize-" + (dark ? "dark" : "light") + ".png"))
+                    window.orderOut(nil)
+                }
+            }
+            model.dismissDestinations(); model.selectSecureTransfer(true)
+            let mapping = model.privateDestinations!
+            let request = CoreRequest(.restorePrepare(path: bundle.path, disabledGroups: [], includeSecure: true, selection: model.selection), restoreDestinations: mapping)
+            let wire = try request.encoded()
+            precondition(wire.range(of: Data(custom.path.utf8)) == nil && wire.range(of: Data(identity.name.utf8)) == nil && wire.range(of: Data(identity.id.utf8)) == nil)
+            try await preview(.importRequired, label: "Custom destination Preview")
+            precondition(model.canRebuild)
+            model.back(); model.customizeDestinations(); let reopened = await interact()
+            precondition(reopened.map(\.kind) == [.bundleUnlock] && model.showingDestinations)
+            model.setDestination(nil, for: identity.id)
+            precondition(model.preparation == nil && model.preview == nil && model.privateDestinations == nil)
+            model.setDestination(custom.path, for: identity.id); model.dismissDestinations()
+            try await preview(.importRequired, label: "Changed mapping needs fresh Preview")
+            model.requestRebuild(); model.confirmRebuild(); let imported = await interact(preparing: false)
+            precondition(imported.filter { $0.kind == .importConfirmation }.count == 1)
+            precondition(model.executionResult?.outcome == .clean && CoreSecureRestoreEvidence(events: model.categoryPresentationEvents).verified)
+            for suffix in ["", ".pub"] {
+                let actual = try Data(contentsOf: custom.appendingPathComponent("id_disposable" + suffix))
+                let expected = try Data(contentsOf: root.appendingPathComponent("disposable_identity" + suffix))
+                precondition(actual == expected && !fm.fileExists(atPath: ssh.appendingPathComponent("id_disposable" + suffix).path))
+            }
+            precondition(fm.fileExists(atPath: ssh.appendingPathComponent("id_second").path))
+            try await preview(.allMatch, label: "Custom/default no-op comparison")
+            precondition(!model.canRebuild)
+            let privateValues = [custom.path, identity.name, identity.fingerprint, identity.id].map { Data($0.utf8) } + [keySecret, bundleSecret]
+            for entry in try await logs.history() {
+                let report = try await DiagnosticReportBuilder.generate(id: entry.id, environment: .current()) { id, cursor in try await logs.page(id, after: cursor) }
+                precondition(privateValues.allSatisfy { report.utf8.range(of: $0) == nil })
+            }
+            for base in [logs.directory, core.appendingPathComponent("logs")] {
+                for case let file as URL in fm.enumerator(at: base, includingPropertiesForKeys: [.isRegularFileKey])?.allObjects ?? [] {
+                    if (try? file.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true {
+                        let bytes = try Data(contentsOf: file)
+                        precondition(privateValues.allSatisfy { bytes.range(of: $0) == nil })
+                    }
+                }
+            }
+            await choose(ordinary, secure: false)
+            precondition(model.destinationInventory == nil && model.destinationDirectories.isEmpty && !model.showingDestinations)
+            print("PASS: authenticated private Customize, cancellation/retry, default-off scope, mapping invalidation, mixed production import, exact bytes, Verification/no-op, privacy and Bundle reset")
+            return
         }
         if CommandLine.arguments.contains("--secure-compare-binding-only") {
             await choose()
@@ -2433,6 +2529,187 @@ import SwiftUI
         print("PASS: Restore accordion Bundle ceiling, sparse/legacy/Advanced-only scope, defaults, tri-state masters, stable subsets, explicit dependencies, cancellation and Back/Refresh preservation; no Execute")
     }
 
+    @MainActor static func secureDestinationUIChecks(_ model: RestoreModel, runtime: CoreRuntime, core: URL, source: URL,
+                                                    python: URL, repository: URL) async throws {
+        setbuf(stdout, nil)
+        _ = NSApplication.shared
+        let fm = FileManager.default, secureID = CoreRestorePreparation.secureDomain
+        let output = URL(fileURLWithPath: "build/Debug/SecureDestinationsUI")
+        try fm.createDirectory(at: output, withIntermediateDirectories: true)
+        func json(_ value: Any, _ name: String) throws {
+            try JSONSerialization.data(withJSONObject: value).write(to: core.appendingPathComponent(name))
+        }
+        // Execute only the new public presentation projection, without Core workflows.
+        let projection = Process()
+        projection.executableURL = python
+        projection.arguments = ["-B", "-c", """
+        import ast,os,sys
+        tree=ast.parse(open(sys.argv[1]).read())
+        prepare=next(node for node in tree.body if isinstance(node,ast.FunctionDef) and node.name=='prepared_restore')
+        blocks=[node for node in prepare.body if isinstance(node,ast.With) for node in node.body
+                if isinstance(node,ast.If) and any(isinstance(item,ast.Constant) and item.value=='secure_destination_scope' for item in ast.walk(node))]
+        assert len(blocks)==1
+        code=compile(ast.Module(body=blocks,type_ignores=[]),'<destination presentation>','exec')
+        ssh=os.path.join(os.environ['HOME'],'.ssh')
+        for directories,expected in [(None,'default'),([None,None],'default'),([ssh],'default'),(['/fixture/one'],'custom'),(['/fixture/one','/fixture/two'],'custom'),([None,'/fixture/one'],'mixed'),([ssh,'/fixture/one'],'mixed')]:
+            values=dict(os=os,include_secure=True,destinations=None if directories is None else dict(items=[dict(directory=p) for p in directories]),summary={})
+            exec(code,values); assert values['summary']==dict(secure_destination_scope=expected)
+        values=dict(os=os,include_secure=False,destinations=None,summary={});exec(code,values);assert values['summary']=={}
+        print('PASS: production prepared destination projection: default/custom/mixed, explicit default, off; no private fields')
+        """, repository.appendingPathComponent("modules/core/application-interface/core.py").path]
+        projection.environment = ["HOME": core.deletingLastPathComponent().path, "PATH": "/usr/bin:/bin", "PYTHONDONTWRITEBYTECODE": "1"]
+        try projection.run(); projection.waitUntilExit(); precondition(projection.terminationStatus == 0)
+        try write("secure-ui", core.appendingPathComponent("mode"))
+        try write(repository.appendingPathComponent("modules/migration").path, core.appendingPathComponent("migration-path"))
+        let names = ["id_work_" + String(repeating: "long_identity_", count: 5), "id_personal"]
+        let ids = [String(repeating: "1", count: 64), String(repeating: "2", count: 64)]
+        let identities: [[String: Any]] = zip(ids, names).enumerated().map { index, pair in
+            ["identity_id": pair.0, "name": pair.1, "key_type": "ssh-ed25519",
+             "fingerprint": "SHA256:" + Data(repeating: UInt8(index + 1), count: 32).base64EncodedString().replacingOccurrences(of: "=", with: "")]
+        }
+        try json(["version": 1, "bundle_id": String(repeating: "b", count: 64), "items": identities], "identities.json")
+        try json(["format_version": 1, "selected_categories": ["ssh-configuration"], "selected_item_counts": ["homebrew-packages": 2], "secure_component": true,
+                  "restore_selection": ["groups": [["id": "Homebrew", "domains": ["homebrew-packages"]], ["id": "SSH Configuration", "domains": ["ssh-configuration"]]],
+                    "inventory": [["domain": "homebrew-packages", "label": "Homebrew Packages", "selection_mode": "items", "availability": "available",
+                                   "source_present": true, "capture_selected": true, "items": [["item_id": "git", "label": "git"], ["item_id": "jq", "label": "jq"]]],
+                                  ["domain": "ssh-configuration", "label": "SSH Configuration", "selection_mode": "category", "availability": "available",
+                                   "source_present": true, "capture_selected": true, "items": []]]]], "inspection.json")
+        try json(["prepared_plan_id": String(repeating: "a", count: 64), "plan_diagnostics": ["bundle": String(repeating: "b", count: 64)],
+                  "selection": ["categories": [], "items": [:]], "selected_groups": [], "selected_categories": [], "selected_item_counts": [:],
+                  "include_secure": true, "secure_restore_status": "selected_pending",
+                  "plan": [["domain": secureID, "item_id": CoreRestorePreparation.secureItem, "action": "validate_and_import", "disposition": "pending_unlock", "reason": "secure_unlock_required"]],
+                  "readiness": ["ready": true, "ready_scope": "environment", "conditions": [["domain": secureID, "code": "secure_bridge_required", "status": "external_action_required", "scope": "execution_launch"]], "reentry": "restore_prepare"],
+                  "has_planned_changes": true, "has_executable_changes": true, "warning_count": 0, "error_count": 0], "secure-plan.json")
+        func complete() async {
+            let deadline = Date().addingTimeInterval(15)
+            while model.busy || runtime.isActive {
+                precondition(Date() < deadline)
+                if let challenge = runtime.secureChallenge {
+                    precondition(challenge.kind == .bundleUnlock)
+                    runtime.respond(to: challenge, with: .secret(Data("presentation-fixture".utf8)))
+                }
+                try? await Task.sleep(for: .milliseconds(10))
+            }
+            await model.waitForCompletion()
+        }
+        func descendants<T: NSView>(_ view: NSView, _: T.Type) -> [T] {
+            (view as? T).map { [$0] } ?? view.subviews.flatMap { descendants($0, T.self) }
+        }
+        func click(_ host: NSView, _ window: NSWindow, _ point: NSPoint) {
+            let location = host.convert(point, to: nil)
+            for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+                window.sendEvent(NSEvent.mouseEvent(with: type, location: location, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                    windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 1)!)
+            }
+        }
+        func settle(_ view: NSView) async {
+            try? await Task.sleep(for: .milliseconds(80)); view.layoutSubtreeIfNeeded(); view.displayIfNeeded()
+        }
+        func render<V: View>(_ content: V, name: String, width: CGFloat = 785, height: CGFloat = 560) async throws {
+            for dark in [false, true] {
+                let host = NSHostingView(rootView: content.frame(width: width, height: height).background(Color(nsColor: .windowBackgroundColor)))
+                let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: height), styleMask: [.titled], backing: .buffered, defer: false)
+                window.isReleasedWhenClosed = false; window.contentView = host; host.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+                window.makeKeyAndOrderFront(nil); await settle(host)
+                precondition(host.fittingSize.width <= width + 1)
+                let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds)!
+                host.cacheDisplay(in: host.bounds, to: bitmap)
+                try bitmap.representation(using: .png, properties: [:])!.write(to: output.appendingPathComponent(name + (dark ? "-dark.png" : "-light.png")))
+                if name == "customize" {
+                    // SwiftUI exposes no in-process AX children on this SDK. Check
+                    // rendered actions with local Vision instead of assuming NSButton.
+                    let recognition = VNRecognizeTextRequest()
+                    recognition.recognitionLevel = .accurate; recognition.usesLanguageCorrection = false
+                    try VNImageRequestHandler(cgImage: bitmap.cgImage!).perform([recognition])
+                    let actions = (recognition.results ?? []).filter { $0.topCandidates(1).first?.string.hasPrefix("Choose Folder") == true }
+                    precondition(actions.count == 2, "Both folder actions must remain visible")
+                    let frames = actions.map(\.boundingBox)
+                    precondition(abs(frames[0].minX - frames[1].minX) < 0.004
+                                 && frames.allSatisfy { CGRect(x: 0, y: 0, width: 1, height: 1).contains($0) && $0.width > 0 })
+                    let viewSource = try String(contentsOf: repository.appendingPathComponent("desktop/Macseed/Sources/RestoreView.swift"))
+                    precondition(viewSource.contains(".accessibilityValue(model.destinationDirectories[identity.id] ?? \"~/.ssh\")")
+                                 && viewSource.contains(".truncationMode(.middle).textSelection(.enabled)"), "Full path binding and text selection must survive truncation")
+                }
+                window.close()
+            }
+        }
+        model.choose(source); await model.waitForCompletion()
+        precondition(model.state == .review && !model.includeSecure && model.canCustomizeDestinations)
+        let expansion = SecureExpansion()
+        let selectionHost = NSHostingView(rootView: SecureSelectionHost(expansion: expansion, model: model))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 785, height: 500), styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = selectionHost; window.makeKeyAndOrderFront(nil)
+        defer { window.close() }
+        await settle(selectionHost)
+        func secureCheckbox() -> NSButton {
+            descendants(selectionHost, NSButton.self).first { $0.accessibilityLabel() == "Select Secure Transfer" }!
+        }
+        func disclose() async {
+            let checkbox = secureCheckbox(), frame = checkbox.convert(checkbox.bounds, to: selectionHost)
+            click(selectionHost, window, NSPoint(x: frame.minX - 18, y: frame.midY)); await settle(selectionHost)
+        }
+        precondition(expansion.ids.isEmpty)
+        for _ in 0..<2 {
+            let box = secureCheckbox(); precondition(NSApp.sendAction(box.action!, to: box.target, from: box)); await settle(selectionHost)
+            precondition(expansion.ids.isEmpty)
+        }
+        try await render(SecureRestoreHost(expansion: expansion, model: model, runtime: runtime), name: "selection-collapsed")
+        model.customizeDestinations(); await complete()
+        precondition(model.showingDestinations && !model.includeSecure)
+        let path = "/private/tmp/ssh-ui-fixture/" + String(repeating: "long-folder-name/", count: 8) + "keys"
+        model.setDestination(path, for: ids[0])
+        try await render(RestoreDestinationsView(model: model), name: "customize", width: 620, height: 400)
+        model.dismissDestinations()
+        let directories = model.destinationDirectories
+        await disclose()
+        precondition(expansion.ids == [CaptureHierarchy.secureTransferID] && !model.includeSecure && model.destinationDirectories == directories)
+        for _ in 0..<2 {
+            let box = secureCheckbox(); precondition(NSApp.sendAction(box.action!, to: box.target, from: box)); await settle(selectionHost)
+            precondition(expansion.ids == [CaptureHierarchy.secureTransferID] && model.destinationDirectories == directories)
+        }
+        try await render(SecureRestoreHost(expansion: expansion, model: model, runtime: runtime), name: "selection-expanded")
+        let all = RestoreSelectionPresentation.disclosureIDs(model.selectionAreas, advanced: true, secureAvailable: true)
+        precondition(all.contains(CaptureHierarchy.secureTransferID))
+        let expandHost = NSHostingView(rootView: SecureExpandHost(expansion: expansion, ids: all))
+        let expandWindow = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 120, height: 36), styleMask: [.borderless], backing: .buffered, defer: false)
+        expandWindow.isReleasedWhenClosed = false; expandWindow.contentView = expandHost; expandWindow.makeKeyAndOrderFront(nil)
+        await settle(expandHost)
+        for index in 0..<2 {
+            click(expandHost, expandWindow, NSPoint(x: 60, y: 18)); await settle(expandHost); await settle(selectionHost)
+            precondition(WorkflowExpansion.allExpanded(expansion.ids, available: all) == (index == 0))
+            precondition(model.destinationDirectories == directories && !model.includeSecure)
+        }
+        expandWindow.close()
+        precondition(!WorkflowExpansion.allExpanded(expansion.ids, available: all))
+        model.selectSecureTransfer(true)
+        for area in model.eligibleAreas { model.selectArea(area.id, included: false) }
+        for (scope, text) in [("default", "Keys will be restored to ~/.ssh."), ("custom", "Keys will be restored to selected locations."), ("mixed", "Keys will use default and custom locations.")] {
+            try write(scope, core.appendingPathComponent("reported-scope"))
+            model.refreshPreview(); await complete()
+            precondition(model.state == .preview && model.canRebuild, model.technicalReason ?? "Preview fixture failed")
+            let plan = model.preparation!, preview = model.preview!
+            let tasks = RestoreTaskPresentation(preview: preview, plan: plan)
+            let message = tasks.domains.first { $0.id == secureID }!.items[0].item.action
+            precondition(message == text + " Existing keys won't be overwritten." + (scope == "default" ? "" : "\nSSH configuration may need updating."))
+            precondition(!message.contains(path) && (scope == "default" || !message.contains("~/.ssh")))
+            await disclose()
+            precondition(model.preparation?.preparedPlanID == plan.preparedPlanID && model.preview?.summary == preview.summary && model.destinationDirectories == directories)
+            if scope == "custom" {
+                try await render(RestoreView(model: model, runtime: runtime, categoryExpansion: .constant(true)).padding(20), name: "preview-custom", height: 650)
+            }
+        }
+        // The same mixed UI mapping above deliberately received all three Core scopes.
+        // Display follows prepared evidence, never the current session dictionary.
+        model.setDestination(nil, for: ids[0])
+        precondition(model.preparation != nil && model.destinationDirectories == directories, "Preview is not editable")
+        model.back(); model.customizeDestinations(); await complete(); model.setDestination(nil, for: ids[0])
+        precondition(model.destinationDirectories.isEmpty && model.privateDestinations == nil && model.preparation == nil && model.preview == nil)
+        model.dismissDestinations()
+        precondition(!fm.fileExists(atPath: core.appendingPathComponent("MUTATION_ATTEMPT").path))
+        print("PASS: native collapsed/expanded Secure Transfer, independent checkbox/chevron, shared Expand All scope, mapping persistence, prepared default/custom/mixed copy, contextual warning and stale Preview invalidation")
+        print("PASS: Light/Dark Selection, Customize (long name/path and aligned folder actions), and custom Preview fixtures; no importer or Execute")
+    }
+
     @MainActor static func main() async throws {
         if CommandLine.arguments.contains("--secure-passphrase-only") || CommandLine.arguments.contains("--bundled-age-only") {
             try await securePassphraseChecks(repository: URL(fileURLWithPath: CommandLine.arguments[1]), python: URL(fileURLWithPath: CommandLine.arguments[2])); return
@@ -2443,14 +2720,15 @@ import SwiftUI
         if CommandLine.arguments.contains("--secure-request-budget-only") {
             try await secureRequestBudgetChecks(repository: URL(fileURLWithPath: CommandLine.arguments[1]), python: URL(fileURLWithPath: CommandLine.arguments[2])); return
         }
-        if CommandLine.arguments.contains("--secure-compare-only") || CommandLine.arguments.contains("--secure-compare-binding-only") {
+        if CommandLine.arguments.contains("--secure-compare-only") || CommandLine.arguments.contains("--secure-compare-binding-only") || CommandLine.arguments.contains("--secure-destinations-only") {
             try await secureComparisonChecks(repository: URL(fileURLWithPath: CommandLine.arguments[1]), python: URL(fileURLWithPath: CommandLine.arguments[2])); return
         }
         if CommandLine.arguments.contains("--secure-restore-only") {
             try await secureRestoreChecks(repository: URL(fileURLWithPath: CommandLine.arguments[1]), python: URL(fileURLWithPath: CommandLine.arguments[2])); return
         }
         let homebrewSetupOnly = CommandLine.arguments.contains("--homebrew-setup-only")
-        let selectionAccordionOnly = CommandLine.arguments.contains("--selection-accordion-only") || homebrewSetupOnly
+        let secureUIOnly = CommandLine.arguments.contains("--secure-destination-ui-only")
+        let selectionAccordionOnly = CommandLine.arguments.contains("--selection-accordion-only") || homebrewSetupOnly || secureUIOnly
         let refreshCancellationOnly = CommandLine.arguments.contains("--appstore-refresh-cancel-only")
         if !selectionAccordionOnly && !refreshCancellationOnly { try topologyPreviewChecks() }
         if CommandLine.arguments.contains("--topology-preview-only") { return }
@@ -2528,7 +2806,7 @@ import SwiftUI
         try FileManager.default.createDirectory(at: core.appendingPathComponent("modules/core/application-interface"), withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: core.appendingPathComponent("config"), withIntermediateDirectories: true)
         for path in ["bootstrap.sh", "config/toolkit.conf", "modules/core/application-interface/core.py"] { try Data().write(to: core.appendingPathComponent(path)) }
-        try write("#!/bin/bash\nexec python3 -B fixture.py\n", core.appendingPathComponent("modules/core/application-interface/core.sh"))
+        try write("#!/bin/bash\nexec python3 -B fixture.py \"$@\"\n", core.appendingPathComponent("modules/core/application-interface/core.sh"))
         try write("""
         import json, sys, time, os, signal
         from pathlib import Path
@@ -2555,9 +2833,34 @@ import SwiftUI
         signal.signal(signal.SIGTERM,cancelled)
         emit('started')
         operation=request['operation']
+        if mode=='secure-ui' and operation in ('restore_prepare','secure_restore_inventory','secure_restore_compare'):
+            # Presentation fixture only: no Bundle decryption, importer or Execute.
+            if operation!='restore_prepare':
+                sys.path.insert(0,Path('migration-path').read_text())
+                from secret_input import inherited_socket,metadata,receive,response
+                channel=inherited_socket(int(sys.argv[2]))
+                emit('phase_started',dict(phase='secure_compare'))
+                challenge=dict(type='challenge',protocol_version=1,operation_id=request['operation_id'],challenge_id='a'*32,kind='bundle_unlock',attempt=1)
+                metadata(channel,challenge); response(receive(channel,time.monotonic()+10),challenge)
+                emit('phase_completed',dict(phase='secure_compare')); channel.close()
+            if operation=='secure_restore_inventory':
+                result=json.loads(Path('identities.json').read_text()); result['operation_id']=request['operation_id']
+                private=Path(os.environ['TMPDIR'])/'secure-restore-inventory.json'
+                private.write_text(json.dumps(result)); private.chmod(0o600)
+                result=dict(status='authenticated')
+            elif operation=='secure_restore_compare':
+                result=dict(decision='import_required',target_state='c'*64,source_fingerprint='b'*64,prepared_plan_id='a'*64,
+                            selection=request['parameters']['selection'],include_secure=True,comparison_operation_id=request['operation_id'])
+            else:
+                result=json.loads(Path('secure-plan.json').read_text())
+                result['secure_destination_scope']=Path('reported-scope').read_text()
+            emit('result',result); emit('completed'); sys.exit(0)
         if operation=='capabilities':
             features={} if mode=='old_core' else {'restore_selection':{'version':1},'bundle_comparison':{'version':1}}
             result=dict(protocol_version=1, product_version='3.4.0',operations=['bundle_inspect','restore_prepare','environment_compare'],features=features)
+            if mode=='secure-ui':
+                result['operations'].append('secure_restore_inventory')
+                features['secure_restore_destinations']=dict(version=1,inventory='secure_restore_inventory',max_items=32)
         elif operation=='environment_compare':
             result=json.loads(Path('comparison.json').read_text())
         elif operation=='bundle_inspect':
@@ -2822,10 +3125,15 @@ import SwiftUI
         let inspection: [String: Any] = ["format_version": 1, "selected_categories": macOS + ["ssh-configuration"], "selected_item_counts": [:], "secure_component": !Self.finalUXFixtures,
                                         "restore_selection": ["groups": groups, "inventory": inventory]]
         try JSONSerialization.data(withJSONObject: inspection).write(to: core.appendingPathComponent("inspection.json"))
-        let runtime = CoreRuntime(operationLogs: refreshCancellationOnly ? nil : .shared)
+        let runtime = CoreRuntime(operationLogs: refreshCancellationOnly || secureUIOnly ? nil : .shared)
         let location = CoreLocation(root: core, python: python, home: root, temporaryBase: root, toolDirectories: [])
         let model = RestoreModel(runtime: runtime, location: location)
         let source = root.appendingPathComponent("sample.mbt")
+        if secureUIOnly {
+            try await secureDestinationUIChecks(model, runtime: runtime, core: core, source: source, python: python,
+                repository: URL(fileURLWithPath: CommandLine.arguments[1]))
+            return
+        }
         model.choose(source); await model.waitForCompletion()
         if homebrewSetupOnly {
             try write("attention", core.appendingPathComponent("mode"))

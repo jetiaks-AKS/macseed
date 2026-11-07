@@ -119,7 +119,7 @@ enum RestoreSelectionPresentation {
     static func ordered(_ areas: [CoreRestoreInspection.Area]) -> [CoreRestoreInspection.Area] {
         WorkspacePresentationTaxonomy.project(areas).flatMap(\.rows)
     }
-    static func disclosureIDs(_ areas: [CoreRestoreInspection.Area], advanced: Bool) -> Set<String> {
+    static func disclosureIDs(_ areas: [CoreRestoreInspection.Area], advanced: Bool, secureAvailable: Bool = false) -> Set<String> {
         let sections = CaptureHierarchy.project(areas).filter {
             advanced ? $0.group == .advanced : CaptureHierarchy.ordinaryGroups.contains($0.group)
         }
@@ -128,6 +128,7 @@ enum RestoreSelectionPresentation {
             if section.group == .vscode { ids.insert(section.group.id) }
             ids.formUnion(section.rows.filter(RestoreAreaSelectionView.hasDisclosure).map(\.id))
         }
+        if advanced && secureAvailable { ids.insert(CaptureHierarchy.secureTransferID) }
         return ids
     }
     static func group(_ areas: [CoreRestoreInspection.Area]) -> CoreRestoreInspection.Group {
@@ -163,7 +164,7 @@ struct RestoreSelectionContent: View {
     @RestoreViewState<Set<String>> private var expanded = []
     private var areas: [CoreRestoreInspection.Area] { RestoreSelectionPresentation.ordered(model.selectionAreas) }
     private func disclosureIDs(advanced: Bool) -> Set<String> {
-        RestoreSelectionPresentation.disclosureIDs(areas, advanced: advanced)
+        RestoreSelectionPresentation.disclosureIDs(areas, advanced: advanced, secureAvailable: model.inspection?.secureComponent == true)
     }
     private var treeExpansion: Binding<Set<String>> {
         if let expansion { return expansion }
@@ -201,10 +202,25 @@ struct RestoreSelectionContent: View {
             CaptureGroupHeader(title: "Secure Transfer", summary: model.includeSecure ? "Selected" : "Off", symbol: "lock.shield",
                 selection: AnyView(NativeSelectionCheckbox("", isOn: Binding(get: { model.includeSecure }, set: { model.selectSecureTransfer($0) }), accessibilityTitle: "Select Secure Transfer")
                     .disabled(model.state != .review || model.runtime.isActive)),
-                expanded: nil)
-            Text("Encrypted SSH identities. Preview checks which keys already match this Mac. Missing keys can be imported during Rebuild without overwriting existing keys.")
-                .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                .padding(.leading, 16 + CaptureChildRowGrid.leadingInset).padding(.trailing, 16).padding(.bottom, 12)
+                expanded: WorkflowExpansion.binding(CaptureHierarchy.secureTransferID, in: treeExpansion))
+            if treeExpansion.wrappedValue.contains(CaptureHierarchy.secureTransferID) {
+                Text("Encrypted SSH keys. Existing keys won't be overwritten.")
+                    .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    .padding(.leading, 16 + CaptureChildRowGrid.leadingInset).padding(.trailing, 16).padding(.bottom, 8)
+                HStack {
+                    Text(model.destinationDirectories.isEmpty ? "Restore to: ~/.ssh" : "Custom locations configured")
+                        .font(.callout.weight(.semibold)).foregroundStyle(.primary)
+                    Spacer()
+                    if model.secureDestinationsSupported {
+                        Button("Customize…") { model.customizeDestinations() }
+                            .disabled(!model.canCustomizeDestinations)
+                            .accessibilityIdentifier("restore.secure.customize")
+                    }
+                }.padding(.leading, 16 + CaptureChildRowGrid.leadingInset).padding(.trailing, 16).padding(.bottom, 12)
+                if let message = model.destinationMessage {
+                    Text(message).font(.callout).foregroundStyle(.secondary).padding(.horizontal, 16).padding(.bottom, 12)
+                }
+            }
         })
     }
 }
@@ -498,9 +514,9 @@ struct RestoreView: View {
                         ProgressView().controlSize(.large)
                             .frame(width: 40, height: 40).accessibilityHidden(true)
                         VStack(alignment: .leading, spacing: 6) {
-                            Text("Preparing Rebuild Preview").font(.title2.weight(.bold))
+                            Text(model.unlockingDestinations ? "Unlocking SSH Identity List" : "Preparing Rebuild Preview").font(.title2.weight(.bold))
                                 .accessibilityAddTraits(.isHeader)
-                            Text(runtime.stopping ? "Stopping Preview…" : "Inspecting the selected environment and checking prerequisites…")
+                            Text(runtime.stopping ? "Stopping Preview…" : model.unlockingDestinations ? "Authenticating the encrypted package to configure destinations…" : "Inspecting the selected environment and checking prerequisites…")
                                 .font(.callout).foregroundStyle(.secondary)
                         }
                     }
@@ -580,8 +596,11 @@ struct RestoreView: View {
         }
         .modifier(OperationLogPresenter(runtime: runtime))
         .sheet(item: Binding(get: { runtime.operationID == model.operationID && [.preparing, .rebuilding].contains(model.state) ? runtime.secureChallenge : nil }, set: { _ in })) { challenge in
-            CaptureSecureInputView(runtime: runtime, challenge: challenge, restoring: true, comparing: model.state == .preparing).id(challenge.id)
+            CaptureSecureInputView(runtime: runtime, challenge: challenge, restoring: true, comparing: model.state == .preparing, customizing: model.unlockingDestinations).id(challenge.id)
                 .interactiveDismissDisabled()
+        }
+        .sheet(isPresented: Binding(get: { model.showingDestinations }, set: { if !$0 { model.dismissDestinations() } })) {
+            RestoreDestinationsView(model: model)
         }
         .sheet(isPresented: Binding(get: { model.installerConsent }, set: { if !$0 { model.cancelInstallerPreparation() } })) {
             VStack(alignment: .leading, spacing: 16) {
@@ -1657,5 +1676,50 @@ struct AppStoreRestoreActions: View {
             Button(model.state == .preparing ? "Refreshing…" : "Refresh Status") { model.refreshAppStore() }
                 .disabled(!model.canPreview)
         }
+    }
+}
+
+// Only this explicit private sheet displays authenticated names and destinations.
+struct RestoreDestinationsView: View {
+    @ObservedObject var model: RestoreModel
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("SSH Identity Destinations").font(.title2.weight(.semibold))
+            Text("Choose where to restore each SSH key.")
+                .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            ScrollView {
+                Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 6) {
+                    ForEach(model.destinationInventory?.items ?? []) { identity in
+                        Text(identity.name).font(.headline).lineLimit(1).truncationMode(.middle).textSelection(.enabled)
+                            .accessibilityValue(identity.name).gridCellColumns(3)
+                        Text(identity.keyType + " · " + identity.fingerprint).font(.caption).foregroundStyle(.secondary)
+                            .textSelection(.enabled).gridCellColumns(3)
+                        GridRow(alignment: .top) {
+                            Text(model.destinationDirectories[identity.id] ?? "~/.ssh")
+                                .font(.callout).lineLimit(2).truncationMode(.middle).textSelection(.enabled)
+                                .accessibilityLabel("Restore location")
+                                .accessibilityValue(model.destinationDirectories[identity.id] ?? "~/.ssh")
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            Button("Choose Folder…") { choose(identity.id) }.fixedSize()
+                            Button("Use Default") { model.setDestination(nil, for: identity.id) }.fixedSize()
+                                .disabled(model.destinationDirectories[identity.id] == nil)
+                                .opacity(model.destinationDirectories[identity.id] == nil ? 0 : 1)
+                                .accessibilityHidden(model.destinationDirectories[identity.id] == nil)
+                        }.padding(.bottom, 14)
+                    }
+                }.padding(.vertical, 4)
+            }.frame(height: min(280, CGFloat(model.destinationInventory?.items.count ?? 0) * 104))
+            Text("Existing folders only. SSH settings aren't changed.")
+                .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            HStack { Spacer(); Button("Done") { model.dismissDestinations() }.keyboardShortcut(.defaultAction) }
+        }.padding(24).frame(width: 620)
+    }
+    private func choose(_ identityID: String) {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true; panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false; panel.canCreateDirectories = false; panel.resolvesAliases = false
+        panel.prompt = "Use Folder"
+        guard panel.runModal() == .OK, let url = panel.url, url.isFileURL else { return }
+        model.setDestination(url.path, for: identityID)
     }
 }

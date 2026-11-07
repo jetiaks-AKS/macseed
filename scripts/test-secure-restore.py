@@ -118,7 +118,7 @@ class SecureRestoreTests(unittest.TestCase):
         self.plan = events[1]['data']['prepared_plan_id']
         return private, public
 
-    def peer(self, answer=None, plan=None, invalid_fd=False, timeout=30):
+    def peer(self, answer=None, plan=None, invalid_fd=False, timeout=30, *, operation='restore_execute', mapping=None, comparison=None):
         parent, endpoint = socket.socketpair()
         fd = endpoint.fileno()
         identity = os.fstat(fd)
@@ -126,6 +126,15 @@ class SecureRestoreTests(unittest.TestCase):
         request = {'protocol_version': 1, 'operation_id': 'secure-test', 'operation': 'restore_execute',
                    'parameters': {'path': str(self.archive), 'disabled_groups': [], 'include_secure': True,
                                   'expected_prepared_plan_id': plan or self.plan}}
+        request['operation'] = operation
+        if operation == 'secure_restore_inventory':
+            request['parameters'] = {'path': str(self.archive)}
+            (self.private_temp / 'secure-restore-inventory.json').unlink(missing_ok=True)
+        if mapping is not None:
+            request['parameters']['custom_destinations'] = True
+            self.write_mapping(mapping, 'secure-test')
+        if comparison is not None:
+            request['parameters']['secure_comparison'] = comparison
         command = ['bash', str(self.project / 'modules/core/application-interface/core.sh'),
                    '--secure-fd', str(99999 if invalid_fd else fd)]
         child = subprocess.Popen(command, cwd=self.project, env=self.environment, pass_fds=(fd,),
@@ -176,7 +185,7 @@ class SecureRestoreTests(unittest.TestCase):
                 for log in (self.project / 'logs').glob('*'):
                     if log.is_file():
                         self.assertNotIn(secret, log.read_bytes())
-            self.assertEqual(sum(e['type'] in ('failed', 'completed') for e in events), 1, events)
+            self.assertEqual(sum(e['type'] in ('failed', 'completed', 'cancelled') for e in events), 1, events)
             return child.returncode, events, challenges
         finally:
             parent.close()
@@ -557,6 +566,239 @@ class SecureRestoreTests(unittest.TestCase):
         self.assertFalse(events[-1]['data']['target_mutation_may_have_started'])
         self.assertFalse((self.home / '.ssh').exists())
 
+    def write_mapping(self, mapping, operation_id):
+        control = self.private_temp / 'secure-restore-destinations.json'
+        control.write_text(json.dumps({'operation_id': operation_id, 'mapping': mapping}))
+        control.chmod(0o600)
+
+    def destination_prepare(self, mapping):
+        self.write_mapping(mapping, 'destination-prepare')
+        request = {'protocol_version': 1, 'operation_id': 'destination-prepare', 'operation': 'restore_prepare',
+                   'parameters': {'path': str(self.archive), 'disabled_groups': [], 'include_secure': True,
+                                  'custom_destinations': True}}
+        result = subprocess.run(['bash', str(self.project / 'modules/core/application-interface/core.sh')],
+                                input=json.dumps(request).encode(), cwd=self.project, env=self.environment,
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
+        return result.returncode, [json.loads(line) for line in result.stdout.splitlines()]
+
+    def inventory_mapping(self, directories):
+        status, events, challenges = self.peer(operation='secure_restore_inventory')
+        self.assertEqual(status, 0, events)
+        self.assertEqual([c['kind'] for c in challenges], ['bundle_unlock'])
+        inventory = json.loads((self.private_temp / 'secure-restore-inventory.json').read_bytes())
+        self.assertEqual(inventory['bundle_id'], bundle.fingerprint(self.archive))
+        self.assertEqual(len(inventory['items']), len(directories))
+        mapping = dict(version=1, bundle_id=inventory['bundle_id'], items=sorted([
+            dict(identity_id=row['identity_id'], directory=str(directory) if directory else None)
+            for row, directory in zip(inventory['items'], directories)], key=lambda row: row['identity_id']))
+        for row in inventory['items']:
+            for field in ('name', 'fingerprint', 'identity_id'):
+                self.assertNotIn(row[field], json.dumps(events))
+        return mapping, inventory
+
+    def destination_comparison(self, mapping):
+        status, events = self.destination_prepare(mapping)
+        self.assertEqual(status, 0, events)
+        prepared = events[1]['data']['prepared_plan_id']
+        status, events, _ = self.peer(operation='secure_restore_compare', mapping=mapping, plan=prepared)
+        self.assertEqual(status, 0, events)
+        return prepared, next(row['data'] for row in events if row['type'] == 'result')
+
+    def multiple_fixture(self):
+        first = self.fixture()
+        second = self.root / 'external-second-key'
+        subprocess.run(['ssh-keygen', '-q', '-t', 'ed25519', '-N', '', '-f', str(second)], check=True)
+        pairs = {'id_disposable': first, 'id_external': (second.read_bytes(), Path(str(second) + '.pub').read_bytes())}
+        lines = ['toolkit-ssh-identities', 'version=1', 'count=2']
+        for name, (private, public) in pairs.items():
+            fp = 'SHA256:' + base64.b64encode(hashlib.sha256(base64.b64decode(public.split()[1])).digest()).decode().rstrip('=')
+            lines.append('\t'.join((name, 'ssh-ed25519', fp, str(len(private)), hashlib.sha256(private).hexdigest(), str(len(public)), hashlib.sha256(public).hexdigest())))
+        with tarfile.open(self.root / 'payload.tar', 'w', format=tarfile.USTAR_FORMAT) as archive:
+            for name, raw in [('manifest', ('\n'.join(lines) + '\n').encode())] + [
+                    ('keys/' + name + suffix, raw) for name, pair in pairs.items() for suffix, raw in zip(('', '.pub'), pair)]:
+                member = tarfile.TarInfo(name); member.size = len(raw); archive.addfile(member, io.BytesIO(raw))
+        (self.stage / 'secure.age').unlink(); self.archive.unlink()
+        encrypt(REAL_AGE, self.root / 'payload.tar', self.stage / 'secure.age')
+        (self.stage / 'secure.age').chmod(0o600)
+        bundle.pack(self.stage, self.archive, '/Users/source')
+        return pairs
+
+    def test_custom_destinations_mixed_and_repeated_preview(self):
+        pairs = self.multiple_fixture()
+        target = self.root.resolve() / 'private custom-ключи'; target.mkdir(mode=0o700)
+        mapping, _ = self.inventory_mapping([None, target])
+        plan, comparison = self.destination_comparison(mapping)
+        repeat, again = self.destination_comparison(mapping)
+        self.assertEqual(plan, repeat); self.assertEqual(comparison['target_state'], again['target_state'])
+        self.assertEqual(comparison['decision'], 'import_required')
+        status, events, _ = self.peer(mapping=mapping, plan=plan, comparison=comparison)
+        self.assertEqual(status, 0, events)
+        for name, directory in [('id_disposable', self.home / '.ssh'), ('id_external', target)]:
+            self.assertEqual((directory / name).read_bytes(), pairs[name][0])
+            self.assertEqual((directory / (name + '.pub')).read_bytes(), pairs[name][1])
+            self.assertEqual((directory / name).stat().st_mode & 0o777, 0o600)
+        _, repeated = self.destination_comparison(mapping)
+        self.assertEqual(repeated['decision'], 'all_match')
+        for path in (target, target / 'id_external'):
+            self.assertNotIn(str(path), json.dumps(events))
+        for log in (self.project / 'logs').rglob('*'):
+            if log.is_file(): self.assertNotIn(str(target).encode(), log.read_bytes())
+
+    def test_custom_destinations_multiple_and_matching_pair(self):
+        pairs = self.multiple_fixture()
+        targets = [self.root.resolve() / name for name in ('custom-one', 'custom-two')]
+        for directory in targets: directory.mkdir(mode=0o700)
+        for suffix, raw in zip(('', '.pub'), pairs['id_disposable']):
+            path = targets[0] / ('id_disposable' + suffix); path.write_bytes(raw); path.chmod(0o600)
+        before = (targets[0] / 'id_disposable').stat()
+        mapping, _ = self.inventory_mapping(targets)
+        plan, comparison = self.destination_comparison(mapping)
+        status, events, _ = self.peer(mapping=mapping, plan=plan, comparison=comparison)
+        self.assertEqual(status, 0, events)
+        self.assertEqual((targets[0] / 'id_disposable').stat().st_ino, before.st_ino)
+        self.assertEqual((targets[1] / 'id_external').read_bytes(), pairs['id_external'][0])
+        self.assertFalse((self.home / '.ssh').exists())
+
+    def test_custom_destination_conflict_blocks_entire_package(self):
+        self.multiple_fixture()
+        target = self.root.resolve() / 'custom'; target.mkdir(mode=0o700)
+        mapping, _ = self.inventory_mapping([None, target])
+        # A partial pair blocks every identity, including the default destination.
+        (target / 'id_external.pub').write_bytes(b'preserve partial pair')
+        plan, comparison = self.destination_comparison(mapping)
+        self.assertEqual(comparison['decision'], 'conflict')
+        status, events, challenges = self.peer(mapping=mapping, plan=plan, comparison=comparison)
+        self.assertNotEqual(status, 0); self.assertFalse(challenges)
+        self.assertFalse((self.home / '.ssh').exists())
+        self.assertEqual((target / 'id_external.pub').read_bytes(), b'preserve partial pair')
+
+    def test_custom_destination_changed_after_preview(self):
+        self.fixture()
+        target = self.root.resolve() / 'custom'; target.mkdir(mode=0o700)
+        mapping, _ = self.inventory_mapping([target])
+        plan, comparison = self.destination_comparison(mapping)
+        target.rename(target.with_name('old-custom')); target.mkdir(mode=0o700)
+        status, events, challenges = self.peer(mapping=mapping, plan=plan, comparison=comparison)
+        self.assertNotEqual(status, 0); self.assertEqual(events[-1]['data']['code'], 'stale_plan')
+        self.assertFalse(challenges); self.assertEqual(list(target.iterdir()), [])
+        # Changing only the selected mapping also invalidates preparation.
+        mapping['items'][0]['directory'] = str(target.with_name('old-custom'))
+        status, events, _ = self.peer(mapping=mapping, plan=plan, comparison=comparison)
+        self.assertNotEqual(status, 0); self.assertEqual(events[-1]['data']['code'], 'stale_plan')
+
+    def test_custom_destination_unsafe_and_case_collisions(self):
+        private, public = self.fixture()
+        target = self.root.resolve() / 'custom'; target.mkdir(mode=0o700)
+        mapping, _ = self.inventory_mapping([target])
+        for mode in (0o777, 0o770):
+            target.chmod(mode)
+            status, _ = self.destination_prepare(mapping); self.assertNotEqual(status, 0)
+        target.chmod(0o700)
+        alias = target.with_name('alias'); alias.symlink_to(target)
+        mapping['items'][0]['directory'] = str(alias)
+        status, _ = self.destination_prepare(mapping); self.assertNotEqual(status, 0)
+        alias.unlink(); mapping['items'][0]['directory'] = str(target)
+        for kind in ('case', 'symlink', 'hardlink', 'different'):
+            with self.subTest(kind=kind):
+                p = target / ('ID_DISPOSABLE' if kind == 'case' else 'id_disposable')
+                q = target / 'id_disposable.pub'
+                if kind == 'symlink': p.symlink_to(self.identity)
+                elif kind == 'hardlink': os.link(self.identity, p)
+                else: p.write_bytes(b'different' if kind == 'different' else private); p.chmod(0o600)
+                q.write_bytes(public); q.chmod(0o644)
+                _, comparison = self.destination_comparison(mapping)
+                self.assertEqual(comparison['decision'], 'conflict')
+                p.unlink(); q.unlink()
+
+    def test_custom_inventory_wrong_password_cancel_and_bundle_binding(self):
+        self.fixture()
+        for answer in ('wrong disposable passphrase', 'cancel'):
+            status, events, _ = self.peer(lambda *_: answer, operation='secure_restore_inventory')
+            self.assertNotEqual(status, 0)
+            self.assertFalse((self.private_temp / 'secure-restore-inventory.json').exists())
+            self.assertFalse((self.home / '.ssh').exists())
+        target = self.root.resolve() / 'custom'; target.mkdir(mode=0o700)
+        mapping, _ = self.inventory_mapping([target])
+        # Valid legacy Bundle v1 and the same identities, re-encrypted to new bytes.
+        (self.stage / 'secure.age').unlink()
+        encrypt(REAL_AGE, self.root / 'payload.tar', self.stage / 'secure.age')
+        (self.stage / 'secure.age').chmod(0o600)
+        self.archive.unlink(); bundle.pack(self.stage, self.archive, '/Users/source')
+        self.assertNotEqual(mapping['bundle_id'], bundle.fingerprint(self.archive))
+        status, events = self.destination_prepare(mapping)
+        self.assertNotEqual(status, 0); self.assertEqual(events[-1]['data']['code'], 'stale_plan')
+
+
+    def test_custom_destination_identity_binding_and_required_compare(self):
+        self.fixture()
+        target = self.root.resolve() / 'custom'; target.mkdir(mode=0o700)
+        mapping, _ = self.inventory_mapping([target])
+        plan, comparison = self.destination_comparison(mapping)
+        status, events, challenges = self.peer(mapping=mapping, plan=plan)
+        self.assertNotEqual(status, 0); self.assertEqual(events[-1]['data']['code'], 'stale_plan')
+        self.assertFalse(challenges)
+        mapping['items'][0]['identity_id'] = 'a' * 64
+        status, events = self.destination_prepare(mapping)
+        self.assertEqual(status, 0, events)
+        plan = events[1]['data']['prepared_plan_id']
+        status, events, _ = self.peer(operation='secure_restore_compare', mapping=mapping, plan=plan)
+        self.assertNotEqual(status, 0); self.assertEqual(events[-1]['data']['code'], 'secure_target_changed')
+        self.assertEqual(list(target.iterdir()), [])
+
+    def test_custom_destination_failed_and_interrupted_publication(self):
+        self.multiple_fixture()
+        target = self.root.resolve() / 'custom'; target.mkdir(mode=0o700)
+        sentinel = target / 'preserve'; sentinel.write_bytes(b'existing user file')
+        mapping, _ = self.inventory_mapping([None, target])
+        importer = self.project / 'modules/migration/package.sh'
+        original = importer.read_text()
+        marker = '        target_dir_still_visible(dirfd)\n        relative = name + suffix'
+        self.assertEqual(original.count(marker), 1)
+        for failure in ("raise OSError('disposable failure')", 'os.kill(os.getpid(), signal.SIGTERM)'):
+            with self.subTest(failure=failure):
+                plan, comparison = self.destination_comparison(mapping)
+                importer.write_text(original.replace(marker, "        if name == 'id_external' and suffix == '.pub':\n            " + failure + '\n' + marker))
+                status, events, _ = self.peer(mapping=mapping, plan=plan, comparison=comparison)
+                importer.write_text(original)
+                self.assertNotEqual(status, 0, events)
+                self.assertTrue(events[-1]['data']['target_mutation_may_have_started'])
+                self.assertFalse((self.home / '.ssh').exists())
+                self.assertEqual(list(target.iterdir()), [sentinel])
+                self.assertEqual(sentinel.read_bytes(), b'existing user file')
+                self.assertFalse(any(e['type'] == 'verification_record' and e['data'].get('conformity') == 'verified' for e in events))
+
+    def test_custom_destination_target_change_during_consent(self):
+        self.fixture()
+        target = self.root.resolve() / 'custom'; target.mkdir(mode=0o700)
+        mapping, _ = self.inventory_mapping([target])
+        plan, comparison = self.destination_comparison(mapping)
+        def changed(challenge, *_):
+            if challenge['kind'] == 'import_confirmation':
+                (target / 'id_disposable.pub').write_bytes(b'preserve competing file')
+        status, events, _ = self.peer(changed, mapping=mapping, plan=plan, comparison=comparison)
+        self.assertNotEqual(status, 0); self.assertEqual(events[-1]['data']['code'], 'secure_target_changed')
+        self.assertFalse(events[-1]['data']['target_mutation_may_have_started'])
+        self.assertFalse((target / 'id_disposable').exists())
+        self.assertEqual((target / 'id_disposable.pub').read_bytes(), b'preserve competing file')
+
+    def test_custom_destination_acl_and_disappearance(self):
+        self.fixture()
+        target = self.root.resolve() / 'custom'; target.mkdir(mode=0o700)
+        mapping, _ = self.inventory_mapping([target])
+        for rule, allowed in [('everyone allow add_file', False), ('everyone deny add_file', False), ('everyone deny delete', True)]:
+            try:
+                subprocess.run(['/bin/chmod', '+a', rule, str(target)], check=True)
+                status, events = self.destination_prepare(mapping)
+                self.assertEqual(status == 0, allowed, events)
+            finally:
+                subprocess.run(['/bin/chmod', '-N', str(target)], check=True)
+        plan, comparison = self.destination_comparison(mapping)
+        target.rmdir()
+        status, events, challenges = self.peer(mapping=mapping, plan=plan, comparison=comparison)
+        self.assertNotEqual(status, 0); self.assertFalse(challenges)
+        self.assertFalse(target.exists()); self.assertFalse((self.home / '.ssh').exists())
+
+
 
 
 class PairProofTests(unittest.TestCase):
@@ -573,7 +815,8 @@ class PairProofTests(unittest.TestCase):
         for changed in (False, True):
             records = [('fixture', 'ssh-ed25519', 'unused', b'saved-private', b'saved-public')]
             namespace = dict(home_check=lambda: None, ssh='/unused-fixture',
-                             os=type('OS', (), {'path': type('Paths', (), {'lexists': staticmethod(lambda _: True), 'join': staticmethod(lambda *x: '/'.join(x))})}),
+                             target_directory=lambda _: '/unused-fixture',
+                             os=type('OS', (), {'listdir': staticmethod(lambda _: ['fixture', 'fixture.pub']), 'path': type('Paths', (), {'lexists': staticmethod(lambda _: True), 'join': staticmethod(lambda *x: '/'.join(x))})}),
                              owned=lambda *args: None, checked_bytes=lambda path, mode: b'saved-public' if path.endswith('.pub') else b'saved-private',
                              validate_pair=lambda *args, **kwargs: ('ssh-ed25519', 'unused', b'changed-private' if changed else b'saved-private', b'saved-public'),
                              Conflict=Conflict, Invalid=Invalid)

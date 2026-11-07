@@ -18,6 +18,7 @@ struct CoreProcessOutcome: Sendable {
     // Nil keeps older/injected outcomes unknown; absence of Core events alone
     // does not establish whether a process launched.
     var processLaunched: Bool? = nil
+    var restoreIdentityInventory: CoreRestoreIdentityInventory? = nil
 }
 
 // One owned process group per operation. All blocking I/O runs off the MainActor.
@@ -111,6 +112,15 @@ final class CoreTransport: @unchecked Sendable {
                 guard bytes.count <= 65536,
                       FileManager.default.createFile(atPath: temporary.appendingPathComponent("external-ssh-sources.json").path,
                                                      contents: bytes, attributes: [.posixPermissions: 0o600]) else { return failure(.invalidRequest) }
+            } catch { return failure(.invalidRequest) }
+        }
+        if let mapping = request.restoreDestinations {
+            do {
+                let value = try JSONSerialization.jsonObject(with: JSONEncoder().encode(mapping))
+                let bytes = try JSONSerialization.data(withJSONObject: ["operation_id": request.operationID, "mapping": value])
+                guard bytes.count <= 65536,
+                      FileManager.default.createFile(atPath: temporary.appendingPathComponent("secure-restore-destinations.json").path,
+                          contents: bytes, attributes: [.posixPermissions: 0o600]) else { return failure(.invalidRequest) }
             } catch { return failure(.invalidRequest) }
         }
         let input = Pipe(), output = Pipe(), diagnostics = Pipe()
@@ -273,9 +283,56 @@ final class CoreTransport: @unchecked Sendable {
         secureChannel?.finish(outcomeError: finalError)
         secretReader.wait()
         if let error = secureChannel?.error { finalError = error; terminal = nil }
+        var inventory: CoreRestoreIdentityInventory?
+        if request.command.operation == .secureRestoreInventory, finalError == nil, terminal?.type == "completed", !wasCancelled() {
+            do { inventory = try Self.readRestoreInventory(temporary: temporary, operationID: request.operationID) }
+            catch { finalError = .secureChannelInvalid; terminal = nil }
+        }
         return CoreProcessOutcome(terminal: terminal, exitCode: exitCode, signalled: signalled,
                                   error: finalError, stderr: stderr,
-                                  cancellationRequested: wasCancelled() || secureChannel?.cancellationRequested == true, processLaunched: true)
+                                  cancellationRequested: wasCancelled() || secureChannel?.cancellationRequested == true, processLaunched: true, restoreIdentityInventory: inventory)
+    }
+
+    private static func readRestoreInventory(temporary: URL, operationID: String) throws -> CoreRestoreIdentityInventory {
+        let directory = open(temporary.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW)
+        guard directory >= 0 else { throw CoreRuntimeError.secureChannelInvalid }
+        defer { Darwin.close(directory) }
+        var parent = stat(), parentNow = stat()
+        guard fstat(directory, &parent) == 0, parent.st_uid == getuid(), parent.st_mode & 0o777 == 0o700 else { throw CoreRuntimeError.secureChannelInvalid }
+        let name = "secure-restore-inventory.json"
+        let fd = openat(directory, name, O_RDONLY | O_NOFOLLOW | O_NONBLOCK)
+        guard fd >= 0 else { throw CoreRuntimeError.secureChannelInvalid }
+        defer { Darwin.close(fd) }
+        func same(_ left: stat, _ right: stat) -> Bool {
+            left.st_dev == right.st_dev && left.st_ino == right.st_ino && left.st_mode == right.st_mode
+                && left.st_uid == right.st_uid && left.st_gid == right.st_gid && left.st_nlink == right.st_nlink
+                && left.st_size == right.st_size && left.st_mtimespec.tv_sec == right.st_mtimespec.tv_sec
+                && left.st_mtimespec.tv_nsec == right.st_mtimespec.tv_nsec && left.st_ctimespec.tv_sec == right.st_ctimespec.tv_sec
+                && left.st_ctimespec.tv_nsec == right.st_ctimespec.tv_nsec
+        }
+        var before = stat(), after = stat(), visible = stat()
+        guard fstat(fd, &before) == 0, before.st_mode & S_IFMT == S_IFREG, before.st_uid == getuid(),
+              before.st_mode & 0o777 == 0o600, before.st_nlink == 1, (1...65536).contains(before.st_size) else { throw CoreRuntimeError.secureChannelInvalid }
+        var bytes = [UInt8](repeating: 0, count: Int(before.st_size) + 1)
+        let count = Darwin.read(fd, &bytes, bytes.count)
+        guard count == before.st_size, fstat(fd, &after) == 0, fstatat(directory, name, &visible, AT_SYMLINK_NOFOLLOW) == 0,
+              same(before, after), same(after, visible), lstat(temporary.path, &parentNow) == 0,
+              parent.st_dev == parentNow.st_dev, parent.st_ino == parentNow.st_ino,
+              parent.st_mode == parentNow.st_mode, parent.st_uid == parentNow.st_uid else { throw CoreRuntimeError.secureChannelInvalid }
+        let data = Data(bytes.prefix(count))
+        let inventory = try JSONDecoder().decode(CoreRestoreIdentityInventory.self, from: data)
+        try inventory.validate(operationID: operationID)
+        // Required fields account for every object key, including duplicates that
+        // a JSON decoder would otherwise collapse. Values contain no nested maps.
+        var quoted = false, escaped = false, fields = 0
+        for byte in data {
+            if escaped { escaped = false }
+            else if quoted && byte == 92 { escaped = true }
+            else if byte == 34 { quoted.toggle() }
+            else if !quoted && byte == 58 { fields += 1 }
+        }
+        guard fields == 4 + inventory.items.count * 4 else { throw CoreRuntimeError.secureChannelInvalid }
+        return inventory
     }
 
     private func drain(_ fd: Int32, receive: (Data) -> Void, failed: (CoreRuntimeError) -> Void) {

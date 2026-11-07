@@ -34,7 +34,7 @@ indirect enum CoreJSON: Codable, Equatable, Sendable {
 enum CoreOperation: String, Codable, CaseIterable, Sendable {
     case capabilities, bundleInspect = "bundle_inspect"
     case capturePrepare = "capture_prepare", captureExecute = "capture_execute", captureIdentityInspect = "capture_identity_inspect"
-    case restorePrepare = "restore_prepare", restoreExecute = "restore_execute", secureRestoreCompare = "secure_restore_compare"
+    case restorePrepare = "restore_prepare", restoreExecute = "restore_execute", secureRestoreCompare = "secure_restore_compare", secureRestoreInventory = "secure_restore_inventory"
     case environmentCompare = "environment_compare"
 }
 
@@ -70,6 +70,72 @@ struct CoreCaptureInventoryRow: Decodable, Sendable {
     enum CodingKeys: String, CodingKey { case domain, status, reason, items, selectionMode = "selection_mode", includedSettings = "included_settings" }
 }
 
+// Private operation/session data, deliberately absent from ordinary Core JSONL.
+struct CoreRestoreDestinations: Codable, Equatable, Sendable, CustomStringConvertible, CustomDebugStringConvertible, CustomReflectable {
+    struct Item: Codable, Equatable, Sendable, CustomStringConvertible, CustomDebugStringConvertible, CustomReflectable {
+        var description: String { "RestoreDestination(redacted)" }
+        var debugDescription: String { description }
+        var customMirror: Mirror { Mirror(self, children: [:]) }
+        let identityID: String
+        let directory: String?
+        enum CodingKeys: String, CodingKey { case identityID = "identity_id", directory }
+        func encode(to encoder: Encoder) throws {
+            var values = encoder.container(keyedBy: CodingKeys.self)
+            try values.encode(identityID, forKey: .identityID)
+            if let directory { try values.encode(directory, forKey: .directory) }
+            else { try values.encodeNil(forKey: .directory) }
+        }
+    }
+    let version: Int
+    let bundleID: String
+    let items: [Item]
+    enum CodingKeys: String, CodingKey { case version, bundleID = "bundle_id", items }
+    var description: String { "RestoreDestinations(redacted)" }
+    var debugDescription: String { description }
+    var customMirror: Mirror { Mirror(self, children: [:]) }
+    func validate() throws {
+        guard version == 1, Self.validID(bundleID), (1...32).contains(items.count),
+              items.map(\.identityID) == Array(Set(items.map(\.identityID))).sorted(),
+              items.allSatisfy({ Self.validID($0.identityID) && ($0.directory.map {
+                  $0.hasPrefix("/") && $0.utf8.count <= 1024 && !$0.unicodeScalars.contains(where: { $0.value < 32 || $0.value == 127 })
+              } ?? true) }) else { throw CoreRuntimeError.invalidRequest }
+    }
+    static func validID(_ value: String) -> Bool { value.range(of: "^[0-9a-f]{64}$", options: .regularExpression) != nil }
+}
+
+struct CoreRestoreIdentityInventory: Decodable, Sendable, CustomStringConvertible, CustomDebugStringConvertible, CustomReflectable {
+    struct Item: Decodable, Identifiable, Sendable, CustomStringConvertible, CustomDebugStringConvertible, CustomReflectable {
+        let identityID: String
+        let name: String
+        let keyType: String
+        let fingerprint: String
+        var id: String { identityID }
+        enum CodingKeys: String, CodingKey { case identityID = "identity_id", name, keyType = "key_type", fingerprint }
+        var description: String { "RestoreIdentity(redacted)" }
+        var debugDescription: String { description }
+        var customMirror: Mirror { Mirror(self, children: [:]) }
+    }
+    let version: Int
+    let operationID: String
+    let bundleID: String
+    let items: [Item]
+    enum CodingKeys: String, CodingKey { case version, operationID = "operation_id", bundleID = "bundle_id", items }
+    var description: String { "RestoreInventory(redacted)" }
+    var debugDescription: String { description }
+    var customMirror: Mirror { Mirror(self, children: [:]) }
+    func validate(operationID: String) throws {
+        guard version == 1, self.operationID == operationID, CoreRestoreDestinations.validID(bundleID),
+              (1...32).contains(items.count), Set(items.map(\.id)).count == items.count,
+              Set(items.map { $0.name.lowercased() }).count == items.count, Set(items.map(\.fingerprint)).count == items.count,
+              items.allSatisfy({ CoreRestoreDestinations.validID($0.id)
+                  && $0.name.range(of: "^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$", options: .regularExpression) != nil
+                  && !$0.name.lowercased().hasSuffix(".pub")
+                  && ["ssh-ed25519", "ssh-rsa", "ecdsa-sha2-nistp256", "ecdsa-sha2-nistp384", "ecdsa-sha2-nistp521"].contains($0.keyType)
+                  && $0.fingerprint.range(of: "^SHA256:[A-Za-z0-9+/]{43}$", options: .regularExpression) != nil
+              }) else { throw CoreRuntimeError.secureChannelInvalid }
+    }
+}
+
 enum CoreCommand: Sendable {
     case capabilities
     case bundleInspect(path: String)
@@ -78,6 +144,7 @@ enum CoreCommand: Sendable {
     case captureExecute(selection: CoreCaptureSelection, destination: String, preparedID: String, replacementSHA256: String? = nil)
     case restorePrepare(path: String, disabledGroups: [String], includeSecure: Bool, selection: CoreRestoreSelection? = nil, installerPreparations: [String]? = nil)
     case restoreExecute(path: String, disabledGroups: [String], includeSecure: Bool, preparedID: String, selection: CoreRestoreSelection? = nil, secureComparison: CoreSecureComparison? = nil)
+    case secureRestoreInventory(path: String)
     case secureRestoreCompare(path: String, preparedID: String, selection: CoreRestoreSelection)
     case environmentCompare(generatedDirectory: String, blueprintPath: String?)
     case environmentCompareBundle(path: String)
@@ -91,6 +158,7 @@ enum CoreCommand: Sendable {
         case .captureExecute: .captureExecute
         case .restorePrepare: .restorePrepare
         case .restoreExecute: .restoreExecute
+        case .secureRestoreInventory: .secureRestoreInventory
         case .secureRestoreCompare: .secureRestoreCompare
         case .environmentCompare, .environmentCompareBundle: .environmentCompare
         }
@@ -99,7 +167,7 @@ enum CoreCommand: Sendable {
         switch self {
         case .captureExecute(let selection, _, _, _): !selection.secureIdentities.isEmpty
         case .restoreExecute(_, _, let secure, _, _, _): secure
-        case .secureRestoreCompare: true
+        case .secureRestoreCompare, .secureRestoreInventory: true
         default: false
         }
     }
@@ -113,7 +181,7 @@ enum CoreCommand: Sendable {
         }
         switch self {
         case .capabilities: return nil
-        case .bundleInspect(let path): return .object(["path": .string(path)])
+        case .bundleInspect(let path), .secureRestoreInventory(let path): return .object(["path": .string(path)])
         case .captureIdentityInspect: return .object([:])
         case .capturePrepare(let value): return .object(["selection": try selection(value)])
         case .captureExecute(let value, let destination, let id, let replacement):
@@ -148,10 +216,12 @@ struct CoreRequest: Sendable {
     // Capture-session references only. Never serialized into the ordinary request
     // or logs; the transport owns a private per-operation reference file.
     let externalIdentityPaths: [String]
-    init(_ command: CoreCommand, operationID: String = UUID().uuidString, externalIdentityPaths: [String] = []) {
+    let restoreDestinations: CoreRestoreDestinations?
+    init(_ command: CoreCommand, operationID: String = UUID().uuidString, externalIdentityPaths: [String] = [], restoreDestinations: CoreRestoreDestinations? = nil) {
         self.command = command
         self.operationID = operationID
         self.externalIdentityPaths = externalIdentityPaths
+        self.restoreDestinations = restoreDestinations
     }
     func encoded() throws -> Data {
         guard operationID.range(of: "^[A-Za-z0-9_-]{1,64}$", options: .regularExpression) != nil else {
@@ -168,6 +238,13 @@ struct CoreRequest: Sendable {
             parameters["external_identities"] = .bool(true)
             fields["parameters"] = .object(parameters)
         } else if command.operation == .captureIdentityInspect { throw CoreRuntimeError.invalidRequest }
+        if let restoreDestinations {
+            guard [.restorePrepare, .restoreExecute, .secureRestoreCompare].contains(command.operation),
+                  var parameters = fields["parameters"]?.object, parameters["include_secure"]?.boolean == true else { throw CoreRuntimeError.invalidRequest }
+            try restoreDestinations.validate()
+            parameters["custom_destinations"] = .bool(true)
+            fields["parameters"] = .object(parameters)
+        }
         let data = try JSONEncoder().encode(CoreJSON.object(fields))
         guard data.count <= 4096 else { throw CoreRuntimeError.requestTooLarge }
         return data
@@ -230,6 +307,7 @@ struct CoreCapabilities: Decodable, Sendable {
     let productVersion: String
     let operations: [String]
     let features: [String: CoreJSON]?
+    var supportsSecureRestoreDestinations: Bool { operations.contains("secure_restore_inventory") && features?["secure_restore_destinations"]?.object?["version"]?.integer == 1 }
     var supportsBundleComparison: Bool { features?["bundle_comparison"]?.object?["version"]?.integer == 1 }
     var supportsRestoreSelection: Bool { features?["restore_selection"]?.object?["version"]?.integer == 1 }
     enum CodingKeys: String, CodingKey {

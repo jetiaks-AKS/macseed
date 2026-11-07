@@ -37,6 +37,7 @@ TYPES = {'ssh-ed25519', 'ssh-rsa', 'ecdsa-sha2-nistp256',
 sys.dont_write_bytecode = True
 sys.path.insert(0, sys.argv.pop(1))
 from evidence import Evidence
+from restore_destinations import Directory, identity_id, safe_acl, validate as validate_destinations
 from secret_input import Input, SecureError, PrivateTemporaryDirectory, decrypt, key_public, encrypt
 from age_runtime import executable as age_executable
 from external_sources import ExternalSourceError, read_pair as external_pair, read_control, paths as external_paths
@@ -60,6 +61,8 @@ secure_code = None
 # Process-local proof only: exact bytes, no passphrases, never reused by Preview.
 validated_pairs = {}
 decryption_started = False
+destination_paths = {}
+custom_directories = {}
 private_temporary = PrivateTemporaryDirectory if interaction is not None else tempfile.TemporaryDirectory
 home = os.environ.get('HOME', '')
 ssh = os.path.join(home, '.ssh')
@@ -127,11 +130,13 @@ def checked_bytes(path, modes):
     parent_fd = os.open(parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     try:
         parent_before = os.fstat(parent_fd)
-        if not stat.S_ISDIR(parent_before.st_mode) or parent_before.st_uid != uid or stat.S_IMODE(parent_before.st_mode) != 0o700 or (parent_before.st_dev, parent_before.st_ino) != (os.lstat(parent).st_dev, os.lstat(parent).st_ino):
+        if not stat.S_ISDIR(parent_before.st_mode) or parent_before.st_uid != uid or (parent_before.st_mode & 0o022 if parent in destination_paths.values() else stat.S_IMODE(parent_before.st_mode) != 0o700) or (parent_before.st_dev, parent_before.st_ino) != (os.lstat(parent).st_dev, os.lstat(parent).st_ino):
             raise Invalid('identity parent changed')
-        fd = os.open(os.path.basename(path), os.O_RDONLY | os.O_NOFOLLOW, dir_fd=parent_fd)
+        fd = os.open(os.path.basename(path), os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent_fd)
         try:
             before = os.fstat(fd)
+            if parent in destination_paths.values():
+                safe_acl(fd)
             allowed = modes if isinstance(modes, tuple) else (modes,)
             if not stat.S_ISREG(before.st_mode) or before.st_uid != uid or before.st_nlink != 1 or stat.S_IMODE(before.st_mode) not in allowed:
                 raise Invalid('unsafe identity file')
@@ -140,7 +145,7 @@ def checked_bytes(path, modes):
             after = os.fstat(fd)
             path_now = os.lstat(path)
             parent_now = os.lstat(parent)
-            if len(raw) > MAX_KEY or (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns) != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns) or (after.st_dev, after.st_ino) != (path_now.st_dev, path_now.st_ino) or (parent_before.st_dev, parent_before.st_ino) != (parent_now.st_dev, parent_now.st_ino) or stat.S_IMODE(parent_now.st_mode) != 0o700:
+            if len(raw) > MAX_KEY or (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns) != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns) or (after.st_dev, after.st_ino) != (path_now.st_dev, path_now.st_ino) or (parent_before.st_dev, parent_before.st_ino) != (parent_now.st_dev, parent_now.st_ino) or (parent_now.st_mode & 0o022 if parent in destination_paths.values() else stat.S_IMODE(parent_now.st_mode) != 0o700):
                 raise Invalid('identity changed during validation')
             return raw
         finally:
@@ -158,7 +163,7 @@ def open_checked_package(path):
         parent_visible = os.lstat(parent)
         if not stat.S_ISDIR(parent_before.st_mode) or (parent_before.st_dev, parent_before.st_ino) != (parent_visible.st_dev, parent_visible.st_ino):
             raise Invalid('package parent changed')
-        fd = os.open(os.path.basename(path), os.O_RDONLY | os.O_NOFOLLOW, dir_fd=parent_fd)
+        fd = os.open(os.path.basename(path), os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent_fd)
         try:
             s = os.fstat(fd)
             visible = os.lstat(path)
@@ -518,17 +523,30 @@ def archive_validate(path, stage, *, cryptographic=True):
             result.append((name, kind, fp, private, public))
         return result
 
+def target_directory(name):
+    return destination_paths.get(name, ssh)
+
 def target_plan(records, *, cryptographic=True):
     home_check()
-    exists = os.path.lexists(ssh)
-    if exists:
-        try:
-            owned(ssh, 'dir', 0o700)
-        except Invalid:
-            raise Conflict('unsafe SSH target directory')
     plan = []
     for position, (name, _, _, private, public) in enumerate(records, 1):
-        p = os.path.join(ssh, name)
+        directory = target_directory(name)
+        exists = os.path.lexists(directory)
+        if directory != ssh:
+            with Directory(directory):
+                pass
+        elif exists:
+            try:
+                owned(directory, 'dir', 0o700)
+            except Invalid:
+                raise Conflict('unsafe SSH target directory')
+        if exists:
+            # Check case collisions even on a case-sensitive filesystem.
+            entries = os.listdir(directory)
+            for filename in (name, name + '.pub'):
+                if any(entry.casefold() == filename.casefold() and entry != filename for entry in entries):
+                    raise Conflict('case-insensitive target collision')
+        p = os.path.join(directory, name)
         q = p + '.pub'
         if not exists or (not os.path.lexists(p) and not os.path.lexists(q)):
             plan.append('create')
@@ -550,8 +568,6 @@ def target_plan(records, *, cryptographic=True):
     return plan
 
 def target_observation(records):
-    # A bounded observation token, not a second comparison algorithm. Reuse the
-    # same target safety/byte readers; never return names, paths or key bytes.
     home_check()
     rows = []
     def stamp(path):
@@ -559,14 +575,22 @@ def target_observation(records):
         return [value.st_dev, value.st_ino, value.st_mode, value.st_uid,
                 value.st_nlink, value.st_size, value.st_mtime_ns, value.st_ctime_ns]
     rows.append(stamp(home))
-    if not os.path.lexists(ssh):
-        rows.append(None)
-    else:
-        owned(ssh, 'dir', 0o700)
-        rows.append(stamp(ssh))
+    for directory in sorted({target_directory(row[0]) for row in records}):
+        if directory != ssh:
+            with Directory(directory) as opened:
+                rows.append([value for _, value in opened.visible])
+        if not os.path.lexists(directory):
+            rows.append([directory, None])
+            continue
+        if directory == ssh:
+            owned(ssh, 'dir', 0o700)
+        before_directory = stamp(directory)
+        rows.append([directory, before_directory])
         for name, _, _, _, _ in records:
+            if target_directory(name) != directory:
+                continue
             for suffix, modes in (('', 0o600), ('.pub', (0o600, 0o644))):
-                path = os.path.join(ssh, name + suffix)
+                path = os.path.join(directory, name + suffix)
                 if not os.path.lexists(path):
                     rows.append(None)
                 else:
@@ -575,7 +599,7 @@ def target_observation(records):
                     if stamp(path) != before:
                         raise Conflict('target changed')
                     rows.append([before, digest(raw)])
-        if rows[1] != stamp(ssh):
+        if before_directory != stamp(directory):
             raise Conflict('target changed')
     return digest(json.dumps(rows, separators=(',', ':')).encode('ascii'))
 
@@ -624,6 +648,9 @@ def open_target_dir(homefd):
         raise
 
 def target_dir_still_visible(fd):
+    if fd in custom_directories:
+        custom_directories[fd].check()
+        return
     current = os.fstat(fd)
     visible = os.lstat(ssh)
     if (current.st_dev, current.st_ino) != (visible.st_dev, visible.st_ino) or not stat.S_ISDIR(visible.st_mode) or visible.st_uid != uid or stat.S_IMODE(visible.st_mode) != 0o700:
@@ -639,7 +666,7 @@ def publish_pair(name, private, public, created, dirfd):
             raise Conflict('target identity appeared during publication')
         with os.fdopen(fd, 'wb') as f:
             s = os.fstat(f.fileno())
-            created.append((relative, s.st_dev, s.st_ino))
+            created.append((dirfd, relative, s.st_dev, s.st_ino))
             os.fchmod(f.fileno(), perm)
             f.write(payload)
             f.flush()
@@ -815,6 +842,7 @@ def run():
             os.close(parent_fd)
         print('Encrypted package published')
         return
+    context = interaction.restore_context() if interaction is not None else {'inventory': False, 'mapping': None}
     source = args[0]
     if os.path.realpath(source) != source:
         raise Invalid('package path contains symlink')
@@ -838,6 +866,29 @@ def run():
                     raise Invalid('decryption failed')
         evidence.reason = 'input_invalid'
         records = archive_validate(archive, stage, cryptographic=mode != 'application-compare')
+        ids = [identity_id(row) for row in records]
+        if (len({row[0].casefold() for row in records}) != len(records)
+                or len({row[2] for row in records}) != len(records)):
+            raise Invalid('duplicate package identity')
+        mapping = context['mapping']
+        if mapping is not None:
+            validate_destinations(mapping)
+            if sorted(ids) != [row['identity_id'] for row in mapping['items']]:
+                raise SecureError('secure_target_changed')
+            destinations = {row['identity_id']: row['directory'] for row in mapping['items']}
+            for record, key in zip(records, ids):
+                directory = destinations[key]
+                if directory is not None:
+                    # Even an explicitly chosen ~/.ssh must already exist.
+                    with Directory(directory):
+                        pass
+                    destination_paths[record[0]] = directory
+        if context['inventory']:
+            if mode != 'application-compare' or mapping is not None:
+                raise SecureError('secure_channel_invalid')
+            for (name, kind, fingerprint, _, _), key in zip(records, ids):
+                interaction.inventory_item(dict(identity_id=key, name=name, key_type=kind, fingerprint=fingerprint))
+            return
         if mode == 'application-compare':
             # This branch returns before consent, journal/evidence publication,
             # target directory creation or any importer Apply code.
@@ -848,7 +899,7 @@ def run():
                     raise SecureError('secure_target_changed')
                 comparison = {'decision': 'import_required' if 'create' in plan else 'all_match',
                               'target_state': before}
-            except (Conflict, Invalid, OSError):
+            except (Conflict, Invalid, OSError, SecureError):
                 comparison = {'decision': 'conflict', 'target_state': None}
             print(json.dumps(comparison, separators=(',', ':')))
             return
@@ -874,9 +925,17 @@ def run():
         mutation_recorded = False
         homefd = None
         dirfd = None
+        directories = {}
         try:
+            for directory in sorted(set(destination_paths.values())):
+                opened = Directory(directory)
+                custom_directories[opened.fd] = opened
+                directories[directory] = opened.fd
             homefd = open_home_dir()
-            if not os.path.lexists(ssh):
+            if expected_target_state is not None and target_observation(records) != expected_target_state:
+                raise SecureError('secure_target_changed')
+            needs_default = any(target_directory(row[0]) == ssh for row in records)
+            if needs_default and not os.path.lexists(ssh):
                 if interaction is not None:
                     interaction.mutation()
                     mutation_recorded = True
@@ -885,7 +944,9 @@ def run():
                 except FileExistsError:
                     raise Conflict('SSH directory appeared')
                 made_ssh = True
-            dirfd = open_target_dir(homefd)
+            if needs_default and ssh not in directories:
+                dirfd = open_target_dir(homefd)
+                directories[ssh] = dirfd
             if target_plan(records) != plan:
                 raise Conflict('target changed')
             for (name, _, _, private, public), status in zip(records, plan):
@@ -893,19 +954,20 @@ def run():
                     if interaction is not None and not mutation_recorded:
                         interaction.mutation()
                         mutation_recorded = True
-                    publish_pair(name, private, public, created, dirfd)
+                    publish_pair(name, private, public, created, directories[target_directory(name)])
             evidence.phase = 'post_apply'
-            target_dir_still_visible(dirfd)
+            for descriptor in directories.values():
+                target_dir_still_visible(descriptor)
             if target_plan(records) != ['identical'] * len(records):
                 raise Invalid('post-publication verification failed')
             evidence.matched('success')
             print('Import verified')
         except BaseException:
-            for relative, device, inode in reversed(created):
+            for descriptor, relative, device, inode in reversed(created):
                 try:
-                    current = os.stat(relative, dir_fd=dirfd, follow_symlinks=False)
+                    current = os.stat(relative, dir_fd=descriptor, follow_symlinks=False)
                     if (current.st_dev, current.st_ino) == (device, inode):
-                        os.unlink(relative, dir_fd=dirfd)
+                        os.unlink(relative, dir_fd=descriptor)
                 except OSError:
                     pass
             if made_ssh:
@@ -918,6 +980,9 @@ def run():
                     pass
             raise
         finally:
+            for opened in custom_directories.values():
+                opened.close()
+            custom_directories.clear()
             if dirfd is not None:
                 os.close(dirfd)
             if homefd is not None:

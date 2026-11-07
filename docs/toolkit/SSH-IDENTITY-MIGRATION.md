@@ -68,11 +68,11 @@ destination names (case-insensitive) or public fingerprints are rejected. Add an
 Prepare validate the public pair metadata without unlocking; Execute reuses full
 cryptographic pair validation, including protected-key challenges.
 
-The destination is always `~/.ssh/<validated-name>` in the receiving HOME.
+The default destination is `~/.ssh/<validated-name>` in the receiving HOME.
 The existing encrypted v1 manifest authenticates the name and pair bytes; source
-paths never enter the Bundle. There is **no format change**, custom target mapping
-or new importer: legacy Bundles keep their semantics, and older v1 CLI importers
-read these packages with the same destination policy. Missing `.ssh` is handled by
+paths never enter the Bundle. There is **no format change** or second importer: legacy Bundles keep their
+semantics, and older v1 CLI importers restore these packages to `~/.ssh`. Desktop
+can optionally choose existing directories through the private mapping below. Missing `.ssh` is handled by
 the existing importer; partial/differing/unsafe pairs block the transfer and target
 changes invalidate Preview. No source-directory reconstruction is attempted.
 
@@ -84,6 +84,45 @@ Source references live only in the Capture session and private operation staging
 they are excluded from ordinary JSONL, logs, diagnostics, Blueprint and settings.
 Keychain, agents, GPG, tokens, arbitrary files/directories and other sensitive-data
 types remain outside this contract.
+
+### Optional Desktop Restore directories
+
+Secure Transfer remains default-off and selects the entire encrypted package.
+**Customize…** in Rebuild Selection explicitly unlocks the Bundle and validates
+all archive entries, manifest hashes, names and OpenSSH public/envelope metadata
+before showing any identities. This read-only operation neither imports keys nor
+requires protected-key passphrases. Execute still performs full cryptographic
+pair validation. Default destinations require no Customize step or extra unlock.
+
+Each authenticated identity can use an existing directory chosen with the native
+folder picker; **Use Default** restores `~/.ssh`. Private/public filenames never
+change. The session mapping binds the complete identity set (including both file
+hashes) to the selected Bundle bytes. It is not saved in the Bundle, Blueprint or
+preferences. [Core](../core/APPLICATION-INTERFACE.md#private-restore-destinations)
+owns the private operation transport and capability negotiation.
+
+Custom paths must be canonical absolute paths, at most 1024 UTF-8 bytes, with no
+symlinks/aliases or traversal. Core pins all directory components, requires
+root/current-user ancestors without shared write access (root-owned sticky `1777`
+ancestors are allowed), and an existing current-user-owned destination with owner
+read/write/search and no group/other writes. Extended ACL grants are rejected;
+deny-only ACLs retain their restrictions. Existing directories are never created,
+chmodded or chowned. Only the legacy default `~/.ssh` may be created during Execute.
+Existing pairs retain the same ownership, regular-file, single-link and mode checks.
+Case-insensitive name collisions, partial, unsafe or differing pairs block the
+entire package before import.
+
+Changing a mapping discards preparation, Preview and Secure Compare evidence.
+Prepare binds directory identities; Compare inspects exact bytes at the selected
+locations; Execute revalidates Bundle, identity set, directories and target evidence
+before consent and publication. Matching pairs remain unchanged. Post-import
+Verification uses the selected destinations. Cancellation/failure keeps existing
+no-clobber and best-effort cleanup of this attempt's own files; it is not an atomic
+rollback across directories. SIGKILL or loss of power can leave partial/unknown state.
+
+Custom paths do not rewrite `IdentityFile`, select SSH Configuration or establish
+Host-profile dependencies. The UI retains unresolved-dependency guidance. Combined
+SSH integration and Secure Check remain outside this slice.
 
 ### Encrypted representation
 

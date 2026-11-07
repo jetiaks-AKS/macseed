@@ -1560,16 +1560,19 @@ real-user SSH workflows during documentation maintenance:
 | Repeated Preview / Already Matches / no-op | PASS |
 
 Supported identities are encrypted in `secure.age`; external pairs can be added
-manually. All identities currently restore into `~/.ssh`; custom restore destinations
-are **not implemented**. The accepted comparison includes one Secure Transfer
+manually. Identities restore into `~/.ssh` by default. Optional custom directories
+are accepted in the separate Slice 3 extension below and are not part of the earlier
+Stage 16H acceptance. The accepted comparison includes one Secure Transfer
 requirement and disables Rebuild for a confirmed no-op. This closes the supported
 identity checkpoint, not hosted CI, Stage 17 distribution or clean-Mac qualification.
 [SSH Environment Completion — Developer Environment Closure](CAPTURE-RESTORE.md#ssh-environment-completion--developer-environment-closure)
-is **NEXT / PLANNED**, with configuration/destination integration owned there.
+remains in progress; combined configuration/destination dependency integration
+is not completed by this extension.
 
 Core owns Secure Migration. `CoreRuntime` opens `CoreSecureTransport` only for
 Capture Execute with explicit identity IDs, Restore Execute with explicit
-`include_secure: true`, or the selected read-only `secure_restore_compare` operation. Ordinary operations retain their existing launch path.
+`include_secure: true`, the selected read-only `secure_restore_compare`, or explicitly requested
+`secure_restore_inventory` operation. Ordinary operations retain their existing launch path.
 The selected Macseed 1.0 scope requires 16H and bundled age. Pinned, verified age
 v1.3.2 is implemented locally in `Contents/Helpers/age`. `CoreLocationResolver`
 binds every production launch to its app; Core validates the fixed helper path,
@@ -1598,10 +1601,10 @@ Remove forgets the candidate without deleting files. The one existing tri-state
 master and independent disclosure retain their semantics. Advanced selection and
 ordinary domain/item counts remain separate; secure-only Capture is supported.
 
-Review and confirmation explain the fixed destination `~/.ssh/<validated-name>`
+Review and confirmation explain the default destination `~/.ssh/<validated-name>`
 in the receiving HOME and the `IdentityFile` limitation. No custom destination or
 source path is stored in the Bundle; the existing encrypted v1 names authenticate
-the destination. Existing Preview/Result secondary detail gives the same bounded
+the filenames. Existing Preview/Result secondary detail gives the same bounded
 configuration reminder, without inferring a Host-profile relationship. Core source
 checks and format compatibility are owned by [Secure Migration](toolkit/SSH-IDENTITY-MIGRATION.md#manually-selected-desktop-sources).
 
@@ -1614,6 +1617,31 @@ inspection uses the existing cancellable runtime without a secret channel;
 encrypted execution keeps the existing FD challenges and operation ownership.
 This extension is included in the accepted Stage 16H identity scope. Broader
 release and packaged qualification remain separate.
+
+**Slice 3 — optional Restore directories.** The existing Secure Transfer section
+adds a compact **Customize…** action when Core advertises destination capability
+v1. Secure Transfer remains independent/default-off and selects the whole package;
+its shared accordion starts collapsed and participates in For Experienced Users
+Expand All/Collapse All. Disclosure changes preserve selection, destinations and Preview.
+There are no per-identity Restore checkboxes. Each Customize request explicitly unlocks and
+validates the Bundle before showing private authenticated name/type/fingerprint
+rows. A native directory-only picker chooses an existing location per identity;
+**Use Default** returns that identity to `~/.ssh`. Default Restore adds no unlock
+or configuration step. Wrong passwords/cancellation keep Selection available.
+
+Destination references stay in the current review session and private operation
+staging. Changing them clears preparation, Preview and Secure Compare evidence;
+changing Bundle, Cancel Review or Done clears the session. Preview compares the
+actual selected locations; Rebuild revalidates them and verifies imported/matching
+pairs there. Only the Customize sheet displays custom paths. Other surfaces use
+aggregate package status. Preview reads default/custom/mixed destination scope from
+prepared Core evidence; the short custom-location reminder stays inside its expanded
+Secure Transfer category. No SSH config rewrite, automatic selection, new wizard or
+persistent preference is introduced.
+[Secure Migration](toolkit/SSH-IDENTITY-MIGRATION.md#optional-desktop-restore-directories)
+owns safety and compatibility; [Core](core/APPLICATION-INTERFACE.md#private-restore-destinations)
+owns private transport. SSH Environment Completion, combined dependency integration
+and Secure Check remain open.
 
 Secure Execute and authenticated secure comparison open the separate inherited Unix-socket FD bridge. Native secure
 text fields handle Bundle encryption and protected-key unlock, with distinct

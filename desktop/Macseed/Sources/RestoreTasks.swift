@@ -201,7 +201,7 @@ struct RestoreTaskPresentation {
                 let index = Int(item.id.replacingOccurrences(of: "restore-", with: ""))
                 let entry = index.flatMap { plan.plan.indices.contains($0) ? plan.plan[$0] : nil }
                 if entry?.isSecureImport == true {
-                    return Self.secureItem(item, events: events, result: result, executing: executing)
+                    return Self.secureItem(item, events: events, result: result, executing: executing, destinations: plan.secureDestinationScope)
                 }
                 func belongs(_ row: [String: CoreJSON]) -> Bool {
                     row["domain"]?.string == entry?.domain && row["item_id"]?.string == entry?.itemID
@@ -457,7 +457,8 @@ struct RestoreTaskPresentation {
         }
         domains = output
     }
-    private static func secureItem(_ item: DisplayItem, events: [CoreEvent], result: RestoreExecutionPresentation?, executing: Bool) -> TaskItemPresentation {
+    private static func secureItem(_ item: DisplayItem, events: [CoreEvent], result: RestoreExecutionPresentation?, executing: Bool,
+                                   destinations: CoreRestorePreparation.SecureDestinationScope?) -> TaskItemPresentation {
         let evidence = CoreSecureRestoreEvidence(events: events, payload: result?.structuredEvidence)
         let outcome = evidence.operation?["outcome"]?.string
         let reason = evidence.operation?["reason"]?.string ?? item.reason
@@ -471,7 +472,15 @@ struct RestoreTaskPresentation {
         let message: String
         if preview {
             state = item.status == .matching ? .matching : item.status == .ready ? .planned : item.status == .unverified ? .unverified : .attention
-            message = item.action
+            if state == .planned, let destinations {
+                let location: String
+                switch destinations {
+                case .defaultLocation: location = "Keys will be restored to ~/.ssh."
+                case .custom: location = "Keys will be restored to selected locations."
+                case .mixed: location = "Keys will use default and custom locations."
+                }
+                message = location + " Existing keys won't be overwritten."
+            } else { message = item.action }
         } else if evidence.verified {
             state = outcome == "noop" ? .matching : .completed
             labels = [outcome == "noop" ? "Already Matches" : "Applied", "Verified"]
@@ -493,8 +502,8 @@ struct RestoreTaskPresentation {
         } else if events.contains(where: { $0.phase == "secure_import" || $0.type == "secure_challenge_waiting" }) {
             state = .working; message = "Secure Transfer is in progress."
         } else { state = .waiting; message = "Waiting" }
-        let destinationDetail = evidence.verified || (preview && [.matching, .planned].contains(state))
-            ? " Identities use ~/.ssh with their saved names. SSH configuration is unchanged; review IdentityFile if it expects another location." : ""
+        let destinationDetail = preview && (destinations == .custom || destinations == .mixed)
+            ? "\nSSH configuration may need updating." : ""
         return TaskItemPresentation(id: item.id,
             item: DisplayItem(id: item.id, title: item.title, status: item.status, action: message + destinationDetail, reason: reason), state: state,
             executionAction: "Validate And Import", resultLabels: labels,

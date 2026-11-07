@@ -341,6 +341,59 @@ struct RestoreProgressRow {
         runtime.cancel()
     }
 
+    @Published private(set) var secureDestinationsSupported = false
+    @Published private(set) var unlockingDestinations = false
+    @Published private(set) var showingDestinations = false
+    @Published private(set) var destinationInventory: CoreRestoreIdentityInventory?
+    @Published private(set) var destinationDirectories: [String: String] = [:]
+    @Published private(set) var destinationMessage: String?
+    var canCustomizeDestinations: Bool {
+        state == .review && !busy && !runtime.isActive && inspection?.secureComponent == true && secureDestinationsSupported
+    }
+    var privateDestinations: CoreRestoreDestinations? {
+        guard includeSecure, let inventory = destinationInventory, !destinationDirectories.isEmpty else { return nil }
+        return CoreRestoreDestinations(version: 1, bundleID: inventory.bundleID,
+            items: inventory.items.map { .init(identityID: $0.id, directory: destinationDirectories[$0.id]) }.sorted { $0.identityID < $1.identityID })
+    }
+    func customizeDestinations() {
+        guard canCustomizeDestinations, let source else { return }
+        invalidate(); destinationMessage = nil; cancelRequested = false
+        unlockingDestinations = true; state = .preparing
+        let request = CoreRequest(.secureRestoreInventory(path: source.path))
+        operationID = request.operationID
+        runtime.start(request, location: location)
+        work = Task {
+            await runtime.waitForCompletion()
+            unlockingDestinations = false
+            guard self.source == source, runtime.operationID == request.operationID else { return }
+            state = .review
+            if runtime.state == .completed, let inventory = runtime.takeRestoreIdentityInventory() {
+                if let previous = destinationInventory, previous.bundleID != inventory.bundleID {
+                    clearDestinations()
+                    destinationMessage = "The Bundle changed. Choose it again before customizing destinations."
+                    return
+                }
+                destinationInventory = inventory; showingDestinations = true
+            } else {
+                destinationMessage = runtime.state == .cancelled
+                    ? "Unlock cancelled. Destinations are unchanged."
+                    : "The identity list could not be authenticated. Check the Bundle and passphrase, then try Customize again."
+            }
+        }
+    }
+    func dismissDestinations() { showingDestinations = false }
+    func setDestination(_ directory: String?, for identityID: String) {
+        guard showingDestinations, state == .review, !runtime.isActive,
+              destinationInventory?.items.contains(where: { $0.id == identityID }) == true else { return }
+        guard destinationDirectories[identityID] != directory else { return }
+        destinationDirectories[identityID] = directory
+        invalidate()
+    }
+    private func clearDestinations() {
+        destinationInventory = nil; destinationDirectories = [:]; destinationMessage = nil
+        showingDestinations = false; unlockingDestinations = false
+    }
+
     @Published private(set) var includeSecure = false
     func selectSecureTransfer(_ included: Bool) {
         guard state == .review, !busy, !runtime.isActive, inspection?.secureComponent == true else { return }
@@ -460,7 +513,7 @@ struct RestoreProgressRow {
               plan.readiness.ready, plan.errorCount == 0, plan.hasComparedExecutableChanges, plan.selection == canonicalSelection, plan.includeSecure == includeSecure,
               !includeSecure || plan.secureComparedReady else { return }
         let request = CoreRequest(.restoreExecute(path: source.path, disabledGroups: [], includeSecure: includeSecure,
-                                                preparedID: plan.preparedPlanID, selection: selection, secureComparison: plan.secureComparison))
+                                                preparedID: plan.preparedPlanID, selection: selection, secureComparison: plan.secureComparison), restoreDestinations: privateDestinations)
         progressScope = RestoreProgressRow.freeze(preview: preview, plan: plan)
         executionPreview = preview; executionPlan = plan
         executionStartedAt = Date(); executionFinishedAt = nil
@@ -518,6 +571,7 @@ struct RestoreProgressRow {
     }
     func finish() {
         guard state == .result, !runtime.isActive else { return }
+        clearDestinations()
         invalidate(); progressScope = []; executionResult = nil; inspection = nil; source = nil
         executionPreview = nil; executionPlan = nil; executionStartedAt = nil; executionFinishedAt = nil
         categoryEvidence = [:]; categoryEvidenceEvents = []; evidenceSequence = 0
@@ -544,6 +598,7 @@ struct RestoreProgressRow {
         // owned async phases and any active shared Core operation are excluded.
         work = nil
         operationID = nil
+        clearDestinations()
         invalidate(); source = nil; inspection = nil; selectedCategories = []; selectedItems = [:]; includeSecure = false
         failure = nil; technicalReason = nil; prerequisiteRetryMessage = nil; retryingPrerequisites = false
         cancelRequested = false; reviewCancelConfirmation = false; reviewCancelSource = nil; stopConfirmation = false; stopOperationID = nil
@@ -569,6 +624,7 @@ struct RestoreProgressRow {
         cancelRequested = false
         showingAppStore = false
         appStoreRefreshState = .idle
+        clearDestinations(); secureDestinationsSupported = false
         source = url; inspection = nil; selectedCategories = []; selectedItems = [:]; includeSecure = false
         invalidate(); failure = nil; technicalReason = nil
         guard url.isFileURL, url.pathExtension.lowercased() == "mbt" else {
@@ -580,6 +636,7 @@ struct RestoreProgressRow {
             guard runtime.capabilities?.supportsRestoreSelection == true else {
                 fail("Rebuild selection is unavailable in this build. Use a compatible Macseed version.", code: nil); return
             }
+            secureDestinationsSupported = runtime.capabilities?.supportsSecureRestoreDestinations == true
             guard await receive(CoreRequest(.bundleInspect(path: url.path))) else { return }
             do {
                 guard let result = runtime.latestResult else { throw CoreRuntimeError.malformedEvent }
@@ -686,7 +743,7 @@ struct RestoreProgressRow {
         let expected = canonicalSelection
         let expectedSecure = includeSecure
         let requestSelection = selection
-        let request = CoreRequest(.restorePrepare(path: source.path, disabledGroups: [], includeSecure: includeSecure, selection: requestSelection, installerPreparations: installerPreparations))
+        let request = CoreRequest(.restorePrepare(path: source.path, disabledGroups: [], includeSecure: includeSecure, selection: requestSelection, installerPreparations: installerPreparations), restoreDestinations: privateDestinations)
         invalidate(); failure = nil; technicalReason = nil; state = .preparing
         appStoreRefreshState = .idle
         if appStoreRefresh {
@@ -723,7 +780,7 @@ struct RestoreProgressRow {
                 if expectedSecure {
                     // Reuse Prepare's bounded wire representation. The canonical
                     // scope above still validates Core's expansion against inventory.
-                    let compare = CoreRequest(.secureRestoreCompare(path: source.path, preparedID: data.preparedPlanID, selection: requestSelection))
+                    let compare = CoreRequest(.secureRestoreCompare(path: source.path, preparedID: data.preparedPlanID, selection: requestSelection), restoreDestinations: privateDestinations)
                     guard await receive(compare) else { return }
                     guard let result = runtime.latestResult else { throw CoreRuntimeError.malformedEvent }
                     let comparison = try result.decodeData(CoreSecureComparison.self)
@@ -775,8 +832,10 @@ struct RestoreProgressRow {
             case "secure_channel_timeout": message = "Secure comparison timed out. No SSH identities were changed. Refresh Preview to try again."
             case "secure_comparison_unavailable": message = "Secure comparison could not use the bundled tool or required secure prerequisites. Check the requirement; rebuild or reinstall Macseed if its bundled tool is unavailable, then Refresh Preview."
             case "secure_comparison_failed": message = "Secure comparison could not start or finish safely. No SSH identities were changed. Check the local runtime and temporary-folder access, then Refresh Preview."
+            case "secure_target_conflict": message = "An SSH identity destination is unavailable, unsafe, or conflicts with this package. Review Selection and Customize, then Refresh Preview."
+            case "secure_input_invalid": message = "The private destination mapping is invalid. Choose the saved environment again and reopen Customize."
             case "secure_channel_invalid", "secure_target_changed": message = "Secure comparison could not confirm a stable target state. No SSH identities were changed. Refresh Preview."
-            case "stale_plan": message = "The inputs changed. Refresh Preview to inspect the current state."
+            case "stale_plan": message = privateDestinations == nil ? "The inputs changed. Refresh Preview to inspect the current state." : "The Bundle or destination changed. Review Selection and Refresh Preview. If the Bundle changed, choose it again and reopen Customize."
             case "workspace_dependency_missing", "workspace_path_conflict":
                 message = CoreRestorePreparation.workspacePreviewReasons[code!]!
             case "pkg_preparation_failed":

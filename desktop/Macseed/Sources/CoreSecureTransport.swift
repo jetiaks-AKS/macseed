@@ -86,7 +86,7 @@ final class CoreSecureTransport: @unchecked Sendable {
         guard request.command.requiresSecretBridge else { throw CoreRuntimeError.invalidRequest }
         operationID = request.operationID
         let capture = request.command.operation == .captureExecute
-        let comparing = request.command.operation == .secureRestoreCompare
+        let comparing = [.secureRestoreCompare, .secureRestoreInventory].contains(request.command.operation)
         phase = capture ? "secure_packaging" : comparing ? "secure_compare" : "secure_import"
         kinds = capture ? [.bundleEncrypt, .sshKeyUnlock] : comparing ? [.bundleUnlock] : [.bundleUnlock, .sshKeyUnlock, .importConfirmation]
         self.handler = handler

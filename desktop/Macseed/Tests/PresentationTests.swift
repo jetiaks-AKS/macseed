@@ -731,10 +731,21 @@ private struct CaptureRefinementHost: View {
             case .importRequired: explanation = "Some saved SSH identities are missing. Rebuild can import them without overwriting existing keys."
             case .conflict: explanation = "An existing SSH identity conflicts with the saved version. No keys will be overwritten."
             }
-            let destinationDetail = decision == .conflict ? ""
-                : " Identities use ~/.ssh with their saved names. SSH configuration is unchanged; review IdentityFile if it expects another location."
             precondition(secure.items.count == 1 && secure.items[0].item.title == "Encrypted SSH identity package"
-                && secure.items[0].item.action == explanation + destinationDetail)
+                && secure.items[0].item.action == explanation)
+            // Missing destination evidence must never invent the legacy location.
+            precondition(!secure.items[0].item.action.contains("~/.ssh"))
+            for (scope, location) in [(CoreRestorePreparation.SecureDestinationScope.defaultLocation, "Keys will be restored to ~/.ssh."),
+                                      (.custom, "Keys will be restored to selected locations."),
+                                      (.mixed, "Keys will use default and custom locations.")] {
+                var scoped = plan; scoped.secureDestinationScope = scope
+                let scopedTasks = RestoreTaskPresentation(preview: .init(scoped, catalog: catalog), plan: scoped)
+                let message = scopedTasks.domains.first { $0.id == secureID }!.items[0].item.action
+                let expected = decision == .importRequired ? location + " Existing keys won't be overwritten." : explanation
+                precondition(message == expected + (scope == .defaultLocation ? "" : "\nSSH configuration may need updating."))
+                precondition(scope == .defaultLocation || !message.contains("~/.ssh"))
+                precondition(RestorePreviewMetrics.counts(scopedTasks.domains) == counts)
+            }
             precondition(RestorePreviewMetrics.badges(secure).map(\.1) == (decision == .allMatch ? [] : [1]))
             let advanced = RestorePreviewHierarchy.sections(tasks.domains).first { $0.group == .advanced }!
             precondition(advanced.rows.allSatisfy { $0.id != secureID } && RestorePreviewMetrics.counts(advanced.rows).changes == 1)
@@ -768,8 +779,21 @@ private struct CaptureRefinementHost: View {
         precondition(selection.contains("guard model.inspection?.secureComponent == true else { return nil }"))
         precondition(selection.contains("model.selectSecureTransfer($0)")
                      && selection.contains(".disabled(model.state != .review || model.runtime.isActive)"))
-        precondition(selection.contains("without overwriting existing keys"))
+        precondition(selection.contains("Encrypted SSH keys. Existing keys won't be overwritten."))
+        let normalizedSelection = selection.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        precondition(normalizedSelection.contains("Text(model.destinationDirectories.isEmpty ? \"Restore to: ~/.ssh\" : \"Custom locations configured\") .font(.callout.weight(.semibold)).foregroundStyle(.primary)"))
+        precondition(normalizedSelection.contains("Text(\"Encrypted SSH keys. Existing keys won't be overwritten.\") .font(.callout).foregroundStyle(.secondary)"))
+        precondition(selection.contains("summary: model.includeSecure ? \"Selected\" : \"Off\""))
+        precondition(selection.contains("expanded: WorkflowExpansion.binding(CaptureHierarchy.secureTransferID, in: treeExpansion)"))
+        precondition(selection.contains("if treeExpansion.wrappedValue.contains(CaptureHierarchy.secureTransferID)"))
+        precondition(selection.contains("model.customizeDestinations()") && selection.contains("model.canCustomizeDestinations"))
+        let destinations = source.components(separatedBy: "struct RestoreDestinationsView: View")[1]
+        precondition(destinations.contains("panel.canChooseDirectories = true") && destinations.contains("panel.canChooseFiles = false")
+                     && destinations.contains("panel.canCreateDirectories = false") && destinations.contains("panel.resolvesAliases = false")
+                     && destinations.contains("model.setDestination(nil, for: identity.id)")
+                     && !destinations.contains("NativeSelectionCheckbox") && !destinations.contains("Toggle("))
         precondition(source.contains("Read-only preview — no changes are made."))
+        precondition(!source.contains("Custom key locations may differ") && !source.contains("SSH configuration may need updating."))
         print("PASS: Secure Transfer availability, explicit selection, busy guard, no-clobber explanation and read-only Preview")
     }
 
@@ -5308,7 +5332,7 @@ private struct CaptureRefinementHost: View {
             .components(separatedBy: "func requestStop()")[0]
         let executePattern = #"CoreRequest\s*\(\s*\.restoreExecute\s*\(\s*path\s*:\s*source\.path\s*,\s*disabledGroups\s*:\s*\[\s*\]\s*,"#
             + #"\s*includeSecure\s*:\s*includeSecure\s*,\s*preparedID\s*:\s*plan\.preparedPlanID\s*,"#
-            + #"\s*selection\s*:\s*selection\s*,\s*secureComparison\s*:\s*plan\.secureComparison\s*\)\s*\)"#
+            + #"\s*selection\s*:\s*selection\s*,\s*secureComparison\s*:\s*plan\.secureComparison\s*\)\s*,\s*restoreDestinations\s*:\s*privateDestinations\s*\)"#
         precondition(restoreView.contains("model.confirmRebuild()")
             && confirmRebuild.range(of: executePattern, options: .regularExpression) != nil
             && confirmRebuild.contains("runtime.start(request, location: location)"),

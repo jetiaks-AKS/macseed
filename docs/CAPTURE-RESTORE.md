@@ -130,9 +130,10 @@ Desktop **Add SSH Identity…** also admits explicitly chosen safe SSH pairs out
 `~/.ssh`, including a user-owned directory outside HOME. The adjacent `.pub` is
 required; there is no recursive search, automatic selection or source modification.
 Candidates join the same default-off selection and can be removed without deleting
-files. Capture Review/confirmation explains that all pairs restore to
-`~/.ssh/<validated-name>` in the receiving HOME. Source locations are not restored,
-and custom target paths are not supported. Existing Secure Migration v1 and `.mbt`
+files. Capture Review/confirmation explains the default destination
+`~/.ssh/<validated-name>` in the receiving HOME. Source locations are not restored.
+Rebuild Selection optionally configures existing custom directories through
+[Customize](toolkit/SSH-IDENTITY-MIGRATION.md#optional-desktop-restore-directories). Existing Secure Migration v1 and `.mbt`
 formats remain unchanged; names and bytes stay authenticated inside `secure.age`.
 Prepare binds source evidence; Execute revalidates sources and cryptographic pairs.
 Preview still unlocks only the Bundle, compares exact intended targets without
@@ -157,14 +158,14 @@ to [Secure SSH Identity Migration](toolkit/SSH-IDENTITY-MIGRATION.md).
 
 ### SSH Environment Completion — Developer Environment Closure
 
-**NEXT / PLANNED — not implemented.** Complete practical SSH Configuration support
+**IN PROGRESS — combined integration remains planned.** Complete practical SSH Configuration support
 across Discovery, Capture, Preview, Restore and Verification, prioritizing
 `IdentityFile`, `IdentitiesOnly`, `AddKeysToAgent`, `UseKeychain` and other safely
 portable SSH directives. This extends the bounded configuration contract without
 reopening completed Stage 16H identity transfer.
 
-Add optional per-identity restore destinations, defaulting to `~/.ssh`. Configuration
-belongs in the existing Rebuild **SELECTION** screen through a compact **Customize…**
+Accepted Slice 3 implements optional per-identity restore directories, defaulting to
+`~/.ssh`. Configuration belongs in the existing Rebuild **SELECTION** screen through a compact **Customize…**
 sheet and native macOS folder picker. Accepting defaults requires no extra steps.
 Preserve **SELECTION = configure; PREVIEW = read-only validation; REBUILD = execute**:
 no destination editing in Preview, new top-level screen or separate SSH manager.
@@ -174,8 +175,8 @@ Never silently rewrite SSH configuration; every proposed correction requires exp
 authorization. Resolve false Needs Attention results while preserving genuine
 unsupported, conflicting and unsafe findings. Keep Secure Migration v1 Bundle
 compatibility. A later joint SSH Configuration + identity E2E must cover default and
-custom destinations, Verification and repeated no-op. No part of this checkpoint is
-implemented by this completion/documentation task.
+custom destinations, Verification and repeated no-op. The optional destination
+slice does not complete this integration checkpoint.
 
 ## Results
 

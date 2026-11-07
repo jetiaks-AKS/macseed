@@ -32,6 +32,7 @@ from homebrew_stop import Controller, StopAccepted
 from external_state import pending as external_pending
 import restore_selection
 from secure import launch_channel, import_secure, compare_secure, SecureError
+import restore_destinations
 
 PROTOCOL_VERSION = 1
 MAX_REQUEST = 4096
@@ -118,8 +119,8 @@ def restore_signals():
         signal.signal(signal.SIGTERM, previous_term)
 
 
-def restore_prepare(path, disabled_groups, include_secure, selection=None, installer_preparations=None):
-    with restore_signals(), prepared_restore(path, disabled_groups, include_secure, selection, installer_preparations, workspace_preview=True) as (summary, _stage, _source, _staged):
+def restore_prepare(path, disabled_groups, include_secure, selection=None, installer_preparations=None, destinations=None):
+    with restore_signals(), prepared_restore(path, disabled_groups, include_secure, selection, installer_preparations, workspace_preview=True, destinations=destinations) as (summary, _stage, _source, _staged):
         return summary
 
 
@@ -134,7 +135,7 @@ def valid_comparison(value):
              (value['decision'] != 'conflict' and isinstance(value['target_state'], str) and PREPARED_PLAN_ID.fullmatch(value['target_state']))))
 
 
-def secure_restore_compare(operation_id, path, disabled_groups, expected_id, selection, channel):
+def secure_restore_compare(operation_id, path, disabled_groups, expected_id, selection, channel, destinations=None, inventory=False):
     sequence = 1
     def event(kind, data=None):
         nonlocal sequence
@@ -143,15 +144,20 @@ def secure_restore_compare(operation_id, path, disabled_groups, expected_id, sel
     try:
         if channel is None:
             raise SecureError('secure_bridge_required')
-        with restore_signals(), prepared_restore(path, disabled_groups, True, selection, workspace_preview=True) as (plan, stage, source_id, _):
-            if plan['prepared_plan_id'] != expected_id:
+        with restore_signals(), prepared_restore(path, disabled_groups, True, selection, workspace_preview=True, destinations=destinations) as (plan, stage, source_id, _):
+            if not inventory and plan['prepared_plan_id'] != expected_id:
                 raise ExecuteFailed('stale_plan')
             if any(row['domain'] == 'secure-ssh-identities' and row.get('scope') != 'execution_launch'
                    and row['status'] not in ('satisfied', 'safely_satisfiable') for row in plan['readiness']['conditions']):
                 raise SecureError('secure_comparison_unavailable')
-            compared = compare_secure(ROOT, stage / 'secure.age', channel, operation_id, event)
+            compared = compare_secure(ROOT, stage / 'secure.age', channel, operation_id, event, destinations=destinations, inventory=inventory)
             if restore_fingerprint(Path(path)) != source_id:
                 raise ExecuteFailed('stale_plan')
+            if inventory:
+                restore_destinations.publish_inventory(operation_id, source_id, compared)
+                event('result', {'status': 'authenticated'})
+                event('completed', {'status': 'success'})
+                return 0
             result = dict(compared, source_fingerprint=plan['plan_diagnostics']['bundle'],
                           # prepared_restore already expanded/validated this exact
                           # request and bound its canonical scope to expected_id.
@@ -190,7 +196,7 @@ def restore_unpack(*args, **kwargs):
 
 
 @contextmanager
-def prepared_restore(path, disabled_groups, include_secure, selection=None, installer_preparations=None, *, workspace_preview=False):
+def prepared_restore(path, disabled_groups, include_secure, selection=None, installer_preparations=None, *, workspace_preview=False, destinations=None):
     if bundle.RECOVERY.exists() or bundle.RECOVERY.is_symlink():
         raise RecoveryRequired()
     input_path = Path(path)
@@ -200,6 +206,7 @@ def prepared_restore(path, disabled_groups, include_secure, selection=None, inst
     # unpack performs authoritative archive/path/Blueprint validation. Bind that
     # read to the source identity instead of validating the same archive twice.
     source_identity = restore_fingerprint(input_path)
+    destination_state = restore_destinations.preparation(destinations, source_identity) if destinations else None
     with tempfile.TemporaryDirectory(prefix="mbt-bundle-", dir=os.environ.get("TMPDIR") or "/tmp") as temporary:
         private = Path(temporary)
         stage = private / "stage"
@@ -466,6 +473,10 @@ def prepared_restore(path, disabled_groups, include_secure, selection=None, inst
                                         if key != 'external_tools'}
         identity = {"bundle": source_identity, "stage": stage_identity,
                     "disabled_groups": sorted(disabled_groups), "summary": identity_summary}
+        if destinations is not None:
+            if restore_destinations.preparation(destinations, source_identity) != destination_state:
+                raise SecureError('secure_target_changed')
+            identity['secure_destinations'] = destination_state
         if ssh_evidence is not None:
             if ssh_observation() != ssh_evidence:
                 raise PreviewFailed()
@@ -495,6 +506,10 @@ def prepared_restore(path, disabled_groups, include_secure, selection=None, inst
         # This identifies observed inputs and this module summary, never authorizes Apply.
         # Future Execute must rebuild and revalidate Preview before mutation.
         # Additive public fields after legacy identity calculation preserve old IDs.
+        if include_secure:
+            custom = {row['directory'] is not None and row['directory'] != os.path.join(os.environ['HOME'], '.ssh')
+                      for row in destinations['items']} if destinations else {False}
+            summary['secure_destination_scope'] = 'mixed' if len(custom) == 2 else 'custom' if True in custom else 'default'
         summary['selection'] = requested_selection
         if duplicates:
             summary['effective_selection'] = restore_selection.canonical(stage)
@@ -651,7 +666,7 @@ def restore_graceful_result(state, owned, failure):
     return failure('cancelled', 130)
 
 
-def restore_execute(operation_id, path, disabled_groups, include_secure, expected_id, channel=None, selection=None, secure_comparison=None):
+def restore_execute(operation_id, path, disabled_groups, include_secure, expected_id, channel=None, selection=None, secure_comparison=None, destinations=None):
     sequence = 1  # started has already been emitted by main().
     state = {"prepared_plan_id": None, "execution_status": "not_started",
              "unknown_consequences": False,
@@ -740,13 +755,15 @@ def restore_execute(operation_id, path, disabled_groups, include_secure, expecte
                 state['unknown_consequences'] = True
                 raise ExecuteFailed('privileged_lifecycle_unknown')
             event("phase_started", {"phase": "preparation"})
-            with prepared_restore(path, disabled_groups, include_secure, selection, workspace_preview=True) as (plan, stage, source_id, stage_id):
+            with prepared_restore(path, disabled_groups, include_secure, selection, workspace_preview=True, destinations=destinations) as (plan, stage, source_id, stage_id):
                 event("phase_completed", {"phase": "preparation"})
                 if plan["prepared_plan_id"] != expected_id:
                     state["plan_validation"] = {"check": "prepared_plan_id", "expected_id": expected_id,
                         "recomputed_id": plan["prepared_plan_id"], "components": plan["plan_diagnostics"]}
                     raise ExecuteFailed("stale_plan")
                 state["prepared_plan_id"] = plan["prepared_plan_id"]
+                if destinations is not None and secure_comparison is None:
+                    raise ExecuteFailed('stale_plan')
                 if secure_comparison is not None:
                     if (not include_secure or not valid_comparison(secure_comparison) or
                             secure_comparison['prepared_plan_id'] != expected_id or
@@ -829,7 +846,7 @@ def restore_execute(operation_id, path, disabled_groups, include_secure, expecte
                     state["secure_restore_status"] = "running"
                     secure_evidence = import_secure(ROOT, stage / "secure.age", channel,
                                                     operation_id, event, secure_mutation, record=record_event,
-                                                    expected_target_state=secure_comparison["target_state"] if secure_comparison else None)
+                                                    expected_target_state=secure_comparison["target_state"] if secure_comparison else None, destinations=destinations)
                     state["secure_restore_status"] = "completed"
                 checkpoint()
                 environment = dict(os.environ, MACSEED_PKG_PREPARATION_CONTEXT=pkg_preparation.context(source_id, stage_id), BUNDLE_RESTORE_ACTIVE="true",
@@ -1207,6 +1224,14 @@ def dispatch(version, channel=None):
             if operation == 'capture_execute' and (not isinstance(parameters['expected_prepared_capture_id'], str) or
                     not PREPARED_PLAN_ID.fullmatch(parameters['expected_prepared_capture_id'])):
                 raise ValueError('invalid Capture prepared ID')
+        elif operation == "secure_restore_inventory":
+            parameters = value["parameters"]
+            if set(value) != required | {"parameters"} or not isinstance(parameters, dict) or set(parameters) != {"path"}:
+                raise ValueError("invalid inventory request")
+            path = parameters["path"]
+            if not isinstance(path, str) or not path.startswith("/") or "\0" in path:
+                raise ValueError("invalid Bundle path")
+            include_secure = True
         elif operation in ("bundle_inspect", "restore_prepare", "restore_execute", "secure_restore_compare"):
             if set(value) != required | {"parameters"}:
                 raise ValueError("invalid Bundle request")
@@ -1217,6 +1242,8 @@ def dispatch(version, channel=None):
             optional = ({'selection', 'installer_preparations'} if operation == 'restore_prepare' else
                         {'selection', 'secure_comparison'} if operation == 'restore_execute' else
                         {'selection'} if operation == 'secure_restore_compare' else set())
+            if operation != 'bundle_inspect':
+                optional |= {'custom_destinations'}
             if not isinstance(parameters, dict) or not expected <= set(parameters) or set(parameters) - expected - optional:
                 raise ValueError("invalid Bundle parameters")
             if 'installer_preparations' in parameters:
@@ -1239,6 +1266,8 @@ def dispatch(version, channel=None):
                         raise ValueError("invalid prepared plan ID")
                 if operation == 'secure_restore_compare' and not include_secure:
                     raise ValueError('secure scope required')
+                if 'custom_destinations' in parameters and (not include_secure or parameters['custom_destinations'] is not True):
+                    raise ValueError('invalid destinations')
                 if 'secure_comparison' in parameters and (not include_secure or not valid_comparison(parameters['secure_comparison'])):
                     raise ValueError('invalid secure comparison')
         else:
@@ -1248,10 +1277,20 @@ def dispatch(version, channel=None):
         emit(1, "failed", operation_id, {"code": "invalid_request"})
         return 2
 
-    if channel is not None and operation != "capture_execute" and (operation not in ("restore_execute", "secure_restore_compare") or not include_secure):
+    if channel is not None and operation != "capture_execute" and (operation not in ("restore_execute", "secure_restore_compare", "secure_restore_inventory") or not include_secure):
         channel.close()
         channel = None
     emit(1, "started", operation_id)
+    destinations = None
+    if operation in ('restore_prepare', 'restore_execute', 'secure_restore_compare') and parameters.get('custom_destinations'):
+        try:
+            destinations = restore_destinations.operation_mapping(operation_id)
+        except SecureError as exc:
+            emit(2, 'failed', operation_id, {'code': exc.code, 'publication_occurred': False,
+                                           'target_mutation_may_have_started': False})
+            return 2
+    if operation == 'secure_restore_inventory':
+        return secure_restore_compare(operation_id, path, [], None, {'categories': [], 'items': {}}, channel, inventory=True)
     if operation == "environment_compare":
         return environment_compare(operation_id, parameters)
     if operation in ('capture_prepare', 'capture_execute', 'capture_identity_inspect'):
@@ -1272,27 +1311,27 @@ def dispatch(version, channel=None):
         if len(disabled_groups) != len(set(disabled_groups)) or any(item not in bundle.GROUPS for item in disabled_groups):
             emit(2, 'failed', operation_id, {'code': 'invalid_selection'})
             return 2
-        return secure_restore_compare(operation_id, path, disabled_groups, expected_id, parameters.get('selection'), channel)
+        return secure_restore_compare(operation_id, path, disabled_groups, expected_id, parameters.get('selection'), channel, destinations)
     if operation == "restore_execute":
         if len(disabled_groups) != len(set(disabled_groups)) or any(item not in bundle.GROUPS for item in disabled_groups):
             emit(2, "failed", operation_id, {"code": "invalid_selection",
                                                "publication_occurred": False,
                                                "target_mutation_may_have_started": False})
             return 2
-        return restore_execute(operation_id, path, disabled_groups, include_secure, expected_id, channel, parameters.get("selection"), parameters.get("secure_comparison"))
+        return restore_execute(operation_id, path, disabled_groups, include_secure, expected_id, channel, parameters.get("selection"), parameters.get("secure_comparison"), destinations)
     if operation == "capabilities":
         result = {
             "protocol_version": PROTOCOL_VERSION,
             "product_version": version,
-            "features": {"external_ssh_identities": {"version": 1, "destination": "ssh_directory", "max_items": 32}, "pkg_installer_preparation": {"version": 1}, "bundle_comparison": {"version": 1}, "homebrew_graceful_stop": {"version": 1}, "restore_selection": {"version": 1, "inventory": "bundle_inspect", "selection_modes": ["category", "items"]}},
-            "operations": ["capabilities", "bundle_inspect", "restore_prepare", "restore_execute", "secure_restore_compare", "capture_prepare", "capture_execute", "capture_identity_inspect", "environment_compare"],
+            "features": {"secure_restore_destinations": {"version": 1, "inventory": "secure_restore_inventory", "max_items": 32}, "external_ssh_identities": {"version": 1, "destination": "ssh_directory", "max_items": 32}, "pkg_installer_preparation": {"version": 1}, "bundle_comparison": {"version": 1}, "homebrew_graceful_stop": {"version": 1}, "restore_selection": {"version": 1, "inventory": "bundle_inspect", "selection_modes": ["category", "items"]}},
+            "operations": ["capabilities", "bundle_inspect", "restore_prepare", "restore_execute", "secure_restore_compare", "secure_restore_inventory", "capture_prepare", "capture_execute", "capture_identity_inspect", "environment_compare"],
         }
     else:
         try:
             if operation == "restore_prepare":
                 if len(disabled_groups) != len(set(disabled_groups)) or any(item not in bundle.GROUPS for item in disabled_groups):
                     raise InvalidSelection()
-                result = restore_prepare(path, disabled_groups, include_secure, parameters.get("selection"), parameters.get("installer_preparations"))
+                result = restore_prepare(path, disabled_groups, include_secure, parameters.get("selection"), parameters.get("installer_preparations"), destinations)
             else:
                 input_path = Path(path)
                 mode = input_path.lstat().st_mode
@@ -1303,6 +1342,9 @@ def dispatch(version, channel=None):
                 result["restore_selection"], _ = restore_selection.inventory(bundle.validate_archive(input_path))
                 if bundle.fingerprint(input_path) != source_identity:
                     raise bundle.Invalid("Bundle changed during inspection")
+        except SecureError as exc:
+            emit(2, "failed", operation_id, {"code": exc.code})
+            return 2
         except ExecuteFailed as exc:
             data = {"code": exc.code}
             if exc.code == 'pkg_preparation_failed' and exc.diagnostic:

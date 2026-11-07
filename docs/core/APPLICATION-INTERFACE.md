@@ -38,9 +38,10 @@ Prepared IDs are 64 lowercase hexadecimal characters.
 | `capture_identity_inspect` | `external_identities: true` | One explicit SSH source pair; safe candidate metadata only, no unlock |
 | `capture_prepare` | `selection`, optional `external_identities: true` | Private staged observation and prepared selection |
 | `capture_execute` | `selection`, `destination`, `expected_prepared_capture_id`, optional `replacement_sha256`, `external_identities: true` | Fresh observation and Bundle publication |
-| `restore_prepare` | `path`, `disabled_groups`, `include_secure`, optional `selection`, `installer_preparations` | Bundle validation, Preview and prerequisites; no publication or Apply |
-| `restore_execute` | `path`, `disabled_groups`, `include_secure`, `expected_prepared_plan_id`, optional `selection`, `secure_comparison` | Fresh preparation, local-state publication and restoration |
-| `secure_restore_compare` | `path`, `disabled_groups`, `include_secure: true`, `expected_prepared_plan_id`, optional `selection` | Authenticated read-only comparison of the selected encrypted package; separate secure FD required |
+| `restore_prepare` | `path`, `disabled_groups`, `include_secure`, optional `selection`, `installer_preparations`, `custom_destinations: true` | Bundle validation, Preview and prerequisites; no publication or Apply |
+| `restore_execute` | `path`, `disabled_groups`, `include_secure`, `expected_prepared_plan_id`, optional `selection`, `secure_comparison`, `custom_destinations: true` | Fresh preparation, local-state publication and restoration |
+| `secure_restore_compare` | `path`, `disabled_groups`, `include_secure: true`, `expected_prepared_plan_id`, optional `selection`, `custom_destinations: true` | Authenticated read-only comparison of the selected encrypted package; separate secure FD required |
+| `secure_restore_inventory` | `path` | Explicit authenticated read-only inventory; separate secure FD, private result only |
 | `environment_compare` | `generated_dir`, `blueprint_path` **or** `bundle_path` | Explicit read-only reference-to-current-Mac comparison |
 
 <a id="capture-destination-replacement"></a>
@@ -1239,12 +1240,61 @@ complete/partial/truncated/invalid/not_run. Compare rejects incomplete record
 transfer; Restore retains available details with their actual status. Order and
 IDs derive deterministically from source records; timestamps remain actual observations.
 
+<a id="private-restore-destinations"></a>
+
+## Private Restore destinations
+
+`features.secure_restore_destinations` advertises version `1`, inventory operation
+`secure_restore_inventory` and `max_items: 32`. Desktop negotiates this capability
+before offering Customize; older clients retain their default Restore behavior.
+Bundle v1, `secure.age` v1 and standalone CLI destination/consent contracts are unchanged.
+
+`secure_restore_inventory` validates the Bundle and complete decrypted package
+through the production comparison engine, allowing only `bundle_unlock` challenges.
+It returns ordinary `result: {"status":"authenticated"}` without identity details.
+Only after full validation and a final Bundle recheck does Core publish
+`secure-restore-inventory.json` in the private operation directory (`0700`; file
+`0600`). Its version-1 object contains `operation_id`, `bundle_id` (Bundle SHA-256)
+and `items`: `identity_id`, `name`, `key_type`, `fingerprint`. Each ID binds the
+validated name/type/fingerprint and both file hashes. Desktop validates, consumes
+and removes the private result with operation cleanup; only the active Customize
+sheet receives these metadata. No password is retained.
+
+A customized Prepare/Compare/Execute request carries only `custom_destinations:
+true`. The same private directory holds `secure-restore-destinations.json`, a
+bounded 64-KiB, single-link regular `0600` file containing `operation_id` and
+`mapping`. Mapping fields are exactly `version: 1`, `bundle_id`, and sorted `items`
+with `identity_id` and `directory` (absolute custom directory, or null for default).
+The complete authenticated identity set is required, with no duplicates, omissions
+or extra rows. Paths and identity IDs are absent from ordinary parameters, argv,
+environment, events, logs, diagnostics and persistent preferences.
+
+Core binds the mapping and fresh directory identities into the prepared ID, and
+requires bound Secure Compare evidence for custom Execute. The internal importer
+socket uses bounded version-1 `restore_context` / indexed `restore_destination`
+messages to deliver the mapping, and `restore_identity` acknowledgements to return
+validated inventory. Indices only frame private messages; identity IDs bind rows.
+These messages never reach the Desktop challenge stream or ordinary JSONL. Frame
+and secret limits remain unchanged. Core and its internal importer ship together.
+
+Selected secure Prepare also returns `secure_destination_scope`: `default`,
+`custom`, or `mixed`, derived from its validated mapping and actual default SSH
+directory. This additive presentation field contains no paths, names or counts;
+it does not change prepared-ID calculation or execution checks. Desktop uses it
+for destination wording only; absent evidence never implies `~/.ssh`.
+
+Compare and Execute inspect actual selected destinations with the same importer;
+all targets must pass before import. Filesystem replacement, mapping/source change
+or changed target bytes invalidate evidence. Only legacy default `~/.ssh` creation
+is allowed. [Secure Migration](../toolkit/SSH-IDENTITY-MIGRATION.md#optional-desktop-restore-directories)
+owns directory safety, no-clobber, cleanup and unresolved `IdentityFile` boundaries.
+
 ## Separate secret channel and privacy
 
 The client passes one endpoint of an anonymous connected Unix stream socket pair
 as an inherited FD greater than 2, using `--secure-fd N`. This is launch metadata,
 not a JSON field. It is required for Execute with selected identities and for
-`secure_restore_compare`; ordinary `restore_prepare` still accepts no secret channel.
+`secure_restore_compare` / `secure_restore_inventory`; ordinary `restore_prepare` still accepts no secret channel.
 Core validates the channel and restricts inheritance; ordinary Bootstrap children
 do not receive it. Secrets must not enter JSONL, argv, environment, Generated
 Configuration, logs or persistent secret-response files.
@@ -1299,5 +1349,6 @@ Both maps belong only to successful result display metadata. They are local UI
 metadata, not diagnostic identities; diagnostic records, failure payloads and
 exported diagnostics must not include these labels. Clients must use neutral
 repository/workspace labels when trusted metadata is absent or unsafe.
-Public fingerprints appear only in Capture SSH candidate inventory. Capture's
+Public fingerprints appear in Capture SSH candidate inventory and the explicit
+private Restore inventory/unlock UI; never ordinary Restore events or diagnostics. Capture's
 absolute `destination` result returns the necessary path supplied by the client.

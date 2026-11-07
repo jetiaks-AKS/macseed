@@ -216,6 +216,44 @@ import Foundation
         inspectBundle.standardOutput = FileHandle.nullDevice; inspectBundle.standardError = FileHandle.nullDevice
         try inspectBundle.run(); inspectBundle.waitUntilExit(); precondition(inspectBundle.terminationStatus == 0)
 
+        if CommandLine.arguments.contains("--custom-destinations-only") {
+            await choose(bundle)
+            precondition(restore.canCustomizeDestinations)
+            restore.customizeDestinations(); let inventoryChallenges = try await interact()
+            precondition(inventoryChallenges.map(\.kind) == [.bundleUnlock] && restore.showingDestinations)
+            let custom = root.appendingPathComponent("custom-protected"), second = root.appendingPathComponent("custom-plain")
+            for directory in [custom, second] { try fm.createDirectory(at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700]) }
+            for identity in restore.destinationInventory!.items {
+                if identity.name == "id_external" { restore.setDestination(custom.path, for: identity.id) }
+                if identity.name == "id_home" { restore.setDestination(second.path, for: identity.id) }
+            }
+            restore.dismissDestinations()
+            let before = try snapshot(target), firstBefore = try snapshot(custom), secondBefore = try snapshot(second), temporary = try staging()
+            restore.refreshPreview(); _ = try await interact()
+            precondition(restore.preparation?.secureComparison?.decision == .importRequired && restore.canRebuild)
+            precondition(try! snapshot(target) == before && snapshot(custom) == firstBefore && snapshot(second) == secondBefore)
+            restore.requestRebuild(); restore.confirmRebuild(); _ = try await interact()
+            precondition(restore.executionResult?.outcome == .clean && CoreSecureRestoreEvidence(events: restore.categoryPresentationEvents).verified)
+            for identity in identities {
+                let directory = identity.label == "id_external" ? custom : identity.label == "id_home" ? second : ssh
+                for suffix in ["", ".pub"] {
+                    let actual = try Data(contentsOf: directory.appendingPathComponent(identity.label + suffix))
+                    let expected = try Data(contentsOf: URL(fileURLWithPath: sourceForName[identity.label]!.path + suffix))
+                    precondition(actual == expected)
+                }
+            }
+            restore.refreshPreview(); _ = try await interact()
+            precondition(restore.preparation?.secureComparison?.decision == .allMatch && !restore.canRebuild)
+            precondition(try! snapshot(source) == sourcesBefore && snapshot(outside) == outsideBefore && staging() == temporary)
+            let forbidden = [keySecret, bundleSecret] + [protected.path, plain.path, custom.path, second.path].map { Data($0.utf8) }
+            for entry in try await logs.history() {
+                let report = try await DiagnosticReportBuilder.generate(id: entry.id, environment: .current()) { id, cursor in try await logs.page(id, after: cursor) }
+                precondition(forbidden.allSatisfy { report.utf8.range(of: $0) == nil })
+            }
+            print("PASS: production external Capture -> authenticated Customize -> multiple custom/default Restore -> exact encrypted bytes, Verification and repeated no-op using bundled age; source/target paths absent from diagnostics")
+            return
+        }
+
 
         try await preview(.importRequired, bundle)
         try await execute(cancel: .importConfirmation)

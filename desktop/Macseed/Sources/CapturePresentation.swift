@@ -599,7 +599,7 @@ struct CaptureSecureTransferView: View {
                             .padding(.leading, CaptureReviewPresentation.hierarchyStep * 2).padding(.bottom, 8)
                     }
                     if !manualIDs.isEmpty {
-                        Text("Manually added pairs restore to ~/.ssh using these names. SSH configuration is not rewritten; review IdentityFile if it expects another location.")
+                        Text("Manually added pairs restore to ~/.ssh by default using these names. SSH configuration is not rewritten; review IdentityFile if it expects another location.")
                             .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                             .padding(.leading, CaptureReviewPresentation.hierarchyStep * 2).padding(.bottom, 8)
                     }
