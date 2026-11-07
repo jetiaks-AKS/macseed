@@ -207,15 +207,14 @@ struct RestoreSelectionContent: View {
                 Text("Encrypted SSH keys. Existing keys won't be overwritten.")
                     .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                     .padding(.leading, 16 + CaptureChildRowGrid.leadingInset).padding(.trailing, 16).padding(.bottom, 8)
-                HStack {
-                    Text(model.destinationDirectories.isEmpty ? "Restore to: ~/.ssh" : "Custom locations configured")
-                        .font(.callout.weight(.semibold)).foregroundStyle(.primary)
-                    Spacer()
+                VStack(alignment: .leading, spacing: 6) {
                     if model.secureDestinationsSupported {
                         Button("Customize…") { model.customizeDestinations() }
                             .disabled(!model.canCustomizeDestinations)
                             .accessibilityIdentifier("restore.secure.customize")
                     }
+                    Text([model.identitySelectionSummary, model.destinationSummary].compactMap { $0 }.joined(separator: " · "))
+                        .font(.callout.weight(.semibold)).foregroundStyle(.primary)
                 }.padding(.leading, 16 + CaptureChildRowGrid.leadingInset).padding(.trailing, 16).padding(.bottom, 12)
                 if let message = model.destinationMessage {
                     Text(message).font(.callout).foregroundStyle(.secondary).padding(.horizontal, 16).padding(.bottom, 12)
@@ -1684,14 +1683,33 @@ struct RestoreDestinationsView: View {
     @ObservedObject var model: RestoreModel
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("SSH Identity Destinations").font(.title2.weight(.semibold))
-            Text("Choose where to restore each SSH key.")
-                .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            Text("SSH Keys").font(.title2.weight(.semibold))
+            VStack(alignment: .leading, spacing: 8) {
+                Text(model.secureIdentitySelectionSupported ? "Choose keys and restore locations." : "Choose where to restore each SSH key.")
+                    .font(.callout).foregroundStyle(.secondary)
+                if let summary = model.identitySelectionSummary {
+                    HStack(spacing: 8) {
+                        if model.secureIdentitySelectionSupported {
+                            Button(model.allIdentitiesSelected ? "Deselect All" : "Select All") {
+                                model.selectAllIdentities(!model.allIdentitiesSelected)
+                            }.buttonStyle(.bordered).controlSize(.regular).fontWeight(.medium).fixedSize()
+                        }
+                        Text(summary).font(.callout).foregroundStyle(.secondary)
+                    }
+                }
+            }
             ScrollView {
                 Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 6) {
                     ForEach(model.destinationInventory?.items ?? []) { identity in
-                        Text(identity.name).font(.headline).lineLimit(1).truncationMode(.middle).textSelection(.enabled)
-                            .accessibilityValue(identity.name).gridCellColumns(3)
+                        HStack(spacing: 8) {
+                            if model.secureIdentitySelectionSupported {
+                                NativeSelectionCheckbox("", isOn: Binding(get: { model.selectedIdentityIDs.contains(identity.id) },
+                                    set: { model.selectIdentity(identity.id, included: $0) }), accessibilityTitle: "Select " + identity.name)
+                                    .frame(width: 20, height: 20)
+                            }
+                            Text(identity.name).font(.headline).lineLimit(1).truncationMode(.middle).textSelection(.enabled)
+                                .accessibilityValue(identity.name).frame(maxWidth: .infinity, alignment: .leading)
+                        }.gridCellColumns(3)
                         Text(identity.keyType + " · " + identity.fingerprint).font(.caption).foregroundStyle(.secondary)
                             .textSelection(.enabled).gridCellColumns(3)
                         GridRow(alignment: .top) {
@@ -1705,7 +1723,9 @@ struct RestoreDestinationsView: View {
                                 .disabled(model.destinationDirectories[identity.id] == nil)
                                 .opacity(model.destinationDirectories[identity.id] == nil ? 0 : 1)
                                 .accessibilityHidden(model.destinationDirectories[identity.id] == nil)
-                        }.padding(.bottom, 14)
+                        }.disabled(!model.selectedIdentityIDs.contains(identity.id))
+                            .foregroundStyle(model.selectedIdentityIDs.contains(identity.id) ? .primary : .secondary)
+                            .padding(.bottom, 14)
                     }
                 }.padding(.vertical, 4)
             }.frame(height: min(280, CGFloat(model.destinationInventory?.items.count ?? 0) * 104))

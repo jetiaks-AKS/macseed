@@ -1029,7 +1029,8 @@ evidence. Category-only domains remain whole; item domains permit whole/subset
 scope. Fully/partially/not-selected counts describe selectable Core categories,
 exclude unavailable categories and do not replace Preview item metrics.
 Secure Transfer defaults to `include_secure: false`; explicit opt-in selects the
-whole encrypted package under [Secure interactions](#secure-interactions).
+whole encrypted package by default; Customize can choose an authenticated subset
+under [Secure interactions](#secure-interactions).
 
 VS Code Workspace uses per-descriptor stable IDs and safe names. Missing
 folder/base/parent dependencies require explicit selection correction; no automatic
@@ -1620,21 +1621,31 @@ release and packaged qualification remain separate.
 
 **Slice 3 — optional Restore directories.** The existing Secure Transfer section
 adds a compact **Customize…** action when Core advertises destination capability
-v1. Secure Transfer remains independent/default-off and selects the whole package;
+v1. Secure Transfer remains independent/default-off and initially selects the whole package;
 its shared accordion starts collapsed and participates in For Experienced Users
 Expand All/Collapse All. Disclosure changes preserve selection, destinations and Preview.
-There are no per-identity Restore checkboxes. Each Customize request explicitly unlocks and
+**Slice 3B** adds per-identity checkboxes when Core advertises selection v2. The
+existing sheet is titled **SSH Keys**, with a concise selected/total count.
+Unchecked rows retain destinations with inactive controls. Each Customize request explicitly unlocks and
 validates the Bundle before showing private authenticated name/type/fingerprint
 rows. A native directory-only picker chooses an existing location per identity;
 **Use Default** returns that identity to `~/.ssh`. Default Restore adds no unlock
 or configuration step. Wrong passwords/cancellation keep Selection available.
 
-Destination references stay in the current review session and private operation
-staging. Changing them clears preparation, Preview and Secure Compare evidence;
+Selection and destination references stay in the current review session and private operation
+staging. Changing either clears preparation, Preview and Secure Compare evidence;
 changing Bundle, Cancel Review or Done clears the session. Preview compares the
 actual selected locations; Rebuild revalidates them and verifies imported/matching
-pairs there. Only the Customize sheet displays custom paths. Other surfaces use
-aggregate package status. Preview reads default/custom/mixed destination scope from
+pairs there. Only selected identities participate in target conflicts, import,
+protected-key prompts and Verification. Excluded entries still undergo full-package
+authentication, manifest/hash and public/envelope checks. Zero selected keys switches
+the parent off without blocking ordinary categories. Reopening Customize preserves
+choices; explicitly enabling the parent with an empty subset selects all keys again.
+If a reopened Bundle has changed, the old authenticated context remains bound and
+cannot become a whole-package fallback; the user must choose the Bundle again.
+Only the Customize sheet displays custom paths. Expanded Selection shows a count
+only after authenticated metadata is available. Other surfaces use aggregate selected
+scope. Preview reads default/custom/mixed destination scope from
 prepared Core evidence; the short custom-location reminder stays inside its expanded
 Secure Transfer category. No SSH config rewrite, automatic selection, new wizard or
 persistent preference is introduced.
@@ -1666,13 +1677,12 @@ checkpoint; complete 1.0 qualification remains separate.
 Restore Selection reuses the Capture hierarchy: Standard Setup has one ordinary
 container; For Experienced Users has one container with Advanced and Secure
 Transfer sibling rows. Secure Transfer retains its independent Selected/Off
-master but has no disclosure in Selection. Its description is always visible:
-“Encrypted SSH identities. Preview checks which keys already match this Mac.
-Missing keys can be imported during Rebuild without overwriting existing keys.”
-Experienced Expand/Collapse controls Advanced and its nested categories only;
-Capture and Preview retain their meaningful Secure Transfer disclosures.
+master and a separate collapsed-by-default disclosure. The explanation and
+Customize controls appear inside expanded content; Experienced Expand/Collapse
+includes this disclosure without changing selection.
 Secure Transfer is absent without `secure.age`, otherwise defaults off and selects
-the whole package. When off it is absent from Preview, confirmation, Progress and Result.
+the whole package initially, with optional private subset selection in Customize.
+When off it is absent from Preview, confirmation, Progress and Result.
 Secure-only Rebuild is supported; identities never enter ordinary Advanced counts.
 
 The existing Preview button runs ordinary `restore_prepare`, then automatically
@@ -1685,7 +1695,7 @@ validation, OpenSSH public/envelope checks and race-safe exact target-byte check
 It does not unlock encrypted private keys or claim cryptographic private/public
 pair validity. Import confirmation, target writes, configuration publication and
 import receipts remain excluded. Execute independently derives and verifies every
-private/public pair, with original key encryption preserved. Successful pair proof
+selected private/public pair, with original key encryption preserved. Successful pair proof
 may be reused only for the exact same private/public bytes within that worker;
 file ownership, modes, links and target state are still rechecked. No passphrases
 or validation proofs cross operations.

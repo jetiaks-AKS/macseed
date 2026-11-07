@@ -141,7 +141,7 @@ struct RestoreTaskPresentation {
     func confirmationMessages(_ plan: CoreRestorePreparation) -> [String] {
         var messages = Self.scopeWarningMessages(plan)
         if plan.includeSecure {
-            messages.append("Secure Transfer will unlock and import the encrypted SSH identity package without overwriting existing identities. A separate import confirmation is required during Rebuild.")
+            messages.append("Secure Transfer will unlock the encrypted package and import the selected SSH keys without overwriting existing identities. A separate import confirmation is required during Rebuild.")
         }
         if automaticAttentionCount > 0 {
             messages.append("\(automaticAttentionCount) automatic requirements need attention. Review the category details; blocked items will remain unchanged.")
@@ -475,16 +475,16 @@ struct RestoreTaskPresentation {
             if state == .planned, let destinations {
                 let location: String
                 switch destinations {
-                case .defaultLocation: location = "Keys will be restored to ~/.ssh."
-                case .custom: location = "Keys will be restored to selected locations."
-                case .mixed: location = "Keys will use default and custom locations."
+                case .defaultLocation: location = "Selected keys will be restored to ~/.ssh."
+                case .custom: location = "Selected keys will be restored to selected locations."
+                case .mixed: location = "Selected keys will use default and custom locations."
                 }
                 message = location + " Existing keys won't be overwritten."
             } else { message = item.action }
         } else if evidence.verified {
             state = outcome == "noop" ? .matching : .completed
             labels = [outcome == "noop" ? "Already Matches" : "Applied", "Verified"]
-            message = outcome == "noop" ? "The identity package already matches; verified without changes." : "SSH identities imported and verified."
+            message = outcome == "noop" ? "Selected SSH identities already match; verified without changes." : "SSH identities imported and verified."
         } else if reason == "target_conflict" || evidence.contradictoryObservation || evidence.observation?["conformity"]?.string == "mismatch" {
             state = .attention; labels = ["Needs Attention"]
             message = reason == "target_conflict" ? "An existing SSH identity conflicts with this package and was preserved." : "The imported identity package could not be verified."

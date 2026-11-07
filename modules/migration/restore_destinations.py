@@ -27,13 +27,15 @@ def identity_id(record):
 
 def validate(value):
     if (not isinstance(value, dict) or set(value) != {'version', 'bundle_id', 'items'}
-            or type(value['version']) is not int or value['version'] != 1
+            or type(value['version']) is not int or value['version'] not in (1, 2)
             or not isinstance(value['bundle_id'], str) or not HEX.fullmatch(value['bundle_id'])
             or not isinstance(value['items'], list) or not 1 <= len(value['items']) <= 32):
         raise SecureError('secure_input_invalid')
     ids = []
     for row in value['items']:
-        if (not isinstance(row, dict) or set(row) != {'identity_id', 'directory'}
+        fields = {'identity_id', 'directory'} | ({'selected'} if value['version'] == 2 else set())
+        if (not isinstance(row, dict) or set(row) != fields
+                or (value['version'] == 2 and type(row['selected']) is not bool)
                 or not isinstance(row['identity_id'], str) or not HEX.fullmatch(row['identity_id'])):
             raise SecureError('secure_input_invalid')
         path = row['directory']
@@ -45,6 +47,11 @@ def validate(value):
     if ids != sorted(set(ids)):
         raise SecureError('secure_input_invalid')
     return value
+
+
+def selected_items(mapping):
+    # v1 always describes the whole authenticated package. v2 never falls back.
+    return [row for row in mapping['items'] if mapping['version'] == 1 or row['selected']]
 
 
 def operation_mapping(operation_id):
@@ -181,7 +188,7 @@ def preparation(mapping, bundle_id):
     if mapping['bundle_id'] != bundle_id:
         raise SecureError('stale_plan')
     observations = []
-    for path in sorted({row['directory'] for row in mapping['items'] if row['directory'] is not None}):
+    for path in sorted({row['directory'] for row in selected_items(mapping) if row['directory'] is not None}):
         with Directory(path) as directory:
             observations.append([path, [stamp for _, stamp in directory.visible]])
     return digest([mapping, observations])

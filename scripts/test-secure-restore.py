@@ -604,12 +604,17 @@ class SecureRestoreTests(unittest.TestCase):
         self.assertEqual(status, 0, events)
         return prepared, next(row['data'] for row in events if row['type'] == 'result')
 
-    def multiple_fixture(self):
-        first = self.fixture()
-        second = self.root / 'external-second-key'
-        subprocess.run(['ssh-keygen', '-q', '-t', 'ed25519', '-N', '', '-f', str(second)], check=True)
-        pairs = {'id_disposable': first, 'id_external': (second.read_bytes(), Path(str(second) + '.pub').read_bytes())}
-        lines = ['toolkit-ssh-identities', 'version=1', 'count=2']
+    def multiple_fixture(self, *, protected=False, count=2):
+        pairs = {'id_disposable': self.fixture(protected=protected)}
+        for name in ['id_external', 'id_third'][:count - 1]:
+            key = self.root / name
+            subprocess.run(['ssh-keygen', '-q', '-t', 'ed25519', '-N', '', '-f', str(key)], check=True)
+            pairs[name] = (key.read_bytes(), Path(str(key) + '.pub').read_bytes())
+        self.publish_pairs(pairs)
+        return pairs
+
+    def publish_pairs(self, pairs):
+        lines = ['toolkit-ssh-identities', 'version=1', 'count=' + str(len(pairs))]
         for name, (private, public) in pairs.items():
             fp = 'SHA256:' + base64.b64encode(hashlib.sha256(base64.b64decode(public.split()[1])).digest()).decode().rstrip('=')
             lines.append('\t'.join((name, 'ssh-ed25519', fp, str(len(private)), hashlib.sha256(private).hexdigest(), str(len(public)), hashlib.sha256(public).hexdigest())))
@@ -621,7 +626,203 @@ class SecureRestoreTests(unittest.TestCase):
         encrypt(REAL_AGE, self.root / 'payload.tar', self.stage / 'secure.age')
         (self.stage / 'secure.age').chmod(0o600)
         bundle.pack(self.stage, self.archive, '/Users/source')
-        return pairs
+
+    def selective_mapping(self, names, directories):
+        mapping, inventory = self.inventory_mapping(directories)
+        selected = {row['identity_id'] for row in inventory['items'] if row['name'] in names}
+        mapping['version'] = 2
+        for row in mapping['items']:
+            row['selected'] = row['identity_id'] in selected
+        return mapping, inventory
+
+    def test_selective_protected_excluded_conflict_and_repeat(self):
+        pairs = self.multiple_fixture(protected=True)
+        target = self.root.resolve() / 'chosen-private'; target.mkdir(mode=0o700)
+        unsafe = self.root.resolve() / 'excluded-unsafe'; unsafe.mkdir(mode=0o777); unsafe.chmod(0o777)
+        preserved = unsafe / 'id_disposable.pub'; preserved.write_bytes(b'excluded conflict')
+        before = preserved.stat()
+        mapping, inventory = self.selective_mapping({'id_external'}, [unsafe, target])
+        plan, comparison = self.destination_comparison(mapping)
+        self.assertEqual(comparison['decision'], 'import_required')
+        status, events, challenges = self.peer(mapping=mapping, plan=plan, comparison=comparison)
+        self.assertEqual(status, 0, events)
+        self.assertEqual([c['kind'] for c in challenges], ['bundle_unlock', 'import_confirmation'])
+        self.assertEqual(events[-2]['data']['verification']['verified_count'], 1)
+        self.assertEqual((target / 'id_external').read_bytes(), pairs['id_external'][0])
+        self.assertEqual((target / 'id_external.pub').read_bytes(), pairs['id_external'][1])
+        self.assertEqual(preserved.read_bytes(), b'excluded conflict')
+        self.assertEqual([getattr(preserved.stat(), k) for k in ('st_ino', 'st_mode', 'st_size', 'st_mtime_ns', 'st_ctime_ns')],
+                         [getattr(before, k) for k in ('st_ino', 'st_mode', 'st_size', 'st_mtime_ns', 'st_ctime_ns')])
+        self.assertEqual(unsafe.stat().st_mode & 0o777, 0o777)
+        self.assertFalse((unsafe / 'id_disposable').exists()); self.assertFalse((self.home / '.ssh').exists())
+        for value in [str(target), str(unsafe)] + [r[k] for r in inventory['items'] for k in ('identity_id', 'name', 'fingerprint')]:
+            self.assertNotIn(value, json.dumps(events))
+            for log in (self.project / 'logs').rglob('*'):
+                if log.is_file(): self.assertNotIn(value.encode(), log.read_bytes())
+        before = (target / 'id_external').stat()
+        plan, comparison = self.destination_comparison(mapping)
+        self.assertEqual(comparison['decision'], 'all_match')
+        status, events, challenges = self.peer(mapping=mapping, plan=plan, comparison=comparison)
+        self.assertNotEqual(status, 0, events)
+        self.assertEqual(events[-1]['data']['code'], 'no_executable_work')
+        self.assertFalse(challenges)
+        self.assertFalse(events[-1]['data']['target_mutation_may_have_started'])
+        self.assertEqual([getattr((target / 'id_external').stat(), k) for k in ('st_ino', 'st_mode', 'st_size', 'st_mtime_ns', 'st_ctime_ns')],
+                         [getattr(before, k) for k in ('st_ino', 'st_mode', 'st_size', 'st_mtime_ns', 'st_ctime_ns')])
+
+    def test_selective_selected_conflict_blocks_subset(self):
+        self.multiple_fixture(count=3)
+        targets = [self.root.resolve() / name for name in ('one', 'two', 'excluded')]
+        for target in targets: target.mkdir(mode=0o700)
+        preserved = targets[1] / 'id_external.pub'; preserved.write_bytes(b'conflicting selected pair')
+        mapping, _ = self.selective_mapping({'id_disposable', 'id_external'}, targets)
+        plan, comparison = self.destination_comparison(mapping)
+        self.assertEqual(comparison['decision'], 'conflict')
+        status, events, challenges = self.peer(mapping=mapping, plan=plan, comparison=comparison)
+        self.assertNotEqual(status, 0); self.assertFalse(challenges)
+        self.assertEqual(list(targets[0].iterdir()), []); self.assertEqual(list(targets[2].iterdir()), [])
+        self.assertEqual(preserved.read_bytes(), b'conflicting selected pair')
+
+    def test_selective_unselected_default_conflict_and_inactive_destination(self):
+        pairs = self.multiple_fixture()
+        ssh = self.home / '.ssh'; ssh.mkdir(mode=0o700)
+        preserved = ssh / 'id_disposable.pub'; preserved.write_bytes(b'excluded default conflict')
+        mapping, _ = self.selective_mapping({'id_external'}, [None, None])
+        _, comparison = self.destination_comparison(mapping)
+        self.assertEqual(comparison['decision'], 'import_required')
+        unsafe = self.root.resolve() / 'unsafe-unused'; unsafe.mkdir(mode=0o700); unsafe.chmod(0o777)
+        next(row for row in mapping['items'] if not row['selected'])['directory'] = str(unsafe)
+        status, events = self.destination_prepare(mapping); self.assertEqual(status, 0, events)
+        self.assertEqual(events[1]['data']['secure_destination_scope'], 'default')
+        plan, comparison = self.destination_comparison(mapping)
+        status, events, _ = self.peer(mapping=mapping, plan=plan, comparison=comparison)
+        self.assertEqual(status, 0, events)
+        self.assertEqual((ssh / 'id_external').read_bytes(), pairs['id_external'][0])
+        self.assertEqual(preserved.read_bytes(), b'excluded default conflict')
+        self.assertFalse((ssh / 'id_disposable').exists()); self.assertEqual(list(unsafe.iterdir()), [])
+
+    def test_selective_multiple_locations_and_legacy_whole_package(self):
+        pairs = self.multiple_fixture()
+        status, prepared = self.invoke(secure=True)
+        self.assertEqual(status.returncode, 0, prepared)
+        status, events, _ = self.peer(plan=prepared[1]['data']['prepared_plan_id'])
+        self.assertEqual(status, 0, events)
+        self.assertEqual(events[-2]['data']['verification']['verified_count'], 2)
+        for name, pair in pairs.items(): self.assertEqual((self.home / '.ssh' / name).read_bytes(), pair[0])
+        targets = [self.root.resolve() / name for name in ('first-location', 'second-location')]
+        for target in targets: target.mkdir(mode=0o700)
+        for suffix, raw in zip(('', '.pub'), pairs['id_disposable']):
+            path = targets[0] / ('id_disposable' + suffix); path.write_bytes(raw); path.chmod(0o600)
+        before = (targets[0] / 'id_disposable').stat()
+        mapping, _ = self.selective_mapping(set(pairs), targets)
+        plan, comparison = self.destination_comparison(mapping)
+        status, events, _ = self.peer(mapping=mapping, plan=plan, comparison=comparison)
+        self.assertEqual(status, 0, events)
+        self.assertEqual(events[-2]['data']['verification']['verified_count'], 2)
+        self.assertEqual((targets[0] / 'id_disposable').stat().st_ino, before.st_ino)
+        self.assertEqual((targets[0] / 'id_disposable').stat().st_mtime_ns, before.st_mtime_ns)
+        for (name, pair), target in zip(pairs.items(), targets):
+            self.assertEqual((target / name).read_bytes(), pair[0])
+            self.assertEqual((target / (name + '.pub')).read_bytes(), pair[1])
+
+    def test_selective_invalid_context_and_unknown_ids(self):
+        self.multiple_fixture()
+        mapping, _ = self.selective_mapping({'id_external'}, [None, None])
+        for kind in ('duplicate', 'bad-id', 'non-bool', 'missing-flag', 'v1-with-flags', 'unknown-version', 'too-many'):
+            invalid = json.loads(json.dumps(mapping))
+            if kind == 'duplicate': invalid['items'][1]['identity_id'] = invalid['items'][0]['identity_id']
+            elif kind == 'bad-id': invalid['items'][0]['identity_id'] = 'forged'
+            elif kind == 'non-bool': invalid['items'][0]['selected'] = 1
+            elif kind == 'missing-flag': del invalid['items'][0]['selected']
+            elif kind == 'v1-with-flags': invalid['version'] = 1
+            elif kind == 'unknown-version': invalid['version'] = 3
+            else: invalid['items'] *= 17
+            with self.subTest(kind=kind):
+                status, events = self.destination_prepare(invalid)
+                self.assertNotEqual(status, 0); self.assertEqual(events[-1]['data']['code'], 'secure_input_invalid')
+        selected = next(row for row in mapping['items'] if row['selected'])
+        selected['identity_id'] = 'a' * 64; mapping['items'].sort(key=lambda row: row['identity_id'])
+        status, events = self.destination_prepare(mapping); self.assertEqual(status, 0, events)
+        status, events, _ = self.peer(operation='secure_restore_compare', mapping=mapping, plan=events[1]['data']['prepared_plan_id'])
+        self.assertNotEqual(status, 0); self.assertEqual(events[-1]['data']['code'], 'secure_target_changed')
+        self.assertFalse((self.home / '.ssh').exists())
+
+    def test_selective_zero_does_not_import_and_allows_ordinary(self):
+        self.multiple_fixture(protected=True)
+        (self.project / 'bin').mkdir()
+        shutil.copy2(ROOT / 'scripts/install-bs.sh', self.project / 'scripts/install-bs.sh')
+        shutil.copy2(ROOT / 'bin/bs', self.project / 'bin/bs')
+        (self.root / 'bin/bs').symlink_to(self.project / 'bin/bs')
+        blueprint = self.stage / 'blueprint.conf'
+        blueprint.write_text(blueprint.read_text().replace('[workspace-folders]\n', '[workspace-folders]\nProjects\n'))
+        self.archive.unlink(); bundle.pack(self.stage, self.archive, '/Users/source')
+        mapping, _ = self.selective_mapping(set(), [self.root.resolve() / 'missing-excluded', None])
+        status, events = self.destination_prepare(mapping); self.assertEqual(status, 0, events)
+        plan = events[1]['data']
+        self.assertFalse(plan['include_secure'])
+        self.assertTrue(any(row['domain'] != 'secure-ssh-identities' for row in plan['plan']))
+        self.assertFalse(any(row['domain'] == 'secure-ssh-identities' for row in plan['plan']))
+        status, events, challenges = self.peer(mapping=mapping, plan=plan['prepared_plan_id'])
+        self.assertEqual(status, 0, events); self.assertFalse(challenges)
+        self.assertEqual(events[-2]['data']['secure_restore_status'], 'not_selected')
+        self.assertTrue((self.home / 'Projects').is_dir())
+        self.assertFalse(any(row.get('phase') == 'secure_import' for row in events))
+        self.assertFalse((self.home / '.ssh').exists())
+
+    def test_selective_stale_selection_bundle_and_destination(self):
+        pairs = self.multiple_fixture()
+        target = self.root.resolve() / 'selected'; target.mkdir(mode=0o700)
+        mapping, _ = self.selective_mapping({'id_external'}, [None, target])
+        plan, comparison = self.destination_comparison(mapping)
+        original = json.loads(json.dumps(mapping))
+        for row in mapping['items']: row['selected'] = not row['selected']
+        status, events, challenges = self.peer(mapping=mapping, plan=plan, comparison=comparison)
+        self.assertNotEqual(status, 0); self.assertEqual(events[-1]['data']['code'], 'stale_plan'); self.assertFalse(challenges)
+        mapping = original
+        target.rename(target.with_name('previous')); target.mkdir(mode=0o700)
+        status, events, challenges = self.peer(mapping=mapping, plan=plan, comparison=comparison)
+        self.assertNotEqual(status, 0); self.assertEqual(events[-1]['data']['code'], 'stale_plan'); self.assertFalse(challenges)
+        self.publish_pairs(pairs)
+        status, events = self.destination_prepare(mapping)
+        self.assertNotEqual(status, 0); self.assertEqual(events[-1]['data']['code'], 'stale_plan')
+
+    def test_selective_excluded_malformed_entry_still_rejected(self):
+        pairs = self.multiple_fixture()
+        mapping, _ = self.selective_mapping({'id_external'}, [None, None])
+        pairs['id_disposable'] = (b'not an OpenSSH envelope', pairs['id_disposable'][1])
+        self.publish_pairs(pairs)
+        mapping['bundle_id'] = bundle.fingerprint(self.archive)
+        status, events = self.destination_prepare(mapping); self.assertEqual(status, 0, events)
+        status, events, challenges = self.peer(operation='secure_restore_compare', mapping=mapping, plan=events[1]['data']['prepared_plan_id'])
+        self.assertNotEqual(status, 0); self.assertEqual(events[-1]['data']['code'], 'secure_payload_invalid')
+        self.assertEqual([row['kind'] for row in challenges], ['bundle_unlock'])
+        self.assertFalse((self.home / '.ssh').exists())
+
+    def test_selective_password_cancel_and_interrupted_subset(self):
+        self.multiple_fixture(count=3)
+        targets = [self.root.resolve() / name for name in ('one', 'two', 'excluded')]
+        for target in targets: target.mkdir(mode=0o700)
+        preserved = targets[2] / 'id_third'; preserved.write_bytes(b'untouched excluded identity')
+        mapping, _ = self.selective_mapping({'id_disposable', 'id_external'}, targets)
+        plan, comparison = self.destination_comparison(mapping)
+        for answer in ('wrong passphrase', 'cancel'):
+            status, events, _ = self.peer(lambda *_: answer, operation='secure_restore_compare', mapping=mapping, plan=plan)
+            self.assertNotEqual(status, 0)
+            self.assertEqual(list(targets[0].iterdir()), []); self.assertEqual(list(targets[1].iterdir()), [])
+        importer = self.project / 'modules/migration/package.sh'
+        original = importer.read_text()
+        marker = "        target_dir_still_visible(dirfd)\n        relative = name + suffix"
+        self.assertEqual(original.count(marker), 1)
+        for failure in ("raise OSError('disposable failure')", 'os.kill(os.getpid(), signal.SIGTERM)'):
+            with self.subTest(failure=failure):
+                plan, comparison = self.destination_comparison(mapping)
+                importer.write_text(original.replace(marker, "        if name == 'id_external' and suffix == '.pub':\n            " + failure + '\n' + marker))
+                status, events, _ = self.peer(mapping=mapping, plan=plan, comparison=comparison)
+                importer.write_text(original)
+                self.assertNotEqual(status, 0); self.assertTrue(events[-1]['data']['target_mutation_may_have_started'])
+                self.assertEqual(list(targets[0].iterdir()), []); self.assertEqual(list(targets[1].iterdir()), [])
+                self.assertEqual(preserved.read_bytes(), b'untouched excluded identity')
+                self.assertFalse(any(e['type'] == 'verification_record' and e['data'].get('conformity') == 'verified' for e in events))
 
     def test_custom_destinations_mixed_and_repeated_preview(self):
         pairs = self.multiple_fixture()

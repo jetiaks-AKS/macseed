@@ -87,12 +87,19 @@ types remain outside this contract.
 
 ### Optional Desktop Restore directories
 
-Secure Transfer remains default-off and selects the entire encrypted package.
+Secure Transfer remains default-off. Initial opt-in selects the entire encrypted
+package. With negotiated selection support, the existing **SSH Keys** Customize
+sheet can select an explicit subset by authenticated identity ID and retain a
+destination for each key. Excluded keys remain in the Bundle and on the Mac;
+their destination controls are inactive and their paths are not inspected.
 **Customize…** in Rebuild Selection explicitly unlocks the Bundle and validates
 all archive entries, manifest hashes, names and OpenSSH public/envelope metadata
 before showing any identities. This read-only operation neither imports keys nor
-requires protected-key passphrases. Execute still performs full cryptographic
-pair validation. Default destinations require no Customize step or extra unlock.
+requires protected-key passphrases. Execute performs full cryptographic pair
+validation and protected-key prompts only for selected identities. Malformed
+entries, manifest/hash mismatches and invalid public/envelope metadata anywhere
+in the package still reject it, including excluded entries. Default whole-package
+Restore requires no Customize step or extra unlock.
 
 Each authenticated identity can use an existing directory chosen with the native
 folder picker; **Use Default** restores `~/.ssh`. Private/public filenames never
@@ -110,19 +117,29 @@ deny-only ACLs retain their restrictions. Existing directories are never created
 chmodded or chowned. Only the legacy default `~/.ssh` may be created during Execute.
 Existing pairs retain the same ownership, regular-file, single-link and mode checks.
 Case-insensitive name collisions, partial, unsafe or differing pairs block the
-entire package before import.
+selected subset before import. Conflicts at excluded targets do not block it.
 
-Changing a mapping discards preparation, Preview and Secure Compare evidence.
+Changing selection or destinations discards preparation, Preview and Secure Compare evidence.
 Prepare binds directory identities; Compare inspects exact bytes at the selected
 locations; Execute revalidates Bundle, identity set, directories and target evidence
 before consent and publication. Matching pairs remain unchanged. Post-import
-Verification uses the selected destinations. Cancellation/failure keeps existing
+Verification covers only selected identities at their selected destinations.
+Zero selection means no secure work: Desktop switches Secure Transfer off and
+ordinary selected categories can continue. No empty import success is produced.
+Customize retains choices; selecting the parent when the subset is empty explicitly
+selects all keys again. Opening Customize never enables transfer.
+Cancellation/failure keeps existing
 no-clobber and best-effort cleanup of this attempt's own files; it is not an atomic
 rollback across directories. SIGKILL or loss of power can leave partial/unknown state.
 
 Custom paths do not rewrite `IdentityFile`, select SSH Configuration or establish
 Host-profile dependencies. The UI retains unresolved-dependency guidance. Combined
 SSH integration and Secure Check remain outside this slice.
+
+The private mapping v2 adds explicit selection to the complete authenticated
+identity inventory. Mapping v1 and standalone CLI retain whole-package behavior;
+new clients require advertised selection support and older Core rejects v2
+rather than importing everything. Bundle v1 and `secure.age` v1 are unchanged.
 
 ### Encrypted representation
 

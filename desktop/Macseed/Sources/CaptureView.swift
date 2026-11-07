@@ -326,7 +326,7 @@ struct CaptureSecureInputView: View {
                     }
                 }
             }
-            Text(confirmingImport ? "Import the validated encrypted SSH identity package? Existing identities will not be overwritten. This confirmation is required before import."
+            Text(confirmingImport ? "Import the selected SSH identities from the validated encrypted package? Existing identities will not be overwritten. This confirmation is required before import."
                  : challenge.kind == .bundleUnlock ? "Enter the Bundle passphrase created when capturing this environment. It unlocks the encrypted Secure Transfer package."
                  : encrypting
                  ? "Choose a new Bundle passphrase for the encrypted SSH identities. Other saved settings are not encrypted."

@@ -1245,8 +1245,10 @@ IDs derive deterministically from source records; timestamps remain actual obser
 ## Private Restore destinations
 
 `features.secure_restore_destinations` advertises version `1`, inventory operation
-`secure_restore_inventory` and `max_items: 32`. Desktop negotiates this capability
+`secure_restore_inventory`, `max_items: 32`, and `selection_version: 2`. Desktop negotiates this capability
 before offering Customize; older clients retain their default Restore behavior.
+Selection checkboxes require `selection_version: 2`; destination-only clients
+continue using mapping v1, and Core without this capability rejects mapping v2.
 Bundle v1, `secure.age` v1 and standalone CLI destination/consent contracts are unchanged.
 
 `secure_restore_inventory` validates the Bundle and complete decrypted package
@@ -1261,7 +1263,7 @@ and removes the private result with operation cleanup; only the active Customize
 sheet receives these metadata. No password is retained.
 
 A customized Prepare/Compare/Execute request carries only `custom_destinations:
-true`. The same private directory holds `secure-restore-destinations.json`, a
+true`, including a subset with default destinations. The same private directory holds `secure-restore-destinations.json`, a
 bounded 64-KiB, single-link regular `0600` file containing `operation_id` and
 `mapping`. Mapping fields are exactly `version: 1`, `bundle_id`, and sorted `items`
 with `identity_id` and `directory` (absolute custom directory, or null for default).
@@ -1269,9 +1271,26 @@ The complete authenticated identity set is required, with no duplicates, omissio
 or extra rows. Paths and identity IDs are absent from ordinary parameters, argv,
 environment, events, logs, diagnostics and persistent preferences.
 
+Mapping v2 keeps the same envelope and full identity set, adding a required boolean
+`selected` to every item. V1 has no selection field and means whole package. Unknown
+versions, missing/nonboolean flags, duplicate or unknown IDs fail closed; importer
+validation binds every ID to the authenticated package before filtering. Only
+selected directories receive target safety/freshness inspection. Desktop retains
+excluded locations in session memory and sends null for them. Names, IDs and
+individual choices never enter ordinary request/event/log fields.
+Once Customize authenticates inventory, Desktop sends v2 even for all selected
+keys using default locations, keeping that choice bound to the same Bundle.
+
+An all-false mapping is explicit zero work, never a default-package fallback.
+Core Prepare/Execute treat it as `include_secure: false`, binding the private
+context into preparation while allowing ordinary work. Secure Compare rejects an
+empty active subset; no importer or empty successful secure receipt is produced.
+Desktop normally sends an ordinary nonsecure request after switching its parent off.
+
 Core binds the mapping and fresh directory identities into the prepared ID, and
 requires bound Secure Compare evidence for custom Execute. The internal importer
-socket uses bounded version-1 `restore_context` / indexed `restore_destination`
+socket requires a version-2 `restore_context` handshake, returning an explicit
+`mapping_version` (1 or 2), followed by indexed `restore_destination`
 messages to deliver the mapping, and `restore_identity` acknowledgements to return
 validated inventory. Indices only frame private messages; identity IDs bind rows.
 These messages never reach the Desktop challenge stream or ordinary JSONL. Frame
@@ -1283,8 +1302,12 @@ directory. This additive presentation field contains no paths, names or counts;
 it does not change prepared-ID calculation or execution checks. Desktop uses it
 for destination wording only; absent evidence never implies `~/.ssh`.
 
-Compare and Execute inspect actual selected destinations with the same importer;
-all targets must pass before import. Filesystem replacement, mapping/source change
+Compare and Execute authenticate and structurally validate the entire package,
+then inspect only selected identities and destinations with the same importer.
+Execute cryptographically validates only selected private/public pairs; excluded
+protected keys never request a passphrase. All selected targets must pass before
+import, and importer/Verification evidence counts only that subset.
+Filesystem replacement, selection/mapping/source change
 or changed target bytes invalidate evidence. Only legacy default `~/.ssh` creation
 is allowed. [Secure Migration](../toolkit/SSH-IDENTITY-MIGRATION.md#optional-desktop-restore-directories)
 owns directory safety, no-clobber, cleanup and unresolved `IdentityFile` boundaries.

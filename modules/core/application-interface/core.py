@@ -508,7 +508,7 @@ def prepared_restore(path, disabled_groups, include_secure, selection=None, inst
         # Additive public fields after legacy identity calculation preserve old IDs.
         if include_secure:
             custom = {row['directory'] is not None and row['directory'] != os.path.join(os.environ['HOME'], '.ssh')
-                      for row in destinations['items']} if destinations else {False}
+                      for row in restore_destinations.selected_items(destinations)} if destinations else {False}
             summary['secure_destination_scope'] = 'mixed' if len(custom) == 2 else 'custom' if True in custom else 'default'
         summary['selection'] = requested_selection
         if duplicates:
@@ -762,7 +762,7 @@ def restore_execute(operation_id, path, disabled_groups, include_secure, expecte
                         "recomputed_id": plan["prepared_plan_id"], "components": plan["plan_diagnostics"]}
                     raise ExecuteFailed("stale_plan")
                 state["prepared_plan_id"] = plan["prepared_plan_id"]
-                if destinations is not None and secure_comparison is None:
+                if include_secure and destinations is not None and secure_comparison is None:
                     raise ExecuteFailed('stale_plan')
                 if secure_comparison is not None:
                     if (not include_secure or not valid_comparison(secure_comparison) or
@@ -1285,6 +1285,13 @@ def dispatch(version, channel=None):
     if operation in ('restore_prepare', 'restore_execute', 'secure_restore_compare') and parameters.get('custom_destinations'):
         try:
             destinations = restore_destinations.operation_mapping(operation_id)
+            if not restore_destinations.selected_items(destinations):
+                if operation == 'secure_restore_compare':
+                    raise SecureError('secure_input_invalid')
+                include_secure = False
+                if channel is not None:
+                    channel.close()
+                    channel = None
         except SecureError as exc:
             emit(2, 'failed', operation_id, {'code': exc.code, 'publication_occurred': False,
                                            'target_mutation_may_have_started': False})
@@ -1323,7 +1330,7 @@ def dispatch(version, channel=None):
         result = {
             "protocol_version": PROTOCOL_VERSION,
             "product_version": version,
-            "features": {"secure_restore_destinations": {"version": 1, "inventory": "secure_restore_inventory", "max_items": 32}, "external_ssh_identities": {"version": 1, "destination": "ssh_directory", "max_items": 32}, "pkg_installer_preparation": {"version": 1}, "bundle_comparison": {"version": 1}, "homebrew_graceful_stop": {"version": 1}, "restore_selection": {"version": 1, "inventory": "bundle_inspect", "selection_modes": ["category", "items"]}},
+            "features": {"secure_restore_destinations": {"version": 1, "selection_version": 2, "inventory": "secure_restore_inventory", "max_items": 32}, "external_ssh_identities": {"version": 1, "destination": "ssh_directory", "max_items": 32}, "pkg_installer_preparation": {"version": 1}, "bundle_comparison": {"version": 1}, "homebrew_graceful_stop": {"version": 1}, "restore_selection": {"version": 1, "inventory": "bundle_inspect", "selection_modes": ["category", "items"]}},
             "operations": ["capabilities", "bundle_inspect", "restore_prepare", "restore_execute", "secure_restore_compare", "secure_restore_inventory", "capture_prepare", "capture_execute", "capture_identity_inspect", "environment_compare"],
         }
     else:

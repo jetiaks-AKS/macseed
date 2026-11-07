@@ -178,9 +178,10 @@ class Input:
         return response(receive(self.channel, time.monotonic() + WAIT_SECONDS), challenge)
 
     def restore_context(self):
-        metadata(self.channel, {'type': 'restore_context', 'version': 1})
+        metadata(self.channel, {'type': 'restore_context', 'version': 2})
         value = json.loads(receive(self.channel, time.monotonic() + WAIT_SECONDS), object_pairs_hook=unique_fields)
-        if (not isinstance(value, dict) or set(value) != {'inventory', 'bundle_id', 'count'}
+        if (not isinstance(value, dict) or set(value) != {'inventory', 'bundle_id', 'count', 'mapping_version'}
+                or type(value['mapping_version']) is not int or value['mapping_version'] not in (1, 2)
                 or type(value['inventory']) is not bool or type(value['count']) is not int
                 or not 0 <= value['count'] <= 32):
             raise SecureError('secure_channel_invalid')
@@ -188,7 +189,9 @@ class Input:
         for index in range(value['count']):
             metadata(self.channel, {'type': 'restore_destination', 'index': index})
             items.append(json.loads(receive(self.channel, time.monotonic() + WAIT_SECONDS), object_pairs_hook=unique_fields))
-        mapping = dict(version=1, bundle_id=value['bundle_id'], items=items) if items else None
+        if value['count'] == 0 and (value['bundle_id'] is not None or value['mapping_version'] != 1):
+            raise SecureError('secure_channel_invalid')
+        mapping = dict(version=value['mapping_version'], bundle_id=value['bundle_id'], items=items) if items else None
         return dict(inventory=value['inventory'], mapping=mapping)
 
     def inventory_item(self, item):

@@ -727,17 +727,17 @@ private struct CaptureRefinementHost: View {
             let secure = tasks.domains.first { $0.id == secureID }!
             let explanation: String
             switch decision {
-            case .allMatch: explanation = "All saved SSH identities already match this Mac. Nothing to restore."
-            case .importRequired: explanation = "Some saved SSH identities are missing. Rebuild can import them without overwriting existing keys."
+            case .allMatch: explanation = "All selected SSH identities already match this Mac. Nothing to restore."
+            case .importRequired: explanation = "Some selected SSH identities are missing. Rebuild can import them without overwriting existing keys."
             case .conflict: explanation = "An existing SSH identity conflicts with the saved version. No keys will be overwritten."
             }
             precondition(secure.items.count == 1 && secure.items[0].item.title == "Encrypted SSH identity package"
                 && secure.items[0].item.action == explanation)
             // Missing destination evidence must never invent the legacy location.
             precondition(!secure.items[0].item.action.contains("~/.ssh"))
-            for (scope, location) in [(CoreRestorePreparation.SecureDestinationScope.defaultLocation, "Keys will be restored to ~/.ssh."),
-                                      (.custom, "Keys will be restored to selected locations."),
-                                      (.mixed, "Keys will use default and custom locations.")] {
+            for (scope, location) in [(CoreRestorePreparation.SecureDestinationScope.defaultLocation, "Selected keys will be restored to ~/.ssh."),
+                                      (.custom, "Selected keys will be restored to selected locations."),
+                                      (.mixed, "Selected keys will use default and custom locations.")] {
                 var scoped = plan; scoped.secureDestinationScope = scope
                 let scopedTasks = RestoreTaskPresentation(preview: .init(scoped, catalog: catalog), plan: scoped)
                 let message = scopedTasks.domains.first { $0.id == secureID }!.items[0].item.action
@@ -781,17 +781,44 @@ private struct CaptureRefinementHost: View {
                      && selection.contains(".disabled(model.state != .review || model.runtime.isActive)"))
         precondition(selection.contains("Encrypted SSH keys. Existing keys won't be overwritten."))
         let normalizedSelection = selection.split(whereSeparator: \.isWhitespace).joined(separator: " ")
-        precondition(normalizedSelection.contains("Text(model.destinationDirectories.isEmpty ? \"Restore to: ~/.ssh\" : \"Custom locations configured\") .font(.callout.weight(.semibold)).foregroundStyle(.primary)"))
+        precondition(normalizedSelection.contains("Text([model.identitySelectionSummary, model.destinationSummary].compactMap { $0 }.joined(separator: \" · \")) .font(.callout.weight(.semibold)).foregroundStyle(.primary)"))
         precondition(normalizedSelection.contains("Text(\"Encrypted SSH keys. Existing keys won't be overwritten.\") .font(.callout).foregroundStyle(.secondary)"))
         precondition(selection.contains("summary: model.includeSecure ? \"Selected\" : \"Off\""))
         precondition(selection.contains("expanded: WorkflowExpansion.binding(CaptureHierarchy.secureTransferID, in: treeExpansion)"))
         precondition(selection.contains("if treeExpansion.wrappedValue.contains(CaptureHierarchy.secureTransferID)"))
         precondition(selection.contains("model.customizeDestinations()") && selection.contains("model.canCustomizeDestinations"))
+        precondition(selection.contains("VStack(alignment: .leading, spacing: 6)")
+                     && selection.range(of: "Button(\"Customize…\")")!.lowerBound < selection.range(of: "Text([model.identitySelectionSummary")!.lowerBound,
+                     "Customize must precede its summary in a compact leading-aligned column")
         let destinations = source.components(separatedBy: "struct RestoreDestinationsView: View")[1]
         precondition(destinations.contains("panel.canChooseDirectories = true") && destinations.contains("panel.canChooseFiles = false")
                      && destinations.contains("panel.canCreateDirectories = false") && destinations.contains("panel.resolvesAliases = false")
                      && destinations.contains("model.setDestination(nil, for: identity.id)")
-                     && !destinations.contains("NativeSelectionCheckbox") && !destinations.contains("Toggle("))
+                     && destinations.contains("model.selectIdentity(identity.id, included: $0)")
+                     && destinations.contains(".disabled(!model.selectedIdentityIDs.contains(identity.id))")
+                     && destinations.contains("model.identitySelectionSummary") && !destinations.contains("Toggle("))
+        let destinationSummary = destinations.components(separatedBy: "if let summary = model.identitySelectionSummary")[1]
+            .components(separatedBy: "ScrollView")[0]
+        precondition(destinationSummary.contains("if model.secureIdentitySelectionSupported")
+                     && destinationSummary.contains("Button(model.allIdentitiesSelected ? \"Deselect All\" : \"Select All\")")
+                     && destinationSummary.contains("model.selectAllIdentities(!model.allIdentitiesSelected)")
+                     && destinationSummary.contains(".buttonStyle(.bordered).controlSize(.regular).fontWeight(.medium).fixedSize()")
+                     && destinationSummary.range(of: "Button(")!.lowerBound < destinationSummary.range(of: "Text(summary)")!.lowerBound
+                     && destinationSummary.contains("Text(summary).font(.callout).foregroundStyle(.secondary)")
+                     && !destinationSummary.contains("Spacer()") && !destinationSummary.contains(".buttonStyle(.link)"),
+                     "The regular bordered bulk action must lead the secondary counter below the explanation")
+        for version in [1, 2] {
+            let raw: [String: Any] = ["protocol_version": 1, "product_version": "3.4.0", "operations": ["secure_restore_inventory"],
+                "features": ["secure_restore_destinations": ["version": 1, "selection_version": version]]]
+            let capability = try! JSONDecoder().decode(CoreCapabilities.self, from: JSONSerialization.data(withJSONObject: raw))
+            precondition(capability.supportsSecureRestoreDestinations && capability.supportsSecureRestoreSelection == (version == 2))
+            let mapping = CoreRestoreDestinations(version: version, bundleID: String(repeating: "b", count: 64), items: [
+                .init(identityID: String(repeating: "a", count: 64), directory: nil, selected: version == 2 ? false : nil)])
+            try! mapping.validate()
+            let request = CoreRequest(.restorePrepare(path: "/fixture.mbt", disabledGroups: [], includeSecure: true), restoreDestinations: mapping)
+            let encoded = String(data: try! request.encoded(), encoding: .utf8)!
+            precondition(!encoded.contains("selected") && !encoded.contains(mapping.items[0].identityID))
+        }
         precondition(source.contains("Read-only preview — no changes are made."))
         precondition(!source.contains("Custom key locations may differ") && !source.contains("SSH configuration may need updating."))
         print("PASS: Secure Transfer availability, explicit selection, busy guard, no-clobber explanation and read-only Preview")

@@ -138,11 +138,12 @@ def _run_secure(root, package, channel, operation_id, event, mutation, export_se
                         raise
                     except (ValueError, UnicodeError):
                         raise SecureError('secure_channel_invalid') from None
-                    if message == {'type': 'restore_context', 'version': 1}:
+                    if message == {'type': 'restore_context', 'version': 2}:
                         if context_sent or export_selection is not None or seen_challenges:
                             raise SecureError('secure_channel_invalid')
                         context_sent = True
                         metadata(parent, {'inventory': inventory, 'bundle_id': destinations['bundle_id'] if destinations else None,
+                                          'mapping_version': destinations['version'] if destinations else 1,
                                           'count': len(destinations['items']) if destinations else 0})
                     elif message == {'type': 'restore_destination', 'index': destination_index}:
                         if not context_sent or destinations is None or destination_index >= len(destinations['items']) or seen_challenges:

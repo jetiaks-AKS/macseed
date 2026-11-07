@@ -841,6 +841,49 @@ import Vision
                 }
             }
         }
+        if CommandLine.arguments.contains("--secure-identity-selection-only") {
+            await choose(secure: false)
+            precondition(model.secureIdentitySelectionSupported && !model.includeSecure)
+            model.customizeDestinations(); _ = await interact()
+            let inventory = model.destinationInventory!
+            let excluded = inventory.items.first { $0.name == "id_disposable" }!
+            let selected = inventory.items.first { $0.name == "id_second" }!
+            let custom = root.appendingPathComponent("selected-only")
+            try fm.createDirectory(at: custom, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+            model.selectIdentity(excluded.id, included: false)
+            model.setDestination(custom.path, for: selected.id)
+            model.dismissDestinations(); precondition(!model.includeSecure)
+            model.selectSecureTransfer(true)
+            precondition(model.privateDestinations?.version == 2 && model.selectedIdentityIDs == [selected.id])
+            try await preview(.importRequired, label: "Selective native Preview")
+            precondition(try! fm.contentsOfDirectory(atPath: custom.path).isEmpty)
+            model.requestRebuild(); model.confirmRebuild(); let challenges = await interact(preparing: false)
+            precondition(challenges.filter { $0.kind == .sshKeyUnlock }.map { $0.identity?.name } == [selected.name])
+            precondition(model.executionResult?.outcome == .clean && CoreSecureRestoreEvidence(events: model.categoryPresentationEvents).verified)
+            for suffix in ["", ".pub"] {
+                precondition(try! Data(contentsOf: custom.appendingPathComponent(selected.name + suffix)) == Data(contentsOf: root.appendingPathComponent("disposable_second" + suffix)))
+            }
+            precondition(!fm.fileExists(atPath: ssh.path))
+            try await preview(.allMatch, label: "Selective native repeated Preview")
+            precondition(!model.canRebuild)
+            let secrets = [keySecret, bundleSecret] + [custom.path, selected.id, excluded.id, selected.name, excluded.name].map { Data($0.utf8) }
+            for entry in try await logs.history() {
+                let report = try await DiagnosticReportBuilder.generate(id: entry.id, environment: .current()) { id, cursor in try await logs.page(id, after: cursor) }
+                precondition(secrets.allSatisfy { report.utf8.range(of: $0) == nil })
+            }
+            model.back(); model.customizeDestinations(); _ = await interact()
+            model.selectIdentity(selected.id, included: false)
+            precondition(!model.includeSecure && !model.canPreview && !model.canRebuild && model.preparation == nil)
+            model.dismissDestinations(); model.selectArea("workspace-folders", included: true)
+            precondition(model.canPreview)
+            model.refreshPreview(); let zeroChallenges = await interact()
+            precondition(zeroChallenges.isEmpty && model.preparation?.includeSecure == false)
+            precondition(model.preparation?.plan.contains(where: \.isSecureImport) == false)
+            await choose(ordinary, secure: false)
+            precondition(model.selectedIdentityIDs.isEmpty && model.destinationInventory == nil)
+            print("PASS: native private v2 subset, selected protected-key prompt only, selected-location Verification/no-op, zero selection with ordinary Preview, Bundle reset and diagnostic privacy")
+            return
+        }
         if CommandLine.arguments.contains("--secure-destinations-only") {
             await choose(secure: false)
             precondition(model.canCustomizeDestinations && !model.includeSecure)
@@ -887,7 +930,8 @@ import Vision
             model.back(); model.customizeDestinations(); let reopened = await interact()
             precondition(reopened.map(\.kind) == [.bundleUnlock] && model.showingDestinations)
             model.setDestination(nil, for: identity.id)
-            precondition(model.preparation == nil && model.preview == nil && model.privateDestinations == nil)
+            precondition(model.preparation == nil && model.preview == nil
+                         && model.privateDestinations?.items.allSatisfy { $0.selected == true && $0.directory == nil } == true)
             model.setDestination(custom.path, for: identity.id); model.dismissDestinations()
             try await preview(.importRequired, label: "Changed mapping needs fresh Preview")
             model.requestRebuild(); model.confirmRebuild(); let imported = await interact(preparing: false)
@@ -2544,6 +2588,9 @@ import Vision
         projection.executableURL = python
         projection.arguments = ["-B", "-c", """
         import ast,os,sys
+        from pathlib import Path
+        sys.path.insert(0,str(Path(sys.argv[1]).parents[2]/'migration'))
+        import restore_destinations
         tree=ast.parse(open(sys.argv[1]).read())
         prepare=next(node for node in tree.body if isinstance(node,ast.FunctionDef) and node.name=='prepared_restore')
         blocks=[node for node in prepare.body if isinstance(node,ast.With) for node in node.body
@@ -2552,7 +2599,7 @@ import Vision
         code=compile(ast.Module(body=blocks,type_ignores=[]),'<destination presentation>','exec')
         ssh=os.path.join(os.environ['HOME'],'.ssh')
         for directories,expected in [(None,'default'),([None,None],'default'),([ssh],'default'),(['/fixture/one'],'custom'),(['/fixture/one','/fixture/two'],'custom'),([None,'/fixture/one'],'mixed'),([ssh,'/fixture/one'],'mixed')]:
-            values=dict(os=os,include_secure=True,destinations=None if directories is None else dict(items=[dict(directory=p) for p in directories]),summary={})
+            values=dict(os=os,restore_destinations=restore_destinations,include_secure=True,destinations=None if directories is None else dict(version=1,items=[dict(directory=p) for p in directories]),summary={})
             exec(code,values); assert values['summary']==dict(secure_destination_scope=expected)
         values=dict(os=os,include_secure=False,destinations=None,summary={});exec(code,values);assert values['summary']=={}
         print('PASS: production prepared destination projection: default/custom/mixed, explicit default, off; no private fields')
@@ -2611,30 +2658,84 @@ import Vision
                 let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: height), styleMask: [.titled], backing: .buffered, defer: false)
                 window.isReleasedWhenClosed = false; window.contentView = host; host.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
                 window.makeKeyAndOrderFront(nil); await settle(host)
+                if name == "customize-partial" {
+                    let checkboxes = descendants(host, NSButton.self).filter { $0.accessibilityLabel()?.hasPrefix("Select id_") == true }
+                    precondition(checkboxes.count == 2 && checkboxes.allSatisfy { $0.frame.width <= 22 })
+                    let checkbox = checkboxes.first { $0.accessibilityLabel() == "Select id_personal" }!
+                    for selected in [true, false] {
+                        precondition(NSApp.sendAction(checkbox.action!, to: checkbox.target, from: checkbox)); await settle(host)
+                        precondition(model.selectedIdentityIDs.contains(ids[1]) == selected)
+                    }
+                    precondition(model.selectedIdentityIDs == [ids[0]])
+                }
                 precondition(host.fittingSize.width <= width + 1)
                 let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds)!
                 host.cacheDisplay(in: host.bounds, to: bitmap)
                 try bitmap.representation(using: .png, properties: [:])!.write(to: output.appendingPathComponent(name + (dark ? "-dark.png" : "-light.png")))
-                if name == "customize" {
+                if name.hasPrefix("customize-") || name.hasPrefix("selection-") {
                     // SwiftUI exposes no in-process AX children on this SDK. Check
                     // rendered actions with local Vision instead of assuming NSButton.
                     let recognition = VNRecognizeTextRequest()
                     recognition.recognitionLevel = .accurate; recognition.usesLanguageCorrection = false
                     try VNImageRequestHandler(cgImage: bitmap.cgImage!).perform([recognition])
-                    let actions = (recognition.results ?? []).filter { $0.topCandidates(1).first?.string.hasPrefix("Choose Folder") == true }
-                    precondition(actions.count == 2, "Both folder actions must remain visible")
-                    let frames = actions.map(\.boundingBox)
-                    precondition(abs(frames[0].minX - frames[1].minX) < 0.004
-                                 && frames.allSatisfy { CGRect(x: 0, y: 0, width: 1, height: 1).contains($0) && $0.width > 0 })
-                    let viewSource = try String(contentsOf: repository.appendingPathComponent("desktop/Macseed/Sources/RestoreView.swift"))
-                    precondition(viewSource.contains(".accessibilityValue(model.destinationDirectories[identity.id] ?? \"~/.ssh\")")
-                                 && viewSource.contains(".truncationMode(.middle).textSelection(.enabled)"), "Full path binding and text selection must survive truncation")
+                    let renderedText = (recognition.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
+                    func bounds(_ text: String) throws -> CGRect {
+                        let matches = (recognition.results ?? []).compactMap { $0.topCandidates(1).first }
+                            .filter { $0.string.contains(text) }
+                        precondition(matches.count == 1, "Expected one visible \(text): \(renderedText)")
+                        return try matches[0].boundingBox(for: matches[0].string.range(of: text)!)!.boundingBox
+                    }
+                    if name == "selection-collapsed" {
+                        precondition(!renderedText.contains("Customize") && !renderedText.contains("keys selected")
+                                     && !renderedText.contains("Encrypted SSH keys"), "Collapsed Secure Transfer must retain only its header")
+                    } else if name.hasPrefix("selection-expanded") {
+                        let explanation = try bounds("Encrypted SSH keys"), customize = try bounds("Customize")
+                        let summary = try bounds(model.identitySelectionSummary!)
+                        precondition(explanation.minY > customize.maxY && customize.minY > summary.maxY
+                                     && abs(explanation.minX - summary.minX) < 0.01
+                                     && abs(customize.minX - summary.minX) < 0.03,
+                                     "Customize must be left-aligned below the explanation and above the summary")
+                    } else {
+                        let explanation = try bounds("Choose keys and restore locations.")
+                        let action = try bounds(model.allIdentitiesSelected ? "Deselect All" : "Select All")
+                        let count = try bounds(model.identitySelectionSummary!)
+                        precondition(explanation.minY > action.maxY && abs(explanation.minX - action.minX) < 0.03
+                                     && count.minX > action.maxX && abs(count.midY - action.midY) < 0.012,
+                                     "Bulk action must be below the explanation, leading the accurate count on one row")
+                        let actions = (recognition.results ?? []).filter { $0.topCandidates(1).first?.string.hasPrefix("Choose Folder") == true }
+                        precondition(actions.count == 2, "Both folder actions must remain visible")
+                        let frames = actions.map(\.boundingBox)
+                        precondition(abs(frames[0].minX - frames[1].minX) < 0.004
+                                     && frames.allSatisfy { CGRect(x: 0, y: 0, width: 1, height: 1).contains($0) && $0.width > 0 })
+                        // Vision can merge checkbox glyphs into a name's bounds.
+                        // Measure labels in the area after the native checkbox rail.
+                        let nameStart = descendants(host, NSButton.self)
+                            .filter { $0.accessibilityLabel()?.hasPrefix("Select id_") == true }
+                            .map { $0.convert($0.bounds, to: host).maxX }.max()! / width
+                        recognition.regionOfInterest = CGRect(x: nameStart, y: 0, width: 1 - nameStart, height: 1)
+                        try VNImageRequestHandler(cgImage: bitmap.cgImage!).perform([recognition])
+                        let names = (recognition.results ?? []).filter { $0.topCandidates(1).first?.string.hasPrefix("id_") == true }
+                        precondition(names.count == 2 && names.allSatisfy { $0.boundingBox.minX < 0.05 }
+                                     && abs(names[0].boundingBox.minX - names[1].boundingBox.minX) < 0.004,
+                                     "Identity names must align beside compact checkboxes")
+                        let viewSource = try String(contentsOf: repository.appendingPathComponent("desktop/Macseed/Sources/RestoreView.swift"))
+                        precondition(viewSource.contains(".accessibilityValue(model.destinationDirectories[identity.id] ?? \"~/.ssh\")")
+                                     && viewSource.contains(".truncationMode(.middle).textSelection(.enabled)"), "Full path binding and text selection must survive truncation")
+                    }
                 }
                 window.close()
             }
         }
         model.choose(source); await model.waitForCompletion()
         precondition(model.state == .review && !model.includeSecure && model.canCustomizeDestinations)
+        model.selectAllIdentities(true)
+        precondition(model.selectedIdentityIDs.isEmpty && !model.includeSecure, "Bulk selection requires authenticated Customize metadata")
+        for area in model.eligibleAreas { model.selectArea(area.id, included: true) }
+        precondition(model.bulkState == .all && model.selectionSummary == "Some items excluded",
+                     "Available but Off Secure Transfer must not claim Everything selected")
+        model.selectSecureTransfer(true)
+        precondition(model.selectionSummary == "Everything selected", "Default opt-in still selects the whole package")
+        model.selectSecureTransfer(false)
         let expansion = SecureExpansion()
         let selectionHost = NSHostingView(rootView: SecureSelectionHost(expansion: expansion, model: model))
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 785, height: 500), styleMask: [.titled], backing: .buffered, defer: false)
@@ -2656,9 +2757,31 @@ import Vision
         try await render(SecureRestoreHost(expansion: expansion, model: model, runtime: runtime), name: "selection-collapsed")
         model.customizeDestinations(); await complete()
         precondition(model.showingDestinations && !model.includeSecure)
+        precondition(model.secureIdentitySelectionSupported && model.selectedIdentityIDs == Set(ids))
+        model.selectIdentity(ids[1], included: false)
+        precondition(model.identitySelectionSummary == "1 of 2 keys selected" && !model.includeSecure)
         let path = "/private/tmp/ssh-ui-fixture/" + String(repeating: "long-folder-name/", count: 8) + "keys"
         model.setDestination(path, for: ids[0])
-        try await render(RestoreDestinationsView(model: model), name: "customize", width: 620, height: 400)
+        let remembered = model.destinationDirectories
+        model.selectAllIdentities(true)
+        precondition(model.allIdentitiesSelected && !model.includeSecure && model.destinationDirectories == remembered)
+        precondition(model.selectionSummary == "Some items excluded")
+        model.selectSecureTransfer(true)
+        precondition(model.selectionSummary == "Everything selected")
+        model.selectIdentity(ids[1], included: false)
+        precondition(!model.allIdentitiesSelected && model.selectionSummary == "Some items excluded")
+        model.selectAllIdentities(true)
+        precondition(model.includeSecure && model.selectionSummary == "Everything selected")
+        model.selectAllIdentities(false)
+        precondition(model.selectedIdentityIDs.isEmpty && !model.includeSecure && model.canPreview
+                     && model.preparation == nil && model.preview == nil && !model.canRebuild
+                     && model.destinationDirectories == remembered, "Deselect All preserves mappings and ordinary Preview eligibility")
+        model.selectAllIdentities(true)
+        precondition(model.allIdentitiesSelected && !model.includeSecure && model.destinationDirectories == remembered,
+                     "Select All restores keys without enabling Secure Transfer")
+        try await render(RestoreDestinationsView(model: model), name: "customize-all", width: 620, height: 440)
+        model.selectIdentity(ids[1], included: false)
+        try await render(RestoreDestinationsView(model: model), name: "customize-partial", width: 620, height: 440)
         model.dismissDestinations()
         let directories = model.destinationDirectories
         await disclose()
@@ -2683,7 +2806,7 @@ import Vision
         precondition(!WorkflowExpansion.allExpanded(expansion.ids, available: all))
         model.selectSecureTransfer(true)
         for area in model.eligibleAreas { model.selectArea(area.id, included: false) }
-        for (scope, text) in [("default", "Keys will be restored to ~/.ssh."), ("custom", "Keys will be restored to selected locations."), ("mixed", "Keys will use default and custom locations.")] {
+        for (scope, text) in [("default", "Selected keys will be restored to ~/.ssh."), ("custom", "Selected keys will be restored to selected locations."), ("mixed", "Selected keys will use default and custom locations.")] {
             try write(scope, core.appendingPathComponent("reported-scope"))
             model.refreshPreview(); await complete()
             precondition(model.state == .preview && model.canRebuild, model.technicalReason ?? "Preview fixture failed")
@@ -2702,11 +2825,49 @@ import Vision
         // Display follows prepared evidence, never the current session dictionary.
         model.setDestination(nil, for: ids[0])
         precondition(model.preparation != nil && model.destinationDirectories == directories, "Preview is not editable")
-        model.back(); model.customizeDestinations(); await complete(); model.setDestination(nil, for: ids[0])
-        precondition(model.destinationDirectories.isEmpty && model.privateDestinations == nil && model.preparation == nil && model.preview == nil)
+        model.selectIdentity(ids[0], included: false)
+        precondition(model.preparation != nil && model.selectedIdentityIDs == [ids[0]], "Preview selection is not editable")
+        model.selectAllIdentities(true)
+        precondition(model.preparation != nil && model.selectedIdentityIDs == [ids[0]], "Bulk selection is unavailable in Preview")
+        model.back(); model.customizeDestinations(); await complete()
+        model.selectAllIdentities(false)
+        precondition(!model.includeSecure && !model.canPreview && !model.canRebuild && model.preparation == nil && model.preview == nil)
+        precondition(model.selectionSummary == "Nothing selected")
+        precondition(model.identitySelectionSummary == "0 of 2 keys selected" && model.privateDestinations == nil)
+        precondition(model.destinationSummary == nil, "Zero selection must not claim a restore destination")
+        model.setDestination(nil, for: ids[0])
+        precondition(model.destinationDirectories == directories, "Excluded destination controls are inactive")
+        let ordinary = model.eligibleAreas.first!.id
+        model.selectArea(ordinary, included: true); precondition(model.canPreview)
+        model.selectArea(ordinary, included: false)
+        model.selectIdentity(ids[1], included: true)
+        precondition(!model.includeSecure && !model.canPreview, "Customize must not silently enable transfer")
+        model.selectSecureTransfer(true)
+        precondition(model.selectedIdentityIDs == [ids[1]] && model.canPreview && model.privateDestinations?.version == 2)
+        precondition(model.privateDestinations?.items.first { $0.identityID == ids[0] }?.directory == nil)
+        model.selectIdentity(ids[1], included: false)
+        model.selectSecureTransfer(true)
+        precondition(model.selectedIdentityIDs == Set(ids) && model.includeSecure, "Parent selection restores an empty subset explicitly")
         model.dismissDestinations()
+        model.back(); model.customizeDestinations(); await complete(); model.setDestination(nil, for: ids[0])
+        precondition(model.destinationDirectories.isEmpty && model.privateDestinations?.version == 2
+                     && model.privateDestinations?.items.allSatisfy { $0.selected == true && $0.directory == nil } == true
+                     && model.preparation == nil && model.preview == nil)
+        model.dismissDestinations()
+        let bound = model.privateDestinations!
+        try json(["version": 1, "bundle_id": String(repeating: "d", count: 64), "items": identities], "identities.json")
+        model.customizeDestinations(); await complete()
+        precondition(!model.showingDestinations && model.destinationMessage != nil && model.privateDestinations == bound,
+                     "A changed Bundle must not discard authenticated selection and fall back to the whole package")
+        var ordinaryInspection = try JSONSerialization.jsonObject(with: Data(contentsOf: core.appendingPathComponent("inspection.json"))) as! [String: Any]
+        ordinaryInspection["secure_component"] = false
+        try json(ordinaryInspection, "inspection.json")
+        model.choose(source); await model.waitForCompletion()
+        for area in model.eligibleAreas { model.selectArea(area.id, included: true) }
+        precondition(model.selectionSummary == "Everything selected", "Ordinary-only bundles keep their complete-selection summary")
         precondition(!fm.fileExists(atPath: core.appendingPathComponent("MUTATION_ATTEMPT").path))
-        print("PASS: native collapsed/expanded Secure Transfer, independent checkbox/chevron, shared Expand All scope, mapping persistence, prepared default/custom/mixed copy, contextual warning and stale Preview invalidation")
+        print("PASS: Select All/Deselect All preserves destinations and parent opt-in; zero-selection and Preview guards; truthful footer for absent/off/all/partial Secure Transfer")
+        print("PASS: native subset selection, zero-selection/parent recovery, independent checkbox/chevron, shared Expand All scope, mapping persistence, prepared destination copy and stale Preview invalidation")
         print("PASS: Light/Dark Selection, Customize (long name/path and aligned folder actions), and custom Preview fixtures; no importer or Execute")
     }
 
@@ -2720,7 +2881,7 @@ import Vision
         if CommandLine.arguments.contains("--secure-request-budget-only") {
             try await secureRequestBudgetChecks(repository: URL(fileURLWithPath: CommandLine.arguments[1]), python: URL(fileURLWithPath: CommandLine.arguments[2])); return
         }
-        if CommandLine.arguments.contains("--secure-compare-only") || CommandLine.arguments.contains("--secure-compare-binding-only") || CommandLine.arguments.contains("--secure-destinations-only") {
+        if CommandLine.arguments.contains("--secure-compare-only") || CommandLine.arguments.contains("--secure-compare-binding-only") || CommandLine.arguments.contains("--secure-destinations-only") || CommandLine.arguments.contains("--secure-identity-selection-only") {
             try await secureComparisonChecks(repository: URL(fileURLWithPath: CommandLine.arguments[1]), python: URL(fileURLWithPath: CommandLine.arguments[2])); return
         }
         if CommandLine.arguments.contains("--secure-restore-only") {
@@ -2860,7 +3021,7 @@ import Vision
             result=dict(protocol_version=1, product_version='3.4.0',operations=['bundle_inspect','restore_prepare','environment_compare'],features=features)
             if mode=='secure-ui':
                 result['operations'].append('secure_restore_inventory')
-                features['secure_restore_destinations']=dict(version=1,inventory='secure_restore_inventory',max_items=32)
+                features['secure_restore_destinations']=dict(version=1,selection_version=2,inventory='secure_restore_inventory',max_items=32)
         elif operation=='environment_compare':
             result=json.loads(Path('comparison.json').read_text())
         elif operation=='bundle_inspect':
@@ -3945,7 +4106,9 @@ import Vision
         model.selectArea("macos-dock", included: false)
         precondition(model.groupState(macOSGroup) == .mixed && model.selectedAreaCount == 12)
         model.selectGroup(macOSGroup, included: false); precondition(model.groupState(macOSGroup) == .none && model.selectionSummary == "Some items excluded")
-        model.selectGroup(macOSGroup, included: true); precondition(model.groupState(macOSGroup) == .all && model.selectionSummary == "Everything selected")
+        model.selectGroup(macOSGroup, included: true)
+        precondition(model.groupState(macOSGroup) == .all
+                     && model.selectionSummary == (Self.finalUXFixtures ? "Everything selected" : "Some items excluded"))
         model.selectItem("macos-dock", item: "invented", included: false)
         precondition(model.selectedCategories.contains("macos-dock"))
         let packages = model.areas.first { $0.id == "homebrew-packages" }!
@@ -4112,7 +4275,9 @@ import Vision
         }
         model.back(); precondition(model.state == .review && model.preparation == nil && model.bulkState == .all)
         model.toggleAll(); precondition(model.selectedAreaCount == 0 && !model.canPreview && model.selectionSummary == "Nothing selected")
-        model.toggleAll(); precondition(model.bulkState == .all && model.selectionSummary == "Everything selected")
+        model.toggleAll()
+        precondition(model.bulkState == .all
+                     && model.selectionSummary == (Self.finalUXFixtures ? "Everything selected" : "Some items excluded"))
         for mode in ["prepare_failure", "wrong_selection", "interrupted"] {
             try write(mode, core.appendingPathComponent("mode")); model.refreshPreview(); await model.waitForCompletion()
             precondition(model.state == .failed && model.preparation == nil && model.preview == nil)

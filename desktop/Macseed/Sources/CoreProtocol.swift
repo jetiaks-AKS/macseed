@@ -78,12 +78,14 @@ struct CoreRestoreDestinations: Codable, Equatable, Sendable, CustomStringConver
         var customMirror: Mirror { Mirror(self, children: [:]) }
         let identityID: String
         let directory: String?
-        enum CodingKeys: String, CodingKey { case identityID = "identity_id", directory }
+        var selected: Bool? = nil
+        enum CodingKeys: String, CodingKey { case identityID = "identity_id", directory, selected }
         func encode(to encoder: Encoder) throws {
             var values = encoder.container(keyedBy: CodingKeys.self)
             try values.encode(identityID, forKey: .identityID)
             if let directory { try values.encode(directory, forKey: .directory) }
             else { try values.encodeNil(forKey: .directory) }
+            if let selected { try values.encode(selected, forKey: .selected) }
         }
     }
     let version: Int
@@ -94,7 +96,8 @@ struct CoreRestoreDestinations: Codable, Equatable, Sendable, CustomStringConver
     var debugDescription: String { description }
     var customMirror: Mirror { Mirror(self, children: [:]) }
     func validate() throws {
-        guard version == 1, Self.validID(bundleID), (1...32).contains(items.count),
+        guard [1, 2].contains(version), Self.validID(bundleID), (1...32).contains(items.count),
+              items.allSatisfy({ version == 1 ? $0.selected == nil : $0.selected != nil }),
               items.map(\.identityID) == Array(Set(items.map(\.identityID))).sorted(),
               items.allSatisfy({ Self.validID($0.identityID) && ($0.directory.map {
                   $0.hasPrefix("/") && $0.utf8.count <= 1024 && !$0.unicodeScalars.contains(where: { $0.value < 32 || $0.value == 127 })
@@ -308,6 +311,7 @@ struct CoreCapabilities: Decodable, Sendable {
     let operations: [String]
     let features: [String: CoreJSON]?
     var supportsSecureRestoreDestinations: Bool { operations.contains("secure_restore_inventory") && features?["secure_restore_destinations"]?.object?["version"]?.integer == 1 }
+    var supportsSecureRestoreSelection: Bool { supportsSecureRestoreDestinations && features?["secure_restore_destinations"]?.object?["selection_version"]?.integer == 2 }
     var supportsBundleComparison: Bool { features?["bundle_comparison"]?.object?["version"]?.integer == 1 }
     var supportsRestoreSelection: Bool { features?["restore_selection"]?.object?["version"]?.integer == 1 }
     enum CodingKeys: String, CodingKey {

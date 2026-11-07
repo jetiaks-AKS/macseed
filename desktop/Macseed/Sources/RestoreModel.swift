@@ -43,9 +43,9 @@ struct RestorePreviewPresentation {
             case "pending_unlock" where row.isSecureImport:
                 switch prepared.secureComparison?.decision {
                 case .allMatch:
-                    status = .matching; message = "All saved SSH identities already match this Mac. Nothing to restore."
+                    status = .matching; message = "All selected SSH identities already match this Mac. Nothing to restore."
                 case .importRequired where prepared.secureExecutable:
-                    status = .ready; message = "Some saved SSH identities are missing. Rebuild can import them without overwriting existing keys."
+                    status = .ready; message = "Some selected SSH identities are missing. Rebuild can import them without overwriting existing keys."
                 case .conflict:
                     status = .attention; message = "An existing SSH identity conflicts with the saved version. No keys will be overwritten."
                 default:
@@ -342,6 +342,8 @@ struct RestoreProgressRow {
     }
 
     @Published private(set) var secureDestinationsSupported = false
+    @Published private(set) var secureIdentitySelectionSupported = false
+    @Published private(set) var selectedIdentityIDs: Set<String> = []
     @Published private(set) var unlockingDestinations = false
     @Published private(set) var showingDestinations = false
     @Published private(set) var destinationInventory: CoreRestoreIdentityInventory?
@@ -351,9 +353,44 @@ struct RestoreProgressRow {
         state == .review && !busy && !runtime.isActive && inspection?.secureComponent == true && secureDestinationsSupported
     }
     var privateDestinations: CoreRestoreDestinations? {
-        guard includeSecure, let inventory = destinationInventory, !destinationDirectories.isEmpty else { return nil }
-        return CoreRestoreDestinations(version: 1, bundleID: inventory.bundleID,
-            items: inventory.items.map { .init(identityID: $0.id, directory: destinationDirectories[$0.id]) }.sorted { $0.identityID < $1.identityID })
+        guard includeSecure, let inventory = destinationInventory,
+              secureIdentitySelectionSupported || !destinationDirectories.isEmpty else { return nil }
+        return CoreRestoreDestinations(version: secureIdentitySelectionSupported ? 2 : 1, bundleID: inventory.bundleID,
+            items: inventory.items.map { identity in
+                let selected = selectedIdentityIDs.contains(identity.id)
+                return .init(identityID: identity.id, directory: selected ? destinationDirectories[identity.id] : nil,
+                             selected: secureIdentitySelectionSupported ? selected : nil)
+            }.sorted { $0.identityID < $1.identityID })
+    }
+    var identitySelectionSummary: String? {
+        guard let inventory = destinationInventory else { return nil }
+        return "\(selectedIdentityIDs.count) of \(inventory.items.count) keys selected"
+    }
+    var allIdentitiesSelected: Bool {
+        guard let inventory = destinationInventory else { return false }
+        return selectedIdentityIDs.count == inventory.items.count
+    }
+    var hasCustomDestinations: Bool { destinationDirectories.keys.contains { selectedIdentityIDs.contains($0) } }
+    var destinationSummary: String? {
+        guard destinationInventory == nil || !selectedIdentityIDs.isEmpty else { return nil }
+        return hasCustomDestinations ? "Custom locations configured" : "Restore to: ~/.ssh"
+    }
+    func selectIdentity(_ identityID: String, included: Bool) {
+        guard secureIdentitySelectionSupported, showingDestinations, state == .review, !runtime.isActive,
+              destinationInventory?.items.contains(where: { $0.id == identityID }) == true else { return }
+        guard selectedIdentityIDs.contains(identityID) != included else { return }
+        if included { selectedIdentityIDs.insert(identityID) } else { selectedIdentityIDs.remove(identityID) }
+        if selectedIdentityIDs.isEmpty { includeSecure = false }
+        invalidate()
+    }
+    func selectAllIdentities(_ included: Bool) {
+        guard secureIdentitySelectionSupported, showingDestinations, state == .review, !runtime.isActive,
+              let inventory = destinationInventory else { return }
+        let selected: Set<String> = included ? Set(inventory.items.map(\.id)) : []
+        guard selectedIdentityIDs != selected else { return }
+        selectedIdentityIDs = selected
+        if selected.isEmpty { includeSecure = false }
+        invalidate()
     }
     func customizeDestinations() {
         guard canCustomizeDestinations, let source else { return }
@@ -369,10 +406,12 @@ struct RestoreProgressRow {
             state = .review
             if runtime.state == .completed, let inventory = runtime.takeRestoreIdentityInventory() {
                 if let previous = destinationInventory, previous.bundleID != inventory.bundleID {
-                    clearDestinations()
+                    // Retain the old authenticated context so a failed reopen
+                    // cannot silently turn a subset into whole-package import.
                     destinationMessage = "The Bundle changed. Choose it again before customizing destinations."
                     return
                 }
+                if destinationInventory == nil { selectedIdentityIDs = Set(inventory.items.map(\.id)) }
                 destinationInventory = inventory; showingDestinations = true
             } else {
                 destinationMessage = runtime.state == .cancelled
@@ -384,19 +423,23 @@ struct RestoreProgressRow {
     func dismissDestinations() { showingDestinations = false }
     func setDestination(_ directory: String?, for identityID: String) {
         guard showingDestinations, state == .review, !runtime.isActive,
+              selectedIdentityIDs.contains(identityID),
               destinationInventory?.items.contains(where: { $0.id == identityID }) == true else { return }
         guard destinationDirectories[identityID] != directory else { return }
         destinationDirectories[identityID] = directory
         invalidate()
     }
     private func clearDestinations() {
-        destinationInventory = nil; destinationDirectories = [:]; destinationMessage = nil
+        destinationInventory = nil; selectedIdentityIDs = []; destinationDirectories = [:]; destinationMessage = nil
         showingDestinations = false; unlockingDestinations = false
     }
 
     @Published private(set) var includeSecure = false
     func selectSecureTransfer(_ included: Bool) {
         guard state == .review, !busy, !runtime.isActive, inspection?.secureComponent == true else { return }
+        if included, selectedIdentityIDs.isEmpty, let inventory = destinationInventory {
+            selectedIdentityIDs = Set(inventory.items.map(\.id))
+        }
         includeSecure = included
         invalidate()
     }
@@ -437,7 +480,9 @@ struct RestoreProgressRow {
     var selectionSummary: String {
         if includeSecure && selectedAreaCount == 0 { return "Secure Transfer selected" }
         return switch bulkState {
-        case .all: "Everything selected"
+        case .all:
+            inspection?.secureComponent == true && (!includeSecure || (destinationInventory != nil && !allIdentitiesSelected))
+                ? "Some items excluded" : "Everything selected"
         case .mixed: "Some items excluded"
         case .none: "Nothing selected"
         }
@@ -624,7 +669,7 @@ struct RestoreProgressRow {
         cancelRequested = false
         showingAppStore = false
         appStoreRefreshState = .idle
-        clearDestinations(); secureDestinationsSupported = false
+        clearDestinations(); secureDestinationsSupported = false; secureIdentitySelectionSupported = false
         source = url; inspection = nil; selectedCategories = []; selectedItems = [:]; includeSecure = false
         invalidate(); failure = nil; technicalReason = nil
         guard url.isFileURL, url.pathExtension.lowercased() == "mbt" else {
@@ -637,6 +682,7 @@ struct RestoreProgressRow {
                 fail("Rebuild selection is unavailable in this build. Use a compatible Macseed version.", code: nil); return
             }
             secureDestinationsSupported = runtime.capabilities?.supportsSecureRestoreDestinations == true
+            secureIdentitySelectionSupported = runtime.capabilities?.supportsSecureRestoreSelection == true
             guard await receive(CoreRequest(.bundleInspect(path: url.path))) else { return }
             do {
                 guard let result = runtime.latestResult else { throw CoreRuntimeError.malformedEvent }

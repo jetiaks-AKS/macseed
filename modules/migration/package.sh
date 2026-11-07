@@ -37,7 +37,7 @@ TYPES = {'ssh-ed25519', 'ssh-rsa', 'ecdsa-sha2-nistp256',
 sys.dont_write_bytecode = True
 sys.path.insert(0, sys.argv.pop(1))
 from evidence import Evidence
-from restore_destinations import Directory, identity_id, safe_acl, validate as validate_destinations
+from restore_destinations import Directory, identity_id, safe_acl, selected_items, validate as validate_destinations
 from secret_input import Input, SecureError, PrivateTemporaryDirectory, decrypt, key_public, encrypt
 from age_runtime import executable as age_executable
 from external_sources import ExternalSourceError, read_pair as external_pair, read_control, paths as external_paths
@@ -865,7 +865,9 @@ def run():
                 if result.returncode:
                     raise Invalid('decryption failed')
         evidence.reason = 'input_invalid'
-        records = archive_validate(archive, stage, cryptographic=mode != 'application-compare')
+        # Authenticate and structurally validate every entry before selecting a
+        # subset. Excluded protected keys must never request a private-key unlock.
+        records = archive_validate(archive, stage, cryptographic=False)
         ids = [identity_id(row) for row in records]
         if (len({row[0].casefold() for row in records}) != len(records)
                 or len({row[2] for row in records}) != len(records)):
@@ -875,7 +877,12 @@ def run():
             validate_destinations(mapping)
             if sorted(ids) != [row['identity_id'] for row in mapping['items']]:
                 raise SecureError('secure_target_changed')
-            destinations = {row['identity_id']: row['directory'] for row in mapping['items']}
+            destinations = {row['identity_id']: row['directory'] for row in selected_items(mapping)}
+            records = [record for record, key in zip(records, ids) if key in destinations]
+            if not records:
+                # Core handles zero selection without launching the importer.
+                raise SecureError('secure_input_invalid')
+            ids = [identity_id(row) for row in records]
             for record, key in zip(records, ids):
                 directory = destinations[key]
                 if directory is not None:
@@ -905,6 +912,12 @@ def run():
             return
         if expected_target_state is not None and target_observation(records) != expected_target_state:
             raise SecureError('secure_target_changed')
+        for position, (name, kind, fingerprint, _, _) in enumerate(records, 1):
+            actual_kind, actual_fingerprint, _, _ = validate_pair(
+                os.path.join(stage, name), os.path.join(stage, name + '.pub'),
+                position=position, total=len(records))
+            if (kind, fingerprint) != (actual_kind, actual_fingerprint):
+                raise Invalid('package fingerprint mismatch')
         evidence.selected([r[0] for r in records])
         plan = target_plan(records)
         for (name, kind, fp, _, _), status in zip(records, plan):
