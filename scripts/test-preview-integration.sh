@@ -3,7 +3,9 @@
 # Real entrypoint and production modules; only external effects are intercepted.
 set -u
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-TEST_ROOT="$(mktemp -d)"
+TEST_ROOT="$(mktemp -d)" || exit 2
+# SSH preflight rejects symlink ancestors, including macOS /var -> /private/var.
+TEST_ROOT="$(cd "$TEST_ROOT" && pwd -P)" || exit 2
 trap 'rm -rf "$TEST_ROOT"' EXIT INT TERM
 FIXTURE="$TEST_ROOT/project"
 TEST_FAILURES=0
@@ -279,6 +281,7 @@ run_case() {
 assert_contains() {
     if ! grep -Fq -- "$2" "$1"; then
         echo "FAIL: missing $2 in $1" >&2
+        cat "$1" >&2
         ((TEST_FAILURES++))
     fi
 }
