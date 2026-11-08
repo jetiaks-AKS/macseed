@@ -53,22 +53,13 @@ without weakening assertions, skipping tests or changing workflows merely to obt
 
 ## SSH Environment Completion — Developer Environment Closure
 
-**NEXT / PLANNED — not implemented.** Stage 16H identity completion and accepted
+**Restoration foundation accepted in `5afa889`; integration qualification open.** Stage 16H identity completion and accepted
 manual evidence belong to [Roadmap](ROADMAP.md#stage-16--native-macseed-desktop)
 and [Desktop](docs/DESKTOP.md#secure-interactions). Follow the
 [workflow contract](docs/CAPTURE-RESTORE.md#ssh-environment-completion--developer-environment-closure):
 
-- [ ] Complete practical SSH Configuration Discovery, Capture, Preview, Restore and
-  Verification, prioritizing `IdentityFile`, `IdentitiesOnly`, `AddKeysToAgent`,
-  `UseKeychain` and other safely portable directives.
-- [ ] Add optional per-identity destinations in existing Rebuild Selection through
-  a compact Customize… sheet and native folder picker; default `~/.ssh` requires
-  no extra steps. Keep Preview read-only and Rebuild responsible for execution;
-  no destination editing in Preview, top-level screen or SSH manager.
-- [ ] Validate `IdentityFile` against selected destinations; require explicit
-  authorization for every proposed SSH configuration correction, never silent rewriting.
-- [ ] Correct false Needs Attention results without hiding unsupported, conflicting
-  or unsafe configurations, retaining Secure Migration v1 Bundle compatibility.
+- [ ] Complete code review of bounded SSH → Git dependency integration and its
+  focused fixtures; retain the existing transport, privacy and execution fences.
 - [ ] Later qualify joint SSH Configuration + identities E2E, including default/custom
   destinations, Verification and repeated no-op.
 

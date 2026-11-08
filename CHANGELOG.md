@@ -11,6 +11,11 @@ The format is based on the principles of **Keep a Changelog**.
 
 ### Added
 
+* SSH dependency qualification for planned topology Git clones: Preview distinguishes
+  local readiness, conditional restoration and blocked requirements without testing
+  remote authentication. Execute rechecks private evidence after identity import and
+  SSH configuration publication; HTTPS and local Git operations remain independent.
+
 * Independent safe SSH Configuration restoration: unchanged IdentityFile references
   can be preserved with a separate key advisory, while explicitly approved path
   corrections retain qualified-evidence requirements. Capture and Rebuild share

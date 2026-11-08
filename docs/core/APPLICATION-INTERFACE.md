@@ -470,6 +470,10 @@ calculation. Prepare returns `plan_diagnostics`: SHA-256 fingerprints for `bundl
 `stage`, canonical `selection`, preparation `parameters`, `plan`, `readiness`
 (excluding external-tool provenance), and `modules`. These fingerprints are
 computed before public row correlation and never authorize execution.
+Topology plans with SSH clones additionally bind `git_ssh_observation` to private
+local configuration/key evidence. Fixed per-clone reasons express local readiness,
+conditional restoration or unresolved requirements without exposing Host/key links;
+see [SSH clone dependencies](../toolkit/CONFIGURATION.md#ssh-dependencies-of-planned-clones).
 On a freshness refusal, Execute adds `plan_validation` with allowlisted `check`
 (`prepared_plan_id` or `input_recheck`), `expected_id`, `recomputed_id` and the
 recomputed `components`. Input rechecks also report Boolean

@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Native Git mutations only in disposable HOME/local remote fixtures."""
 import importlib.util
+import copy
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -10,6 +12,7 @@ import signal
 import sys
 import time
 import unittest
+from unittest import mock
 
 sys.dont_write_bytecode = True
 spec = importlib.util.spec_from_file_location('restore_fixture', Path(__file__).with_name('test-restore-prepare.py'))
@@ -38,6 +41,10 @@ args = sys.argv[1:]
 native = os.environ['TEST_REAL_GIT']
 if 'clone' in args:
     assert args[-1].startswith(os.environ['HOME'] + '/')
+    if os.environ.get('TEST_EXPECT_SSH_CONFIG'):
+        assert os.path.isfile(os.path.join(os.environ['HOME'], '.ssh/config'))
+        assert 'StrictHostKeyChecking=yes' in os.environ['GIT_SSH_COMMAND']
+        assert 'BatchMode=yes' in os.environ['GIT_SSH_COMMAND']
     remote = args[-2]
     args[-2] = os.environ['TEST_REMOTE']
     with open(os.environ['TEST_MUTATIONS'], 'a') as stream: stream.write('clone\\n')
@@ -90,6 +97,204 @@ os.execv(native, [native, *args])
         admin = Path(marker.read_text().strip()[8:])
         shutil.rmtree(path)
         shutil.rmtree(admin)
+
+    def ssh_clone(self, *, selected=False, local=False, references=(), remote='git@fixture-alias:team/repo.git', version=2):
+        self.paths, self.branches, self.parents = self.paths[:1], ['main'], [0]
+        self.configure()
+        if (self.home / 'Projects').exists():
+            shutil.rmtree(self.home / 'Projects')
+        repositories = self.stage / self.contract.REPOSITORIES
+        repositories.write_text(repositories.read_text().replace('https://example.invalid/team/repo.git', remote))
+        raw = ('Host fixture-alias\n    HostName example.invalid\n    User git\n' + ''.join(
+            '    IdentityFile ' + value + '\n' for value in references)).encode()
+        if local:
+            directory = self.home / '.ssh'; directory.mkdir(mode=0o700, exist_ok=True)
+            target = directory / 'config'; target.write_bytes(raw); target.chmod(0o600)
+        if selected:
+            blueprint = self.stage / 'blueprint.conf'
+            blueprint.write_text(blueprint.read_text().replace('ssh-configuration="false"', 'ssh-configuration="true"'))
+            fixture.bundle.write_file(self.stage / 'generated/ssh/config.snapshot',
+                f'# toolkit-ssh-snapshot: {version}\n# status: ready\n# excluded-profiles: 0\n\n'.encode() + raw)
+        self.archive.unlink(); self.pack()
+
+    def test_ssh_selected_alias_publication_before_clone(self):
+        self.ssh_clone(selected=True)
+        self.environment['TEST_EXPECT_SSH_CONFIG'] = 'true'
+        plan = self.prepare()
+        self.assertEqual(self.git_rows(plan)[0]['reason'], 'git_ssh_restore_pending')
+        self.assertFalse((self.root / 'mutations').exists())
+        self.assertFalse((self.home / '.ssh').exists())
+        result, events = self.execute(plan['prepared_plan_id'])
+        self.assertEqual(result.returncode, 0, events)
+        self.assertEqual((self.root / 'mutations').read_text().splitlines(), ['clone'])
+        repeated = self.git_rows(self.prepare())[0]
+        self.assertEqual(repeated['disposition'], 'satisfied')
+        self.assertNotIn('git_ssh', repeated['reason'] or '')
+
+    def test_ssh_v1_selected_alias_and_uri(self):
+        self.ssh_clone(selected=True, remote='ssh://git@fixture-alias/team/repo.git', version=1)
+        self.environment['TEST_EXPECT_SSH_CONFIG'] = 'true'
+        self.assertEqual(self.git_rows(self.prepare())[0]['reason'], 'git_ssh_restore_pending')
+        self.restore()
+
+    def test_ssh_local_key_and_stale_identity(self):
+        self.ssh_clone(local=True, references=['~/.ssh/id_fixture'])
+        key = self.home / '.ssh/id_fixture'
+        subprocess.run(['/usr/bin/ssh-keygen', '-q', '-t', 'ed25519', '-N', '', '-f', str(key)], check=True)
+        plan = self.prepare()
+        self.assertEqual(self.git_rows(plan)[0]['reason'], 'git_ssh_local_ready')
+        key.write_bytes(key.read_bytes() + b'\n')
+        result, events = self.execute(plan['prepared_plan_id'])
+        self.assertEqual(result.returncode, 2, events)
+        self.assertEqual(events[-1]['data']['code'], 'stale_plan')
+        self.assertFalse(events[-1]['data']['publication_started'])
+        self.assertFalse((self.root / 'mutations').exists())
+
+    def test_ssh_local_configuration_clone_and_stale_config(self):
+        self.ssh_clone(local=True)
+        plan = self.prepare()
+        self.assertEqual(self.git_rows(plan)[0]['reason'], 'git_ssh_local_ready')
+        target = self.home / '.ssh/config'
+        target.write_bytes(target.read_bytes() + b'# changed\n')
+        result, events = self.execute(plan['prepared_plan_id'])
+        self.assertEqual(result.returncode, 2, events)
+        self.assertEqual(events[-1]['data']['code'], 'stale_plan')
+        self.restore()
+
+    def test_ssh_missing_required_key_and_independent_https(self):
+        self.paths, self.branches, self.parents = self.paths[:2], ['main', 'main'], [0, 1]
+        self.configure(folders=['Projects'])
+        shutil.rmtree(self.home / 'Projects')
+        repositories = self.stage / self.contract.REPOSITORIES
+        repositories.write_text(repositories.read_text().replace('https://example.invalid/team/repo.git',
+            'git@fixture-alias:team/repo.git', 1))
+        directory = self.home / '.ssh'; directory.mkdir(mode=0o700)
+        (directory / 'config').write_text('Host fixture-alias\n    HostName example.invalid\n    IdentityFile ~/.ssh/missing\n')
+        (directory / 'config').chmod(0o600)
+        self.archive.unlink(); self.pack()
+        plan = self.prepare(); rows = {row['checkout_id']: row for row in self.git_rows(plan)}
+        self.assertEqual(rows[self.ids[0]]['reason'], 'git_ssh_identity_unresolved')
+        self.assertEqual(rows[self.ids[0]]['disposition'], 'blocked')
+        self.assertEqual(rows[self.ids[1]]['disposition'], 'planned')
+        result, events = self.execute(plan['prepared_plan_id'])
+        self.assertEqual(result.returncode, 0, events)
+        self.assertFalse((self.home / self.paths[0]).exists())
+        self.assertTrue((self.home / self.paths[1] / '.git').exists())
+        self.assertEqual((self.root / 'mutations').read_text().splitlines(), ['clone'])
+        self.assertNotEqual(events[-2]['data']['verification']['verdict'], 'selected_requirements_verified')
+
+    def test_ssh_conflict_and_independent_https_with_unsupported_ssh(self):
+        self.ssh_clone(selected=True, local=True)
+        target = self.home / '.ssh/config'
+        target.write_text(target.read_text().replace('example.invalid', 'different.invalid'))
+        plan = self.prepare()
+        self.assertEqual(self.git_rows(plan)[0]['reason'], 'git_ssh_configuration_conflict')
+        self.assertFalse(plan['readiness']['ready'])
+        # Existing topology admission allows HTTPS/SSH, not file/local remotes.
+        # Do not widen it just because Clone Executor also supports local forms.
+        self.ssh_clone(remote='https://example.invalid/team/repo.git')
+        target.write_text('Match exec unsafe\n')
+        self.assertIsNone(self.git_rows(self.prepare())[0]['reason'])
+        self.restore()
+
+    def test_ssh_private_import_binding_and_approved_destination(self):
+        # Component fixture: authenticated evidence is simulated here; the secure
+        # suite separately exercises the actual encrypted import/receipt bridge.
+        sys.path.insert(0, str(fixture.ROOT / 'modules/ssh'))
+        sys.path.insert(0, str(fixture.ROOT / 'modules/bootstrap/workspace'))
+        import git_dependencies as dependency
+        self.ssh_clone(local=True, references=['~/keys/id_fixture'])
+        files = {str(p.relative_to(self.stage)): p.read_bytes() for p in self.stage.rglob('*') if p.is_file()}
+        rows = [dict(domain='git-repositories', item_id='1', checkout_id=self.ids[0], action='clone',
+                     disposition='planned', reason=None, dependency_ids=[])]
+        evidence = dependency.assess(files, self.home, rows, pending_secure=True)
+        rule = evidence['rules'][self.ids[0]]
+        self.assertEqual(rule['reason'], dependency.PENDING)
+        empty = dependency.assess(files, self.home, rows, pending_secure=True,
+                                 destinations=dict(version=2, bundle_id='b' * 64, items=[]))
+        self.assertEqual(empty['rules'][self.ids[0]]['reason'], dependency.MISSING)
+        (self.home / 'keys').mkdir(mode=0o700)
+        key = self.home / 'keys/id_fixture'
+        subprocess.run(['/usr/bin/ssh-keygen', '-q', '-t', 'ed25519', '-N', '', '-f', str(key)], check=True)
+        receipt = dict(identity_id='a' * 64, name='id_fixture', target='identical',
+                       pair_digest=[hashlib.sha256(p.read_bytes()).hexdigest() for p in (key, key.with_suffix('.pub'))])
+        mapping = dict(version=2, bundle_id='b' * 64, items=[dict(identity_id='a' * 64, directory=str(key.parent), selected=True)])
+        excluded = copy.deepcopy(evidence)
+        excluded_mapping = copy.deepcopy(mapping); excluded_mapping['items'][0]['selected'] = False
+        dependency.bind_imports(excluded, self.home, authenticated=[receipt], destinations=excluded_mapping)
+        self.assertFalse(dependency.revalidate(excluded['rules'][self.ids[0]], self.home))
+        dependency.bind_imports(evidence, self.home, authenticated=[receipt], destinations=mapping)
+        self.assertTrue(dependency.revalidate(rule, self.home))
+        self.assertFalse(dependency.revalidate(rule, self.home, '/dev/null'), 'The executor must use the bound configuration')
+        key.chmod(0o644)
+        self.assertFalse(dependency.revalidate(rule, self.home), 'Changed or unsafe key evidence cannot launch a clone')
+        key.chmod(0o600)
+        target = self.home / '.ssh/config'
+        target.write_text(target.read_text().replace('~/keys/id_fixture', str(key)))
+        unapproved = dependency.assess(files, self.home, rows)
+        self.assertEqual(unapproved['rules'][self.ids[0]]['reason'], dependency.MISSING)
+        approved = dependency.assess(files, self.home, rows, approved_paths=[str(key)])
+        self.assertTrue(dependency.revalidate(approved['rules'][self.ids[0]], self.home))
+        for remote in ('git@github.com:owner/repo.git', 'ssh://git@github.com/owner/repo.git'):
+            self.assertEqual(dependency.host(remote), 'github.com')
+        for remote in ('https://example.invalid/repo', 'file:///fixture/repo', '/fixture/repo'):
+            self.assertIsNone(dependency.host(remote))
+        self.assertEqual(dependency.host('git@Fixture-Alias:repo'), 'Fixture-Alias')
+        self.assertRaises(ValueError, dependency.host, 'ssh://git:secret@example.invalid/repo')
+
+    def test_ssh_shared_file_transition_and_dependency_ids(self):
+        sys.path.insert(0, str(fixture.ROOT / 'modules/ssh'))
+        sys.path.insert(0, str(fixture.ROOT / 'modules/bootstrap/workspace'))
+        import git_dependencies as dependency
+        from topology_preview import dependency_id
+        self.ssh_clone(local=True)
+        files = {str(p.relative_to(self.stage)): p.read_bytes() for p in self.stage.rglob('*') if p.is_file()}
+        files['blueprint.conf'] = files['blueprint.conf'].replace(b'ssh-configuration="false"', b'ssh-configuration="true"')
+        additional = [('hostname', 'other.invalid')]
+        files['generated/ssh/config.snapshot'] = dependency.snapshot('additional', additional)
+        rows = [dict(domain='git-repositories', item_id='1', checkout_id=self.ids[0], action='clone',
+                     disposition='planned', reason=None, dependency_ids=[])]
+        evidence = dependency.assess(files, self.home, rows)
+        rule = evidence['rules'][self.ids[0]]
+        self.assertEqual(rule['reason'], dependency.PENDING)
+        with mock.patch.object(dependency, 'MAX_EVIDENCE', 0):
+            limited = dependency.assess(files, self.home, rows)
+        self.assertEqual(limited['rules'][self.ids[0]], dict(reason=dependency.UNSUPPORTED))
+        with mock.patch.object(dependency, 'MAX_HOSTS', 1), \
+                mock.patch.object(dependency, 'host', side_effect=['first', 'second']), \
+                mock.patch.object(dependency, 'qualify', side_effect=ValueError('unsupported')) as qualification:
+            dependency.assess(files, self.home, rows * 2)
+        self.assertEqual(qualification.call_count, 1, 'Failed observations also consume the Host budget')
+        with mock.patch('clone_execution.SSH_CONFIG_LIMIT', 1):
+            oversized = dependency.assess(files, self.home, rows)
+        self.assertEqual(oversized['rules'][self.ids[0]], dict(reason=dependency.UNSUPPORTED),
+                         'Planned publication must also fit the existing Clone Executor limit')
+        dependency.bind_imports(evidence, self.home)
+        self.assertFalse(dependency.revalidate(rule, self.home))
+        target = self.home / '.ssh/config'
+        target.write_bytes(target.read_bytes() + dependency.config.payload({'additional': additional}))
+        self.assertTrue(dependency.revalidate(rule, self.home), 'An authorized sibling Host merge must not invalidate this existing Host')
+        noop = [dict(rows[0], action='none', disposition='satisfied')]
+        self.assertFalse(dependency.assess(files, self.home, noop)['rules'])
+        folder = dict(domain='workspace-folders', item_id='Projects/checkout/data', action='create_directory',
+                      disposition='planned', reason=None, dependency_ids=[self.ids[0]])
+        workspace = dict(domain='vscode-workspaces', item_id='workspace-fixture', action='create_workspace',
+                         disposition='planned', reason=None,
+                         dependency_ids=[dependency_id('workspace-folders', folder['item_id'])])
+        projected = rows + [folder, workspace]
+        dependency.project(projected, dict(rules={self.ids[0]: dict(reason=dependency.CONFLICT)}))
+        self.assertTrue(all(row['disposition'] == 'blocked' for row in projected))
+        # No explicit dependency and ordered unresolved references remain distinct.
+        for references, expected in [(['none'], dependency.READY),
+                                     (['~/.ssh/first', '~/.ssh/second'], dependency.MISSING)]:
+            target.write_bytes(dependency.config.payload({'fixture-alias': [('hostname', 'example.invalid')]
+                              + [('identityfile', value) for value in references]}))
+            local_files = dict(files, **{'blueprint.conf': files['blueprint.conf'].replace(
+                b'ssh-configuration="true"', b'ssh-configuration="false"')})
+            assessed = dependency.assess(local_files, self.home, [dict(rows[0], action='clone', disposition='planned')])
+            local_rule = assessed['rules'][self.ids[0]]
+            self.assertEqual(local_rule['reason'], expected)
+            self.assertEqual([row['reference'] for row in local_rule['references']], references)
 
     def descriptors(self, *, folder_only=False, count=1, folders=None, linked=False):
         self.configure(folders=folders or ['Projects/data'])

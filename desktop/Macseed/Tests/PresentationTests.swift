@@ -5056,7 +5056,24 @@ private struct CaptureRefinementHost: View {
             precondition(blockedContent.allMatchCount == nil && blockedContent.showsPrerequisites,
                          "Removing an advisory work item must not hide failed readiness")
         }
-        print("PASS: SSH advisories preserve all-match presentation; required dependencies, Host conflicts, planned imports and category limitations remain visible")
+        for (reason, disposition, status, readyText) in [
+            ("git_ssh_local_ready", "planned", DisplayStatus.ready, "Ready to Restore"),
+            ("git_ssh_restore_pending", "planned", .ready, "Conditional"),
+            ("git_ssh_identity_unresolved", "blocked", .attention, ""),
+            ("git_ssh_configuration_conflict", "blocked", .attention, "")
+        ] {
+            var gitPlan = values
+            gitPlan["plan"] = [["domain": "git-repositories", "item_id": "1", "action": "clone", "disposition": disposition, "reason": reason]]
+            gitPlan["include_secure"] = false; gitPlan.removeValue(forKey: "ssh_resolution")
+            let prepared = try JSONDecoder().decode(CoreRestorePreparation.self, from: JSONSerialization.data(withJSONObject: gitPlan))
+            let presentation = RestorePreviewPresentation(prepared, catalog: catalog)
+            let item = presentation.categories[0].items[0]
+            precondition(presentation.categories.count == 1 && presentation.categories[0].items.count == 1,
+                         "SSH qualification describes the clone, not an additional task")
+            precondition(item.status == status && (item.restoreReadyText ?? "") == readyText)
+            if status == .ready { precondition(item.action.contains("Remote authentication has not been tested")) }
+        }
+        print("PASS: SSH advisories preserve all-match presentation; Git clone dependency states retain one task and do not imply remote authentication")
     }
 
     @MainActor static func main() async {

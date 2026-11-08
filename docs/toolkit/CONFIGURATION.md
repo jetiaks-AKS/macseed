@@ -917,6 +917,50 @@ Graceful Stop completes the owned step and prevents the next launch; resume mean
 fresh Preview and confirmation. Force Stop can require manual lifecycle inspection.
 Publication recovery protects configuration only, not Git state.
 
+#### SSH dependencies of planned clones
+
+Topology Restore qualifies literal scp-style and `ssh://` destinations through
+`modules/ssh/git_dependencies.py`, reusing the SSH snapshot parser, Safe Merge and
+IdentityFile qualification. Only planned clones are inspected: matching checkouts,
+local worktree/HEAD operations and HTTPS remain independent. Existing file/local
+transport admission is unchanged; this does not add file remotes to topology Bundles.
+
+| Clone finding | Preview |
+|---|---|
+| Safe local configuration and qualified explicit references | Changes Planned; remote authentication untested |
+| Selected Host publication or possible selected identity import required | Conditional; no claim that the encrypted package contains the needed key |
+| Missing/unqualified required explicit reference | Clone blocked; configuration itself can still retain its advisory |
+| Differing selected Host or unsupported/unsafe SSH input | Clone blocked; existing files preserved |
+| Existing matching checkout | Already Matches; no SSH requirement added |
+
+The selected effective snapshot includes only explicitly approved corrections.
+Literal Host matching is case-sensitive; HostName is never reverse-mapped into an
+alias. No wildcard/Match/Include evaluation, certificate/provider expansion, default
+key discovery or remote authentication probe occurs. At most 32 distinct literal
+destinations are qualified, using the existing per-profile reference/location
+bounds and a 1 MiB budget for private dependency details; excess rows stay
+unqualified. Planned configuration must also fit the Clone Executor's unchanged
+128 KiB inert-config limit. All explicit ordered file references must qualify; implicit files, agents
+and `IdentityFile none` remain unassessed remote authentication inputs. Unsupported
+local configuration remains unresolved rather than being interpreted speculatively.
+
+Only fixed clone reasons enter ordinary events; no Host/key relationship or extra
+dependency task is published. Private per-clone evidence extends the existing
+digest-bound Workspace context and prepared-plan diagnostics. After successful
+Secure Import, only receipt-qualified changes to the required paths may update key
+bindings. Failed/cancelled import never reaches Git. The existing Restore SSH
+prerequisite publishes/verifies configuration before Workspace; the consumer and
+Clone Executor admission recheck exact expected config bytes and safe key evidence,
+including the inert config snapshot actually supplied to SSH. Native host-key,
+BatchMode, process ownership, cancellation and retained-partial safeguards remain.
+
+An unrelated SSH dependency does not mark HTTPS or local worktree operations
+blocked. Existing operation-wide readiness still applies when an unsafe/conflicting
+SSH Configuration category is explicitly selected; exclude or resolve it before
+Execute. Late native Git failure retains the existing stop/fence policy. Legacy
+non-topology Restore retains its existing readiness and executor contract, without
+the new per-clone dependency projection.
+
 Global Verification emits the existing coverage/conformity records with a
 `topology` predicate for each selected checkout and directory predicates for
 folders. It independently checks common repository/base/linked relationship,

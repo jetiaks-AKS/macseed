@@ -245,14 +245,13 @@ Complete one bounded checkpoint at a time, preserving accepted scope and evidenc
 
 ## SSH Environment Completion — Developer Environment Closure
 
-**Next — planned, not implemented.** Following completed Stage 16H SSH Identities,
-complete practical SSH Configuration across Discovery → Capture → Preview →
-Restore → Verification, then integrate optional per-identity restore destinations
-(default `~/.ssh`) in the existing Rebuild Selection Customize… sheet. Preview
-remains read-only; no new screen or SSH manager. Validate `IdentityFile` against
-selected destinations, require explicit authorization for configuration corrections,
-retain genuine unsafe/unsupported/conflicting findings and Secure Migration v1
-compatibility, and later qualify joint E2E with custom destinations and repeated no-op.
+**SSH restoration foundation accepted; integration qualification open.** `5afa889`
+publishes independent SSH Configuration, explicit IdentityFile corrections, optional
+identity destinations and the unified selection UI. SSH-dependent topology clones
+now have bounded local dependency qualification under Slice 4C code review, reusing
+the existing import → configuration → clone order. Remote authentication and
+representative native joint E2E with custom destinations and repeated no-op remain
+qualification gates; local fixture evidence does not close them.
 [Capture / Restore](docs/CAPTURE-RESTORE.md#ssh-environment-completion--developer-environment-closure)
 owns the contract; [TODO](TODO.md#ssh-environment-completion--developer-environment-closure)
 owns unfinished actions. Stage 17 and the other remaining gates are unchanged.

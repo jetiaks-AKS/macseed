@@ -35,6 +35,7 @@ from secure import launch_channel, import_secure, compare_secure, SecureError
 import restore_destinations
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'ssh'))
 import restore_resolution as ssh_resolution
+import git_dependencies as git_ssh
 
 PROTOCOL_VERSION = 1
 MAX_REQUEST = 4096
@@ -298,6 +299,7 @@ def prepared_restore(path, disabled_groups, include_secure, selection=None, inst
             raise InvalidSelection() from None
         bundle.narrow(stage, disabled_groups, workspace_preview=workspace_preview)
         topology_preview = None
+        git_ssh_evidence = None
         topology_files = None
         preview_blueprint = stage / 'blueprint.conf'
         if bundle.workspace_extension_present(restore_selection.staged_files(stage)):
@@ -399,6 +401,10 @@ def prepared_restore(path, disabled_groups, include_secure, selection=None, inst
         if topology_files is not None:
             try:
                 topology_preview = inspect_topology(topology_files, os.environ['HOME'], bounded_read)
+                git_ssh_evidence = git_ssh.assess(topology_files, os.environ['HOME'], topology_preview['plan'],
+                    pending_secure=include_secure, destinations=destinations,
+                    approved_paths=[row['reference'] for row in (ssh_approvals or {}).get('items', [])])
+                git_ssh.project(topology_preview['plan'], git_ssh_evidence)
             except ObservationError:
                 raise PreviewFailed() from None
         workspace_clone = bool(topology_preview and any(row['action'] == 'clone' and row['disposition'] == 'planned'
@@ -597,6 +603,8 @@ def prepared_restore(path, disabled_groups, include_secure, selection=None, inst
             identity['ssh_observation'] = ssh_evidence
         if topology_preview is not None:
             identity['workspace_observation'] = topology_preview['fingerprint']
+            if git_ssh_evidence['rules']:
+                identity['git_ssh_observation'] = git_ssh_evidence['fingerprint']
         if duplicates:
             identity["requested_selection"] = requested_selection
             identity["application_duplicates"] = duplicates
@@ -615,6 +623,8 @@ def prepared_restore(path, disabled_groups, include_secure, selection=None, inst
             components['ssh_observation'] = ssh_evidence
         if topology_preview is not None:
             components['workspace_observation'] = topology_preview['fingerprint']
+            if git_ssh_evidence['rules']:
+                components['git_ssh_observation'] = git_ssh_evidence['fingerprint']
         summary["plan_diagnostics"] = {key: hashlib.sha256(json.dumps(value, sort_keys=True,
             separators=(",", ":")).encode()).hexdigest() for key, value in components.items()}
         # This identifies observed inputs and this module summary, never authorizes Apply.
@@ -945,7 +955,8 @@ def restore_execute(operation_id, path, disabled_groups, include_secure, expecte
                 if topology:
                     from topology_execution import create_context
                     try:
-                        workspace_environment = create_context(path, stage, source_id, stage_id, plan)
+                        workspace_environment = create_context(path, stage, source_id, stage_id, plan,
+                            approved_paths=[row['reference'] for row in (ssh_approvals or {}).get('items', [])], destinations=destinations)
                     except ValueError:
                         raise ExecuteFailed('stale_plan') from None
                 checkpoint()
@@ -979,6 +990,9 @@ def restore_execute(operation_id, path, disabled_groups, include_secure, expecte
                     original = bundle.checked_file(stage.parent / ssh_resolution.ORIGINAL)
                     ssh_execution = (ssh_resolution.execution_context(original, current, approvals=ssh_approvals,
                         bundle_id=source_id, destinations=destinations, authenticated=authenticated), original)
+                if topology:
+                    from topology_execution import bind_ssh_imports
+                    workspace_environment = bind_ssh_imports(workspace_environment, authenticated, destinations)
                 checkpoint()
                 environment = dict(os.environ, MACSEED_PKG_PREPARATION_CONTEXT=pkg_preparation.context(source_id, stage_id), BUNDLE_RESTORE_ACTIVE="true",
                                    BUNDLE_RESTORE_SECURE_FILE="application-evidence" if include_secure else "",

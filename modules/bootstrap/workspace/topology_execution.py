@@ -23,6 +23,8 @@ from reporting import project
 from homebrew_stop import State, KEY, StopAccepted
 from topology_preview import Inspector, inspect, contract, discovery, directory_fd, workspace_folders, dependency_id
 from clone_execution import CloneExecutor, pending
+sys.path.insert(0, str(ROOT / 'modules/ssh'))
+import git_dependencies as git_ssh
 
 KEY_CONTEXT = 'MACSEED_WORKSPACE_CONTEXT'
 KEY_DIGEST = 'MACSEED_WORKSPACE_CONTEXT_DIGEST'
@@ -32,18 +34,37 @@ def digest(value):
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
 
 
-def create_context(source, stage, source_id, stage_id, plan):
+def create_context(source, stage, source_id, stage_id, plan, *, approved_paths=(), destinations=None):
     files = restore_selection.staged_files(stage)
     evidence = inspect(files, os.environ['HOME'], read)
     if digest(evidence['fingerprint']) != plan['plan_diagnostics']['workspace_observation']:
         raise ValueError('workspace observation changed')
+    ssh = git_ssh.assess(files, os.environ['HOME'], evidence['plan'],
+                         pending_secure=plan['include_secure'], approved_paths=approved_paths, destinations=destinations)
+    if ssh['rules'] and digest(ssh['fingerprint']) != plan['plan_diagnostics'].get('git_ssh_observation'):
+        raise ValueError('SSH observation changed')
     value = dict(contract=1, source=str(Path(source).absolute()), stage=str(stage),
                  source_id=source_id, stage_id=stage_id, prepared_plan_id=plan['prepared_plan_id'],
-                 evidence=evidence)
+                 evidence=evidence, ssh=ssh, ssh_bound=False)
     path = stage.parent / 'workspace-execution.json'
     data = json.dumps(value, sort_keys=True).encode()
     bundle.write_file(path, data)
     return {KEY_CONTEXT: str(path), KEY_DIGEST: hashlib.sha256(data).hexdigest()}
+
+
+def bind_ssh_imports(environment, authenticated, destinations):
+    path = Path(environment[KEY_CONTEXT])
+    data = bundle.checked_file(path)
+    if hashlib.sha256(data).hexdigest() != environment[KEY_DIGEST]:
+        raise ValueError('workspace context changed')
+    value = json.loads(data)
+    git_ssh.bind_imports(value['ssh'], os.environ['HOME'], authenticated=authenticated, destinations=destinations)
+    value['ssh_bound'] = True
+    # Separate, exclusive protected publication; never replace an accepted input.
+    bound = path.with_name('workspace-bound-execution.json')
+    data = json.dumps(value, sort_keys=True).encode()
+    bundle.write_file(bound, data)
+    return {KEY_CONTEXT: str(bound), KEY_DIGEST: hashlib.sha256(data).hexdigest()}
 
 
 class Consumer:
@@ -255,12 +276,17 @@ class Consumer:
         previous = inspect(self.files, self.home, read)
         if previous != self.context['evidence']:
             raise ValueError('stale workspace plan')
+        if not self.context.get('ssh_bound'):
+            raise ValueError('unbound SSH dependencies')
         failed = set()
         status = 0
         for authorized in self.context['evidence']['plan']:
             self.checkpoint()
             row = self.current_row(previous['plan'], authorized)
             item = row.get('checkout_id')
+            ssh_rule = self.context['ssh']['rules'].get(item)
+            if ssh_rule is not None and not git_ssh.revalidate(ssh_rule, self.home):
+                row = dict(row, disposition='blocked', reason=git_ssh.MISSING)
             if any(parent in failed for parent in row.get('dependency_ids', [])):
                 row = dict(row, disposition='blocked', reason='workspace_dependency_pending')
             if row['disposition'] == 'satisfied':
@@ -351,7 +377,8 @@ class Consumer:
                 self.executor = CloneExecutor(deadline=7200 if row['action'] == 'clone' else 120)
                 if row['action'] == 'clone':
                     code, reason, safe = self.executor.run(self.records[item]['remote'], str(path),
-                        self.records[item]['branch'], empty_destination=path.exists(), verify=verify)
+                        self.records[item]['branch'], empty_destination=path.exists(), verify=verify,
+                        admit=(lambda config: git_ssh.revalidate(ssh_rule, self.home, config)) if ssh_rule is not None else None)
                 else:
                     args, env = self.local_command(item, row['action'])
                     def unchanged():

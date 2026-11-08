@@ -95,7 +95,7 @@ struct RestorePreviewPresentation {
             let inventoryLabel = row.selectionItemID.flatMap { id in catalog.inventory.first { $0.id == row.domain }?.items.first { $0.id == id }?.label }
             let title = row.isSSHDependency ? "SSH key references" : row.isSecureImport ? "Encrypted SSH identity package" : inventoryLabel ?? row.displayName ?? (row.itemID.hasPrefix("opaque:") ? "Private item" : (row.itemID == "scope" ? "Selected area" : row.itemID))
             let action = row.assistedAppStoreItem?.message ?? row.unsupportedRepairExplanation ?? row.diagnostic?.explanation ?? reasonMessage ?? (row.authorizationRequired == true ? message + " · Administrator authorization required" : message)
-            let conditional = ["workspace_dependency_pending", "workspace_commit_after_clone"].contains(row.reason ?? "")
+            let conditional = ["workspace_dependency_pending", "workspace_commit_after_clone", "git_ssh_restore_pending"].contains(row.reason ?? "")
             rows[row.domain, default: []].append(DisplayItem(id: "restore-\(index)", title: title, status: status, action: action, reason: row.reason, restoreReadyText: status == .ready ? (row.isSSHDependency ? "After Secure Transfer" : conditional ? "Conditional" : Self.readyText(action: row.action)) : nil))
         }
         categories = order.map { domain in

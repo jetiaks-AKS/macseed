@@ -166,6 +166,13 @@ class Progress:
         return self.last is not None and now - self.last >= self.interval
 
 
+SSH_CONFIG_LIMIT = 128 * 1024
+
+
+def uses_ssh(remote):
+    return remote.startswith('ssh://') or (':' in remote and not remote.startswith(('https://', 'file://', '/')))
+
+
 def ssh_configuration(stack):
     """Snapshot inert client settings; native SSH still owns Host matching.
 
@@ -179,8 +186,8 @@ def ssh_configuration(stack):
     with os.fdopen(descriptor, 'rb') as stream:
         if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
             raise CloneAdmissionError('unsafe SSH configuration')
-        raw = stream.read(131073)
-    if len(raw) > 131072:
+        raw = stream.read(SSH_CONFIG_LIMIT + 1)
+    if len(raw) > SSH_CONFIG_LIMIT:
         raise CloneAdmissionError('oversized SSH configuration')
     try:
         data = raw.decode('utf-8')
@@ -251,12 +258,13 @@ class CloneExecutor:
     def cancel(self, *_):
         self.cancelled = True
 
-    def run(self, remote, path, branch, *, empty_destination=False, verify=None):
+    def run(self, remote, path, branch, *, empty_destination=False, verify=None, admit=None):
         def prepare(scratch):
             if empty_destination and (Path(path).is_symlink() or not Path(path).is_dir() or any(Path(path).iterdir())):
                 raise ValueError('destination changed')
-            ssh_remote = remote.startswith('ssh://') or (':' in remote and not remote.startswith(('https://', 'file://', '/')))
-            config = ssh_configuration(scratch) if ssh_remote else '/dev/null'
+            config = ssh_configuration(scratch) if uses_ssh(remote) else '/dev/null'
+            if admit is not None and not admit(config):
+                raise CloneAdmissionError('SSH dependency changed')
             return command(remote, path, branch, config)
         return self._run(path, prepare, existing=empty_destination, verify=verify)
 

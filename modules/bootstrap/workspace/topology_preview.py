@@ -425,11 +425,10 @@ class Inspector(discovery.Observer):
                         raise Conflict('workspace_operation_in_progress')
 
     def clone_profile(self, remote, destination, branch):
-        from clone_execution import command, ssh_configuration
+        from clone_execution import command, ssh_configuration, uses_ssh
         try:
             with ExitStack() as scratch:
-                ssh = remote.startswith('ssh://') or (':' in remote and not remote.startswith('https://'))
-                configuration = ssh_configuration(scratch) if ssh else '/dev/null'
+                configuration = ssh_configuration(scratch) if uses_ssh(remote) else '/dev/null'
                 command(remote, str(destination), branch, configuration,
                         observe=lambda data: self.remember(hashlib.sha256(data).hexdigest()))
         except (OSError, ValueError):

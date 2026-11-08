@@ -667,6 +667,67 @@ class SecureRestoreTests(unittest.TestCase):
         (self.root / 'bin/bs').symlink_to(self.project / 'bin/bs')
         self.environment['BS_INSTALL_DIR'] = str(self.root / 'bin')
 
+    def git_dependency_fixture(self):
+        contract = bundle.workspace_contract()
+        spec = importlib.util.spec_from_file_location('git_ssh_fixture', ROOT / 'scripts/workspace_fixture.py')
+        workspace_fixture = importlib.util.module_from_spec(spec); spec.loader.exec_module(workspace_fixture)
+        remote, oid = workspace_fixture.repository(self.root, 'git-remote')
+        checkout = contract.identity('checkout', 'Projects/checkout')
+        blueprint = self.stage / 'blueprint.conf'
+        blueprint.write_text(blueprint.read_text().replace('[git-repositories]\n', '[git-repositories]\n' + checkout + '\n'))
+        bundle.write_file(self.stage / contract.REPOSITORIES, (
+            f'[{checkout}]\nNAME="checkout"\nPATH="/Users/source/Projects/checkout"\n'
+            'REMOTE="git@private-host:team/repo.git"\nCURRENT_BRANCH="main"\nDEFAULT_BRANCH="main"\nTOPOLOGY_VERSION="1"\n'
+            + ''.join(key + '="false"\n' for key in ('HAS_UNCOMMITTED_CHANGES', 'HAS_VSCODE_FOLDER',
+                'HAS_SETTINGS', 'HAS_TASKS', 'HAS_LAUNCH', 'HAS_EXTENSIONS'))).encode())
+        bundle.write_file(self.stage / contract.TOPOLOGY, json.dumps(dict(contract=1, roots=['Projects'], groups=[
+            dict(id=contract.identity('repository', 'Projects/checkout'), base_item_id=checkout, object_format='sha1',
+                 members=[dict(item_id=checkout, head_kind='branch', head_oid=oid)])])).encode())
+        self.environment.update(GIT_CONFIG_NOSYSTEM='1', GIT_CONFIG_GLOBAL='/dev/null',
+                                TEST_REAL_GIT=shutil.which('git'), TEST_REMOTE=str(remote))
+        wrapper = self.root / 'bin/git'
+        wrapper.write_text('''#!/usr/bin/env python3
+import os, subprocess, sys
+args=sys.argv[1:]; native=os.environ['TEST_REAL_GIT']
+if 'clone' in args:
+    for name in ('config','id_disposable','id_disposable.pub'):
+        assert os.path.isfile(os.path.join(os.environ['HOME'],'.ssh',name))
+    assert 'StrictHostKeyChecking=yes' in os.environ['GIT_SSH_COMMAND']
+    assert 'BatchMode=yes' in os.environ['GIT_SSH_COMMAND']
+    remote=args[-2]; args[-2]=os.environ['TEST_REMOTE']
+    with open(os.environ['TEST_MUTATIONS'],'a') as log: log.write('clone\\n')
+    code=subprocess.call([native,*args])
+    if not code: code=subprocess.call([native,'-C',args[-1],'config','remote.origin.url',remote])
+    sys.exit(code)
+os.execv(native,[native,*args])
+''')
+        wrapper.chmod(0o700)
+        self.archive.unlink(); bundle.pack(self.stage, self.archive, '/Users/source')
+
+    def test_git_clone_after_protected_import_and_ssh_publication(self):
+        self.fixture(protected=True); self.dependency_snapshot(['~/.ssh/id_disposable'])
+        self.git_dependency_fixture(); self.ssh_bootstrap()
+        result, events = self.invoke(secure=True)
+        self.assertEqual(result.returncode, 0, events)
+        plan = events[1]['data']
+        git = next(row for row in plan['plan'] if row['domain'] == 'git-repositories')
+        self.assertEqual((git['disposition'], git['reason']), ('planned', 'git_ssh_restore_pending'))
+        self.assertFalse((self.home / '.ssh').exists())
+        status, events, _ = self.peer(lambda c, _count, _child: 'cancel' if c['kind'] == 'import_confirmation' else None,
+                                      plan=plan['prepared_plan_id'])
+        self.assertNotEqual(status, 0)
+        self.assertFalse((self.root / 'mutations').exists())
+        self.assertFalse((self.home / 'Projects/checkout').exists())
+        result, events = self.invoke(secure=True)
+        self.assertEqual(result.returncode, 0, events)
+        status, events, challenges = self.peer(plan=events[1]['data']['prepared_plan_id'], timeout=60)
+        self.assertEqual(status, 0, events)
+        self.assertIn('ssh_key_unlock', [row['kind'] for row in challenges])
+        self.assertEqual((self.root / 'mutations').read_text().splitlines(), ['clone'])
+        self.assertEqual(events[-2]['data']['verification']['verdict'], 'selected_requirements_verified', events)
+        for private in ('private-host', 'private.invalid', 'id_disposable', str(self.home)):
+            self.assertNotIn(private, json.dumps(events))
+
     def test_v2_secure_expected_import_precedes_configuration(self):
         self.fixture(protected=True); self.dependency_snapshot(['~/.ssh/id_disposable']); self.ssh_bootstrap()
         plan, _, receipt = self.dependency_compare()
