@@ -443,6 +443,29 @@ private struct CaptureRefinementHost: View {
         print("PASS: dynamic nonzero green/blue/orange cards; one full-width all-match card; genuine blockers/incomplete states and action-focused filtering retained")
     }
 
+    @MainActor static func captureConfirmationPrivacyChecks(_ source: String) {
+        let selected = CaptureModel.confirmationPrivacyMessage(includesSSHIdentities: true).lowercased()
+        precondition(selected.contains("ssh identities are encrypted separately"),
+            "Selected identities must disclose their separate encryption")
+        precondition(selected.contains("other saved settings are not encrypted"),
+            "Identity encryption must not imply that ordinary settings are encrypted")
+        precondition(selected.contains("bundle passphrase") && selected.contains("safe"),
+            "Secure Capture must retain passphrase safekeeping guidance")
+        let ordinary = CaptureModel.confirmationPrivacyMessage(includesSSHIdentities: false).lowercased()
+        precondition(ordinary.contains("saved settings are not encrypted"))
+        precondition(!["ssh", "identities", "secure transfer", "passphrase"].contains(where: ordinary.contains),
+            "Capture without identities must omit irrelevant Secure Transfer guidance")
+
+        let confirmation = source.components(separatedBy: "case .confirmation:")[1]
+            .components(separatedBy: "case .result:")[0]
+        let preparedSelection = #"let\s+selection\s*=\s*prepared\s*\.\s*publicationSelection"#
+        let contextualMessage = #"Text\s*\(\s*CaptureModel\s*\.\s*confirmationPrivacyMessage\s*\(\s*includesSSHIdentities\s*:\s*!\s*selection\s*\.\s*secureIdentities\s*\.\s*isEmpty\s*\)\s*\)"#
+        precondition(confirmation.range(of: preparedSelection, options: .regularExpression) != nil
+            && confirmation.range(of: contextualMessage, options: .regularExpression) != nil,
+            "CaptureView must render the model's privacy message for the prepared publication selection")
+        print("PASS: Capture Confirmation contextual encryption boundary, passphrase guidance and prepared-selection presentation")
+    }
+
     @MainActor static func externalIdentityChecks() async throws {
         setbuf(stdout, nil)
         _ = NSApplication.shared
@@ -453,7 +476,8 @@ private struct CaptureRefinementHost: View {
         precondition(picker.contains("NSOpenPanel()") && picker.contains("allowsMultipleSelection = false")
             && picker.contains("canChooseDirectories = false") && picker.contains("resolvesAliases = false")
             && picker.contains("model.addSSHIdentity"))
-        precondition(source.contains("model.externalDestinationExplanation") && source.contains("manualIDs: model.manualIdentityIDs"))
+        captureConfirmationPrivacyChecks(source)
+        precondition(source.contains("manualIDs: model.manualIdentityIDs"))
         var items: [CoreCaptureSecureInventory.Identity] = []
         for index in 0..<3 {
             let label = index == 0 ? "id_standard" : String(repeating: "external_", count: 8) + String(index)
@@ -5297,7 +5321,7 @@ private struct CaptureRefinementHost: View {
             + String(contentsOf: sources.appendingPathComponent("FoundationSettings.swift"), encoding: .utf8)
         let captureView = try! String(contentsOf: sources.appendingPathComponent("CaptureView.swift"), encoding: .utf8)
         precondition(!captureView.contains("Capture does not rebuild or change settings on this Mac."))
-        precondition(captureView.contains("The saved settings are private but unencrypted. Private SSH identities are not included."))
+        captureConfirmationPrivacyChecks(captureView)
         precondition(captureView.contains("No completed publication was reported.") && captureView.contains("Publication could not be confirmed."))
         precondition(captureView.contains("failure.isOutdatedPreparation") && captureView.contains("Text(failure.presentationTitle)"))
 
@@ -5414,16 +5438,18 @@ private struct CaptureRefinementHost: View {
             .components(separatedBy: "func requestStop()")[0]
         let executePattern = #"CoreRequest\s*\(\s*\.restoreExecute\s*\(\s*path\s*:\s*source\.path\s*,\s*disabledGroups\s*:\s*\[\s*\]\s*,"#
             + #"\s*includeSecure\s*:\s*includeSecure\s*,\s*preparedID\s*:\s*plan\.preparedPlanID\s*,"#
-            + #"\s*selection\s*:\s*selection\s*,\s*secureComparison\s*:\s*plan\.secureComparison\s*\)\s*,\s*restoreDestinations\s*:\s*privateDestinations\s*\)"#
+            + #"\s*selection\s*:\s*selection\s*,\s*secureComparison\s*:\s*plan\.secureComparison\s*\)\s*,\s*restoreDestinations\s*:\s*privateDestinations\s*,"#
+            + #"\s*sshApprovals\s*:\s*privateSSHApprovals\s*\)"#
         precondition(restoreView.contains("model.confirmRebuild()")
             && confirmRebuild.range(of: executePattern, options: .regularExpression) != nil
             && confirmRebuild.contains("runtime.start(request, location: location)"),
-            "Confirmed Rebuild must dispatch the selected scope and its prepared secure comparison through the model")
+            "Confirmed Rebuild must dispatch the selected scope, prepared secure comparison and explicit SSH approvals through the model")
         let executeGuard = confirmRebuild.components(separatedBy: "let request =")[0].filter { !$0.isWhitespace }
         precondition(executeGuard.contains("guardstate==.confirming,!runtime.isActive")
             && executeGuard.contains("plan.selection==canonicalSelection,plan.includeSecure==includeSecure")
+            && executeGuard.contains("plan.sshDependenciesReady")
             && executeGuard.contains("!includeSecure||plan.secureComparedReadyelse{return}"),
-            "Execute must reject a busy runtime, stale selection or unready selected Secure Transfer")
+            "Execute must reject a busy runtime, stale selection, unresolved SSH dependencies or unready selected Secure Transfer")
         let defaultRestoreRuntime = CoreRuntime()
         let defaultRestore = RestoreModel(runtime: defaultRestoreRuntime)
         precondition(!defaultRestore.includeSecure, "Secure Transfer must remain off by default")
