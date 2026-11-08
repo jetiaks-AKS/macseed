@@ -148,7 +148,8 @@ struct CaptureMacOSSettingsGroup {
 enum CaptureSelectionScope: CaseIterable {
     case ordinary, advanced
     func contains(_ domain: String) -> Bool {
-        switch WorkspacePresentationTaxonomy.group(for: domain).section {
+        guard domain != "ssh-configuration" else { return false }
+        return switch WorkspacePresentationTaxonomy.group(for: domain).section {
         case .applicationsTools, .macOSSettings, .applicationExtras: self == .ordinary
         case .advanced: self == .advanced
         case .otherFindings: false

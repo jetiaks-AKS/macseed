@@ -38,9 +38,9 @@ class CoreInterfaceTests(unittest.TestCase):
         self.assertEqual(records[1]["data"], {
             "protocol_version": 1,
             "product_version": "3.4.0",
-            "features": {"secure_restore_destinations": {"version": 1, "selection_version": 2, "inventory": "secure_restore_inventory", "max_items": 32}, "external_ssh_identities": {"version": 1, "destination": "ssh_directory", "max_items": 32}, "pkg_installer_preparation": {"version": 1}, "bundle_comparison": {"version": 1},
+            "features": {"ssh_identity_resolution": {"version": 1, "review": "ssh_restore_review", "max_items": 32}, "secure_restore_destinations": {"version": 1, "selection_version": 2, "inventory": "secure_restore_inventory", "max_items": 32}, "external_ssh_identities": {"version": 1, "destination": "ssh_directory", "max_items": 32}, "pkg_installer_preparation": {"version": 1}, "bundle_comparison": {"version": 1},
                 "homebrew_graceful_stop": {"version": 1}, "restore_selection": {"version": 1, "inventory": "bundle_inspect", "selection_modes": ["category", "items"]}},
-            "operations": ["capabilities", "bundle_inspect", "restore_prepare", "restore_execute", "secure_restore_compare", "secure_restore_inventory", "capture_prepare", "capture_execute", "capture_identity_inspect", "environment_compare"],
+            "operations": ["ssh_restore_review", "capabilities", "bundle_inspect", "restore_prepare", "restore_execute", "secure_restore_compare", "secure_restore_inventory", "capture_prepare", "capture_execute", "capture_identity_inspect", "environment_compare"],
         })
         self.assertEqual(sum(row["type"] in ("completed", "failed") for row in records), 1)
         self.assertEqual(records[-1]["type"], "completed")

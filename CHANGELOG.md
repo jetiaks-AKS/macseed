@@ -11,6 +11,11 @@ The format is based on the principles of **Keep a Changelog**.
 
 ### Added
 
+* Independent safe SSH Configuration restoration: unchanged IdentityFile references
+  can be preserved with a separate key advisory, while explicitly approved path
+  corrections retain qualified-evidence requirements. Capture and Rebuild share
+  an SSH group with independent Configuration and default-off SSH Keys selection.
+
 * Core read-only qualification of selected SSH Host IdentityFile dependencies,
   with safe local pair evidence and authenticated Secure Compare destinations.
   Findings remain separate from configuration conformity; no path rewriting,

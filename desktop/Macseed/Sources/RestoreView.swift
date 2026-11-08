@@ -53,6 +53,11 @@ struct RestoreAreaSelectionView: View {
                         if model.canRetrySSHReview { Button("Retry Review") { model.reviewSSHReferences(retry: true) } }
                     }.padding(.leading, hierarchyIndent + 40).padding(.vertical, 6)
                 }
+                if area.id == "ssh-configuration", model.sshReviewMessage == nil, let summary = model.sshCorrectionSummary {
+                    Label(summary, systemImage: "info.circle").font(.callout).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.leading, hierarchyIndent + 40).padding(.vertical, 6)
+                }
                 if let description = Self.selectionDescription(area.id) {
                     Text(description).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                         .padding(.leading, hierarchyIndent + 40).padding(.vertical, 4)
@@ -76,10 +81,6 @@ struct RestoreAreaSelectionView: View {
                 }
             }
             if area.id == "ssh-configuration", (expansion?.wrappedValue ?? expanded), model.sshResolutionSupported {
-                if let summary = model.sshCorrectionSummary {
-                    Text(summary).font(.callout).foregroundStyle(.secondary)
-                        .padding(.leading, hierarchyIndent + 40).padding(.vertical, 6)
-                }
                 Color.clear.frame(height: 0).task(id: model.sshReviewTrigger) { model.reviewSSHReferences() }
             }
             if !notices.isEmpty { ItemDetails(items: notices).padding(.leading, RestoreRowGrid.titleInset + hierarchyIndent) }
@@ -140,7 +141,7 @@ enum RestoreSelectionPresentation {
         WorkspacePresentationTaxonomy.project(areas).flatMap(\.rows)
     }
     static func disclosureIDs(_ areas: [CoreRestoreInspection.Area], advanced: Bool, secureAvailable: Bool = false) -> Set<String> {
-        let sections = CaptureHierarchy.project(areas).filter {
+        let sections = CaptureHierarchy.project(areas.filter { $0.id != "ssh-configuration" }).filter {
             advanced ? $0.group == .advanced : CaptureHierarchy.ordinaryGroups.contains($0.group)
         }
         var ids = Set(sections.map { CaptureHierarchy.sectionID($0.group) })
@@ -148,7 +149,13 @@ enum RestoreSelectionPresentation {
             if section.group == .vscode { ids.insert(section.group.id) }
             ids.formUnion(section.rows.filter(RestoreAreaSelectionView.hasDisclosure).map(\.id))
         }
-        if advanced && secureAvailable { ids.insert(CaptureHierarchy.secureTransferID) }
+        if advanced && (secureAvailable || areas.contains(where: { $0.id == "ssh-configuration" })) {
+            ids.insert(CaptureHierarchy.sshID)
+            if areas.contains(where: { $0.id == "ssh-configuration" && RestoreAreaSelectionView.hasDisclosure($0) }) {
+                ids.insert("ssh-configuration")
+            }
+            if secureAvailable { ids.insert(CaptureHierarchy.secureTransferID) }
+        }
         return ids
     }
     static func group(_ areas: [CoreRestoreInspection.Area]) -> CoreRestoreInspection.Group {
@@ -219,10 +226,17 @@ struct RestoreSelectionContent: View {
     private var secureTransferGroup: AnyView? {
         guard model.inspection?.secureComponent == true else { return nil }
         return AnyView(VStack(alignment: .leading, spacing: 0) {
-            CaptureGroupHeader(title: "Secure Transfer", summary: model.includeSecure ? "Selected" : "Off", symbol: "lock.shield",
-                selection: AnyView(NativeSelectionCheckbox("", isOn: Binding(get: { model.includeSecure }, set: { model.selectSecureTransfer($0) }), accessibilityTitle: "Select Secure Transfer")
-                    .disabled(model.state != .review || model.runtime.isActive)),
-                expanded: WorkflowExpansion.binding(CaptureHierarchy.secureTransferID, in: treeExpansion))
+            HStack(spacing: RestoreRowGrid.spacing) {
+                NativeSelectionCheckbox("", isOn: Binding(get: { model.includeSecure }, set: { model.selectSecureTransfer($0) }), accessibilityTitle: "Select SSH Keys")
+                    .disabled(model.state != .review || model.runtime.isActive)
+                    .frame(width: RestoreRowGrid.checkboxWidth, height: 28).padding(.leading, CaptureReviewPresentation.hierarchyStep)
+                DisclosureGroup(isExpanded: WorkflowExpansion.binding(CaptureHierarchy.secureTransferID, in: treeExpansion)) { EmptyView() } label: {
+                    CaptureRowColumns(
+                        title: WorkspaceCategoryTitle(id: CaptureHierarchy.secureTransferID, title: "SSH Keys", fallbackSymbol: "lock.shield"),
+                        status: CaptureGroupStatus(summary: model.includeSecure ? model.identitySelectionSummary ?? "Selected" : "Off"))
+                }.disclosureGroupStyle(TaskDisclosureStyle())
+                    .accessibilityIdentifier("capture.disclosure.SSH Keys")
+            }.padding(.leading, 16 + CaptureChildRowGrid.leadingInset).padding(.trailing, 16)
             if treeExpansion.wrappedValue.contains(CaptureHierarchy.secureTransferID) {
                 Text("Encrypted SSH keys. Existing keys won't be overwritten.")
                     .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
@@ -233,9 +247,19 @@ struct RestoreSelectionContent: View {
                             .disabled(!model.canCustomizeDestinations)
                             .accessibilityIdentifier("restore.secure.customize")
                     }
-                    Text([model.identitySelectionSummary, model.destinationSummary].compactMap { $0 }.joined(separator: " · "))
-                        .font(.callout.weight(.semibold)).foregroundStyle(.primary)
+                    if let destinationSummary = model.destinationSummary {
+                        Text(destinationSummary).font(.callout.weight(.semibold)).foregroundStyle(.primary)
+                    }
                 }.padding(.leading, 16 + CaptureChildRowGrid.leadingInset).padding(.trailing, 16).padding(.bottom, 12)
+                if model.secureIdentitySelectionSupported, let inventory = model.destinationInventory {
+                    ForEach(inventory.items) { identity in
+                        CaptureItemSelectionRow(title: identity.name, included: Binding(
+                            get: { model.selectedIdentityIDs.contains(identity.id) },
+                            set: { model.selectIdentity(identity.id, included: $0) }))
+                            .disabled(!model.canCustomizeDestinations)
+                    }.padding(.leading, 16 + CaptureChildRowGrid.leadingInset + CaptureReviewPresentation.hierarchyStep * 2)
+                        .padding(.trailing, 16).padding(.bottom, 8)
+                }
                 if let message = model.destinationMessage {
                     Text(message).font(.callout).foregroundStyle(.secondary).padding(.horizontal, 16).padding(.bottom, 12)
                 }

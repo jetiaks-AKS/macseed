@@ -67,7 +67,7 @@ class IdentityDependencyTests(unittest.TestCase):
         self.assertEqual([r['reference'] for r in rows[0]['references']], hosts[0][1])
         self.assertEqual([r['status'] for r in rows[0]['references']], ['missing', 'local_satisfied'])
         self.assertEqual(rows[1]['references'][0]['status'], 'local_satisfied')
-        self.assertEqual(dependencies.projection(rows), dict(version=1, findings=['local_satisfied', 'missing']))
+        self.assertEqual(dependencies.projection(rows), dict(version=1, findings=['local_satisfied', 'missing'], reasons=['checked_absent', 'local_pair_qualified']))
 
     def test_none_implicit_legacy_and_absolute_never_read(self):
         with patch.object(dependencies, 'observe', side_effect=AssertionError('unexpected path inspection')):
@@ -224,6 +224,75 @@ class IdentityResolutionTests(unittest.TestCase):
         self.assertTrue(self.inspect(raw)['qualified'])
         self.assertTrue(resolution.apply(raw, str(self.home)))
         self.assertEqual((self.home / '.ssh/config').stat().st_mode & 0o777, 0o600)
+
+    def test_original_references_are_advisory_but_corrections_stay_strict(self):
+        raw = self.raw([('one', ['~/.ssh/missing']), ('shared', ['~/.ssh/missing'])])
+        plan = self.inspect(raw)
+        self.assertFalse(plan['qualified'])
+        self.assertTrue(resolution.public(plan)['ready'])
+        approval = self.approval(raw, '~/keys/also-missing')
+        corrected = self.inspect(raw, approvals=approval)
+        self.assertFalse(resolution.public(corrected)['ready'])
+        with self.assertRaises(resolution.SecureError):
+            self.execution_context(raw, corrected, approvals=approval, bundle_id='a' * 64)
+        self.assertFalse((self.home / '.ssh').exists())
+        context = self.execution_context(raw, plan)
+        self.assertTrue(resolution.apply(raw, str(self.home), context))
+        self.assertEqual((self.home / '.ssh/config').read_bytes(), resolution.config.payload(resolution.config.snapshot(raw)[3]))
+        self.assertFalse((self.home / '.ssh/missing').exists())
+        self.assertFalse(resolution.bound_plan(raw, str(self.home), None, verification=True)['qualified'])
+
+    def test_advisory_absence_does_not_hide_new_intermediate_directory(self):
+        raw = self.raw([('one', ['~/.ssh/nested/missing'])])
+        stable_home = self.root / 'stable-home'
+        stable_home.mkdir(mode=0o700)
+        self.assertTrue(resolution.apply(raw, str(stable_home)))
+        self.assertFalse((stable_home / '.ssh/nested').exists())
+        plan = self.inspect(raw)
+        context = self.execution_context(raw, plan)
+        create = resolution.create
+        def changed(expected, home, target, validate):
+            def recheck():
+                (self.home / '.ssh/nested').mkdir(mode=0o700)
+                validate()
+            return create(expected, home, target, recheck)
+        with patch.object(resolution, 'create', side_effect=changed):
+            with self.assertRaises(resolution.merge.PublicationUncertain):
+                resolution.apply(raw, str(self.home), context)
+        self.assertFalse((self.home / '.ssh/config').exists())
+        self.assertEqual(len(list((self.home / '.ssh').glob('.macseed-ssh-pending-*'))), 1)
+
+    def test_config_only_merge_keeps_reference_order_and_conflict_guards(self):
+        self.install()
+        target = self.home / '.ssh/config'
+        prefix = b'# retain\nHost existing\n HostName existing.invalid\n'
+        target.write_bytes(prefix); target.chmod(0o600)
+        raw = self.raw([('one', ['~/.ssh/missing', '~/.ssh/id_fixture', '/previous/key'])])
+        plan = self.inspect(raw)
+        self.assertEqual(plan['action'], 'merge')
+        self.assertTrue(resolution.apply(raw, str(self.home), self.execution_context(raw, plan)))
+        self.assertEqual(target.read_bytes(), prefix + resolution.config.payload(resolution.config.snapshot(raw)[3]))
+        self.assertEqual(self.inspect(raw)['action'], 'noop')
+
+    def test_config_only_does_not_grant_git_authentication(self):
+        from contextlib import ExitStack
+        sys.path.insert(0, str(ROOT / 'modules/bootstrap/workspace'))
+        import clone_execution
+        raw = self.raw([('one', ['~/.ssh/missing'])])
+        self.assertTrue(resolution.apply(raw, str(self.home)))
+        with patch.dict(os.environ, HOME=str(self.home)), ExitStack() as stack:
+            snapshot = clone_execution.ssh_configuration(stack)
+            self.assertIn(b'IdentityFile ~/.ssh/missing', Path(snapshot).read_bytes())
+            with patch.object(clone_execution, 'read', return_value=subprocess.CompletedProcess([], 0, b'', b'')):
+                for remote in ('git@one:fixture.git', 'https://example.invalid/fixture.git', 'file:///fixture.git'):
+                    argv, env = clone_execution.command(remote, str(self.home / 'checkout'), None, snapshot)
+                    self.assertIn(remote, argv)
+                    self.assertEqual(env['GIT_TERMINAL_PROMPT'], '0')
+                    for guard in ('BatchMode=yes', 'StrictHostKeyChecking=yes', 'AddKeysToAgent=no',
+                                  'ProxyCommand=none', 'ProxyJump=none', 'ForwardAgent=no'):
+                        self.assertIn(guard, env['GIT_SSH_COMMAND'])
+        self.assertFalse((self.home / '.ssh/missing').exists())
+        self.assertFalse((self.home / 'checkout').exists(), 'No network operation is executed by this fixture')
 
     def test_execution_context_large_snapshot_and_protected_original(self):
         raw = self.raw([(f'host-{index:04d}-' + 'x' * 65, []) for index in range(450)])
@@ -453,6 +522,35 @@ class SelectionTests(unittest.TestCase):
         self.ssh_ids = [item['item_id'] for item in row['items']]
         return self.fixture.home / '.ssh/config'
 
+    def test_matching_hosts_with_locked_key_configuration_only(self):
+        target = self.ssh_fixture(version=2)
+        target.parent.mkdir(mode=0o700)
+        for name, phrase in [('local', ''), ('locked', 'disposable-fixture-passphrase')]:
+            subprocess.run(['/usr/bin/ssh-keygen', '-q', '-t', 'ed25519', '-N', phrase,
+                            '-f', str(target.parent / name)], check=True)
+        raw = IdentityDependencyTests.raw(self, [('one', ['~/.ssh/local']), ('two', []), ('three', ['~/.ssh/locked'])])
+        self.ssh_source.write_bytes(raw)
+        self.fixture.archive.unlink(); self.fixture.pack()
+        target.write_bytes(b'# existing formatting remains\n' + resolution.config.payload(resolution.config.snapshot(raw)[3]))
+        target.chmod(0o600)
+        before = (target.read_bytes(), target.stat().st_ino, target.stat().st_mtime_ns)
+        chosen = dict(categories=['ssh-configuration'], items={})
+        plan = self.prepare(chosen)
+        self.assertFalse(plan['include_secure'])
+        self.assertTrue(plan['readiness']['ready']); self.assertTrue(plan['ssh_resolution']['ready'])
+        self.assertEqual(plan['ssh_resolution']['action'], 'noop')
+        self.assertEqual([(row['item_id'], row['disposition']) for row in plan['plan']],
+                         [('config', 'satisfied'), ('identity-references', 'warning')])
+        self.assertIn('locked_or_invalid_identity', plan['ssh_identity_dependencies']['reasons'])
+        self.assertEqual(plan['ssh_resolution']['remote_authentication'], 'not_assessed')
+        self.fixture.allow_application_bootstrap()
+        result, events = self.fixture.execute(plan['prepared_plan_id'], selection=chosen)
+        self.assertEqual(result.returncode, 0, events)
+        self.assertEqual(events[-2]['data']['verification']['verdict'], 'selected_requirements_verified')
+        self.assertIn('unresolved', events[-2]['data']['ssh_identity_dependencies']['findings'])
+        self.assertFalse(any(row['type'] == 'secure_challenge' for row in events))
+        self.assertEqual(before, (target.read_bytes(), target.stat().st_ino, target.stat().st_mtime_ns))
+
     def ssh_selection(self, indexes=(0,)):
         return dict(categories=[], items={'ssh-configuration': sorted(self.ssh_ids[index] for index in indexes)})
 
@@ -466,7 +564,7 @@ class SelectionTests(unittest.TestCase):
         bundle.pack(self.stage, self.fixture.archive, '/Users/source')
         chosen = self.ssh_selection((1,))
         initial = self.prepare(chosen)
-        self.assertEqual(initial['ssh_identity_dependencies'], dict(version=1, findings=['missing']))
+        self.assertEqual(initial['ssh_identity_dependencies'], dict(version=1, findings=['missing'], reasons=['checked_absent']))
         self.assertFalse(initial['include_secure'])
         self.assertFalse(target.parent.exists())
         target.parent.mkdir(mode=0o700)
@@ -474,7 +572,7 @@ class SelectionTests(unittest.TestCase):
         subprocess.run(['/usr/bin/ssh-keygen', '-q', '-t', 'ed25519', '-N', '', '-f', str(key)], check=True)
         before = [(p.name, p.stat().st_ino, p.stat().st_mtime_ns, p.read_bytes()) for p in sorted(target.parent.iterdir())]
         local = self.prepare(chosen)
-        self.assertEqual(local['ssh_identity_dependencies'], dict(version=1, findings=['local_satisfied']))
+        self.assertEqual(local['ssh_identity_dependencies'], dict(version=1, findings=['local_satisfied'], reasons=['local_pair_qualified']))
         self.assertTrue(local['readiness']['ready'], local)
         self.assertNotEqual(initial['prepared_plan_id'], local['prepared_plan_id'])
         self.assertEqual(before, [(p.name, p.stat().st_ino, p.stat().st_mtime_ns, p.read_bytes()) for p in sorted(target.parent.iterdir())])
@@ -585,7 +683,7 @@ class SelectionTests(unittest.TestCase):
                     if label == 'I-unsafe':
                         self.assertEqual([row['status'] for row in review['items']], ['unsafe_target', 'unresolved'])
                     prepared = case.prepare(chosen)
-                    blocked = actionable or label.startswith('G-')
+                    blocked = label.startswith('G-')
                     self.assertEqual(prepared['readiness']['ready'], not blocked, (label, prepared))
                     if version == 2: self.assertEqual(prepared['ssh_resolution']['ready'], not blocked)
                     if blocked:
@@ -626,7 +724,7 @@ class SelectionTests(unittest.TestCase):
         self.assertEqual(code, 0, events)
         reviewed = json.loads((self.fixture.private_temp / resolution.REVIEW).read_bytes())
         self.assertEqual(reviewed['items'], [dict(host_id=self.ssh_ids[1], host='production', index=0,
-            reference='/old-home/deploy', status='unresolved', proposal=None)])
+            reference='/old-home/deploy', status='unresolved', reason='nonportable_reference', proposal=None)])
         self.assertEqual(reviewed['bundle_id'], bundle.fingerprint(self.fixture.archive))
         self.assertNotIn('/old-home', json.dumps(events)); self.assertFalse(target.parent.exists())
         approval = dict(version=1, bundle_id=reviewed['bundle_id'], items=[dict(host_id=self.ssh_ids[1], index=0,
@@ -761,13 +859,14 @@ class SelectionTests(unittest.TestCase):
         self.assertTrue(local['ssh_resolution']['ready'])
         chosen = self.ssh_selection((1,))
         plan = self.prepare(chosen)
-        self.assertFalse(plan['readiness']['ready'], plan)
-        self.assertFalse(plan['ssh_resolution']['ready'])
+        self.assertTrue(plan['readiness']['ready'], plan)
+        self.assertTrue(plan['ssh_resolution']['ready'])
         self.assertTrue(any(row['reason'] == 'identity_dependencies_unresolved' for row in plan['plan']))
+        self.fixture.allow_application_bootstrap()
         result, events = self.fixture.execute(plan['prepared_plan_id'], selection=chosen)
-        self.assertEqual(result.returncode, 2, events)
-        self.assertFalse(events[-1]['data']['publication_started'])
-        self.assertFalse(target.exists())
+        self.assertEqual(result.returncode, 0, events)
+        self.assertIn(b'IdentityFile', target.read_bytes())
+        self.assertEqual(events[-2]['data']['ssh_identity_dependencies']['findings'], ['unresolved'])
         # A subset cannot erase ambiguous source syntax or its v2 capability.
         files = bundle.validate_archive(self.fixture.archive)
         self.assertEqual(bundle.validate_ssh(files), {'ssh-configuration': 2})

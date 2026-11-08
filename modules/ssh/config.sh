@@ -100,7 +100,7 @@ ssh_configuration_inspect() {
         if [[ "$SSH_V2_APPLIED" == true ]]; then
             if [[ ( "$SSH_TARGET_CONFORMITY" != exact && "$SSH_TARGET_CONFORMITY" != profiles_match ) ||
                   "$(python3 -B "$SSH_MERGE_HELPER" evidence "$HOME")" != "$SSH_V2_POST_EVIDENCE" ||
-                  "$(python3 -B "$SSH_RESOLUTION_HELPER" verify "$SSH_SNAPSHOT_FILE" "$HOME")" != qualified ]]; then
+                  "$(python3 -B "$SSH_RESOLUTION_HELPER" verify-corrections "$SSH_SNAPSHOT_FILE" "$HOME")" != qualified ]]; then
                 error "SSH state changed after publication"
                 return 2
             fi
@@ -111,6 +111,7 @@ ssh_configuration_inspect() {
         result=$?
         if [[ $result -ne 0 ]]; then
             SSH_MERGE_ACTION=refused
+            [[ "$merge" != identity_unresolved ]] || SSH_MERGE_ACTION=identity-unresolved
             warning "SSH configuration or identity dependencies remain unresolved"
             return 1
         fi
@@ -140,7 +141,9 @@ preview_ssh_configuration() {
     local payload result
     payload="$(mktemp)" || return 2
     ssh_configuration_inspect "$payload"; result=$?
-    if [[ $result -eq 0 && "$SSH_MERGE_ACTION" == merge ]]; then
+    if [[ "$SSH_MERGE_ACTION" == identity-unresolved ]]; then
+        preview_record ssh-configuration config none blocked ssh_identity_unresolved
+    elif [[ $result -eq 0 && "$SSH_MERGE_ACTION" == merge ]]; then
         preview_record ssh-configuration missing-profiles create planned missing_profiles
         preview_action "Would add SSH configuration: $SSH_MERGE_COUNT missing profiles"
     elif [[ "$SSH_TARGET_CONFORMITY" == exact || "$SSH_TARGET_CONFORMITY" == profiles_match ]]; then
@@ -165,10 +168,12 @@ preview_ssh_configuration() {
     if [[ $result -eq 1 && "$SSH_MERGE_ACTION" == refused &&
           ( "$SSH_TARGET_CONFORMITY" == exact || "$SSH_TARGET_CONFORMITY" == profiles_match ) ]]; then
         preview_record ssh-configuration publication none blocked external_management
-    elif [[ $result -eq 1 && "$SSH_TARGET_STATUS" == different && "$SSH_TARGET_CONFORMITY" == profiles_match ]]; then
+    elif [[ $result -eq 1 && "$SSH_MERGE_ACTION" != identity-unresolved &&
+            "$SSH_TARGET_STATUS" == different && "$SSH_TARGET_CONFORMITY" == profiles_match ]]; then
         preview_record ssh-configuration publication none conflict target_conflict
     fi
-    if (( SSH_IDENTITY_PORTABLE + SSH_IDENTITY_UNRESOLVED > 0 )) && [[ "$SSH_DEPENDENCIES" != qualified ]]; then
+    if (( SSH_IDENTITY_PORTABLE + SSH_IDENTITY_UNRESOLVED > 0 )) &&
+       [[ "$SSH_DEPENDENCIES" != qualified && "$SSH_MERGE_ACTION" != identity-unresolved ]]; then
         preview_record ssh-configuration identity-references none warning identity_dependencies_unresolved
     fi
     if [[ $result -eq 0 && "$SSH_TARGET_STATUS" == absent-* ]]; then
@@ -355,7 +360,9 @@ verify_ssh_configuration() {
             *) verification_result ssh-configuration config supported_config_match 2 ;;
         esac
     fi
-    if (( SSH_IDENTITY_PORTABLE + SSH_IDENTITY_UNRESOLVED > 0 )); then
+    # Restore reports dependency evidence separately from configuration success.
+    # Keep the existing read-only Check/ordinary Verification coverage contract.
+    if [[ "${BUNDLE_RESTORE_ACTIVE:-false}" != true ]] && (( SSH_IDENTITY_PORTABLE + SSH_IDENTITY_UNRESOLVED > 0 )); then
         if [[ "$(python3 -B "$SSH_RESOLUTION_HELPER" verify "$SSH_SNAPSHOT_FILE" "$HOME")" == qualified ]]; then
             verification_coverage ssh-configuration identity-references resolved observed_present
             verification_result ssh-configuration identity-references identity_references_qualified 0

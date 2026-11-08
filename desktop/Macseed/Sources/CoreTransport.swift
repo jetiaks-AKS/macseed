@@ -304,7 +304,11 @@ final class CoreTransport: @unchecked Sendable {
                 let data = try Self.readPrivateInventory(temporary: temporary, name: "ssh-restore-references.json")
                 let value = try JSONDecoder().decode(CoreSSHReview.self, from: data)
                 try value.validate(operationID: request.operationID)
-                try Self.validateFields(data, count: 4 + value.items.count * 6 + value.items.filter { $0.proposal != nil }.count * 3)
+                // Current reviews include a reason; older responses omit it.
+                // Count decoded optional fields without admitting unknown or duplicate keys.
+                try Self.validateFields(data, count: 4 + value.items.count * 6
+                    + value.items.filter { $0.reason != nil }.count
+                    + value.items.filter { $0.proposal != nil }.count * 3)
                 sshReview = value
             } catch { finalError = .malformedEvent; terminal = nil }
         }

@@ -24,6 +24,13 @@ MAX_ENTRIES = 4096
 SECONDS = 5
 TYPES = {b'ssh-ed25519', b'ssh-rsa', b'ecdsa-sha2-nistp256',
          b'ecdsa-sha2-nistp384', b'ecdsa-sha2-nistp521'}
+REASONS = {'explicit_none', 'no_explicit_reference', 'nonportable_reference', 'observation_limit',
+           'checked_absent', 'observation_changed', 'unsupported_identity', 'unsafe_pair', 'unsafe_path',
+           'observation_unavailable', 'ambiguous_destination', 'selected_target_conflict',
+           'selected_target_unqualified', 'authenticated_destination', 'verified_import_pair',
+           'authenticated_pair_requires_unlock', 'locked_or_invalid_identity', 'pair_mismatch',
+           'local_pair_qualified', 'approved_local_key_unqualified', 'approved_identity_destination_changed',
+           'approved_identity_unavailable'}
 
 
 def collision(directory, names):
@@ -201,4 +208,5 @@ def assess(raw, home, *, authenticated=(), destinations=None, approved_paths=(),
 
 def projection(rows):
     # No names, paths, identity IDs, fingerprints, counts or per-item correlation.
-    return dict(version=1, findings=sorted({item['status'] for row in rows for item in row['references']}))
+    return dict(version=1, findings=sorted({item['status'] for row in rows for item in row['references']}),
+                reasons=sorted({item['reason'] for row in rows for item in row['references']} & REASONS))

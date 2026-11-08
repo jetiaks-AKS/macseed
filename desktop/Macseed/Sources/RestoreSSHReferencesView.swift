@@ -1,37 +1,46 @@
 import AppKit
 import SwiftUI
 
+private typealias SSHReferenceState<Value> = SwiftUI.State<Value>
+
 // Inline under the selected Host. Core returns only references needing attention.
 struct RestoreSSHReferenceCorrection: View {
     @ObservedObject var model: RestoreModel
     let item: CoreSSHReview.Item
+    @SSHReferenceState<Bool> private var choosing = false
     private var secureKeys: [CoreRestoreIdentityInventory.Item] {
         model.destinationInventory?.items.filter { model.includeSecure && model.selectedIdentityIDs.contains($0.id) } ?? []
     }
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("IdentityFile \(item.index + 1)").font(.callout.weight(.medium))
-            Text("Original: " + item.reference).textSelection(.enabled).lineLimit(2).truncationMode(.middle)
-            if let proposal = model.sshProposals[item.id] {
-                Text("Qualified proposal: " + proposal.reference).textSelection(.enabled).lineLimit(2).truncationMode(.middle)
+            if model.sshProposals[item.id] == nil && !choosing {
                 if model.canReviewSSHReferences {
-                    Toggle("Approve this path change", isOn: Binding(
-                        get: { model.approvedSSHReferences.contains(item.id) },
-                        set: { model.approveSSHReference(item, approved: $0) })).toggleStyle(.checkbox)
+                    Button("Correct IdentityFile \(item.index + 1)…") { choosing = true }.buttonStyle(.link)
                 }
-            }
-            if model.canReviewSSHReferences {
-                HStack(spacing: 12) {
-                    Button("Choose Local Key…") { choose() }
-                    if !secureKeys.isEmpty {
-                        Menu("Selected Secure Key") {
-                            ForEach(secureKeys) { identity in
-                                Button(identity.name) { model.proposeSSHReference(model.sshDestination(identity), identityID: identity.id, for: item) }
+            } else {
+                Text("IdentityFile \(item.index + 1)").font(.callout.weight(.medium))
+                Text("Original: " + item.reference).textSelection(.enabled).lineLimit(2).truncationMode(.middle)
+                if let proposal = model.sshProposals[item.id] {
+                    Text("Qualified proposal: " + proposal.reference).textSelection(.enabled).lineLimit(2).truncationMode(.middle)
+                    if model.canReviewSSHReferences {
+                        Toggle("Approve this path change", isOn: Binding(
+                            get: { model.approvedSSHReferences.contains(item.id) },
+                            set: { model.approveSSHReference(item, approved: $0) })).toggleStyle(.checkbox)
+                    }
+                }
+                if model.canReviewSSHReferences {
+                    HStack(spacing: 12) {
+                        Button("Choose Local Key…") { choose() }
+                        if !secureKeys.isEmpty {
+                            Menu("Selected Secure Key") {
+                                ForEach(secureKeys) { identity in
+                                    Button(identity.name) { model.proposeSSHReference(model.sshDestination(identity), identityID: identity.id, for: item) }
+                                }
                             }
                         }
-                    }
-                    if model.sshProposals[item.id] != nil {
-                        Button("Preserve Original") { model.proposeSSHReference(nil, for: item) }
+                        if model.sshProposals[item.id] != nil {
+                            Button("Preserve Original") { model.proposeSSHReference(nil, for: item); choosing = false }
+                        }
                     }
                 }
             }

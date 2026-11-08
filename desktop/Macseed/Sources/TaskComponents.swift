@@ -360,6 +360,7 @@ enum RestorePreviewVisibility {
         items.filter { !isMatching($0) }
     }
     static func includes(_ domain: TaskDomainPresentation) -> Bool {
+        // Key advisories remain evidence, but do not turn matching configuration into work.
         !items(domain.items).isEmpty || domain.resultCategoryIssue || domain.resultCategoryMessage != nil
             || domain.activityState.map { $0 != .matching } == true
     }
@@ -453,7 +454,7 @@ struct TaskDomainList: View {
                             advancedControls: AnyView(CaptureExpandButton(ids: captureDisclosureIDs(in: .advanced),
                                 title: "For Experienced Users", expanded: treeExpansion)),
                             secureTransferGroup: captureSecureTransferGroup,
-                            summary: { $0.isEmpty ? "Not Included" : captureResultLayout ? "Saved" : "Ready to Save" },
+                            summary: { $0.isEmpty && captureSecureTransferGroup == nil ? "Not Included" : captureResultLayout ? "Saved" : "Ready to Save" },
                             attention: { $0.contains { [TaskRowState.attention, .unverified, .failed, .partial].contains($0.state) } ? "Needs Attention" : nil }) { domain in
                             if domain.id == "macos-settings", !settingsCategories.isEmpty {
                                 captureSettings(domain)
@@ -589,7 +590,7 @@ struct TaskDomainList: View {
             return AnyView(domainRow(domain).padding(.leading, CaptureChildRowGrid.leadingInset))
         }
         return AnyView(VStack(alignment: .leading, spacing: 0) {
-            CaptureGroupHeader(title: domain.title, summary: captureResultLayout ? "Saved" : "Ready to Save", symbol: domain.symbol,
+            CaptureGroupHeader(title: CaptureHierarchy.title(domain.id, fallback: domain.title), summary: captureResultLayout ? "Saved" : "Ready to Save", symbol: domain.symbol,
                 expanded: WorkflowExpansion.binding(domain.id, in: treeExpansion))
             if expandedIDs.contains(domain.id) {
                 domainContents(domain).padding(.leading, 16 + CaptureChildRowGrid.leadingInset).padding(.trailing, 16)
@@ -694,7 +695,7 @@ struct TaskDomainList: View {
         }.joined(separator: " · ")
     }
     private func domainTitle(_ domain: TaskDomainPresentation) -> some View {
-        WorkspaceCategoryTitle(id: domain.id, title: captureHierarchy || restorePreviewHierarchy ? CaptureHierarchy.title(domain.id, fallback: domain.title) : domain.title,
+        WorkspaceCategoryTitle(id: domain.id, title: captureHierarchy || (restorePreviewHierarchy && domain.id != "ssh-configuration") ? CaptureHierarchy.title(domain.id, fallback: domain.title) : domain.title,
             fallbackSymbol: domain.symbol)
             .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -775,6 +776,12 @@ struct TaskDomainItems: View {
                 .padding(.trailing, captureResultLayout ? TaskRowLayout.contentStatusInset : 0)
         } else {
             VStack(spacing: 0) {
+                if let advisory = domain.sshKeyAdvisory {
+                    Label(advisory, systemImage: "info.circle").font(.callout).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.leading, restorePreview ? previewTitleInset : 0).padding(.vertical, 6)
+                }
                 if !commonFailureInPrerequisites, let message = domain.sharedObservationMessage {
                     Text(message).font(.caption).foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 4)

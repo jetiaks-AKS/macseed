@@ -186,7 +186,7 @@ def review_references(original, home, *, proposals=None, bundle_id=None, destina
                 proposed[item['host_id'], item['index']] = dict(reference=item['reference'],
                     identity_id=item['identity_id'], status=status)
     rows = [dict(host_id=host_id(row['host']), host=row['host'], index=index,
-                 reference=item['reference'], status=item['status'], proposal=proposed.get((host_id(row['host']), index)))
+                 reference=item['reference'], status=item['status'], reason=item['reason'], proposal=proposed.get((host_id(row['host']), index)))
             for row in current for index, item in enumerate(row['references'])
             if item['status'] in ('missing', 'unresolved', 'unsafe_target')]
     # Bound the private response after filtering; healthy shared references need
@@ -194,6 +194,13 @@ def review_references(original, home, *, proposals=None, bundle_id=None, destina
     if len(rows) > MAX_APPROVALS:
         raise SecureError('ssh_review_unavailable')
     return rows
+
+
+def correction_findings(rows, approvals):
+    """Only an explicitly changed reference makes identity evidence authorization."""
+    required = {(item['host_id'], item['index']) for item in (approvals or {}).get('items', [])}
+    return [item for row in rows for index, item in enumerate(row['references'])
+            if (host_id(row['host']), index) in required]
 
 
 def inspect(original, home, *, approvals=None, bundle_id=None, destinations=None,
@@ -206,9 +213,12 @@ def inspect(original, home, *, approvals=None, bundle_id=None, destinations=None
     findings = [item for row in rows for item in row['references']]
     qualified = all(item['status'] in ('local_satisfied', 'no_file_dependency') for item in findings)
     expected = all(item['status'] in ('local_satisfied', 'no_file_dependency', 'selected_expected') for item in findings)
-    pending = not qualified and not expected and pending_secure and not authenticated and all(
+    corrections = correction_findings(rows, approvals)
+    corrections_qualified = all(item['status'] == 'local_satisfied' for item in corrections)
+    corrections_expected = all(item['status'] in ('local_satisfied', 'selected_expected') for item in corrections)
+    pending = not corrections_qualified and not corrections_expected and pending_secure and not authenticated and all(
         item['status'] in ('local_satisfied', 'no_file_dependency', 'missing') or
-        (item['status'] == 'unresolved' and item['reason'] == 'locked_or_invalid_identity') for item in findings)
+        (item['status'] == 'unresolved' and item['reason'] == 'locked_or_invalid_identity') for item in corrections)
     target = target_state(home)
     # Never let a correction conceal an existing differing selected Host block.
     _, original_conformity, _ = config.assess(config.payload(config.snapshot(original)[3]), home)
@@ -223,11 +233,12 @@ def inspect(original, home, *, approvals=None, bundle_id=None, destinations=None
         raise merge.Refused('target_changed')
     return dict(raw=raw, action=action, count=count, target=target, dependencies=rows,
                 dependency_digest=digest(rows), qualified=qualified, expected=expected,
+                corrections_qualified=corrections_qualified, corrections_expected=corrections_expected,
                 pending=pending, partial=status == 'partial')
 
 
 def public(plan):
-    ready = plan['qualified'] or plan['expected']
+    ready = plan['corrections_expected']
     return dict(version=1, action=plan['action'], ready=ready, pending=plan['pending'],
                 dependencies=dependencies.projection(plan['dependencies']), remote_authentication='not_assessed')
 
@@ -241,7 +252,10 @@ def valid_public(value):
     return (isinstance(value, dict) and set(value) == set(blocked()) and type(value['version']) is int and value['version'] == 1
             and value['action'] in ('blocked', 'noop', 'create', 'merge') and type(value['ready']) is bool
             and type(value['pending']) is bool and value['remote_authentication'] == 'not_assessed'
-            and isinstance(value['dependencies'], dict) and set(value['dependencies']) == {'version', 'findings'}
+            and isinstance(value['dependencies'], dict) and set(value['dependencies']) in ({'version', 'findings'}, {'version', 'findings', 'reasons'})
+            and isinstance(value['dependencies'].get('reasons', []), list)
+            and len(value['dependencies'].get('reasons', [])) <= len(dependencies.REASONS)
+            and all(isinstance(reason, str) and reason in dependencies.REASONS for reason in value['dependencies'].get('reasons', []))
             and type(value['dependencies']['version']) is int and value['dependencies']['version'] == 1
             and isinstance(value['dependencies']['findings'], list) and len(value['dependencies']['findings']) <= 6
             and not (value['ready'] and (value['pending'] or value['action'] == 'blocked'))
@@ -250,7 +264,7 @@ def valid_public(value):
 
 
 def execution_context(original, plan, *, approvals=None, bundle_id=None, destinations=None, authenticated=(), preview=False):
-    if not preview and not plan['qualified']:
+    if not preview and not plan['corrections_qualified']:
         raise SecureError('ssh_identity_unresolved')
     return dict(version=1, preview=preview, pending_secure=plan['pending'], original_sha=hashlib.sha256(original).hexdigest(), effective_sha=hashlib.sha256(plan['raw']).hexdigest(),
                 approvals=approvals, bundle_id=bundle_id, destinations=destinations,
@@ -331,7 +345,9 @@ def bound_plan(raw, home, value, *, verification=False):
         rows = dependencies.assess(raw, home, authenticated=value['authenticated'] if value else (),
             destinations=value['destinations'] if value else None,
             approved_paths=[row['reference'] for row in approved], verified_import=value is not None and not value['preview'])
-        return dict(qualified=all(item['status'] in ('local_satisfied', 'no_file_dependency') for row in rows for item in row['references']))
+        return dict(qualified=all(item['status'] in ('local_satisfied', 'no_file_dependency') for row in rows for item in row['references']),
+                    corrections_qualified=all(item['status'] == 'local_satisfied' for item in
+                        correction_findings(rows, value['approvals'] if value else None)))
     if value is None:
         return inspect(raw, home)
     plan = inspect(original, home, approvals=value['approvals'], bundle_id=value['bundle_id'],
@@ -409,7 +425,7 @@ def apply(raw, home, value=None):
     if value is not None and value['preview']:
         raise merge.Refused('preview_not_authorization')
     plan = bound_plan(raw, home, value)
-    if not plan['qualified']:
+    if not plan['corrections_qualified']:
         raise merge.Refused('identity_unresolved')
     def recheck_dependencies():
         if value is not None:
@@ -418,6 +434,21 @@ def apply(raw, home, value=None):
         rows = dependencies.assess(raw, home, authenticated=value['authenticated'] if value else (),
                                    destinations=value['destinations'] if value else None,
                                    approved_paths=[row['reference'] for row in approved], verified_import=value is not None)
+        # Creation of our pinned .ssh directory changes the absence binding for
+        # references below it. Accept only that expected transition: the key must
+        # still be checked absent, with no newly appearing intermediate directory.
+        # Every other key observation (including advisory ones) stays bound.
+        if plan['target']['state'] == 'absent-directory':
+            for before, after in zip(plan['dependencies'], rows):
+                for old, new in zip(before['references'], after['references']):
+                    reference = old['reference']
+                    if (reference and reference.startswith('~/.ssh/') and old['status'] == new['status'] == 'missing'
+                            and old['reason'] == new['reason'] == 'checked_absent'):
+                        parent = (Path(home) / reference[2:]).parent
+                        while not os.path.lexists(parent):
+                            parent = parent.parent
+                        if parent == Path(home) / '.ssh':
+                            new['binding'] = old['binding']
         if digest(rows) != plan['dependency_digest']:
             raise merge.Refused('identity_changed')
     if plan['action'] == 'noop':
@@ -438,13 +469,14 @@ def main():
     command, filename, home = sys.argv[1:]
     raw = config.read_snapshot(filename)
     value = context(raw)
-    if command == 'verify':
-        print('qualified' if bound_plan(raw, home, value, verification=True)['qualified'] else 'unresolved')
+    if command in ('verify', 'verify-corrections'):
+        field = 'qualified' if command == 'verify' else 'corrections_qualified'
+        print('qualified' if bound_plan(raw, home, value, verification=True)[field] else 'unresolved')
     elif command == 'plan':
         plan = bound_plan(raw, home, value)
-        if not (plan['qualified'] or (value and value['preview'] and (plan['pending'] or plan['expected']))):
+        if not (plan['corrections_qualified'] or (value and value['preview'] and (plan['pending'] or plan['corrections_expected']))):
             raise merge.Refused('identity_unresolved')
-        print(plan['action'], plan['count'], plan['target']['evidence'], 'qualified' if plan['qualified'] else 'pending')
+        print(plan['action'], plan['count'], plan['target']['evidence'], 'qualified' if plan['qualified'] else 'advisory')
     elif command == 'apply':
         print('published' if apply(raw, home, value) else 'noop')
     else:
@@ -457,6 +489,9 @@ if __name__ == '__main__':
     except merge.PublicationUncertain as exc:
         print('publication_uncertain', int(exc.changed))
         sys.exit(2)
+    except merge.Refused as exc:
+        print('identity_unresolved' if str(exc) == 'identity_unresolved' else 'unresolved')
+        sys.exit(1)
     except (OSError, ValueError, KeyError, TypeError, SecureError, ExternalSourceError):
         print('unresolved')
         sys.exit(1)

@@ -49,6 +49,7 @@ struct CoreSSHReview: Decodable, Sendable, CustomStringConvertible, CustomDebugS
         let index: Int
         let reference: String
         let status: String
+        var reason: String? = nil
         let proposal: Proposal?
         struct Proposal: Decodable, Sendable, CustomStringConvertible, CustomDebugStringConvertible, CustomReflectable {
             let reference: String
@@ -60,7 +61,7 @@ struct CoreSSHReview: Decodable, Sendable, CustomStringConvertible, CustomDebugS
             var customMirror: Mirror { Mirror(self, children: [:]) }
         }
         var id: String { "\(hostID):\(index)" }
-        enum CodingKeys: String, CodingKey { case hostID = "host_id", host, index, reference, status, proposal }
+        enum CodingKeys: String, CodingKey { case hostID = "host_id", host, index, reference, status, reason, proposal }
         var description: String { "SSHReference(redacted)" }
         var debugDescription: String { description }
         var customMirror: Mirror { Mirror(self, children: [:]) }
@@ -87,7 +88,26 @@ struct CoreSSHReview: Decodable, Sendable, CustomStringConvertible, CustomDebugS
 
 // Aggregate advisory status is safe for ordinary Protocol events.
 struct CoreSSHResolution: Codable, Equatable, Sendable {
-    struct Dependencies: Codable, Equatable, Sendable { let version: Int; let findings: [String] }
+    struct Dependencies: Codable, Equatable, Sendable {
+        let version: Int
+        let findings: [String]
+        var reasons: [String]? = nil
+        var advisory: String? {
+            if findings.contains("unsafe_target") {
+                return "Some SSH key references could not be safely checked. Original references are preserved; affected connections may require attention."
+            }
+            if findings.contains("unresolved") {
+                return "Some SSH keys could not be verified. Configuration can be restored, but affected connections may require their keys."
+            }
+            if findings.contains("missing") {
+                return "Some SSH keys are missing. Configuration can be restored, but affected connections require their keys."
+            }
+            if findings.contains("selected_expected") {
+                return "Some SSH keys are expected after Secure Transfer. SSH authentication has not been tested."
+            }
+            return nil
+        }
+    }
     let version: Int
     let action: String
     let ready: Bool

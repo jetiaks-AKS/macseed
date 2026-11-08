@@ -10,6 +10,7 @@ enum CaptureHierarchy {
     static let initialExpansion: Set<String> = []
     static let ordinaryGroups: [Group] = [.applicationsTools, .macOSSettings, .vscode]
     static let secureTransferID = "presentation.capture.secure-transfer"
+    static let sshID = "presentation.ssh"
     static func symbol(_ group: Group) -> String {
         switch group {
         case .applicationsTools: "square.stack.3d.up"
@@ -36,13 +37,13 @@ enum CaptureHierarchy {
     }
     static func title(_ id: String, fallback: String) -> String {
         ["vscode-extensions": "Extensions", "vscode-settings": "Settings", "git-repositories": "Git Repositories / Worktrees",
-         "shell-zsh": "Shell / Zsh", "vscode-workspaces": "VS Code Workspace"][id] ?? fallback
+         "shell-zsh": "Shell / Zsh", "vscode-workspaces": "VS Code Workspace", "ssh-configuration": "Configuration",
+         secureTransferID: "SSH Keys"][id] ?? fallback
     }
     static func selectionDescription(_ id: String) -> String? {
         switch id {
         case "workspace-folders": "Saves folder structure only. Files aren't included."
         case "git-repositories": "Saves repository and worktree setup. Local changes aren't transferred."
-        case "ssh-configuration": "Saves supported SSH host profiles. SSH keys use Secure Transfer."
         case "vscode-workspaces": "Saves supported workspace references, not project files."
         default: nil
         }
@@ -54,13 +55,16 @@ enum CaptureHierarchy {
             result.insert(sectionID(group))
             if group == .vscode { result.insert(group.id) }
         }
-        // Experienced disclosure includes the secure sibling without adding it
-        // to Advanced's ordinary selection taxonomy or counters.
-        if scope == .advanced && ids.contains(secureTransferID) { result.insert(secureTransferID) }
+        // SSH is presentation only; secret consent never enters bulk selection.
+        if scope == .advanced && (ids.contains("ssh-configuration") || ids.contains(secureTransferID)) {
+            result.insert(sshID)
+            if ids.contains("ssh-configuration") { result.insert("ssh-configuration") }
+            if ids.contains(secureTransferID) { result.insert(secureTransferID) }
+        }
         return result
     }
     static func childDisclosureIDs(_ ids: [String], group: Group) -> Set<String> {
-        var result = Set(ids.filter { Self.group(for: $0) == group })
+        var result = Set(ids.filter { Self.group(for: $0) == group && $0 != "ssh-configuration" })
         if group == .vscode && !result.isEmpty { result.insert(group.id) }
         return result
     }
@@ -73,17 +77,19 @@ enum CaptureHierarchy {
 @MainActor enum CaptureReviewPresentation {
     static let hierarchyStep: CGFloat = 12
     static func experiencedSelectionSummary(_ model: CaptureModel) -> String? {
-        let categories = model.categories.filter { CaptureHierarchy.group(for: $0.id) == .advanced && model.selectionState($0) != .none }.count
+        let categories = bulkCategories(model.categories, group: .advanced).filter { model.selectionState($0) != .none }.count
+        let hosts = model.selectedItems["ssh-configuration"]?.count ?? 0
         let identities = model.selectedSecureIdentities.count
         var parts: [String] = []
         if categories > 0 { parts.append("\(categories) advanced \(categories == 1 ? "category" : "categories") selected") }
+        if hosts > 0 { parts.append("\(hosts) SSH \(hosts == 1 ? "profile" : "profiles") selected") }
         if identities > 0 { parts.append("\(identities) SSH \(identities == 1 ? "identity" : "identities") selected") }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
     static func bulkCategories(_ categories: [CaptureCategory], group: CaptureHierarchy.Group) -> [CaptureCategory] {
         // Explicit bulk selection covers the same domains as the group summary;
         // the existing model filters eligibility without inferring dependencies.
-        categories.filter { CaptureHierarchy.group(for: $0.id) == group }
+        categories.filter { CaptureHierarchy.group(for: $0.id) == group && $0.id != "ssh-configuration" }
     }
     static func selectionLabel(_ category: CaptureCategory, model: CaptureModel) -> String {
         guard model.selectionState(category) != .none else { return "Not Selected" }
@@ -172,9 +178,10 @@ struct CaptureGroupStatus: View {
 // presentation containers only. Domain rows retain their trailing indicators.
 struct CaptureAccordionStyle: DisclosureGroupStyle {
     var selection: AnyView? = nil
+    var reservesSelectionColumn = false
     var selectionLeadingInset: CGFloat = 0
     func makeBody(configuration: Configuration) -> some View {
-        if let selection {
+        if selection != nil || reservesSelectionColumn {
             HStack(spacing: 12) {
                 Button { configuration.isExpanded.toggle() } label: {
                     Image(systemName: "chevron.right")
@@ -182,7 +189,10 @@ struct CaptureAccordionStyle: DisclosureGroupStyle {
                         .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                         .frame(width: 12, height: 48).contentShape(Rectangle())
                 }.buttonStyle(.plain).accessibilityHidden(true)
-                selection.frame(width: 28, height: 28).padding(.leading, selectionLeadingInset)
+                Group {
+                    if let selection { selection }
+                    else { Color.clear.accessibilityHidden(true) }
+                }.frame(width: 28, height: 28).padding(.leading, selectionLeadingInset)
                 Button { configuration.isExpanded.toggle() } label: {
                     configuration.label.frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
                         .contentShape(Rectangle())
@@ -208,33 +218,44 @@ struct CaptureAccordionStyle: DisclosureGroupStyle {
 
 struct CaptureGroupHeader: View {
     let title: String
-    let summary: String
+    var summary: String? = nil
     var symbol = "square.stack.3d.up"
     var tint: Color = .blue
     var titleTint: Color = .primary
     var attention: String? = nil
     var nested = false
     var selection: AnyView? = nil
+    var reservesSelectionColumn = false
     var expanded: Binding<Bool>?
-    private var label: some View {
-        CaptureRowColumns(title: HStack(spacing: selection == nil ? 8 : 12) {
+    private var hasSelectionColumn: Bool { selection != nil || reservesSelectionColumn }
+    private var titleLabel: some View {
+        HStack(spacing: hasSelectionColumn ? 12 : 8) {
             Image(systemName: symbol).foregroundStyle(tint)
-                .frame(width: selection == nil ? 20 : TaskRowLayout.iconWidth).accessibilityHidden(true)
+                .frame(width: hasSelectionColumn ? TaskRowLayout.iconWidth : 20).accessibilityHidden(true)
             Text(title).font(nested ? .body.weight(.medium) : .headline).foregroundStyle(titleTint)
-        }, status: CaptureGroupStatus(summary: summary, attention: attention))
-            .padding(.trailing, 26)
+        }
+    }
+    @ViewBuilder private var label: some View {
+        if let summary {
+            CaptureRowColumns(title: titleLabel, status: CaptureGroupStatus(summary: summary, attention: attention))
+                .padding(.trailing, 26)
+        } else {
+            titleLabel.frame(maxWidth: .infinity, alignment: .leading)
+        }
     }
     var body: some View {
         Group {
             if let expanded {
                 DisclosureGroup(isExpanded: expanded) { EmptyView() } label: { label }
                     .disclosureGroupStyle(CaptureAccordionStyle(selection: selection,
+                        reservesSelectionColumn: reservesSelectionColumn,
                         selectionLeadingInset: nested ? CaptureReviewPresentation.hierarchyStep : 0))
                     .accessibilityIdentifier("capture.disclosure." + title)
             } else {
                 HStack(spacing: 12) {
                     Color.clear.frame(width: 12).accessibilityHidden(true)
                     if let selection { selection.frame(width: 28, height: 28) }
+                    else if reservesSelectionColumn { Color.clear.frame(width: 28, height: 28).accessibilityHidden(true) }
                     label
                 }.frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
             }
@@ -280,8 +301,10 @@ struct CaptureGroupedContent<Row: Identifiable, RowContent: View>: View where Ro
                     }
                 }.modifier(WorkspaceCardSurface()).accessibilityIdentifier("capture.container.ordinary")
             }
-            let advanced = sections.first { $0.group == .advanced }?.rows ?? []
-            if !advanced.isEmpty || secureTransferGroup != nil {
+            let advanced = (sections.first { $0.group == .advanced }?.rows ?? []).filter { $0.id != "ssh-configuration" }
+            let configuration = rows.filter { $0.id == "ssh-configuration" }
+            let hasSSH = !configuration.isEmpty || secureTransferGroup != nil
+            if !advanced.isEmpty || hasSSH {
                 HStack(alignment: .firstTextBaseline, spacing: 12) {
                     VStack(alignment: .leading, spacing: 4) {
                         let heading = WorkspaceSectionHeader(title: "For Experienced Users")
@@ -289,7 +312,7 @@ struct CaptureGroupedContent<Row: Identifiable, RowContent: View>: View where Ro
                             DisclosureGroup(isExpanded: experiencedVisibility) { EmptyView() } label: { heading }
                                 .disclosureGroupStyle(HeaderDisclosureStyle())
                                 .accessibilityIdentifier("capture.experienced.disclosure")
-                                .help("Show Advanced and Secure Transfer. Collapsing keeps your selections.")
+                                .help("Show Advanced and SSH settings. Collapsing keeps your selections.")
                         } else {
                             heading
                         }
@@ -309,8 +332,8 @@ struct CaptureGroupedContent<Row: Identifiable, RowContent: View>: View where Ro
                                 .padding(.horizontal, 16).padding(.vertical, 8)
                         }
                         if !advanced.isEmpty { accordion(.advanced, rows: advanced) }
-                        if !advanced.isEmpty && secureTransferGroup != nil { Divider().padding(.horizontal, 16) }
-                        if let secureTransferGroup { secureTransferGroup }
+                        if !advanced.isEmpty && hasSSH { Divider().padding(.horizontal, 16) }
+                        if hasSSH { ssh(rows: configuration) }
                     }
                     .background(.quaternary.opacity(0.2), in: RoundedRectangle(cornerRadius: 8))
                     .modifier(WorkspaceCardSurface()).accessibilityIdentifier("capture.container.experienced")
@@ -327,7 +350,7 @@ struct CaptureGroupedContent<Row: Identifiable, RowContent: View>: View where Ro
             CaptureGroupHeader(title: CaptureHierarchy.sectionTitle(group), summary: summary(rows),
                 symbol: CaptureHierarchy.symbol(group), tint: group == .advanced ? advancedTint : .blue,
                 titleTint: group == .advanced ? advancedTint : .primary,
-                attention: attention(rows), selection: selection?(group, rows),
+                attention: attention(rows), selection: rows.isEmpty ? nil : selection?(group, rows),
                 expanded: WorkflowExpansion.binding(CaptureHierarchy.sectionID(group), in: $expanded))
             if expanded.contains(CaptureHierarchy.sectionID(group)) {
                 if group == .vscode {
@@ -340,6 +363,18 @@ struct CaptureGroupedContent<Row: Identifiable, RowContent: View>: View where Ro
                 }
             }
         }
+    }
+    private func ssh(rows: [Row]) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            CaptureGroupHeader(title: "SSH", symbol: "key", tint: advancedTint, titleTint: advancedTint,
+                reservesSelectionColumn: selection != nil,
+                expanded: WorkflowExpansion.binding(CaptureHierarchy.sshID, in: $expanded))
+            if expanded.contains(CaptureHierarchy.sshID) {
+                members(rows)
+                if !rows.isEmpty && secureTransferGroup != nil { Divider().padding(.horizontal, 16) }
+                if let secureTransferGroup { secureTransferGroup }
+            }
+        }.accessibilityIdentifier("workflow.ssh.group")
     }
     private func members(_ rows: [Row]) -> some View {
         VStack(spacing: 0) {
@@ -575,13 +610,20 @@ struct CaptureSecureTransferView: View {
     }
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            CaptureGroupHeader(title: "Secure Transfer", summary: selectionStatus, symbol: "lock.shield",
-                selection: AnyView(master), expanded: expansion ?? $expanded)
+            HStack(spacing: 12) {
+                master.frame(width: 28, height: 28).padding(.leading, CaptureReviewPresentation.hierarchyStep)
+                DisclosureGroup(isExpanded: expansion ?? $expanded) { EmptyView() } label: {
+                    CaptureRowColumns(
+                        title: WorkspaceCategoryTitle(id: CaptureHierarchy.secureTransferID, title: "SSH Keys", fallbackSymbol: "lock.shield"),
+                        status: CaptureGroupStatus(summary: selectionStatus))
+                }.disclosureGroupStyle(TaskDisclosureStyle())
+                    .accessibilityIdentifier("capture.disclosure.SSH Keys")
+            }.padding(.leading, 16 + CaptureChildRowGrid.leadingInset).padding(.trailing, 16)
             if expansion?.wrappedValue ?? expanded {
                 VStack(alignment: .leading, spacing: 0) {
                     Text(inventory.status == "observation_error" ? "SSH identity candidates could not be read. Scan again before selecting identities."
-                        : inventory.items.isEmpty ? "No eligible SSH identity pairs were found. Ordinary SSH Configuration is separate and remains selectable."
-                        : "Choose SSH identity pairs to encrypt. Transfer is off until you select an identity. Candidates are fully validated during saving; ordinary SSH Configuration is separate.")
+                        : inventory.items.isEmpty ? "No eligible SSH identity pairs found. Add an identity to include it."
+                        : "Select SSH identities to encrypt separately.")
                         .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                         .padding(.leading, CaptureReviewPresentation.hierarchyStep * 2).padding(.bottom, 8)
                     if let addIdentity {
@@ -629,7 +671,7 @@ struct CaptureSecureTransferView: View {
     }
     @ViewBuilder private var master: some View {
         if !inventory.items.isEmpty {
-            NativeSelectionCheckbox("", state: selectionState, accessibilityTitle: "Select Secure Transfer", setIncluded: selectAll)
+            NativeSelectionCheckbox("", state: selectionState, accessibilityTitle: "Select SSH Keys", setIncluded: selectAll)
                 .disabled(!editable)
         } else { Color.clear.frame(width: 28, height: 28).accessibilityHidden(true) }
     }

@@ -294,12 +294,13 @@ ssh_snapshot_validate "$p"
 [[ "$(sed -n '/IdentityFile/p' "$p")" == $'    IdentityFile ~/.ssh/first\n    IdentityFile /external/second' ]] && pass 'IdentityFile order and paths retained' || fail 'IdentityFile order or path changed'
 cp "$p" "$HOME/.ssh/config"
 rm -f "$p"
-expect 'matching extended config retains unresolved dependencies' 1 preview_ssh_configuration
+expect 'matching extended config has advisory dependencies' 0 preview_ssh_configuration
 [[ "$SSH_TARGET_CONFORMITY" == exact && ! -e "$HOME/.ssh/first" ]] && pass 'reference is not identity proof' || fail 'reference treated as identity proof'
 rm -rf "$HOME/.ssh"
-expect 'v2 Preview cannot plan automatic creation' 1 preview_ssh_configuration
-expect 'v2 Bootstrap blocked before directory creation' 1 bootstrap_ssh_configuration
-[[ ! -e "$HOME/.ssh" && "$MODULE_CHANGED" == false ]] && pass 'v2 no-write boundary' || fail 'v2 wrote target'
+expect 'v2 Preview plans configuration independently' 0 preview_ssh_configuration
+[[ ! -e "$HOME/.ssh" ]] && pass 'Preview stays read-only' || fail 'Preview wrote target'
+expect 'v2 Bootstrap preserves unqualified references' 0 bootstrap_ssh_configuration
+[[ -f "$HOME/.ssh/config" && ! -e "$HOME/.ssh/first" && "$MODULE_CHANGED" == true ]] && pass 'config only creates no keys' || fail 'config-only boundary'
 
 reset_fixture
 source_config "$valid_profile"$' IdentityFile none\n IdentitiesOnly no\n AddKeysToAgent yes\n UseKeychain no\n'

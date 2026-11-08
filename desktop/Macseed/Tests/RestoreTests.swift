@@ -73,28 +73,31 @@ import Vision
             let scrolls = descendants(host, NSScrollView.self)
             precondition(scrolls.count == 1)
             let scroll = scrolls[0], document = scroll.documentView!, before = footer
-            let boxes = descendants(host, NSButton.self).filter { $0.target is NativeSelectionCheckbox.Coordinator }
             if model.state == .review {
-                let secure = boxes.first { $0.accessibilityLabel() == "Select Secure Transfer" }
+                precondition(!descendants(host, NSButton.self).contains { $0.accessibilityLabel() == "Select SSH Keys" },
+                             "SSH is collapsed by default")
+                expansion.ids = [CaptureHierarchy.sshID]; await settle()
+                let boxes = descendants(host, NSButton.self).filter { $0.target is NativeSelectionCheckbox.Coordinator }
+                let secure = boxes.first { $0.accessibilityLabel() == "Select SSH Keys" }
                 precondition((secure != nil) == (model.inspection?.secureComponent == true))
                 if let secure, let advanced = boxes.first(where: { $0.accessibilityLabel() == "Select Advanced" }) {
                     let a = advanced.convert(advanced.bounds, to: host), s = secure.convert(secure.bounds, to: host)
-                    precondition(abs(a.minX - s.minX) < 1 && (48...49).contains(s.minY - a.minY))
+                    precondition(abs(s.minX - a.minX - CaptureReviewPresentation.hierarchyStep) < 1 && s.minY > a.minY + 96)
                     for _ in 0..<2 {
                         precondition(NSApp.sendAction(secure.action!, to: secure.target, from: secure)); await settle()
-                        precondition(model.selection == selection && expansion.ids.isEmpty)
+                        precondition(model.selection == selection && expansion.ids == [CaptureHierarchy.sshID])
                     }
                     for _ in 0..<2 {
                         precondition(NSApp.sendAction(advanced.action!, to: advanced.target, from: advanced)); await settle()
-                        precondition(model.includeSecure == included && expansion.ids.isEmpty)
+                        precondition(model.includeSecure == included && expansion.ids == [CaptureHierarchy.sshID])
                     }
-                    let point = host.convert(NSPoint(x: 38, y: s.midY), to: nil)
+                    let point = host.convert(NSPoint(x: host.bounds.width - 38, y: s.midY), to: nil)
                     for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
                         window.sendEvent(NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
                             windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 1)!)
                     }
                     await settle()
-                    precondition(expansion.ids == [CaptureHierarchy.secureTransferID], "Secure disclosure must not change selection")
+                    precondition(expansion.ids == [CaptureHierarchy.sshID, CaptureHierarchy.secureTransferID], "Secure disclosure must not change selection")
                 }
                 expansion.ids = RestoreSelectionPresentation.disclosureIDs(model.selectionAreas, advanced: false)
                     .union(RestoreSelectionPresentation.disclosureIDs(model.selectionAreas, advanced: true, secureAvailable: model.inspection?.secureComponent == true))
@@ -850,7 +853,8 @@ import Vision
             let selected = inventory.items.first { $0.name == "id_second" }!
             let custom = root.appendingPathComponent("selected-only")
             try fm.createDirectory(at: custom, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
-            model.selectIdentity(excluded.id, included: false)
+            precondition(model.selectedIdentityIDs.isEmpty && !model.includeSecure, "Authentication is not key selection or transfer consent")
+            model.selectIdentity(selected.id, included: true)
             model.setDestination(custom.path, for: selected.id)
             model.dismissDestinations(); precondition(!model.includeSecure)
             model.selectSecureTransfer(true)
@@ -896,6 +900,8 @@ import Vision
             precondition(runtime.restoreIdentityInventory == nil && runtime.termination?.restoreIdentityInventory == nil)
             let inventory = model.destinationInventory!
             precondition(inventory.items.count == 2 && !fm.fileExists(atPath: ssh.path))
+            precondition(model.selectedIdentityIDs.isEmpty, "Unlock does not select keys")
+            model.selectAllIdentities(true)
             let custom = root.appendingPathComponent("custom-private-destination")
             try fm.createDirectory(at: custom, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
             let identity = inventory.items.first { $0.name == "id_disposable" }!
@@ -1382,7 +1388,7 @@ import Vision
         let view = VStack(alignment: .leading, spacing: 18) {
             WorkspaceHeader(title: ProductTask.restore.title, subtitle: ProductTask.restore.subtitle, symbol: ProductTask.restore.symbol)
             RestoreView(model: model, runtime: runtime, categoryExpansion: .constant(true),
-                selectionExpansion: .constant(CaptureHierarchy.disclosureIDs(["ssh-configuration"], scope: .advanced)),
+                selectionExpansion: .constant(CaptureHierarchy.disclosureIDs(["ssh-configuration", CaptureHierarchy.secureTransferID], scope: .advanced)),
                 showsPreviewActions: true, showsSelectionActions: false, showsResultActions: false)
         }.padding(28).frame(width: 785).background(Color(nsColor: .windowBackgroundColor)).environment(\.colorScheme, .light)
         let host = NSHostingView(rootView: view)
@@ -1418,7 +1424,29 @@ import Vision
         model.selectArea("homebrew-packages", included: false)
         model.reviewSSHReferences(); await model.waitForCompletion()
         precondition((try? reviewCount()) == attempts, "Unrelated selection cannot trigger another SSH review")
+        let ssh = model.areas.first { $0.id == "ssh-configuration" }!
+        let host = ssh.items[0].id
+        precondition(ssh.reason == nil && RestoreAreaSelectionView.notices(ssh).isEmpty,
+                     "A review failure is separate from Bundle/category limitations")
+        model.selectItem(ssh.id, item: host, included: false)
+        precondition(model.sshReviewMessage == nil && !model.sshReviewFailed && !model.sshNeedsAttention && !model.canRetrySSHReview)
+        model.selectItem(ssh.id, item: host, included: true)
+        precondition(!model.sshNeedsAttention, "Re-selecting a Host must not revive the previous scope's error")
+        model.reviewSSHReferences(); await model.waitForCompletion()
+        precondition(model.sshReviewFailed && model.sshNeedsAttention && model.canRetrySSHReview)
+        model.selectArea(ssh.id, included: false)
+        model.selectArea(ssh.id, included: true)
+        precondition(model.sshReviewMessage == nil && !model.sshReviewFailed && !model.sshNeedsAttention)
+        model.reviewSSHReferences(); await model.waitForCompletion()
+        precondition(model.sshReviewFailed && model.sshNeedsAttention && model.canRetrySSHReview,
+                     "A fresh genuine failure retains the scoped warning and Retry")
         try await renderSSHFixture(model, runtime, name: "review-category-warning")
+        for malformed in ["extra-field", "duplicate-field"] {
+            try write(malformed, core.appendingPathComponent("review-state"))
+            model.reviewSSHReferences(retry: true); await model.waitForCompletion()
+            precondition(runtime.error == .malformedEvent && model.sshReviewFailed && model.sshNeedsAttention && model.canRetrySSHReview,
+                         "Accepting the known reason field must not admit extra or duplicate private response fields")
+        }
         try write("empty", core.appendingPathComponent("review-state"))
         model.reviewSSHReferences(retry: true); await model.waitForCompletion()
         precondition(model.sshReview?.items.isEmpty == true && !model.sshNeedsAttention && model.sshReviewMessage == nil && !model.canRetrySSHReview)
@@ -1426,12 +1454,21 @@ import Vision
         let successful = try reviewCount()
         model.reviewSSHReferences(); await model.waitForCompletion()
         precondition((try? reviewCount()) == successful, "Successful empty reviews are cached")
+        try write("locked", core.appendingPathComponent("review-state"))
+        model.selectArea(ssh.id, included: false); model.selectArea(ssh.id, included: true)
+        model.reviewSSHReferences(); await model.waitForCompletion()
+        precondition(model.sshReview?.items.first?.reason == "locked_or_invalid_identity")
+        precondition(model.sshCorrections(for: host).isEmpty && model.sshCorrectionSummary != nil,
+                     "Unchanged unverified references retain advisory evidence without correction controls")
+        precondition(!model.sshNeedsAttention && model.sshReviewMessage == nil && !model.canRetrySSHReview
+            && !model.includeSecure && runtime.secureChallenge == nil,
+                     "An encrypted/unverified key must not become a Selection conflict or unlock request")
         try write("missing", core.appendingPathComponent("review-state"))
         model.back()
         precondition(model.privateSSHApprovals == nil)
         model.refreshPreview(); await model.waitForCompletion()
-        precondition(model.preparation?.sshResolution?.ready == false && !model.ready && !model.canRebuild)
-        precondition(model.preview?.categories.flatMap(\.items).contains { $0.title == "SSH key references" && $0.status == .attention } == true)
+        precondition(model.preparation?.sshResolution?.ready == true && model.ready && model.canRebuild)
+        precondition(model.preview?.categories.flatMap(\.items).contains { $0.title == "SSH key references" } == false)
         try await renderSSHFixture(model, runtime, name: "missing-key-warning")
         model.selectArea("ssh-configuration", included: true)
         model.reviewSSHReferences(); await model.waitForCompletion()
@@ -1439,7 +1476,15 @@ import Vision
         let item = model.sshReview!.items[0]
         let other = model.sshReview!.items[1]
         precondition(model.sshCorrections(for: "unselected-host").isEmpty)
-        precondition(model.sshCorrectionSummary == "Corrections: 0 approved · 2 unresolved")
+        precondition(model.sshCorrectionSummary == "Some SSH keys could not be verified. Configuration can be restored, but affected connections may require their keys.")
+        try await renderSSHFixture(model, runtime, name: "unified-config-only")
+        model.refreshPreview(); await model.waitForCompletion()
+        precondition(model.canRebuild && model.preparation?.sshDependenciesReady == true)
+        let advisory = RestoreTaskPresentation(preview: model.preview!, plan: model.preparation!)
+        precondition(advisory.automaticAttentionCount == 0 && advisory.domains.first { $0.id == "ssh-configuration" }?.sshKeyAdvisory != nil)
+        try await renderSSHFixture(model, runtime, name: "unverified-key-advisory")
+        model.back()
+
         model.approveSSHReference(item, approved: true)
         precondition(model.privateSSHApprovals == nil, "No approval control before qualification")
         model.proposeSSHReference("~/keys/invalid", for: item)
@@ -1449,8 +1494,10 @@ import Vision
         precondition(model.sshProposals.isEmpty && model.privateSSHApprovals == nil)
         await model.waitForCompletion()
         precondition(model.sshProposals[item.id]?.reference == "~/keys/deploy" && model.privateSSHApprovals == nil)
+        precondition(model.sshReviewMessage == nil && !model.sshNeedsAttention,
+                     "Fresh successful qualification clears the earlier proposal error")
         model.approveSSHReference(item, approved: true)
-        precondition(model.sshCorrectionSummary == "Corrections: 1 approved · 1 unresolved")
+        precondition(model.sshCorrectionSummary == "1 path change approved. Some SSH keys are missing. Configuration can be restored, but affected connections require their keys.")
         let approval = model.privateSSHApprovals!
         let request = CoreRequest(.restorePrepare(path: "/fixture.mbt", disabledGroups: [], includeSecure: false), sshApprovals: approval)
         let ordinary = String(decoding: try request.encoded(), as: UTF8.self)
@@ -1458,11 +1505,11 @@ import Vision
         precondition(!String(reflecting: approval).contains("deploy"))
         try await renderSSHFixture(model, runtime, name: "approved-custom-path")
         model.refreshPreview(); await model.waitForCompletion()
-        precondition(model.preparation?.sshDependenciesReady == false && !model.canRebuild, "One approval cannot resolve another dependency")
+        precondition(model.preparation?.sshDependenciesReady == true && model.canRebuild, "An unrelated advisory cannot block a qualified correction")
         model.selectArea("ssh-configuration", included: true)
         model.proposeSSHReference("~/keys/fallback", for: other); await model.waitForCompletion()
         model.approveSSHReference(other, approved: true)
-        precondition(model.sshCorrectionSummary == "Corrections: 2 approved · 0 unresolved")
+        precondition(model.sshCorrectionSummary == "2 path changes approved.")
         model.refreshPreview(); await model.waitForCompletion()
         precondition(model.preparation?.sshDependenciesReady == true && model.canRebuild)
         model.selectArea("ssh-configuration", included: true)
@@ -1487,28 +1534,33 @@ import Vision
             }
             await model.waitForCompletion()
         }
+        try await renderSSHFixture(model, runtime, name: "unified-both-selected")
         try write("expected", core.appendingPathComponent("preview-state"))
         model.refreshPreview(); await complete()
         precondition(model.canRebuild && model.preparation?.sshDependenciesReady == true,
                      "Expected-import Preview failed: \(model.state), \(String(describing: runtime.error)), \(model.technicalReason ?? "none")")
-        let expectedRow = model.preview!.categories.flatMap(\.items).first { $0.title == "SSH key references" }!
-        precondition(expectedRow.status == .ready && expectedRow.restoreReadyText == "After Secure Transfer")
+        let expectedTasks = RestoreTaskPresentation(preview: model.preview!, plan: model.preparation!)
+        precondition(expectedTasks.domains.first { $0.id == "ssh-configuration" }?.sshKeyAdvisory?.contains("after Secure Transfer") == true)
+        let secureTask = expectedTasks.domains.first { $0.id == CoreRestorePreparation.secureDomain }!
+        precondition(secureTask.state == .planned && RestorePreviewVisibility.includes(secureTask))
         precondition(model.preview?.categories.first { $0.id == "ssh-configuration" }.map(RestorePreviewPresentation.state) == "Changes Planned")
         try await renderSSHFixture(model, runtime, name: "pending-selected-import")
         model.back()
         try write("unresolved", core.appendingPathComponent("preview-state"))
         model.refreshPreview(); await complete()
-        precondition(!model.canRebuild && model.preparation?.sshDependenciesReady == false,
-                     "An import plan cannot resolve an unrelated missing reference")
+        precondition(model.canRebuild && model.preparation?.sshDependenciesReady == true,
+                     "An unrelated missing reference remains advisory after successful selected comparison")
         model.back(); model.selectSecureTransfer(false)
         try write("conflict", core.appendingPathComponent("preview-state"))
         model.refreshPreview(); await model.waitForCompletion()
         precondition(!model.canRebuild && model.preparation?.readiness.ready == false)
+        let conflictTasks = RestoreTaskPresentation(preview: model.preview!, plan: model.preparation!)
+        precondition(conflictTasks.automaticAttentionCount > 0 && conflictTasks.domains.contains(where: RestorePreviewVisibility.includes))
         try await renderSSHFixture(model, runtime, name: "host-conflict")
         model.requestRebuild(); precondition(model.state == .preview)
         let logs = try String(contentsOf: core.appendingPathComponent("requests.jsonl"))
         precondition(!logs.contains("deploy") && !logs.contains("/old-mac") && !logs.contains("secure_restore_inventory"))
-        print("PASS: inline selected Host corrections, Core-qualified proposals, explicit consent, partial approval status, freshness invalidation, private transport and native screenshots")
+        print("PASS: SSH review error lifecycle, unverified-key advisory, inline corrections, explicit consent, freshness, planned imports, Host conflicts and private transport")
     }
 
     @MainActor static func sshHostSelectionChecks(_ model: RestoreModel, runtime: CoreRuntime) async throws {
@@ -1611,7 +1663,7 @@ import Vision
                     precondition(box.state == (["github", "production"].contains(name) ? .on : .off))
                 }
                 precondition(controls.contains { $0.accessibilityLabel() == "Select SSH Configuration" && $0.state == .mixed })
-                precondition(controls.contains { $0.accessibilityLabel() == "Select Secure Transfer" && $0.state == .off })
+                precondition(controls.contains { $0.accessibilityLabel() == "Select SSH Keys" && $0.state == .off })
             }
             let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds)!
             host.cacheDisplay(in: host.bounds, to: bitmap)
@@ -2644,7 +2696,7 @@ import Vision
         }
         func selected() -> Set<String> { Set(model.selection.categories).union(model.selection.items.keys) }
         func group(_ kind: Taxonomy.Group) -> CoreRestoreInspection.Group {
-            RestoreSelectionPresentation.group(model.selectionAreas.filter { Taxonomy.group(for: $0.id) == kind })
+            RestoreSelectionPresentation.group(model.selectionAreas.filter { Taxonomy.group(for: $0.id) == kind && $0.id != "ssh-configuration" })
         }
         func requests() -> Data { try! Data(contentsOf: core.appendingPathComponent("requests.jsonl")) }
         let ordinary = [row("app-store", mode: "items", items: ["Xcode", "Pages"]),
@@ -2698,6 +2750,8 @@ import Vision
         precondition(!selected().contains("workspace-folders"))
         model.selectGroup(group(.advanced), included: true)
         precondition(model.groupState(group(.advanced)) == .all && selected().isSuperset(of: initial.categories))
+        precondition(!selected().contains("ssh-configuration") && !model.includeSecure,
+                     "Advanced selects neither SSH profiles nor keys")
         precondition(!selected().contains("future-eligible"))
         model.selectGroup(group(.advanced), included: false)
         precondition(model.selection == initial && !model.reviewCancellationNeedsConfirmation)
@@ -2875,11 +2929,11 @@ import Vision
                                      && !renderedText.contains("Encrypted SSH keys"), "Collapsed Secure Transfer must retain only its header")
                     } else if name.hasPrefix("selection-expanded") {
                         let explanation = try bounds("Encrypted SSH keys"), customize = try bounds("Customize")
-                        let summary = try bounds(model.identitySelectionSummary!)
-                        precondition(explanation.minY > customize.maxY && customize.minY > summary.maxY
-                                     && abs(explanation.minX - summary.minX) < 0.01
-                                     && abs(customize.minX - summary.minX) < 0.03,
-                                     "Customize must be left-aligned below the explanation and above the summary")
+                        let summary = try bounds(model.includeSecure ? model.identitySelectionSummary! : "Off")
+                        let category = try bounds("SSH Keys")
+                        precondition(explanation.minY > customize.maxY && abs(customize.minX - explanation.minX) < 0.03
+                                     && abs(category.midY - summary.midY) < 0.012 && summary.minX > category.maxX,
+                                     "Status/count stays in the category header; Customize follows the explanation")
                     } else {
                         let explanation = try bounds("Choose keys and restore locations.")
                         let action = try bounds(model.allIdentitiesSelected ? "Deselect All" : "Select All")
@@ -2922,28 +2976,30 @@ import Vision
         precondition(model.selectionSummary == "Everything selected", "Default opt-in still selects the whole package")
         model.selectSecureTransfer(false)
         let expansion = SecureExpansion()
+        expansion.ids = [CaptureHierarchy.sshID]
         let selectionHost = NSHostingView(rootView: SecureSelectionHost(expansion: expansion, model: model))
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 785, height: 500), styleMask: [.titled], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false; window.contentView = selectionHost; window.makeKeyAndOrderFront(nil)
         defer { window.close() }
         await settle(selectionHost)
         func secureCheckbox() -> NSButton {
-            descendants(selectionHost, NSButton.self).first { $0.accessibilityLabel() == "Select Secure Transfer" }!
+            descendants(selectionHost, NSButton.self).first { $0.accessibilityLabel() == "Select SSH Keys" }!
         }
         func disclose() async {
+            expansion.ids.insert(CaptureHierarchy.sshID); await settle(selectionHost)
             let checkbox = secureCheckbox(), frame = checkbox.convert(checkbox.bounds, to: selectionHost)
-            click(selectionHost, window, NSPoint(x: frame.minX - 18, y: frame.midY)); await settle(selectionHost)
+            click(selectionHost, window, NSPoint(x: selectionHost.bounds.width - 38, y: frame.midY)); await settle(selectionHost)
         }
-        precondition(expansion.ids.isEmpty)
+        precondition(expansion.ids == [CaptureHierarchy.sshID])
         for _ in 0..<2 {
             let box = secureCheckbox(); precondition(NSApp.sendAction(box.action!, to: box.target, from: box)); await settle(selectionHost)
-            precondition(expansion.ids.isEmpty)
+            precondition(expansion.ids == [CaptureHierarchy.sshID])
         }
         try await render(SecureRestoreHost(expansion: expansion, model: model, runtime: runtime), name: "selection-collapsed")
         model.customizeDestinations(); await complete()
         precondition(model.showingDestinations && !model.includeSecure)
-        precondition(model.secureIdentitySelectionSupported && model.selectedIdentityIDs == Set(ids))
-        model.selectIdentity(ids[1], included: false)
+        precondition(model.secureIdentitySelectionSupported && model.selectedIdentityIDs.isEmpty)
+        model.selectIdentity(ids[0], included: true)
         precondition(model.identitySelectionSummary == "1 of 2 keys selected" && !model.includeSecure)
         let path = "/private/tmp/ssh-ui-fixture/" + String(repeating: "long-folder-name/", count: 8) + "keys"
         model.setDestination(path, for: ids[0])
@@ -2970,14 +3026,24 @@ import Vision
         model.dismissDestinations()
         let directories = model.destinationDirectories
         await disclose()
-        precondition(expansion.ids == [CaptureHierarchy.secureTransferID] && !model.includeSecure && model.destinationDirectories == directories)
+        precondition(expansion.ids == [CaptureHierarchy.sshID, CaptureHierarchy.secureTransferID] && !model.includeSecure && model.destinationDirectories == directories)
+        // Inline and Customize controls share the authenticated subset. Editing
+        // it while transfer is off does not silently enable the parent consent.
+        let inlineIdentity = descendants(selectionHost, NSButton.self).first { $0.accessibilityLabel() == model.destinationInventory!.items[1].name }!
+        precondition(!model.showingDestinations && inlineIdentity.state == .off)
+        precondition(NSApp.sendAction(inlineIdentity.action!, to: inlineIdentity.target, from: inlineIdentity)); await settle(selectionHost)
+        precondition(model.selectedIdentityIDs == Set(ids) && !model.includeSecure && model.preparation == nil && model.preview == nil)
+        precondition(NSApp.sendAction(inlineIdentity.action!, to: inlineIdentity.target, from: inlineIdentity)); await settle(selectionHost)
+        precondition(model.selectedIdentityIDs == [ids[0]] && model.destinationDirectories == directories)
         for _ in 0..<2 {
             let box = secureCheckbox(); precondition(NSApp.sendAction(box.action!, to: box.target, from: box)); await settle(selectionHost)
-            precondition(expansion.ids == [CaptureHierarchy.secureTransferID] && model.destinationDirectories == directories)
+            precondition(expansion.ids == [CaptureHierarchy.sshID, CaptureHierarchy.secureTransferID] && model.destinationDirectories == directories)
         }
         try await render(SecureRestoreHost(expansion: expansion, model: model, runtime: runtime), name: "selection-expanded")
         let all = RestoreSelectionPresentation.disclosureIDs(model.selectionAreas, advanced: true, secureAvailable: true)
         precondition(all.contains(CaptureHierarchy.secureTransferID))
+        expansion.ids = [CaptureHierarchy.sshID]; await settle(selectionHost)
+        precondition(!WorkflowExpansion.allExpanded(expansion.ids, available: all))
         let expandHost = NSHostingView(rootView: SecureExpandHost(expansion: expansion, ids: all))
         let expandWindow = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 120, height: 36), styleMask: [.borderless], backing: .buffered, defer: false)
         expandWindow.isReleasedWhenClosed = false; expandWindow.contentView = expandHost; expandWindow.makeKeyAndOrderFront(nil)
@@ -3214,7 +3280,7 @@ import Vision
             ready=Path('preview-state').read_text()=='expected'
             result=dict(decision='import_required',target_state='c'*64,source_fingerprint='b'*64,prepared_plan_id='a'*64,
                 selection=request['parameters']['selection'],include_secure=True,comparison_operation_id=request['operation_id'],
-                ssh_resolution=dict(version=1,action='create',ready=ready,pending=False,
+                ssh_resolution=dict(version=1,action='create',ready=True,pending=False,
                     dependencies=dict(version=1,findings=['selected_expected'] if ready else ['missing','selected_expected']),remote_authentication='not_assessed'))
             emit('result',result); emit('completed'); sys.exit(0)
         if operation=='capabilities':
@@ -3243,8 +3309,14 @@ import Vision
                 if candidate['reference'] in ('~/keys/deploy','~/keys/fallback'):
                     result['items'][candidate['index']]['proposal']=dict(reference=candidate['reference'],identity_id=None,status='local_satisfied')
             if review_state=='empty': result['items']=[]
+            if review_state in ('locked','extra-field','duplicate-field'):
+                result['items']=[dict(host_id=host,host='production',index=0,reference='~/.ssh/locked',status='unresolved',reason='locked_or_invalid_identity',proposal=None)]
+            if review_state=='extra-field': result['items'][0]['unexpected']=True
+            payload=json.dumps(result)
+            if review_state=='duplicate-field':
+                payload=payload.replace('"reason": "locked_or_invalid_identity"','"reason": "locked_or_invalid_identity", "reason": "locked_or_invalid_identity"')
             private=Path(os.environ['TMPDIR'])/'ssh-restore-references.json'
-            private.write_text(json.dumps(result)); private.chmod(0o600)
+            private.write_text(payload); private.chmod(0o600)
             result=dict(status='reviewed')
         elif operation=='environment_compare':
             result=json.loads(Path('comparison.json').read_text())
@@ -3296,7 +3368,7 @@ import Vision
                     assert envelope['approvals']['items'][0]['approved'] is True
                     assert all(row['reference'] in ('~/keys/deploy','~/keys/fallback') for row in envelope['approvals']['items'])
                     approved=len(envelope['approvals']['items'])==2
-                result['ssh_resolution']=dict(version=1,action='create',ready=approved,pending=False,
+                result['ssh_resolution']=dict(version=1,action='create',ready=True,pending=False,
                     dependencies=dict(version=1,findings=['local_satisfied' if approved else 'unresolved']),remote_authentication='not_assessed')
                 result['plan']=[row for row in result['plan'] if row['domain']!='ssh-configuration']
                 result['plan'].append(dict(domain='ssh-configuration',item_id='config',action='create',disposition='planned',reason=None))
@@ -3306,7 +3378,7 @@ import Vision
                     result.update(include_secure=True,secure_restore_status='selected_pending',plan_diagnostics=dict(bundle='b'*64))
                     result['readiness']['conditions'].append(dict(domain='secure-ssh-identities',code='secure_bridge_required',status='external_action_required',scope='execution_launch'))
                     result['plan'].append(dict(domain='secure-ssh-identities',item_id='encrypted_identity_set',action='validate_and_import',disposition='pending_unlock',reason='secure_unlock_required'))
-                    result['ssh_resolution'].update(pending=True)
+                    result['ssh_resolution'].update(pending=False)
                 if Path('preview-state').exists() and Path('preview-state').read_text()=='conflict':
                     result['plan']=[dict(domain='ssh-configuration',item_id='config',action='none',disposition='conflict',reason='target_conflict')]
                     result['ssh_resolution'].update(action='blocked',ready=False,pending=False)

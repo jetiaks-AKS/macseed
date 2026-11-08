@@ -670,7 +670,7 @@ class SecureRestoreTests(unittest.TestCase):
     def test_v2_secure_expected_import_precedes_configuration(self):
         self.fixture(protected=True); self.dependency_snapshot(['~/.ssh/id_disposable']); self.ssh_bootstrap()
         plan, _, receipt = self.dependency_compare()
-        self.assertFalse(plan['ssh_resolution']['ready']); self.assertTrue(plan['ssh_resolution']['pending'])
+        self.assertTrue(plan['ssh_resolution']['ready']); self.assertFalse(plan['ssh_resolution']['pending'])
         self.assertTrue(any(row['item_id'] == 'identity-references' and row['disposition'] == 'warning'
                             for row in plan['plan']), 'Prepare has no authenticated key evidence yet')
         self.assertEqual(receipt['ssh_resolution']['dependencies']['findings'], ['selected_expected'])
@@ -681,7 +681,11 @@ class SecureRestoreTests(unittest.TestCase):
         target = self.home / '.ssh/config'; self.assertIn(b'IdentityFile ~/.ssh/id_disposable', target.read_bytes())
         self.assertEqual(events[-2]['data']['verification']['verdict'], 'selected_requirements_verified', events)
         proofs = events[-2]['data']['verification']['details']['verification_records']
-        self.assertTrue(any(row['predicate'] == 'identity_references_qualified' and row['conformity'] == 'verified' for row in proofs))
+        self.assertTrue(any(row['domain'] == 'ssh-configuration' and row['predicate'] == 'supported_config_match'
+                            and row['conformity'] == 'verified' for row in proofs))
+        self.assertFalse(any(row['predicate'] == 'identity_references_qualified' for row in proofs))
+        self.assertEqual(events[-2]['data']['ssh_identity_dependencies'],
+                         dict(version=1, findings=['local_satisfied'], reasons=['verified_import_pair']))
 
     def test_v2_import_evidence_must_cover_verified_receipt(self):
         self.multiple_fixture(); self.dependency_snapshot(['~/.ssh/id_disposable']); self.ssh_bootstrap()
@@ -706,7 +710,8 @@ class SecureRestoreTests(unittest.TestCase):
             host_id='restore:' + hashlib.sha256(b'ssh-configuration\0private-host').hexdigest(), index=0,
             original='/old-home/id_disposable', reference='~/keys/id_disposable', identity_id=row['identity_id'], approved=True)])
         blocked = self.resolution_prepare(mapping)
-        self.assertFalse(blocked['ssh_resolution']['ready']); self.assertFalse(blocked['readiness']['ready'])
+        self.assertTrue(blocked['ssh_resolution']['ready']); self.assertTrue(blocked['readiness']['ready'])
+        self.assertEqual(blocked['ssh_resolution']['dependencies']['findings'], ['unresolved'])
         plan = self.resolution_prepare(mapping, approval)
         self.assertTrue(plan['readiness']['ready'], plan)
         status, events, _ = self.peer(operation='secure_restore_compare', plan=plan['prepared_plan_id'], mapping=mapping, approvals=approval)

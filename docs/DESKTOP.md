@@ -145,10 +145,10 @@ The approved target grouping is:
 - **macOS Settings:** existing supported domains and only subsequently qualified additions.
 - **Application Extras → VS Code:** collapsible application group; Extensions retain
   item selection and Settings retains whole-category selection.
-- **Advanced — For experienced users:** collapsed/opt-in Git, repositories/worktrees,
-  Workspace Folders, SSH, Shell / Zsh and **VS Code Workspace**. Capture places
-  **Secure Transfer** directly below Advanced as a sibling under **For Experienced Users**,
-  with its own explicit, default-off identity selection. Restore also defaults
+- **For Experienced Users:** sibling **Advanced** and **SSH** disclosures. Advanced
+  contains Git, repositories/worktrees, Workspace Folders, Shell / Zsh and **VS Code Workspace**.
+  Capture and Rebuild group **Configuration** and **SSH Keys** (Secure Transfer)
+  under SSH. Each child has independent selection; SSH has no checkbox or aggregate status rail. Restore also defaults
   `include_secure` to false; explicit selection enables the encrypted package.
 
 Descriptors are **HIDE / FREEZE** from ordinary UX, with explicit Advanced Capture
@@ -252,10 +252,10 @@ typography are refined within that scope, without closing broader qualification 
 
 ### Capture Review — implemented structure and geometry
 
-The Capture section disclosure is visually accepted; the local Confirmation
-alignment refinement awaits visual acceptance. Review's **For Experienced Users** heading has a leading disclosure
-chevron; clicking the heading expands or collapses the entire Advanced/Secure
-Transfer container without changing selection. It starts collapsed, with hidden
+The Capture section disclosure is visually accepted; the current SSH sibling and
+category-chevron refinement awaits visual acceptance. Review's **For Experienced Users** heading has a leading disclosure
+chevron; clicking the heading expands or collapses the entire Advanced/SSH
+container without changing selection. It starts collapsed, with hidden
 selected categories and identities summarized below the heading. Expansion is
 workflow-local, survives Back/Next and resets for a new scan; it is neither a
 saved preference nor Secure Transfer consent.
@@ -265,28 +265,37 @@ as sibling category section names. `CaptureGroupedContent` renders one ordinary
 bordered accordion containing
 **Applications & Tools**, **macOS Settings** and **Application Extras**. Application
 Extras contains the **VS Code** subgroup, then **Extensions** and **Settings**.
-**For Experienced Users** precedes one shared bordered container with two sibling
-rows: **Advanced**, then **Secure Transfer**, separated by one standard inset divider.
-There is no gap or second border between them; expanded content stays inside the
-shared 8 pt rounded surface. Both reuse the ordinary container's header columns,
-horizontal padding and 48 pt row height, with independent disclosure. Advanced
-holds Git Configuration, Git Repositories / Worktrees, Workspace Folders, SSH
-Configuration, Shell / Zsh and VS Code Workspace. It retains its warm title/icon
-accent; Secure Transfer retains blue. The shared surface remains neutral in
-Light/Dark. Unknown domains remain visible as Other Findings.
-Presentation parents add no requirements or duplicate counts.
+**For Experienced Users** contains sibling **Advanced** and **SSH** groups in the
+existing bordered container. SSH groups **Configuration** and **SSH Keys**, is
+collapsed by default and uses the key icon. It is a native disclosure
+without a checkbox, status rail, Core domain, Bundle category or independent selection state.
+The two children retain their existing checkboxes, Host/identity controls and private
+transport. Other Advanced rows retain their order and the existing typography,
+spacing and status columns. No additional screen or surface is introduced.
 
-Each sibling owns one master checkbox. Advanced's master/status cover only its
-eligible configuration descendants and never change SSH identities. Secure Transfer
-reuses the identity selection: Off/Partial selects all eligible identities; All clears
-them. Individual controls update the same state; status is Off, N of M selected or
-All Selected. There is no shared parent selector or second identity master.
-The experienced section's Expand All controls both sibling groups and their nested
-disclosures, independently of either master checkbox. Secure-only Capture remains
-available with every ordinary category deselected; Confirmation keeps the prepared
-secure scope read-only in the same shared hierarchy.
+Advanced's master selects only its five configuration categories, never SSH profiles or identities.
+SSH Keys remains default-off; expanding SSH changes no selection. Host counts
+and transfer status belong to the children. Expand All includes
+both child disclosures. Capture Confirmation/Result reuse this hierarchy over the
+prepared/published scope; secure-only selection remains valid.
 
-Within Advanced, SSH Configuration uses the existing parent checkbox and native
+Visual group headers retain leading disclosure chevrons. Selectable categories,
+including Configuration and SSH Keys, reuse the native trailing disclosure layout:
+the status/count rail precedes the common right-hand chevron column. Collapsed
+chevrons point right; expanded chevrons point down. Checkbox actions remain
+independent of disclosure actions. SSH reserves the shared empty checkbox column
+so its icon/title align with Advanced, without adding a selection control.
+
+Rebuild shows individual identity checkboxes under SSH Keys after the existing
+explicit unlock/Customize operation provides the private inventory. Inline and
+Customize controls share the same subset and Preview invalidation path; custom
+folders remain in Customize. Unlocking while transfer is off selects no keys and
+does not enable transfer. A prior explicit whole-package opt-in is materialized
+when the inventory arrives. Editing a subset while transfer is off keeps it off
+until the SSH Keys parent is explicitly selected. Expanding a disclosure never
+unlocks a Bundle; no additional cache or persistence is introduced.
+
+Within SSH, Configuration uses the existing parent checkbox and native
 disclosure for Core-provided supported Host profiles in both Capture and Rebuild.
 Each Host has one checkbox and retains its complete directives; the parent selects
 all available profiles and the category shows `N of M selected`. Capture Advanced
@@ -297,10 +306,11 @@ prepared confirmation/Preview and requires fresh preparation. Snapshot coverage,
 v2 qualification and IdentityFile dependency gates remain Core-owned; configuration
 conformity makes no authentication or connectivity claim.
 
-Rebuild uses **Advanced → SSH Configuration → Host** for compact inline IdentityFile
-corrections. Core returns only selected references needing attention; healthy, implicit
-and `none` references have no correction controls. Choose Local Key or Selected Secure
-Key asks the protected review operation to qualify a proposal before showing
+Rebuild uses **For Experienced Users → SSH → Configuration → Host** for compact inline IdentityFile
+corrections. Core returns only selected references needing attention; healthy, implicit,
+`none` and protected-but-unverified references have no path correction controls.
+An optional inline correction action reveals the original reference; Choose Local
+Key or Selected Secure Key asks the protected review operation to qualify a proposal before showing
 **Approve this path change**. The original reference remains the default. Inapplicable
 controls are absent; approval counts stay separate from unresolved dependencies.
 Ordinary Host disclosure does not unlock or enable Secure Transfer. Explicitly choosing
@@ -308,7 +318,8 @@ a selected secure identity reuses the existing Bundle unlock/Compare boundary; i
 neither imports a key nor tests SSH authentication. A changed proposal requires fresh
 consent. Changing the Bundle, selected secure identities or destinations clears
 approvals. Parent Host checkboxes do not approve paths. Refresh Preview checks effective
-references; Rebuild requires Core's positive dependency result. Paths remain out of
+references; Rebuild requires Core's safe configuration result and qualified approved
+replacements. Original missing/unverified references remain advisory. Paths remain out of
 requests, JSONL, operation logs and diagnostics through the protected transport in the
 [Core contract](core/APPLICATION-INTERFACE.md#ssh-identity-dependency-assessment).
 
@@ -316,9 +327,21 @@ Review sends only compact SSH selection, using the existing whole-category wire 
 when all Hosts are selected. Unrelated category changes do not repeat the operation;
 successful empty results need no warning. Review failure belongs to the SSH category's
 status and expanded details, with explicit read-only retry when the request is valid.
-Preview labels the dependency row **SSH key references** and uses the latest bound
-Core resolution: authenticated `selected_expected` means planned availability after Secure Transfer;
-unresolved dependencies and selected Host conflicts keep Rebuild unavailable.
+The private response accepts the current per-reference `reason` and legacy rows
+without it; unknown and duplicate fields remain rejected.
+Changing SSH selection clears the previous scope's review error; successful review
+also clears earlier errors. Unverified keys do not set Selection's Needs Attention;
+Bundle/category limitations remain separate from review errors.
+Preview presents original key dependencies as one compact contextual advisory when
+the category has visible work, without another requirement row or Need Attention
+count. An advisory alone does not show a category: if all selected requirements
+match and readiness is satisfied, Preview shows **Everything Already Matches**.
+Advisory evidence remains in the model. Configuration can be
+Already Matches or Changes Planned while a key remains missing/unverified.
+Authenticated `selected_expected` means expected availability after Secure Transfer,
+not authentication success. Selected Host conflicts, unsafe configuration targets
+and unqualified approved replacements remain blocking. A selected secure import
+still requires its own successful Compare and explicit consent.
 
 Review and Restore Selection share the 0/12/24/36 pt hierarchy offsets defined by
 `CaptureReviewPresentation.hierarchyStep`. Indentation applies once to leading
@@ -342,7 +365,7 @@ when its count is positive.
 
 ### Capture Review — selection and disclosure
 
-The ordinary group headers, Advanced, Secure Transfer and VS Code have native tri-state masters:
+The ordinary group headers, Advanced, SSH Keys and VS Code have native tri-state masters:
 **checked** means all eligible descendants, **unchecked** none, and **mixed** a
 partial selection. Clicking checked clears the eligible scope; clicking unchecked
 or mixed selects that group's eligible scope. Ordinary/Advanced `CaptureGroupControls` uses
@@ -362,10 +385,10 @@ Selected / Not Selected text is omitted where a row checkbox already expresses
 that fact; meaningful item counts, aggregate summaries and diagnostics remain.
 
 Every fresh Scan selects eligible ordinary requirements and leaves Advanced,
-Secure Transfer and unknown domains OFF; all section and nested disclosures start collapsed.
+SSH Configuration, SSH Keys and unknown domains OFF; all section and nested disclosures start collapsed.
 Unsupported, unavailable and observation-error domains are never selected. The
 Advanced master explicitly selects/clears all eligible Advanced domains and their
-items, including Workspace Folders. It leaves ordinary choices intact. Ordinary
+items, including Workspace Folders. It leaves SSH and ordinary choices intact. Ordinary
 actions and disclosures never select dependencies; Core still validates explicitly
 selected workspace/descriptor dependencies. No additional selection engine or
 request fields are introduced.
@@ -374,7 +397,7 @@ Review and Confirmation each have **two section-level Expand All / Collapse All
 controls** when both sections are present. The ordinary control sits beside
 **Standard Setup** on both screens and affects only Applications & Tools, macOS
 Settings, Application Extras and their applicable nested disclosures.
-The **For Experienced Users** Expand/Collapse control affects both Advanced and Secure Transfer,
+The **For Experienced Users** Expand/Collapse control affects both Advanced and SSH,
 including applicable nested disclosures. Both headers and controls live inside
 `WorkflowList` and scroll with their content. Review shows that control while the
 experienced section is expanded. Section controls retain the 42 pt trailing inset.
@@ -460,16 +483,16 @@ One ordinary container holds Applications & Tools (App Store Applications, Homeb
 Applications, Homebrew Packages), macOS Settings and Application Extras → VS Code →
 Extensions / Settings under **Standard Setup**. Below **For Experienced Users**,
 Advanced contains Git Configuration, Git Repositories / Worktrees, Workspace Folders,
-SSH Configuration, Shell / Zsh and VS Code Workspace, in that order. Stage 16H adds
-Secure Transfer as Advanced's independent sibling in the same bordered container
-when the Bundle includes `secure.age`. Its default-off checkbox selects the whole
+Shell / Zsh and VS Code Workspace, in that order. Its sibling SSH contains Configuration
+and independently selected SSH Keys in the same bordered container.
+SSH Keys is present when the Bundle includes `secure.age`. Its default-off checkbox selects the whole
 package. The prior ordinary Selection visual acceptance is retained; Stage 16H
 identity workflows have the accepted manual E2E evidence below.
 
 The inspected Bundle is the strict scope ceiling. Absent/Capture-excluded domains
 and empty groups are hidden; captured unavailable/unsupported evidence remains
 explainable. Unknown captured domains retain Other Findings. Fresh inspection selects
-eligible ordinary requirements; Advanced and unknown domains default OFF. All
+eligible ordinary requirements; Advanced, SSH and unknown domains default OFF. All
 disclosures start collapsed. Advanced-only/folder-only Bundles require explicit
 selection, without automatically selecting dependencies or expanding Bundle scope.
 
@@ -1624,7 +1647,7 @@ releases. [Distribution](DISTRIBUTION.md#bundled-age--required-for-desktop-10) o
 provenance, redistribution and remaining Stage 17 signing/clean-Mac qualification.
 
 Capture validates typed candidate inventory and preparation counts, shows names,
-types and public fingerprints in the Secure Transfer sibling group, and defaults every identity off.
+types and public fingerprints in SSH → SSH Keys, and defaults every identity off.
 Prepare does not unlock keys or establish cryptographic pairing. Execute rechecks the prepared ID,
 validates all selected pairs and exports `secure.age` with Core's existing engine.
 Results require matching preparation/destination, publication evidence and the
@@ -1660,7 +1683,7 @@ release and packaged qualification remain separate.
 
 **Slice 3 — optional Restore directories.** The existing Secure Transfer section
 adds a compact **Customize…** action when Core advertises destination capability
-v1. Secure Transfer remains independent/default-off and initially selects the whole package;
+v1. Secure Transfer remains independent/default-off; explicit parent opt-in selects the whole package unless a subset was chosen;
 its shared accordion starts collapsed and participates in For Experienced Users
 Expand All/Collapse All. Disclosure changes preserve selection, destinations and Preview.
 **Slice 3B** adds per-identity checkboxes when Core advertises selection v2. The
@@ -1714,13 +1737,14 @@ The earlier generic-dialog limitation is resolved in the completed identity
 checkpoint; complete 1.0 qualification remains separate.
 
 Restore Selection reuses the Capture hierarchy: Standard Setup has one ordinary
-container; For Experienced Users has one container with Advanced and Secure
-Transfer sibling rows. Secure Transfer retains its independent Selected/Off
+container; For Experienced Users has one container with sibling Advanced and SSH
+groups. SSH contains Configuration and SSH Keys. SSH Keys retains its independent Selected/Off
 master and a separate collapsed-by-default disclosure. The explanation and
 Customize controls appear inside expanded content; Experienced Expand/Collapse
 includes this disclosure without changing selection.
-Secure Transfer is absent without `secure.age`, otherwise defaults off and selects
-the whole package initially, with optional private subset selection in Customize.
+Secure Transfer is absent without `secure.age`, otherwise defaults off. Explicit
+parent opt-in selects the whole package unless a private subset was chosen in
+Customize or the authenticated inline list. Authentication alone selects nothing.
 When off it is absent from Preview, confirmation, Progress and Result.
 Secure-only Rebuild is supported; identities never enter ordinary Advanced counts.
 

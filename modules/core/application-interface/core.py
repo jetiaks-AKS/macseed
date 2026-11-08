@@ -892,7 +892,7 @@ def restore_execute(operation_id, path, disabled_groups, include_secure, expecte
                         raise ExecuteFailed('no_executable_work')
                 ssh_before = ssh_plan(stage, approvals=ssh_approvals, bundle_id=source_id,
                                       destinations=destinations, pending_secure=include_secure)
-                if ssh_before is not None and not ssh_before['qualified']:
+                if ssh_before is not None and not ssh_before['corrections_qualified']:
                     if (not include_secure or secure_comparison is None or
                             not secure_comparison.get('ssh_resolution', {}).get('ready')):
                         raise ExecuteFailed('ssh_identity_unresolved')
@@ -1047,6 +1047,11 @@ def restore_execute(operation_id, path, disabled_groups, include_secure, expecte
                                                    if row["outcome"] == "failure"]
                     raise ExecuteFailed('privileged_lifecycle_unknown' if state.get('unknown_consequences') else "bootstrap_failed")
                 checkpoint()
+                if ssh_execution is not None:
+                    _, rows = ssh_resolution.resolved_dependencies(ssh_execution[1], os.environ['HOME'],
+                        approvals=ssh_approvals, bundle_id=source_id, destinations=destinations,
+                        authenticated=authenticated, verified_import=include_secure)
+                    state['ssh_identity_dependencies'] = ssh_resolution.dependencies.projection(rows)
                 if control is not None:
                     with control.lock:
                         control.state.boundary('finished')

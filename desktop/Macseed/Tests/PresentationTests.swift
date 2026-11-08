@@ -29,7 +29,8 @@ private struct SecureSelectionFixtureView: View {
     @ObservedObject var state: SecureSelectionFixture
     let inventory: CoreCaptureSecureInventory
     var body: some View {
-        CaptureGroupedContent(rows: [TaskDomainPresentation(id: "ssh-configuration", title: "SSH Configuration", symbol: "key", items: [])],
+        CaptureGroupedContent(rows: [TaskDomainPresentation(id: "git-configuration", title: "Git Configuration", symbol: "gearshape", items: []),
+            TaskDomainPresentation(id: "ssh-configuration", title: "SSH Configuration", symbol: "key", items: [])],
             expanded: $state.groupsExpanded,
             selection: { _, _ in AnyView(NativeSelectionCheckbox("", isOn: $state.advancedSelected, accessibilityTitle: "Select Advanced")) },
             secureTransferGroup: AnyView(secure), summary: { _ in state.advancedSelected ? "All Selected" : "Not Selected" },
@@ -156,7 +157,7 @@ private struct CaptureRefinementHost: View {
         let originalSelection = model.selection
         clickHeading(x: 80); try await settle(review)
         precondition(visibility.experiencedVisible, "Clicking the section title expands the experienced container")
-        precondition(selectionBoxes(review).contains { $0.accessibilityLabel() == "Select Secure Transfer" })
+        precondition(selectionBoxes(review).contains { $0.accessibilityLabel() == "Select SSH Keys" })
         precondition(selectionBoxes(review).count >= 5, "Advanced and Secure Transfer child checkboxes are visible")
         precondition(review.fittingSize.height > hiddenHeight + 80 && model.selection == originalSelection)
         precondition(model.selectedSecureIdentities.isEmpty, "Visibility is never Secure Transfer opt-in")
@@ -594,9 +595,9 @@ private struct CaptureRefinementHost: View {
         let source = try String(contentsOfFile: "Sources/RestoreView.swift", encoding: .utf8)
         let selection = source.components(separatedBy: "struct RestoreSelectionContent: View {")[1].components(separatedBy: "// Only section placement")[0]
         let secure = selection.components(separatedBy: "private var secureTransferGroup: AnyView?")[1]
-        precondition(secure.contains("expanded: nil") && !secure.contains("if treeExpansion") && !secure.contains("WorkflowExpansion.binding"))
-        precondition(secure.contains("Encrypted SSH identities. Preview checks which keys already match this Mac. Missing keys can be imported during Rebuild without overwriting existing keys."))
-        precondition(selection.contains("RestoreSelectionPresentation.disclosureIDs(areas, advanced: advanced)") && !selection.contains("ids.insert(CoreRestorePreparation.secureDomain)"))
+        precondition(secure.contains("WorkflowExpansion.binding(CaptureHierarchy.secureTransferID") && secure.contains("if treeExpansion"))
+        precondition(secure.contains("Encrypted SSH keys. Existing keys won't be overwritten."))
+        precondition(selection.contains("RestoreSelectionPresentation.disclosureIDs(areas, advanced: advanced, secureAvailable: model.inspection?.secureComponent == true)") && !selection.contains("ids.insert(CoreRestorePreparation.secureDomain)"))
         let capture = try String(contentsOfFile: "Sources/CaptureView.swift", encoding: .utf8)
         let capturePresentation = try String(contentsOfFile: "Sources/CapturePresentation.swift", encoding: .utf8)
         let captureSecure = capturePresentation.components(separatedBy: "struct CaptureSecureTransferView: View")[1]
@@ -980,7 +981,7 @@ private struct CaptureRefinementHost: View {
         let experienced = CaptureHierarchy.disclosureIDs(ids, scope: .advanced)
         precondition(ordinary.isDisjoint(with: experienced))
         precondition(ordinary.isSuperset(of: ["macos-settings", "macos-finder", CaptureHierarchy.sectionID(.vscode), CaptureHierarchy.Group.vscode.id, "vscode-extensions"]))
-        precondition(experienced == [CaptureHierarchy.sectionID(.advanced), "git-configuration", "ssh-configuration", CaptureHierarchy.secureTransferID])
+        precondition(experienced == [CaptureHierarchy.sectionID(.advanced), "git-configuration", "ssh-configuration", CaptureHierarchy.sshID, CaptureHierarchy.secureTransferID])
         for scope in [ordinary, experienced] {
             let other = scope == ordinary ? experienced : ordinary
             let all = CaptureHierarchy.toggled(other, ids: scope)
@@ -993,7 +994,7 @@ private struct CaptureRefinementHost: View {
             }
         }
         precondition(CaptureHierarchy.disclosureIDs([CaptureHierarchy.secureTransferID], scope: .ordinary).isEmpty)
-        precondition(CaptureHierarchy.disclosureIDs([CaptureHierarchy.secureTransferID], scope: .advanced) == [CaptureHierarchy.secureTransferID])
+        precondition(CaptureHierarchy.disclosureIDs([CaptureHierarchy.secureTransferID], scope: .advanced) == [CaptureHierarchy.sshID, CaptureHierarchy.secureTransferID])
         let presentation = try String(contentsOfFile: "Sources/CapturePresentation.swift")
         let grouping = presentation.components(separatedBy: "struct CaptureGroupedContent<")[1].components(separatedBy: "struct CaptureTaskPresentation")[0]
         precondition(grouping.contains("DisclosureGroup(isExpanded: experiencedVisibility)")
@@ -1002,8 +1003,9 @@ private struct CaptureRefinementHost: View {
             "Experienced Expand All is available only while the container is expanded")
         precondition(grouping.components(separatedBy: "WorkspaceCardSurface()").count - 1 == 2,
                      "Exactly one ordinary and one experienced surface, with no per-sibling card")
-        precondition(grouping.contains("if !advanced.isEmpty && secureTransferGroup != nil { Divider().padding(.horizontal, 16) }")
-            && !grouping.components(separatedBy: "private func accordion")[1].contains("secureTransferGroup"))
+        precondition(CaptureHierarchy.sshID != CaptureHierarchy.secureTransferID)
+        precondition(!WorkspacePresentationTaxonomy.Group.advanced.domains.contains(CaptureHierarchy.sshID))
+        precondition(grouping.components(separatedBy: "CaptureGroupHeader(title: \"SSH\"").count - 1 == 1)
         let view = try String(contentsOfFile: "Sources/CaptureView.swift")
         let review = view.components(separatedBy: "case .review:")[1].components(separatedBy: "case .confirmation:")[0]
         let reviewHeading = review.components(separatedBy: "WorkflowList {")[0]
@@ -1024,7 +1026,7 @@ private struct CaptureRefinementHost: View {
             precondition(content.contains("title: \"Standard Setup\"") && content.contains("title: \"For Experienced Users\""))
         }
         precondition(grouping.components(separatedBy: "WorkspaceSectionHeader(title: \"For Experienced Users\")").count - 1 == 1)
-        precondition(grouping.contains("if !ordinary.isEmpty {") && grouping.contains("if !advanced.isEmpty || secureTransferGroup != nil {"))
+        precondition(grouping.contains("if !ordinary.isEmpty {") && grouping.contains("if !advanced.isEmpty || hasSSH {"))
         print("PASS: Plain Capture workflow headings, Standard Setup/For Experienced Users labels, exactly two scoped controls, empty-section omission and shared surfaces")
     }
 
@@ -1064,26 +1066,52 @@ private struct CaptureRefinementHost: View {
         }
         let inventory = CoreCaptureSecureInventory(status: "present", reason: nil, items: identities)
         try inventory.validate()
-        let output = URL(fileURLWithPath: "build/Debug/Stage16HSecureSiblings")
+        let output = URL(fileURLWithPath: "build/Debug/SSHUnifiedSelection")
         try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
         for (width, dark): (CGFloat, Bool) in [(580, false), (1040, false), (580, true), (1040, true)] {
+            // Compare actual shared-row rendering with a checkbox versus its
+            // empty column, using the same symbol to measure the column itself.
+            func iconBounds(_ header: CaptureGroupHeader) -> CGRect {
+                let renderer = ImageRenderer(content: header.frame(width: width).environment(\.colorScheme, dark ? .dark : .light))
+                let bitmap = NSBitmapImageRep(cgImage: renderer.cgImage!)
+                var pixels: [CGPoint] = []
+                for x in 0..<Int(width / 2) { for y in 0..<bitmap.pixelsHigh {
+                    let color = bitmap.colorAt(x: x, y: y)!.usingColorSpace(.sRGB)!
+                    if color.alphaComponent > 0.9 && color.blueComponent > 0.4
+                        && color.blueComponent > color.redComponent * 1.4 && color.blueComponent > color.greenComponent * 1.1 {
+                        pixels.append(CGPoint(x: x, y: y))
+                    }
+                } }
+                precondition(!pixels.isEmpty)
+                return CGRect(x: pixels.map(\.x).min()!, y: pixels.map(\.y).min()!,
+                    width: pixels.map(\.x).max()! - pixels.map(\.x).min()!, height: pixels.map(\.y).max()! - pixels.map(\.y).min()!)
+            }
+            let selectedHeader = CaptureGroupHeader(title: "Advanced", symbol: "key",
+                selection: AnyView(NativeSelectionCheckbox("", isOn: .constant(false))), expanded: .constant(false))
+            let emptyHeader = CaptureGroupHeader(title: "SSH", symbol: "key", reservesSelectionColumn: true, expanded: .constant(false))
+            precondition(iconBounds(selectedHeader) == iconBounds(emptyHeader), "SSH reserves the exact group checkbox column")
             let state = SecureSelectionFixture()
             let (view, window) = host(SecureSelectionFixtureView(state: state, inventory: inventory), width: width)
             view.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
             await settle(view)
+            precondition(boxes(view).count == 1 && state.selected.isEmpty && !state.advancedSelected)
+            state.groupsExpanded = [CaptureHierarchy.sectionID(.advanced), CaptureHierarchy.sshID]
+            await settle(view)
             let collapsedHeight = view.fittingSize.height
-            func master() -> NSButton { boxes(view).first { $0.accessibilityLabel() == "Select Secure Transfer" }! }
+            func master() -> NSButton { boxes(view).first { $0.accessibilityLabel() == "Select SSH Keys" }! }
             func advancedMaster() -> NSButton { boxes(view).first { $0.accessibilityLabel() == "Select Advanced" }! }
             precondition(boxes(view).count == 2 && master().state == .off && state.selected.isEmpty && !state.advancedSelected)
             let advancedFrame = advancedMaster().convert(advancedMaster().bounds, to: view)
             let secureFrame = master().convert(master().bounds, to: view)
-            precondition(abs(secureFrame.minX - advancedFrame.minX) < 1 && (48...49).contains(secureFrame.minY - advancedFrame.minY),
-                         "Sibling group masters align with 48pt rows and one standard divider")
+            precondition(abs(secureFrame.minX - advancedFrame.minX - CaptureReviewPresentation.hierarchyStep) < 1
+                         && secureFrame.minY > advancedFrame.minY + 96,
+                         "SSH Keys is a category under the sibling SSH group; SSH adds no master checkbox")
             activate(master()); await settle(view)
             precondition(master().state == .on && state.selected.count == 2 && !state.expanded && !state.advancedSelected)
             func clickDisclosure(_ checkbox: NSButton) {
                 let row = checkbox.convert(checkbox.bounds, to: view)
-                let point = view.convert(NSPoint(x: 22, y: row.midY), to: nil)
+                let x: CGFloat = checkbox.accessibilityLabel() == "Select SSH Keys" ? width - 22 : 22
+                let point = view.convert(NSPoint(x: x, y: row.midY), to: nil)
                 for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
                     let event = NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
                         windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 1)!
@@ -1092,13 +1120,13 @@ private struct CaptureRefinementHost: View {
             }
             clickDisclosure(master())
             await settle(view)
-            precondition(state.expanded && state.selected.count == 2 && boxes(view).count == 4 && !state.groupsExpanded.contains("advanced"))
+            precondition(state.expanded && state.selected.count == 2 && boxes(view).count == 4)
             clickDisclosure(advancedMaster()); await settle(view)
-            precondition(state.expanded && state.groupsExpanded.contains(CaptureHierarchy.sectionID(.advanced)) && state.selected.count == 2)
+            precondition(state.expanded && !state.groupsExpanded.contains(CaptureHierarchy.sectionID(.advanced)) && state.selected.count == 2 && boxes(view).count == 4)
             activate(advancedMaster()); await settle(view)
             precondition(state.advancedSelected && state.selected.count == 2)
             clickDisclosure(advancedMaster()); await settle(view)
-            precondition(state.expanded && !state.groupsExpanded.contains(CaptureHierarchy.sectionID(.advanced)) && boxes(view).count == 4)
+            precondition(state.expanded && state.groupsExpanded.contains(CaptureHierarchy.sectionID(.advanced)) && boxes(view).count == 4)
             func item(_ index: Int) -> NSButton { boxes(view).first { $0.accessibilityLabel() == "Include SSH identity " + identities[index].label }! }
             activate(item(0)); await settle(view)
             precondition(master().state == .mixed && state.selected == [identities[1].id] && state.expanded)
@@ -1137,22 +1165,21 @@ private struct CaptureRefinementHost: View {
             try bitmap.representation(using: .png, properties: [:])!.write(to: output.appendingPathComponent("selection-\(Int(width))-\(dark ? "dark" : "light").png"))
             clickDisclosure(master()); await settle(view)
             precondition(!state.expanded && state.selected.count == 2 && boxes(view).count == 2 && view.fittingSize.height == collapsedHeight)
-            print("PASS: Sibling groups, independent native masters/disclosures, preserved tri-state and identity geometry at \(Int(width))pt \(dark ? "Dark" : "Light")")
+            print("PASS: Advanced / SSH children, independent native selection/disclosure, preserved tri-state and identity geometry at \(Int(width))pt \(dark ? "Dark" : "Light")")
             window.orderOut(nil)
         }
         let source = try String(contentsOfFile: "Sources/CapturePresentation.swift")
         let secureSource = source.components(separatedBy: "struct CaptureSecureTransferView:")[1].components(separatedBy: "extension SelectionState")[0]
-        precondition(!secureSource.contains("Button(") && !secureSource.contains("Toggle("), "No duplicate bulk-selection controls")
+        precondition(secureSource.contains(".disclosureGroupStyle(TaskDisclosureStyle())") && !secureSource.contains("Toggle("), "One native Secure Transfer selection control")
         let groupedSource = source.components(separatedBy: "struct CaptureGroupedContent<")[1].components(separatedBy: "struct CaptureTaskPresentation")[0]
-        let accordionSource = groupedSource.components(separatedBy: "private func accordion")[1]
-        precondition(!accordionSource.contains("secureTransferGroup") && groupedSource.contains("capture.container.secure-transfer"))
-        precondition(groupedSource.range(of: "capture.container.advanced")!.lowerBound < groupedSource.range(of: "capture.container.secure-transfer")!.lowerBound)
+        precondition(groupedSource.contains("workflow.ssh.group"))
+        precondition(!groupedSource.contains("capture.container.secure-transfer"), "No duplicate Secure Transfer surface")
         let secureDomain = TaskDomainPresentation(id: CaptureHierarchy.secureTransferID, title: "Secure Transfer", symbol: "lock.shield",
             items: [TaskItemPresentation(id: identities[0].id, item: DisplayItem(id: identities[0].id, title: identities[0].label, status: .ready,
                 action: "The SSH key pair will be validated and encrypted during saving."), state: .planned)])
         for domains in [[secureDomain], [TaskDomainPresentation(id: "ssh-configuration", title: "SSH Configuration", symbol: "key", items: []), secureDomain]] {
             let (view, window) = host(TaskDomainList(domains: domains, stateTitles: [.planned: "Ready to Save"], compactReadyItems: true,
-                captureHierarchy: true, expansion: .constant([CaptureHierarchy.secureTransferID])), width: 580)
+                captureHierarchy: true, expansion: .constant([CaptureHierarchy.sectionID(.advanced), CaptureHierarchy.sshID, CaptureHierarchy.secureTransferID])), width: 580)
             await settle(view)
             precondition(boxes(view).isEmpty && view.fittingSize.height > 96, "Secure-only and mixed Confirmation keep prepared items read-only and reachable")
             window.orderOut(nil)
@@ -1931,8 +1958,8 @@ private struct CaptureRefinementHost: View {
         precondition(liveCapture.flatMap(\.rows).flatMap(\.categories).map(\.id).sorted() == categories.map(\.id).sorted())
         for section in liveCapture {
             let controls = CaptureReviewPresentation.bulkCategories(categories, group: section.group)
-            precondition(controls.map(\.id).sorted() == section.rows.flatMap(\.categories).map(\.id).sorted(),
-                "Capture group summary and bulk action must use the same original domain membership")
+            precondition(controls.map(\.id).sorted() == section.rows.flatMap(\.categories).filter { $0.id != "ssh-configuration" }.map(\.id).sorted(),
+                "Capture group masters exclude the sibling SSH configuration")
         }
         precondition(CaptureReviewPresentation.bulkCategories(categories, group: .advanced).contains { $0.id == "workspace-folders" })
         precondition(SelectionState.none.bulkActionTitle == "Select All" && SelectionState.mixed.bulkActionTitle == "Select All"
@@ -2023,17 +2050,19 @@ private struct CaptureRefinementHost: View {
         precondition(grouping.components(separatedBy: "WorkspaceCardSurface()").count - 1 == 2)
         precondition(grouping.contains("capture.container.ordinary") && grouping.contains("capture.container.experienced"))
         precondition(grouping.contains("CaptureHierarchy.ordinaryGroups") && !capturePresentation.contains("Compatibility & Dependencies"))
-        precondition(!capturePresentation.contains("compatibilityID") && !grouping.contains("rows.filter"))
+        precondition(!capturePresentation.contains("compatibilityID"))
         precondition(grouping.contains("members(rows)") && !grouping.contains("NativeSelectionCheckbox"))
-        precondition(grouping.contains("capture.container.experienced") && !grouping.components(separatedBy: "private func accordion")[1].contains("secureTransferGroup"),
-            "Secure Transfer is a sibling group below Advanced, independent of its disclosure")
+        precondition(grouping.contains("workflow.ssh.group") && grouping.contains("if expanded.contains(CaptureHierarchy.sshID)"),
+            "Configuration and SSH Keys share the sibling presentation-only SSH disclosure")
         precondition(grouping.contains("tint: group == .advanced ? advancedTint : .blue")
             && grouping.contains("titleTint: group == .advanced ? advancedTint : .primary"))
+        precondition(grouping.contains("CaptureGroupHeader(title: \"SSH\", symbol: \"key\", tint: advancedTint, titleTint: advancedTint,"),
+            "The sibling SSH header reuses Advanced's existing icon and title accent")
         precondition(grouping.contains("colorScheme == .dark ? Color(red: 0.95, green: 0.52, blue: 0.34) : Color(red: 0.72, green: 0.26, blue: 0.13)"))
         precondition(WorkspacePresentationTaxonomy.Group.advanced.domains == ["git-configuration", "git-repositories", "workspace-folders", "ssh-configuration", "shell-zsh", "vscode-workspaces"])
         let secure = capturePresentation.components(separatedBy: "struct CaptureSecureTransferView:")[1].components(separatedBy: "extension SelectionState")[0]
-        precondition(secure.contains("CaptureGroupHeader(title: \"Secure Transfer\"") && secure.contains("Color.clear.frame(width: 28, height: 28)"))
-        precondition(secure.contains("selection: AnyView(master), expanded: expansion ?? $expanded"))
+        precondition(secure.contains(".disclosureGroupStyle(TaskDisclosureStyle())") && secure.contains("Color.clear.frame(width: 28, height: 28)"))
+        precondition(secure.contains("DisclosureGroup(isExpanded: expansion ?? $expanded)"))
         precondition(secure.contains("if inventory.items.isEmpty { return \"Unavailable\" }") && secure.contains("ForEach(inventory.items)")
             && secure.contains("NativeSelectionCheckbox") && !secure.contains("Divider()"))
         let header = capturePresentation.components(separatedBy: "struct CaptureGroupHeader:")[1].components(separatedBy: "struct CaptureGroupedContent<")[0]
@@ -4940,6 +4969,14 @@ private struct CaptureRefinementHost: View {
         let row = CoreRestoreInspection.Area(domain: "ssh-configuration", label: "SSH Configuration", selectionMode: "items",
             availability: "available", reason: nil, items: [.init(itemID: "opaque", label: "production")])
         precondition(RestoreAreaSelectionView.hasDisclosure(row))
+        precondition(RestoreAreaSelectionView.notices(row).isEmpty)
+        let limited = CoreRestoreInspection.Area(domain: row.id, label: row.label, selectionMode: "items",
+            availability: "available", reason: "unsupported_content", items: row.items)
+        precondition(RestoreAreaSelectionView.notices(limited).first?.status == .attention,
+                     "A real Bundle/category limitation must retain its warning")
+        let unsafe = CoreRestoreInspection.Area(domain: row.id, label: row.label, selectionMode: "items",
+            availability: "unsupported", reason: "unsafe_target", items: row.items)
+        precondition(RestoreAreaSelectionView.notices(unsafe).first?.status == .unsupported)
         let selection = CoreRestoreSelection(categories: ["ssh-configuration"], items: [:])
         let disclosure = CoreCommand.sshRestoreReview(path: "/fixture.mbt", selection: selection)
         let secureChoice = CoreCommand.sshRestoreReview(path: "/fixture.mbt", selection: selection, includeSecure: true)
@@ -4968,15 +5005,58 @@ private struct CaptureRefinementHost: View {
         let preview = RestorePreviewPresentation(plan, catalog: catalog)
         let key = preview.categories.first { $0.id == "ssh-configuration" }!.items[0]
         precondition(plan.sshDependenciesReady && key.title == "SSH key references" && key.status == .ready && key.restoreReadyText == "After Secure Transfer")
+        let importTasks = RestoreTaskPresentation(preview: preview, plan: plan)
+        let importDomain = importTasks.domains.first { $0.id == CoreRestorePreparation.secureDomain }!
+        precondition(RestorePreviewVisibility.includes(importDomain) && importDomain.state == .planned,
+                     "Planned Secure Transfer remains visible independently of SSH key advisories")
         plan.secureComparison?.sshResolution = pending
         precondition(!plan.sshDependenciesReady && RestorePreviewPresentation(plan, catalog: catalog).categories[0].items[0].status == .attention)
+        let blockedTasks = RestoreTaskPresentation(preview: RestorePreviewPresentation(plan, catalog: catalog), plan: plan)
+        precondition(blockedTasks.automaticAttentionCount > 0 && blockedTasks.domains.contains(where: RestorePreviewVisibility.includes))
         var conflict = values
         conflict["include_secure"] = false; conflict["secure_restore_status"] = "not_selected"
         conflict.removeValue(forKey: "ssh_resolution") // Legacy v1 still cannot silently skip a selected conflict.
         conflict["plan"] = [["domain": "ssh-configuration", "item_id": "config", "action": "none", "disposition": "conflict", "reason": "target_conflict"]]
         let legacy = try JSONDecoder().decode(CoreRestorePreparation.self, from: JSONSerialization.data(withJSONObject: conflict))
         precondition(!legacy.sshDependenciesReady)
-        print("PASS: SSH dependency pending/expected presentation remains separate from remote authentication and existing Host disclosure")
+        let conflictTasks = RestoreTaskPresentation(preview: RestorePreviewPresentation(legacy, catalog: catalog), plan: legacy)
+        precondition(conflictTasks.automaticAttentionCount > 0 && RestorePreviewVisibility.includes(conflictTasks.domains[0]))
+        for finding in ["missing", "unresolved", "unsafe_target", "local_satisfied", "no_file_dependency"] {
+            var independent = values
+            independent["include_secure"] = false; independent["secure_restore_status"] = "not_selected"
+            independent["has_planned_changes"] = false
+            independent["readiness"] = ["ready": true, "ready_scope": "environment", "conditions": [], "reentry": "restore_prepare"] as [String: Any]
+            independent["ssh_resolution"] = ["version": 1, "action": "noop", "ready": true, "pending": false,
+                "dependencies": ["version": 1, "findings": [finding]], "remote_authentication": "not_assessed"] as [String: Any]
+            independent["plan"] = [["domain": "ssh-configuration", "item_id": "config", "action": "none", "disposition": "satisfied", "reason": NSNull()], dependency]
+            let prepared = try JSONDecoder().decode(CoreRestorePreparation.self, from: JSONSerialization.data(withJSONObject: independent))
+            let presentation = RestorePreviewPresentation(prepared, catalog: catalog)
+            let tasks = RestoreTaskPresentation(preview: presentation, plan: prepared)
+            precondition(prepared.sshDependenciesReady && tasks.automaticAttentionCount == 0)
+            precondition(tasks.domains.count == 1 && tasks.domains[0].items.count == 1 && tasks.domains[0].state == .matching)
+            let advisory = ["missing", "unresolved", "unsafe_target"].contains(finding)
+            precondition((tasks.domains[0].sshKeyAdvisory != nil) == advisory)
+            precondition(!RestorePreviewVisibility.includes(tasks.domains[0]),
+                         "An advisory alone must not make matching configuration a Preview work item")
+            precondition(RestorePreviewMetrics.counts(tasks.domains).attention == 0)
+            let otherMatches = TaskDomainPresentation(id: "homebrew-packages", title: "Homebrew Packages", symbol: "shippingbox",
+                items: (0..<101).map { index in
+                    let id = "matching-\(index)"
+                    return TaskItemPresentation(id: id, item: .init(id: id, title: id, status: .matching, action: ""), state: .matching)
+                })
+            let domains = tasks.domains + [otherMatches]
+            let counts = RestorePreviewMetrics.counts(domains)
+            precondition(counts.matching == 102 && counts.changes == 0 && counts.attention == 0)
+            let content = RestorePreviewContent(title: "", state: .matching, domains: domains, alreadyMatches: true,
+                previewEvaluated: true, prerequisites: .init(conditions: [], ready: true), areas: [], showsActions: false)
+            precondition(content.allMatchCount == 102 && content.visibleDomains.isEmpty && !content.showsPrerequisites,
+                         "All matching requirements with an unverified key show only Everything Already Matches")
+            let blockedContent = RestorePreviewContent(title: "", state: .matching, domains: domains, alreadyMatches: true,
+                previewEvaluated: true, prerequisites: .init(conditions: [], ready: false), areas: [], showsActions: false)
+            precondition(blockedContent.allMatchCount == nil && blockedContent.showsPrerequisites,
+                         "Removing an advisory work item must not hide failed readiness")
+        }
+        print("PASS: SSH advisories preserve all-match presentation; required dependencies, Host conflicts, planned imports and category limitations remain visible")
     }
 
     @MainActor static func main() async {
@@ -5037,6 +5117,7 @@ private struct CaptureRefinementHost: View {
         if CommandLine.arguments.contains("--restore-macos-only") { await restoreMacOSChecks(); return }
         if CommandLine.arguments.contains("--workflow-scroll-only") { try! await workflowStatusScrollChecks(); return }
         if CommandLine.arguments.count == 1 {
+            try! await secureSelectionChecks()
             try! await capturePreviewRefinementChecks()
             try! previewCleanupChecks()
             try! await settingsToolsChecks()
@@ -5132,6 +5213,8 @@ private struct CaptureRefinementHost: View {
         if CommandLine.arguments.contains("--final-ui-only") { finalUIAlignmentChecks(); return }
         if CommandLine.arguments.contains("--final-corrections") { finalCorrectionChecks(); return }
         if CommandLine.arguments.contains("--restore-only") { renderRestoreV2(); return }
+        try! captureDisclosureChecks()
+        try! sshResolutionPresentationChecks()
         let finalItem = TaskItemPresentation(id: "result-item", item: DisplayItem(id: "result-item", title: "Example", status: .information, action: "Confirmed outcome"), state: .completed, resultLabels: ["Applied", "Verified"])
         for state in [TaskRowState.completed, .attention, .failed, .unverified, .notRun] {
             let domain = TaskDomainPresentation(id: "homebrew-casks", title: "Homebrew Applications", symbol: "app", items: [finalItem], confirmedFinalState: state)

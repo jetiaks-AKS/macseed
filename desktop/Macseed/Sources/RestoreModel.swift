@@ -36,6 +36,9 @@ struct RestorePreviewPresentation {
         var rows: [String: [DisplayItem]] = [:]
         var order: [String] = []
         for (index, row) in prepared.plan.enumerated() {
+            // Core retains the dependency record, but an advisory is not another
+            // configuration requirement, planned mutation or attention counter.
+            if row.isSSHDependency && prepared.sshResolution?.ready == true { continue }
             if rows[row.domain] == nil { order.append(row.domain) }
             let status: DisplayStatus
             let message: String
@@ -380,9 +383,7 @@ struct RestoreProgressRow {
     }
     var sshNeedsAttention: Bool {
         guard !sshReviewScope.isEmpty else { return false }
-        return sshReviewMessage != nil || sshReview?.items.contains {
-            selectedItems["ssh-configuration"]?.contains($0.hostID) == true && !approvedSSHReferences.contains($0.id)
-        } == true
+        return sshReviewMessage != nil
     }
     var sshReviewScope: String {
         (canonicalSelection.categories.contains("ssh-configuration") ? "all" : (canonicalSelection.items["ssh-configuration"] ?? []).joined(separator: ","))
@@ -392,13 +393,16 @@ struct RestoreProgressRow {
     }
     func sshCorrections(for hostID: String) -> [CoreSSHReview.Item] {
         guard selectedItems["ssh-configuration"]?.contains(hostID) == true else { return [] }
-        return sshReview?.items.filter { $0.hostID == hostID } ?? []
+        return sshReview?.items.filter { $0.hostID == hostID && $0.reason != "locked_or_invalid_identity" } ?? []
     }
     var sshCorrectionSummary: String? {
         let rows = sshReview?.items.filter { selectedItems["ssh-configuration"]?.contains($0.hostID) == true } ?? []
         guard !rows.isEmpty else { return nil }
         let approved = rows.filter { approvedSSHReferences.contains($0.id) }.count
-        return "Corrections: \(approved) approved · \(rows.count - approved) unresolved"
+        let remaining = rows.filter { !approvedSSHReferences.contains($0.id) }
+        let advisory = CoreSSHResolution.Dependencies(version: 1, findings: remaining.map(\.status)).advisory
+        let approval = approved > 0 ? "\(approved) path \(approved == 1 ? "change" : "changes") approved." : nil
+        return [approval, advisory].compactMap { $0 }.joined(separator: " ")
     }
     func reviewSSHReferences(proposal: CoreSSHApprovals.Item? = nil, retry: Bool = false) {
         guard canReviewSSHReferences, let source,
@@ -460,7 +464,8 @@ struct RestoreProgressRow {
         let home = NSHomeDirectory() + "/"
         return path.hasPrefix(home) ? "~/" + path.dropFirst(home.count) : path
     }
-    private func clearSSHApprovals() { sshProposals = [:]; approvedSSHReferences = []; sshReviewedScope = nil; sshReview = nil; sshReviewMessage = nil; sshReviewFailed = false }
+    private func clearSSHReviewStatus() { sshReviewedScope = nil; sshReviewMessage = nil; sshReviewFailed = false }
+    private func clearSSHApprovals() { sshProposals = [:]; approvedSSHReferences = []; sshReview = nil; clearSSHReviewStatus() }
 
     @Published private(set) var secureDestinationsSupported = false
     @Published private(set) var secureIdentitySelectionSupported = false
@@ -497,7 +502,7 @@ struct RestoreProgressRow {
         return hasCustomDestinations ? "Custom locations configured" : "Restore to: ~/.ssh"
     }
     func selectIdentity(_ identityID: String, included: Bool) {
-        guard secureIdentitySelectionSupported, showingDestinations, state == .review, !runtime.isActive,
+        guard secureIdentitySelectionSupported, state == .review, !runtime.isActive,
               destinationInventory?.items.contains(where: { $0.id == identityID }) == true else { return }
         guard selectedIdentityIDs.contains(identityID) != included else { return }
         clearSSHApprovals()
@@ -534,7 +539,9 @@ struct RestoreProgressRow {
                     destinationMessage = "The Bundle changed. Choose it again before customizing destinations."
                     return
                 }
-                if destinationInventory == nil { selectedIdentityIDs = Set(inventory.items.map(\.id)) }
+                // Materialize a prior whole-package opt-in; authentication alone
+                // must not select identities or enable Secure Transfer.
+                if destinationInventory == nil && includeSecure { selectedIdentityIDs = Set(inventory.items.map(\.id)) }
                 destinationInventory = inventory; showingDestinations = true
             } else {
                 destinationMessage = runtime.state == .cancelled
@@ -825,12 +832,14 @@ struct RestoreProgressRow {
         invalidate(); state = .review
     }
     private func updateDraftArea(_ area: CoreRestoreInspection.Area, included: Bool) {
+        let previousSSHScope = sshReviewScope
         let id = area.id
         if area.selectionMode == "category" {
             if included { selectedCategories.insert(id) } else { selectedCategories.remove(id) }
         } else {
             selectedItems[id] = included ? Set(area.items.map(\.id)) : nil
         }
+        if sshReviewScope != previousSSHScope { clearSSHReviewStatus() }
     }
     func selectPreviewDomain(_ id: String, included: Bool) {
         guard state == .preview, !runtime.isActive else { return }
@@ -848,8 +857,10 @@ struct RestoreProgressRow {
     func selectItem(_ domain: String, item: String, included: Bool) {
         guard !busy, !runtime.isActive, let area = eligibleAreas.first(where: { $0.id == domain }),
               area.selectionMode == "items", area.items.contains(where: { $0.id == item }) else { return }
+        let previousSSHScope = sshReviewScope
         if included { selectedItems[domain, default: []].insert(item) }
         else { selectedItems[domain]?.remove(item); if selectedItems[domain]?.isEmpty == true { selectedItems[domain] = nil } }
+        if sshReviewScope != previousSSHScope { clearSSHReviewStatus() }
         invalidate(); state = .review
     }
     func selectGroup(_ group: CoreRestoreInspection.Group, included: Bool) {

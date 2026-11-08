@@ -1186,9 +1186,11 @@ its own fresh checks. CLI and Desktop use the same consumer. Verification can
 confirm the selected profiles while leaving unrelated supported profiles intact;
 neither merge success nor conformity proves connectivity or authentication.
 
-**Extended requirements boundary:** v2 creation, missing-Host merge and no-op
-require positively qualified dependencies. Configuration conformity remains a
-separate predicate. Neither configuration nor key qualification proves remote
+**Configuration independence:** v2 creation, missing-Host merge and no-op preserve
+original IdentityFile references even when keys are missing, unverified or unsafe
+to inspect. These are advisory findings, not permission to read unsafe files or
+proof that connections work. Configuration and publication safeguards remain strict.
+An explicitly approved replacement still requires qualified identity evidence. Neither configuration nor key qualification proves remote
 authentication, agent availability or Keychain readiness. No `ssh-add` or Keychain
 mutation is performed. Ordinary records expose aggregate statuses/reasons, not
 Host aliases, users, addresses or identity paths. Selection inventory exposes Host
@@ -1200,8 +1202,10 @@ Restore Prepare assesses the already narrowed snapshot in `modules/ssh/identity_
 Each selected supported Host retains its ordered references; several Hosts can
 share one observation. The process-private model keeps the Host/reference relation
 and bounded reasons separately from configuration conformity. Ordinary Protocol
-exposes only the set of finding kinds, without paths, aliases, identity metadata,
-counts or per-item correlation.
+exposes only sets of finding kinds and allowlisted reason codes, without paths,
+aliases, identity metadata, counts or per-item correlation.
+`locked_or_invalid_identity` means noninteractive qualification failed; it does
+not establish that a protected key is damaged.
 
 | Finding | Qualified meaning |
 | --- | --- |
@@ -1257,10 +1261,12 @@ file. Review returns only missing, unresolved or unsafe selected references. A p
 uses `approved:false` and the same qualification rules; it never authorizes publication.
 Only a qualified proposal can be explicitly approved in the inline Host correction.
 
-Prepare never unlocks a Bundle. Missing portable dependencies can be pending when
-Secure Transfer is selected; only authenticated Compare can qualify them as
-`selected_expected`. Execute requires that comparison and independently reimports
-or validates the selected identities. Only a validated successful/no-op importer
+Prepare never unlocks a Bundle. Only an approved correction requiring a selected
+identity can make configuration readiness pending on Secure Transfer. Only
+authenticated Compare can qualify an absent selected identity as `selected_expected`.
+Selected Secure Transfer retains its own comparison/consent requirements; Execute
+imports or validates those identities before publishing SSH configuration. Unchanged
+references do not require an unrelated import or approval. Only a validated successful/no-op importer
 receipt plus fresh exact pair hashes can qualify a protected local key for this
 operation. Failed/cancelled import cannot publish dependent SSH profiles. Imported
 keys are never overwritten or rolled back because a later configuration step fails.
@@ -1285,11 +1291,18 @@ the empty marker. Any uncertain mutation retains artifacts for manual inspection
 there is no overwrite fallback or automatic rollback. Partial sources may create or
 match supported profiles while retaining unresolved coverage, but cannot merge.
 Include/Match/wildcard/unsupported targets, unsafe ancestors, case collisions,
-symlinks, ownership/ACL/mode problems and unresolved dependencies stay blocked.
+symlinks and ownership/ACL/mode problems in the configuration target stay blocked.
+Unqualified approved replacements also stay blocked; unchanged key references are
+advisory. Dependency observations remain freshness-bound, including advisory ones.
+When publication itself creates `.ssh`, only the expected absence-binding transition
+for still-absent keys beneath that pinned directory is accepted; concurrent key or
+intermediate-directory changes remain failures.
 
-Verification separately reports effective configuration conformity, dependency
-qualification and Secure Transfer import evidence. Required unresolved references
-prevent full success. Check performs local read-only qualification only; it neither
+Restore Verification reports effective configuration conformity independently of
+the separate `ssh_identity_dependencies` result and Secure Transfer import evidence.
+A verified configuration does not mean verified keys or successful authentication.
+Missing/unverified original references cannot turn matching configuration into a
+publication conflict. Check retains its existing local read-only dependency coverage; it neither
 unlocks `secure.age` nor reuses a previous operation's private authentication.
 Git transport/order, existing conflicting Host correction and Secure Transfer in
 Check remain outside this slice. The [workflow owner](../CAPTURE-RESTORE.md#ssh-environment-completion--developer-environment-closure)

@@ -42,6 +42,13 @@ The consolidated evidence assessment is accepted; no repair task remains from
 those failures. Run additional canonical validation for identified gaps or changes,
 without weakening assertions, skipping tests or changing workflows merely to obtain PASS.
 
+- [ ] Stabilize Secure Restore test runtime after [CI #153](https://github.com/jetiaks-AKS/macseed/actions/runs/42480406327).
+  The suite exceeded its approximately 750-second deadline (752.009s including termination),
+  independently of the stale capabilities assertion. Inspect per-case timing and
+  cleanup evidence before a bounded optimization or partition change; do not
+  raise timeouts blindly. The SSH checkpoint validates selected cases only and
+  does not close this hosted runtime gate.
+
 <a id="secure-ssh-desktop-16h"></a>
 
 ## SSH Environment Completion — Developer Environment Closure

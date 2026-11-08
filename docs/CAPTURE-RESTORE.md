@@ -108,7 +108,7 @@ See [Core interface](core/APPLICATION-INTERFACE.md) and [CLI](toolkit/CLI.md).
 **Stage 16H SSH Identities — COMPLETED (2026-11-05).** Core/CLI secure migration
 and native Secure Capture/Restore are implemented and manually accepted in the
 supported identity scope. Desktop Capture offers explicit, default-off identities
-in Secure Transfer, beside Advanced under For Experienced Users, and uses the
+in SSH → SSH Keys, beside Advanced under For Experienced Users, and uses the
 existing Core engine through native secure fields and a separate inherited FD.
 Desktop Restore selects the whole encrypted package, defaults off, and requires
 authenticated read-only comparison through the existing Preview button. Matching
@@ -172,12 +172,18 @@ Preserve **SELECTION = configure; PREVIEW = read-only validation; REBUILD = exec
 no destination editing in Preview, new top-level screen or separate SSH manager.
 
 Slice 4B qualifies `IdentityFile` references against local keys and authenticated selected
-identity destinations. **Advanced → SSH Configuration → Host** shows an inline
+identity destinations. **For Experienced Users → SSH → Configuration → Host** shows an inline
 correction only for a selected reference needing attention: original reference,
 qualified proposal and explicit approval. Custom destinations never rewrite paths
 automatically; approved corrections and remaining unresolved references are counted
 separately.
-Qualified create/no-op/missing-Host merge retains existing conflicting Hosts unchanged.
+Configuration and SSH Keys (the existing Secure Transfer domain) remain independently selectable beneath the
+presentation-only SSH disclosure in Capture and Rebuild. Original IdentityFile
+references are preserved during safe configuration-only restoration; missing or
+unverified keys produce one advisory, not a publication blocker. Explicit approved
+corrections still require qualified evidence. Configuration Verification and key
+qualification are separate; neither claims remote authentication.
+Safe create/no-op/missing-Host merge retains existing conflicting Hosts unchanged.
 [Configuration](toolkit/CONFIGURATION.md#explicit-identityfile-resolution-and-v2-restore)
 owns publication, dependency and stale-plan safeguards. Resolve false Needs Attention results while preserving genuine
 unsupported, conflicting and unsafe findings. Keep Secure Migration v1 Bundle

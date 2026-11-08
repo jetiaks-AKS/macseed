@@ -1334,8 +1334,9 @@ owns directory safety, no-clobber, cleanup and unresolved `IdentityFile` boundar
 Selected SSH profiles retain the Slice 4A read-only dependency projection;
 [Configuration](../toolkit/CONFIGURATION.md#read-only-identityfile-dependencies)
 owns evidence, bounds and unresolved cases. `restore_prepare` adds
-`ssh_identity_dependencies: {"version":1,"findings":[...]}` when SSH is selected.
-Only aggregate kinds cross JSONL; ordered Host/reference rows and local evidence
+`ssh_identity_dependencies: {"version":1,"findings":[...],"reasons":[...]}` when SSH is selected.
+The additive `reasons` list contains only allowlisted aggregate codes; legacy
+projections without it remain valid. Only aggregate kinds/reasons cross JSONL; ordered Host/reference rows and local evidence
 remain private and contribute to the prepared ID. Secure-only selection omits it.
 
 Slice 4B advertises `ssh_identity_resolution: {version:1, review:"ssh_restore_review",
@@ -1344,7 +1345,7 @@ Restore `selection`. The default validates/unpacks/narrows the Bundle without un
 it, then returns only `status: "reviewed"`. Its protected `ssh-restore-references.json`
 result uses the existing inventory envelope (`version`, `operation_id`, `bundle_id`,
 `items`). Only missing/unresolved/unsafe references are returned; rows contain `host_id`,
-`host`, zero-based `index`, `reference`, `status` and nullable `proposal`. A qualified
+`host`, zero-based `index`, `reference`, `status`, optional `reason` and nullable `proposal`. A qualified
 proposal contains `reference`, nullable `identity_id` and `status` (`local_satisfied`
 or `selected_expected`). Review can consume the same protected proposal envelope via
 `ssh_approvals:true`, but requires `approved:false`; these rows cannot authorize
@@ -1367,7 +1368,11 @@ owns the file and publication safeguards.
 For selected v2, Prepare and the Secure Compare receipt add `ssh_resolution`:
 `{version:1, action, ready, pending, dependencies, remote_authentication:"not_assessed"}`.
 Actions are `create`, `merge`, `noop`, `blocked`; dependencies use the aggregate
-projection above. Pending is not ready or Already Matches. Compare uses fresh
+projection above. `ready` describes safe configuration resolution, including any
+explicitly approved corrections; it does not assert that all keys qualify.
+Unchanged missing/unverified/unsafe-to-inspect references remain advisory. Pending
+means an approved correction still needs authenticated selected-import evidence.
+Pending is not ready or Already Matches. Compare uses fresh
 authenticated selected identities and exact intended destinations. Its additive
 `ssh_identity_dependencies` event remains separate from config conformity.
 The strict comparison validator accepts the optional bounded resolution projection;
@@ -1387,7 +1392,9 @@ consumer publishes config. Fresh verified evidence and approvals travel in the
 existing protected Bootstrap item-state directory, not argv/environment content.
 Preview contexts cannot authorize Apply. The consumer rechecks dependencies and
 target evidence at publication and separately verifies effective config and keys.
-Unsuccessful import stops before dependent config publication. Existing recovery,
+Successful Restore also returns freshly assessed `ssh_identity_dependencies`
+separately from configuration Verification. No new selection domain or Bundle
+format is introduced. Unsuccessful selected import stops before config publication. Existing recovery,
 no-clobber, unrelated execution order and Git transport are unchanged.
 
 ## Separate secret channel and privacy

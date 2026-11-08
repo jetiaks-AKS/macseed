@@ -236,7 +236,7 @@ class RestorePrepareTests(unittest.TestCase):
         self.assertEqual((target.stat().st_ino, target.stat().st_mtime_ns), (before.st_ino, before.st_mtime_ns))
         self.assertEqual(list(directory.glob('.macseed-ssh-predecessor-*')), retained)
 
-    def test_ssh_v2_blocks_creation_and_retains_unresolved_dependencies(self):
+    def test_ssh_v2_config_only_preserves_missing_reference(self):
         target = self.ssh_prerequisite_fixture()
         source = self.stage / 'generated/ssh/config.snapshot'
         source.write_bytes(source.read_bytes().replace(b'snapshot: 1', b'snapshot: 2') +
@@ -244,19 +244,19 @@ class RestorePrepareTests(unittest.TestCase):
         self.pack()
         plan = self.plan_result()
         rows = [row for row in plan['plan'] if row['domain'] == 'ssh-configuration']
-        self.assertFalse(any(row['disposition'] == 'planned' for row in rows), rows)
-        self.assertFalse(plan['ssh_resolution']['ready'])
-        self.assertTrue(any(row['reason'] == 'identity_dependencies_unresolved' for row in rows), rows)
-        self.assertFalse(plan['readiness']['ready'])
+        self.assertTrue(any(row['disposition'] == 'planned' for row in rows), rows)
+        self.assertTrue(plan['ssh_resolution']['ready'])
+        self.assertTrue(plan['readiness']['ready'])
+        self.assertEqual([row['item_id'] for row in rows if row['disposition'] == 'warning'], ['identity-references'])
+        self.assertFalse(any(row['item_id'] == 'publication' for row in rows))
         result, events = self.execute(plan['prepared_plan_id'])
-        self.assertEqual(result.returncode, 2, events)
-        self.assertFalse(events[-1]['data']['publication_started'])
-        self.assertFalse(target.exists())
-        self.assertEqual(list(target.parent.iterdir()), [])
-        target.write_bytes(self.ssh_payload + b'    IdentityFile ~/.ssh/key\n    IdentitiesOnly yes\n')
-        target.chmod(0o600)
+        self.assertEqual(result.returncode, 0, events)
+        self.assertIn(b'IdentityFile ~/.ssh/key', target.read_bytes())
+        self.assertFalse((target.parent / 'key').exists())
+        self.assertEqual(events[-2]['data']['verification']['verdict'], 'selected_requirements_verified')
+        self.assertEqual(events[-2]['data']['ssh_identity_dependencies']['findings'], ['missing'])
         plan = self.plan_result()
-        self.assertFalse(plan['readiness']['ready'])
+        self.assertTrue(plan['readiness']['ready'])
         self.assertTrue(any(row['domain'] == 'ssh-configuration' and row['item_id'] == 'config'
                             and row['disposition'] == 'satisfied' for row in plan['plan']))
 

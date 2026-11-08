@@ -66,6 +66,7 @@ struct TaskDomainPresentation: Identifiable {
     var resultCategoryIssue = false
     var resultProblemDomains: Set<String> = []
     var resultCategoryMessage: String? = nil
+    var sshKeyAdvisory: String? = nil
     var resultProblemMessages: [String: String] = [:]
     var confirmedFinalState: TaskRowState? = nil
     var sharedObservationItemIDs: Set<String> {
@@ -339,6 +340,14 @@ struct RestoreTaskPresentation {
             if items.isEmpty { continue }
             var domain = TaskDomainPresentation(id: domainID, title: category.title,
                 symbol: Self.symbol(category.id), items: items, activityState: operationProgress ? Self.executionState(items, activity: result == nil ? activityState : nil) : activityState, previewOnly: !executing && result == nil)
+            if domainID == "ssh-configuration" {
+                let observed = result?.structuredEvidence?["ssh_identity_dependencies"]
+                if case .array(let findings) = observed?.object?["findings"] {
+                    domain.sshKeyAdvisory = CoreSSHResolution.Dependencies(version: 1, findings: findings.compactMap(\.string)).advisory
+                } else {
+                    domain.sshKeyAdvisory = (plan.effectiveSSHResolution ?? plan.sshResolution)?.dependencies.advisory
+                }
+            }
             if domainID == CoreRestorePreparation.secureDomain {
                 // The importer emits package and per-key receipts. They describe one
                 // selected requirement; never turn each receipt into another row/count.
@@ -843,7 +852,7 @@ enum RestoreResultDetails {
             return TaskDomainPresentation(id: domain.id, title: domain.title, symbol: domain.symbol, items: items,
                 activityState: domain.activityState, previewOnly: domain.previewOnly,
                 resultCategoryIssue: domain.resultCategoryIssue, resultProblemDomains: domain.resultProblemDomains,
-                resultCategoryMessage: domain.resultCategoryMessage, resultProblemMessages: domain.resultProblemMessages,
+                resultCategoryMessage: domain.resultCategoryMessage, sshKeyAdvisory: domain.sshKeyAdvisory, resultProblemMessages: domain.resultProblemMessages,
                 confirmedFinalState: domain.confirmedFinalState)
         }
     }
