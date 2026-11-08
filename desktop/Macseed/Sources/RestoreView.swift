@@ -46,6 +46,13 @@ struct RestoreAreaSelectionView: View {
                 }
             }
             if Self.hasDisclosure(area) && (expansion?.wrappedValue ?? expanded) {
+                if area.id == "ssh-configuration", model.canReviewSSHReferences, let message = model.sshReviewMessage {
+                    HStack(alignment: .firstTextBaseline, spacing: 10) {
+                        Label(message, systemImage: "exclamationmark.triangle")
+                            .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                        if model.canRetrySSHReview { Button("Retry Review") { model.reviewSSHReferences(retry: true) } }
+                    }.padding(.leading, hierarchyIndent + 40).padding(.vertical, 6)
+                }
                 if let description = Self.selectionDescription(area.id) {
                     Text(description).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                         .padding(.leading, hierarchyIndent + 40).padding(.vertical, 4)
@@ -56,11 +63,24 @@ struct RestoreAreaSelectionView: View {
                             get: { model.selectedItems[area.id]?.contains(item.id) == true },
                             set: { model.selectItem(area.id, item: item.id, included: $0) }))
                             .padding(.leading, hierarchyIndent + CaptureReviewPresentation.hierarchyStep)
+                        if area.id == "ssh-configuration" {
+                            ForEach(model.sshCorrections(for: item.id)) { reference in
+                                RestoreSSHReferenceCorrection(model: model, item: reference)
+                                    .padding(.leading, hierarchyIndent + CaptureReviewPresentation.hierarchyStep + 40)
+                            }
+                        }
                     }
                 } else {
                     VStack(alignment: .leading, spacing: 7) { ForEach(area.items) { item in Text(item.label) } }
                         .padding(.leading, hierarchyIndent + CaptureReviewPresentation.hierarchyStep).padding(.vertical, 4)
                 }
+            }
+            if area.id == "ssh-configuration", (expansion?.wrappedValue ?? expanded), model.sshResolutionSupported {
+                if let summary = model.sshCorrectionSummary {
+                    Text(summary).font(.callout).foregroundStyle(.secondary)
+                        .padding(.leading, hierarchyIndent + 40).padding(.vertical, 6)
+                }
+                Color.clear.frame(height: 0).task(id: model.sshReviewTrigger) { model.reviewSSHReferences() }
             }
             if !notices.isEmpty { ItemDetails(items: notices).padding(.leading, RestoreRowGrid.titleInset + hierarchyIndent) }
         }.padding(.leading, 16 + CaptureChildRowGrid.leadingInset).padding(.trailing, 16)
@@ -84,7 +104,7 @@ struct RestoreAreaSelectionView: View {
             if !area.selectable {
                 CaptureStatusText(title: area.availability == "unsupported" ? "Unsupported" : "Unavailable",
                     state: area.reason == "observation_error" ? .attention : .skipped)
-            } else if area.reason != nil {
+            } else if area.reason != nil || (area.id == "ssh-configuration" && model.sshNeedsAttention) {
                 CaptureStatusText(title: "Needs Attention", state: .attention)
             }
             if area.selectable && area.selectionMode == "items" {
@@ -594,8 +614,9 @@ struct RestoreView: View {
             }
         }
         .modifier(OperationLogPresenter(runtime: runtime))
-        .sheet(item: Binding(get: { runtime.operationID == model.operationID && [.preparing, .rebuilding].contains(model.state) ? runtime.secureChallenge : nil }, set: { _ in })) { challenge in
-            CaptureSecureInputView(runtime: runtime, challenge: challenge, restoring: true, comparing: model.state == .preparing, customizing: model.unlockingDestinations).id(challenge.id)
+        .sheet(item: Binding(get: { runtime.operationID == model.operationID && ([.preparing, .rebuilding].contains(model.state) || (model.state == .review && runtime.operation == .sshRestoreReview)) ? runtime.secureChallenge : nil }, set: { _ in })) { challenge in
+            CaptureSecureInputView(runtime: runtime, challenge: challenge, restoring: true, comparing: model.state == .preparing,
+                customizing: model.unlockingDestinations || runtime.operation == .sshRestoreReview).id(challenge.id)
                 .interactiveDismissDisabled()
         }
         .sheet(isPresented: Binding(get: { model.showingDestinations }, set: { if !$0 { model.dismissDestinations() } })) {

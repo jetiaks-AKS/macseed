@@ -4901,7 +4901,62 @@ private struct CaptureRefinementHost: View {
         print("PASS: Restore Selection native checkbox hierarchy at narrow/wide widths, shared 200pt status rail, independent disclosures, one WorkflowList and aggregate settings")
     }
 
+    static func sshResolutionPresentationChecks() throws {
+        let base: [String: Any] = ["version": 1, "action": "create", "ready": false, "pending": true,
+            "dependencies": ["version": 1, "findings": ["missing"]], "remote_authentication": "not_assessed"]
+        let pending = try JSONDecoder().decode(CoreSSHResolution.self, from: JSONSerialization.data(withJSONObject: base))
+        precondition(pending.valid && !pending.ready && pending.pending)
+        var expected = base; expected["ready"] = true; expected["pending"] = false
+        expected["dependencies"] = ["version": 1, "findings": ["selected_expected"]]
+        let qualified = try JSONDecoder().decode(CoreSSHResolution.self, from: JSONSerialization.data(withJSONObject: expected))
+        precondition(qualified.valid && qualified.ready && qualified.remoteAuthentication == "not_assessed")
+        expected["remote_authentication"] = "verified"
+        let invalid = try JSONDecoder().decode(CoreSSHResolution.self, from: JSONSerialization.data(withJSONObject: expected))
+        precondition(!invalid.valid)
+        let row = CoreRestoreInspection.Area(domain: "ssh-configuration", label: "SSH Configuration", selectionMode: "items",
+            availability: "available", reason: nil, items: [.init(itemID: "opaque", label: "production")])
+        precondition(RestoreAreaSelectionView.hasDisclosure(row))
+        let selection = CoreRestoreSelection(categories: ["ssh-configuration"], items: [:])
+        let disclosure = CoreCommand.sshRestoreReview(path: "/fixture.mbt", selection: selection)
+        let secureChoice = CoreCommand.sshRestoreReview(path: "/fixture.mbt", selection: selection, includeSecure: true)
+        precondition(!disclosure.requiresSecretBridge && secureChoice.requiresSecretBridge)
+        let proposal = CoreSSHApprovals(version: 1, bundleID: String(repeating: "b", count: 64), items: [
+            .init(hostID: "restore:" + String(repeating: "c", count: 64), index: 0, original: "/old/key",
+                  reference: "~/keys/key", identityID: nil, approved: false)])
+        _ = try CoreRequest(disclosure, sshApprovals: proposal).encoded()
+        do {
+            _ = try CoreRequest(.restorePrepare(path: "/fixture.mbt", disabledGroups: [], includeSecure: false), sshApprovals: proposal).encoded()
+            preconditionFailure("An unapproved review proposal must never become Prepare consent")
+        } catch CoreRuntimeError.invalidRequest { }
+        let catalog = CoreRestoreInspection.Inventory(groups: [.init(id: "SSH Configuration", domains: ["ssh-configuration"])], inventory: [row])
+        let dependency: [String: Any] = ["domain": "ssh-configuration", "item_id": "identity-references", "action": "none", "disposition": "warning", "reason": "identity_dependencies_unresolved"]
+        let secure: [String: Any] = ["domain": "secure-ssh-identities", "item_id": "encrypted_identity_set", "action": "validate_and_import", "disposition": "pending_unlock", "reason": "secure_unlock_required"]
+        let values: [String: Any] = ["prepared_plan_id": String(repeating: "a", count: 64), "selection": ["categories": ["ssh-configuration"], "items": [:]],
+            "selected_groups": ["SSH Configuration"], "selected_categories": ["ssh-configuration"], "selected_item_counts": [:],
+            "include_secure": true, "secure_restore_status": "selected_pending", "plan": [dependency, secure], "ssh_resolution": base,
+            "readiness": ["ready": true, "ready_scope": "environment", "conditions": [["domain": "secure-ssh-identities", "code": "secure_bridge_required", "status": "external_action_required", "scope": "execution_launch"]], "reentry": "restore_prepare"],
+            "has_planned_changes": true, "warning_count": 0, "error_count": 0]
+        var plan = try JSONDecoder().decode(CoreRestorePreparation.self, from: JSONSerialization.data(withJSONObject: values))
+        precondition(!plan.sshDependenciesReady)
+        plan.secureComparison = .init(decision: .importRequired, targetState: String(repeating: "c", count: 64),
+            sourceFingerprint: String(repeating: "b", count: 64), preparedPlanID: plan.preparedPlanID,
+            selection: selection, includeSecure: true, comparisonOperationID: "fixture", sshResolution: qualified)
+        let preview = RestorePreviewPresentation(plan, catalog: catalog)
+        let key = preview.categories.first { $0.id == "ssh-configuration" }!.items[0]
+        precondition(plan.sshDependenciesReady && key.title == "SSH key references" && key.status == .ready && key.restoreReadyText == "After Secure Transfer")
+        plan.secureComparison?.sshResolution = pending
+        precondition(!plan.sshDependenciesReady && RestorePreviewPresentation(plan, catalog: catalog).categories[0].items[0].status == .attention)
+        var conflict = values
+        conflict["include_secure"] = false; conflict["secure_restore_status"] = "not_selected"
+        conflict.removeValue(forKey: "ssh_resolution") // Legacy v1 still cannot silently skip a selected conflict.
+        conflict["plan"] = [["domain": "ssh-configuration", "item_id": "config", "action": "none", "disposition": "conflict", "reason": "target_conflict"]]
+        let legacy = try JSONDecoder().decode(CoreRestorePreparation.self, from: JSONSerialization.data(withJSONObject: conflict))
+        precondition(!legacy.sshDependenciesReady)
+        print("PASS: SSH dependency pending/expected presentation remains separate from remote authentication and existing Host disclosure")
+    }
+
     @MainActor static func main() async {
+        if CommandLine.arguments.contains("--ssh-resolution-only") { try! sshResolutionPresentationChecks(); return }
         if CommandLine.arguments.contains("--workflow-contracts-only") { workflowContractChecks(); return }
         if CommandLine.arguments.contains("--preview-column-geometry-only") { previewColumnGeometryChecks(); return }
         if CommandLine.arguments.contains("--preview-cleanup-only") {

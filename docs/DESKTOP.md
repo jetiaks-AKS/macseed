@@ -294,8 +294,31 @@ remains off initially. Rebuild lists only saved profiles; selecting the category
 includes all of them. Clearing its last Host excludes SSH Configuration while
 preserving other categories and Secure Transfer. A Host selection change clears
 prepared confirmation/Preview and requires fresh preparation. Snapshot coverage,
-v2 restrictions and IdentityFile dependency gates remain Core-owned; configuration
+v2 qualification and IdentityFile dependency gates remain Core-owned; configuration
 conformity makes no authentication or connectivity claim.
+
+Rebuild uses **Advanced → SSH Configuration → Host** for compact inline IdentityFile
+corrections. Core returns only selected references needing attention; healthy, implicit
+and `none` references have no correction controls. Choose Local Key or Selected Secure
+Key asks the protected review operation to qualify a proposal before showing
+**Approve this path change**. The original reference remains the default. Inapplicable
+controls are absent; approval counts stay separate from unresolved dependencies.
+Ordinary Host disclosure does not unlock or enable Secure Transfer. Explicitly choosing
+a selected secure identity reuses the existing Bundle unlock/Compare boundary; it
+neither imports a key nor tests SSH authentication. A changed proposal requires fresh
+consent. Changing the Bundle, selected secure identities or destinations clears
+approvals. Parent Host checkboxes do not approve paths. Refresh Preview checks effective
+references; Rebuild requires Core's positive dependency result. Paths remain out of
+requests, JSONL, operation logs and diagnostics through the protected transport in the
+[Core contract](core/APPLICATION-INTERFACE.md#ssh-identity-dependency-assessment).
+
+Review sends only compact SSH selection, using the existing whole-category wire form
+when all Hosts are selected. Unrelated category changes do not repeat the operation;
+successful empty results need no warning. Review failure belongs to the SSH category's
+status and expanded details, with explicit read-only retry when the request is valid.
+Preview labels the dependency row **SSH key references** and uses the latest bound
+Core resolution: authenticated `selected_expected` means planned availability after Secure Transfer;
+unresolved dependencies and selected Host conflicts keep Rebuild unavailable.
 
 Review and Restore Selection share the 0/12/24/36 pt hierarchy offsets defined by
 `CaptureReviewPresentation.hierarchyStep`. Indentation applies once to leading
@@ -388,6 +411,10 @@ summaries and separate independent warnings. There are **no selection checkboxes
 Every domain, including Secure Transfer, uses the same status/count column and
 trailing disclosure column. Secure Transfer shows the prepared SSH identity count
 and retains its expandable identity list.
+Confirmation shows one concise privacy statement. With selected SSH identities it
+states that identities are encrypted separately, other settings are not encrypted,
+and the Bundle passphrase must be kept safe. Without identities, only the settings
+encryption boundary is shown. Destination/path correction guidance stays in context.
 Only groups included in the effective prepared selection appear. Ordinary categories
 share one container; included Advanced and Secure Transfer share the second. Empty
 sections and their controls are omitted, including the ordinary section for a
@@ -1613,11 +1640,12 @@ Remove forgets the candidate without deleting files. The one existing tri-state
 master and independent disclosure retain their semantics. Advanced selection and
 ordinary domain/item counts remain separate; secure-only Capture is supported.
 
-Review and confirmation explain the default destination `~/.ssh/<validated-name>`
-in the receiving HOME and the `IdentityFile` limitation. No custom destination or
-source path is stored in the Bundle; the existing encrypted v1 names authenticate
-the filenames. Existing Preview/Result secondary detail gives the same bounded
-configuration reminder, without inferring a Host-profile relationship. Core source
+Review explains the default destination `~/.ssh/<validated-name>` in the receiving
+HOME, custom Rebuild destinations and explicitly approved IdentityFile corrections.
+Confirmation keeps only the conditional encryption/passphrase disclosure. No custom
+destination or source path is stored in the Bundle; the existing encrypted v1 names
+authenticate the filenames. These Capture disclosures do not infer a Host-profile
+relationship. Core source
 checks and format compatibility are owned by [Secure Migration](toolkit/SSH-IDENTITY-MIGRATION.md#manually-selected-desktop-sources).
 
 Source references remain in the current Capture session and private operation

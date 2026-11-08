@@ -139,7 +139,8 @@ Prepare binds source evidence; Execute revalidates sources and cryptographic pai
 Preview still unlocks only the Bundle, compares exact intended targets without
 mutation and counts Secure Transfer as one requirement. The existing importer
 preserves no-clobber, explicit consent, target freshness and verified evidence.
-SSH Configuration is not rewritten: review `IdentityFile` if it expects another
+Choosing a key destination does not rewrite SSH Configuration. Explicitly review and
+approve an `IdentityFile` correction if it expects another
 location. This reminder does not infer private Host-profile relationships.
 See [source safety and compatibility](toolkit/SSH-IDENTITY-MIGRATION.md#manually-selected-desktop-sources).
 
@@ -158,7 +159,7 @@ to [Secure SSH Identity Migration](toolkit/SSH-IDENTITY-MIGRATION.md).
 
 ### SSH Environment Completion — Developer Environment Closure
 
-**IN PROGRESS — combined integration remains planned.** Complete practical SSH Configuration support
+**IN PROGRESS — bounded v2 Restore is implemented; wider qualification remains open.** Complete practical SSH Configuration support
 across Discovery, Capture, Preview, Restore and Verification, prioritizing
 `IdentityFile`, `IdentitiesOnly`, `AddKeysToAgent`, `UseKeychain` and other safely
 portable SSH directives. This extends the bounded configuration contract without
@@ -170,9 +171,15 @@ sheet and native macOS folder picker. Accepting defaults requires no extra steps
 Preserve **SELECTION = configure; PREVIEW = read-only validation; REBUILD = execute**:
 no destination editing in Preview, new top-level screen or separate SSH manager.
 
-Validate `IdentityFile` references against the actual selected identity destinations.
-Never silently rewrite SSH configuration; every proposed correction requires explicit
-authorization. Resolve false Needs Attention results while preserving genuine
+Slice 4B qualifies `IdentityFile` references against local keys and authenticated selected
+identity destinations. **Advanced → SSH Configuration → Host** shows an inline
+correction only for a selected reference needing attention: original reference,
+qualified proposal and explicit approval. Custom destinations never rewrite paths
+automatically; approved corrections and remaining unresolved references are counted
+separately.
+Qualified create/no-op/missing-Host merge retains existing conflicting Hosts unchanged.
+[Configuration](toolkit/CONFIGURATION.md#explicit-identityfile-resolution-and-v2-restore)
+owns publication, dependency and stale-plan safeguards. Resolve false Needs Attention results while preserving genuine
 unsupported, conflicting and unsafe findings. Keep Secure Migration v1 Bundle
 compatibility. A later joint SSH Configuration + identity E2E must cover default and
 custom destinations, Verification and repeated no-op. The optional destination

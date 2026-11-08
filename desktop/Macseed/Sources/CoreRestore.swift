@@ -98,13 +98,15 @@ struct CoreSecureComparison: Codable, Equatable, Sendable {
     let selection: CoreRestoreSelection
     let includeSecure: Bool
     let comparisonOperationID: String
+    var sshResolution: CoreSSHResolution? = nil
     enum CodingKeys: String, CodingKey {
+        case sshResolution = "ssh_resolution"
         case decision, selection, targetState = "target_state", sourceFingerprint = "source_fingerprint"
         case preparedPlanID = "prepared_plan_id", includeSecure = "include_secure", comparisonOperationID = "comparison_operation_id"
     }
     func validate(plan: CoreRestorePreparation, operationID: String, requestSelection: CoreRestoreSelection? = nil) throws {
         func digest(_ value: String?) -> Bool { value?.range(of: "^[0-9a-f]{64}$", options: .regularExpression) != nil }
-        guard plan.includeSecure, includeSecure, selection == (requestSelection ?? plan.selection), preparedPlanID == plan.preparedPlanID,
+        guard sshResolution?.valid != false, (plan.sshResolution == nil || sshResolution != nil), plan.includeSecure, includeSecure, selection == (requestSelection ?? plan.selection), preparedPlanID == plan.preparedPlanID,
               sourceFingerprint == plan.planDiagnostics?["bundle"], digest(sourceFingerprint), digest(preparedPlanID),
               comparisonOperationID == operationID, operationID.range(of: "^[A-Za-z0-9_-]{1,64}$", options: .regularExpression) != nil,
               decision == .conflict ? targetState == nil : digest(targetState) else { throw CoreRuntimeError.malformedEvent }
@@ -113,6 +115,15 @@ struct CoreSecureComparison: Codable, Equatable, Sendable {
 
 struct CoreRestorePreparation: Decodable {
     var secureComparison: CoreSecureComparison? = nil
+    var sshResolution: CoreSSHResolution? = nil
+    var effectiveSSHResolution: CoreSSHResolution? { includeSecure ? secureComparison?.sshResolution : sshResolution }
+    var sshDependenciesReady: Bool {
+        // Selected SSH conflicts are never an item-local skip, including legacy v1.
+        guard !plan.contains(where: { $0.domain == "ssh-configuration" && ["conflict", "blocked", "unknown"].contains($0.disposition) }) else { return false }
+        guard sshResolution != nil else { return true }
+        return effectiveSSHResolution?.valid == true && effectiveSSHResolution?.ready == true
+            && (!includeSecure || secureComparedReady)
+    }
     enum SecureDestinationScope: String, Decodable { case defaultLocation = "default", custom, mixed }
     var secureDestinationScope: SecureDestinationScope? = nil
     var secureComparedReady: Bool { secureExecutable && secureComparison.map { [.allMatch, .importRequired].contains($0.decision) } == true }
@@ -272,6 +283,10 @@ struct CoreRestorePreparation: Decodable {
         }
     }
     struct Row: Decodable {
+        var isSSHDependency: Bool {
+            domain == "ssh-configuration" && itemID == "identity-references" && action == "none"
+                && disposition == "warning" && reason == "identity_dependencies_unresolved"
+        }
         var isSecureImport: Bool {
             domain == CoreRestorePreparation.secureDomain && itemID == CoreRestorePreparation.secureItem
                 && action == "validate_and_import" && disposition == "pending_unlock" && reason == "secure_unlock_required"
@@ -332,6 +347,7 @@ struct CoreRestorePreparation: Decodable {
     }
     enum CodingKeys: String, CodingKey {
         case effectiveSelection = "effective_selection", applicationDuplicates = "application_duplicates"
+        case sshResolution = "ssh_resolution"
         case secureDestinationScope = "secure_destination_scope"
         case scopeWarnings = "scope_warnings"
         case planDiagnostics = "plan_diagnostics"
@@ -345,6 +361,7 @@ struct CoreRestorePreparation: Decodable {
             && readiness.conditions.contains { $0.isItemLocal && $0.domain == row.domain && $0.code == row.reason }
     }
     func validate(expected: CoreRestoreSelection, catalog: CoreRestoreInspection.Inventory, expectedIncludeSecure: Bool = false) throws {
+        guard sshResolution?.valid != false else { throw CoreRuntimeError.malformedEvent }
         let effective = effectiveSelection ?? selection
         if effectiveSelection != nil || applicationDuplicates != nil {
             let duplicates = applicationDuplicates ?? []

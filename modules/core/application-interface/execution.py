@@ -24,7 +24,7 @@ class ProcessObservationUnavailable(Exception):
 
 
 class OwnedBootstrap:
-    def __init__(self, root, environment, secure_evidence=None, on_record=None, identities=None, mode="--bootstrap", skipped_casks=None, cask_plans=None, graceful_control=None):
+    def __init__(self, root, environment, secure_evidence=None, on_record=None, identities=None, mode="--bootstrap", skipped_casks=None, cask_plans=None, graceful_control=None, ssh_evidence=None):
         if mode not in {"--bootstrap", "--application-compare"}:
             raise ValueError("unsupported owned mode")
         # Both execution and read-only Comparison must account for child workers.
@@ -81,6 +81,10 @@ class OwnedBootstrap:
                              MACSEED_SECURE_ATTEMPT=attempt, MACSEED_SECURE_EXIT=str(status))
             descriptors += (receipt.fileno(),)
         try:
+            if ssh_evidence is not None:
+                from restore_resolution import write_context
+                context, original = ssh_evidence
+                write_context(self.item_state.name, original, context)
             skipped_file = Path(self.item_state.name) / 'skipped-casks.json'
             descriptor = os.open(skipped_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
             with os.fdopen(descriptor, 'w') as stream:

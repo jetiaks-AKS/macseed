@@ -12,6 +12,10 @@ SSH_IDENTITY_PORTABLE=0
 SSH_IDENTITY_UNRESOLVED=0
 SSH_CONFIG_HELPER="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/config.py"
 SSH_MERGE_HELPER="${SSH_CONFIG_HELPER%/*}/ssh_merge.py"
+SSH_RESOLUTION_HELPER="${SSH_CONFIG_HELPER%/*}/restore_resolution.py"
+SSH_DEPENDENCIES=""
+SSH_V2_APPLIED=false
+SSH_V2_POST_EVIDENCE=""
 SSH_MERGE_ACTION=""
 SSH_MERGE_COUNT=0
 SSH_TARGET_EVIDENCE=""
@@ -91,14 +95,28 @@ ssh_configuration_inspect() {
         warning "Existing SSH configuration is preserved"
         return 1
     fi
-    # Extended snapshots are comparison-only in this slice. Exact existing
-    # files need no write, but file references remain unvalidated dependencies.
-    if [[ "$SSH_SNAPSHOT_VERSION" == 2 && "$SSH_TARGET_STATUS" != identical ]] ||
-       (( SSH_IDENTITY_PORTABLE + SSH_IDENTITY_UNRESOLVED > 0 )); then
-        warning "Extended SSH requirements need dependency qualification before restoration"
-        return 1
+    SSH_DEPENDENCIES=""
+    if [[ "$SSH_SNAPSHOT_VERSION" == 2 ]]; then
+        if [[ "$SSH_V2_APPLIED" == true ]]; then
+            if [[ ( "$SSH_TARGET_CONFORMITY" != exact && "$SSH_TARGET_CONFORMITY" != profiles_match ) ||
+                  "$(python3 -B "$SSH_MERGE_HELPER" evidence "$HOME")" != "$SSH_V2_POST_EVIDENCE" ||
+                  "$(python3 -B "$SSH_RESOLUTION_HELPER" verify "$SSH_SNAPSHOT_FILE" "$HOME")" != qualified ]]; then
+                error "SSH state changed after publication"
+                return 2
+            fi
+            SSH_MERGE_ACTION=noop; SSH_DEPENDENCIES=qualified
+            return 0
+        fi
+        merge="$(python3 -B "$SSH_RESOLUTION_HELPER" plan "$SSH_SNAPSHOT_FILE" "$HOME")"
+        result=$?
+        if [[ $result -ne 0 ]]; then
+            SSH_MERGE_ACTION=refused
+            warning "SSH configuration or identity dependencies remain unresolved"
+            return 1
+        fi
+        read -r SSH_MERGE_ACTION SSH_MERGE_COUNT SSH_TARGET_EVIDENCE SSH_DEPENDENCIES <<< "$merge"
+        return 0
     fi
-    [[ "$SSH_SNAPSHOT_VERSION" != 2 ]] || return 0
     merge="$(python3 -B "$SSH_MERGE_HELPER" plan "$payload" "$HOME")"
     result=$?
     if [[ $result -ne 0 ]]; then
@@ -150,10 +168,7 @@ preview_ssh_configuration() {
     elif [[ $result -eq 1 && "$SSH_TARGET_STATUS" == different && "$SSH_TARGET_CONFORMITY" == profiles_match ]]; then
         preview_record ssh-configuration publication none conflict target_conflict
     fi
-    if [[ "$SSH_SNAPSHOT_VERSION" == 2 && "$SSH_TARGET_STATUS" == absent-* ]]; then
-        preview_record ssh-configuration publication none warning extended_ssh_read_only
-    fi
-    if (( SSH_IDENTITY_PORTABLE + SSH_IDENTITY_UNRESOLVED > 0 )); then
+    if (( SSH_IDENTITY_PORTABLE + SSH_IDENTITY_UNRESOLVED > 0 )) && [[ "$SSH_DEPENDENCIES" != qualified ]]; then
         preview_record ssh-configuration identity-references none warning identity_dependencies_unresolved
     fi
     if [[ $result -eq 0 && "$SSH_TARGET_STATUS" == absent-* ]]; then
@@ -181,6 +196,37 @@ bootstrap_ssh_configuration() {
             declare -F verification_application_operation_hook >/dev/null && verification_application_operation_hook ssh-configuration config create skipped target_or_source_conflict
         fi
         rm -f "$payload"; [[ $result -ne 3 ]] || return 0; return "$result"
+    fi
+    if [[ "$SSH_SNAPSHOT_VERSION" == 2 ]]; then
+        if [[ "$SSH_V2_APPLIED" == true ]]; then
+            rm -f "$payload"
+            success "SSH configuration already verified"
+            [[ "$SSH_SOURCE_PARTIAL" != true ]] || return 1
+            return 0
+        fi
+        publication="$(python3 -B "$SSH_RESOLUTION_HELPER" apply "$SSH_SNAPSHOT_FILE" "$HOME")"
+        result=$?
+        if [[ $result -eq 0 ]]; then
+            ssh_target_inspect "$payload"; result=$?
+            if [[ "$SSH_TARGET_CONFORMITY" != exact && "$SSH_TARGET_CONFORMITY" != profiles_match ]]; then result=2; fi
+        fi
+        rm -f "$payload"
+        if [[ "$publication" == published || "$publication" == 'publication_uncertain 1' ]]; then
+            MODULE_CHANGED=true
+        fi
+        if [[ $result -ne 0 ]]; then
+            declare -F verification_operation_hook >/dev/null && verification_operation_hook ssh-configuration config create failure ssh_publication_uncertain
+            error "SSH publication was not verified; preserve any .macseed-ssh-pending-* directory for manual review"
+            return 2
+        fi
+        SSH_V2_APPLIED=true
+        SSH_V2_POST_EVIDENCE="$(python3 -B "$SSH_MERGE_HELPER" evidence "$HOME")" || return 2
+        local outcome=success
+        [[ "$publication" != noop ]] || outcome=noop
+        declare -F verification_operation_hook >/dev/null && verification_operation_hook ssh-configuration config create "$outcome"
+        success "SSH configuration verified; remote authentication was not tested"
+        [[ "$SSH_SOURCE_PARTIAL" != true ]] || return 1
+        return 0
     fi
     if [[ "$SSH_MERGE_ACTION" == merge ]]; then
         publication="$(python3 -B "$SSH_MERGE_HELPER" publish "$payload" "$HOME" "$SSH_TARGET_EVIDENCE")"
@@ -310,8 +356,13 @@ verify_ssh_configuration() {
         esac
     fi
     if (( SSH_IDENTITY_PORTABLE + SSH_IDENTITY_UNRESOLVED > 0 )); then
-        verification_coverage ssh-configuration identity-references unresolved unobserved
-        verification_diagnostic "$GV_LAST_REF" prerequisite_unmet warning scope
+        if [[ "$(python3 -B "$SSH_RESOLUTION_HELPER" verify "$SSH_SNAPSHOT_FILE" "$HOME")" == qualified ]]; then
+            verification_coverage ssh-configuration identity-references resolved observed_present
+            verification_result ssh-configuration identity-references identity_references_qualified 0
+        else
+            verification_coverage ssh-configuration identity-references unresolved unobserved
+            verification_diagnostic "$GV_LAST_REF" prerequisite_unmet warning scope
+        fi
     fi
     if [[ "$SSH_TARGET_EXCLUDED" -gt 0 ]]; then
         verification_coverage ssh-configuration target-scope unresolved partial

@@ -1088,7 +1088,8 @@ Accepted file references are `~/path` (portable relative to receiving HOME) and
 `/absolute/path` (recognized but portability unresolved), at most 1024 ASCII bytes, with nonempty components
 containing only letters, digits, dots, underscores and hyphens. Dot/dot-dot
 components, repeated/trailing slashes, relative paths, foreign-user homes,
-variables and percent tokens are rejected; paths are never expanded or rewritten.
+variables and percent tokens are rejected. Capture preserves their spelling; Restore
+changes a reference only through the explicit approval contract below.
 A lone `IdentityFile none` suppresses default identity-file loading, not agent
 authentication. Mixed `none`/file lists and repeated file references are excluded.
 See [OpenSSH semantics](https://man.openbsd.org/ssh_config) and
@@ -1128,7 +1129,7 @@ even when every comparable selected profile matches.
 File conformity and permission to Apply are separate. Legacy v1 creation on
 confirmed absence retains its no-clobber publication and byte/metadata verification
 (`~/.ssh` `0700`, `config` `0600`). Existing fully supported configurations can
-receive **only missing literal Host profiles from a complete v1 source**. Matching
+receive **only missing literal Host profiles from a complete qualified v1/v2 source**. Matching
 selected profiles are no-op, including differences in scalar order, comments and
 formatting. Different settings for an existing Host, case-only alias differences,
 duplicate aliases, any unsupported target block, Include/Match, wildcards and
@@ -1185,17 +1186,13 @@ its own fresh checks. CLI and Desktop use the same consumer. Verification can
 confirm the selected profiles while leaving unrelated supported profiles intact;
 neither merge success nor conformity proves connectivity or authentication.
 
-**Extended requirements boundary:** automatic creation/merge from v2 is blocked. Exact existing v2
-configuration can be a no-op only without file-reference dependencies. Every
-non-`none` IdentityFile retains the existing unresolved execution/Verification gate,
-including a portable reference whose configuration text matches. Configuration
-conformity does not open keys. Restore's separate read-only dependency assessment
-below does not relax that gate. Comparison can confirm supported
-configuration while retaining an incomplete overall verdict; it proves neither
-remote authentication nor agent/Keychain readiness. No `ssh-add` or Keychain
+**Extended requirements boundary:** v2 creation, missing-Host merge and no-op
+require positively qualified dependencies. Configuration conformity remains a
+separate predicate. Neither configuration nor key qualification proves remote
+authentication, agent availability or Keychain readiness. No `ssh-add` or Keychain
 mutation is performed. Ordinary records expose aggregate statuses/reasons, not
 Host aliases, users, addresses or identity paths. Selection inventory exposes Host
-aliases as labels and opaque item IDs; it never exposes directive values.
+aliases as labels and opaque item IDs; directive values use the private review boundary.
 
 ### Read-only IdentityFile dependencies
 
@@ -1215,8 +1212,9 @@ counts or per-item correlation.
 | `unsafe_target` | Unsafe path/ownership/permissions/ACL, symlink, hardlink, nonregular file, partial pair, case collision, public/private mismatch, or selected target conflict. |
 | `no_file_dependency` | A lone `IdentityFile none`, or no explicit IdentityFile. Default files, agents and remote authentication remain unassessed. |
 
-Only explicit `~/` references are inspected under receiving HOME; absolute
-references remain unresolved and are never opened. No recursive key discovery or
+By default only explicit `~/` references are inspected under receiving HOME;
+absolute references remain unresolved. An explicitly approved replacement may
+name an absolute destination and is subject to the same safe-pair checks. No recursive key discovery or
 basename/fingerprint search occurs. Existing explicit pairs may reside outside
 `.ssh` under HOME. Local qualification reuses Secure Transfer's safe pair reader
 and private destination/ACL checks, requires adjacent `.pub`, and supports OpenSSH
@@ -1235,25 +1233,67 @@ into its ID; a fresh preparation observes again, including byte changes that lea
 the public finding kind unchanged.
 
 SSH Configuration and Secure Transfer remain independently selectable. Prepare
-never unlocks `secure.age` or trusts a saved inventory as authentication. Only an
-explicit Secure Compare reuses authenticated selected identities through the live
-private importer socket. The complete package and mapping v1/v2 are validated
+never unlocks `secure.age` or trusts a saved inventory as authentication. Explicit Secure Compare reuses authenticated selected identities through the live
+private importer socket; Execute obtains fresh evidence from successful validated import. The complete package and mapping v1/v2 are validated
 before filtering; excluded identities cannot satisfy an expected dependency.
 Intended locations use the existing private destination mapping, without rewriting
 references. A selected identity at a different directory does not satisfy the old
-reference. Absolute custom references remain unresolved. Evidence is operation
+reference. Unapproved absolute references remain unresolved. Evidence is operation
 local and rechecked against current local bytes; no password or authenticated
 identity cache is retained. See the [Core projection](../core/APPLICATION-INTERFACE.md#ssh-identity-dependency-assessment).
 
-Slice 4A supplies advisory qualification only. Slice 4B still needs an explicit
-v2 execution/no-op contract, path-correction consent and freshness binding before
-any publication behavior can change. Existing Safe Merge, import no-clobber,
-recovery, configuration Verification and Check contracts remain unchanged.
+### Explicit IdentityFile resolution and v2 Restore
 
-Conflict correction, identity linkage/correction consent, Git
-dependency ordering and Secure Transfer in Check remain deferred. SSH Environment
-Completion is not complete; [Capture / Restore](../CAPTURE-RESTORE.md#ssh-environment-completion--developer-environment-closure)
-owns the later workflow boundary.
+`modules/ssh/restore_resolution.py` consumes the same ordered snapshot and dependency
+model. The default preserves every reference. An approval binds the Bundle digest,
+opaque selected Host ID, zero-based IdentityFile index, original spelling, proposed
+reference and optional selected secure identity ID. A local proposal must qualify
+at its exact location. A secure proposal must match the current authenticated
+selected identity and its exact mapped destination; filenames alone never establish
+an association. Changing Secure Transfer selection/destinations clears Desktop
+approvals and invalidates Preview. Selecting SSH Configuration never grants consent.
+Review/approval transport is bounded to 32 references and 64 KiB per private control
+file. Review returns only missing, unresolved or unsafe selected references. A proposal
+uses `approved:false` and the same qualification rules; it never authorizes publication.
+Only a qualified proposal can be explicitly approved in the inline Host correction.
+
+Prepare never unlocks a Bundle. Missing portable dependencies can be pending when
+Secure Transfer is selected; only authenticated Compare can qualify them as
+`selected_expected`. Execute requires that comparison and independently reimports
+or validates the selected identities. Only a validated successful/no-op importer
+receipt plus fresh exact pair hashes can qualify a protected local key for this
+operation. Failed/cancelled import cannot publish dependent SSH profiles. Imported
+keys are never overwritten or rolled back because a later configuration step fails.
+
+The prepared ID binds original/effective snapshots, selection, approvals, destination
+mapping, local dependency evidence and target configuration evidence. Execute
+rechecks those inputs; the domain consumer rechecks key bytes, safe paths and config
+at publication. The original snapshot is a separate bounded (1 MiB), owned `0600`
+file inside the private `0700` operation directory. The small execution control binds
+its SHA-256 and file identity/metadata; no-follow reads revalidate both before use
+and publication. Both files are created exclusively. The global control-file limit
+remains 64 KiB. Import may create an absent `.ssh`, but cannot invalidate the pinned
+HOME ancestry or create/change config unnoticed. Existing differing selected Hosts
+remain conflicts **against the original source**, even if a proposed correction
+would match them. This also blocks reapplying an old Bundle whose references differ
+from a previously corrected target; no remembered consent overrides that boundary.
+
+Qualified v2 uses the existing atomic missing-Host Merge and predecessor recovery.
+Creation stages `new` in a private `.macseed-ssh-pending-*` directory, flushes it,
+uses exclusive Darwin rename, then verifies bytes/identity/permissions and removes
+the empty marker. Any uncertain mutation retains artifacts for manual inspection;
+there is no overwrite fallback or automatic rollback. Partial sources may create or
+match supported profiles while retaining unresolved coverage, but cannot merge.
+Include/Match/wildcard/unsupported targets, unsafe ancestors, case collisions,
+symlinks, ownership/ACL/mode problems and unresolved dependencies stay blocked.
+
+Verification separately reports effective configuration conformity, dependency
+qualification and Secure Transfer import evidence. Required unresolved references
+prevent full success. Check performs local read-only qualification only; it neither
+unlocks `secure.age` nor reuses a previous operation's private authentication.
+Git transport/order, existing conflicting Host correction and Secure Transfer in
+Check remain outside this slice. The [workflow owner](../CAPTURE-RESTORE.md#ssh-environment-completion--developer-environment-closure)
+tracks the remaining integration qualification.
 
 ## Selected-state consumers
 

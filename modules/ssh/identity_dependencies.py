@@ -115,11 +115,12 @@ def qualify(pair, deadline):
     return 'local_satisfied', 'local_pair_qualified'
 
 
-def assess(raw, home, *, authenticated=(), destinations=None):
+def assess(raw, home, *, authenticated=(), destinations=None, approved_paths=(), verified_import=False):
     """Assess a validated, already narrowed snapshot; never trust inventory files.
 
-    authenticated is supplied only by the live successful Secure Compare bridge,
-    after full package validation and selected-target checks. No cross-run cache.
+    authenticated is supplied only by the live successful Compare/import bridge,
+    after full package validation and selected-target checks. verified_import
+    additionally requires a validated cryptographic import receipt. No cross-run cache.
     """
     _, _, _, profiles = snapshot(raw)
     intended = {}
@@ -141,10 +142,10 @@ def assess(raw, home, *, authenticated=(), destinations=None):
             if kind == 'none':
                 findings.append(dict(reference=reference, status='no_file_dependency', reason='explicit_none'))
                 continue
-            if kind != 'portable':
+            if kind != 'portable' and reference not in approved_paths:
                 findings.append(dict(reference=reference, status='unresolved', reason='nonportable_reference'))
                 continue
-            path = str(Path(home) / reference[2:])
+            path = str(Path(home) / reference[2:]) if kind == 'portable' else reference
             if path not in locations:
                 status, reason, binding = 'unresolved', 'observation_limit', None
                 pair_digest = None
@@ -186,7 +187,8 @@ def assess(raw, home, *, authenticated=(), destinations=None):
                 elif target == 'create' and finding['status'] == 'missing':
                     finding.update(status='selected_expected', reason='authenticated_destination')
                 elif target == 'identical' and finding['status'] == 'unresolved' and finding['reason'] == 'locked_or_invalid_identity':
-                    finding.update(status='selected_expected', reason='authenticated_pair_requires_unlock')
+                    finding.update(status='local_satisfied' if verified_import else 'selected_expected',
+                                   reason='verified_import_pair' if verified_import else 'authenticated_pair_requires_unlock')
                 elif ((target == 'create' and finding['status'] != 'missing')
                       or (target == 'identical' and finding['status'] == 'missing')):
                     finding.update(status='unresolved', reason='observation_changed')

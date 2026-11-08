@@ -26,7 +26,7 @@ expect() { local label="$1" expected="$2"; shift 2; "$@"; local got=$?; [[ $got 
 reset_fixture() {
     rm -rf "$HOME/.ssh" "$TEST_ROOT/config"
     mkdir -p "$TEST_ROOT/config/generated/ssh"
-    WARNINGS=0; PLAN=""; PREVIEW_RECORDS=""; MODULE_CHANGED=false
+    WARNINGS=0; PLAN=""; PREVIEW_RECORDS=""; MODULE_CHANGED=false; SSH_V2_APPLIED=false
 }
 source_config() {
     mkdir -p "$HOME/.ssh"
@@ -312,8 +312,9 @@ expect 'exact v2 without file dependencies is a no-op' 0 bootstrap_ssh_configura
 /usr/bin/ssh -G -F "$HOME/.ssh/config" example > "$TEST_ROOT/native-options" 2> "$TEST_ROOT/native-error"
 [[ $? -eq 0 && "$(sed -n 's/^identityfile /identityfile /p' "$TEST_ROOT/native-options")" == 'identityfile none' ]] && pass 'native OpenSSH none semantics' || fail 'native OpenSSH none semantics'
 rm -rf "$HOME/.ssh"
-expect 'none/boolean v2 also cannot create configuration' 1 bootstrap_ssh_configuration
-[[ ! -e "$HOME/.ssh" ]] && pass 'all extended creation remains gated' || fail 'extended creation bypassed gate'
+SSH_V2_APPLIED=false # A new operation after target removal.
+expect 'qualified none/boolean v2 creates configuration' 0 bootstrap_ssh_configuration
+[[ -f "$HOME/.ssh/config" && "$MODULE_CHANGED" == true ]] && pass 'qualified v2 creation' || fail 'qualified v2 creation'
 
 # These are literal SSH syntax fixtures, not shell-expanded HOME paths.
 # shellcheck disable=SC2088

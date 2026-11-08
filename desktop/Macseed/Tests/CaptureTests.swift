@@ -255,6 +255,31 @@ import SwiftUI
         """, core.appendingPathComponent("fixture.py"))
         let runtime = CoreRuntime(operationLogs: nil)
         let model = CaptureModel(runtime: runtime, location: CoreLocation(root: core, python: python, home: root, temporaryBase: root, toolDirectories: []))
+        if CommandLine.arguments.contains("--ssh-confirmation-only") {
+            let id = String(repeating: "a", count: 64)
+            try JSONSerialization.data(withJSONObject: [row("ssh-configuration", mode: "category")]).write(to: core.appendingPathComponent("inventory.json"))
+            try JSONSerialization.data(withJSONObject: ["status": "present", "items": [[
+                "item_id": id, "label": "fixture-key", "key_type": "ssh-ed25519", "validation": "candidate_requires_pair_validation",
+                "fingerprint": "SHA256:" + Data(repeating: 1, count: 32).base64EncodedString().replacingOccurrences(of: "=", with: "")]]])
+                .write(to: core.appendingPathComponent("secure-inventory.json"))
+            model.scan(); await model.waitForCompletion()
+            model.selectCategory("ssh-configuration", included: true)
+            for secure in [false, true] {
+                if model.state == .confirmation { model.editSelection() }
+                model.selectSecureIdentity(id, included: secure)
+                model.prepare(destination: root.appendingPathComponent(secure ? "secure.mbt" : "settings.mbt")); await model.waitForCompletion()
+                precondition(model.state == .confirmation)
+                let included = !model.preparation!.publicationSelection!.secureIdentities.isEmpty
+                precondition(included == secure)
+                let message = CaptureModel.confirmationPrivacyMessage(includesSSHIdentities: included)
+                precondition(message.contains("not encrypted") && !message.contains("~/.ssh") && !message.contains("manually"))
+                precondition(message.contains("passphrase") == secure && message.contains("SSH identities") == secure)
+                if secure { precondition(message.contains("encrypted separately") && message.contains("safe")) }
+            }
+            precondition(!FileManager.default.fileExists(atPath: root.appendingPathComponent("secure.mbt").path), "Confirmation does not save or import")
+            print("PASS: Capture Confirmation concise encryption boundary and passphrase disclosure only for selected SSH identities; no destination restriction")
+            return
+        }
         if CommandLine.arguments.contains("--ssh-host-selection-only") {
             try await sshHostSelectionChecks(model: model, runtime: runtime, core: core, root: root)
             return

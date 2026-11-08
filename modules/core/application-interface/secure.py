@@ -154,7 +154,7 @@ def _run_secure(root, package, channel, operation_id, event, mutation, export_se
                     elif isinstance(message, dict) and message.get('type') == 'restore_identity':
                         item = message.get('identity')
                         fields = {'type', 'version', 'identity'} | ({'target', 'pair_digest'} if not inventory else set())
-                        if (not (inventory or compare) or not context_sent or not seen_challenges or len(identities) >= 32
+                        if (export_selection is not None or not context_sent or not seen_challenges or len(identities) >= 32
                                 or set(message) != fields or type(message['version']) is not int
                                 or message['version'] != (1 if inventory else 2)
                                 or not isinstance(item, dict) or set(item) != {'identity_id', 'name', 'key_type', 'fingerprint'}
@@ -255,6 +255,17 @@ def _run_secure(root, package, channel, operation_id, event, mutation, export_se
                     if identity_evidence is not None:
                         identity_evidence.extend(identities)
                     return value
+                if export_selection is None:
+                    receipt_names = sorted(line.split('\t')[1] for line in raw.decode('ascii').splitlines()[1:-1])
+                    if (not identities or sorted(row['name'] for row in identities) != receipt_names
+                            or any(row['target'] != 'identical' for row in identities)
+                            or (destinations is not None and sorted(row['identity_id'] for row in identities) !=
+                                [row['identity_id'] for row in selected_items(destinations)])
+                            or not any(kind == 'verification' and row['conformity'] == 'verified'
+                                       for kind, row in import_records(raw))):
+                        raise SecureError('secure_import_failed')
+                    if identity_evidence is not None:
+                        identity_evidence.extend(identities)
                 event('phase_completed', {'phase': phase})
                 return None if export_selection is not None else (raw, attempt, status)
             finally:
@@ -273,9 +284,9 @@ def _run_secure(root, package, channel, operation_id, event, mutation, export_se
 
 
 def import_secure(root, package, channel, operation_id, event, mutation, export_selection=None, record=None,
-                  *, expected_target_state=None, destinations=None):
+                  *, expected_target_state=None, destinations=None, identity_evidence=None):
     return _run_secure(root, package, channel, operation_id, event, mutation, export_selection, record,
-                       expected_target_state=expected_target_state, destinations=destinations)
+                       expected_target_state=expected_target_state, destinations=destinations, identity_evidence=identity_evidence)
 
 
 def export_secure(root, package, selection, channel, operation_id, event):

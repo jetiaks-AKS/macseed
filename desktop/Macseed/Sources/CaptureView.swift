@@ -199,13 +199,8 @@ struct CaptureView: View {
                               systemImage: "exclamationmark.triangle")
                             .font(.callout).foregroundStyle(.orange)
                     }
-                    Text(selection.secureIdentities.isEmpty
-                         ? "The saved settings are private but unencrypted. Private SSH identities are not included."
-                         : "Selected SSH identities will be encrypted separately with a new Bundle passphrase. Other saved settings remain private but unencrypted. Keep the passphrase separate from the saved environment.")
-                        .font(.callout).foregroundStyle(.secondary)
-                    if let explanation = model.externalDestinationExplanation {
-                        Text(explanation).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                    }
+                    Text(CaptureModel.confirmationPrivacyMessage(includesSSHIdentities: !selection.secureIdentities.isEmpty))
+                        .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                     let tasks = CaptureTaskPresentation(categories: prepared.inventory.map { CaptureCategory(row: $0) }, selection: selection,
                         phase: .confirmation, secureIdentities: prepared.secureIdentities.items)
                     TaskDomainList(domains: tasks.domains, stateTitles: [.planned: "Ready to Save"], compactReadyItems: true, title: "Included in this capture",

@@ -40,6 +40,14 @@ struct RestorePreviewPresentation {
             let status: DisplayStatus
             let message: String
             switch row.disposition {
+            case _ where row.isSSHDependency && prepared.sshDependenciesReady:
+                if prepared.effectiveSSHResolution?.dependencies.findings.contains("selected_expected") == true {
+                    status = .ready; message = "Available after Secure Transfer, before SSH configuration is restored."
+                } else {
+                    status = .matching; message = "Referenced keys are qualified on this Mac."
+                }
+            case _ where row.isSSHDependency:
+                status = .attention; message = "Some key references are missing or unqualified. Review SSH Configuration."
             case "pending_unlock" where row.isSecureImport:
                 switch prepared.secureComparison?.decision {
                 case .allMatch:
@@ -82,10 +90,10 @@ struct RestorePreviewPresentation {
             default: reasonMessage = row.reason.flatMap { CoreRestorePreparation.workspacePreviewReasons[$0] }
             }
             let inventoryLabel = row.selectionItemID.flatMap { id in catalog.inventory.first { $0.id == row.domain }?.items.first { $0.id == id }?.label }
-            let title = row.isSecureImport ? "Encrypted SSH identity package" : inventoryLabel ?? row.displayName ?? (row.itemID.hasPrefix("opaque:") ? "Private item" : (row.itemID == "scope" ? "Selected area" : row.itemID))
+            let title = row.isSSHDependency ? "SSH key references" : row.isSecureImport ? "Encrypted SSH identity package" : inventoryLabel ?? row.displayName ?? (row.itemID.hasPrefix("opaque:") ? "Private item" : (row.itemID == "scope" ? "Selected area" : row.itemID))
             let action = row.assistedAppStoreItem?.message ?? row.unsupportedRepairExplanation ?? row.diagnostic?.explanation ?? reasonMessage ?? (row.authorizationRequired == true ? message + " · Administrator authorization required" : message)
             let conditional = ["workspace_dependency_pending", "workspace_commit_after_clone"].contains(row.reason ?? "")
-            rows[row.domain, default: []].append(DisplayItem(id: "restore-\(index)", title: title, status: status, action: action, reason: row.reason, restoreReadyText: status == .ready ? (conditional ? "Conditional" : Self.readyText(action: row.action)) : nil))
+            rows[row.domain, default: []].append(DisplayItem(id: "restore-\(index)", title: title, status: status, action: action, reason: row.reason, restoreReadyText: status == .ready ? (row.isSSHDependency ? "After Secure Transfer" : conditional ? "Conditional" : Self.readyText(action: row.action)) : nil))
         }
         categories = order.map { domain in
             DisplayCategory(id: domain, title: domain == CoreRestorePreparation.secureDomain ? "Secure Transfer" : catalog.inventory.first { $0.id == domain }?.label ?? "Other supported state", symbol: domain == CoreRestorePreparation.secureDomain ? "lock.shield" : "slider.horizontal.3", items: rows[domain] ?? [])
@@ -341,6 +349,119 @@ struct RestoreProgressRow {
         runtime.cancel()
     }
 
+    @Published private(set) var sshResolutionSupported = false
+    @Published private(set) var sshReview: CoreSSHReview?
+    private var sshReviewedScope: String?
+    @Published private(set) var sshProposals: [String: CoreSSHApprovals.Item] = [:]
+    @Published private(set) var approvedSSHReferences: Set<String> = []
+    @Published private(set) var sshReviewMessage: String?
+    @Published private(set) var sshReviewFailed = false
+    var canReviewSSHReferences: Bool {
+        sshResolutionSupported && state == .review && !busy && !runtime.isActive
+            && (canonicalSelection.categories.contains("ssh-configuration") || !(canonicalSelection.items["ssh-configuration"] ?? []).isEmpty)
+    }
+    var privateSSHApprovals: CoreSSHApprovals? {
+        guard let review = sshReview else { return nil }
+        let hosts = canonicalSelection.items["ssh-configuration"] ?? []
+        let all = canonicalSelection.categories.contains("ssh-configuration")
+        let items = sshProposals.filter { approvedSSHReferences.contains($0.key) && (all || hosts.contains($0.value.hostID)) }
+            .map(\.value).sorted { ($0.hostID, $0.index) < ($1.hostID, $1.index) }
+        return items.isEmpty ? nil : CoreSSHApprovals(version: 1, bundleID: review.bundleID, items: items)
+    }
+    var sshReviewSelection: CoreRestoreSelection {
+        // Reuse Restore's bounded whole-category wire form, scoped to SSH only.
+        let compact = selection
+        return .init(categories: compact.categories.filter { $0 == "ssh-configuration" },
+                     items: compact.items.filter { $0.key == "ssh-configuration" })
+    }
+    var canRetrySSHReview: Bool {
+        guard sshReviewFailed, canReviewSSHReferences, let source else { return false }
+        return (try? CoreRequest(.sshRestoreReview(path: source.path, selection: sshReviewSelection)).encoded()) != nil
+    }
+    var sshNeedsAttention: Bool {
+        guard !sshReviewScope.isEmpty else { return false }
+        return sshReviewMessage != nil || sshReview?.items.contains {
+            selectedItems["ssh-configuration"]?.contains($0.hostID) == true && !approvedSSHReferences.contains($0.id)
+        } == true
+    }
+    var sshReviewScope: String {
+        (canonicalSelection.categories.contains("ssh-configuration") ? "all" : (canonicalSelection.items["ssh-configuration"] ?? []).joined(separator: ","))
+    }
+    var sshReviewTrigger: String {
+        sshReviewScope + (sshReviewedScope == nil ? ":new" : ":reviewed") + (canReviewSSHReferences ? ":ready" : ":busy")
+    }
+    func sshCorrections(for hostID: String) -> [CoreSSHReview.Item] {
+        guard selectedItems["ssh-configuration"]?.contains(hostID) == true else { return [] }
+        return sshReview?.items.filter { $0.hostID == hostID } ?? []
+    }
+    var sshCorrectionSummary: String? {
+        let rows = sshReview?.items.filter { selectedItems["ssh-configuration"]?.contains($0.hostID) == true } ?? []
+        guard !rows.isEmpty else { return nil }
+        let approved = rows.filter { approvedSSHReferences.contains($0.id) }.count
+        return "Corrections: \(approved) approved · \(rows.count - approved) unresolved"
+    }
+    func reviewSSHReferences(proposal: CoreSSHApprovals.Item? = nil, retry: Bool = false) {
+        guard canReviewSSHReferences, let source,
+              proposal != nil || (retry && canRetrySSHReview) || sshReviewedScope != sshReviewScope else { return }
+        let scope = sshReviewScope
+        sshReviewedScope = scope; sshReviewMessage = nil; sshReviewFailed = false
+        let proposals = proposal.flatMap { item in sshReview.map { CoreSSHApprovals(version: 1, bundleID: $0.bundleID, items: [item]) } }
+        let secure = proposal?.identityID != nil
+        let request = CoreRequest(.sshRestoreReview(path: source.path, selection: sshReviewSelection, includeSecure: secure),
+                                  restoreDestinations: secure ? privateDestinations : nil, sshApprovals: proposals)
+        operationID = request.operationID
+        runtime.start(request, location: location)
+        work = Task {
+            await runtime.waitForCompletion()
+            guard self.source == source, sshReviewScope == scope, runtime.operationID == request.operationID else { return }
+            if runtime.state == .completed, let review = runtime.takeSSHReview() {
+                if sshReview?.bundleID != review.bundleID { sshProposals = [:]; approvedSSHReferences = [] }
+                sshReview = review
+                let ids = Set(review.items.map(\.id))
+                sshProposals = sshProposals.filter { ids.contains($0.key) }
+                approvedSSHReferences.formIntersection(ids)
+                if let proposal {
+                    let id = "\(proposal.hostID):\(proposal.index)"
+                    if let row = review.items.first(where: { $0.id == id }), row.reference == proposal.original,
+                       let qualified = row.proposal, qualified.reference == proposal.reference,
+                       qualified.identityID == proposal.identityID {
+                        sshProposals[id] = .init(hostID: proposal.hostID, index: proposal.index, original: proposal.original,
+                            reference: qualified.reference, identityID: qualified.identityID, approved: true)
+                    } else if ids.contains(id) {
+                        sshReviewMessage = "The proposed key could not be qualified. The original reference is preserved."
+                    }
+                }
+            } else {
+                sshReviewFailed = true
+                sshReviewMessage = runtime.error == .requestTooLarge
+                    ? "The selected SSH scope exceeds the review limit. Select fewer Hosts or the whole category."
+                    : "SSH reference review is unavailable. The selected configuration is unchanged."
+            }
+        }
+    }
+    func proposeSSHReference(_ reference: String?, identityID: String? = nil, for item: CoreSSHReview.Item) {
+        guard canReviewSSHReferences, sshCorrections(for: item.hostID).contains(where: { $0.id == item.id }),
+              identityID == nil || (includeSecure && selectedIdentityIDs.contains(identityID!)) else { return }
+        approvedSSHReferences.remove(item.id); sshProposals[item.id] = nil
+        invalidate()
+        if let reference, reference != item.reference {
+            reviewSSHReferences(proposal: .init(hostID: item.hostID, index: item.index, original: item.reference,
+                reference: reference, identityID: identityID, approved: false))
+        }
+    }
+    func approveSSHReference(_ item: CoreSSHReview.Item, approved: Bool) {
+        guard canReviewSSHReferences, sshProposals[item.id] != nil,
+              sshCorrections(for: item.hostID).contains(where: { $0.id == item.id }) else { return }
+        if approved { approvedSSHReferences.insert(item.id) } else { approvedSSHReferences.remove(item.id) }
+        invalidate()
+    }
+    func sshDestination(_ identity: CoreRestoreIdentityInventory.Item) -> String {
+        let path = (destinationDirectories[identity.id] ?? NSHomeDirectory() + "/.ssh") + "/" + identity.name
+        let home = NSHomeDirectory() + "/"
+        return path.hasPrefix(home) ? "~/" + path.dropFirst(home.count) : path
+    }
+    private func clearSSHApprovals() { sshProposals = [:]; approvedSSHReferences = []; sshReviewedScope = nil; sshReview = nil; sshReviewMessage = nil; sshReviewFailed = false }
+
     @Published private(set) var secureDestinationsSupported = false
     @Published private(set) var secureIdentitySelectionSupported = false
     @Published private(set) var selectedIdentityIDs: Set<String> = []
@@ -379,6 +500,7 @@ struct RestoreProgressRow {
         guard secureIdentitySelectionSupported, showingDestinations, state == .review, !runtime.isActive,
               destinationInventory?.items.contains(where: { $0.id == identityID }) == true else { return }
         guard selectedIdentityIDs.contains(identityID) != included else { return }
+        clearSSHApprovals()
         if included { selectedIdentityIDs.insert(identityID) } else { selectedIdentityIDs.remove(identityID) }
         if selectedIdentityIDs.isEmpty { includeSecure = false }
         invalidate()
@@ -388,6 +510,7 @@ struct RestoreProgressRow {
               let inventory = destinationInventory else { return }
         let selected: Set<String> = included ? Set(inventory.items.map(\.id)) : []
         guard selectedIdentityIDs != selected else { return }
+        clearSSHApprovals()
         selectedIdentityIDs = selected
         if selected.isEmpty { includeSecure = false }
         invalidate()
@@ -426,10 +549,12 @@ struct RestoreProgressRow {
               selectedIdentityIDs.contains(identityID),
               destinationInventory?.items.contains(where: { $0.id == identityID }) == true else { return }
         guard destinationDirectories[identityID] != directory else { return }
+        clearSSHApprovals()
         destinationDirectories[identityID] = directory
         invalidate()
     }
     private func clearDestinations() {
+        clearSSHApprovals(); sshReview = nil; sshReviewMessage = nil; sshReviewFailed = false
         destinationInventory = nil; selectedIdentityIDs = []; destinationDirectories = [:]; destinationMessage = nil
         showingDestinations = false; unlockingDestinations = false
     }
@@ -440,6 +565,7 @@ struct RestoreProgressRow {
         if included, selectedIdentityIDs.isEmpty, let inventory = destinationInventory {
             selectedIdentityIDs = Set(inventory.items.map(\.id))
         }
+        if includeSecure != included { clearSSHApprovals() }
         includeSecure = included
         invalidate()
     }
@@ -497,7 +623,7 @@ struct RestoreProgressRow {
         preparation.map { $0.selection != canonicalSelection || $0.includeSecure != includeSecure } ?? false
     }
     var ready: Bool {
-        guard !previewNeedsRefresh, state == .preview, let plan = preparation, plan.readiness.ready, plan.errorCount == 0 else { return false }
+        guard !previewNeedsRefresh, state == .preview, let plan = preparation, plan.readiness.ready, plan.sshDependenciesReady, plan.errorCount == 0 else { return false }
         return !plan.plan.contains { row in
             // A conflict with no proposed action is retained by the existing
             // consumer; environmental blockers are owned by Core readiness.
@@ -530,7 +656,7 @@ struct RestoreProgressRow {
         }
     }
     var canRebuild: Bool {
-        ready && !runtime.isActive && preparation?.hasComparedExecutableChanges == true
+        ready && !runtime.isActive && preparation?.sshDependenciesReady == true && preparation?.hasComparedExecutableChanges == true
             && preparation?.selection == canonicalSelection && preparation?.includeSecure == includeSecure
     }
     var confirmationMessages: [String] {
@@ -555,10 +681,10 @@ struct RestoreProgressRow {
     func cancelRebuildConfirmation() { if state == .confirming { state = .preview } }
     func confirmRebuild() {
         guard state == .confirming, !runtime.isActive, let source, let plan = preparation, let preview,
-              plan.readiness.ready, plan.errorCount == 0, plan.hasComparedExecutableChanges, plan.selection == canonicalSelection, plan.includeSecure == includeSecure,
+              plan.readiness.ready, plan.sshDependenciesReady, plan.errorCount == 0, plan.hasComparedExecutableChanges, plan.selection == canonicalSelection, plan.includeSecure == includeSecure,
               !includeSecure || plan.secureComparedReady else { return }
         let request = CoreRequest(.restoreExecute(path: source.path, disabledGroups: [], includeSecure: includeSecure,
-                                                preparedID: plan.preparedPlanID, selection: selection, secureComparison: plan.secureComparison), restoreDestinations: privateDestinations)
+                                                preparedID: plan.preparedPlanID, selection: selection, secureComparison: plan.secureComparison), restoreDestinations: privateDestinations, sshApprovals: privateSSHApprovals)
         progressScope = RestoreProgressRow.freeze(preview: preview, plan: plan)
         executionPreview = preview; executionPlan = plan
         executionStartedAt = Date(); executionFinishedAt = nil
@@ -681,6 +807,7 @@ struct RestoreProgressRow {
             guard runtime.capabilities?.supportsRestoreSelection == true else {
                 fail("Rebuild selection is unavailable in this build. Use a compatible Macseed version.", code: nil); return
             }
+            sshResolutionSupported = runtime.capabilities?.supportsSSHResolution == true
             secureDestinationsSupported = runtime.capabilities?.supportsSecureRestoreDestinations == true
             secureIdentitySelectionSupported = runtime.capabilities?.supportsSecureRestoreSelection == true
             guard await receive(CoreRequest(.bundleInspect(path: url.path))) else { return }
@@ -789,7 +916,7 @@ struct RestoreProgressRow {
         let expected = canonicalSelection
         let expectedSecure = includeSecure
         let requestSelection = selection
-        let request = CoreRequest(.restorePrepare(path: source.path, disabledGroups: [], includeSecure: includeSecure, selection: requestSelection, installerPreparations: installerPreparations), restoreDestinations: privateDestinations)
+        let request = CoreRequest(.restorePrepare(path: source.path, disabledGroups: [], includeSecure: includeSecure, selection: requestSelection, installerPreparations: installerPreparations), restoreDestinations: privateDestinations, sshApprovals: privateSSHApprovals)
         invalidate(); failure = nil; technicalReason = nil; state = .preparing
         appStoreRefreshState = .idle
         if appStoreRefresh {
@@ -826,7 +953,7 @@ struct RestoreProgressRow {
                 if expectedSecure {
                     // Reuse Prepare's bounded wire representation. The canonical
                     // scope above still validates Core's expansion against inventory.
-                    let compare = CoreRequest(.secureRestoreCompare(path: source.path, preparedID: data.preparedPlanID, selection: requestSelection), restoreDestinations: privateDestinations)
+                    let compare = CoreRequest(.secureRestoreCompare(path: source.path, preparedID: data.preparedPlanID, selection: requestSelection), restoreDestinations: privateDestinations, sshApprovals: privateSSHApprovals)
                     guard await receive(compare) else { return }
                     guard let result = runtime.latestResult else { throw CoreRuntimeError.malformedEvent }
                     let comparison = try result.decodeData(CoreSecureComparison.self)
@@ -842,6 +969,7 @@ struct RestoreProgressRow {
     }
     func back() {
         guard !busy, !runtime.isActive else { return }
+        sshReviewedScope = nil
         invalidate(); state = inspection == nil ? .choose : .review
     }
     func cancel() { if busy { cancelRequested = true; invalidate(); runtime.cancel() } }

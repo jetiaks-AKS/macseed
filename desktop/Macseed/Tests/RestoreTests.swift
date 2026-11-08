@@ -1372,6 +1372,145 @@ import Vision
         CommandLine.arguments.contains("--final-restore-ux-only") || CommandLine.arguments.contains("--selection-preview-only") || CommandLine.arguments.contains("--preview-appstore-layout-only")
     }
     static func write(_ value: String, _ path: URL) throws { try value.write(to: path, atomically: false, encoding: .utf8) }
+    // Native production Views with mocked Protocol responses. Core behavior is
+    // independently exercised by the disposable-HOME Python fixture tests.
+    @MainActor static func renderSSHFixture(_ model: RestoreModel, _ runtime: CoreRuntime, name: String) async throws {
+        guard !CommandLine.arguments.contains("--no-renders") else { return }
+        let output = URL(fileURLWithPath: "build/Debug/SSHFinalUX")
+        try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+        _ = NSApplication.shared; NSApp.appearance = NSAppearance(named: .aqua)
+        let view = VStack(alignment: .leading, spacing: 18) {
+            WorkspaceHeader(title: ProductTask.restore.title, subtitle: ProductTask.restore.subtitle, symbol: ProductTask.restore.symbol)
+            RestoreView(model: model, runtime: runtime, categoryExpansion: .constant(true),
+                selectionExpansion: .constant(CaptureHierarchy.disclosureIDs(["ssh-configuration"], scope: .advanced)),
+                showsPreviewActions: true, showsSelectionActions: false, showsResultActions: false)
+        }.padding(28).frame(width: 785).background(Color(nsColor: .windowBackgroundColor)).environment(\.colorScheme, .light)
+        let host = NSHostingView(rootView: view)
+        host.appearance = NSAppearance(named: .aqua)
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 785, height: host.fittingSize.height), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = host; host.frame = window.contentView!.bounds
+        window.makeKeyAndOrderFront(nil)
+        try await Task.sleep(for: .milliseconds(100)); host.layoutSubtreeIfNeeded(); host.displayIfNeeded()
+        let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds)!
+        host.cacheDisplay(in: host.bounds, to: bitmap)
+        try bitmap.representation(using: .png, properties: [:])!.write(to: output.appendingPathComponent(name + "-mock-ui-light.png"))
+        window.close()
+    }
+
+    @MainActor static func sshResolutionChecks(_ model: RestoreModel, runtime: CoreRuntime, core: URL) async throws {
+        precondition(model.sshResolutionSupported && !model.includeSecure)
+        model.selectArea("ssh-configuration", included: true)
+        model.selectArea("homebrew-packages", included: true)
+        do {
+            _ = try CoreRequest(.sshRestoreReview(path: "/fixture.mbt", selection: model.canonicalSelection)).encoded()
+            preconditionFailure("Regression fixture must exceed the old expanded request limit")
+        } catch CoreRuntimeError.requestTooLarge { }
+        precondition(model.sshReviewSelection.categories == ["ssh-configuration"] && model.sshReviewSelection.items.isEmpty)
+        func reviewCount() throws -> Int {
+            try String(contentsOf: core.appendingPathComponent("requests.jsonl")).split(separator: "\n").filter { $0.contains("ssh_restore_review") }.count
+        }
+        try write("failure", core.appendingPathComponent("review-state"))
+        model.reviewSSHReferences(); await model.waitForCompletion()
+        precondition(model.sshReviewFailed && model.sshNeedsAttention && model.canRetrySSHReview)
+        let attempts = try reviewCount()
+        model.reviewSSHReferences(); await model.waitForCompletion()
+        precondition((try? reviewCount()) == attempts, "Failed reviews must not automatically loop")
+        model.selectArea("homebrew-packages", included: false)
+        model.reviewSSHReferences(); await model.waitForCompletion()
+        precondition((try? reviewCount()) == attempts, "Unrelated selection cannot trigger another SSH review")
+        try await renderSSHFixture(model, runtime, name: "review-category-warning")
+        try write("empty", core.appendingPathComponent("review-state"))
+        model.reviewSSHReferences(retry: true); await model.waitForCompletion()
+        precondition(model.sshReview?.items.isEmpty == true && !model.sshNeedsAttention && model.sshReviewMessage == nil && !model.canRetrySSHReview)
+        try await renderSSHFixture(model, runtime, name: "normal-selection")
+        let successful = try reviewCount()
+        model.reviewSSHReferences(); await model.waitForCompletion()
+        precondition((try? reviewCount()) == successful, "Successful empty reviews are cached")
+        try write("missing", core.appendingPathComponent("review-state"))
+        model.back()
+        precondition(model.privateSSHApprovals == nil)
+        model.refreshPreview(); await model.waitForCompletion()
+        precondition(model.preparation?.sshResolution?.ready == false && !model.ready && !model.canRebuild)
+        precondition(model.preview?.categories.flatMap(\.items).contains { $0.title == "SSH key references" && $0.status == .attention } == true)
+        try await renderSSHFixture(model, runtime, name: "missing-key-warning")
+        model.selectArea("ssh-configuration", included: true)
+        model.reviewSSHReferences(); await model.waitForCompletion()
+        precondition(model.state == .review && model.sshReview?.items.count == 2 && runtime.secureChallenge == nil)
+        let item = model.sshReview!.items[0]
+        let other = model.sshReview!.items[1]
+        precondition(model.sshCorrections(for: "unselected-host").isEmpty)
+        precondition(model.sshCorrectionSummary == "Corrections: 0 approved · 2 unresolved")
+        model.approveSSHReference(item, approved: true)
+        precondition(model.privateSSHApprovals == nil, "No approval control before qualification")
+        model.proposeSSHReference("~/keys/invalid", for: item)
+        await model.waitForCompletion()
+        precondition(model.sshProposals.isEmpty && model.privateSSHApprovals == nil)
+        model.proposeSSHReference("~/keys/deploy", for: item)
+        precondition(model.sshProposals.isEmpty && model.privateSSHApprovals == nil)
+        await model.waitForCompletion()
+        precondition(model.sshProposals[item.id]?.reference == "~/keys/deploy" && model.privateSSHApprovals == nil)
+        model.approveSSHReference(item, approved: true)
+        precondition(model.sshCorrectionSummary == "Corrections: 1 approved · 1 unresolved")
+        let approval = model.privateSSHApprovals!
+        let request = CoreRequest(.restorePrepare(path: "/fixture.mbt", disabledGroups: [], includeSecure: false), sshApprovals: approval)
+        let ordinary = String(decoding: try request.encoded(), as: UTF8.self)
+        precondition(ordinary.contains("ssh_approvals") && !ordinary.contains("deploy") && !ordinary.contains(item.hostID))
+        precondition(!String(reflecting: approval).contains("deploy"))
+        try await renderSSHFixture(model, runtime, name: "approved-custom-path")
+        model.refreshPreview(); await model.waitForCompletion()
+        precondition(model.preparation?.sshDependenciesReady == false && !model.canRebuild, "One approval cannot resolve another dependency")
+        model.selectArea("ssh-configuration", included: true)
+        model.proposeSSHReference("~/keys/fallback", for: other); await model.waitForCompletion()
+        model.approveSSHReference(other, approved: true)
+        precondition(model.sshCorrectionSummary == "Corrections: 2 approved · 0 unresolved")
+        model.refreshPreview(); await model.waitForCompletion()
+        precondition(model.preparation?.sshDependenciesReady == true && model.canRebuild)
+        model.selectArea("ssh-configuration", included: true)
+        model.proposeSSHReference("~/keys/changed", for: item)
+        precondition(model.privateSSHApprovals?.items.count == 1 && model.preparation == nil && !model.canRebuild)
+        await model.waitForCompletion()
+        precondition(model.sshProposals[item.id] == nil)
+        model.selectItem("ssh-configuration", item: item.hostID, included: false)
+        precondition(model.sshCorrections(for: item.hostID).isEmpty && model.privateSSHApprovals == nil)
+        model.selectArea("ssh-configuration", included: true)
+        model.selectSecureTransfer(true)
+        precondition(model.privateSSHApprovals == nil && model.includeSecure && runtime.secureChallenge == nil)
+        func complete() async {
+            let deadline = Date().addingTimeInterval(15)
+            while model.busy || runtime.isActive {
+                precondition(Date() < deadline)
+                if let challenge = runtime.secureChallenge {
+                    precondition(challenge.kind == .bundleUnlock)
+                    runtime.respond(to: challenge, with: .secret(Data("presentation-fixture".utf8)))
+                }
+                try? await Task.sleep(for: .milliseconds(10))
+            }
+            await model.waitForCompletion()
+        }
+        try write("expected", core.appendingPathComponent("preview-state"))
+        model.refreshPreview(); await complete()
+        precondition(model.canRebuild && model.preparation?.sshDependenciesReady == true,
+                     "Expected-import Preview failed: \(model.state), \(String(describing: runtime.error)), \(model.technicalReason ?? "none")")
+        let expectedRow = model.preview!.categories.flatMap(\.items).first { $0.title == "SSH key references" }!
+        precondition(expectedRow.status == .ready && expectedRow.restoreReadyText == "After Secure Transfer")
+        precondition(model.preview?.categories.first { $0.id == "ssh-configuration" }.map(RestorePreviewPresentation.state) == "Changes Planned")
+        try await renderSSHFixture(model, runtime, name: "pending-selected-import")
+        model.back()
+        try write("unresolved", core.appendingPathComponent("preview-state"))
+        model.refreshPreview(); await complete()
+        precondition(!model.canRebuild && model.preparation?.sshDependenciesReady == false,
+                     "An import plan cannot resolve an unrelated missing reference")
+        model.back(); model.selectSecureTransfer(false)
+        try write("conflict", core.appendingPathComponent("preview-state"))
+        model.refreshPreview(); await model.waitForCompletion()
+        precondition(!model.canRebuild && model.preparation?.readiness.ready == false)
+        try await renderSSHFixture(model, runtime, name: "host-conflict")
+        model.requestRebuild(); precondition(model.state == .preview)
+        let logs = try String(contentsOf: core.appendingPathComponent("requests.jsonl"))
+        precondition(!logs.contains("deploy") && !logs.contains("/old-mac") && !logs.contains("secure_restore_inventory"))
+        print("PASS: inline selected Host corrections, Core-qualified proposals, explicit consent, partial approval status, freshness invalidation, private transport and native screenshots")
+    }
+
     @MainActor static func sshHostSelectionChecks(_ model: RestoreModel, runtime: CoreRuntime) async throws {
         let ssh = model.areas.first { $0.id == "ssh-configuration" }!
         let hosts = ssh.items.map(\.id)
@@ -2935,7 +3074,8 @@ import Vision
         }
         let homebrewSetupOnly = CommandLine.arguments.contains("--homebrew-setup-only")
         let secureUIOnly = CommandLine.arguments.contains("--secure-destination-ui-only")
-        let sshHostOnly = CommandLine.arguments.contains("--ssh-host-selection-only")
+        let sshResolutionOnly = CommandLine.arguments.contains("--ssh-resolution-only")
+        let sshHostOnly = CommandLine.arguments.contains("--ssh-host-selection-only") || sshResolutionOnly
         let selectionAccordionOnly = CommandLine.arguments.contains("--selection-accordion-only") || homebrewSetupOnly || secureUIOnly || sshHostOnly
         let refreshCancellationOnly = CommandLine.arguments.contains("--appstore-refresh-cancel-only")
         if !selectionAccordionOnly && !refreshCancellationOnly { try topologyPreviewChecks() }
@@ -3063,12 +3203,49 @@ import Vision
                 result=json.loads(Path('secure-plan.json').read_text())
                 result['secure_destination_scope']=Path('reported-scope').read_text()
             emit('result',result); emit('completed'); sys.exit(0)
+        if mode=='ssh-resolution' and operation=='secure_restore_compare':
+            sys.path.insert(0,Path('migration-path').read_text())
+            from secret_input import inherited_socket,metadata,receive,response
+            channel=inherited_socket(int(sys.argv[2]))
+            emit('phase_started',dict(phase='secure_compare'))
+            challenge=dict(type='challenge',protocol_version=1,operation_id=request['operation_id'],challenge_id='a'*32,kind='bundle_unlock',attempt=1)
+            metadata(channel,challenge); response(receive(channel,time.monotonic()+10),challenge)
+            emit('phase_completed',dict(phase='secure_compare')); channel.close()
+            ready=Path('preview-state').read_text()=='expected'
+            result=dict(decision='import_required',target_state='c'*64,source_fingerprint='b'*64,prepared_plan_id='a'*64,
+                selection=request['parameters']['selection'],include_secure=True,comparison_operation_id=request['operation_id'],
+                ssh_resolution=dict(version=1,action='create',ready=ready,pending=False,
+                    dependencies=dict(version=1,findings=['selected_expected'] if ready else ['missing','selected_expected']),remote_authentication='not_assessed'))
+            emit('result',result); emit('completed'); sys.exit(0)
         if operation=='capabilities':
             features={} if mode=='old_core' else {'restore_selection':{'version':1},'bundle_comparison':{'version':1}}
             result=dict(protocol_version=1, product_version='3.4.0',operations=['bundle_inspect','restore_prepare','environment_compare'],features=features)
+            if mode=='ssh-resolution':
+                result['operations'].append('ssh_restore_review')
+                features['ssh_identity_resolution']=dict(version=1,review='ssh_restore_review',max_items=32)
             if mode=='secure-ui':
                 result['operations'].append('secure_restore_inventory')
                 features['secure_restore_destinations']=dict(version=1,selection_version=2,inventory='secure_restore_inventory',max_items=32)
+        elif operation=='ssh_restore_review':
+            assert request['parameters']['selection']==dict(categories=['ssh-configuration'],items={})
+            review_state=Path('review-state').read_text() if Path('review-state').exists() else 'missing'
+            if review_state=='failure': emit('failed',dict(code='ssh_review_unavailable')); sys.exit(2)
+            host='restore:'+'c'*64
+            result=dict(version=1,operation_id=request['operation_id'],bundle_id='b'*64,
+                items=[dict(host_id=host,host='production',index=0,reference='/old-mac/keys/deploy',status='unresolved',proposal=None),
+                       dict(host_id=host,host='production',index=1,reference='~/.ssh/fallback',status='missing',proposal=None)])
+            assert request['parameters']['include_secure'] is False
+            if request['parameters'].get('ssh_approvals'):
+                control=Path(os.environ['TMPDIR'])/'ssh-restore-approvals.json'
+                assert control.stat().st_mode & 0o777 == 0o600
+                envelope=json.loads(control.read_text()); assert envelope['operation_id']==request['operation_id']
+                candidate=envelope['approvals']['items'][0]; assert candidate['approved'] is False
+                if candidate['reference'] in ('~/keys/deploy','~/keys/fallback'):
+                    result['items'][candidate['index']]['proposal']=dict(reference=candidate['reference'],identity_id=None,status='local_satisfied')
+            if review_state=='empty': result['items']=[]
+            private=Path(os.environ['TMPDIR'])/'ssh-restore-references.json'
+            private.write_text(json.dumps(result)); private.chmod(0o600)
+            result=dict(status='reviewed')
         elif operation=='environment_compare':
             result=json.loads(Path('comparison.json').read_text())
         elif operation=='bundle_inspect':
@@ -3082,7 +3259,7 @@ import Vision
                 time.sleep(20)
             if mode=='prepare_failure': emit('failed',{'code':'preview_failed'}); sys.exit(2)
             if mode=='workspace_dependency_missing': emit('failed',{'code':'workspace_dependency_missing'}); sys.exit(2)
-            assert request['parameters']['include_secure'] is False
+            if mode!='ssh-resolution': assert request['parameters']['include_secure'] is False
             assert request['parameters']['disabled_groups']==[]
             requested=request['parameters']['selection']
             catalog=json.loads(Path('inspection.json').read_text())['restore_selection']
@@ -3110,6 +3287,30 @@ import Vision
                 selected_groups=groups, selected_categories=selected_categories,selected_item_counts={k:len(v) for k,v in selected_items.items()},
                 include_secure=False,secure_restore_status='not_selected',plan=plan,readiness=dict(ready=not conditions or mode in ('safe','satisfied'),ready_scope='environment',conditions=conditions,reentry='restore_prepare'),
                 has_planned_changes=mode not in ('no_changes','no_changes_attention'),warning_count=1 if mode=='attention' else 0,error_count=0)
+            if mode=='ssh-resolution':
+                approved=request['parameters'].get('ssh_approvals') is True
+                if approved:
+                    private=Path(os.environ['TMPDIR'])/'ssh-restore-approvals.json'
+                    assert private.stat().st_mode & 0o777 == 0o600
+                    envelope=json.loads(private.read_text()); assert envelope['operation_id']==request['operation_id']
+                    assert envelope['approvals']['items'][0]['approved'] is True
+                    assert all(row['reference'] in ('~/keys/deploy','~/keys/fallback') for row in envelope['approvals']['items'])
+                    approved=len(envelope['approvals']['items'])==2
+                result['ssh_resolution']=dict(version=1,action='create',ready=approved,pending=False,
+                    dependencies=dict(version=1,findings=['local_satisfied' if approved else 'unresolved']),remote_authentication='not_assessed')
+                result['plan']=[row for row in result['plan'] if row['domain']!='ssh-configuration']
+                result['plan'].append(dict(domain='ssh-configuration',item_id='config',action='create',disposition='planned',reason=None))
+                if not approved:
+                    result['plan'].append(dict(domain='ssh-configuration',item_id='identity-references',action='none',disposition='warning',reason='identity_dependencies_unresolved'))
+                if request['parameters']['include_secure']:
+                    result.update(include_secure=True,secure_restore_status='selected_pending',plan_diagnostics=dict(bundle='b'*64))
+                    result['readiness']['conditions'].append(dict(domain='secure-ssh-identities',code='secure_bridge_required',status='external_action_required',scope='execution_launch'))
+                    result['plan'].append(dict(domain='secure-ssh-identities',item_id='encrypted_identity_set',action='validate_and_import',disposition='pending_unlock',reason='secure_unlock_required'))
+                    result['ssh_resolution'].update(pending=True)
+                if Path('preview-state').exists() and Path('preview-state').read_text()=='conflict':
+                    result['plan']=[dict(domain='ssh-configuration',item_id='config',action='none',disposition='conflict',reason='target_conflict')]
+                    result['ssh_resolution'].update(action='blocked',ready=False,pending=False)
+                    result['readiness']=dict(ready=False,ready_scope='environment',conditions=[dict(domain='ssh-configuration',code='ssh_configuration_not_ready',status='external_action_required',scope='operation')],reentry='restore_prepare')
             if mode.startswith('assisted_'):
                 result['warning_count']=0 if mode=='assisted_installed' else 1
                 for index,row in enumerate(result['plan']):
@@ -3337,6 +3538,14 @@ import Vision
                          ["domain": "macos-finder", "label": "Finder", "selection_mode": "category", "availability": "available", "reason": NSNull(), "items": []]]
             groups = [["id": "SSH Configuration", "domains": ["ssh-configuration"]], ["id": "macOS Settings", "domains": ["macos-finder"]]]
         }
+        if sshResolutionOnly {
+            try write("ssh-resolution", core.appendingPathComponent("mode"))
+            inventory[0]["items"] = [["item_id": "restore:" + String(repeating: "c", count: 64), "label": "production"]]
+            inventory.append(["domain": "homebrew-packages", "label": "Homebrew Packages", "selection_mode": "items", "availability": "available", "reason": NSNull(),
+                              "items": (0..<100).map { ["item_id": "restore:" + String(repeating: "d", count: 64) + String($0), "label": "fixture-\($0)"] }])
+            groups.append(["id": "Homebrew", "domains": ["homebrew-packages"]])
+            try write(repo.appendingPathComponent("modules/migration").path, core.appendingPathComponent("migration-path"))
+        }
         let inspection: [String: Any] = ["format_version": 1, "selected_categories": sshHostOnly ? ["ssh-configuration", "macos-finder"] : macOS + ["ssh-configuration"], "selected_item_counts": [:], "secure_component": !Self.finalUXFixtures,
                                         "restore_selection": ["groups": groups, "inventory": inventory]]
         try JSONSerialization.data(withJSONObject: inspection).write(to: core.appendingPathComponent("inspection.json"))
@@ -3350,6 +3559,10 @@ import Vision
             return
         }
         model.choose(source); await model.waitForCompletion()
+        if sshResolutionOnly {
+            try await sshResolutionChecks(model, runtime: runtime, core: core)
+            return
+        }
         if sshHostOnly {
             try await sshHostSelectionChecks(model, runtime: runtime)
             try await realPrepare(repo: repo, python: python, root: root, sshHosts: true)

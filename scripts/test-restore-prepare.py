@@ -245,7 +245,7 @@ class RestorePrepareTests(unittest.TestCase):
         plan = self.plan_result()
         rows = [row for row in plan['plan'] if row['domain'] == 'ssh-configuration']
         self.assertFalse(any(row['disposition'] == 'planned' for row in rows), rows)
-        self.assertTrue(any(row['reason'] == 'extended_ssh_read_only' for row in rows), rows)
+        self.assertFalse(plan['ssh_resolution']['ready'])
         self.assertTrue(any(row['reason'] == 'identity_dependencies_unresolved' for row in rows), rows)
         self.assertFalse(plan['readiness']['ready'])
         result, events = self.execute(plan['prepared_plan_id'])

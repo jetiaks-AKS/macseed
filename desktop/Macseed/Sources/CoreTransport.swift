@@ -19,6 +19,7 @@ struct CoreProcessOutcome: Sendable {
     // does not establish whether a process launched.
     var processLaunched: Bool? = nil
     var restoreIdentityInventory: CoreRestoreIdentityInventory? = nil
+    var sshReview: CoreSSHReview? = nil
 }
 
 // One owned process group per operation. All blocking I/O runs off the MainActor.
@@ -120,6 +121,15 @@ final class CoreTransport: @unchecked Sendable {
                 let bytes = try JSONSerialization.data(withJSONObject: ["operation_id": request.operationID, "mapping": value])
                 guard bytes.count <= 65536,
                       FileManager.default.createFile(atPath: temporary.appendingPathComponent("secure-restore-destinations.json").path,
+                          contents: bytes, attributes: [.posixPermissions: 0o600]) else { return failure(.invalidRequest) }
+            } catch { return failure(.invalidRequest) }
+        }
+        if let approvals = request.sshApprovals {
+            do {
+                let value = try JSONSerialization.jsonObject(with: JSONEncoder().encode(approvals))
+                let bytes = try JSONSerialization.data(withJSONObject: ["operation_id": request.operationID, "approvals": value])
+                guard bytes.count <= 65536,
+                      FileManager.default.createFile(atPath: temporary.appendingPathComponent("ssh-restore-approvals.json").path,
                           contents: bytes, attributes: [.posixPermissions: 0o600]) else { return failure(.invalidRequest) }
             } catch { return failure(.invalidRequest) }
         }
@@ -288,18 +298,35 @@ final class CoreTransport: @unchecked Sendable {
             do { inventory = try Self.readRestoreInventory(temporary: temporary, operationID: request.operationID) }
             catch { finalError = .secureChannelInvalid; terminal = nil }
         }
+        var sshReview: CoreSSHReview?
+        if request.command.operation == .sshRestoreReview, finalError == nil, terminal?.type == "completed", !wasCancelled() {
+            do {
+                let data = try Self.readPrivateInventory(temporary: temporary, name: "ssh-restore-references.json")
+                let value = try JSONDecoder().decode(CoreSSHReview.self, from: data)
+                try value.validate(operationID: request.operationID)
+                try Self.validateFields(data, count: 4 + value.items.count * 6 + value.items.filter { $0.proposal != nil }.count * 3)
+                sshReview = value
+            } catch { finalError = .malformedEvent; terminal = nil }
+        }
         return CoreProcessOutcome(terminal: terminal, exitCode: exitCode, signalled: signalled,
                                   error: finalError, stderr: stderr,
-                                  cancellationRequested: wasCancelled() || secureChannel?.cancellationRequested == true, processLaunched: true, restoreIdentityInventory: inventory)
+                                  cancellationRequested: wasCancelled() || secureChannel?.cancellationRequested == true, processLaunched: true, restoreIdentityInventory: inventory, sshReview: sshReview)
     }
 
     private static func readRestoreInventory(temporary: URL, operationID: String) throws -> CoreRestoreIdentityInventory {
+        let data = try readPrivateInventory(temporary: temporary, name: "secure-restore-inventory.json")
+        let inventory = try JSONDecoder().decode(CoreRestoreIdentityInventory.self, from: data)
+        try inventory.validate(operationID: operationID)
+        try validateFields(data, count: 4 + inventory.items.count * 4)
+        return inventory
+    }
+
+    private static func readPrivateInventory(temporary: URL, name: String) throws -> Data {
         let directory = open(temporary.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW)
         guard directory >= 0 else { throw CoreRuntimeError.secureChannelInvalid }
         defer { Darwin.close(directory) }
         var parent = stat(), parentNow = stat()
         guard fstat(directory, &parent) == 0, parent.st_uid == getuid(), parent.st_mode & 0o777 == 0o700 else { throw CoreRuntimeError.secureChannelInvalid }
-        let name = "secure-restore-inventory.json"
         let fd = openat(directory, name, O_RDONLY | O_NOFOLLOW | O_NONBLOCK)
         guard fd >= 0 else { throw CoreRuntimeError.secureChannelInvalid }
         defer { Darwin.close(fd) }
@@ -319,9 +346,10 @@ final class CoreTransport: @unchecked Sendable {
               same(before, after), same(after, visible), lstat(temporary.path, &parentNow) == 0,
               parent.st_dev == parentNow.st_dev, parent.st_ino == parentNow.st_ino,
               parent.st_mode == parentNow.st_mode, parent.st_uid == parentNow.st_uid else { throw CoreRuntimeError.secureChannelInvalid }
-        let data = Data(bytes.prefix(count))
-        let inventory = try JSONDecoder().decode(CoreRestoreIdentityInventory.self, from: data)
-        try inventory.validate(operationID: operationID)
+        return Data(bytes.prefix(count))
+    }
+
+    private static func validateFields(_ data: Data, count: Int) throws {
         // Required fields account for every object key, including duplicates that
         // a JSON decoder would otherwise collapse. Values contain no nested maps.
         var quoted = false, escaped = false, fields = 0
@@ -331,8 +359,7 @@ final class CoreTransport: @unchecked Sendable {
             else if byte == 34 { quoted.toggle() }
             else if !quoted && byte == 58 { fields += 1 }
         }
-        guard fields == 4 + inventory.items.count * 4 else { throw CoreRuntimeError.secureChannelInvalid }
-        return inventory
+        guard fields == count else { throw CoreRuntimeError.secureChannelInvalid }
     }
 
     private func drain(_ fd: Int32, receive: (Data) -> Void, failed: (CoreRuntimeError) -> Void) {

@@ -554,6 +554,7 @@ enum OperationLogPresentation {
         case .captureExecute: "Capture · Save Environment"
         case .bundleInspect: "Rebuild · Inspect Environment"
         case .restorePrepare: "Rebuild · Preview"
+        case .sshRestoreReview: "Rebuild / SSH References"
         case .secureRestoreInventory: "Rebuild · Secure Destinations"
         case .secureRestoreCompare: "Rebuild · Secure Comparison"
         case .restoreExecute: "Rebuild · Execute"

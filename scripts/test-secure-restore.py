@@ -118,7 +118,7 @@ class SecureRestoreTests(unittest.TestCase):
         self.plan = events[1]['data']['prepared_plan_id']
         return private, public
 
-    def peer(self, answer=None, plan=None, invalid_fd=False, timeout=30, *, operation='restore_execute', mapping=None, comparison=None):
+    def peer(self, answer=None, plan=None, invalid_fd=False, timeout=30, *, operation='restore_execute', mapping=None, comparison=None, approvals=None):
         parent, endpoint = socket.socketpair()
         fd = endpoint.fileno()
         identity = os.fstat(fd)
@@ -130,9 +130,15 @@ class SecureRestoreTests(unittest.TestCase):
         if operation == 'secure_restore_inventory':
             request['parameters'] = {'path': str(self.archive)}
             (self.private_temp / 'secure-restore-inventory.json').unlink(missing_ok=True)
+        if operation == 'ssh_restore_review':
+            request['parameters'] = dict(path=str(self.archive), selection=dict(categories=['ssh-configuration'], items={}), include_secure=True)
+            (self.private_temp / 'ssh-restore-references.json').unlink(missing_ok=True)
         if mapping is not None:
             request['parameters']['custom_destinations'] = True
             self.write_mapping(mapping, 'secure-test')
+        if approvals is not None:
+            request['parameters']['ssh_approvals'] = True
+            self.write_approvals(approvals, 'secure-test')
         if comparison is not None:
             request['parameters']['secure_comparison'] = comparison
         command = ['bash', str(self.project / 'modules/core/application-interface/core.sh'),
@@ -631,10 +637,130 @@ class SecureRestoreTests(unittest.TestCase):
         self.assertEqual(len(findings), 1, events)
         receipt = next(row['data'] for row in events if row['type'] == 'result')
         self.assertEqual(set(receipt), {'decision', 'target_state', 'source_fingerprint', 'prepared_plan_id',
-                                        'selection', 'include_secure', 'comparison_operation_id'})
+                                        'selection', 'include_secure', 'comparison_operation_id', 'ssh_resolution'})
         for private in ('private-host', 'private.invalid', 'id_disposable', 'id_external', str(self.home), '~/.ssh'):
             self.assertNotIn(private, json.dumps(events))
         return plan, findings[0], receipt
+
+    def write_approvals(self, approvals, operation_id):
+        target = self.private_temp / 'ssh-restore-approvals.json'
+        target.write_text(json.dumps(dict(operation_id=operation_id, approvals=approvals))); target.chmod(0o600)
+
+    def resolution_prepare(self, mapping=None, approvals=None):
+        request = dict(protocol_version=1, operation_id='ssh-prepare', operation='restore_prepare',
+                       parameters=dict(path=str(self.archive), disabled_groups=[], include_secure=True))
+        if mapping is not None:
+            self.write_mapping(mapping, 'ssh-prepare'); request['parameters']['custom_destinations'] = True
+        if approvals is not None:
+            self.write_approvals(approvals, 'ssh-prepare'); request['parameters']['ssh_approvals'] = True
+        result = subprocess.run(['bash', str(self.project / 'modules/core/application-interface/core.sh')],
+            input=json.dumps(request).encode(), cwd=self.project, env=self.environment, capture_output=True)
+        events = [json.loads(line) for line in result.stdout.splitlines()]
+        self.assertEqual(result.returncode, 0, events)
+        return events[-2]['data']
+
+    def ssh_bootstrap(self):
+        (self.root / 'bin/sudo').write_text('#!/bin/bash\nexit 0\n')
+        (self.project / 'bin').mkdir()
+        shutil.copy2(ROOT / 'scripts/install-bs.sh', self.project / 'scripts/install-bs.sh')
+        shutil.copy2(ROOT / 'bin/bs', self.project / 'bin/bs')
+        (self.root / 'bin/bs').symlink_to(self.project / 'bin/bs')
+        self.environment['BS_INSTALL_DIR'] = str(self.root / 'bin')
+
+    def test_v2_secure_expected_import_precedes_configuration(self):
+        self.fixture(protected=True); self.dependency_snapshot(['~/.ssh/id_disposable']); self.ssh_bootstrap()
+        plan, _, receipt = self.dependency_compare()
+        self.assertFalse(plan['ssh_resolution']['ready']); self.assertTrue(plan['ssh_resolution']['pending'])
+        self.assertTrue(any(row['item_id'] == 'identity-references' and row['disposition'] == 'warning'
+                            for row in plan['plan']), 'Prepare has no authenticated key evidence yet')
+        self.assertEqual(receipt['ssh_resolution']['dependencies']['findings'], ['selected_expected'])
+        self.assertTrue(receipt['ssh_resolution']['ready']); self.assertFalse((self.home / '.ssh').exists())
+        status, events, challenges = self.peer(plan=plan['prepared_plan_id'], comparison=receipt)
+        self.assertEqual(status, 0, events)
+        self.assertIn('ssh_key_unlock', [c['kind'] for c in challenges])
+        target = self.home / '.ssh/config'; self.assertIn(b'IdentityFile ~/.ssh/id_disposable', target.read_bytes())
+        self.assertEqual(events[-2]['data']['verification']['verdict'], 'selected_requirements_verified', events)
+        proofs = events[-2]['data']['verification']['details']['verification_records']
+        self.assertTrue(any(row['predicate'] == 'identity_references_qualified' and row['conformity'] == 'verified' for row in proofs))
+
+    def test_v2_import_evidence_must_cover_verified_receipt(self):
+        self.multiple_fixture(); self.dependency_snapshot(['~/.ssh/id_disposable']); self.ssh_bootstrap()
+        plan, _, receipt = self.dependency_compare()
+        helper = self.project / 'modules/migration/package.sh'
+        source = helper.read_text()
+        start = source.index('        def verified_identities():')
+        end = source.index("        if 'create' not in plan:", start)
+        source = source[:start] + source[start:end].replace('zip(records, ids)', 'zip(records[:1], ids[:1])') + source[end:]
+        helper.write_text(source)
+        status, events, _ = self.peer(plan=plan['prepared_plan_id'], comparison=receipt)
+        self.assertEqual(status, 2, events); self.assertEqual(events[-1]['data']['code'], 'secure_import_failed')
+        self.assertFalse((self.home / '.ssh/config').exists())
+        self.assertTrue(events[-1]['data']['target_mutation_may_have_started'])
+
+    def test_v2_secure_custom_correction_requires_approval(self):
+        self.fixture(protected=True); self.dependency_snapshot(['/old-home/id_disposable']); self.ssh_bootstrap()
+        directory = self.home / 'keys'; directory.mkdir(mode=0o700)
+        mapping, inventory = self.inventory_mapping([directory])
+        row = inventory['items'][0]
+        approval = dict(version=1, bundle_id=inventory['bundle_id'], items=[dict(
+            host_id='restore:' + hashlib.sha256(b'ssh-configuration\0private-host').hexdigest(), index=0,
+            original='/old-home/id_disposable', reference='~/keys/id_disposable', identity_id=row['identity_id'], approved=True)])
+        blocked = self.resolution_prepare(mapping)
+        self.assertFalse(blocked['ssh_resolution']['ready']); self.assertFalse(blocked['readiness']['ready'])
+        plan = self.resolution_prepare(mapping, approval)
+        self.assertTrue(plan['readiness']['ready'], plan)
+        status, events, _ = self.peer(operation='secure_restore_compare', plan=plan['prepared_plan_id'], mapping=mapping, approvals=approval)
+        self.assertEqual(status, 0, events)
+        receipt = next(row['data'] for row in events if row['type'] == 'result')
+        self.assertTrue(receipt['ssh_resolution']['ready'])
+        changed = json.loads(json.dumps(approval)); changed['items'][0]['reference'] = '~/.ssh/id_disposable'
+        status, events, _ = self.peer(plan=plan['prepared_plan_id'], mapping=mapping, approvals=changed, comparison=receipt)
+        self.assertEqual(status, 2); self.assertEqual(events[-1]['data']['code'], 'stale_plan')
+        status, events, _ = self.peer(plan=plan['prepared_plan_id'], mapping=mapping, approvals=approval, comparison=receipt)
+        self.assertEqual(status, 0, events)
+        self.assertTrue((directory / 'id_disposable').exists()); self.assertFalse((self.home / '.ssh/id_disposable').exists())
+        self.assertIn(b'IdentityFile ~/keys/id_disposable', (self.home / '.ssh/config').read_bytes())
+
+    def test_inline_secure_review_is_explicit_read_only_and_destination_bound(self):
+        self.fixture(protected=True); self.dependency_snapshot(['/old-home/id_disposable'])
+        directory = self.home / 'keys'; directory.mkdir(mode=0o700)
+        mapping, inventory = self.inventory_mapping([directory])
+        row = inventory['items'][0]
+        proposal = dict(version=1, bundle_id=inventory['bundle_id'], items=[dict(
+            host_id='restore:' + hashlib.sha256(b'ssh-configuration\0private-host').hexdigest(), index=0,
+            original='/old-home/id_disposable', reference='~/keys/id_disposable', identity_id=row['identity_id'], approved=False)])
+        status, events, challenges = self.peer(operation='ssh_restore_review', mapping=mapping, approvals=proposal)
+        self.assertEqual(status, 0, events)
+        self.assertEqual([item['kind'] for item in challenges], ['bundle_unlock'])
+        reviewed = json.loads((self.private_temp / 'ssh-restore-references.json').read_bytes())
+        self.assertEqual(reviewed['items'][0]['proposal'], dict(reference='~/keys/id_disposable', identity_id=row['identity_id'], status='selected_expected'))
+        self.assertFalse((self.home / '.ssh').exists()); self.assertEqual(list(directory.iterdir()), [])
+        for private in ('id_disposable', '/old-home', 'private-host', row['identity_id'], str(self.home)):
+            self.assertNotIn(private, json.dumps(events))
+        proposal['items'][0]['reference'] = '~/.ssh/id_disposable'
+        status, events, _ = self.peer(operation='ssh_restore_review', mapping=mapping, approvals=proposal)
+        self.assertEqual(status, 0, events)
+        reviewed = json.loads((self.private_temp / 'ssh-restore-references.json').read_bytes())
+        self.assertIsNone(reviewed['items'][0]['proposal'])
+        self.assertFalse((self.home / '.ssh').exists()); self.assertEqual(list(directory.iterdir()), [])
+
+    def test_v2_failed_cancelled_import_and_changed_target_never_publish(self):
+        self.fixture(protected=True); self.dependency_snapshot(['~/.ssh/id_disposable']); self.ssh_bootstrap()
+        plan, _, receipt = self.dependency_compare()
+        for answer, code in ((lambda c,n,p: 'wrong-test-only' if c['kind']=='ssh_key_unlock' else None, 'secure_key_unlock_rejected'),
+                             (lambda c,n,p: 'cancel' if c['kind']=='import_confirmation' else None, 'secure_cancelled')):
+            with self.subTest(code=code):
+                status, events, _ = self.peer(answer, plan=plan['prepared_plan_id'], comparison=receipt)
+                self.assertNotEqual(status, 0, events); self.assertEqual(events[-1]['data']['code'], code)
+                self.assertFalse((self.home / '.ssh/config').exists()); self.assertFalse((self.home / '.ssh/id_disposable').exists())
+        def changed(challenge, number, process):
+            if challenge['kind'] == 'import_confirmation':
+                target = self.home / '.ssh'; target.mkdir(mode=0o700)
+                bundle.write_file(target / 'config', b'# appeared during confirmation\n')
+        status, events, _ = self.peer(changed, plan=plan['prepared_plan_id'], comparison=receipt)
+        self.assertNotEqual(status, 0, events)
+        self.assertEqual((self.home / '.ssh/config').read_bytes(), b'# appeared during confirmation\n')
+        self.assertNotIn(b'Host ', (self.home / '.ssh/config').read_bytes())
 
     def test_dependency_default_authenticated_and_read_only(self):
         private, public = self.fixture(protected=True)

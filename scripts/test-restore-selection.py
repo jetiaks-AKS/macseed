@@ -22,6 +22,7 @@ fixture = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(fixture)
 sys.path.insert(0, str(ROOT / 'modules/ssh'))
 import identity_dependencies as dependencies
+import restore_resolution as resolution
 
 
 class IdentityDependencyTests(unittest.TestCase):
@@ -181,6 +182,241 @@ class IdentityDependencyTests(unittest.TestCase):
         self.assertEqual(set(Path('/private/tmp').glob('macseed-dependency-*')), before)
 
 
+class IdentityResolutionTests(unittest.TestCase):
+    setUp = IdentityDependencyTests.setUp
+    raw = IdentityDependencyTests.raw
+    install = IdentityDependencyTests.install
+    state = IdentityDependencyTests.state
+
+    def execution_context(self, raw, plan, **kwargs):
+        directory = self.root / ('context-' + str(len(list(self.root.glob('context-*')))))
+        directory.mkdir(mode=0o700)
+        resolution.write_context(directory, raw, resolution.execution_context(raw, plan, **kwargs))
+        with patch.dict(os.environ, MACSEED_APPLICATION_EXECUTION='true', MACSEED_ITEM_STATE_DIR=str(directory)):
+            return resolution.context(plan['raw'])
+
+    def approval(self, raw, reference, identity=None):
+        row = resolution.references(raw)[0]
+        return dict(version=1, bundle_id='a' * 64, items=[dict(host_id=row['host_id'], index=row['index'],
+                    original=row['reference'], reference=reference, identity_id=identity, approved=True)])
+
+    def inspect(self, raw, **kwargs):
+        before = self.state()
+        plan = resolution.inspect(raw, str(self.home), bundle_id='a' * 64, **kwargs)
+        self.assertEqual(before, self.state(), 'assessment cannot mutate HOME')
+        return plan
+
+    def test_v2_local_order_shared_create_verify_noop(self):
+        self.install(); self.install('second')
+        raw = self.raw([('one', ['~/.ssh/second', '~/.ssh/id_fixture']), ('two', ['~/.ssh/id_fixture']), ('none', ['none'])])
+        plan = self.inspect(raw)
+        self.assertTrue(plan['qualified']); self.assertEqual(plan['action'], 'create')
+        context = self.execution_context(raw, plan, bundle_id='a' * 64)
+        self.assertTrue(resolution.apply(raw, str(self.home), context))
+        self.assertEqual((self.home / '.ssh/config').read_bytes(), resolution.config.payload(resolution.config.snapshot(raw)[3]))
+        self.assertTrue(resolution.bound_plan(raw, str(self.home), context, verification=True)['qualified'])
+        repeat = self.inspect(raw)
+        self.assertEqual(repeat['action'], 'noop')
+        self.assertFalse(resolution.apply(raw, str(self.home)))
+
+    def test_v2_none_and_no_file_creation(self):
+        raw = self.raw([('implicit', []), ('none', ['none'])])
+        self.assertTrue(self.inspect(raw)['qualified'])
+        self.assertTrue(resolution.apply(raw, str(self.home)))
+        self.assertEqual((self.home / '.ssh/config').stat().st_mode & 0o777, 0o600)
+
+    def test_execution_context_large_snapshot_and_protected_original(self):
+        raw = self.raw([(f'host-{index:04d}-' + 'x' * 65, []) for index in range(450)])
+        self.assertGreater(len(raw), 65536)
+        plan = self.inspect(raw)
+        context = self.execution_context(raw, plan)
+        directory = Path(context['_directory'])
+        original = directory / resolution.ORIGINAL
+        control = directory / resolution.EVIDENCE
+        self.assertLess(control.stat().st_size, 65536)
+        self.assertEqual(original.read_bytes(), raw)
+        self.assertEqual(original.stat().st_mode & 0o777, 0o600)
+        self.assertNotIn('host-0000', control.read_text())
+        with self.assertRaises(FileExistsError):
+            resolution.write_context(directory, raw, resolution.execution_context(raw, plan))
+        self.assertTrue(resolution.bound_plan(raw, str(self.home), context)['qualified'])
+        # Same bytes at a new inode must not bypass the private freshness binding.
+        replacement = directory / 'replacement'
+        replacement.write_bytes(raw); replacement.chmod(0o600); replacement.replace(original)
+        with self.assertRaises(resolution.merge.Refused):
+            resolution.bound_plan(raw, str(self.home), context)
+        context = self.execution_context(raw, plan)
+        original = Path(context['_directory']) / resolution.ORIGINAL
+        original.write_bytes(raw.replace(b'host-0000', b'host-9999'))
+        with self.assertRaises(resolution.merge.Refused):
+            resolution.apply(raw, str(self.home), context)
+        self.assertFalse((self.home / '.ssh').exists())
+        context = self.execution_context(raw, plan)
+        original = Path(context['_directory']) / resolution.ORIGINAL
+        original.chmod(0o644)
+        with self.assertRaises((OSError, resolution.config.Unsafe)):
+            resolution.bound_plan(raw, str(self.home), context)
+        original.unlink(); original.symlink_to(directory / resolution.ORIGINAL)
+        with self.assertRaises((OSError, resolution.config.Invalid)):
+            resolution.bound_plan(raw, str(self.home), context)
+
+
+    def test_explicit_local_approval_and_original_conflict(self):
+        target = self.key # Explicit safe absolute destination outside receiving HOME.
+        raw = self.raw([('one', ['/old-home/key'])])
+        self.assertFalse(self.inspect(raw)['qualified'])
+        approval = self.approval(raw, str(target))
+        plan = self.inspect(raw, approvals=approval)
+        self.assertTrue(plan['qualified'])
+        context = self.execution_context(raw, plan, approvals=approval, bundle_id='a' * 64)
+        self.assertTrue(resolution.apply(plan['raw'], str(self.home), context))
+        with self.assertRaises(resolution.merge.Refused):
+            self.inspect(raw, approvals=approval) # Corrected existing Host cannot conceal original conflict.
+
+    def test_inline_review_qualifies_proposals_without_granting_consent(self):
+        self.install()
+        raw = self.raw([('one', ['/old/key', '~/.ssh/absent']), ('healthy', ['~/.ssh/id_fixture']), ('none', ['none']), ('implicit', [])])
+        before = self.state()
+        rows = resolution.review_references(raw, str(self.home))
+        self.assertEqual([row['reference'] for row in rows], ['/old/key', '~/.ssh/absent'])
+        self.assertTrue(all(row['proposal'] is None for row in rows))
+        proposal = self.approval(raw, '~/.ssh/id_fixture'); proposal['items'][0]['approved'] = False
+        rows = resolution.review_references(raw, str(self.home), proposals=proposal, bundle_id='a'*64)
+        self.assertEqual(rows[0]['proposal'], dict(reference='~/.ssh/id_fixture', identity_id=None, status='local_satisfied'))
+        self.assertIsNone(rows[1]['proposal'])
+        with self.assertRaises(resolution.SecureError): self.inspect(raw, approvals=proposal)
+        proposal['items'][0]['reference'] = '~/.ssh/missing-other'
+        rows = resolution.review_references(raw, str(self.home), proposals=proposal, bundle_id='a'*64)
+        self.assertIsNone(rows[0]['proposal'])
+        proposal['bundle_id'] = 'b'*64
+        with self.assertRaises(resolution.SecureError):
+            resolution.review_references(raw, str(self.home), proposals=proposal, bundle_id='a'*64)
+        self.assertEqual(self.state(), before)
+
+    def test_empty_review_shared_keys_and_actionable_limit(self):
+        self.install()
+        raw = self.raw([(f'host-{i}', ['~/.ssh/id_fixture']) for i in range(40)])
+        before = self.state()
+        self.assertEqual(resolution.review_references(raw, str(self.home)), [])
+        self.assertEqual(self.state(), before)
+        missing = self.raw([(f'host-{i}', ['~/.ssh/missing']) for i in range(33)])
+        with self.assertRaises(resolution.SecureError) as caught:
+            resolution.review_references(missing, str(self.home))
+        self.assertEqual(caught.exception.code, 'ssh_review_unavailable')
+
+    def test_merge_preserves_unrelated_profiles_and_partial_source(self):
+        self.install()
+        target = self.home / '.ssh/config'
+        before = b'# retained comment\nHost untouched\n    HostName unrelated.invalid\n'
+        target.write_bytes(before); target.chmod(0o600)
+        raw = self.raw([('new', ['~/.ssh/id_fixture'])])
+        self.assertEqual(self.inspect(raw)['action'], 'merge')
+        partial = raw.replace(b'status: ready', b'status: partial').replace(b'excluded-profiles: 0', b'excluded-profiles: 1')
+        with self.assertRaises(resolution.merge.Refused): self.inspect(partial)
+        self.assertTrue(resolution.apply(raw, str(self.home)))
+        self.assertTrue(target.read_bytes().startswith(before))
+        saved = list(target.parent.glob('.macseed-ssh-predecessor-*'))
+        self.assertEqual(len(saved), 1)
+        self.assertEqual((saved[0] / 'observed').read_bytes(), before)
+
+    def test_stale_key_target_approval_and_bundle(self):
+        key = self.install()
+        raw = self.raw([('one', ['~/.ssh/id_fixture'])])
+        plan = self.inspect(raw)
+        context = self.execution_context(raw, plan, bundle_id='a' * 64)
+        key.chmod(0o644)
+        with self.assertRaises(resolution.merge.Refused): resolution.apply(raw, str(self.home), context)
+        key.chmod(0o600)
+        target = self.home / '.ssh/config'; target.write_bytes(b'# appeared\n'); target.chmod(0o600)
+        with self.assertRaises(resolution.merge.Refused): resolution.apply(raw, str(self.home), context)
+        target.unlink()
+        approval = self.approval(raw, '~/keys/other'); approval['bundle_id'] = 'b' * 64
+        with self.assertRaises(resolution.SecureError): self.inspect(raw, approvals=approval)
+        self.assertFalse(target.exists())
+
+    def test_unsafe_case_symlink_and_existing_conflicting_host(self):
+        self.install()
+        raw = self.raw([('one', ['~/.ssh/id_fixture'])])
+        target = self.home / '.ssh/config'
+        collision = target.with_name('Config'); collision.write_bytes(b'preserve'); collision.chmod(0o600)
+        with self.assertRaises(resolution.merge.Refused): self.inspect(raw)
+        collision.unlink()
+        target.symlink_to(self.key)
+        with self.assertRaises((OSError, resolution.merge.Refused)): self.inspect(raw)
+        target.unlink()
+        for source in (b'Host one\n HostName different.invalid\n', b'Host *\n User other\n', b'Include extra\n', b'Match all\n User other\n'):
+            target.write_bytes(source); target.chmod(0o600)
+            with self.assertRaises(resolution.merge.Refused): self.inspect(raw)
+            self.assertEqual(target.read_bytes(), source)
+
+    def test_expected_identity_requires_selected_destination_and_verified_import(self):
+        import hashlib
+        from restore_destinations import digest
+        raw = self.raw([('one', ['/old/key'])])
+        pair = [self.key.read_bytes(), Path(str(self.key) + '.pub').read_bytes()]
+        hashes = [hashlib.sha256(value).hexdigest() for value in pair]
+        identity = dict(name='id_fixture', key_type='ssh-ed25519', fingerprint='SHA256:' + 'x'*43, pair_digest=hashes, target='create')
+        identity['identity_id'] = digest([identity['name'], identity['key_type'], identity['fingerprint'], *hashes])
+        approval = self.approval(raw, '~/keys/id_fixture', identity['identity_id'])
+        directory = self.home / 'keys'; directory.mkdir(mode=0o700)
+        mapping = dict(version=2, bundle_id='a'*64, items=[dict(identity_id=identity['identity_id'], directory=str(directory), selected=True)])
+        pending = self.inspect(raw, approvals=approval, destinations=mapping, pending_secure=True)
+        self.assertTrue(pending['pending']); self.assertFalse(pending['qualified'])
+        expected = self.inspect(raw, approvals=approval, destinations=mapping, authenticated=[identity])
+        self.assertTrue(expected['expected']); self.assertFalse(expected['qualified'])
+        mapping['items'][0]['selected'] = False
+        with self.assertRaises(resolution.SecureError): self.inspect(raw, approvals=approval, destinations=mapping, authenticated=[identity])
+
+
+    def test_preview_context_cannot_apply_and_approval_cannot_be_implicit(self):
+        self.install()
+        raw = self.raw([('one', ['~/.ssh/id_fixture'])])
+        plan = self.inspect(raw)
+        context = self.execution_context(raw, plan, preview=True)
+        with self.assertRaises(resolution.merge.Refused): resolution.apply(raw, str(self.home), context)
+        approval = self.approval(raw, '~/keys/other'); approval['items'][0]['approved'] = False
+        with self.assertRaises(resolution.SecureError): self.inspect(raw, approvals=approval)
+        self.assertFalse((self.home / '.ssh/config').exists())
+
+    def test_uncertain_creation_retains_recovery_and_blocks_reentry(self):
+        raw = self.raw([('one', ['none'])])
+        with patch.object(resolution.merge, 'rename', side_effect=OSError('fixture publication fault')):
+            with self.assertRaises(resolution.merge.PublicationUncertain) as caught:
+                resolution.apply(raw, str(self.home))
+        self.assertTrue(caught.exception.changed)
+        self.assertFalse((self.home / '.ssh/config').exists())
+        pending = list((self.home / '.ssh').glob('.macseed-ssh-pending-*'))
+        self.assertEqual(len(pending), 1); self.assertTrue((pending[0] / 'new').is_file())
+        with self.assertRaises(resolution.merge.Refused): self.inspect(raw)
+
+    def test_dependency_change_at_merge_preserves_pending_predecessor(self):
+        key = self.install()
+        target = self.home / '.ssh/config'; before = b'Host untouched\n HostName untouched.invalid\n'
+        target.write_bytes(before); target.chmod(0o600)
+        raw = self.raw([('one', ['~/.ssh/id_fixture'])])
+        rename = resolution.merge.rename
+        def change(*args):
+            rename(*args)
+            if args[-1] == 2: # Darwin RENAME_SWAP completed before the observation changes.
+                key.chmod(0o644)
+        with patch.object(resolution.merge, 'rename', side_effect=change):
+            with self.assertRaises(resolution.merge.PublicationUncertain): resolution.apply(raw, str(self.home))
+        pending = list(target.parent.glob('.macseed-ssh-pending-*'))
+        self.assertEqual(len(pending), 1)
+        self.assertEqual((pending[0] / 'swap').read_bytes(), before)
+        self.assertTrue(target.read_bytes().startswith(before))
+
+    def test_check_dependency_qualification_remains_separate_from_config_conflict(self):
+        self.install()
+        raw = self.raw([('one', ['~/.ssh/id_fixture'])])
+        target = self.home / '.ssh/config'; target.write_bytes(b'Host one\n HostName different.invalid\n'); target.chmod(0o600)
+        before = self.state()
+        self.assertTrue(resolution.bound_plan(raw, str(self.home), None, verification=True)['qualified'])
+        self.assertEqual(before, self.state())
+        self.assertEqual(resolution.config.assess(resolution.config.payload(resolution.config.snapshot(raw)[3]), str(self.home))[1], 'conflicting_profiles')
+
+
+
 class SelectionTests(unittest.TestCase):
     def setUp(self):
         self.fixture = fixture.RestorePrepareTests()
@@ -239,7 +475,7 @@ class SelectionTests(unittest.TestCase):
         before = [(p.name, p.stat().st_ino, p.stat().st_mtime_ns, p.read_bytes()) for p in sorted(target.parent.iterdir())]
         local = self.prepare(chosen)
         self.assertEqual(local['ssh_identity_dependencies'], dict(version=1, findings=['local_satisfied']))
-        self.assertFalse(local['readiness']['ready'], 'qualification must not enable v2 publication')
+        self.assertTrue(local['readiness']['ready'], local)
         self.assertNotEqual(initial['prepared_plan_id'], local['prepared_plan_id'])
         self.assertEqual(before, [(p.name, p.stat().st_ino, p.stat().st_mtime_ns, p.read_bytes()) for p in sorted(target.parent.iterdir())])
         self.assertEqual(self.prepare(self.ssh_selection((0,)))['ssh_identity_dependencies']['findings'], ['no_file_dependency'])
@@ -291,6 +527,165 @@ class SelectionTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, events)
         self.assertEqual((target.stat().st_ino, target.stat().st_mtime_ns), (before.st_ino, before.st_mtime_ns))
         self.assertEqual(list(target.parent.glob('.macseed-ssh-predecessor-*')), retained)
+
+    def ssh_request(self, operation, chosen, approvals=None, plan=None):
+        request = dict(protocol_version=1, operation_id='ssh-review-test', operation=operation,
+                       parameters=dict(path=str(self.fixture.archive), selection=chosen))
+        if operation != 'ssh_restore_review':
+            request['parameters'].update(disabled_groups=[], include_secure=False)
+        if plan is not None: request['parameters']['expected_prepared_plan_id'] = plan
+        if approvals is not None:
+            request['parameters']['ssh_approvals'] = True
+            control = self.fixture.private_temp / resolution.CONTROL
+            control.write_text(json.dumps(dict(operation_id=request['operation_id'], approvals=approvals))); control.chmod(0o600)
+        child = subprocess.run(['bash', str(self.fixture.project / 'modules/core/application-interface/core.sh')],
+                               input=json.dumps(request).encode(), env=self.fixture.environment, cwd=self.fixture.project, capture_output=True)
+        return child.returncode, [json.loads(line) for line in child.stdout.splitlines()]
+
+    def test_ssh_review_and_readiness_fixture_matrix(self):
+        # Production request/Bundle/selection/snapshot/review/response and Prepare.
+        # Every scenario has its own HOME; no live key or config is consulted.
+        scenarios = [('A-v1', 1, []), ('B-local', 2, ['~/.ssh/id_fixture']),
+                     ('C-none', 2, ['none']), ('C-implicit', 2, []),
+                     ('D-missing', 2, ['~/.ssh/missing']), ('G-conflict-v1', 1, []),
+                     ('G-conflict-v2', 2, []),
+                     ('H-ordered', 2, ['~/.ssh/id_fixture', '~/.ssh/missing', '~/.ssh/other']),
+                     ('I-unsafe', 2, ['~/.ssh/unsafe', '/source-only/key'])]
+        for label, version, refs in scenarios:
+            with self.subTest(scenario=label):
+                case = SelectionTests(); case.setUp()
+                try:
+                    target = case.ssh_fixture(version=version)
+                    raw = IdentityDependencyTests.raw(self, [('production', refs)], version=version)
+                    case.ssh_source.write_bytes(raw)
+                    case.fixture.archive.unlink(); bundle.pack(case.stage, case.fixture.archive, '/Users/source')
+                    if label in ('B-local', 'H-ordered'):
+                        target.parent.mkdir(mode=0o700)
+                        for name in (['id_fixture', 'other'] if label == 'H-ordered' else ['id_fixture']):
+                            subprocess.run(['/usr/bin/ssh-keygen', '-q', '-t', 'ed25519', '-N', '', '-f', str(target.parent / name)], check=True)
+                    elif label.startswith('G-'):
+                        target.parent.mkdir(mode=0o700)
+                        target.write_bytes(b'Host production\n HostName conflicting.invalid\n'); target.chmod(0o600)
+                    elif label == 'I-unsafe':
+                        target.parent.mkdir(mode=0o700)
+                        (target.parent / 'unsafe').symlink_to(case.fixture.root / 'absent-key')
+                    def state():
+                        return [(str(p.relative_to(case.fixture.home)), p.lstat().st_ino, p.lstat().st_mode,
+                                 p.lstat().st_mtime_ns, p.read_bytes() if p.is_file() and not p.is_symlink() else None)
+                                for p in [case.fixture.home, *sorted(case.fixture.home.rglob('*'))]]
+                    before = state()
+                    chosen = dict(categories=['ssh-configuration'], items={})
+                    code, events = case.ssh_request('ssh_restore_review', chosen)
+                    self.assertEqual(code, 0, (label, events))
+                    review = json.loads((case.fixture.private_temp / resolution.REVIEW).read_bytes())
+                    actionable = label in ('D-missing', 'H-ordered', 'I-unsafe')
+                    self.assertEqual(bool(review['items']), actionable, label)
+                    if label == 'H-ordered':
+                        self.assertEqual([(row['index'], row['reference']) for row in review['items']], [(1, refs[1])])
+                    if label == 'I-unsafe':
+                        self.assertEqual([row['status'] for row in review['items']], ['unsafe_target', 'unresolved'])
+                    prepared = case.prepare(chosen)
+                    blocked = actionable or label.startswith('G-')
+                    self.assertEqual(prepared['readiness']['ready'], not blocked, (label, prepared))
+                    if version == 2: self.assertEqual(prepared['ssh_resolution']['ready'], not blocked)
+                    if blocked:
+                        result, rejected = case.fixture.execute(prepared['prepared_plan_id'], selection=chosen)
+                        self.assertEqual(result.returncode, 2, rejected)
+                        self.assertFalse(rejected[-1]['data']['publication_started'])
+                    self.assertEqual(state(), before, 'read-only assessment/rejected Execute cannot change HOME')
+                    self.assertFalse((case.fixture.root / 'mutations').exists())
+                    print('PASS fixture:', label)
+                finally:
+                    case.doCleanups()
+
+    def test_large_v2_snapshot_prepare_execute_context(self):
+        target = self.ssh_fixture(version=2)
+        self.fixture.allow_application_bootstrap()
+        raw = IdentityDependencyTests.raw(self, [(f'host-{index:04d}-' + 'x' * 65, []) for index in range(450)])
+        self.assertGreater(len(raw), 65536)
+        bundle.ssh_snapshot(raw)
+        self.ssh_source.write_bytes(raw)
+        self.fixture.archive.unlink(); bundle.pack(self.stage, self.fixture.archive, '/Users/source')
+        chosen = dict(categories=['ssh-configuration'], items={})
+        prepared = self.prepare(chosen)
+        self.assertTrue(prepared['readiness']['ready'], prepared)
+        self.assertFalse(target.exists())
+        result, events = self.fixture.execute(prepared['prepared_plan_id'], selection=chosen)
+        self.assertEqual(result.returncode, 0, events)
+        self.assertEqual(target.read_bytes(), resolution.config.payload(resolution.config.snapshot(raw)[3]))
+        self.assertEqual(events[-2]['data']['verification']['verdict'], 'selected_requirements_verified')
+
+    def test_v2_private_review_local_approval_execute_and_stale(self):
+        target = self.ssh_fixture(version=2)
+        self.fixture.allow_application_bootstrap()
+        directory = self.fixture.home / 'keys'; directory.mkdir(mode=0o700)
+        key = directory / 'deploy'
+        subprocess.run(['/usr/bin/ssh-keygen', '-q', '-t', 'ed25519', '-N', '', '-f', str(key)], check=True)
+        chosen = self.ssh_selection((1,))
+        code, events = self.ssh_request('ssh_restore_review', chosen)
+        self.assertEqual(code, 0, events)
+        reviewed = json.loads((self.fixture.private_temp / resolution.REVIEW).read_bytes())
+        self.assertEqual(reviewed['items'], [dict(host_id=self.ssh_ids[1], host='production', index=0,
+            reference='/old-home/deploy', status='unresolved', proposal=None)])
+        self.assertEqual(reviewed['bundle_id'], bundle.fingerprint(self.fixture.archive))
+        self.assertNotIn('/old-home', json.dumps(events)); self.assertFalse(target.parent.exists())
+        approval = dict(version=1, bundle_id=reviewed['bundle_id'], items=[dict(host_id=self.ssh_ids[1], index=0,
+            original='/old-home/deploy', reference='~/keys/deploy', identity_id=None, approved=True)])
+        proposal = json.loads(json.dumps(approval)); proposal['items'][0]['approved'] = False
+        (self.fixture.private_temp / resolution.REVIEW).unlink()
+        code, events = self.ssh_request('ssh_restore_review', chosen, proposal)
+        self.assertEqual(code, 0, events)
+        qualified = json.loads((self.fixture.private_temp / resolution.REVIEW).read_bytes())
+        self.assertEqual(qualified['items'][0]['proposal']['status'], 'local_satisfied')
+        self.assertNotIn('deploy', json.dumps(events))
+        code, events = self.ssh_request('restore_prepare', chosen, proposal)
+        self.assertEqual(code, 2); self.assertEqual(events[-1]['data']['code'], 'ssh_approval_invalid')
+        code, events = self.ssh_request('restore_prepare', chosen, approval)
+        self.assertEqual(code, 0, events)
+        plan = events[-2]['data']; self.assertTrue(plan['ssh_resolution']['ready']); self.assertTrue(plan['readiness']['ready'], plan)
+        code, stale = self.ssh_request('restore_execute', chosen, plan=plan['prepared_plan_id'])
+        self.assertEqual(code, 2); self.assertEqual(stale[-1]['data']['code'], 'stale_plan'); self.assertFalse(target.exists())
+        code, result = self.ssh_request('restore_execute', chosen, approval, plan['prepared_plan_id'])
+        self.assertEqual(code, 0, result)
+        self.assertIn(b'IdentityFile ~/keys/deploy', target.read_bytes())
+        self.assertNotIn(b'Host github', target.read_bytes())
+        self.assertEqual(result[-2]['data']['verification']['verdict'], 'selected_requirements_verified', result)
+        code, repeated = self.ssh_request('restore_prepare', chosen, approval)
+        self.assertEqual(code, 0, repeated)
+        self.assertFalse(repeated[-2]['data']['readiness']['ready'], 'original differing Host remains a conflict')
+        for private in ('/old-home', '~/keys/deploy', str(self.fixture.home), 'production.invalid'):
+            self.assertNotIn(private, json.dumps(result))
+
+    def test_v2_no_file_execute_noop_and_selected_stale(self):
+        target = self.ssh_fixture(version=2)
+        self.fixture.allow_application_bootstrap()
+        chosen = self.ssh_selection()
+        plan = self.prepare(chosen)
+        result, stale = self.fixture.execute(plan['prepared_plan_id'], selection=self.ssh_selection((1,)))
+        self.assertEqual(result.returncode, 2); self.assertEqual(stale[-1]['data']['code'], 'stale_plan')
+        result, events = self.fixture.execute(plan['prepared_plan_id'], selection=chosen)
+        self.assertEqual(result.returncode, 0, events)
+        self.assertEqual(events[-2]['data']['verification']['verdict'], 'selected_requirements_verified')
+        before = target.stat()
+        plan = self.prepare(chosen)
+        self.assertEqual(plan['ssh_resolution']['action'], 'noop')
+        result, events = self.fixture.execute(plan['prepared_plan_id'], selection=chosen)
+        self.assertEqual(result.returncode, 0, events)
+        self.assertEqual((before.st_ino, before.st_mtime_ns), (target.stat().st_ino, target.stat().st_mtime_ns))
+
+    def test_v2_partial_creation_retains_unresolved_coverage(self):
+        target = self.ssh_fixture(version=2, partial=True)
+        self.fixture.allow_application_bootstrap()
+        chosen = self.ssh_selection()
+        plan = self.prepare(chosen)
+        self.assertTrue(plan['ssh_resolution']['ready']); self.assertTrue(plan['readiness']['ready'])
+        result, events = self.fixture.execute(plan['prepared_plan_id'], selection=chosen)
+        self.assertEqual(events[-1]['type'], 'completed', events)
+        self.assertTrue(target.exists())
+        self.assertTrue(any(row['domain'] == 'ssh-configuration' and row['disposition'] == 'unresolved'
+                            and row['source_status'] == 'partial'
+                            for row in events[-2]['data']['verification']['details']['coverage_records']))
+        self.assertNotEqual(events[-2]['data']['verification']['verdict'], 'selected_requirements_verified')
 
     def test_ssh_full_legacy_empty_and_independent_secure_selection(self):
         target = self.ssh_fixture(secure=True)
@@ -359,17 +754,19 @@ class SelectionTests(unittest.TestCase):
                 self.assertFalse(events[-1]['data']['publication_started'])
                 self.assertEqual(target.read_bytes(), raw)
 
-    def test_ssh_subset_v2_never_downgrades_or_resolves_identity(self):
+    def test_ssh_subset_v2_qualified_no_file_and_unresolved_identity(self):
         target = self.ssh_fixture(version=2)
-        for chosen in (self.ssh_selection(), self.ssh_selection((1,))):
-            plan = self.prepare(chosen)
-            self.assertFalse(plan['readiness']['ready'], plan)
-            self.assertTrue(any(row['reason'] == 'extended_ssh_read_only' for row in plan['plan']))
-            unresolved = any(row['reason'] == 'identity_dependencies_unresolved' for row in plan['plan'])
-            self.assertEqual(unresolved, chosen == self.ssh_selection((1,)))
-            result, events = self.fixture.execute(plan['prepared_plan_id'], selection=chosen)
-            self.assertEqual(result.returncode, 2, events)
-            self.assertFalse(events[-1]['data']['publication_started'])
+        local = self.prepare(self.ssh_selection())
+        self.assertTrue(local['readiness']['ready'], local)
+        self.assertTrue(local['ssh_resolution']['ready'])
+        chosen = self.ssh_selection((1,))
+        plan = self.prepare(chosen)
+        self.assertFalse(plan['readiness']['ready'], plan)
+        self.assertFalse(plan['ssh_resolution']['ready'])
+        self.assertTrue(any(row['reason'] == 'identity_dependencies_unresolved' for row in plan['plan']))
+        result, events = self.fixture.execute(plan['prepared_plan_id'], selection=chosen)
+        self.assertEqual(result.returncode, 2, events)
+        self.assertFalse(events[-1]['data']['publication_started'])
         self.assertFalse(target.exists())
         # A subset cannot erase ambiguous source syntax or its v2 capability.
         files = bundle.validate_archive(self.fixture.archive)

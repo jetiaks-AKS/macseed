@@ -940,8 +940,14 @@ def run():
         plan = target_plan(records)
         for (name, kind, fp, _, _), status in zip(records, plan):
             print(f'{status}: {name} {kind} {fp}')
+        def verified_identities():
+            if interaction is not None:
+                for (name, kind, fingerprint, private, public), key in zip(records, ids):
+                    interaction.inventory_item(dict(identity_id=key, name=name, key_type=kind, fingerprint=fingerprint),
+                                               target='identical', pair_digest=[digest(private), digest(public)])
         if 'create' not in plan:
             evidence.matched('noop')
+            verified_identities()
             print('All identities already match')
             return
         if ask('Type import to confirm: ') != 'import':
@@ -992,6 +998,7 @@ def run():
             if target_plan(records) != ['identical'] * len(records):
                 raise Invalid('post-publication verification failed')
             evidence.matched('success')
+            verified_identities()
             print('Import verified')
         except BaseException:
             for descriptor, relative, device, inode in reversed(created):

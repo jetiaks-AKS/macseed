@@ -1331,41 +1331,64 @@ owns directory safety, no-clobber, cleanup and unresolved `IdentityFile` boundar
 
 ## SSH identity dependency assessment
 
-Slice 4A adds advisory read-only qualification for selected supported SSH Host
-profiles. [Configuration](../toolkit/CONFIGURATION.md#read-only-identityfile-dependencies)
-owns supported evidence, limits and unresolved cases. It changes neither the v2
-publication gate nor configuration semantic conformity, readiness, Verification,
-Git transport/order or Secure Transfer selection.
+Selected SSH profiles retain the Slice 4A read-only dependency projection;
+[Configuration](../toolkit/CONFIGURATION.md#read-only-identityfile-dependencies)
+owns evidence, bounds and unresolved cases. `restore_prepare` adds
+`ssh_identity_dependencies: {"version":1,"findings":[...]}` when SSH is selected.
+Only aggregate kinds cross JSONL; ordered Host/reference rows and local evidence
+remain private and contribute to the prepared ID. Secure-only selection omits it.
 
-When SSH Configuration is selected, `restore_prepare` adds
-`ssh_identity_dependencies: {"version":1,"findings":[...]}`. `findings` is a sorted,
-deduplicated set drawn from `local_satisfied`, `selected_expected`, `missing`,
-`unresolved`, `unsafe_target`, `no_file_dependency`; an empty supported Host scope
-has an empty set. Prepare uses local evidence only, so cannot produce
-`selected_expected`. The private ordered Host/reference model and local evidence
-digest participate in prepared-ID binding; paths, key metadata and individual
-findings are never emitted. Secure-only selection omits this field.
+Slice 4B advertises `ssh_identity_resolution: {version:1, review:"ssh_restore_review",
+max_items:32}`. The read-only `ssh_restore_review` request takes `path` and ordinary
+Restore `selection`. The default validates/unpacks/narrows the Bundle without unlocking
+it, then returns only `status: "reviewed"`. Its protected `ssh-restore-references.json`
+result uses the existing inventory envelope (`version`, `operation_id`, `bundle_id`,
+`items`). Only missing/unresolved/unsafe references are returned; rows contain `host_id`,
+`host`, zero-based `index`, `reference`, `status` and nullable `proposal`. A qualified
+proposal contains `reference`, nullable `identity_id` and `status` (`local_satisfied`
+or `selected_expected`). Review can consume the same protected proposal envelope via
+`ssh_approvals:true`, but requires `approved:false`; these rows cannot authorize
+Prepare or Execute. Only an explicit secure-identity proposal permits `include_secure:true`
+and optional `custom_destinations:true`: it uses the existing Bundle-unlock-only Compare
+helper and fresh private identity evidence. Disclosure never requests that secure mode.
 
-After successful explicit `secure_restore_compare`, Core may emit an additive
-`ssh_identity_dependencies` event with that same projection before the ordinary
-`result`. It combines fresh local inspection with authenticated selected identities
-and their intended destinations. This event is advisory: the existing strict
-comparison receipt remains unchanged, and the projection is not an Execute input
-or authorization. Current Desktop can ignore the additive field/event; there are
-no new screens or presentation changes. Uncertain/pending dependency evidence
-must never be projected as Already Matches.
+Prepare/Compare/Execute accept the boolean `ssh_approvals: true`, never paths or
+mapping data in the request. A protected `ssh-restore-approvals.json` envelope
+contains `operation_id` and `approvals`: `{version:1, bundle_id, items}`. Each sorted
+unique `(host_id,index)` row contains `original`, `reference`, nullable `identity_id`
+and explicit `approved:true`. Unknown/stale Host or reference associations fail
+closed. Desktop uses the same private operation directory (`0700`) and bounded,
+owned, single-link `0600` no-follow file transport as custom destinations.
+The execution context keeps the original SSH snapshot in a separate bounded protected
+file, bound by SHA-256 and freshness metadata; the 64 KiB control limit is unchanged.
+[Configuration](../toolkit/CONFIGURATION.md#explicit-identityfile-resolution-and-v2-restore)
+owns the file and publication safeguards.
 
-The internal importer reuses `restore_identity` on its private socket: inventory
-keeps version 1; Compare uses version 2 with the same `identity` fields plus
-`target` (`create`, `identical`, `conflict`, `unresolved`) and `pair_digest` (private
-and public SHA-256 values). Core validates message shape, identity uniqueness,
-the ID's binding to these hashes, the mapped selected-ID set and agreement with
-the comparison receipt before releasing evidence to the domain assessor.
-Messages never reach the Desktop challenge stream or ordinary JSONL. Evidence
-comes only from the current authenticated comparison, after package/mapping
-validation; inventory files and mappings alone cannot establish it. Bundle and
-prepared-plan freshness checks still apply, and the Bundle is rechecked after
-dependency assessment. Import behavior and its receipt are unchanged.
+For selected v2, Prepare and the Secure Compare receipt add `ssh_resolution`:
+`{version:1, action, ready, pending, dependencies, remote_authentication:"not_assessed"}`.
+Actions are `create`, `merge`, `noop`, `blocked`; dependencies use the aggregate
+projection above. Pending is not ready or Already Matches. Compare uses fresh
+authenticated selected identities and exact intended destinations. Its additive
+`ssh_identity_dependencies` event remains separate from config conformity.
+The strict comparison validator accepts the optional bounded resolution projection;
+legacy receipts remain valid for scopes without v2 dependencies.
+
+The importer sends private `restore_identity` v2 rows after Compare, or after a
+cryptographically validated successful/no-op import. Inventory remains v1. v2 adds
+`target` and private/public `pair_digest` to the identity fields. Core validates
+shape, uniqueness, identity/hash binding, selected-ID completeness and agreement
+with Compare or the verified importer receipt before releasing evidence. Neither
+stored inventory nor exit zero establishes qualification. No such rows reach the
+Desktop challenge stream or JSONL.
+
+Execute checks original selected Hosts before corrected-source equivalence, validates
+its prepared inputs and Compare binding, then imports keys before the existing SSH
+consumer publishes config. Fresh verified evidence and approvals travel in the
+existing protected Bootstrap item-state directory, not argv/environment content.
+Preview contexts cannot authorize Apply. The consumer rechecks dependencies and
+target evidence at publication and separately verifies effective config and keys.
+Unsuccessful import stops before dependent config publication. Existing recovery,
+no-clobber, unrelated execution order and Git transport are unchanged.
 
 ## Separate secret channel and privacy
 

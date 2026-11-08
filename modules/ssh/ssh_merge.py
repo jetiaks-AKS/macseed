@@ -1,4 +1,4 @@
-"""Bounded v1 SSH additions and Darwin predecessor-preserving publication.
+"""Bounded SSH additions and Darwin predecessor-preserving publication.
 
 No key readers, config evaluation, overwrite rename fallback or automatic rollback.
 """
@@ -215,8 +215,8 @@ def evidence(home):
         return hashlib.sha256(b'unsafe-or-unavailable').hexdigest()
 
 
-def candidate(expected, actual):
-    source, rejected, structural = config.parse(expected, version=1)
+def candidate(expected, actual, *, version=1):
+    source, rejected, structural = config.parse(expected, version=version)
     if rejected or structural:
         raise Refused('source_excluded')
     existing, rejected, structural = config.parse(actual)
@@ -244,7 +244,7 @@ def candidate(expected, actual):
     return merged, len(missing)
 
 
-def plan(expected, home):
+def plan(expected, home, *, version=1):
     with target(home) as (directory, recheck, _):
         if directory is None:
             return 'create', 0
@@ -255,7 +255,7 @@ def plan(expected, home):
         except FileNotFoundError:
             recheck()
             return 'create', 0
-        _, count = candidate(expected, actual)
+        _, count = candidate(expected, actual, version=version)
         if count:
             swap_supported(directory)
         recheck()
@@ -284,14 +284,14 @@ def write_private(directory, name, raw, source_directory, old, metadata):
         fcntl.fcntl(stream.fileno(), 51)  # Darwin F_FULLFSYNC, no durability fallback.
 
 
-def publish(expected, home, expected_evidence):
+def publish(expected, home, expected_evidence, *, version=1, validate=None):
     if not expected_evidence or evidence(home) != expected_evidence:
         raise Refused('target_changed')
     with target(home) as (directory, recheck, _):
         if directory is None or config.pending_publication(directory):
             raise Refused('target_changed')
         original, old, metadata = observed_file(directory)
-        merged, count = candidate(expected, original)
+        merged, count = candidate(expected, original, version=version)
         if not count:
             recheck()
             return False
@@ -323,6 +323,8 @@ def publish(expected, home, expected_evidence):
                 raise Refused('target_changed')
             # This is an atomic exchange, not inode compare-and-swap. Verify the
             # actual displaced predecessor and retain it even on a last-gap race.
+            if validate is not None:
+                validate()
             rename(recovery, 'swap', directory, 'config', 2)
             published, new, new_metadata = observed_file(directory)
             displaced, predecessor, predecessor_metadata = observed_file(recovery, 'swap')
@@ -334,6 +336,8 @@ def publish(expected, home, expected_evidence):
             recheck()
             if identity(os.stat(pending, dir_fd=directory, follow_symlinks=False)) != recovery_identity:
                 raise Refused('publication_uncertain')
+            if validate is not None:
+                validate()
             os.fsync(recovery)
             os.fsync(directory)
             # A completed directory is a retained backup, not a re-entry block.
@@ -355,7 +359,9 @@ def publish(expected, home, expected_evidence):
 def main():
     command, *args = sys.argv[1:]
     try:
-        if command == 'plan' and len(args) == 2:
+        if command == 'evidence' and len(args) == 1:
+            print(evidence(args[0]))
+        elif command == 'plan' and len(args) == 2:
             before = evidence(args[1])
             decision = plan(config.read_file(args[0]), args[1])
             if evidence(args[1]) != before:

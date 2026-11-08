@@ -64,7 +64,7 @@ def operation_mapping(operation_id):
         raise SecureError('secure_input_invalid') from None
 
 
-def publish_inventory(operation_id, bundle_id, items):
+def publish_inventory(operation_id, bundle_id, items, *, name=INVENTORY):
     directory = Path(os.environ['TMPDIR']).resolve()
     fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     try:
@@ -75,13 +75,13 @@ def publish_inventory(operation_id, bundle_id, items):
                          separators=(',', ':')).encode()
         if len(raw) > 65536:
             raise SecureError('secure_input_invalid')
-        output = os.open(INVENTORY, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=fd)
+        output = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=fd)
         with os.fdopen(output, 'wb') as stream:
             os.fchmod(stream.fileno(), 0o600)
             stream.write(raw)
         current = os.lstat(directory)
         if Directory.stamp(before) != Directory.stamp(current):
-            os.unlink(INVENTORY, dir_fd=fd)
+            os.unlink(name, dir_fd=fd)
             raise SecureError('secure_target_changed')
     finally:
         os.close(fd)

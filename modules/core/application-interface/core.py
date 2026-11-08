@@ -33,6 +33,8 @@ from external_state import pending as external_pending
 import restore_selection
 from secure import launch_channel, import_secure, compare_secure, SecureError
 import restore_destinations
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'ssh'))
+import restore_resolution as ssh_resolution
 
 PROTOCOL_VERSION = 1
 MAX_REQUEST = 4096
@@ -56,6 +58,49 @@ def ssh_dependencies(stage, selection, *, authenticated=(), destinations=None):
     rows = assess(bundle.checked_file(stage / 'generated/ssh/config.snapshot'), os.environ['HOME'],
                   authenticated=authenticated, destinations=destinations)
     return projection(rows), restore_destinations.digest(rows)
+
+
+def ssh_plan(stage, *, approvals=None, bundle_id=None, destinations=None, authenticated=(), pending_secure=False, verified_import=False):
+    original = stage.parent / 'ssh-original.snapshot'
+    if not original.exists():
+        return None
+    return ssh_resolution.inspect(bundle.checked_file(original), os.environ['HOME'], approvals=approvals,
+        bundle_id=bundle_id, destinations=destinations, authenticated=authenticated,
+        pending_secure=pending_secure, verified_import=verified_import)
+
+
+def ssh_review(operation_id, path, selection, *, proposals=None, destinations=None, channel=None, event=None, include_secure=False):
+    source_id = restore_fingerprint(Path(path))
+    with tempfile.TemporaryDirectory(prefix='mbt-ssh-review-', dir=os.environ.get('TMPDIR')) as temporary:
+        stage = Path(temporary) / 'stage'
+        stage.mkdir(mode=0o700)
+        restore_unpack(Path(path), stage, os.environ['HOME'], workspace_preview=True)
+        try:
+            restore_selection.narrow(stage, selection, [])
+        except restore_selection.InvalidSelection:
+            raise InvalidSelection() from None
+        scoped = restore_selection.canonical(stage)
+        if 'ssh-configuration' not in scoped['categories'] and 'ssh-configuration' not in scoped['items']:
+            raise InvalidSelection()
+        authenticated = []
+        if include_secure:
+            if channel is None:
+                raise SecureError('secure_bridge_required')
+            if proposals is None or not any(row['identity_id'] is not None for row in proposals['items']):
+                raise SecureError('ssh_approval_invalid')
+            if destinations is not None and destinations['bundle_id'] != source_id:
+                raise SecureError('stale_plan')
+            compare_secure(ROOT, stage / 'secure.age', channel, operation_id, event,
+                           destinations=destinations, identity_evidence=authenticated)
+        elif proposals and any(row['identity_id'] is not None for row in proposals['items']):
+            raise SecureError('secure_bridge_required')
+        rows = ssh_resolution.review_references(bundle.checked_file(stage / 'generated/ssh/config.snapshot'),
+            os.environ['HOME'], proposals=proposals, bundle_id=source_id,
+            destinations=destinations, authenticated=authenticated)
+        if restore_fingerprint(Path(path)) != source_id:
+            raise SecureError('stale_plan')
+        restore_destinations.publish_inventory(operation_id, source_id, rows, name=ssh_resolution.REVIEW)
+    return {'status': 'reviewed'}
 
 
 class RecoveryRequired(Exception):
@@ -130,14 +175,16 @@ def restore_signals():
         signal.signal(signal.SIGTERM, previous_term)
 
 
-def restore_prepare(path, disabled_groups, include_secure, selection=None, installer_preparations=None, destinations=None):
-    with restore_signals(), prepared_restore(path, disabled_groups, include_secure, selection, installer_preparations, workspace_preview=True, destinations=destinations) as (summary, _stage, _source, _staged):
+def restore_prepare(path, disabled_groups, include_secure, selection=None, installer_preparations=None, destinations=None, ssh_approvals=None):
+    with restore_signals(), prepared_restore(path, disabled_groups, include_secure, selection, installer_preparations, workspace_preview=True, destinations=destinations, ssh_approvals=ssh_approvals) as (summary, _stage, _source, _staged):
         return summary
 
 
 def valid_comparison(value):
-    return (isinstance(value, dict) and set(value) == {'decision', 'target_state', 'source_fingerprint',
-            'prepared_plan_id', 'selection', 'include_secure', 'comparison_operation_id'} and
+    return (isinstance(value, dict) and set(value) in ({'decision', 'target_state', 'source_fingerprint',
+            'prepared_plan_id', 'selection', 'include_secure', 'comparison_operation_id'},
+            {'decision', 'target_state', 'source_fingerprint', 'prepared_plan_id', 'selection', 'include_secure', 'comparison_operation_id', 'ssh_resolution'}) and
+            ('ssh_resolution' not in value or ssh_resolution.valid_public(value['ssh_resolution'])) and
             value['decision'] in ('all_match', 'import_required', 'conflict') and value['include_secure'] is True and
             all(isinstance(value[key], str) and PREPARED_PLAN_ID.fullmatch(value[key])
                 for key in ('source_fingerprint', 'prepared_plan_id')) and
@@ -146,7 +193,7 @@ def valid_comparison(value):
              (value['decision'] != 'conflict' and isinstance(value['target_state'], str) and PREPARED_PLAN_ID.fullmatch(value['target_state']))))
 
 
-def secure_restore_compare(operation_id, path, disabled_groups, expected_id, selection, channel, destinations=None, inventory=False):
+def secure_restore_compare(operation_id, path, disabled_groups, expected_id, selection, channel, destinations=None, inventory=False, ssh_approvals=None):
     sequence = 1
     def event(kind, data=None):
         nonlocal sequence
@@ -155,7 +202,7 @@ def secure_restore_compare(operation_id, path, disabled_groups, expected_id, sel
     try:
         if channel is None:
             raise SecureError('secure_bridge_required')
-        with restore_signals(), prepared_restore(path, disabled_groups, True, selection, workspace_preview=True, destinations=destinations) as (plan, stage, source_id, _):
+        with restore_signals(), prepared_restore(path, disabled_groups, True, selection, workspace_preview=True, destinations=destinations, ssh_approvals=ssh_approvals) as (plan, stage, source_id, _):
             if not inventory and plan['prepared_plan_id'] != expected_id:
                 raise ExecuteFailed('stale_plan')
             if any(row['domain'] == 'secure-ssh-identities' and row.get('scope') != 'execution_launch'
@@ -171,12 +218,19 @@ def secure_restore_compare(operation_id, path, disabled_groups, expected_id, sel
                 event('result', {'status': 'authenticated'})
                 event('completed', {'status': 'success'})
                 return 0
-            dependencies = ssh_dependencies(stage, plan['selection'], authenticated=authenticated, destinations=destinations)
+            resolved = None
+            if 'ssh_resolution' in plan:
+                try:
+                    resolved = ssh_plan(stage, approvals=ssh_approvals, bundle_id=source_id, destinations=destinations, authenticated=authenticated)
+                except (ssh_resolution.merge.Refused, OSError):
+                    pass
+            dependencies = ((ssh_resolution.dependencies.projection(resolved['dependencies']), resolved['dependency_digest'])
+                            if resolved else ssh_dependencies(stage, plan['selection'], authenticated=authenticated, destinations=destinations))
             if restore_fingerprint(Path(path)) != source_id:
                 raise ExecuteFailed('stale_plan')
             if dependencies is not None:
-                # Additive advisory evidence, separate from the strict Execute
-                # receipt and from configuration semantic conformity/readiness.
+                # Aggregate dependency evidence remains separate from configuration
+                # semantic conformity; sensitive relations stay private.
                 event('ssh_identity_dependencies', dependencies[0])
             result = dict(compared, source_fingerprint=plan['plan_diagnostics']['bundle'],
                           # prepared_restore already expanded/validated this exact
@@ -184,6 +238,8 @@ def secure_restore_compare(operation_id, path, disabled_groups, expected_id, sel
                           # Keep the compact representation in the Execute receipt.
                           prepared_plan_id=expected_id, selection=selection if selection is not None else plan['selection'], include_secure=True,
                           comparison_operation_id=operation_id)
+            if 'ssh_resolution' in plan:
+                result['ssh_resolution'] = ssh_resolution.public(resolved) if resolved else ssh_resolution.blocked()
             event('result', result)
             event('completed', {'status': 'success'})
             return 0
@@ -216,7 +272,7 @@ def restore_unpack(*args, **kwargs):
 
 
 @contextmanager
-def prepared_restore(path, disabled_groups, include_secure, selection=None, installer_preparations=None, *, workspace_preview=False, destinations=None):
+def prepared_restore(path, disabled_groups, include_secure, selection=None, installer_preparations=None, *, workspace_preview=False, destinations=None, ssh_approvals=None):
     if bundle.RECOVERY.exists() or bundle.RECOVERY.is_symlink():
         raise RecoveryRequired()
     input_path = Path(path)
@@ -228,7 +284,7 @@ def prepared_restore(path, disabled_groups, include_secure, selection=None, inst
     source_identity = restore_fingerprint(input_path)
     destination_state = restore_destinations.preparation(destinations, source_identity) if destinations else None
     with tempfile.TemporaryDirectory(prefix="mbt-bundle-", dir=os.environ.get("TMPDIR") or "/tmp") as temporary:
-        private = Path(temporary)
+        private = Path(temporary).resolve()
         stage = private / "stage"
         stage.mkdir(mode=0o700)
         restore_unpack(input_path, stage, os.environ["HOME"], workspace_preview=workspace_preview)
@@ -255,6 +311,31 @@ def prepared_restore(path, disabled_groups, include_secure, selection=None, inst
         ssh_evidence = (ssh_observation()
                         if 'ssh-configuration' in requested_selection['categories'] or
                         'ssh-configuration' in requested_selection['items'] else None)
+        resolved = None
+        if ssh_evidence is not None:
+            snapshot_file = stage / 'generated/ssh/config.snapshot'
+            original = bundle.checked_file(snapshot_file)
+            source_version, _, _, source_profiles = ssh_resolution.config.snapshot(original)
+            if source_version == 2 and source_profiles:
+                bundle.write_file(private / 'ssh-original.snapshot', original)
+                effective = ssh_resolution.effective(original, ssh_approvals, source_identity)
+                if effective != original:
+                    snapshot_file.write_bytes(effective)
+                try:
+                    resolved = ssh_plan(stage, approvals=ssh_approvals, bundle_id=source_identity,
+                                        destinations=destinations, pending_secure=include_secure)
+                except (ssh_resolution.merge.Refused, OSError):
+                    pass  # Existing shell inspection reports the same blocked scope.
+                if resolved is None:
+                    bundle.write_file(private / ssh_resolution.EVIDENCE, b'{"version":1,"blocked":true}')
+                else:
+                    context = ssh_resolution.execution_context(original, resolved, approvals=ssh_approvals,
+                        bundle_id=source_identity, destinations=destinations, preview=True)
+                    ssh_resolution.write_context(private, original, context, existing_original=True)
+            elif ssh_approvals is not None:
+                raise SecureError('ssh_approval_invalid')
+        elif ssh_approvals is not None:
+            raise SecureError('ssh_approval_invalid')
         duplicates = bundle.deduplicate_applications(stage)
         stage_identity = restore_fingerprint(stage)
         preparation_context = pkg_preparation.context(source_identity, stage_identity)
@@ -290,7 +371,7 @@ def prepared_restore(path, disabled_groups, include_secure, selection=None, inst
         environment = dict(os.environ, MACSEED_PKG_PREPARATION_CONTEXT=preparation_context, BLUEPRINT_FILE=str(preview_blueprint),
                            BLUEPRINT_GENERATED_DIR=str(stage / "generated"),
                            BUNDLE_RESTORE_PREVIEW="true", MACSEED_PERFORMANCE_SCOPE="preview", PREVIEW_SUMMARY_FILE=str(summary_file),
-                           MACSEED_APPLICATION_EXECUTION="true", PREVIEW_PLAN_FILE=str(plan_file))
+                           MACSEED_APPLICATION_EXECUTION="true", PREVIEW_PLAN_FILE=str(plan_file), MACSEED_ITEM_STATE_DIR=str(private))
         try:
             preview_status = bounded_read(["./bootstrap.sh", "--dry-run"], PHASE_SECONDS,
                                           cwd=ROOT, env=environment).returncode
@@ -489,7 +570,10 @@ def prepared_restore(path, disabled_groups, include_secure, selection=None, inst
         }
         if 'ssh-configuration' in requested_selection['items']:
             summary['selected_item_counts']['ssh-configuration'] = len(requested_selection['items']['ssh-configuration'])
-        dependencies = ssh_dependencies(stage, requested_selection)
+        dependencies = ((ssh_resolution.dependencies.projection(resolved['dependencies']), resolved['dependency_digest'])
+                        if resolved else ssh_dependencies(stage, requested_selection))
+        if (private / 'ssh-original.snapshot').exists():
+            summary['ssh_resolution'] = ssh_resolution.public(resolved) if resolved else ssh_resolution.blocked()
         if dependencies is not None:
             summary['ssh_identity_dependencies'] = dependencies[0]
         # Diagnostic tool provenance is not an exact-version plan requirement.
@@ -501,6 +585,8 @@ def prepared_restore(path, disabled_groups, include_secure, selection=None, inst
                     "disabled_groups": sorted(disabled_groups), "summary": identity_summary}
         if dependencies is not None:
             identity['ssh_identity_dependencies'] = dependencies[1]
+        if ssh_approvals is not None:
+            identity['ssh_approvals'] = restore_destinations.digest(ssh_approvals)
         if destinations is not None:
             if restore_destinations.preparation(destinations, source_identity) != destination_state:
                 raise SecureError('secure_target_changed')
@@ -577,6 +663,7 @@ def prepared_requirements(stage, include_secure, preparation_context="", *, blue
                        MACSEED_WORKSPACE_CLONE_REQUIRED=str(workspace_clone).lower(),
                        MACSEED_APPLICATION_SECURE_SELECTED=str(include_secure).lower(),
                        MACSEED_APPLICATION_SECURE_READY="true")
+    environment["MACSEED_ITEM_STATE_DIR"] = str(stage.parent)
     try:
         child = bounded_read(["./bootstrap.sh", "--application-readiness"], 180,
                              cwd=ROOT, env=environment)
@@ -653,6 +740,7 @@ def readiness(stage, include_secure, secure_ready=False, secure_only=False, prep
                        MACSEED_APPLICATION_SECURE_READY=str(secure_ready).lower(),
                        MACSEED_APPLICATION_SECURE_ONLY=str(secure_only).lower(),
                        MACSEED_APPLICATION_ALLOW_ITEM_SKIPS="true")
+    environment["MACSEED_ITEM_STATE_DIR"] = str(stage.parent)
     try:
         process = bounded_read(["./bootstrap.sh", "--application-readiness"], 180,
                                cwd=ROOT, env=environment)
@@ -694,7 +782,7 @@ def restore_graceful_result(state, owned, failure):
     return failure('cancelled', 130)
 
 
-def restore_execute(operation_id, path, disabled_groups, include_secure, expected_id, channel=None, selection=None, secure_comparison=None, destinations=None):
+def restore_execute(operation_id, path, disabled_groups, include_secure, expected_id, channel=None, selection=None, secure_comparison=None, destinations=None, ssh_approvals=None):
     sequence = 1  # started has already been emitted by main().
     state = {"prepared_plan_id": None, "execution_status": "not_started",
              "unknown_consequences": False,
@@ -783,7 +871,7 @@ def restore_execute(operation_id, path, disabled_groups, include_secure, expecte
                 state['unknown_consequences'] = True
                 raise ExecuteFailed('privileged_lifecycle_unknown')
             event("phase_started", {"phase": "preparation"})
-            with prepared_restore(path, disabled_groups, include_secure, selection, workspace_preview=True, destinations=destinations) as (plan, stage, source_id, stage_id):
+            with prepared_restore(path, disabled_groups, include_secure, selection, workspace_preview=True, destinations=destinations, ssh_approvals=ssh_approvals) as (plan, stage, source_id, stage_id):
                 event("phase_completed", {"phase": "preparation"})
                 if plan["prepared_plan_id"] != expected_id:
                     state["plan_validation"] = {"check": "prepared_plan_id", "expected_id": expected_id,
@@ -802,6 +890,12 @@ def restore_execute(operation_id, path, disabled_groups, include_secure, expecte
                         raise ExecuteFailed('secure_target_conflict')
                     if secure_comparison['decision'] == 'all_match' and not any(row['disposition'] == 'planned' for row in plan['plan']):
                         raise ExecuteFailed('no_executable_work')
+                ssh_before = ssh_plan(stage, approvals=ssh_approvals, bundle_id=source_id,
+                                      destinations=destinations, pending_secure=include_secure)
+                if ssh_before is not None and not ssh_before['qualified']:
+                    if (not include_secure or secure_comparison is None or
+                            not secure_comparison.get('ssh_resolution', {}).get('ready')):
+                        raise ExecuteFailed('ssh_identity_unresolved')
                 checkpoint()
                 if not plan["has_executable_changes"] and any(
                         row.get("scope") == "item" for row in plan["readiness"]["conditions"]):
@@ -867,6 +961,7 @@ def restore_execute(operation_id, path, disabled_groups, include_secure, expecte
                 event("phase_completed", {"phase": "publication"})
                 checkpoint()
                 secure_evidence = None
+                authenticated = []
                 if include_secure:
                     def secure_mutation():
                         state["target_mutation_may_have_started"] = True
@@ -874,8 +969,16 @@ def restore_execute(operation_id, path, disabled_groups, include_secure, expecte
                     state["secure_restore_status"] = "running"
                     secure_evidence = import_secure(ROOT, stage / "secure.age", channel,
                                                     operation_id, event, secure_mutation, record=record_event,
-                                                    expected_target_state=secure_comparison["target_state"] if secure_comparison else None, destinations=destinations)
+                                                    expected_target_state=secure_comparison["target_state"] if secure_comparison else None, destinations=destinations, identity_evidence=authenticated)
                     state["secure_restore_status"] = "completed"
+                ssh_execution = None
+                if ssh_before is not None:
+                    ssh_resolution.after_import(ssh_before['target'], os.environ['HOME'])
+                    current = ssh_plan(stage, approvals=ssh_approvals, bundle_id=source_id, destinations=destinations,
+                                       authenticated=authenticated, verified_import=include_secure)
+                    original = bundle.checked_file(stage.parent / ssh_resolution.ORIGINAL)
+                    ssh_execution = (ssh_resolution.execution_context(original, current, approvals=ssh_approvals,
+                        bundle_id=source_id, destinations=destinations, authenticated=authenticated), original)
                 checkpoint()
                 environment = dict(os.environ, MACSEED_PKG_PREPARATION_CONTEXT=pkg_preparation.context(source_id, stage_id), BUNDLE_RESTORE_ACTIVE="true",
                                    BUNDLE_RESTORE_SECURE_FILE="application-evidence" if include_secure else "",
@@ -906,7 +1009,7 @@ def restore_execute(operation_id, path, disabled_groups, include_secure, expecte
                                          row["disposition"] == "blocked" and
                                          row["reason"] in {"cask_execution_requirements_unsupported", "cask_target_conflict", "cask_rosetta_required"}]
                         owned = OwnedBootstrap(ROOT, dict(environment, MACSEED_PERFORMANCE_SCOPE="bootstrap"), secure_evidence, record_event,
-                                               identities, skipped_casks=skipped_casks,
+                                               identities, skipped_casks=skipped_casks, ssh_evidence=ssh_execution,
                                                cask_plans={row['item_id']: row['qualification_id'] for row in plan['plan']
                                                            if row['domain'] == 'homebrew-casks' and row.get('qualification_id')},
                                                **({'graceful_control': control} if control is not None else {}))
@@ -1204,7 +1307,7 @@ def dispatch(version, channel=None):
                  "MACSEED_APPLICATION_SECURE_VERIFY_ONLY", "MACSEED_SECURE_EVIDENCE_FD",
                  "MACSEED_SECURE_ATTEMPT", "MACSEED_SECURE_EXIT", "MACSEED_REPORT_FD",
                  "MACSEED_REPORT_COUNT", "MACSEED_REPORT_INVALID", "MACSEED_APPLICATION_CAPTURE",
-                 "MACSEED_CAPTURE_INVENTORY", pkg_preparation.CONTEXT):
+                 "MACSEED_CAPTURE_INVENTORY", "MACSEED_ITEM_STATE_DIR", pkg_preparation.CONTEXT):
         os.environ.pop(name, None)
     try:
         value = request()
@@ -1252,14 +1355,20 @@ def dispatch(version, channel=None):
             if operation == 'capture_execute' and (not isinstance(parameters['expected_prepared_capture_id'], str) or
                     not PREPARED_PLAN_ID.fullmatch(parameters['expected_prepared_capture_id'])):
                 raise ValueError('invalid Capture prepared ID')
-        elif operation == "secure_restore_inventory":
+        elif operation in ("secure_restore_inventory", "ssh_restore_review"):
             parameters = value["parameters"]
-            if set(value) != required | {"parameters"} or not isinstance(parameters, dict) or set(parameters) != {"path"}:
+            expected = {"path", "selection"} if operation == "ssh_restore_review" else {"path"}
+            optional = {"ssh_approvals", "include_secure", "custom_destinations"} if operation == "ssh_restore_review" else set()
+            if (set(value) != required | {"parameters"} or not isinstance(parameters, dict)
+                    or not expected <= set(parameters) or set(parameters) - expected - optional):
                 raise ValueError("invalid inventory request")
             path = parameters["path"]
             if not isinstance(path, str) or not path.startswith("/") or "\0" in path:
                 raise ValueError("invalid Bundle path")
-            include_secure = True
+            include_secure = parameters.get('include_secure', False) if operation == 'ssh_restore_review' else True
+            if (type(include_secure) is not bool or ('ssh_approvals' in parameters and parameters['ssh_approvals'] is not True)
+                    or ('custom_destinations' in parameters and (not include_secure or parameters['custom_destinations'] is not True))):
+                raise ValueError('invalid SSH review')
         elif operation in ("bundle_inspect", "restore_prepare", "restore_execute", "secure_restore_compare"):
             if set(value) != required | {"parameters"}:
                 raise ValueError("invalid Bundle request")
@@ -1271,7 +1380,7 @@ def dispatch(version, channel=None):
                         {'selection', 'secure_comparison'} if operation == 'restore_execute' else
                         {'selection'} if operation == 'secure_restore_compare' else set())
             if operation != 'bundle_inspect':
-                optional |= {'custom_destinations'}
+                optional |= {'custom_destinations', 'ssh_approvals'}
             if not isinstance(parameters, dict) or not expected <= set(parameters) or set(parameters) - expected - optional:
                 raise ValueError("invalid Bundle parameters")
             if 'installer_preparations' in parameters:
@@ -1294,6 +1403,8 @@ def dispatch(version, channel=None):
                         raise ValueError("invalid prepared plan ID")
                 if operation == 'secure_restore_compare' and not include_secure:
                     raise ValueError('secure scope required')
+                if 'ssh_approvals' in parameters and parameters['ssh_approvals'] is not True:
+                    raise ValueError('invalid SSH approvals')
                 if 'custom_destinations' in parameters and (not include_secure or parameters['custom_destinations'] is not True):
                     raise ValueError('invalid destinations')
                 if 'secure_comparison' in parameters and (not include_secure or not valid_comparison(parameters['secure_comparison'])):
@@ -1305,16 +1416,23 @@ def dispatch(version, channel=None):
         emit(1, "failed", operation_id, {"code": "invalid_request"})
         return 2
 
-    if channel is not None and operation != "capture_execute" and (operation not in ("restore_execute", "secure_restore_compare", "secure_restore_inventory") or not include_secure):
+    if channel is not None and operation != "capture_execute" and (operation not in ("restore_execute", "secure_restore_compare", "secure_restore_inventory", "ssh_restore_review") or not include_secure):
         channel.close()
         channel = None
     emit(1, "started", operation_id)
     destinations = None
-    if operation in ('restore_prepare', 'restore_execute', 'secure_restore_compare') and parameters.get('custom_destinations'):
+    ssh_approvals = None
+    if operation in ('restore_prepare', 'restore_execute', 'secure_restore_compare', 'ssh_restore_review') and parameters.get('ssh_approvals'):
+        try:
+            ssh_approvals = ssh_resolution.operation_approvals(operation_id, review=operation == 'ssh_restore_review')
+        except SecureError as exc:
+            emit(2, 'failed', operation_id, {'code': exc.code})
+            return 2
+    if operation in ('restore_prepare', 'restore_execute', 'secure_restore_compare', 'ssh_restore_review') and parameters.get('custom_destinations'):
         try:
             destinations = restore_destinations.operation_mapping(operation_id)
             if not restore_destinations.selected_items(destinations):
-                if operation == 'secure_restore_compare':
+                if operation in ('secure_restore_compare', 'ssh_restore_review'):
                     raise SecureError('secure_input_invalid')
                 include_secure = False
                 if channel is not None:
@@ -1324,6 +1442,23 @@ def dispatch(version, channel=None):
             emit(2, 'failed', operation_id, {'code': exc.code, 'publication_occurred': False,
                                            'target_mutation_may_have_started': False})
             return 2
+    if operation == 'ssh_restore_review':
+        sequence = 1
+        def review_event(kind, data=None):
+            nonlocal sequence
+            sequence += 1
+            emit(sequence, kind, operation_id, data)
+        try:
+            result = ssh_review(operation_id, path, parameters['selection'], proposals=ssh_approvals,
+                destinations=destinations, channel=channel, event=review_event, include_secure=include_secure)
+            review_event('result', result)
+            review_event('completed')
+            return 0
+        except SecureError as exc:
+            review_event('failed', {'code': exc.code})
+        except Exception:
+            review_event('failed', {'code': 'ssh_review_unavailable'})
+        return 2
     if operation == 'secure_restore_inventory':
         return secure_restore_compare(operation_id, path, [], None, {'categories': [], 'items': {}}, channel, inventory=True)
     if operation == "environment_compare":
@@ -1346,27 +1481,27 @@ def dispatch(version, channel=None):
         if len(disabled_groups) != len(set(disabled_groups)) or any(item not in bundle.GROUPS for item in disabled_groups):
             emit(2, 'failed', operation_id, {'code': 'invalid_selection'})
             return 2
-        return secure_restore_compare(operation_id, path, disabled_groups, expected_id, parameters.get('selection'), channel, destinations)
+        return secure_restore_compare(operation_id, path, disabled_groups, expected_id, parameters.get('selection'), channel, destinations, ssh_approvals=ssh_approvals)
     if operation == "restore_execute":
         if len(disabled_groups) != len(set(disabled_groups)) or any(item not in bundle.GROUPS for item in disabled_groups):
             emit(2, "failed", operation_id, {"code": "invalid_selection",
                                                "publication_occurred": False,
                                                "target_mutation_may_have_started": False})
             return 2
-        return restore_execute(operation_id, path, disabled_groups, include_secure, expected_id, channel, parameters.get("selection"), parameters.get("secure_comparison"), destinations)
+        return restore_execute(operation_id, path, disabled_groups, include_secure, expected_id, channel, parameters.get("selection"), parameters.get("secure_comparison"), destinations, ssh_approvals)
     if operation == "capabilities":
         result = {
             "protocol_version": PROTOCOL_VERSION,
             "product_version": version,
-            "features": {"secure_restore_destinations": {"version": 1, "selection_version": 2, "inventory": "secure_restore_inventory", "max_items": 32}, "external_ssh_identities": {"version": 1, "destination": "ssh_directory", "max_items": 32}, "pkg_installer_preparation": {"version": 1}, "bundle_comparison": {"version": 1}, "homebrew_graceful_stop": {"version": 1}, "restore_selection": {"version": 1, "inventory": "bundle_inspect", "selection_modes": ["category", "items"]}},
-            "operations": ["capabilities", "bundle_inspect", "restore_prepare", "restore_execute", "secure_restore_compare", "secure_restore_inventory", "capture_prepare", "capture_execute", "capture_identity_inspect", "environment_compare"],
+            "features": {"ssh_identity_resolution": {"version": 1, "review": "ssh_restore_review", "max_items": 32}, "secure_restore_destinations": {"version": 1, "selection_version": 2, "inventory": "secure_restore_inventory", "max_items": 32}, "external_ssh_identities": {"version": 1, "destination": "ssh_directory", "max_items": 32}, "pkg_installer_preparation": {"version": 1}, "bundle_comparison": {"version": 1}, "homebrew_graceful_stop": {"version": 1}, "restore_selection": {"version": 1, "inventory": "bundle_inspect", "selection_modes": ["category", "items"]}},
+            "operations": ["ssh_restore_review", "capabilities", "bundle_inspect", "restore_prepare", "restore_execute", "secure_restore_compare", "secure_restore_inventory", "capture_prepare", "capture_execute", "capture_identity_inspect", "environment_compare"],
         }
     else:
         try:
             if operation == "restore_prepare":
                 if len(disabled_groups) != len(set(disabled_groups)) or any(item not in bundle.GROUPS for item in disabled_groups):
                     raise InvalidSelection()
-                result = restore_prepare(path, disabled_groups, include_secure, parameters.get("selection"), parameters.get("installer_preparations"), destinations)
+                result = restore_prepare(path, disabled_groups, include_secure, parameters.get("selection"), parameters.get("installer_preparations"), destinations, ssh_approvals)
             else:
                 input_path = Path(path)
                 mode = input_path.lstat().st_mode

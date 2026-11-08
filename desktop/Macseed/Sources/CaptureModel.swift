@@ -222,9 +222,10 @@ enum CaptureSelectionScope: CaseIterable {
     }
     var manualIdentityIDs: Set<String> { Set(externalSources.keys) }
     private var selectedExternalPaths: [String] { selectedSecureIdentities.sorted().compactMap { externalSources[$0] } }
-    var externalDestinationExplanation: String? {
-        selectedSecureIdentities.isDisjoint(with: manualIdentityIDs) ? nil
-            : "Manually added identities will be restored into ~/.ssh using the displayed key names. SSH configuration is not rewritten; review IdentityFile if it expects another location."
+    static func confirmationPrivacyMessage(includesSSHIdentities: Bool) -> String {
+        includesSSHIdentities
+            ? "SSH identities are encrypted separately. Other saved settings are not encrypted. Keep the Bundle passphrase safe."
+            : "Saved settings are not encrypted."
     }
     func addSSHIdentity(_ url: URL) {
         guard state == .review, !busy, !runtime.isActive else { return }
