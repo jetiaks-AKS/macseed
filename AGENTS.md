@@ -213,11 +213,36 @@ validation and `scripts/lint.sh` for ShellCheck. Do not replace canonical runner
 Use `scripts/test.sh --quick`, `--suite` and `--case` for focused feedback;
 [Contributing](CONTRIBUTING.md#focused-feedback-and-ci) owns runner options,
 partition completeness, timings and diagnostic privacy. Quick is not full acceptance.
-When Desktop production presentation/state semantics change, focused validation
-must include both the relevant feature tests and `PresentationTests`. Run full
-canonical validation at implementation checkpoint closure. Canonical repository
-regression and Desktop validation must run sequentially unless temporary-state
-isolation has explicitly been proven.
+Canonical repository regression and Desktop validation must run sequentially
+unless temporary-state isolation has explicitly been proven.
+
+### Mandatory test synchronization
+
+This policy applies to every Macseed implementation checkpoint.
+
+- **Before changing production code:** identify tests dependent on the affected
+  behavior, API, UI strings, state, file structure and contracts. Search existing
+  tests for the relevant symbols, strings and source references.
+- **During implementation:** update obsolete expectations in the same checkpoint
+  as the production change; never defer synchronization until CI fails. Prefer
+  behavioral and semantic assertions over fragile source-text matching for
+  non-contractual UI presentation.
+- **Before completing a checkpoint:** use focused individual cases during
+  development, then run the complete directly affected test suites against the
+  final implementation. Desktop presentation/state changes require complete
+  `PresentationTests` and the affected feature suites (`CaptureTests`,
+  `RestoreTests`, etc.). A successful Debug build or newly added tests alone are
+  insufficient. Do not automatically run the entire repository regression for
+  small isolated changes; broader integration/release validation remains
+  proportional to the scope.
+- **When a test fails:** determine whether it exposes a real product defect or an
+  obsolete assertion before changing code. Never delete, disable, skip or weaken
+  valid safety tests merely to obtain PASS.
+- **When validation cannot be completed:** explicitly name each affected suite
+  not executed, explain why and state what remains unverified. Never claim full
+  validation without completing the required affected suites.
+
+Documentation-only changes retain the lightweight validation rules above.
 
 Minimum Bash syntax verification:
 
