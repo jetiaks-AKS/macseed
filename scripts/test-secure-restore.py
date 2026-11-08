@@ -604,6 +604,117 @@ class SecureRestoreTests(unittest.TestCase):
         self.assertEqual(status, 0, events)
         return prepared, next(row['data'] for row in events if row['type'] == 'result')
 
+    def dependency_snapshot(self, references):
+        blueprint = self.stage / 'blueprint.conf'
+        blueprint.write_text(blueprint.read_text().replace('ssh-configuration="false"', 'ssh-configuration="true"'))
+        (self.stage / 'generated/ssh/config.snapshot').unlink(missing_ok=True)
+        bundle.write_file(self.stage / 'generated/ssh/config.snapshot',
+                          b'# toolkit-ssh-snapshot: 2\n# status: ready\n# excluded-profiles: 0\n\n' +
+                          ('Host private-host\n    HostName private.invalid\n' + ''.join(
+                              '    IdentityFile ' + ref + '\n' for ref in references)).encode())
+        self.archive.unlink()
+        bundle.pack(self.stage, self.archive, '/Users/source')
+
+    def dependency_compare(self, mapping=None):
+        if mapping is None:
+            result, events = self.invoke(secure=True)
+            self.assertEqual(result.returncode, 0, events)
+        else:
+            status, events = self.destination_prepare(mapping)
+            self.assertEqual(status, 0, events)
+        plan = events[1]['data']
+        status, events, challenges = self.peer(operation='secure_restore_compare', mapping=mapping,
+                                              plan=plan['prepared_plan_id'])
+        self.assertEqual(status, 0, events)
+        self.assertEqual([c['kind'] for c in challenges], ['bundle_unlock'])
+        findings = [row['data'] for row in events if row['type'] == 'ssh_identity_dependencies']
+        self.assertEqual(len(findings), 1, events)
+        receipt = next(row['data'] for row in events if row['type'] == 'result')
+        self.assertEqual(set(receipt), {'decision', 'target_state', 'source_fingerprint', 'prepared_plan_id',
+                                        'selection', 'include_secure', 'comparison_operation_id'})
+        for private in ('private-host', 'private.invalid', 'id_disposable', 'id_external', str(self.home), '~/.ssh'):
+            self.assertNotIn(private, json.dumps(events))
+        return plan, findings[0], receipt
+
+    def test_dependency_default_authenticated_and_read_only(self):
+        private, public = self.fixture(protected=True)
+        self.dependency_snapshot(['~/.ssh/id_disposable'])
+        plan, finding, receipt = self.dependency_compare()
+        self.assertEqual(plan['ssh_identity_dependencies']['findings'], ['missing'])
+        self.assertEqual(finding['findings'], ['selected_expected'])
+        self.assertEqual(receipt['decision'], 'import_required')
+        self.assertFalse((self.home / '.ssh').exists())
+        directory = self.home / '.ssh'; directory.mkdir(mode=0o700)
+        for suffix, raw in (('', private), ('.pub', public)):
+            target = directory / ('id_disposable' + suffix)
+            target.write_bytes(raw); target.chmod(0o600)
+        before = [(p.name, p.stat().st_ino, p.stat().st_mtime_ns, p.read_bytes()) for p in sorted(directory.iterdir())]
+        plan, finding, receipt = self.dependency_compare()
+        self.assertEqual(plan['ssh_identity_dependencies']['findings'], ['unresolved'])
+        self.assertEqual(finding['findings'], ['selected_expected'], 'authenticated encrypted envelope is still not a local unlocked pair')
+        self.assertEqual(receipt['decision'], 'all_match')
+        self.assertEqual(before, [(p.name, p.stat().st_ino, p.stat().st_mtime_ns, p.read_bytes()) for p in sorted(directory.iterdir())])
+        self.assertFalse((directory / 'config').exists())
+        self.assertFalse((self.project / 'config/generated').exists())
+
+    def test_dependency_custom_selected_excluded_and_changed_mapping(self):
+        self.multiple_fixture(protected=True)
+        target = self.home / 'keys'; target.mkdir(mode=0o700)
+        self.dependency_snapshot(['~/keys/id_external', '~/.ssh/id_disposable'])
+        mapping, inventory = self.selective_mapping({'id_external'}, [None, target])
+        plan, finding, receipt = self.dependency_compare(mapping)
+        self.assertEqual(finding['findings'], ['missing', 'selected_expected'])
+        self.assertEqual(list(target.iterdir()), [])
+        old_plan = plan['prepared_plan_id']
+        for row in mapping['items']:
+            if row['selected']:
+                row['directory'] = None
+        status, events, challenges = self.peer(operation='secure_restore_compare', mapping=mapping, plan=old_plan)
+        self.assertEqual(status, 2, events)
+        self.assertEqual(events[-1]['data']['code'], 'stale_plan')
+        self.assertFalse(challenges)
+        _, finding, _ = self.dependency_compare(mapping)
+        self.assertEqual(finding['findings'], ['missing'])
+        self.dependency_snapshot(['~/keys/id_external'])
+        status, events = self.destination_prepare(mapping)
+        self.assertEqual(status, 2, events)
+        self.assertEqual(events[-1]['data']['code'], 'stale_plan')
+        self.assertFalse((self.home / '.ssh').exists())
+
+    def test_dependency_conflict_and_absolute_stay_unqualified(self):
+        self.fixture()
+        self.dependency_snapshot(['~/.ssh/id_disposable', '/old-home/id_disposable'])
+        directory = self.home / '.ssh'; directory.mkdir(mode=0o700)
+        target = directory / 'id_disposable'; target.write_bytes(b'preserve conflict'); target.chmod(0o600)
+        _, finding, receipt = self.dependency_compare()
+        self.assertEqual(finding['findings'], ['unresolved', 'unsafe_target'])
+        self.assertEqual(receipt['decision'], 'conflict')
+        self.assertEqual(target.read_bytes(), b'preserve conflict')
+        self.assertFalse(Path(str(target) + '.pub').exists())
+        self.assertFalse((directory / 'config').exists())
+
+    def test_dependency_private_evidence_fails_closed(self):
+        self.fixture()
+        self.dependency_snapshot(['~/.ssh/id_disposable'])
+        result, events = self.invoke(secure=True)
+        self.assertEqual(result.returncode, 0, events)
+        plan = events[1]['data']['prepared_plan_id']
+        source = self.project / 'modules/migration/secret_input.py'
+        original = source.read_text()
+        marker = 'message.update(version=2, target=target, pair_digest=pair_digest)'
+        self.assertEqual(original.count(marker), 1)
+        for replacement in ('return', "message.update(version=2, target=target, pair_digest=['invalid', 'invalid'])",
+                            "message.update(version=2, target=target, pair_digest=['a' * 64, 'b' * 64])",
+                            "message.update(version=2, target='identical', pair_digest=pair_digest)"):
+            with self.subTest(replacement=replacement):
+                source.write_text(original.replace(marker, replacement))
+                status, events, challenges = self.peer(operation='secure_restore_compare', plan=plan)
+                self.assertEqual(status, 2, events)
+                self.assertEqual(events[-1]['data']['code'], 'secure_channel_invalid')
+                self.assertEqual([c['kind'] for c in challenges], ['bundle_unlock'])
+                self.assertFalse(any(row['type'] == 'ssh_identity_dependencies' for row in events))
+                self.assertFalse((self.home / '.ssh').exists())
+
     def multiple_fixture(self, *, protected=False, count=2):
         pairs = {'id_disposable': self.fixture(protected=protected)}
         for name in ['id_external', 'id_third'][:count - 1]:

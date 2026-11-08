@@ -194,8 +194,11 @@ class Input:
         mapping = dict(version=value['mapping_version'], bundle_id=value['bundle_id'], items=items) if items else None
         return dict(inventory=value['inventory'], mapping=mapping)
 
-    def inventory_item(self, item):
-        metadata(self.channel, dict(type='restore_identity', version=1, identity=item))
+    def inventory_item(self, item, *, target=None, pair_digest=None):
+        message = dict(type='restore_identity', version=1, identity=item)
+        if target is not None:
+            message.update(version=2, target=target, pair_digest=pair_digest)
+        metadata(self.channel, message)
         if receive(self.channel, time.monotonic() + WAIT_SECONDS) != b'ACK':
             raise SecureError('secure_channel_invalid')
 

@@ -47,6 +47,17 @@ def ssh_observation():
     return evidence(os.environ['HOME'])
 
 
+def ssh_dependencies(stage, selection, *, authenticated=(), destinations=None):
+    if ('ssh-configuration' not in selection['categories']
+            and 'ssh-configuration' not in selection['items']):
+        return None
+    sys.path.insert(0, str(ROOT / 'modules/ssh'))
+    from identity_dependencies import assess, projection
+    rows = assess(bundle.checked_file(stage / 'generated/ssh/config.snapshot'), os.environ['HOME'],
+                  authenticated=authenticated, destinations=destinations)
+    return projection(rows), restore_destinations.digest(rows)
+
+
 class RecoveryRequired(Exception):
     pass
 
@@ -150,7 +161,9 @@ def secure_restore_compare(operation_id, path, disabled_groups, expected_id, sel
             if any(row['domain'] == 'secure-ssh-identities' and row.get('scope') != 'execution_launch'
                    and row['status'] not in ('satisfied', 'safely_satisfiable') for row in plan['readiness']['conditions']):
                 raise SecureError('secure_comparison_unavailable')
-            compared = compare_secure(ROOT, stage / 'secure.age', channel, operation_id, event, destinations=destinations, inventory=inventory)
+            authenticated = []
+            compared = compare_secure(ROOT, stage / 'secure.age', channel, operation_id, event,
+                                      destinations=destinations, inventory=inventory, identity_evidence=authenticated)
             if restore_fingerprint(Path(path)) != source_id:
                 raise ExecuteFailed('stale_plan')
             if inventory:
@@ -158,6 +171,13 @@ def secure_restore_compare(operation_id, path, disabled_groups, expected_id, sel
                 event('result', {'status': 'authenticated'})
                 event('completed', {'status': 'success'})
                 return 0
+            dependencies = ssh_dependencies(stage, plan['selection'], authenticated=authenticated, destinations=destinations)
+            if restore_fingerprint(Path(path)) != source_id:
+                raise ExecuteFailed('stale_plan')
+            if dependencies is not None:
+                # Additive advisory evidence, separate from the strict Execute
+                # receipt and from configuration semantic conformity/readiness.
+                event('ssh_identity_dependencies', dependencies[0])
             result = dict(compared, source_fingerprint=plan['plan_diagnostics']['bundle'],
                           # prepared_restore already expanded/validated this exact
                           # request and bound its canonical scope to expected_id.
@@ -469,6 +489,9 @@ def prepared_restore(path, disabled_groups, include_secure, selection=None, inst
         }
         if 'ssh-configuration' in requested_selection['items']:
             summary['selected_item_counts']['ssh-configuration'] = len(requested_selection['items']['ssh-configuration'])
+        dependencies = ssh_dependencies(stage, requested_selection)
+        if dependencies is not None:
+            summary['ssh_identity_dependencies'] = dependencies[0]
         # Diagnostic tool provenance is not an exact-version plan requirement.
         # Conditions and normalized planning decisions remain identity-bound.
         identity_summary = dict(summary)
@@ -476,6 +499,8 @@ def prepared_restore(path, disabled_groups, include_secure, selection=None, inst
                                         if key != 'external_tools'}
         identity = {"bundle": source_identity, "stage": stage_identity,
                     "disabled_groups": sorted(disabled_groups), "summary": identity_summary}
+        if dependencies is not None:
+            identity['ssh_identity_dependencies'] = dependencies[1]
         if destinations is not None:
             if restore_destinations.preparation(destinations, source_identity) != destination_state:
                 raise SecureError('secure_target_changed')

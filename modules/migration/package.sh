@@ -899,6 +899,7 @@ def run():
         if mode == 'application-compare':
             # This branch returns before consent, journal/evidence publication,
             # target directory creation or any importer Apply code.
+            plan = None
             try:
                 before = target_observation(records)
                 plan = target_plan(records, cryptographic=False)
@@ -908,6 +909,23 @@ def run():
                               'target_state': before}
             except (Conflict, Invalid, OSError, SecureError):
                 comparison = {'decision': 'conflict', 'target_state': None}
+                plan = None
+            # Selected, authenticated evidence travels only over the existing
+            # private socket. It is never a reusable receipt or import authority.
+            for index, ((name, kind, fingerprint, private, public), key) in enumerate(zip(records, ids)):
+                target = plan[index] if plan is not None else 'unresolved'
+                if plan is None:
+                    try:
+                        before_item = target_observation([records[index]])
+                        target = target_plan([records[index]], cryptographic=False)[0]
+                        if target_observation([records[index]]) != before_item:
+                            target = 'unresolved'
+                    except (Conflict, Invalid):
+                        target = 'conflict'
+                    except (OSError, SecureError):
+                        target = 'unresolved'
+                interaction.inventory_item(dict(identity_id=key, name=name, key_type=kind, fingerprint=fingerprint),
+                                           target=target, pair_digest=[digest(private), digest(public)])
             print(json.dumps(comparison, separators=(',', ':')))
             return
         if expected_target_state is not None and target_observation(records) != expected_target_state:

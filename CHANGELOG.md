@@ -11,6 +11,11 @@ The format is based on the principles of **Keep a Changelog**.
 
 ### Added
 
+* Core read-only qualification of selected SSH Host IdentityFile dependencies,
+  with safe local pair evidence and authenticated Secure Compare destinations.
+  Findings remain separate from configuration conformity; no path rewriting,
+  automatic v2 publication or additional identity import is enabled.
+
 * Completed Stage 16H SSH Identities: accepted automatic and manual external
   Capture → Rebuild → Verification, exact bytes, permissions/fingerprints and
   repeated Preview/no-op. Verified bundled age v1.3.2 removes the Desktop

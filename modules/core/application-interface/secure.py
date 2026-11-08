@@ -16,6 +16,7 @@ import uuid
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'migration'))
 from evidence import read_evidence
+from restore_destinations import digest, selected_items
 from secret_input import (WAIT_SECONDS, SecureError, inherited_socket,
                           metadata, receive, response, send, valid_challenge, valid_identity, unique_fields)
 
@@ -74,7 +75,7 @@ def import_records(raw):
 
 
 def _run_secure(root, package, channel, operation_id, event, mutation, export_selection=None, record=None,
-                  *, compare=False, expected_target_state=None, destinations=None, inventory=False):
+                  *, compare=False, expected_target_state=None, destinations=None, inventory=False, identity_evidence=None):
     child = None
     parent, endpoint = socket.socketpair()
     parent.setblocking(False)
@@ -152,14 +153,24 @@ def _run_secure(root, package, channel, operation_id, event, mutation, export_se
                         destination_index += 1
                     elif isinstance(message, dict) and message.get('type') == 'restore_identity':
                         item = message.get('identity')
-                        if (not inventory or not context_sent or not seen_challenges or len(identities) >= 32
-                                or set(message) != {'type', 'version', 'identity'} or message['version'] != 1
+                        fields = {'type', 'version', 'identity'} | ({'target', 'pair_digest'} if not inventory else set())
+                        if (not (inventory or compare) or not context_sent or not seen_challenges or len(identities) >= 32
+                                or set(message) != fields or type(message['version']) is not int
+                                or message['version'] != (1 if inventory else 2)
                                 or not isinstance(item, dict) or set(item) != {'identity_id', 'name', 'key_type', 'fingerprint'}
                                 or not isinstance(item['identity_id'], str) or not re.fullmatch('[0-9a-f]{64}', item['identity_id'])
                                 or not valid_identity({key: item[key] for key in ('name', 'key_type', 'fingerprint')})
                                 or any(row['identity_id'] == item['identity_id'] or row['name'].casefold() == item['name'].casefold()
                                        or row['fingerprint'] == item['fingerprint'] for row in identities)):
                             raise SecureError('secure_channel_invalid')
+                        if not inventory:
+                            hashes = message['pair_digest']
+                            if (message['target'] not in ('create', 'identical', 'conflict', 'unresolved')
+                                    or not isinstance(hashes, list) or len(hashes) != 2
+                                    or any(not isinstance(value, str) or not re.fullmatch('[0-9a-f]{64}', value) for value in hashes)
+                                    or digest([item['name'], item['key_type'], item['fingerprint'], *hashes]) != item['identity_id']):
+                                raise SecureError('secure_channel_invalid')
+                            item = dict(item, target=message['target'], pair_digest=hashes)
                         identities.append(item)
                         send(parent, b'ACK')
                     elif message == {'type': 'mutation'}:
@@ -221,6 +232,10 @@ def _run_secure(root, package, channel, operation_id, event, mutation, export_se
                     event('phase_completed', {'phase': phase})
                     return identities
                 if compare:
+                    if (not identities or (destinations is not None and
+                            sorted(row['identity_id'] for row in identities) !=
+                            [row['identity_id'] for row in selected_items(destinations)])):
+                        raise SecureError('secure_channel_invalid')
                     raw_result = child.stdout.read(1025)
                     if len(raw_result) > 1024:
                         raise SecureError('secure_comparison_failed')
@@ -231,7 +246,14 @@ def _run_secure(root, package, channel, operation_id, event, mutation, export_se
                             (value['decision'] != 'conflict' and (not isinstance(value['target_state'], str) or
                              not re.fullmatch('[0-9a-f]{64}', value['target_state'])))):
                         raise SecureError('secure_comparison_failed')
+                    targets = {row['target'] for row in identities}
+                    if ((value['decision'] == 'all_match' and targets != {'identical'}) or
+                            (value['decision'] == 'import_required' and
+                             (targets - {'identical', 'create'} or 'create' not in targets))):
+                        raise SecureError('secure_channel_invalid')
                     event('phase_completed', {'phase': phase})
+                    if identity_evidence is not None:
+                        identity_evidence.extend(identities)
                     return value
                 event('phase_completed', {'phase': phase})
                 return None if export_selection is not None else (raw, attempt, status)
@@ -262,7 +284,8 @@ def export_secure(root, package, selection, channel, operation_id, event):
     return _run_secure(root, package, channel, operation_id, event, unexpected_mutation, selection)
 
 
-def compare_secure(root, package, channel, operation_id, event, *, destinations=None, inventory=False):
+def compare_secure(root, package, channel, operation_id, event, *, destinations=None, inventory=False, identity_evidence=None):
     def unexpected_mutation():
         raise SecureError('secure_channel_invalid')
-    return _run_secure(root, package, channel, operation_id, event, unexpected_mutation, compare=True, destinations=destinations, inventory=inventory)
+    return _run_secure(root, package, channel, operation_id, event, unexpected_mutation, compare=True,
+                       destinations=destinations, inventory=inventory, identity_evidence=identity_evidence)

@@ -1187,16 +1187,70 @@ neither merge success nor conformity proves connectivity or authentication.
 
 **Extended requirements boundary:** automatic creation/merge from v2 is blocked. Exact existing v2
 configuration can be a no-op only without file-reference dependencies. Every
-non-`none` IdentityFile remains an unresolved dependency, including a portable
-reference whose configuration text matches. No referenced key is opened, searched,
-validated, moved or selected for Secure Transfer. Comparison can confirm supported
+non-`none` IdentityFile retains the existing unresolved execution/Verification gate,
+including a portable reference whose configuration text matches. Configuration
+conformity does not open keys. Restore's separate read-only dependency assessment
+below does not relax that gate. Comparison can confirm supported
 configuration while retaining an incomplete overall verdict; it proves neither
 remote authentication nor agent/Keychain readiness. No `ssh-add` or Keychain
 mutation is performed. Ordinary records expose aggregate statuses/reasons, not
 Host aliases, users, addresses or identity paths. Selection inventory exposes Host
 aliases as labels and opaque item IDs; it never exposes directive values.
 
-Conflict correction, identity linkage/correction consent, custom destinations, Git
+### Read-only IdentityFile dependencies
+
+Restore Prepare assesses the already narrowed snapshot in `modules/ssh/identity_dependencies.py`.
+Each selected supported Host retains its ordered references; several Hosts can
+share one observation. The process-private model keeps the Host/reference relation
+and bounded reasons separately from configuration conformity. Ordinary Protocol
+exposes only the set of finding kinds, without paths, aliases, identity metadata,
+counts or per-item correlation.
+
+| Finding | Qualified meaning |
+| --- | --- |
+| `local_satisfied` | A safe local OpenSSH private/public pair was read consistently; noninteractive derivation with an empty passphrase matched its adjacent public key. |
+| `selected_expected` | Explicit Secure Compare authenticated a selected identity and qualified its exact intended destination as absent, or found the exact encrypted pair there while local unlock remains unproven. This is pending evidence, never Already Matches. |
+| `missing` | Both pair files, or a required parent component, were absent at a safely checked location. |
+| `unresolved` | Nonportable reference, protected/unsupported/invalid identity, changed observation, ambiguous mapping, or exhausted observation budget. |
+| `unsafe_target` | Unsafe path/ownership/permissions/ACL, symlink, hardlink, nonregular file, partial pair, case collision, public/private mismatch, or selected target conflict. |
+| `no_file_dependency` | A lone `IdentityFile none`, or no explicit IdentityFile. Default files, agents and remote authentication remain unassessed. |
+
+Only explicit `~/` references are inspected under receiving HOME; absolute
+references remain unresolved and are never opened. No recursive key discovery or
+basename/fingerprint search occurs. Existing explicit pairs may reside outside
+`.ssh` under HOME. Local qualification reuses Secure Transfer's safe pair reader
+and private destination/ACL checks, requires adjacent `.pub`, and supports OpenSSH
+Ed25519, RSA and ECDSA. Protected keys are not prompted for or unlocked. Source
+paths never enter subprocess arguments: derivation reads a generic file in
+disposable private staging (`0700` directory, `0600` key file). Normal completion
+and handled cancellation clean it up; SIGKILL or power loss can bypass cleanup
+and leave protected staging behind. No target files, permissions, configuration,
+agent or Keychain state are changed.
+
+Each assessment admits at most 32 distinct portable locations, with a five-second
+derivation budget and at most 4096 direct directory entries for case-collision
+inspection. Unchecked references remain unresolved. Observation failures cannot
+become checked absence or local satisfaction. Prepare binds private local evidence
+into its ID; a fresh preparation observes again, including byte changes that leave
+the public finding kind unchanged.
+
+SSH Configuration and Secure Transfer remain independently selectable. Prepare
+never unlocks `secure.age` or trusts a saved inventory as authentication. Only an
+explicit Secure Compare reuses authenticated selected identities through the live
+private importer socket. The complete package and mapping v1/v2 are validated
+before filtering; excluded identities cannot satisfy an expected dependency.
+Intended locations use the existing private destination mapping, without rewriting
+references. A selected identity at a different directory does not satisfy the old
+reference. Absolute custom references remain unresolved. Evidence is operation
+local and rechecked against current local bytes; no password or authenticated
+identity cache is retained. See the [Core projection](../core/APPLICATION-INTERFACE.md#ssh-identity-dependency-assessment).
+
+Slice 4A supplies advisory qualification only. Slice 4B still needs an explicit
+v2 execution/no-op contract, path-correction consent and freshness binding before
+any publication behavior can change. Existing Safe Merge, import no-clobber,
+recovery, configuration Verification and Check contracts remain unchanged.
+
+Conflict correction, identity linkage/correction consent, Git
 dependency ordering and Secure Transfer in Check remain deferred. SSH Environment
 Completion is not complete; [Capture / Restore](../CAPTURE-RESTORE.md#ssh-environment-completion--developer-environment-closure)
 owns the later workflow boundary.

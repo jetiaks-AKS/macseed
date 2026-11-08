@@ -1329,6 +1329,44 @@ or changed target bytes invalidate evidence. Only legacy default `~/.ssh` creati
 is allowed. [Secure Migration](../toolkit/SSH-IDENTITY-MIGRATION.md#optional-desktop-restore-directories)
 owns directory safety, no-clobber, cleanup and unresolved `IdentityFile` boundaries.
 
+## SSH identity dependency assessment
+
+Slice 4A adds advisory read-only qualification for selected supported SSH Host
+profiles. [Configuration](../toolkit/CONFIGURATION.md#read-only-identityfile-dependencies)
+owns supported evidence, limits and unresolved cases. It changes neither the v2
+publication gate nor configuration semantic conformity, readiness, Verification,
+Git transport/order or Secure Transfer selection.
+
+When SSH Configuration is selected, `restore_prepare` adds
+`ssh_identity_dependencies: {"version":1,"findings":[...]}`. `findings` is a sorted,
+deduplicated set drawn from `local_satisfied`, `selected_expected`, `missing`,
+`unresolved`, `unsafe_target`, `no_file_dependency`; an empty supported Host scope
+has an empty set. Prepare uses local evidence only, so cannot produce
+`selected_expected`. The private ordered Host/reference model and local evidence
+digest participate in prepared-ID binding; paths, key metadata and individual
+findings are never emitted. Secure-only selection omits this field.
+
+After successful explicit `secure_restore_compare`, Core may emit an additive
+`ssh_identity_dependencies` event with that same projection before the ordinary
+`result`. It combines fresh local inspection with authenticated selected identities
+and their intended destinations. This event is advisory: the existing strict
+comparison receipt remains unchanged, and the projection is not an Execute input
+or authorization. Current Desktop can ignore the additive field/event; there are
+no new screens or presentation changes. Uncertain/pending dependency evidence
+must never be projected as Already Matches.
+
+The internal importer reuses `restore_identity` on its private socket: inventory
+keeps version 1; Compare uses version 2 with the same `identity` fields plus
+`target` (`create`, `identical`, `conflict`, `unresolved`) and `pair_digest` (private
+and public SHA-256 values). Core validates message shape, identity uniqueness,
+the ID's binding to these hashes, the mapped selected-ID set and agreement with
+the comparison receipt before releasing evidence to the domain assessor.
+Messages never reach the Desktop challenge stream or ordinary JSONL. Evidence
+comes only from the current authenticated comparison, after package/mapping
+validation; inventory files and mappings alone cannot establish it. Bundle and
+prepared-plan freshness checks still apply, and the Bundle is rechecked after
+dependency assessment. Import behavior and its receipt are unchanged.
+
 ## Separate secret channel and privacy
 
 The client passes one endpoint of an anonymous connected Unix stream socket pair
