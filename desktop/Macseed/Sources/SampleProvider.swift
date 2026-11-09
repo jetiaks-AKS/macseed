@@ -99,7 +99,7 @@ enum RestoreDebugScenario: String, CaseIterable, Identifiable {
     var id: String { rawValue }
     var domains: [TaskDomainPresentation] {
         guard self != .real else { return [] }
-        let titles = ["Homebrew", "Git Configuration", "Git Repositories", "VS Code Extensions", "VS Code Settings"]
+        let titles = ["Homebrew", "Git Configuration", "Git Repositories / Worktrees", "VS Code Extensions", "VS Code Settings"]
         let states: [TaskRowState] = self == .done ? Array(repeating: .completed, count: 5)
             : self == .preview ? [.matching, .attention, .planned, .matching, .unverified]
             : self == .rebuilding ? [.completed, .working, .waiting, .skipped, .failed]

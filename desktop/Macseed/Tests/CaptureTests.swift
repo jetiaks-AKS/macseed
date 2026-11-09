@@ -50,8 +50,8 @@ import SwiftUI
         model.selectItem(ssh.id, item: "production", included: true)
         model.selectSecureIdentity(keyID, included: false)
         precondition(model.selection == selected)
-        try render(model, runtime, state: "ssh-host-selection", tree: CaptureHierarchy.disclosureIDs([ssh.id], scope: .advanced).subtracting([CaptureHierarchy.secureTransferID]))
-        let expandedSSH = CaptureHierarchy.disclosureIDs([ssh.id, CaptureHierarchy.secureTransferID], scope: .advanced)
+        try render(model, runtime, state: "ssh-host-selection", tree: DeveloperSelectionGroup.disclosureIDs([ssh.id]))
+        let expandedSSH = DeveloperSelectionGroup.disclosureIDs([ssh.id, CaptureHierarchy.secureTransferID])
         precondition(expandedSSH.contains(CaptureHierarchy.sshID) && model.selection == selected)
         precondition(!model.selection.categories.contains(CaptureHierarchy.sshID) && model.selection.items[CaptureHierarchy.sshID] == nil)
         try render(model, runtime, state: "ssh-unified-config-only-mock-ui-light", tree: expandedSSH)
@@ -91,8 +91,9 @@ import SwiftUI
                             CaptureView(model: model, runtime: runtime, showsActions: false,
                                 categoryTreeExpansion: tree.map { .constant($0) } ?? (expanded ? .constant(
                                     CaptureHierarchy.disclosureIDs(model.categories.map(\.id), scope: .ordinary)
-                                        .union(CaptureHierarchy.disclosureIDs(model.categories.map(\.id), scope: .advanced))) : nil),
-                                experiencedVisibility: state.hasPrefix("ssh-") ? .constant(true) : nil)
+                                        .union(model.state == .review ? DeveloperSelectionGroup.disclosureIDs(model.categories.map(\.id))
+                                            : CaptureHierarchy.disclosureIDs(model.categories.map(\.id), scope: .advanced))) : nil),
+                                experiencedVisibility: state.hasPrefix("ssh-") || expanded || tree != nil ? .constant(true) : nil)
                         }
                     }.padding(28).frame(maxWidth: .infinity, alignment: .leading)
                 }
@@ -129,10 +130,12 @@ import SwiftUI
                 precondition(checkboxes(host).contains { $0.accessibilityLabel() == "Select SSH Configuration" && $0.state == .mixed })
             }
             if state.hasPrefix("policy-review") {
-                let actual = checkboxes(host)
+                let masters = Set(["Select Applications & Tools", "Select macOS Settings", "Select Application Extras", "Select VS Code"]
+                    + DeveloperSelectionGroup.allCases.map { "Select " + $0.title })
+                let actual = checkboxes(host).filter { !masters.contains($0.accessibilityLabel() ?? "") }
                 let visible = model.categories.filter { $0.selectable && (expanded || CaptureHierarchy.group(for: $0.id) == .otherFindings) }
                 let expected = visible.count + (expanded ? visible.filter(\.itemSelectable).reduce(0) { $0 + $1.row.items.count } : 0)
-                precondition(actual.count == expected, "Capture wrappers must not introduce selection checkboxes: \(actual.count) != \(expected)")
+                precondition(actual.count == expected, "Group masters must preserve the exact category/item inventory: \(actual.count) != \(expected)")
                 precondition(actual.allSatisfy { $0.isEnabled && $0.target != nil && $0.action != nil && !($0.accessibilityLabel() ?? "").isEmpty })
                 if let checkbox = actual.first(where: { $0.accessibilityLabel() == "Select future-eligible" }) {
                     let selection = model.selection
@@ -176,6 +179,93 @@ import SwiftUI
             try bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: "build/Debug/CaptureUIv2-\(state)\(expanded ? "-expanded" : "")-\(width)\(dark ? "-dark" : "").png"))
             window.close()
         }
+    }
+    @MainActor static func developerSelectionChecks(model: CaptureModel, runtime: CoreRuntime, core: URL, root: URL) async throws {
+        let rows = [row("git-configuration", mode: "category"), row("git-repositories", mode: "items", items: ["Macseed"]),
+            row("ssh-configuration", mode: "items", items: ["development", "work"]),
+            row("workspace-folders", mode: "items", items: ["Projects"]), row("vscode-workspaces", mode: "items", items: ["Development"]),
+            row("shell-zsh", mode: "category")]
+        try JSONSerialization.data(withJSONObject: rows).write(to: core.appendingPathComponent("inventory.json"))
+        let ids = [String(repeating: "a", count: 64), String(repeating: "b", count: 64)]
+        let keys: [Object] = ids.enumerated().map { index, id in
+            ["item_id": id, "label": index == 0 ? "personal_key" : "work_key", "key_type": "ssh-ed25519",
+             "validation": "candidate_requires_pair_validation", "fingerprint": "SHA256:" + Data(repeating: UInt8(index + 1), count: 32).base64EncodedString().replacingOccurrences(of: "=", with: "")]
+        }
+        try JSONSerialization.data(withJSONObject: ["status": "present", "items": keys]).write(to: core.appendingPathComponent("secure-inventory.json"))
+        model.scan(); await model.waitForCompletion()
+        precondition(model.state == .review && model.selectedSecureIdentities.isEmpty)
+        precondition(DeveloperSelectionGroup.allCases.map(\.title) == ["Git", "SSH", "Workspace", "Shell"])
+        let initial = model.selection
+        let requests = try Data(contentsOf: core.appendingPathComponent("requests.jsonl"))
+        for group in DeveloperSelectionGroup.allCases {
+            precondition(model.developerGroupState(group) == .none)
+            model.selectDeveloperGroup(group, included: true)
+            precondition(model.developerGroupState(group) == .all)
+            model.selectDeveloperGroup(group, included: false)
+            precondition(model.selection == initial)
+        }
+        model.toggleAll(); model.toggleAll()
+        precondition(model.selectedSecureIdentities.isEmpty, "Global selection never opts into secrets")
+        let expanded = DeveloperSelectionGroup.disclosureIDs(model.categories.map(\.id) + [CaptureHierarchy.secureTransferID])
+        precondition(!expanded.contains(CaptureHierarchy.sectionID(.advanced)))
+        let beforeExpansion = model.selection
+        precondition(CaptureHierarchy.toggled(CaptureHierarchy.toggled([], ids: expanded), ids: expanded).isEmpty)
+        precondition(model.selection == beforeExpansion)
+        func snapshot(_ name: String, expansion: Set<String>) async throws {
+            guard !CommandLine.arguments.contains("--no-renders") else { return }
+            _ = NSApplication.shared
+            NSApp.appearance = NSAppearance(named: .aqua)
+            let view = VStack(alignment: .leading, spacing: 16) {
+                WorkspaceHeader(title: "Capture", subtitle: "Review and select", symbol: ProductTask.capture.symbol)
+                CaptureView(model: model, runtime: runtime, showsActions: false,
+                    categoryTreeExpansion: .constant(expansion), experiencedVisibility: .constant(true))
+            }.padding(24).frame(width: 1040).background(Color(nsColor: .windowBackgroundColor)).preferredColorScheme(.light)
+            let host = NSHostingView(rootView: view)
+            let window = NSWindow(contentRect: .init(origin: .zero, size: host.fittingSize), styleMask: [.borderless], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
+            defer { window.close() }
+            try await Task.sleep(for: .milliseconds(100)); host.layoutSubtreeIfNeeded(); host.displayIfNeeded()
+            func boxes(_ node: NSView) -> [NSButton] { (node as? NSButton).map { [$0] } ?? node.subviews.flatMap(boxes) }
+            let masters = boxes(host).filter { ["Select Git", "Select SSH", "Select Workspace", "Select Shell"].contains($0.accessibilityLabel() ?? "") }
+            precondition(masters.count == 4 && masters.allSatisfy(\.isEnabled))
+            let x = masters.map { $0.convert($0.bounds, to: host).minX }
+            precondition((x.max()! - x.min()!) < 1, "All four master checkbox columns align")
+            precondition(masters.first { $0.accessibilityLabel() == "Select SSH" }!.state == (model.developerGroupState(.ssh) == .all ? .on : model.developerGroupState(.ssh) == .mixed ? .mixed : .off))
+            let output = URL(fileURLWithPath: "build/Debug/DeveloperSelection")
+            try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+            let image = host.bitmapImageRepForCachingDisplay(in: host.bounds)!
+            host.cacheDisplay(in: host.bounds, to: image)
+            try image.representation(using: .png, properties: [:])!.write(to: output.appendingPathComponent(name + ".png"))
+        }
+        try await snapshot("capture-collapsed-light", expansion: [])
+        try await snapshot("capture-expanded-light", expansion: expanded)
+        model.selectItem("ssh-configuration", item: "development", included: true)
+        model.selectSecureIdentity(ids[0], included: true)
+        precondition(model.developerGroupState(.ssh) == .mixed)
+        try await snapshot("capture-ssh-partial-light", expansion: expanded)
+        model.selectDeveloperGroup(.ssh, included: true)
+        precondition(model.selectedSecureIdentities == [ids[0]] && model.developerGroupState(.ssh) == .mixed,
+                     "Explicit group opt-in must not broaden an existing identity subset")
+        model.selectAllSecureIdentities(included: true)
+        precondition(model.developerGroupState(.ssh) == .all)
+        try await snapshot("capture-ssh-full-light", expansion: expanded)
+        let afterActions = try Data(contentsOf: core.appendingPathComponent("requests.jsonl"))
+        precondition(afterActions == requests, "Local controls never call Core")
+        let selected = model.selection
+        model.prepare(destination: root.appendingPathComponent("developer-selection.mbt")); await model.waitForCompletion()
+        precondition(model.state == .confirmation && model.preparation != nil)
+        model.editSelection(); precondition(model.selection == selected)
+        model.selectDeveloperGroup(.ssh, included: false)
+        precondition(model.preparation == nil && model.selectedSecureIdentities.isEmpty)
+        try JSONSerialization.data(withJSONObject: [row("shell-zsh", mode: "category", status: "unsupported", reason: "source_excluded")])
+            .write(to: core.appendingPathComponent("inventory.json"))
+        try JSONSerialization.data(withJSONObject: ["status": "observation_error", "items": []] as Object)
+            .write(to: core.appendingPathComponent("secure-inventory.json"))
+        model.scan(); await model.waitForCompletion()
+        model.selectDeveloperGroup(.shell, included: true); model.selectDeveloperGroup(.ssh, included: true)
+        precondition(!model.developerGroupAvailable(.shell) && !model.developerGroupAvailable(.ssh))
+        precondition(model.selection.categories.isEmpty && model.selectedSecureIdentities.isEmpty)
+        print("PASS: Capture developer siblings, native aggregate states/alignment, default-off/explicit SSH consent, subset preservation, unavailable children and preparation invalidation")
     }
     @MainActor static func main() async throws {
         // Foundation resolves /private/var to /var, while Core requires Python's
@@ -292,6 +382,10 @@ import SwiftUI
             print("PASS: Capture Confirmation concise encryption boundary and passphrase disclosure only for selected SSH identities; no destination restriction")
             return
         }
+        if CommandLine.arguments.contains("--developer-selection-only") {
+            try await developerSelectionChecks(model: model, runtime: runtime, core: core, root: root)
+            return
+        }
         if CommandLine.arguments.contains("--ssh-host-selection-only") {
             try await sshHostSelectionChecks(model: model, runtime: runtime, core: core, root: root)
             return
@@ -316,6 +410,14 @@ import SwiftUI
             try await capturePolicyChecks(model: model, runtime: runtime, core: core, root: root)
             return
         }
+        let originalInventory = try Data(contentsOf: core.appendingPathComponent("inventory.json"))
+        let requestsPath = core.appendingPathComponent("requests.jsonl")
+        let originalRequests = try? Data(contentsOf: requestsPath)
+        try await developerSelectionChecks(model: model, runtime: runtime, core: core, root: root)
+        try originalInventory.write(to: core.appendingPathComponent("inventory.json"))
+        try FileManager.default.removeItem(at: core.appendingPathComponent("secure-inventory.json"))
+        if let originalRequests { try originalRequests.write(to: requestsPath) }
+        else { try FileManager.default.removeItem(at: requestsPath) }
         model.scan(); await model.waitForCompletion()
         precondition(model.state == .review && model.selectedDomainCount == 2 && model.selectedItemCount == 2)
         precondition(model.bulkState == .all && model.selection.secureIdentities.isEmpty)
@@ -1240,7 +1342,7 @@ import SwiftUI
         let top = CaptureHierarchy.initialExpansion
         precondition(top.isEmpty, "Every fresh disclosure starts collapsed, including VS Code and nested rows")
         let all = CaptureHierarchy.disclosureIDs(model.categories.map(\.id) + ["macos-settings"], scope: .ordinary)
-            .union(CaptureHierarchy.disclosureIDs(model.categories.map(\.id), scope: .advanced))
+            .union(DeveloperSelectionGroup.disclosureIDs(model.categories.map(\.id)))
         precondition(CaptureReviewRow.project(model.categories).contains(where: { $0.id == "workspace-folders" }))
         precondition(CaptureReviewPresentation.attention(model.categories(in: .advanced), model: model) == nil)
         precondition(CaptureSummaryPresentation.review(categories: model.categories, domainCount: model.selectedDomainCount,
@@ -1250,7 +1352,7 @@ import SwiftUI
             try render(model, runtime, state: "2d-expanded", tree: all, dark: dark)
             try render(model, runtime, state: "2d-macos-labels", tree: Set(CaptureMacOSSettingsGroup.domainIDs + ["macos-settings"]), dark: dark)
             try render(model, runtime, state: "2d-macos-labels-bottom", scrollToBottom: true, tree: Set(CaptureMacOSSettingsGroup.domainIDs + ["macos-settings"]), dark: dark)
-            try render(model, runtime, state: "2d-advanced-rows", scrollToBottom: true, tree: [CaptureHierarchy.sectionID(.advanced)], dark: dark)
+            try render(model, runtime, state: "2d-developer-rows", scrollToBottom: true, tree: Set(DeveloperSelectionGroup.allCases.map(\.id)), dark: dark)
             try render(model, runtime, state: "2d-application-extras",
                 tree: [CaptureHierarchy.Group.vscode.section.id, CaptureHierarchy.Group.vscode.id], dark: dark)
             try render(model, runtime, state: "2d-long-extensions", scrollToBottom: true,
@@ -1285,6 +1387,9 @@ import SwiftUI
         }
         try JSONSerialization.data(withJSONObject: inventory).write(to: path)
         model.scan(); await model.waitForCompletion(); model.toggleAll(in: .advanced)
+        // Global developer selection intentionally excludes SSH profiles. Select this
+        // fixture explicitly so every measured row actually has a warning.
+        model.selectCategory("ssh-configuration", included: true)
         for dark in [false, true] {
             NSApp.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
             for width: CGFloat in [729, 1329] { // 1000/1600pt window minus the 215pt sidebar and content margins.
@@ -1437,7 +1542,8 @@ import SwiftUI
             } else { sourceIDs = model.categories.map(\.id) + [CaptureHierarchy.secureTransferID] }
             let leaves = model.state == .review ? model.categories.filter { !CaptureCategorySelectionView.hasDisclosure($0) }.map(\.id) : []
             let ordinary = CaptureHierarchy.disclosureIDs(sourceIDs, scope: .ordinary).subtracting(leaves)
-            let experienced = CaptureHierarchy.disclosureIDs(sourceIDs, scope: .advanced).subtracting(leaves)
+            let experienced = (model.state == .review ? DeveloperSelectionGroup.disclosureIDs(sourceIDs)
+                : CaptureHierarchy.disclosureIDs(sourceIDs, scope: .advanced)).subtracting(leaves)
             if expectedOrdinary {
                 let count = Set(sourceIDs.filter { CaptureSelectionScope.ordinary.contains($0) || $0 == "macos-settings" }.map { CaptureHierarchy.group(for: $0) }).count
                 expertY += headerHeight + 24 + CGFloat(count) * 48 + CGFloat(max(0, count - 1)) / window.backingScaleFactor
@@ -1456,18 +1562,19 @@ import SwiftUI
             if !experienced.isEmpty {
                 await experiencedAction()
                 precondition(expansion.ids == experienced, "Experienced native action must include Secure Transfer: \(expansion.ids)")
-                let advancedControl = descendants(host, NSButton.self).first { $0.accessibilityLabel() == "Select Advanced" }
+                let firstGroup = DeveloperSelectionGroup.git.id
+                let advancedControl = descendants(host, NSButton.self).first { $0.accessibilityLabel() == (model.state == .review ? "Select Git" : "Select Advanced") }
                 let groupY = advancedControl.map { $0.convert($0.bounds, to: document).midY }
                     ?? (expertY + headerHeight / 2 + 12 + 24)
                 if expectedAdvanced {
                     await click(x: 22, y: groupY)
-                    precondition(expansion.ids == experienced.subtracting([CaptureHierarchy.sectionID(.advanced)]))
+                    precondition(expansion.ids == experienced.subtracting([firstGroup]))
                 }
                 if expectedSecure {
                     await click(x: 22, y: groupY + (expectedAdvanced ? 48 + 1 / window.backingScaleFactor : 0))
                     precondition(!expansion.ids.contains(CaptureHierarchy.sshID) && expansion.ids.contains(CaptureHierarchy.secureTransferID),
                                  "Collapsing SSH preserves its child disclosure state")
-                    precondition(!expectedAdvanced || !expansion.ids.contains(CaptureHierarchy.sectionID(.advanced)))
+                    precondition(!expectedAdvanced || !expansion.ids.contains(firstGroup))
                 }
                 await experiencedAction(); precondition(expansion.ids == experienced)
                 if expectedOrdinary {
@@ -1480,9 +1587,10 @@ import SwiftUI
             }
             if expectedAdvanced && expectedSecure && model.state == .review {
                 let boxes = descendants(host, NSButton.self)
-                precondition(boxes.contains { $0.accessibilityLabel() == "Select Advanced" }
+                precondition(boxes.contains { $0.accessibilityLabel() == "Select Git" }
+                             && boxes.contains { $0.accessibilityLabel() == "Select SSH" }
                              && !boxes.contains { $0.accessibilityLabel() == "Select SSH Keys" },
-                             "Collapsed SSH has no master checkbox and hides its category controls")
+                             "Collapsed developer groups retain masters and hide their category controls")
             }
             if expectedOrdinary { await ordinaryAction() }
             if !experienced.isEmpty { await experiencedAction() }
@@ -1544,6 +1652,10 @@ import SwiftUI
             if let button = view as? NSButton, button.target is NativeSelectionCheckbox.Coordinator { return [button] }
             return view.subviews.flatMap(boxes)
         }
+        func categories(_ view: NSView) -> [NSButton] {
+            let titles = Set(model.categories.filter(\.selectable).map { "Select " + $0.title })
+            return boxes(view).filter { titles.contains($0.accessibilityLabel() ?? "") }
+        }
         func scrolls(_ view: NSView) -> [NSScrollView] { (view as? NSScrollView).map { [$0] } ?? view.subviews.flatMap(scrolls) }
         func flush(_ host: NSView) {
             RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.05))
@@ -1554,7 +1666,7 @@ import SwiftUI
             let model: CaptureModel
             let runtime: CoreRuntime
             var body: some View {
-                CaptureView(model: model, runtime: runtime, showsActions: false, categoryTreeExpansion: $expansion.ids)
+                CaptureView(model: model, runtime: runtime, showsActions: false, categoryTreeExpansion: $expansion.ids, experiencedVisibility: .constant(true))
             }
         }
         for size in [CGSize(width: 1000, height: 700), CGSize(width: 1600, height: 1050)] {
@@ -1581,29 +1693,29 @@ import SwiftUI
                 let host = NSHostingView(rootView: content)
                 let window = NSWindow(contentRect: CGRect(origin: .zero, size: size), styleMask: [.borderless], backing: .buffered, defer: false)
                 window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil); flush(host)
-                precondition(boxes(host).isEmpty, "All fresh top-level sections are collapsed with no parent checkbox")
+                precondition(categories(host).isEmpty, "Fresh groups show only aggregate checkboxes; categories remain collapsed")
                 let selected = model.selection, requests = try Data(contentsOf: core.appendingPathComponent("requests.jsonl"))
                 expansion.ids.insert(CaptureHierarchy.sectionID(.macOSSettings)); flush(host)
-                precondition(boxes(host).count == 6, "macOS has exactly six independent native category checkboxes")
+                precondition(categories(host).count == 6, "macOS has exactly six independent native category checkboxes")
                 let finder = boxes(host).first { $0.accessibilityLabel() == "Select Finder" }!
                 finder.performClick(nil); flush(host)
                 precondition(model.macOSSettings.state == .mixed && model.macOSSettings.children.filter { model.selectionState($0) == .all }.count == 5)
                 boxes(host).first { $0.accessibilityLabel() == "Select Finder" }!.performClick(nil); flush(host)
                 precondition(model.selection == selected)
                 expansion.ids.formUnion(CaptureMacOSSettingsGroup.domainIDs); flush(host)
-                precondition(boxes(host).count == 6, "Expanded compact preference labels add no per-setting checkbox")
-                expansion.ids.insert(CaptureHierarchy.sectionID(.advanced)); flush(host)
-                precondition(boxes(host).contains { $0.accessibilityLabel() == "Select Workspace Folders" }, "Folders are directly accessible after opening Advanced alone")
+                precondition(categories(host).count == 6, "Expanded compact preference labels add no per-setting checkbox")
+                expansion.ids.insert(DeveloperSelectionGroup.workspace.id); flush(host)
+                precondition(boxes(host).contains { $0.accessibilityLabel() == "Select Workspace Folders" }, "Folders are directly accessible after opening Workspace alone")
                 precondition(!boxes(host).contains { ($0.accessibilityLabel() ?? "").contains("Secure Transfer") }, "Secure Transfer has no enabled checkbox")
-                expansion.ids.remove(CaptureHierarchy.sectionID(.advanced)); flush(host)
+                expansion.ids.remove(DeveloperSelectionGroup.workspace.id); flush(host)
                 expansion.ids.insert(CaptureHierarchy.sectionID(.applicationsTools)); flush(host)
-                precondition(boxes(host).count == 9, "Opening Applications preserves the independent macOS disclosure")
+                precondition(categories(host).count == 9, "Opening Applications preserves the independent macOS disclosure")
                 expansion.ids.insert(CaptureHierarchy.sectionID(.vscode)); flush(host)
-                precondition(boxes(host).count == 9, "VS Code remains independently collapsed")
+                precondition(categories(host).count == 9, "VS Code remains independently collapsed")
                 expansion.ids.insert(CaptureHierarchy.Group.vscode.id); flush(host)
-                precondition(boxes(host).count == 11, "VS Code adds only its two real Core selectors")
+                precondition(categories(host).count == 11, "VS Code adds only its two real Core selectors")
                 expansion.ids = CaptureHierarchy.disclosureIDs(model.categories.map(\.id), scope: .ordinary)
-                    .union(CaptureHierarchy.disclosureIDs(model.categories.map(\.id), scope: .advanced)); flush(host)
+                    .union(DeveloperSelectionGroup.disclosureIDs(model.categories.map(\.id))); flush(host)
                 precondition(boxes(host).contains { $0.accessibilityLabel() == "Select Workspace Folders" }, "Folder-only Capture has a reachable selector with no descriptor selection")
                 precondition(model.selection == selected && (try! Data(contentsOf: core.appendingPathComponent("requests.jsonl"))) == requests)
                 let scroll = scrolls(host)
@@ -1616,7 +1728,7 @@ import SwiftUI
                 precondition(abs(scroll[0].contentView.bounds.minY - bottom) < 2)
                 // A fresh Scan resets the actual mounted view's disclosure binding.
                 model.scan(); await model.waitForCompletion(); flush(host)
-                precondition(expansion.ids.isEmpty && boxes(host).isEmpty && model.selection == selected)
+                precondition(expansion.ids.isEmpty && categories(host).isEmpty && model.selection == selected)
                 // Real read-only Capture rendering never exposes draft checkboxes.
                 expansion.ids = CaptureHierarchy.disclosureIDs(model.categories.map(\.id), scope: .ordinary)
                 model.toggleAll(in: .advanced)
@@ -1664,13 +1776,13 @@ import SwiftUI
             let image = ImageRenderer(content: view.frame(width: width).background(Color(nsColor: .windowBackgroundColor))).cgImage!
             return NSBitmapImageRep(cgImage: image)
         }
-        func bounds(_ image: NSBitmapImageRep, from: Int, to: Int, blue: Bool) -> CGRect? {
+        func bounds(_ image: NSBitmapImageRep, from: Int, to: Int, blue: Bool, orange: Bool = false) -> CGRect? {
             let background = image.colorAt(x: 0, y: 0)!.usingColorSpace(.sRGB)!
             var xs: [Int] = [], ys: [Int] = []
             for x in from..<to {
                 for y in 0..<image.pixelsHigh {
                     guard let c = image.colorAt(x: x, y: y)?.usingColorSpace(.sRGB), c.alphaComponent > 0.9 else { continue }
-                    let matches = blue ? c.blueComponent > 0.4 && c.blueComponent > c.redComponent * 1.4 && c.blueComponent > c.greenComponent * 1.1
+                    let matches = orange ? c.redComponent > 0.5 && c.redComponent > c.greenComponent * 1.15 && c.redComponent > c.blueComponent * 1.4 : blue ? c.blueComponent > 0.4 && c.blueComponent > c.redComponent * 1.4 && c.blueComponent > c.greenComponent * 1.1
                         : abs(c.redComponent - background.redComponent) > 0.15
                     if matches { xs.append(x); ys.append(y) }
                 }
@@ -1683,8 +1795,11 @@ import SwiftUI
                 selectionMode: "category", items: [], includedSettings: nil)), expansion: .constant(false),
             displayTitle: "Configuration", leadingInset: CaptureChildRowGrid.leadingInset))
         let secure = bitmap(CaptureSecureTransferView(expansion: .constant(false)))
-        let siblingIcon = bounds(sibling, from: 0, to: Int(width / 2), blue: true)!
-        let secureIcon = bounds(secure, from: 0, to: Int(width / 2), blue: true)!
+        // Restrict the pixel sample to the icon column: subpixel antialiasing on
+        // normal text can also contain warm pixels, especially in Dark Mode.
+        let iconEnd = Int(16 + CaptureChildRowGrid.leadingInset + CaptureReviewPresentation.hierarchyStep + 28 + 12 + TaskRowLayout.iconWidth)
+        let siblingIcon = bounds(sibling, from: 0, to: iconEnd, blue: false, orange: true)!
+        let secureIcon = bounds(secure, from: 0, to: iconEnd, blue: false, orange: true)!
         precondition(abs(siblingIcon.midX - secureIcon.midX) <= 2 && abs(siblingIcon.midY - secureIcon.midY) <= 2,
             "Secure Transfer's icon must share the nested child column and baseline: \(siblingIcon), \(secureIcon)")
         precondition(sibling.pixelsHigh == 48 && secure.pixelsHigh == sibling.pixelsHigh)
@@ -1695,15 +1810,19 @@ import SwiftUI
         precondition(abs(siblingStatus.minX - secureStatus.minX) <= 1 && abs(siblingStatus.minY - secureStatus.minY) <= 1
             && abs(siblingStatus.width - secureStatus.width) <= 1 && abs(siblingStatus.height - secureStatus.height) <= 1,
             "Secure Transfer's Unavailable label must share the exact child status rail: \(siblingStatus), \(secureStatus)")
-        for group in CaptureHierarchy.ordinaryGroups + [.advanced] {
+        for group in CaptureHierarchy.ordinaryGroups {
             let header = bitmap(CaptureGroupHeader(title: CaptureHierarchy.sectionTitle(group), summary: "Not Selected",
-                symbol: CaptureHierarchy.symbol(group), tint: group == .advanced ? .secondary : .blue, expanded: .constant(false)))
-            precondition((bounds(header, from: 0, to: Int(width / 2), blue: true) != nil) == (group != .advanced),
-                "Ordinary section icons are blue; only the Advanced expert icon is neutral")
+                symbol: CaptureHierarchy.symbol(group), expanded: .constant(false)))
+            precondition(bounds(header, from: 0, to: Int(width / 2), blue: true) != nil)
+        }
+        for group in DeveloperSelectionGroup.allCases {
+            let header = bitmap(CaptureGroupHeader(title: group.title, symbol: group.symbol,
+                tint: DeveloperSelectionGroup.accent(dark ? .dark : .light), expanded: .constant(false)))
+            precondition(bounds(header, from: 0, to: Int(width / 2), blue: false, orange: true) != nil)
         }
         let vscode = bitmap(CaptureGroupHeader(title: "VS Code", summary: "All Selected", symbol: "curlybraces", nested: true, expanded: .constant(false)))
         precondition(bounds(vscode, from: 0, to: Int(width / 2), blue: true) != nil)
-        print("PASS: ordinary/VS Code blue icons, neutral Advanced, Secure Transfer 48pt row and exact sibling icon/status rails at \(Int(width))pt \(dark ? "Dark" : "Light")")
+        print("PASS: ordinary/VS Code blue icons, developer orange icons, SSH Keys 48pt row and exact sibling icon/status rails at \(Int(width))pt \(dark ? "Dark" : "Light")")
     }
 
     @MainActor static func captureStatusOrigin<V: View>(_ view: V, width: CGFloat) -> Int {

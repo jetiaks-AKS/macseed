@@ -14,7 +14,7 @@ enum WorkspacePresentationTaxonomy {
             case .applicationsTools: "Applications & Tools"
             case .macOSSettings: "macOS Settings"
             case .applicationExtras: "Application Extras"
-            case .advanced: "Advanced"
+            case .advanced: "For Experienced Users"
             case .otherFindings: "Other Findings"
             }
         }
@@ -104,9 +104,12 @@ struct WorkspaceSectionHeader: View {
 }
 
 struct WorkspaceCategoryIcon: View {
+    @Environment(\.colorScheme) private var colorScheme
     let symbol: String
+    var domainID: String? = nil
     var body: some View {
-        Image(systemName: symbol).fontWeight(.semibold).foregroundStyle(.blue)
+        Image(systemName: symbol).fontWeight(.semibold)
+            .foregroundStyle(domainID.flatMap(DeveloperSelectionGroup.group(for:)) == nil ? .blue : DeveloperSelectionGroup.accent(colorScheme))
             .frame(width: TaskRowLayout.iconWidth).accessibilityHidden(true)
     }
 }
@@ -115,10 +118,11 @@ struct WorkspaceCategoryTitle: View {
     let id: String
     let title: String
     let fallbackSymbol: String
+    var developerGroup: DeveloperSelectionGroup? = nil
     var body: some View {
         HStack(spacing: 12) {
-            WorkspaceCategoryIcon(symbol: WorkspaceCategoryStyle.symbol(id, fallback: fallbackSymbol))
-            Text(title).font(.body.weight(.medium))
+            WorkspaceCategoryIcon(symbol: WorkspaceCategoryStyle.symbol(id, fallback: fallbackSymbol), domainID: id)
+            Text(DeveloperSelectionGroup.label(id, fallback: title, parent: developerGroup)).font(.body.weight(.medium))
         }
     }
 }
@@ -487,7 +491,7 @@ struct CategoryRow: View {
                 }
                 DisclosureGroup(isExpanded: $expanded) { EmptyView() } label: {
                     HStack {
-                        Label(category.title, systemImage: category.symbol).font(.headline)
+                        WorkspaceCategoryTitle(id: category.id, title: category.title, fallbackSymbol: category.symbol)
                         Spacer()
                         Text(headerSummary ?? "\(category.items.count) \(category.items.count == 1 ? "item" : "items")")
                             .font(.callout).foregroundStyle(.secondary)
@@ -671,7 +675,7 @@ struct CaptureDemoView: View {
                     .font(.callout).foregroundStyle(.secondary)
                 Divider()
                 HStack {
-                    Label("Secure Transfer", systemImage: "lock.shield").font(.headline)
+                    Label("SSH Keys", systemImage: "lock.shield").font(.headline)
                     Spacer()
                     Button(session.secureBulkState.bulkActionTitle) { session.toggleAllIdentities() }
                 }

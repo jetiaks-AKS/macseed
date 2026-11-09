@@ -320,7 +320,7 @@ struct EnvironmentStatusPresentation {
             "macos-trackpad": ("Trackpad", "hand.draw"), "macos-screenshots": ("Screenshots", "camera"),
             "comparison": ("Check", "checkmark.circle"), "blueprint": ("Blueprint", "doc.text")]
         categories = order.map { domain in
-            DisplayCategory(id: domain, title: names[domain]?.0 ?? domain, symbol: names[domain]?.1 ?? "folder", items: grouped[domain]!)
+            DisplayCategory(id: domain, title: DeveloperSelectionGroup.label(domain, fallback: names[domain]?.0 ?? domain), symbol: names[domain]?.1 ?? "folder", items: grouped[domain]!)
         }
         sections = EnvironmentStatusSection.project(categories, groups: result.referencePresentation?.groups ?? [])
         let independentUnverified = result.comparisonRecords.contains { $0.comparisonKind == "unverified" && !dependentRepositoryRecords.contains($0.recordID) }

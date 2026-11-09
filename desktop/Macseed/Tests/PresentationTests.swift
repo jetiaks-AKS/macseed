@@ -32,8 +32,8 @@ private struct SecureSelectionFixtureView: View {
         CaptureGroupedContent(rows: [TaskDomainPresentation(id: "git-configuration", title: "Git Configuration", symbol: "gearshape", items: []),
             TaskDomainPresentation(id: "ssh-configuration", title: "SSH Configuration", symbol: "key", items: [])],
             expanded: $state.groupsExpanded,
-            selection: { _, _ in AnyView(NativeSelectionCheckbox("", isOn: $state.advancedSelected, accessibilityTitle: "Select Advanced")) },
-            secureTransferGroup: AnyView(secure), summary: { _ in state.advancedSelected ? "All Selected" : "Not Selected" },
+            secureTransferGroup: AnyView(secure),
+            developerSelection: { group in group == .git ? AnyView(NativeSelectionCheckbox("", isOn: $state.advancedSelected, accessibilityTitle: "Select Git")) : AnyView(EmptyView()) }, summary: { _ in state.advancedSelected ? "All Selected" : "Not Selected" },
             attention: { _ in nil }) { row in Text(row.title).padding(16) }
     }
     private var secure: some View {
@@ -41,6 +41,47 @@ private struct SecureSelectionFixtureView: View {
             select: { id, included in
                 if included { state.selected.insert(id) } else { state.selected.remove(id) }
             }, selectAll: { state.selected = $0 ? Set(inventory.items.map(\.id)) : [] }, expansion: $state.expanded)
+    }
+}
+
+private final class SelectionHelpFixtureState: ObservableObject {
+    @Published var selected = false
+    @Published var groups: Set<String> = Set(DeveloperSelectionGroup.allCases.map(\.id))
+    @Published var categoryExpanded = false
+    @Published var showsSSH = true
+    var titleFrames: [String: CGRect] = [:]
+}
+
+private struct SelectionHelpFixtureView: View {
+    @ObservedObject var state: SelectionHelpFixtureState
+    let flow: SelectionHelpFlow
+    var body: some View {
+        VStack(spacing: 0) {
+            Text(flow == .capture ? "Capture Selection" : "Rebuild Selection").font(.title2).padding(16)
+            WorkflowList {
+                CaptureGroupedContent(rows: ["git-repositories", "ssh-configuration", "workspace-folders"]
+                    .filter { state.showsSSH || $0 != "ssh-configuration" }
+                    .map { TaskDomainPresentation(id: $0, title: CaptureCategory.title(for: $0), symbol: WorkspaceCategoryStyle.symbol($0), items: []) },
+                    expanded: $state.groups,
+                    developerSelection: { _ in AnyView(NativeSelectionCheckbox("", isOn: $state.selected)) },
+                    summary: { _ in "Not Selected" }, attention: { _ in nil }) { row in
+                    HStack(spacing: 12) {
+                        NativeSelectionCheckbox("", isOn: $state.selected, accessibilityTitle: "Fixture category selection").frame(width: 28)
+                        DisclosureGroup(isExpanded: $state.categoryExpanded) { Text("Fixture details") } label: {
+                            SelectionCategoryTitle(id: row.id, title: DeveloperSelectionGroup.title(row.id, fallback: row.title),
+                                symbol: row.symbol, flow: flow, toggle: { state.categoryExpanded.toggle() })
+                                .fixedSize(horizontal: true, vertical: false)
+                                .background(GeometryReader { proxy in Color.clear.preference(key: WorkflowAnchorFrames.self,
+                                    value: [row.id: proxy.frame(in: .named("selection-help"))]) })
+                        }.disclosureGroupStyle(SelectionCategoryDisclosureStyle())
+                    }.padding(.horizontal, 16)
+                    Color.clear.frame(height: 200)
+                }
+            }.environment(\.workflowListViewport, true).padding(.horizontal, 20)
+            Divider()
+            Text("Selection fixture").frame(maxWidth: .infinity, minHeight: 48)
+        }.background(Color(nsColor: .windowBackgroundColor))
+            .coordinateSpace(name: "selection-help").onPreferenceChange(WorkflowAnchorFrames.self) { state.titleFrames = $0 }
     }
 }
 
@@ -61,8 +102,8 @@ private struct CaptureRefinementHost: View {
     let runtime: CoreRuntime
     var body: some View {
         CaptureView(model: model, runtime: runtime, showsActions: false,
-            categoryTreeExpansion: .constant(CaptureHierarchy.disclosureIDs(
-                model.categories.map(\.id) + [CaptureHierarchy.secureTransferID], scope: .advanced)),
+            categoryTreeExpansion: .constant(DeveloperSelectionGroup.disclosureIDs(
+                model.categories.map(\.id) + [CaptureHierarchy.secureTransferID])),
             experiencedVisibility: $state.experiencedVisible)
     }
 }
@@ -92,7 +133,7 @@ private struct CaptureRefinementHost: View {
         selection = request['parameters']['selection']
         rows = [dict(domain=domain, status='present', selection_mode='items',
                      items=[dict(item_id='fixture', label=label)])
-                for domain, label in [('homebrew-packages','Ordinary fixture'),('git-configuration','Advanced fixture')]]
+                for domain, label in [('homebrew-packages','Ordinary fixture'),('git-configuration','Developer fixture')]]
         identities = [dict(item_id='a'*64, label='fixture_key', key_type='ssh-ed25519',
             fingerprint='SHA256:'+'A'*43, validation='candidate_requires_pair_validation')]
         summary = dict(selected_domains=0, selected_items=0, secure_identity_count=0)
@@ -158,13 +199,13 @@ private struct CaptureRefinementHost: View {
         clickHeading(x: 80); try await settle(review)
         precondition(visibility.experiencedVisible, "Clicking the section title expands the experienced container")
         precondition(selectionBoxes(review).contains { $0.accessibilityLabel() == "Select SSH Keys" })
-        precondition(selectionBoxes(review).count >= 5, "Advanced and Secure Transfer child checkboxes are visible")
+        precondition(selectionBoxes(review).count >= 5, "Developer groups and Secure Transfer child checkboxes are visible")
         precondition(review.fittingSize.height > hiddenHeight + 80 && model.selection == originalSelection)
         precondition(model.selectedSecureIdentities.isEmpty, "Visibility is never Secure Transfer opt-in")
         model.selectItem("git-configuration", item: "fixture", included: true)
         model.selectSecureIdentity(String(repeating: "a", count: 64), included: true)
         let selected = model.selection
-        precondition(CaptureReviewPresentation.experiencedSelectionSummary(model) == "1 advanced category selected · 1 SSH identity selected")
+        precondition(CaptureReviewPresentation.experiencedSelectionSummary(model) == "1 developer category selected · 1 SSH identity selected")
         clickHeading(x: 80); try await settle(review)
         precondition(!visibility.experiencedVisible && model.selection == selected && selectionBoxes(review).count == 1)
         precondition(review.fittingSize.height < hiddenHeight + 45, "Only the small selection indicator remains; no hidden container space")
@@ -806,15 +847,18 @@ private struct CaptureRefinementHost: View {
                      && selection.contains(".disabled(model.state != .review || model.runtime.isActive)"))
         precondition(selection.contains("Encrypted SSH keys. Existing keys won't be overwritten."))
         let normalizedSelection = selection.split(whereSeparator: \.isWhitespace).joined(separator: " ")
-        precondition(normalizedSelection.contains("Text([model.identitySelectionSummary, model.destinationSummary].compactMap { $0 }.joined(separator: \" · \")) .font(.callout.weight(.semibold)).foregroundStyle(.primary)"))
+        precondition(selection.contains("model.identitySelectionSummary") && selection.contains("Text(destinationSummary)"))
         precondition(normalizedSelection.contains("Text(\"Encrypted SSH keys. Existing keys won't be overwritten.\") .font(.callout).foregroundStyle(.secondary)"))
-        precondition(selection.contains("summary: model.includeSecure ? \"Selected\" : \"Off\""))
-        precondition(selection.contains("expanded: WorkflowExpansion.binding(CaptureHierarchy.secureTransferID, in: treeExpansion)"))
+        precondition(selection.contains("summary: model.includeSecure ? model.identitySelectionSummary ?? \"Selected\" : \"Off\""))
+        precondition(selection.contains("isExpanded: WorkflowExpansion.binding(CaptureHierarchy.secureTransferID, in: treeExpansion)"))
         precondition(selection.contains("if treeExpansion.wrappedValue.contains(CaptureHierarchy.secureTransferID)"))
         precondition(selection.contains("model.customizeDestinations()") && selection.contains("model.canCustomizeDestinations"))
         precondition(selection.contains("VStack(alignment: .leading, spacing: 6)")
-                     && selection.range(of: "Button(\"Customize…\")")!.lowerBound < selection.range(of: "Text([model.identitySelectionSummary")!.lowerBound,
+                     && selection.range(of: "Button(\"Customize…\")")!.lowerBound < selection.range(of: "Text(destinationSummary)")!.lowerBound,
                      "Customize must precede its summary in a compact leading-aligned column")
+        precondition(selection.contains("if model.secureIdentitySelectionSupported, let inventory = model.destinationInventory")
+                     && selection.contains("model.selectIdentity(identity.id, included: $0)"),
+                     "Inline keys reuse the authenticated inventory and Customize selection")
         let destinations = source.components(separatedBy: "struct RestoreDestinationsView: View")[1]
         precondition(destinations.contains("panel.canChooseDirectories = true") && destinations.contains("panel.canChooseFiles = false")
                      && destinations.contains("panel.canCreateDirectories = false") && destinations.contains("panel.resolvesAliases = false")
@@ -903,7 +947,7 @@ private struct CaptureRefinementHost: View {
         precondition(offTasks.domains.map(\.id) == tasks.domains.filter { $0.id != secureID }.map(\.id))
         precondition(RestoreExecutionCategories.orderedRows(tasks.domains).map(\.id) == RestoreExecutionCategories.orderedRows(offTasks.domains).map(\.id) + [secureID])
         let ids = RestorePreviewHierarchy.disclosureIDs(tasks.domains, settings: [])
-        precondition(ids.contains(secureID) && ids.contains(CaptureHierarchy.sectionID(.advanced)))
+        precondition(ids.contains(secureID) && ids.contains(DeveloperSelectionGroup.ssh.id) && ids.contains(DeveloperSelectionGroup.git.id))
         precondition(WorkflowExpansion.toggled([], available: ids) == ids)
 
         func event(_ type: String, _ data: [String: Any], sequence: Int = 1) throws -> CoreEvent {
@@ -943,9 +987,12 @@ private struct CaptureRefinementHost: View {
         let dialog = try String(contentsOfFile: "Sources/CaptureView.swift")
         precondition(dialog.contains("runtime.respond(to: challenge, with: .confirmImport)") && dialog.contains("if !confirmingImport {"))
         let groups = try String(contentsOfFile: "Sources/TaskComponents.swift")
-        precondition(groups.contains("counts: restorePreviewHierarchy && domain.id != CoreRestorePreparation.secureDomain ? [] : RestorePreviewMetrics.badges(domain)"))
+        precondition(groups.contains("counts: restorePreviewHierarchy ? [] : RestorePreviewMetrics.badges(domain)"))
         let group = groups.components(separatedBy: "private var previewGroups:")[1].components(separatedBy: "private func previewAccordion")[0]
-        precondition(group.contains("if let advanced { previewAccordion(.advanced, rows: advanced.rows) }") && group.contains("if let secure { domainRow(secure) }"))
+        let developerRows = DeveloperSelectionGroup.allCases.flatMap { group in tasks.domains.filter { DeveloperSelectionGroup.group(for: $0.id) == group } }
+        precondition(developerRows.filter { $0.id == secureID }.count == 1)
+        precondition(Set(developerRows.map(\.id)) == Set(tasks.domains.filter { DeveloperSelectionGroup.group(for: $0.id) != nil }.map(\.id)))
+        precondition(group.contains("ForEach(developerGroups)") && group.contains("previewMembers(rows, parentState: summary.state)"))
         print("PASS: Secure Restore hierarchy, independent scope, 3+1 planned/green preservation, genuine blocker, zero-pill omission, FD consent reuse, strict receipt projection and one logical Result count")
 
         _ = NSApplication.shared
@@ -981,7 +1028,7 @@ private struct CaptureRefinementHost: View {
         let experienced = CaptureHierarchy.disclosureIDs(ids, scope: .advanced)
         precondition(ordinary.isDisjoint(with: experienced))
         precondition(ordinary.isSuperset(of: ["macos-settings", "macos-finder", CaptureHierarchy.sectionID(.vscode), CaptureHierarchy.Group.vscode.id, "vscode-extensions"]))
-        precondition(experienced == [CaptureHierarchy.sectionID(.advanced), "git-configuration", "ssh-configuration", CaptureHierarchy.sshID, CaptureHierarchy.secureTransferID])
+        precondition(experienced == [DeveloperSelectionGroup.git.id, "git-configuration", "ssh-configuration", CaptureHierarchy.sshID, CaptureHierarchy.secureTransferID])
         for scope in [ordinary, experienced] {
             let other = scope == ordinary ? experienced : ordinary
             let all = CaptureHierarchy.toggled(other, ids: scope)
@@ -1005,7 +1052,7 @@ private struct CaptureRefinementHost: View {
                      "Exactly one ordinary and one experienced surface, with no per-sibling card")
         precondition(CaptureHierarchy.sshID != CaptureHierarchy.secureTransferID)
         precondition(!WorkspacePresentationTaxonomy.Group.advanced.domains.contains(CaptureHierarchy.sshID))
-        precondition(grouping.components(separatedBy: "CaptureGroupHeader(title: \"SSH\"").count - 1 == 1)
+        precondition(grouping.components(separatedBy: "CaptureGroupHeader(title: group.title").count - 1 == 1)
         let view = try String(contentsOfFile: "Sources/CaptureView.swift")
         let review = view.components(separatedBy: "case .review:")[1].components(separatedBy: "case .confirmation:")[0]
         let reviewHeading = review.components(separatedBy: "WorkflowList {")[0]
@@ -1086,7 +1133,7 @@ private struct CaptureRefinementHost: View {
                 return CGRect(x: pixels.map(\.x).min()!, y: pixels.map(\.y).min()!,
                     width: pixels.map(\.x).max()! - pixels.map(\.x).min()!, height: pixels.map(\.y).max()! - pixels.map(\.y).min()!)
             }
-            let selectedHeader = CaptureGroupHeader(title: "Advanced", symbol: "key",
+            let selectedHeader = CaptureGroupHeader(title: "Git", symbol: "key",
                 selection: AnyView(NativeSelectionCheckbox("", isOn: .constant(false))), expanded: .constant(false))
             let emptyHeader = CaptureGroupHeader(title: "SSH", symbol: "key", reservesSelectionColumn: true, expanded: .constant(false))
             precondition(iconBounds(selectedHeader) == iconBounds(emptyHeader), "SSH reserves the exact group checkbox column")
@@ -1095,11 +1142,11 @@ private struct CaptureRefinementHost: View {
             view.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
             await settle(view)
             precondition(boxes(view).count == 1 && state.selected.isEmpty && !state.advancedSelected)
-            state.groupsExpanded = [CaptureHierarchy.sectionID(.advanced), CaptureHierarchy.sshID]
+            state.groupsExpanded = [DeveloperSelectionGroup.git.id, CaptureHierarchy.sshID]
             await settle(view)
             let collapsedHeight = view.fittingSize.height
             func master() -> NSButton { boxes(view).first { $0.accessibilityLabel() == "Select SSH Keys" }! }
-            func advancedMaster() -> NSButton { boxes(view).first { $0.accessibilityLabel() == "Select Advanced" }! }
+            func advancedMaster() -> NSButton { boxes(view).first { $0.accessibilityLabel() == "Select Git" }! }
             precondition(boxes(view).count == 2 && master().state == .off && state.selected.isEmpty && !state.advancedSelected)
             let advancedFrame = advancedMaster().convert(advancedMaster().bounds, to: view)
             let secureFrame = master().convert(master().bounds, to: view)
@@ -1122,11 +1169,11 @@ private struct CaptureRefinementHost: View {
             await settle(view)
             precondition(state.expanded && state.selected.count == 2 && boxes(view).count == 4)
             clickDisclosure(advancedMaster()); await settle(view)
-            precondition(state.expanded && !state.groupsExpanded.contains(CaptureHierarchy.sectionID(.advanced)) && state.selected.count == 2 && boxes(view).count == 4)
+            precondition(state.expanded && !state.groupsExpanded.contains(DeveloperSelectionGroup.git.id) && state.selected.count == 2 && boxes(view).count == 4)
             activate(advancedMaster()); await settle(view)
             precondition(state.advancedSelected && state.selected.count == 2)
             clickDisclosure(advancedMaster()); await settle(view)
-            precondition(state.expanded && state.groupsExpanded.contains(CaptureHierarchy.sectionID(.advanced)) && boxes(view).count == 4)
+            precondition(state.expanded && state.groupsExpanded.contains(DeveloperSelectionGroup.git.id) && boxes(view).count == 4)
             func item(_ index: Int) -> NSButton { boxes(view).first { $0.accessibilityLabel() == "Include SSH identity " + identities[index].label }! }
             activate(item(0)); await settle(view)
             precondition(master().state == .mixed && state.selected == [identities[1].id] && state.expanded)
@@ -1165,21 +1212,21 @@ private struct CaptureRefinementHost: View {
             try bitmap.representation(using: .png, properties: [:])!.write(to: output.appendingPathComponent("selection-\(Int(width))-\(dark ? "dark" : "light").png"))
             clickDisclosure(master()); await settle(view)
             precondition(!state.expanded && state.selected.count == 2 && boxes(view).count == 2 && view.fittingSize.height == collapsedHeight)
-            print("PASS: Advanced / SSH children, independent native selection/disclosure, preserved tri-state and identity geometry at \(Int(width))pt \(dark ? "Dark" : "Light")")
+            print("PASS: Git / SSH children, independent native selection/disclosure, preserved tri-state and identity geometry at \(Int(width))pt \(dark ? "Dark" : "Light")")
             window.orderOut(nil)
         }
         let source = try String(contentsOfFile: "Sources/CapturePresentation.swift")
         let secureSource = source.components(separatedBy: "struct CaptureSecureTransferView:")[1].components(separatedBy: "extension SelectionState")[0]
-        precondition(secureSource.contains(".disclosureGroupStyle(TaskDisclosureStyle())") && !secureSource.contains("Toggle("), "One native Secure Transfer selection control")
+        precondition(secureSource.contains(".disclosureGroupStyle(SelectionCategoryDisclosureStyle())") && !secureSource.contains("Toggle("), "One native Secure Transfer selection control, independent from help and disclosure")
         let groupedSource = source.components(separatedBy: "struct CaptureGroupedContent<")[1].components(separatedBy: "struct CaptureTaskPresentation")[0]
-        precondition(groupedSource.contains("workflow.ssh.group"))
+        precondition(groupedSource.contains("selection.group.") && groupedSource.contains("if group == .ssh, let secureTransferGroup"))
         precondition(!groupedSource.contains("capture.container.secure-transfer"), "No duplicate Secure Transfer surface")
         let secureDomain = TaskDomainPresentation(id: CaptureHierarchy.secureTransferID, title: "Secure Transfer", symbol: "lock.shield",
             items: [TaskItemPresentation(id: identities[0].id, item: DisplayItem(id: identities[0].id, title: identities[0].label, status: .ready,
                 action: "The SSH key pair will be validated and encrypted during saving."), state: .planned)])
         for domains in [[secureDomain], [TaskDomainPresentation(id: "ssh-configuration", title: "SSH Configuration", symbol: "key", items: []), secureDomain]] {
             let (view, window) = host(TaskDomainList(domains: domains, stateTitles: [.planned: "Ready to Save"], compactReadyItems: true,
-                captureHierarchy: true, expansion: .constant([CaptureHierarchy.sectionID(.advanced), CaptureHierarchy.sshID, CaptureHierarchy.secureTransferID])), width: 580)
+                captureHierarchy: true, expansion: .constant([CaptureHierarchy.sshID, CaptureHierarchy.secureTransferID])), width: 580)
             await settle(view)
             precondition(boxes(view).isEmpty && view.fittingSize.height > 96, "Secure-only and mixed Confirmation keep prepared items read-only and reachable")
             window.orderOut(nil)
@@ -1260,7 +1307,7 @@ private struct CaptureRefinementHost: View {
             && source.contains(".id(challenge.id)") && source.contains(".interactiveDismissDisabled()")
             && source.contains(".onChange(of: runtime.secureChallenge)")
             && source.contains(".onDisappear { entry.clear(); runtime.cancelSecureChallenge(challenge) }"))
-        print("PASS: Native secure fields, confirmation/UTF-8 limits, transient input clearing, explicit default-off identity checkbox and existing Advanced placement")
+        print("PASS: Native secure fields, confirmation/UTF-8 limits, transient input clearing, explicit default-off identity checkbox and developer group placement")
     }
 
     @MainActor static func homebrewSetupChecks() async {
@@ -1887,7 +1934,7 @@ private struct CaptureRefinementHost: View {
         let advertised = Taxonomy.Group.allCases.flatMap(\.domains)
         precondition(Set(advertised) == known && advertised.count == known.count,
                      "Every Core domain must be classified exactly once")
-        precondition(Taxonomy.Section.allCases.map(\.title) == ["Applications & Tools", "macOS Settings", "Application Extras", "Advanced", "Other Findings"])
+        precondition(Taxonomy.Section.allCases.map(\.title) == ["Applications & Tools", "macOS Settings", "Application Extras", "For Experienced Users", "Other Findings"])
         precondition(Taxonomy.Group.allCases.map(\.section) == Taxonomy.Section.allCases)
         precondition(Taxonomy.Group.vscode.section == .applicationExtras && Taxonomy.Group.vscode.title == "VS Code")
         precondition(Taxonomy.Group.vscode.domains == ["vscode-extensions", "vscode-settings"])
@@ -1965,7 +2012,7 @@ private struct CaptureRefinementHost: View {
         precondition(SelectionState.none.bulkActionTitle == "Select All" && SelectionState.mixed.bulkActionTitle == "Select All"
             && SelectionState.all.bulkActionTitle == "Deselect All")
         let topGroups = liveCapture.filter { $0.group != .otherFindings }.map(\.group)
-        precondition(topGroups.map(CaptureHierarchy.sectionTitle) == ["Applications & Tools", "macOS Settings", "Application Extras", "Advanced"])
+        precondition(topGroups.map(CaptureHierarchy.sectionTitle) == ["Applications & Tools", "macOS Settings", "Application Extras", "For Experienced Users"])
         let capturePresentation = try! String(contentsOfFile: "Sources/CapturePresentation.swift")
         precondition(capturePresentation.contains("WorkspaceSectionHeader(title: \"For Experienced Users\")"))
         precondition(Set(topGroups.map(CaptureHierarchy.sectionID)).count == 4)
@@ -1988,7 +2035,7 @@ private struct CaptureRefinementHost: View {
         let advancedIDs = CaptureHierarchy.disclosureIDs(domains, scope: .advanced)
         precondition(ordinaryIDs.isDisjoint(with: advancedIDs) && !ordinaryIDs.contains("future-domain"))
         precondition(CaptureHierarchy.disclosureIDs(["git-repositories"], scope: .ordinary).isEmpty)
-        precondition(ordinaryIDs.contains(Taxonomy.Group.vscode.id) && advancedIDs.contains(Taxonomy.Group.advanced.id))
+        precondition(ordinaryIDs.contains(Taxonomy.Group.vscode.id) && Set(DeveloperSelectionGroup.allCases.map(\.id)).isSubset(of: advancedIDs) && !advancedIDs.contains(Taxonomy.Group.advanced.id))
         let expanded = CaptureHierarchy.toggled(["future-domain"], ids: advancedIDs)
         precondition(CaptureHierarchy.toggled(expanded, ids: ordinaryIDs).isSuperset(of: expanded))
         precondition(CaptureHierarchy.toggled(expanded, ids: advancedIDs) == ["future-domain"])
@@ -2052,16 +2099,11 @@ private struct CaptureRefinementHost: View {
         precondition(grouping.contains("CaptureHierarchy.ordinaryGroups") && !capturePresentation.contains("Compatibility & Dependencies"))
         precondition(!capturePresentation.contains("compatibilityID"))
         precondition(grouping.contains("members(rows)") && !grouping.contains("NativeSelectionCheckbox"))
-        precondition(grouping.contains("workflow.ssh.group") && grouping.contains("if expanded.contains(CaptureHierarchy.sshID)"),
-            "Configuration and SSH Keys share the sibling presentation-only SSH disclosure")
-        precondition(grouping.contains("tint: group == .advanced ? advancedTint : .blue")
-            && grouping.contains("titleTint: group == .advanced ? advancedTint : .primary"))
-        precondition(grouping.contains("CaptureGroupHeader(title: \"SSH\", symbol: \"key\", tint: advancedTint, titleTint: advancedTint,"),
-            "The sibling SSH header reuses Advanced's existing icon and title accent")
-        precondition(grouping.contains("colorScheme == .dark ? Color(red: 0.95, green: 0.52, blue: 0.34) : Color(red: 0.72, green: 0.26, blue: 0.13)"))
+        precondition(grouping.contains("CaptureGroupHeader(title: group.title") && grouping.contains("if expanded.contains(group.id)"))
+        precondition(grouping.contains("tint: advancedTint, titleTint: advancedTint") && grouping.contains("DeveloperSelectionGroup.accent(colorScheme)"))
         precondition(WorkspacePresentationTaxonomy.Group.advanced.domains == ["git-configuration", "git-repositories", "workspace-folders", "ssh-configuration", "shell-zsh", "vscode-workspaces"])
         let secure = capturePresentation.components(separatedBy: "struct CaptureSecureTransferView:")[1].components(separatedBy: "extension SelectionState")[0]
-        precondition(secure.contains(".disclosureGroupStyle(TaskDisclosureStyle())") && secure.contains("Color.clear.frame(width: 28, height: 28)"))
+        precondition(secure.contains(".disclosureGroupStyle(SelectionCategoryDisclosureStyle())") && secure.contains("Color.clear.frame(width: 28, height: 28)"))
         precondition(secure.contains("DisclosureGroup(isExpanded: expansion ?? $expanded)"))
         precondition(secure.contains("if inventory.items.isEmpty { return \"Unavailable\" }") && secure.contains("ForEach(inventory.items)")
             && secure.contains("NativeSelectionCheckbox") && !secure.contains("Divider()"))
@@ -3001,6 +3043,14 @@ private struct CaptureRefinementHost: View {
         precondition(sameReason.attention[0].items.count == 2, "Independent identities must not collapse just because their explanations match")
         let many = CaptureResultPresentation(publication: publication, notices: (1...30).map { warning("issue-\($0)", reason: "source_partial") })
         precondition(many.attention[0].items.count == 30)
+        let developerIDs = ["git-repositories", "ssh-configuration", "workspace-folders"]
+        let developerPublication = CoreCapturePublication(publicationOccurred: true, destination: publication.destination,
+            preparedCaptureID: publication.preparedCaptureID,
+            bundle: .init(formatVersion: 1, selectedCategories: developerIDs, selectedItemCounts: [:], secureComponent: false))
+        let developerResult = CaptureResultPresentation(publication: developerPublication,
+            notices: developerIDs.map { warning($0, reason: "source_partial", domain: $0) })
+        precondition(developerResult.attention.map(\.title) == ["Git Repositories / Worktrees", "SSH Configuration", "Workspace Folders"])
+        precondition(developerResult.affectedCount == 3 && developerResult.scope == "3 domains · 0 items saved")
         func coloredBounds(_ image: NSBitmapImageRep, warning: Bool) -> CGRect? {
             var xs: [Int] = [], ys: [Int] = []
             for y in 0..<image.pixelsHigh { for x in 0..<image.pixelsWide {
@@ -3029,7 +3079,7 @@ private struct CaptureRefinementHost: View {
         for size in [MainWindowPolicy.minimum, MainWindowPolicy.preferred] {
             for dark in [false, true] {
                 NSApp.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
-                for (name, result) in [("clean", clean), ("attention", limited), ("many", many)] {
+                for (name, result) in [("clean", clean), ("attention", limited), ("many", many), ("developer", developerResult)] {
                     var frames: [String: CGRect] = [:]
                     let content = HStack(spacing: 0) {
                         Color(nsColor: .controlBackgroundColor).frame(width: 215)
@@ -4838,7 +4888,7 @@ private struct CaptureRefinementHost: View {
         precondition(WorkflowExpansion.toggled(expandedIDs, available: expandedIDs).isEmpty)
         let prerequisites = RestorePrerequisiteSummaryPresentation(conditions: plan.readiness.conditions, ready: false)
         precondition(prerequisites.manualConditions.map(\.code) == ["vscode_cli_required", "ssh_configuration_not_ready"])
-        print("PASS: Preview grouping preserves exact effective plan rows, actions, statuses, counts, macOS details and manual App Store scope; sparse/Advanced-only/unknown plans retain evidence")
+        print("PASS: Preview grouping preserves exact effective plan rows, actions, statuses, counts, macOS details and manual App Store scope; sparse/developer-only/unknown plans retain evidence")
 
         var actionCalls = 0
         func flush(_ host: NSView) {
@@ -5076,7 +5126,230 @@ private struct CaptureRefinementHost: View {
         print("PASS: SSH advisories preserve all-match presentation; Git clone dependency states retain one task and do not imply remote authentication")
     }
 
+    @MainActor static func developerSelectionChecks() async throws {
+        let groups = DeveloperSelectionGroup.allCases
+        precondition(groups.map(\.title) == ["Git", "SSH", "Workspace", "Shell"])
+        precondition(Set(groups.flatMap(\.domains)).count == 7)
+        precondition(DeveloperSelectionGroup.state([.all, .all]) == .all)
+        precondition(DeveloperSelectionGroup.state([.all, .none]) == .mixed)
+        precondition(DeveloperSelectionGroup.state([.mixed]) == .mixed)
+        precondition(DeveloperSelectionGroup.state([]) == .none)
+        precondition(DeveloperSelectionGroup.summary(.all, available: false) == "Unavailable")
+        let ids = groups.flatMap(\.domains)
+        let developer = DeveloperSelectionGroup.disclosureIDs(ids)
+        precondition(Set(groups.map(\.id)).isSubset(of: developer) && !developer.contains(CaptureHierarchy.sectionID(.advanced)))
+        let standard = CaptureHierarchy.disclosureIDs(["homebrew-packages", "macos-finder", "vscode-settings"], scope: .ordinary)
+        precondition(developer.isDisjoint(with: standard))
+        precondition(CaptureHierarchy.toggled(standard, ids: developer).isSuperset(of: standard))
+        // Shared read-only taxonomy and its default disclosure policy are unchanged.
+        precondition(WorkspacePresentationTaxonomy.group(for: "git-configuration") == .advanced)
+        precondition(CaptureHierarchy.initialExpansion.isEmpty)
+        precondition(CaptureHierarchy.disclosureIDs(["git-configuration"], scope: .advanced).contains(DeveloperSelectionGroup.git.id))
+        for id in ids.filter({ $0 != "git-configuration" }) { for flow in [SelectionHelpFlow.capture, .rebuild] {
+            precondition(SelectionCategoryHelp.text(id, flow: flow)?.isEmpty == false)
+        } }
+        precondition(SelectionCategoryHelp.text(CaptureHierarchy.secureTransferID, flow: .capture)?.contains("not encrypted") == true)
+        precondition(SelectionCategoryHelp.text("ssh-configuration", flow: .rebuild)?.contains("explicit approval") == true)
+        let qualified = ["Git Configuration", "Git Repositories / Worktrees", "SSH Configuration", "SSH Keys",
+            "Workspace Folders", "VS Code Workspace", "Zsh Configuration"]
+        precondition(zip(ids, qualified).allSatisfy { DeveloperSelectionGroup.label($0, fallback: "old") == $1 })
+        precondition(DeveloperSelectionGroup.label(CoreRestorePreparation.secureDomain, fallback: "Secure Transfer") == "SSH Keys")
+        precondition(DeveloperSelectionGroup.label("ssh-configuration", fallback: "old", parent: .git) == "SSH Configuration")
+        precondition(DeveloperSelectionGroup.label("ssh-configuration", fallback: "old", parent: .ssh) == "Configuration")
+        precondition(DeveloperSelectionGroup.label("workspace-folders", fallback: "old", parent: .workspace) == "Folders")
+        precondition(DeveloperSelectionGroup.label("future", fallback: "Preserved") == "Preserved")
+        for id in CaptureMacOSSettingsGroup.domainIDs + ["git-configuration", "homebrew-packages", "future"] {
+            for flow in [SelectionHelpFlow.capture, .rebuild] { precondition(SelectionCategoryHelp.text(id, flow: flow) == nil) }
+        }
+        precondition(WorkspacePresentationTaxonomy.Section.allCases.allSatisfy { $0.title != "Advanced" })
+        _ = NSApplication.shared
+        // Pixel evidence is scoped to category icons; status symbols keep their own semantic colors.
+        for scheme in [ColorScheme.light, .dark] {
+            for id in ids + [CoreRestorePreparation.secureDomain, "macos-finder", "homebrew-packages"] {
+                let icon = WorkspaceCategoryIcon(symbol: "key", domainID: id).padding(8).background(Color.white).environment(\.colorScheme, scheme)
+                let bitmap = NSBitmapImageRep(cgImage: ImageRenderer(content: icon).cgImage!)
+                var blue = false, orange = false
+                for x in 0..<bitmap.pixelsWide { for y in 0..<bitmap.pixelsHigh {
+                    let c = bitmap.colorAt(x: x, y: y)!.usingColorSpace(.sRGB)!
+                    guard c.alphaComponent > 0.9 else { continue }
+                    blue = blue || (c.blueComponent > c.redComponent * 1.4 && c.blueComponent > 0.4)
+                    orange = orange || (c.redComponent > c.greenComponent * 1.15 && c.redComponent > 0.5 && c.redComponent > c.blueComponent * 1.4)
+                } }
+                precondition(DeveloperSelectionGroup.group(for: id) == nil ? blue && !orange : orange && !blue, "Icon \(id) \(scheme): blue=\(blue) orange=\(orange)")
+            }
+        }
+        let capture = try String(contentsOfFile: "Sources/CaptureView.swift")
+        let restore = try String(contentsOfFile: "Sources/RestoreView.swift")
+        let task = try String(contentsOfFile: "Sources/TaskComponents.swift")
+        let check = try String(contentsOfFile: "Sources/EnvironmentStatusView.swift")
+        precondition(capture.components(separatedBy: "developerSelection:").count == 2 && restore.components(separatedBy: "developerSelection:").count == 2)
+        precondition(!task.contains("developerSelection:") && !check.contains("NativeSelectionCheckbox"))
+        secureRestoreAvailabilityChecks(restore)
+        try sshResolutionPresentationChecks()
+        _ = NSApplication.shared; NSApp.appearance = NSAppearance(named: .aqua)
+        var disclosed = false
+        func fixture(_ showingHelp: Bool) -> some View {
+            VStack {
+                SelectionCategoryTitle(id: "ssh-configuration", title: "Configuration", symbol: "key", flow: .rebuild,
+                    toggle: { disclosed.toggle() }, helpPresentation: .constant(showingHelp))
+                Spacer()
+            }.padding(24).frame(width: 420, height: 360).background(Color(nsColor: .windowBackgroundColor))
+        }
+        let host = NSHostingView(rootView: fixture(false))
+        let window = NSWindow(contentRect: .init(x: 100, y: 200, width: 420, height: 360), styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = host; window.makeKeyAndOrderFront(nil)
+        defer { window.close() }
+        try await Task.sleep(for: .milliseconds(100))
+        host.rootView = fixture(true)
+        try await Task.sleep(for: .milliseconds(500)); host.layoutSubtreeIfNeeded()
+        precondition(!disclosed, "Help never triggers the category disclosure")
+        let popovers = NSApp.windows.filter { $0 !== window && $0.isVisible }
+        guard let popover = popovers.first, let content = popover.contentView else { preconditionFailure("Native help popover did not open") }
+        func hostingView(_ view: NSView) -> NSView? {
+            if String(describing: type(of: view)).contains("HostingView") { return view }
+            return view.subviews.lazy.compactMap(hostingView).first
+        }
+        guard let help = hostingView(content) else { preconditionFailure("Native popover has no rendered SwiftUI content") }
+        help.layoutSubtreeIfNeeded(); help.displayIfNeeded()
+        precondition(help.bounds.width > 0 && help.bounds.height > 0)
+        // Optional local visual evidence: SwiftUI popovers use a compositor layer
+        // that cacheDisplay does not capture. Capture only this fixture's window;
+        // automated suites do not require screen-recording permission.
+        if CommandLine.arguments.contains("--native-help-screenshot") {
+            let output = URL(fileURLWithPath: "build/Debug/DeveloperSelection")
+            try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+            let screenshot = Process()
+            screenshot.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+            screenshot.arguments = ["-x", "-o", "-l", String(popover.windowNumber), output.appendingPathComponent("contextual-help-popover-light.png").path]
+            try screenshot.run(); screenshot.waitUntilExit()
+            precondition(screenshot.terminationStatus == 0, "Fixture popover screenshot failed")
+        }
+        host.rootView = fixture(false)
+        print("PASS: canonical developer labels/groups/accent, selective native help, protected legacy taxonomy, consent and all-match/Preview semantics")
+    }
+    @MainActor static func selectionHelpChecks() async throws {
+        setbuf(stdout, nil)
+        _ = NSApplication.shared; NSApp.setActivationPolicy(.accessory)
+        let previousAppearance = NSApp.appearance
+        defer { NSApp.appearance = previousAppearance }
+        let output = URL(fileURLWithPath: "build/Debug/SelectionHelpPolish")
+        try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+        func descendants<T: NSView>(_ view: NSView, _: T.Type) -> [T] {
+            (view as? T).map { [$0] } ?? view.subviews.flatMap { descendants($0, T.self) }
+        }
+        for flow in [SelectionHelpFlow.capture, .rebuild] {
+            for (width, height): (CGFloat, CGFloat) in [(580, 520), (985, 700)] {
+                for dark in [false, true] {
+                    NSApp.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+                    let state = SelectionHelpFixtureState()
+                    let host = NSHostingView(rootView: SelectionHelpFixtureView(state: state, flow: flow))
+                    let window = NSWindow(contentRect: .init(x: 100, y: 100, width: width, height: height),
+                        styleMask: [.titled, .closable], backing: .buffered, defer: false)
+                    window.isReleasedWhenClosed = false; window.contentView = host
+                    window.makeKeyAndOrderFront(nil)
+                    defer { window.close() }
+                    func settle() async {
+                        try? await Task.sleep(for: .milliseconds(180))
+                        host.layoutSubtreeIfNeeded(); host.displayIfNeeded()
+                    }
+                    await settle()
+                    let scrolls = descendants(host, NSScrollView.self)
+                    precondition(scrolls.count == 1)
+                    let scroll = scrolls[0], document = scroll.documentView!
+                    let viewport = scroll.convert(scroll.bounds, to: host)
+                    let originalGroups = state.groups
+                    func popovers() -> [NSWindow] { NSApp.windows.filter { $0 !== window && $0.isVisible } }
+                    func trigger(_ id: String) -> CGRect {
+                        guard let frame = state.titleFrames[id] else { preconditionFailure("Missing native help title: \(id)") }
+                        precondition(frame.height >= 24)
+                        // The compact title ends with the production 24pt Info
+                        // button. Measure the live row rather than hard-code its position.
+                        return CGRect(x: frame.maxX - 24, y: frame.midY - 12, width: 24, height: 24)
+                    }
+                    func press(_ id: String) async {
+                        let frame = trigger(id)
+                        let point = host.convert(NSPoint(x: frame.midX, y: host.isFlipped ? frame.midY : host.bounds.height - frame.midY), to: nil)
+                        for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+                            window.sendEvent(NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: type == .leftMouseDown ? 1 : 0)!)
+                        }
+                        await settle()
+                    }
+                    func screenshot(_ suffix: String, popover: Bool = false) throws {
+                        guard CommandLine.arguments.contains("--native-help-screenshot") else { return }
+                        let name = "\(flow == .capture ? "capture" : "rebuild")-\(Int(width))-\(dark ? "dark" : "light")-\(suffix).png"
+                        let process = Process(); process.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+                        process.arguments = ["-x", "-o", "-l", String((popover ? popovers().first! : window).windowNumber), output.appendingPathComponent(name).path]
+                        try process.run(); process.waitUntilExit(); precondition(process.terminationStatus == 0)
+                    }
+                    func reveal(_ id: String, atBottom: Bool) async {
+                        let rect = document.convert(trigger(id), from: host)
+                        let y = atBottom ? rect.maxY - scroll.contentView.bounds.height + 12 : rect.minY - 12
+                        let limit = max(0, document.bounds.height - scroll.contentView.bounds.height)
+                        scroll.contentView.scroll(to: .init(x: 0, y: min(max(0, y), limit)))
+                        scroll.reflectScrolledClipView(scroll.contentView); await settle()
+                    }
+                    try screenshot("icon")
+                    await press("git-repositories")
+                    precondition(popovers().count == 1, "Info opens one native popover")
+                    await press("git-repositories")
+                    precondition(popovers().isEmpty, "Pressing Info again closes it")
+                    await press("git-repositories")
+                    scroll.contentView.scroll(to: .init(x: 0, y: 20)); scroll.reflectScrolledClipView(scroll.contentView); await settle()
+                    precondition(popovers().isEmpty, "Moving the containing clip view dismisses help")
+                    try screenshot("after-scroll")
+                    await reveal("ssh-configuration", atBottom: true)
+                    // The window is near the screen's bottom edge; native popover
+                    // placement, not application offsets, must keep help usable.
+                    let screen = window.screen!.visibleFrame
+                    window.setFrameOrigin(.init(x: screen.minX + 30, y: screen.minY + 8)); await settle()
+                    await press("ssh-configuration")
+                    precondition(popovers().count == 1)
+                    precondition(screen.insetBy(dx: -1, dy: -1).contains(popovers()[0].frame), "Bottom-edge native help remains on screen")
+                    try screenshot("bottom-open")
+                    try screenshot("bottom-popover", popover: true)
+                    // Invoke the native Escape/cancel responder action. The
+                    // command-line fixture need not steal application focus.
+                    let popup = popovers()[0]
+                    popup.cancelOperation(nil)
+                    await settle(); precondition(popovers().isEmpty, "Escape dismisses native help")
+                    await press("ssh-configuration")
+                    let clipAmount = max(80, scroll.convert(scroll.bounds, to: host).maxY - trigger("ssh-configuration").minY + 12)
+                    window.setContentSize(.init(width: width, height: height - clipAmount)); await settle()
+                    precondition(!scroll.convert(scroll.bounds, to: host).contains(trigger("ssh-configuration")), "Resize fixture must clip the source trigger")
+                    precondition(popovers().isEmpty, "Clipping the trigger during a resize dismisses help")
+                    window.setContentSize(.init(width: width, height: height)); await settle()
+                    await reveal("ssh-configuration", atBottom: true)
+                    await press("ssh-configuration")
+                    state.showsSSH = false; await settle()
+                    precondition(popovers().isEmpty, "Removing the source category dismisses help")
+                    state.showsSSH = true; await settle()
+                    await reveal("ssh-configuration", atBottom: false)
+                    window.setFrameOrigin(.init(x: screen.minX + 30, y: screen.maxY - window.frame.height - 8)); await settle()
+                    await press("ssh-configuration")
+                    precondition(popovers().count == 1 && screen.insetBy(dx: -1, dy: -1).contains(popovers()[0].frame), "Top-edge help remains usable")
+                    // Opening another visible category keeps only one native help.
+                    await press("workspace-folders")
+                    precondition(popovers().count <= 1, "Changing categories never stacks native help")
+                    // Native popovers may consume the first outside click to
+                    // dismiss; a subsequent click then opens the new category.
+                    if popovers().isEmpty { await press("workspace-folders") }
+                    precondition(popovers().count == 1, "Only one contextual help is presented")
+                    await press("workspace-folders")
+                    precondition(popovers().isEmpty, "The new category owns and toggles its help")
+                    await press("workspace-folders")
+                    scroll.contentView.scroll(to: .zero); scroll.reflectScrolledClipView(scroll.contentView); await settle()
+                    precondition(popovers().isEmpty && !state.selected && !state.categoryExpanded && state.groups == originalGroups)
+                    precondition(scroll.convert(scroll.bounds, to: host) == viewport, "Help does not change the list/footer geometry")
+                    window.close()
+                    print("PASS: \(flow) help \(Int(width))x\(Int(height)) \(dark ? "Dark" : "Light"): native toggle/cancel, scroll/clipping/removal dismissal, screen edges, one help, 24pt target and unchanged selection/disclosure/footer")
+                }
+            }
+        }
+    }
     @MainActor static func main() async {
+        if CommandLine.arguments.contains("--selection-help-only") { try! await selectionHelpChecks(); return }
+        if CommandLine.arguments.contains("--developer-selection-only") { try! await developerSelectionChecks(); return }
         if CommandLine.arguments.contains("--ssh-resolution-only") { try! sshResolutionPresentationChecks(); return }
         if CommandLine.arguments.contains("--workflow-contracts-only") { workflowContractChecks(); return }
         if CommandLine.arguments.contains("--preview-column-geometry-only") { previewColumnGeometryChecks(); return }
@@ -5134,6 +5407,8 @@ private struct CaptureRefinementHost: View {
         if CommandLine.arguments.contains("--restore-macos-only") { await restoreMacOSChecks(); return }
         if CommandLine.arguments.contains("--workflow-scroll-only") { try! await workflowStatusScrollChecks(); return }
         if CommandLine.arguments.count == 1 {
+            try! await selectionHelpChecks()
+            try! await developerSelectionChecks()
             try! await secureSelectionChecks()
             try! await capturePreviewRefinementChecks()
             try! previewCleanupChecks()
@@ -5387,7 +5662,7 @@ private struct CaptureRefinementHost: View {
         precondition(!statusView.contains("Full Diagnostic Details") && !statusView.contains("fact.predicateTitle"))
         let domainView = statusView.components(separatedBy: "struct EnvironmentComparisonDomain: View")[1].components(separatedBy: "struct EnvironmentComparisonItem: View")[0]
         precondition(domainView.contains("WorkflowCountPill(count: count, label: label, tint: tint)") && domainView.contains("if let counts"))
-        precondition(domainView.contains("WorkspaceCategoryIcon(symbol: category.symbol)") && content.contains(".fontWeight(.semibold).foregroundStyle(.blue)"))
+        precondition(domainView.contains("WorkspaceCategoryIcon(symbol: category.symbol, domainID: category.id)") && content.contains("DeveloperSelectionGroup.accent(colorScheme)"))
         precondition(countPill.contains(".padding(.horizontal, 6).frame(minWidth: 32, minHeight: 23)"))
         precondition(content.contains("Rectangle().fill(Color.primary.opacity(0.22)).frame(height: 1.5)"))
 
@@ -5482,7 +5757,8 @@ private struct CaptureRefinementHost: View {
 
         precondition(RestoreRowIcon.symbol(for: "vscode-settings") == "slider.horizontal.3")
         precondition(aggregateSource.contains("WorkspaceCategoryTitle(id: \"macos-settings\","))
-        precondition(restoreView.contains("WorkspaceCategoryTitle(id: area.id, title: CaptureHierarchy.title(area.id, fallback: area.label), fallbackSymbol: RestoreRowIcon.symbol(for: area.id))"))
+        precondition(restoreView.contains("SelectionCategoryTitle(id: area.id, title: DeveloperSelectionGroup.title(area.id, fallback: area.label)")
+            && restoreView.contains("symbol: RestoreRowIcon.symbol(for: area.id), flow: .rebuild"))
         precondition(restoreView.contains("RestoreSelectionPresentation.ordered(model.selectionAreas)")
             && restoreView.contains("CaptureGroupedContent(rows: areas, expanded: treeExpansion,"))
         func luminance(_ color: NSColor) -> Double {
@@ -5606,7 +5882,7 @@ private struct CaptureRefinementHost: View {
         let captureViewPattern = #"CaptureView\s*\(\s*model\s*:\s*capture\s*,\s*runtime\s*:\s*runtime\s*,\s*showsActions\s*:\s*false\s*,"#
             + #"\s*experiencedVisibility\s*:\s*\$captureExperiencedVisible\s*\)"#
         precondition(workspace.range(of: captureViewPattern, options: .regularExpression) != nil,
-            "Workspace owns Capture actions and preserves the Advanced disclosure binding")
+            "Workspace owns Capture actions and preserves the experienced section disclosure binding")
         precondition(workspace.range(of: "CaptureActionsView(model:")!.lowerBound > workspace.range(of: ".modifier(WorkspaceContentGeometry())")!.lowerBound)
         precondition(!captureView.contains("individual items") && captureView.contains("panel.nameFieldStringValue = \"Saved Environment\""))
         let reviewStart = captureView.range(of: "            case .review:")!

@@ -73,7 +73,7 @@ struct CaptureCategory: Identifiable {
                      "git-repositories": "Git Repositories", "vscode-workspaces": "VS Code Workspaces", "workspace-folders": "Workspace Folders", "ssh-configuration": "SSH Configuration",
                      "shell-zsh": "Shell Configuration", "macos-finder": "Finder", "macos-dock": "Dock", "macos-windows": "Windows",
                      "macos-keyboard": "Keyboard", "macos-trackpad": "Trackpad", "macos-screenshots": "Screenshots"]
-        return names[domain] ?? domain
+        return DeveloperSelectionGroup.label(domain, fallback: names[domain] ?? domain)
     }
     var symbol: String {
         switch id {

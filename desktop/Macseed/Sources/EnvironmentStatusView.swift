@@ -313,8 +313,8 @@ struct EnvironmentComparisonDomain: View {
     }
     private var title: some View {
         HStack(spacing: 12) {
-            WorkspaceCategoryIcon(symbol: category.symbol)
-            Text(category.id == "git-repositories" ? "Git Repositories / Worktrees" : category.title).font(.body.weight(.medium))
+            WorkspaceCategoryIcon(symbol: category.symbol, domainID: category.id)
+            Text(DeveloperSelectionGroup.label(category.id, fallback: category.title)).font(.body.weight(.medium))
         }
     }
     var sharedObservationFailure: Bool { !sharedObservationItemIDs.isEmpty }

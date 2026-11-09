@@ -26,7 +26,7 @@ struct RestoreIssueSummaryPresentation {
         var items: [String: [DisplayItem]] = [:]
         for category in categories {
             for item in category.items where item.requiresAttention {
-                if items[category.id] == nil { order.append(category.id); titles[category.id] = category.title }
+                if items[category.id] == nil { order.append(category.id); titles[category.id] = DeveloperSelectionGroup.label(category.id, fallback: category.title) }
                 if items[category.id]?.contains(where: { $0.id == item.id && $0.status == item.status && $0.reason == item.reason }) != true {
                     items[category.id, default: []].append(Self.readable(item))
                 }
@@ -180,7 +180,7 @@ struct RestorePrerequisiteSummaryView: View {
                     if showsHeading { Text("Prerequisites").font(.headline) }
                     ForEach(summary.manualDomains, id: \.self) { domain in
                         RestoreBlockingPrerequisiteAreaView(
-                            title: areas.first { $0.id == domain }?.label ?? "Selected work",
+                            title: DeveloperSelectionGroup.label(domain, fallback: areas.first { $0.id == domain }?.label ?? "Selected work"),
                             conditions: summary.manualConditions.filter { $0.domain == domain })
                     }
                     if let homebrewRecheck, summary.manualConditions.contains(where: {

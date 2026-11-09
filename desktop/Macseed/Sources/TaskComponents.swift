@@ -372,7 +372,8 @@ enum RestorePreviewHierarchy {
     }
     static func disclosureIDs(_ domains: [TaskDomainPresentation], settings: [TaskDomainPresentation]) -> Set<String> {
         var ids = TaskDomainList.disclosureIDs(domains, settings: settings)
-        for section in sections(domains) where section.group != .otherFindings {
+        ids.formUnion(DeveloperSelectionGroup.allCases.filter { group in domains.contains { DeveloperSelectionGroup.group(for: $0.id) == group } }.map(\.id))
+        for section in sections(domains) where section.group != .otherFindings && section.group != .advanced {
             ids.insert(CaptureHierarchy.sectionID(section.group))
             if section.group == .vscode { ids.insert(section.group.id) }
         }
@@ -383,7 +384,7 @@ enum RestorePreviewHierarchy {
             symbol: CaptureHierarchy.symbol(group), items: rows.flatMap(\.items), previewOnly: true)
     }
     static func titleInset(_ id: String) -> CGFloat {
-        if id == CoreRestorePreparation.secureDomain { return 24 }
+        if id == CoreRestorePreparation.secureDomain { return CaptureChildRowGrid.leadingInset + 12 }
         let group = CaptureHierarchy.group(for: id)
         guard group != .otherFindings else { return 0 }
         return CaptureChildRowGrid.leadingInset + 12 * (group == .vscode ? 2 : 1)
@@ -515,18 +516,22 @@ struct TaskDomainList: View {
                 }
             }.modifier(WorkspaceCardSurface()).accessibilityIdentifier("restore.preview.ordinary")
         }
-        let advanced = sections.first(where: { $0.group == .advanced })
-        let secure = domains.first(where: { $0.id == CoreRestorePreparation.secureDomain })
-        if advanced != nil || secure != nil {
+        let developerGroups = DeveloperSelectionGroup.allCases.filter { group in domains.contains { DeveloperSelectionGroup.group(for: $0.id) == group } }
+        if !developerGroups.isEmpty {
             VStack(alignment: .leading, spacing: 12) {
                 HStack(alignment: .firstTextBaseline, spacing: 12) {
                     WorkspaceSectionHeader(title: "For Experienced Users")
                     if ordinary.isEmpty { expandAllButton }
                 }
                 VStack(spacing: 0) {
-                    if let advanced { previewAccordion(.advanced, rows: advanced.rows) }
-                    if advanced != nil && secure != nil { Divider().padding(.horizontal, 16) }
-                    if let secure { domainRow(secure) }
+                    ForEach(developerGroups) { group in
+                        let rows = domains.filter { DeveloperSelectionGroup.group(for: $0.id) == group }
+                        let summary = TaskDomainPresentation(id: group.id, title: group.title, symbol: group.symbol,
+                            items: rows.flatMap(\.items), previewOnly: true)
+                        previewGroupHeader(summary: summary, developer: true)
+                        if expandedIDs.contains(group.id) { previewMembers(rows, parentState: summary.state) }
+                        if group != developerGroups.last { Divider().padding(.horizontal, 16) }
+                    }
                 }
                 .background(.quaternary.opacity(0.2), in: RoundedRectangle(cornerRadius: 8))
                 .modifier(WorkspaceCardSurface()).accessibilityIdentifier("restore.preview.advanced")
@@ -551,27 +556,32 @@ struct TaskDomainList: View {
     }
     private func previewGroupHeader(_ group: CaptureHierarchy.Group, rows: [TaskDomainPresentation], subgroup: Bool = false) -> some View {
         let summary = RestorePreviewHierarchy.summary(group, rows: rows)
-        let tint = colorScheme == .dark ? Color(red: 0.95, green: 0.52, blue: 0.34) : Color(red: 0.72, green: 0.26, blue: 0.13)
-        return DisclosureGroup(isExpanded: WorkflowExpansion.binding(subgroup ? group.id : summary.id, in: treeExpansion)) {
+        return previewGroupHeader(summary: summary, developer: false, subgroupID: subgroup ? group.id : nil)
+    }
+    private func previewGroupHeader(summary: TaskDomainPresentation, developer: Bool, subgroupID: String? = nil) -> some View {
+        let subgroup = subgroupID != nil
+        let id = subgroupID ?? summary.id
+        let tint = DeveloperSelectionGroup.accent(colorScheme)
+        return DisclosureGroup(isExpanded: WorkflowExpansion.binding(id, in: treeExpansion)) {
             EmptyView()
         } label: {
             // Keep the existing Preview status/count reference, also used by
             // Manual Installation. Parent labels add no extra count totals.
             RestorePreviewRow(title: HStack(spacing: 12) {
                 Image(systemName: subgroup ? "curlybraces" : summary.symbol)
-                    .foregroundStyle(group == .advanced ? tint : .blue)
+                    .foregroundStyle(developer ? tint : .blue)
                     .frame(width: TaskRowLayout.iconWidth).accessibilityHidden(true)
                 Text(subgroup ? "VS Code" : summary.title)
                     .font(subgroup ? .body.weight(.medium) : .headline)
-                    .foregroundStyle(group == .advanced ? tint : .primary)
+                    .foregroundStyle(developer ? tint : .primary)
             }, status: RestorePreviewCategoryStatus(domain: summary, stateTitles: stateTitles),
                 counts: subgroup ? [] : RestorePreviewMetrics.badges(summary),
                 // Preserve the former leading indicator's 12pt slot + 12pt gap.
                 titleInset: 24 + (subgroup ? CaptureReviewPresentation.hierarchyStep : 0),
-                expanded: expandedIDs.contains(subgroup ? group.id : summary.id),
+                expanded: expandedIDs.contains(id),
                 statusWidth: nil).padding(.vertical, 6)
         }.disclosureGroupStyle(TaskDisclosureStyle(includesIndicator: false, contentTrailingInset: 0)).padding(.horizontal, 16)
-            .accessibilityIdentifier("restore.preview.disclosure." + (subgroup ? group.id : summary.id))
+            .accessibilityIdentifier("restore.preview.disclosure." + id)
     }
     private func previewMembers(_ rows: [TaskDomainPresentation], parentState: TaskRowState? = nil) -> some View {
         VStack(spacing: 0) {
@@ -590,7 +600,7 @@ struct TaskDomainList: View {
             return AnyView(domainRow(domain).padding(.leading, CaptureChildRowGrid.leadingInset))
         }
         return AnyView(VStack(alignment: .leading, spacing: 0) {
-            CaptureGroupHeader(title: CaptureHierarchy.title(domain.id, fallback: domain.title), summary: captureResultLayout ? "Saved" : "Ready to Save", symbol: domain.symbol,
+            CaptureGroupHeader(title: CaptureHierarchy.title(domain.id, fallback: domain.title), summary: captureResultLayout ? "Saved" : "Ready to Save", symbol: domain.symbol, tint: DeveloperSelectionGroup.accent(colorScheme),
                 expanded: WorkflowExpansion.binding(domain.id, in: treeExpansion))
             if expandedIDs.contains(domain.id) {
                 domainContents(domain).padding(.leading, 16 + CaptureChildRowGrid.leadingInset).padding(.trailing, 16)
@@ -637,7 +647,7 @@ struct TaskDomainList: View {
                 RestorePreviewRow(title: domainTitle(domain),
                     status: RestorePreviewCategoryStatus(domain: domain, stateTitles: stateTitles,
                         parentState: previewParentState, expanded: expandedIDs.contains(domain.id)),
-                    counts: restorePreviewHierarchy && domain.id != CoreRestorePreparation.secureDomain ? [] : RestorePreviewMetrics.badges(domain),
+                    counts: restorePreviewHierarchy ? [] : RestorePreviewMetrics.badges(domain),
                     titleInset: restorePreviewHierarchy ? RestorePreviewHierarchy.titleInset(domain.id) : 0,
                     expanded: expandedIDs.contains(domain.id),
                     statusWidth: restorePreviewHierarchy && domain.id == CoreRestorePreparation.secureDomain ? nil : TaskRowLayout.statusWidth).padding(.vertical, 6)
@@ -695,8 +705,8 @@ struct TaskDomainList: View {
         }.joined(separator: " · ")
     }
     private func domainTitle(_ domain: TaskDomainPresentation) -> some View {
-        WorkspaceCategoryTitle(id: domain.id, title: captureHierarchy || (restorePreviewHierarchy && domain.id != "ssh-configuration") ? CaptureHierarchy.title(domain.id, fallback: domain.title) : domain.title,
-            fallbackSymbol: domain.symbol)
+        WorkspaceCategoryTitle(id: domain.id, title: captureHierarchy || restorePreviewHierarchy ? CaptureHierarchy.title(domain.id, fallback: domain.title) : domain.title,
+            fallbackSymbol: domain.symbol, developerGroup: captureHierarchy || restorePreviewHierarchy ? DeveloperSelectionGroup.group(for: domain.id) : nil)
             .frame(maxWidth: .infinity, alignment: .leading)
     }
     private func domainStatus(_ domain: TaskDomainPresentation) -> some View {

@@ -80,7 +80,7 @@ import Vision
                 let boxes = descendants(host, NSButton.self).filter { $0.target is NativeSelectionCheckbox.Coordinator }
                 let secure = boxes.first { $0.accessibilityLabel() == "Select SSH Keys" }
                 precondition((secure != nil) == (model.inspection?.secureComponent == true))
-                if let secure, let advanced = boxes.first(where: { $0.accessibilityLabel() == "Select Advanced" }) {
+                if let secure, let advanced = boxes.first(where: { $0.accessibilityLabel() == "Select Git" }) {
                     let a = advanced.convert(advanced.bounds, to: host), s = secure.convert(secure.bounds, to: host)
                     precondition(abs(s.minX - a.minX - CaptureReviewPresentation.hierarchyStep) < 1 && s.minY > a.minY + 96)
                     for _ in 0..<2 {
@@ -3122,6 +3122,119 @@ import Vision
         print("PASS: Light/Dark Selection, Customize (long name/path and aligned folder actions), and custom Preview fixtures; no importer or Execute")
     }
 
+    @MainActor static func developerSelectionChecks(core: URL, source: URL, repo: URL, python: URL, root: URL) async throws {
+        let names = ["inspection.json", "mode", "identities.json", "migration-path", "requests.jsonl"]
+        let previous = names.map { try? Data(contentsOf: core.appendingPathComponent($0)) }
+        defer {
+            for (name, data) in zip(names, previous) {
+                if let data { try? data.write(to: core.appendingPathComponent(name)) }
+                else { try? FileManager.default.removeItem(at: core.appendingPathComponent(name)) }
+            }
+        }
+        func json(_ value: Any, _ name: String) throws { try JSONSerialization.data(withJSONObject: value).write(to: core.appendingPathComponent(name)) }
+        let domains = DeveloperSelectionGroup.allCases.flatMap(\.domains).filter { $0 != CaptureHierarchy.secureTransferID }
+        let rows: [[String: Any]] = domains.map { domain in
+            let itemMode = ["ssh-configuration", "git-repositories", "workspace-folders", "vscode-workspaces"].contains(domain)
+            return ["domain": domain, "label": CaptureCategory.title(for: domain), "selection_mode": itemMode ? "items" : "category",
+                    "availability": "available", "source_present": true, "capture_selected": true,
+                    "items": itemMode ? [["item_id": "fixture-" + domain, "label": domain == "ssh-configuration" ? "development" : "Development"]] : []]
+        }
+        var inspection: [String: Any] = ["format_version": 1, "selected_categories": domains, "selected_item_counts": [:], "secure_component": true,
+            "restore_selection": ["groups": [["id": "Developer", "domains": domains]], "inventory": rows]]
+        try json(inspection, "inspection.json"); try write("secure-ui", core.appendingPathComponent("mode"))
+        try write(repo.appendingPathComponent("modules/migration").path, core.appendingPathComponent("migration-path"))
+        let ids = [String(repeating: "1", count: 64), String(repeating: "2", count: 64)]
+        let identities: [[String: Any]] = ids.enumerated().map { index, id in
+            ["identity_id": id, "name": index == 0 ? "personal_key" : "work_key", "key_type": "ssh-ed25519",
+             "fingerprint": "SHA256:" + Data(repeating: UInt8(index + 1), count: 32).base64EncodedString().replacingOccurrences(of: "=", with: "")]
+        }
+        try json(["version": 1, "bundle_id": String(repeating: "b", count: 64), "items": identities], "identities.json")
+        let runtime = CoreRuntime(operationLogs: nil)
+        let model = RestoreModel(runtime: runtime, location: CoreLocation(root: core, python: python, home: root, temporaryBase: root, toolDirectories: []))
+        model.choose(source); await model.waitForCompletion()
+        precondition(model.state == .review && !model.includeSecure && model.destinationInventory == nil)
+        let initial = model.selection
+        let calls = try Data(contentsOf: core.appendingPathComponent("requests.jsonl"))
+        for group in DeveloperSelectionGroup.allCases {
+            precondition(model.developerGroupState(group) == .none)
+            model.selectDeveloperGroup(group, included: true)
+            precondition(model.developerGroupState(group) == .all)
+            if group == .ssh { precondition(model.includeSecure && model.destinationInventory == nil && model.privateDestinations == nil) }
+            model.selectDeveloperGroup(group, included: false)
+            precondition(model.selection == initial && !model.includeSecure)
+        }
+        let afterSelection = try Data(contentsOf: core.appendingPathComponent("requests.jsonl"))
+        precondition(afterSelection == calls, "Checkboxes never authenticate, prepare or import")
+        model.toggleAll(); model.toggleAll(); precondition(!model.includeSecure)
+        model.customizeDestinations()
+        let deadline = Date().addingTimeInterval(15)
+        while model.busy || runtime.isActive {
+            precondition(Date() < deadline)
+            if let challenge = runtime.secureChallenge {
+                precondition(challenge.kind == .bundleUnlock)
+                runtime.respond(to: challenge, with: .secret(Data("static-ui-fixture".utf8)))
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        await model.waitForCompletion()
+        precondition(model.destinationInventory != nil && model.selectedIdentityIDs.isEmpty && !model.includeSecure,
+                     "Explicit Customize authentication alone cannot create consent")
+        model.selectIdentity(ids[0], included: true)
+        model.setDestination("/fixture/custom-keys", for: ids[0])
+        model.selectIdentity(ids[0], included: false)
+        model.dismissDestinations()
+        let expanded = RestoreSelectionPresentation.disclosureIDs(model.selectionAreas, advanced: true, secureAvailable: true)
+        precondition(Set(DeveloperSelectionGroup.allCases.map(\.id)).isSubset(of: expanded))
+        func snapshot(_ name: String, expansion: Set<String>) async throws {
+            guard !CommandLine.arguments.contains("--no-renders") else { return }
+            _ = NSApplication.shared; NSApp.appearance = NSAppearance(named: .aqua)
+            let view = VStack(alignment: .leading, spacing: 16) {
+                WorkspaceHeader(title: "Rebuild", subtitle: "Choose what to rebuild", symbol: ProductTask.restore.symbol)
+                RestoreSelectionContent(model: model, expansion: .constant(expansion))
+            }.padding(24).frame(width: 1040).background(Color(nsColor: .windowBackgroundColor)).preferredColorScheme(.light)
+            let host = NSHostingView(rootView: view)
+            let window = NSWindow(contentRect: .init(origin: .zero, size: host.fittingSize), styleMask: [.borderless], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
+            defer { window.close() }
+            try await Task.sleep(for: .milliseconds(100)); host.layoutSubtreeIfNeeded(); host.displayIfNeeded()
+            func boxes(_ node: NSView) -> [NSButton] { (node as? NSButton).map { [$0] } ?? node.subviews.flatMap(boxes) }
+            let masters = boxes(host).filter { ["Select Git", "Select SSH", "Select Workspace", "Select Shell"].contains($0.accessibilityLabel() ?? "") }
+            precondition(masters.count == 4 && masters.allSatisfy(\.isEnabled))
+            let x = masters.map { $0.convert($0.bounds, to: host).minX }
+            precondition(x.max()! - x.min()! < 1)
+            let output = URL(fileURLWithPath: "build/Debug/DeveloperSelection")
+            try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+            let image = host.bitmapImageRepForCachingDisplay(in: host.bounds)!
+            host.cacheDisplay(in: host.bounds, to: image)
+            try image.representation(using: .png, properties: [:])!.write(to: output.appendingPathComponent(name + ".png"))
+        }
+        try await snapshot("rebuild-collapsed-light", expansion: [])
+        try await snapshot("rebuild-expanded-light", expansion: expanded)
+        model.selectIdentity(ids[0], included: true)
+        precondition(!model.includeSecure)
+        model.selectDeveloperGroup(.ssh, included: true)
+        precondition(model.includeSecure && model.selectedIdentityIDs == [ids[0]] && model.developerGroupState(.ssh) == .mixed)
+        let destinations = model.privateDestinations
+        try await snapshot("rebuild-ssh-partial-light", expansion: expanded)
+        model.selectDeveloperGroup(.ssh, included: false); model.selectDeveloperGroup(.ssh, included: true)
+        precondition(model.selectedIdentityIDs == [ids[0]] && model.privateDestinations == destinations)
+        model.selectIdentity(ids[1], included: true)
+        precondition(model.developerGroupState(.ssh) == .all)
+        try await snapshot("rebuild-ssh-full-light", expansion: expanded)
+        precondition(model.preparation == nil && model.preview == nil)
+        inspection["secure_component"] = false
+        inspection["restore_selection"] = ["groups": [["id": "Shell", "domains": ["shell-zsh"]]], "inventory": [
+            ["domain": "shell-zsh", "label": "Shell", "selection_mode": "category", "availability": "unsupported",
+             "source_present": true, "capture_selected": true, "reason": "source_excluded", "items": []] as [String: Any]]]
+        try json(inspection, "inspection.json")
+        model.choose(source); await model.waitForCompletion()
+        model.selectDeveloperGroup(.shell, included: true); model.selectDeveloperGroup(.ssh, included: true)
+        precondition(!model.developerGroupAvailable(.shell) && !model.developerGroupAvailable(.ssh) && !model.includeSecure)
+        precondition(model.selection.categories.isEmpty)
+        precondition(!FileManager.default.fileExists(atPath: core.appendingPathComponent("MUTATION_ATTEMPT").path))
+        print("PASS: Rebuild developer siblings, aggregate states, explicit whole-package opt-in, unlock without consent, protected subset/custom destination preservation and unavailable categories")
+    }
+
     @MainActor static func main() async throws {
         if CommandLine.arguments.contains("--secure-passphrase-only") || CommandLine.arguments.contains("--bundled-age-only") {
             try await securePassphraseChecks(repository: URL(fileURLWithPath: CommandLine.arguments[1]), python: URL(fileURLWithPath: CommandLine.arguments[2])); return
@@ -3140,9 +3253,10 @@ import Vision
         }
         let homebrewSetupOnly = CommandLine.arguments.contains("--homebrew-setup-only")
         let secureUIOnly = CommandLine.arguments.contains("--secure-destination-ui-only")
+        let developerOnly = CommandLine.arguments.contains("--developer-selection-only")
         let sshResolutionOnly = CommandLine.arguments.contains("--ssh-resolution-only")
         let sshHostOnly = CommandLine.arguments.contains("--ssh-host-selection-only") || sshResolutionOnly
-        let selectionAccordionOnly = CommandLine.arguments.contains("--selection-accordion-only") || homebrewSetupOnly || secureUIOnly || sshHostOnly
+        let selectionAccordionOnly = CommandLine.arguments.contains("--selection-accordion-only") || homebrewSetupOnly || secureUIOnly || sshHostOnly || developerOnly
         let refreshCancellationOnly = CommandLine.arguments.contains("--appstore-refresh-cancel-only")
         if !selectionAccordionOnly && !refreshCancellationOnly { try topologyPreviewChecks() }
         if CommandLine.arguments.contains("--topology-preview-only") { return }
@@ -3625,6 +3739,10 @@ import Vision
         let location = CoreLocation(root: core, python: python, home: root, temporaryBase: root, toolDirectories: [])
         let model = RestoreModel(runtime: runtime, location: location)
         let source = root.appendingPathComponent("sample.mbt")
+        if developerOnly || !CommandLine.arguments.dropFirst(3).contains(where: { $0.hasSuffix("-only") }) {
+            try await developerSelectionChecks(core: core, source: source, repo: repo, python: python, root: root)
+            if developerOnly { return }
+        }
         if secureUIOnly {
             try await secureDestinationUIChecks(model, runtime: runtime, core: core, source: source, python: python,
                 repository: URL(fileURLWithPath: CommandLine.arguments[1]))

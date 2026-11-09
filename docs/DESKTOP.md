@@ -145,36 +145,34 @@ The approved target grouping is:
 - **macOS Settings:** existing supported domains and only subsequently qualified additions.
 - **Application Extras → VS Code:** collapsible application group; Extensions retain
   item selection and Settings retains whole-category selection.
-- **For Experienced Users:** sibling **Advanced** and **SSH** disclosures. Advanced
-  contains Git, repositories/worktrees, Workspace Folders, Shell / Zsh and **VS Code Workspace**.
-  Capture and Rebuild group **Configuration** and **SSH Keys** (Secure Transfer)
-  under SSH. Each child has independent selection; SSH has no checkbox or aggregate status rail. Restore also defaults
-  `include_secure` to false; explicit selection enables the encrypted package.
+- **For Experienced Users (Selection only, awaiting visual review):** four equal
+  sibling groups: **Git** (Configuration, Repositories / Worktrees), **SSH**
+  (Configuration, SSH Keys), **Workspace** (Folders, VS Code Workspace), and
+  **Shell** (Zsh Configuration). Each has an orange title, leading disclosure and
+  native aggregate checkbox/status. Child categories remain independent. This
+  projection does not change the shared taxonomy or any read-only screen.
 
-Descriptors are **HIDE / FREEZE** from ordinary UX, with explicit Advanced Capture
+Descriptors are **HIDE / FREEZE** from ordinary UX, with explicit developer Capture
 and Restore selection, default OFF. Preserve Core/tests/Bundle V1 and legacy
 Restore/Verification/Status; never select dependencies automatically. Workspace
 Folders retains its Core domain and explicit selection contract, OFF. Capture Review
-keeps **Workspace Folders** directly reachable in Advanced, including folder-only Capture.
-Restore exposes captured folders in Advanced, including folder-only Bundles.
+keeps **Folders** directly reachable in Workspace, including folder-only Capture.
+Restore exposes captured folders in Workspace, including folder-only Bundles.
 Neither feature introduces general content transfer.
 
 Selection defaults, scoped masters and independent disclosure are defined once in
 the [Capture](#capture-review--selection-and-disclosure) and
 [Restore Selection](#restore-selection--visually-accepted) contracts below.
-Status compares the complete saved reference, including Advanced.
+Status compares the complete saved reference, including developer requirements.
 
-**Workflow boundary:** Capture uses the hierarchy in Review and Confirmation;
-its Result summarizes publication without a category tree. Restore uses the hierarchy
-in Selection and automatic Preview, then flat ordered domain lists in Progress and
-Result. Environment Status uses static section headings and expandable diagnostic
-category rows, without VS Code or Advanced parent accordions.
-The taxonomy classifies original Core domain
-rows once; Application Extras/VS Code and Advanced add no requirements or counts,
-and unknown domains retain Other Findings. It owns no selection, protocol or
-disclosure state. Capture reuses native disclosure/accessibility patterns and its
-existing selection maps. Restore's cancellation baseline follows its ordinary/Advanced
-defaults, and selection edits require fresh preparation. Core GROUPS and Bundle ceilings remain unchanged.
+**Workflow boundary:** canonical developer names and category icon colors apply
+across workflows. Four developer headings are used in Selection, Capture Confirmation
+and Rebuild Preview; only Selection has group checkboxes and contextual help.
+Capture Result retains its publication summary; Rebuild Progress/Result retain flat
+ordered domain lists. Environment Status retains static section headings and expandable
+diagnostic categories, without Selection parent accordions. Grouping adds no requirements
+or counts. Core IDs, Bundle ceilings, default selection and cancellation baselines are
+unchanged; edits still require fresh preparation.
 No new application adapter, placeholder or separate engine is introduced.
 [Roadmap](../ROADMAP.md#current-practical-execution-order) owns sequence.
 
@@ -236,25 +234,24 @@ and metadata boundaries.
 
 ### Contextual capability guidance
 
-Capture Review and Rebuild Selection show at most one short capability explanation
-inside an existing expanded category, using `.callout` secondary text and the current content
-indentation. Workspace Folders explains structure-only restoration, Git Repositories /
-Worktrees excludes transferring local changes. Capture describes saving supported
-setup; Rebuild describes reconstructing it. Capture also explains that VS Code
-Workspace excludes project files, separates supported SSH host profiles from keys
-in Secure Transfer, and describes For Experienced Users inside its expanded content.
-Rebuild adds no explanation or disclosure to its For Experienced Users heading,
-SSH Configuration or VS Code Workspace.
-Existing whole-category, availability, Secure Transfer and App Store guidance stays
-in place. Collapsed row geometry, selection and later workflow screens are unchanged.
-The contextual guidance is visually accepted in principle; final wording and
-typography are refined within that scope, without closing broader qualification gates.
+Capture Review and Rebuild Selection use optional native `info.circle.fill` buttons beside
+categories with specific capability guidance. No description means no button; macOS
+preferences and unknown categories have none. Native popovers explain the flow's saved/restored scope, portability
+and exclusions. Help and disclosure have separate buttons, keyboard/VoiceOver labels
+and view-local presentation state. Only one help popover is open in a Selection list.
+Scrolling that list, clipping its trigger or removing the source category dismisses help;
+native popover anchoring and Escape remain in effect. Filled neutral icons have 24 pt
+hit targets. No help is added to other workflow screens.
+Errors, required actions/approvals, authentication controls, destination summaries,
+counts and essential encryption/no-clobber warnings remain visible. An unverified
+SSH-key advisory stays informational: Selection offers its detail in contextual help,
+without changing Core evidence, Needs Attention counts or Everything Already Matches.
 
 ### Capture Review — implemented structure and geometry
 
-The Capture section disclosure is visually accepted; the current SSH sibling and
-category-chevron refinement awaits visual acceptance. Review's **For Experienced Users** heading has a leading disclosure
-chevron; clicking the heading expands or collapses the entire Advanced/SSH
+The prior Capture section disclosure is visually accepted; the four developer groups
+and contextual help await visual acceptance. Review's **For Experienced Users** heading
+has a leading disclosure; clicking it expands or collapses the entire developer
 container without changing selection. It starts collapsed, with hidden
 selected categories and identities summarized below the heading. Expansion is
 workflow-local, survives Back/Next and resets for a new scan; it is neither a
@@ -265,26 +262,19 @@ as sibling category section names. `CaptureGroupedContent` renders one ordinary
 bordered accordion containing
 **Applications & Tools**, **macOS Settings** and **Application Extras**. Application
 Extras contains the **VS Code** subgroup, then **Extensions** and **Settings**.
-**For Experienced Users** contains sibling **Advanced** and **SSH** groups in the
-existing bordered container. SSH groups **Configuration** and **SSH Keys**, is
-collapsed by default and uses the key icon. It is a native disclosure
-without a checkbox, status rail, Core domain, Bundle category or independent selection state.
-The two children retain their existing checkboxes, Host/identity controls and private
-transport. Other Advanced rows retain their order and the existing typography,
-spacing and status columns. No additional screen or surface is introduced.
-
-Advanced's master selects only its five configuration categories, never SSH profiles or identities.
-SSH Keys remains default-off; expanding SSH changes no selection. Host counts
-and transfer status belong to the children. Expand All includes
-both child disclosures. Capture Confirmation/Result reuse this hierarchy over the
-prepared/published scope; secure-only selection remains valid.
+**For Experienced Users** uses the Git/SSH/Workspace/Shell display
+projection, reusing the existing group-header geometry and one bordered surface.
+In Selection each group has a master checkbox and aggregate status. SSH remains collapsed by
+default and uses the key icon; Configuration and SSH Keys retain their independent
+Host/identity controls and protected transport. Confirmation uses the same headings over prepared scope, with Ready to Save statuses
+and without selection controls.
 
 Visual group headers retain leading disclosure chevrons. Selectable categories,
 including Configuration and SSH Keys, reuse the native trailing disclosure layout:
 the status/count rail precedes the common right-hand chevron column. Collapsed
 chevrons point right; expanded chevrons point down. Checkbox actions remain
-independent of disclosure actions. SSH reserves the shared empty checkbox column
-so its icon/title align with Advanced, without adding a selection control.
+independent of disclosure actions. All four developer headers use the same native
+checkbox, icon and title columns.
 
 Rebuild shows individual identity checkboxes under SSH Keys after the existing
 explicit unlock/Customize operation provides the private inventory. Inline and
@@ -298,7 +288,7 @@ unlocks a Bundle; no additional cache or persistence is introduced.
 Within SSH, Configuration uses the existing parent checkbox and native
 disclosure for Core-provided supported Host profiles in both Capture and Rebuild.
 Each Host has one checkbox and retains its complete directives; the parent selects
-all available profiles and the category shows `N of M selected`. Capture Advanced
+all available profiles and the category shows `N of M selected`. Capture global developer
 remains off initially. Rebuild lists only saved profiles; selecting the category
 includes all of them. Clearing its last Host excludes SSH Configuration while
 preserving other categories and Secure Transfer. A Host selection change clears
@@ -354,23 +344,25 @@ focused tests own individual paddings, slot sizes, row heights and surface radii
 Group titles use `.headline`; VS Code and domain titles use `.body.weight(.medium)`;
 item labels use `.body`. Status text is `.callout`, secondary counts/explanations
 use `.caption` where implemented, and chevrons use semibold `.caption`. Preserve
-system typography, SF Symbols, blue domain icons and native accent-based
-checkboxes; native inactive appearance remains system-controlled. Use secondary
+system typography, SF Symbols, blue standard icons, warm-orange developer icons
+and native accent-based checkboxes; native inactive appearance remains system-controlled. Use secondary
 neutral styling for unsupported/unavailable state, orange for attention and green
-for confirmed completion. Status text/icons accompany color. The Advanced group
-header has the implemented warm title/icon tint; its surface remains neutral.
+for confirmed completion. Status text/icons accompany color. Developer group
+headers share the warm title/icon accent; surfaces remain neutral.
 The Review summary orders Selected Domains (with selected-items text), Selected SSH
 Identities when nonzero, then Needs Attention only
 when its count is positive.
 
 ### Capture Review — selection and disclosure
 
-The ordinary group headers, Advanced, SSH Keys and VS Code have native tri-state masters:
+The ordinary group headers, Git, SSH, Workspace, Shell, SSH Keys and VS Code have native tri-state masters:
 **checked** means all eligible descendants, **unchecked** none, and **mixed** a
 partial selection. Clicking checked clears the eligible scope; clicking unchecked
-or mixed selects that group's eligible scope. Ordinary/Advanced `CaptureGroupControls` uses
-`CaptureReviewPresentation.bulkCategories`, `CaptureModel.bulkState(for:)` and
-`toggleCategories`; `NativeSelectionCheckbox` retains native checkbox/accessibility
+or mixed selects that group's eligible scope. SSH preserves an existing identity
+subset: its group can remain mixed until the user explicitly changes SSH Keys.
+`DeveloperSelectionGroup` derives state from the existing model maps and invokes
+existing category/key selection methods; ordinary `CaptureGroupControls` is unchanged.
+`NativeSelectionCheckbox` retains native checkbox/accessibility
 semantics and a separate hit target from disclosure. An empty eligible scope has
 no active master and an Unavailable summary. Secure Transfer reuses its existing
 `selectAllSecureIdentities` / `selectSecureIdentity` callbacks and shared selected-ID set.
@@ -384,11 +376,12 @@ existing `selectCategory` / `selectItem` operations and stable Core IDs. Standal
 Selected / Not Selected text is omitted where a row checkbox already expresses
 that fact; meaningful item counts, aggregate summaries and diagnostics remain.
 
-Every fresh Scan selects eligible ordinary requirements and leaves Advanced,
-SSH Configuration, SSH Keys and unknown domains OFF; all section and nested disclosures start collapsed.
-Unsupported, unavailable and observation-error domains are never selected. The
-Advanced master explicitly selects/clears all eligible Advanced domains and their
-items, including Workspace Folders. It leaves SSH and ordinary choices intact. Ordinary
+Every fresh Scan selects eligible ordinary requirements and leaves developer groups,
+SSH Keys and unknown domains OFF; all section and nested disclosures start collapsed.
+Unsupported, unavailable and observation-error domains are never selected. Each
+master affects only its eligible children. Explicit SSH group selection may opt into
+keys; global/ordinary selection never does. A nonempty identity subset is preserved.
+Ordinary
 actions and disclosures never select dependencies; Core still validates explicitly
 selected workspace/descriptor dependencies. No additional selection engine or
 request fields are introduced.
@@ -397,8 +390,9 @@ Review and Confirmation each have **two section-level Expand All / Collapse All
 controls** when both sections are present. The ordinary control sits beside
 **Standard Setup** on both screens and affects only Applications & Tools, macOS
 Settings, Application Extras and their applicable nested disclosures.
-The **For Experienced Users** Expand/Collapse control affects both Advanced and SSH,
-including applicable nested disclosures. Both headers and controls live inside
+The **For Experienced Users** Expand/Collapse control affects the four developer
+groups in both Review and Confirmation, including
+applicable nested disclosures. Both headers and controls live inside
 `WorkflowList` and scroll with their content. Review shows that control while the
 experienced section is expanded. Section controls retain the 42 pt trailing inset.
 There are no pinned, floating or per-category bulk disclosure controls.
@@ -408,7 +402,8 @@ headings in their general workflow header areas, outside the category scroll vie
 Neither owns a disclosure control; each appears once above the category sections.
 
 Each category keeps its own chevron. `CaptureExpandButton`,
-`CaptureHierarchy.disclosureIDs` and `WorkflowExpansion` show Collapse All only when
+`CaptureHierarchy.disclosureIDs`, `DeveloperSelectionGroup.disclosureIDs`
+and `WorkflowExpansion` show Collapse All only when
 every applicable disclosure in that section is open; a mixed state shows Expand
 All. Collapse All clears the section's child expansion, preserving the other
 section. Disclosure never changes selection, counters or preparation, starts secure
@@ -439,7 +434,7 @@ states that identities are encrypted separately, other settings are not encrypte
 and the Bundle passphrase must be kept safe. Without identities, only the settings
 encryption boundary is shown. Destination/path correction guidance stays in context.
 Only groups included in the effective prepared selection appear. Ordinary categories
-share one container; included Advanced and Secure Transfer share the second. Empty
+share one container; included Git, SSH, Workspace and Shell groups share the second. Empty
 sections and their controls are omitted, including the ordinary section for a
 secure-only Capture. Both section headers and controls scroll with their content,
 using the same disclosure scopes as Review; Back and Create Saved Environment stay
@@ -475,6 +470,28 @@ application health or target verification. See [Capture](#capture-this-mac)
 for the publication and re-entry contract. The final current Capture Result layout
 is **Visually Accepted** within the Capture UI scope above.
 
+### Canonical developer presentation
+
+`DeveloperSelectionGroup` owns display names, parent membership and the existing warm-orange
+accent only. Git → Configuration / Repositories / Worktrees; SSH → Configuration / SSH Keys;
+Workspace → Folders / VS Code Workspace; Shell → Zsh Configuration appear under
+**For Experienced Users** in Selection, Capture Confirmation and Rebuild Preview.
+Standalone categories use qualified names (Git Configuration, SSH Configuration,
+Workspace Folders); there is no visible generic Advanced heading. Legacy taxonomy IDs
+remain internal for selection eligibility and operation ordering.
+
+Developer parent and category icons share one accent token; child text stays primary.
+Standard category icons remain blue and semantic operation/status colors are unchanged.
+Check keeps its read-only hierarchy and default expansion; Progress/Result retain their
+ordering, counters and task identity. These screens reuse names and category colors,
+not Selection controls. Secure Transfer remains the technical operation name.
+
+Native category help is optional: repositories/worktrees, SSH Configuration, SSH Keys,
+Workspace Folders, VS Code Workspace, Zsh Configuration and App Store have specific text.
+Other categories, including macOS preferences and unknown IDs, have no info button.
+Required warnings, approvals, destinations and security actions remain outside popovers.
+This consistency refinement awaits final visual and code review.
+
 ### Restore Selection — Visually Accepted
 
 `RestoreSelectionContent` reuses `CaptureGroupedContent`, `CaptureGroupHeader`,
@@ -482,9 +499,8 @@ is **Visually Accepted** within the Capture UI scope above.
 One ordinary container holds Applications & Tools (App Store Applications, Homebrew
 Applications, Homebrew Packages), macOS Settings and Application Extras → VS Code →
 Extensions / Settings under **Standard Setup**. Below **For Experienced Users**,
-Advanced contains Git Configuration, Git Repositories / Worktrees, Workspace Folders,
-Shell / Zsh and VS Code Workspace, in that order. Its sibling SSH contains Configuration
-and independently selected SSH Keys in the same bordered container.
+Git, SSH, Workspace and Shell are equal siblings with the same membership and group-header geometry as Capture. This refinement awaits visual review;
+workflow-specific interaction and execution ordering are preserved.
 SSH Keys is present when the Bundle includes `secure.age`. Its default-off checkbox selects the whole
 package. The prior ordinary Selection visual acceptance is retained; Stage 16H
 identity workflows have the accepted manual E2E evidence below.
@@ -492,15 +508,19 @@ identity workflows have the accepted manual E2E evidence below.
 The inspected Bundle is the strict scope ceiling. Absent/Capture-excluded domains
 and empty groups are hidden; captured unavailable/unsupported evidence remains
 explainable. Unknown captured domains retain Other Findings. Fresh inspection selects
-eligible ordinary requirements; Advanced, SSH and unknown domains default OFF. All
-disclosures start collapsed. Advanced-only/folder-only Bundles require explicit
+eligible ordinary requirements; developer groups and unknown domains default OFF.
+All disclosures start collapsed. Developer-only/folder-only Bundles require explicit
 selection, without automatically selecting dependencies or expanding Bundle scope.
 
 `RestoreGroupControls` applies group and VS Code masters only to eligible captured
 descendants: all checked, none unchecked, partial mixed. Clicking mixed selects the
 eligible scope. VS Code Extensions retains item selection and Settings category
-selection. Checkbox and disclosure targets are independent. Ordinary and Advanced
-Expand All / Collapse All controls affect their own trees only. Back, Refresh Preview
+selection. Developer masters derive tri-state status from existing category and
+Secure Transfer state. Explicit SSH group opt-in may select the encrypted package;
+Unlock alone never creates consent, and a known identity subset/custom destinations
+survive group off/on. Authentication and import confirmation remain separate.
+Checkbox, help and disclosure targets are independent. Standard Setup and For
+Experienced Users Expand All / Collapse All controls affect their own trees only. Back, Refresh Preview
 and Result re-entry preserve explicit selection; new inspection establishes defaults.
 Selection changes invalidate preparation; cancellation compares with those defaults.
 Inspection supplies aggregate macOS domains, not an invented per-setting inventory.
@@ -527,8 +547,8 @@ owns manual visibility and the separate review screen.
 `TaskDomainList` with `restorePreviewHierarchy` uses one ordinary accordion for
 Applications & Tools (Homebrew Applications / Packages), macOS Settings with its
 existing preference details, and Application Extras → VS Code → Extensions / Settings.
-Advanced uses the Selection domain order, beside selected Secure Transfer in the
-experienced container. Only the effective selected plan supplies the display;
+Git, SSH, Workspace and Shell use the canonical developer names in the
+experienced container; SSH Keys stays one actual package requirement under SSH. Only the effective selected plan supplies the display;
 matching-only leaves, subcategories and groups are hidden without changing that plan.
 Empty groups are hidden and unknown rows retain Other Findings. No dependency is
 added for visual symmetry. App Store stays solely
@@ -544,7 +564,7 @@ Its count includes the evaluated automatic and manual items. The existing no-op
 Rebuild gate remains unchanged; empty, failed and incomplete Preview cannot show it.
 
 Nonzero **Planned** and **Attention** badges appear only on Applications & Tools,
-macOS Settings, Application Extras, Advanced and selected Secure Transfer. Green
+macOS Settings, Application Extras and the included developer group headers. Green
 Match badges are omitted; matching totals remain in the summary. Expanded
 intermediate categories omit a generic status only when it repeats their parent
 and visible leaves; collapsed or distinct conditions retain status text. Leaf
@@ -703,7 +723,7 @@ explicit Check Again and Bundle-only Review in Rebuild handoff are unchanged.
 
 Reuse typography, semantic colors, icons, container styling, consistent spacing,
 appropriate hierarchy indentation, status alignment, disclosure conventions and
-Advanced's visual separation. **Visual consistency does not mean identical screen
+the experienced section's visual separation. **Visual consistency does not mean identical screen
 layouts.** Do not impose the same card count, tree depth, disclosure structure or
 level of detail on all three workflows.
 
@@ -985,7 +1005,7 @@ uses content states in one workspace, not mandatory wizard pages.
    not replace ordinary Generated Configuration/Blueprint or rebuild the source Mac.
 2. Review follows the [selection/disclosure contract](#capture-review--selection-and-disclosure).
    Core inventory owns status, eligibility, `selection_mode` and stable IDs. Scan
-   observes the complete inventory even though Advanced/Secure Transfer default off.
+   observes the complete inventory even though developer categories/SSH Keys default off.
    Whole-category and subset selection never overlap: fully selected item domains
    use V1 category shorthand; partial selections send exact IDs. Empty scope disables
    saving with **Choose supported state to capture**. Oversized partial requests
@@ -1002,7 +1022,7 @@ uses content states in one workspace, not mandatory wizard pages.
    shows destination and **Included in this capture**, without repeated aggregate
    counts. Wrapping neutral labels retain independent item/category warnings;
    preparation diagnostics stay in Operation Logs. Back edits Review without resetting
-   explicit Advanced choices. Eligible pre-publication dependency failures retain the
+   explicit developer choices. Eligible pre-publication dependency failures retain the
    same choices through Review Selection. Edits discard old preparation; defaults are
    reapplied only by a new Scan. Whole domains
    remain whole; macOS details name selected subdomains, and VS Code Settings
@@ -1660,7 +1680,7 @@ adjacent `.pub`, including safe sources outside `~/.ssh`/HOME; there is no recur
 search. Validated candidates use the existing name/type/public-fingerprint rows,
 with a small Manually Added label and Remove action. Adding starts unchecked;
 Remove forgets the candidate without deleting files. The one existing tri-state
-master and independent disclosure retain their semantics. Advanced selection and
+master and independent disclosure retain their semantics. Global developer selection and
 ordinary domain/item counts remain separate; secure-only Capture is supported.
 
 Review explains the default destination `~/.ssh/<validated-name>` in the receiving
@@ -1737,7 +1757,7 @@ The earlier generic-dialog limitation is resolved in the completed identity
 checkpoint; complete 1.0 qualification remains separate.
 
 Restore Selection reuses the Capture hierarchy: Standard Setup has one ordinary
-container; For Experienced Users has one container with sibling Advanced and SSH
+container; For Experienced Users has one container with sibling Git, SSH, Workspace and Shell
 groups. SSH contains Configuration and SSH Keys. SSH Keys retains its independent Selected/Off
 master and a separate collapsed-by-default disclosure. The explanation and
 Customize controls appear inside expanded content; Experienced Expand/Collapse
@@ -1746,7 +1766,7 @@ Secure Transfer is absent without `secure.age`, otherwise defaults off. Explicit
 parent opt-in selects the whole package unless a private subset was chosen in
 Customize or the authenticated inline list. Authentication alone selects nothing.
 When off it is absent from Preview, confirmation, Progress and Result.
-Secure-only Rebuild is supported; identities never enter ordinary Advanced counts.
+Secure-only Rebuild is supported; identities never enter ordinary developer counts.
 
 The existing Preview button runs ordinary `restore_prepare`, then automatically
 runs authenticated read-only `secure_restore_compare` when Secure Transfer is
@@ -1770,7 +1790,7 @@ Expanded “Encrypted SSH identity package” uses the existing secondary text:
 “Some saved SSH identities are missing. Rebuild can import them without overwriting
 existing keys.”, or “An existing SSH identity conflicts with the saved version.
 No keys will be overwritten.” These descriptions require a confirmed comparison.
-Existing metrics and category pills consume the same task; ordinary/Advanced counts
+Existing metrics and category pills consume the same task; ordinary/developer counts
 are unchanged and zero pills/cards stay hidden. Partial match plus missing identities
 is one planned requirement, not a key count. Secure-only confirmed match disables
 Rebuild. Mixed work retains secure scope and revalidates it during execution.
@@ -1787,8 +1807,8 @@ operation and a private target-observation digest for executable decisions. Sele
 source, Back/Refresh or a new session invalidates it. Every Preview compares afresh.
 Execute checks the binding, re-unlocks without cached secrets and rejects a changed
 target before secure mutation, retaining no-clobber checks around explicit consent.
-Preview places Secure Transfer after Advanced in their existing shared container;
-no decrypted identity names or per-key Restore selection are exposed.
+Preview presents SSH Keys under SSH in the experienced container. It exposes no
+decrypted identity inventory; authenticated per-key selection remains in Selection/Customize.
 
 Existing Rebuild confirmation explains no-clobber import. Execute handles
 `bundle_unlock`, identity-bound `ssh_key_unlock`, and mandatory explicit

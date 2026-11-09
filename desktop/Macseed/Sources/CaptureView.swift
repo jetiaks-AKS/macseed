@@ -167,6 +167,10 @@ struct CaptureView: View {
                             addIdentity: chooseSSHIdentity, removeIdentity: model.removeSSHIdentity,
                             manualIDs: model.manualIdentityIDs, checkingIdentity: model.addingIdentity,
                             identityError: model.identityError, cancelIdentity: model.cancel)),
+                        developerSelection: { group in AnyView(NativeSelectionCheckbox("", state: model.developerGroupState(group),
+                            accessibilityTitle: "Select " + group.title) { model.selectDeveloperGroup(group, included: $0) }
+                            .disabled(!model.developerGroupAvailable(group) || model.state != .review || runtime.isActive)) },
+                        developerSummary: { DeveloperSelectionGroup.summary(model.developerGroupState($0), available: model.developerGroupAvailable($0)) },
                         summary: { CaptureReviewPresentation.summary($0.flatMap(\.categories), model: model) },
                         attention: { CaptureReviewPresentation.attention($0.flatMap(\.categories), model: model) }) { row in
                         if row.id == "macos-settings" {
@@ -174,7 +178,7 @@ struct CaptureView: View {
                         } else if let category = row.categories.first {
                             CaptureCategorySelectionView(model: model, category: category,
                                 expansion: WorkflowExpansion.binding(row.id, in: treeExpansion),
-                                displayTitle: CaptureHierarchy.title(category.id, fallback: category.title),
+                                displayTitle: DeveloperSelectionGroup.title(category.id, fallback: category.title),
                                 leadingInset: CaptureChildRowGrid.leadingInset,
                                 hierarchyIndent: CaptureReviewPresentation.hierarchyStep * (CaptureHierarchy.group(for: category.id) == .vscode ? 2 : 1))
                         }
@@ -270,7 +274,8 @@ struct CaptureView: View {
         }
     }
     private func disclosureIDs(in scope: CaptureSelectionScope) -> Set<String> {
-        CaptureHierarchy.disclosureIDs(model.categories.map(\.id) + [CaptureHierarchy.secureTransferID], scope: scope)
+        let ids = model.categories.map(\.id) + [CaptureHierarchy.secureTransferID]
+        return (scope == .advanced ? DeveloperSelectionGroup.disclosureIDs(ids) : CaptureHierarchy.disclosureIDs(ids, scope: scope))
             .subtracting(model.categories.filter { !CaptureCategorySelectionView.hasDisclosure($0) }.map(\.id))
     }
 }

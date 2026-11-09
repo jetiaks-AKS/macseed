@@ -40,7 +40,7 @@ struct RestoreAreaSelectionView: View {
                 } else { Color.clear.frame(width: RestoreRowGrid.checkboxWidth, height: 28).padding(.leading, hierarchyIndent).accessibilityHidden(true) }
                 if Self.hasDisclosure(area) {
                     DisclosureGroup(isExpanded: expansion ?? $expanded) { EmptyView() } label: { header }
-                        .disclosureGroupStyle(TaskDisclosureStyle())
+                        .disclosureGroupStyle(SelectionCategoryDisclosureStyle())
                 } else {
                     header.padding(.trailing, 26).frame(minHeight: 48)
                 }
@@ -54,13 +54,13 @@ struct RestoreAreaSelectionView: View {
                     }.padding(.leading, hierarchyIndent + 40).padding(.vertical, 6)
                 }
                 if area.id == "ssh-configuration", model.sshReviewMessage == nil, let summary = model.sshCorrectionSummary {
-                    Label(summary, systemImage: "info.circle").font(.callout).foregroundStyle(.secondary)
+                    let approved = model.sshReview?.items.filter { model.approvedSSHReferences.contains($0.id)
+                        && model.selectedItems[area.id]?.contains($0.hostID) == true }.count ?? 0
+                    Text(approved > 0 ? "\(approved) path \(approved == 1 ? "change" : "changes") approved."
+                         : "SSH key verification is separate from configuration.").font(.caption).foregroundStyle(.secondary)
+                        .help(summary)
                         .fixedSize(horizontal: false, vertical: true)
                         .padding(.leading, hierarchyIndent + 40).padding(.vertical, 6)
-                }
-                if let description = Self.selectionDescription(area.id) {
-                    Text(description).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                        .padding(.leading, hierarchyIndent + 40).padding(.vertical, 4)
                 }
                 if area.selectable && area.selectionMode == "items" {
                     ForEach(area.items) { item in
@@ -98,7 +98,10 @@ struct RestoreAreaSelectionView: View {
         CaptureRowColumns(title: title, status: status)
     }
     private var title: some View {
-        WorkspaceCategoryTitle(id: area.id, title: CaptureHierarchy.title(area.id, fallback: area.label), fallbackSymbol: RestoreRowIcon.symbol(for: area.id))
+        SelectionCategoryTitle(id: area.id, title: DeveloperSelectionGroup.title(area.id, fallback: area.label),
+            symbol: RestoreRowIcon.symbol(for: area.id), flow: .rebuild,
+            toggle: Self.hasDisclosure(area) ? { (expansion ?? $expanded).wrappedValue.toggle() } : nil,
+            information: area.id == "ssh-configuration" ? model.sshCorrectionSummary : nil)
     }
     private var status: some View {
         VStack(alignment: .leading, spacing: 3) {
@@ -141,6 +144,10 @@ enum RestoreSelectionPresentation {
         WorkspacePresentationTaxonomy.project(areas).flatMap(\.rows)
     }
     static func disclosureIDs(_ areas: [CoreRestoreInspection.Area], advanced: Bool, secureAvailable: Bool = false) -> Set<String> {
+        if advanced {
+            let ids = areas.map(\.id) + (secureAvailable ? [CaptureHierarchy.secureTransferID] : [])
+            return DeveloperSelectionGroup.disclosureIDs(ids).subtracting(areas.filter { !RestoreAreaSelectionView.hasDisclosure($0) }.map(\.id))
+        }
         let sections = CaptureHierarchy.project(areas.filter { $0.id != "ssh-configuration" }).filter {
             advanced ? $0.group == .advanced : CaptureHierarchy.ordinaryGroups.contains($0.group)
         }
@@ -214,6 +221,10 @@ struct RestoreSelectionContent: View {
                 advancedControls: AnyView(CaptureExpandButton(ids: disclosureIDs(advanced: true),
                     title: "For Experienced Users", expanded: treeExpansion)),
                 secureTransferGroup: secureTransferGroup,
+                developerSelection: { group in AnyView(NativeSelectionCheckbox("", state: model.developerGroupState(group),
+                    accessibilityTitle: "Select " + group.title) { model.selectDeveloperGroup(group, included: $0) }
+                    .disabled(!model.developerGroupAvailable(group) || model.state != .review || model.runtime.isActive)) },
+                developerSummary: { DeveloperSelectionGroup.summary(model.developerGroupState($0), available: model.developerGroupAvailable($0)) },
                 summary: { RestoreSelectionPresentation.summary($0, model: model) },
                 attention: { rows in rows.contains { !$0.selectable || $0.reason != nil } ? "Saved Requirements Need Attention" : nil }) { area in
                     RestoreAreaSelectionView(model: model, area: area,
@@ -232,9 +243,10 @@ struct RestoreSelectionContent: View {
                     .frame(width: RestoreRowGrid.checkboxWidth, height: 28).padding(.leading, CaptureReviewPresentation.hierarchyStep)
                 DisclosureGroup(isExpanded: WorkflowExpansion.binding(CaptureHierarchy.secureTransferID, in: treeExpansion)) { EmptyView() } label: {
                     CaptureRowColumns(
-                        title: WorkspaceCategoryTitle(id: CaptureHierarchy.secureTransferID, title: "SSH Keys", fallbackSymbol: "lock.shield"),
+                        title: SelectionCategoryTitle(id: CaptureHierarchy.secureTransferID, title: "SSH Keys", symbol: "lock.shield", flow: .rebuild,
+                            toggle: { WorkflowExpansion.binding(CaptureHierarchy.secureTransferID, in: treeExpansion).wrappedValue.toggle() }),
                         status: CaptureGroupStatus(summary: model.includeSecure ? model.identitySelectionSummary ?? "Selected" : "Off"))
-                }.disclosureGroupStyle(TaskDisclosureStyle())
+                }.disclosureGroupStyle(SelectionCategoryDisclosureStyle())
                     .accessibilityIdentifier("capture.disclosure.SSH Keys")
             }.padding(.leading, 16 + CaptureChildRowGrid.leadingInset).padding(.trailing, 16)
             if treeExpansion.wrappedValue.contains(CaptureHierarchy.secureTransferID) {

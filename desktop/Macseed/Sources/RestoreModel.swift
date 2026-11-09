@@ -99,7 +99,7 @@ struct RestorePreviewPresentation {
             rows[row.domain, default: []].append(DisplayItem(id: "restore-\(index)", title: title, status: status, action: action, reason: row.reason, restoreReadyText: status == .ready ? (row.isSSHDependency ? "After Secure Transfer" : conditional ? "Conditional" : Self.readyText(action: row.action)) : nil))
         }
         categories = order.map { domain in
-            DisplayCategory(id: domain, title: domain == CoreRestorePreparation.secureDomain ? "Secure Transfer" : catalog.inventory.first { $0.id == domain }?.label ?? "Other supported state", symbol: domain == CoreRestorePreparation.secureDomain ? "lock.shield" : "slider.horizontal.3", items: rows[domain] ?? [])
+            DisplayCategory(id: domain, title: DeveloperSelectionGroup.label(domain, fallback: catalog.inventory.first { $0.id == domain }?.label ?? "Other supported state"), symbol: domain == CoreRestorePreparation.secureDomain ? "lock.shield" : "slider.horizontal.3", items: rows[domain] ?? [])
         }
         let items = categories.flatMap(\.items)
         let planned = items.filter { $0.status == .ready }.count
@@ -125,7 +125,7 @@ struct RestorePreviewPresentation {
             }.compactMap { area in domainRows.first { $0.id == area.id } }
             return projected.isEmpty ? nil : Section(id: section.id, rows: projected)
         }
-        sections = ordinarySections + (categories.first { $0.id == CoreRestorePreparation.secureDomain }.map { [Section(id: "Secure Transfer", rows: [$0])] } ?? [])
+        sections = ordinarySections + (categories.first { $0.id == CoreRestorePreparation.secureDomain }.map { [Section(id: "SSH Keys", rows: [$0])] } ?? [])
     }
 }
 
@@ -611,7 +611,7 @@ struct RestoreProgressRow {
             .map { "\($0.0) \($0.0 == 1 ? "category" : "categories") \($0.1)" }.joined(separator: " · ")
     }
     var selectionSummary: String {
-        if includeSecure && selectedAreaCount == 0 { return "Secure Transfer selected" }
+        if includeSecure && selectedAreaCount == 0 { return "SSH Keys selected" }
         return switch bulkState {
         case .all:
             inspection?.secureComponent == true && (!includeSecure || (destinationInventory != nil && !allIdentitiesSelected))
@@ -1344,12 +1344,12 @@ struct RestoreResultFindings {
         var otherIssues: Set<String> = []
         var verifiedAreaOrder: [String] = []
         func area(_ domain: String) -> (String, String)? {
-            if domain == CoreRestorePreparation.secureDomain { return (domain, "Secure Transfer") }
+            if domain == CoreRestorePreparation.secureDomain { return (domain, "SSH Keys") }
             if let group = catalog?.groups.first(where: { $0.id == "macOS Settings" && $0.domains.contains(domain) }) {
                 return (group.id, group.id)
             }
             guard let entry = catalog?.inventory.first(where: { $0.id == domain }) else { return nil }
-            return (domain, entry.label)
+            return (domain, DeveloperSelectionGroup.label(domain, fallback: entry.label))
         }
         func append(kind: String, domain: String, item: String = "scope", action: String = "", reason: String,
                     title: String, status: DisplayStatus, message: String) {
