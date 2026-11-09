@@ -273,6 +273,8 @@ struct DiagnosticReportBuilder {
         case .captureExecute: return "Capture / Execute"
         case .bundleInspect: return "Rebuild / Inspect"
         case .restorePrepare: return "Rebuild / Prepare"
+        case .secureCheckInventory: return "Check / SSH Key Selection"
+        case .secureCheckCompare: return "Check / SSH Keys"
         case .sshRestoreReview: return "Rebuild / SSH References"
         case .secureRestoreInventory: return "Rebuild / Secure Destinations"
         case .secureRestoreCompare: return "Rebuild / Secure Comparison"

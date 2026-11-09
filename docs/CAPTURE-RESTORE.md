@@ -108,9 +108,10 @@ See [Core interface](core/APPLICATION-INTERFACE.md) and [CLI](toolkit/CLI.md).
 **Stage 16H SSH Identities — COMPLETED (2026-11-05).** Core/CLI secure migration
 and native Secure Capture/Restore are implemented and manually accepted in the
 supported identity scope. Desktop Capture offers explicit, default-off identities
-in SSH → SSH Keys, beside Advanced under For Experienced Users, and uses the
+in For Experienced Users → SSH → SSH Keys, and uses the
 existing Core engine through native secure fields and a separate inherited FD.
-Desktop Restore selects the whole encrypted package, defaults off, and requires
+Desktop Restore selects the whole encrypted package or an authenticated identity subset,
+defaults off, and requires
 authenticated read-only comparison through the existing Preview button. Matching
 identities count as Already Match; missing identities as one planned requirement;
 conflicts block import. Preview requests only the Bundle passphrase and compares
@@ -159,11 +160,11 @@ to [Secure SSH Identity Migration](toolkit/SSH-IDENTITY-MIGRATION.md).
 
 ### SSH Environment Completion — Developer Environment Closure
 
-**IN PROGRESS — bounded v2 Restore is implemented; wider qualification remains open.** Complete practical SSH Configuration support
-across Discovery, Capture, Preview, Restore and Verification, prioritizing
-`IdentityFile`, `IdentitiesOnly`, `AddKeysToAgent`, `UseKeychain` and other safely
-portable SSH directives. This extends the bounded configuration contract without
-reopening completed Stage 16H identity transfer.
+**Implemented — joint real-Mac qualification remains open.** Bounded SSH Configuration
+supports Discovery, Capture, Preview, Restore and Verification, including `IdentityFile`,
+`IdentitiesOnly`, `AddKeysToAgent` and `UseKeychain` within the
+[supported configuration contract](toolkit/CONFIGURATION.md#explicit-identityfile-resolution-and-v2-restore).
+Stage 16H identity-transfer acceptance retains its original scope.
 
 Accepted Slice 3 implements optional per-identity restore directories, defaulting to
 `~/.ssh`. Configuration belongs in the existing Rebuild **SELECTION** screen through a compact **Customize…**
@@ -185,11 +186,24 @@ corrections still require qualified evidence. Configuration Verification and key
 qualification are separate; neither claims remote authentication.
 Safe create/no-op/missing-Host merge retains existing conflicting Hosts unchanged.
 [Configuration](toolkit/CONFIGURATION.md#explicit-identityfile-resolution-and-v2-restore)
-owns publication, dependency and stale-plan safeguards. Resolve false Needs Attention results while preserving genuine
-unsupported, conflicting and unsafe findings. Keep Secure Migration v1 Bundle
-compatibility. A later joint SSH Configuration + identity E2E must cover default and
-custom destinations, Verification and repeated no-op. The optional destination
-slice does not complete this integration checkpoint.
+owns publication, dependency and stale-plan safeguards. SSH-dependent Git clones use
+bounded local qualification and fresh Execute checks after selected identity import
+and configuration publication; HTTPS and local Git operations remain independent.
+Secure Migration v1 and Bundle compatibility are preserved.
+
+Check authenticates saved keys and compares exact private/public bytes read-only at
+default or explicit custom locations. Its one aggregate SSH Configuration `config`
+result stays separate from SSH Keys. A reference warning can clear only when Core
+proves complete, unambiguous correspondence between the configured paths and the
+authenticated selected pairs in that operation. This includes passphrase-protected
+files but does not prove private-key usability or remote authentication. Legacy
+partial configuration coverage remains Needs Attention. See the
+[Check evidence contract](core/APPLICATION-INTERFACE.md#optional-protected-ssh-check).
+
+Unified Developer UI is visually accepted; implementation and local fixture results
+do not establish hosted CI or joint real-Mac E2E qualification. Joint SSH Configuration
+and identity E2E still must cover default/custom destinations, dependent Git clones,
+Verification, Check and repeated no-op. Stage 16/17 qualification remains open.
 
 ## Results
 

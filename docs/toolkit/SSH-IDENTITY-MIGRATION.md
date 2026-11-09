@@ -133,8 +133,10 @@ no-clobber and best-effort cleanup of this attempt's own files; it is not an ato
 rollback across directories. SIGKILL or loss of power can leave partial/unknown state.
 
 Custom paths do not rewrite `IdentityFile`, select SSH Configuration or establish
-Host-profile dependencies. The UI retains unresolved-dependency guidance. Combined
-SSH integration and Secure Check remain outside this slice.
+Host-profile dependencies. The UI retains unresolved-dependency guidance. Implemented
+[SSH configuration integration](CONFIGURATION.md#explicit-identityfile-resolution-and-v2-restore)
+and [Secure Check](../core/APPLICATION-INTERFACE.md#optional-protected-ssh-check) use
+their own approval/evidence boundaries; custom destination selection grants neither.
 
 The private mapping v2 adds explicit selection to the complete authenticated
 identity inventory. Mapping v1 and standalone CLI retain whole-package behavior;

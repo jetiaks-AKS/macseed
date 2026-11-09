@@ -42,6 +42,8 @@ Prepared IDs are 64 lowercase hexadecimal characters.
 | `restore_execute` | `path`, `disabled_groups`, `include_secure`, `expected_prepared_plan_id`, optional `selection`, `secure_comparison`, `custom_destinations: true` | Fresh preparation, local-state publication and restoration |
 | `secure_restore_compare` | `path`, `disabled_groups`, `include_secure: true`, `expected_prepared_plan_id`, optional `selection`, `custom_destinations: true` | Authenticated read-only comparison of the selected encrypted package; separate secure FD required |
 | `secure_restore_inventory` | `path` | Explicit authenticated read-only inventory; separate secure FD, private result only |
+| `secure_check_inventory` | `path`, `expected_bundle_id` | Explicit authenticated inventory for read-only Check; separate secure FD required |
+| `secure_check_compare` | `path`, `expected_bundle_id`, `custom_destinations: true` | Read-only comparison of an explicit v2 identity subset and private destination mapping |
 | `environment_compare` | `generated_dir`, `blueprint_path` **or** `bundle_path` | Explicit read-only reference-to-current-Mac comparison |
 
 <a id="capture-destination-replacement"></a>
@@ -366,6 +368,86 @@ Environment Status compares these extensions read-only through the same qualifie
 inspector and the existing Verification/Comparison collector; see
 [Phase 6](../toolkit/CONFIGURATION.md#topology-environment-status--phase-6).
 Ordinary legacy Bundle behavior is unchanged.
+
+### Optional protected SSH Check
+
+Normal `environment_compare` never decrypts `secure.age`. A Bundle result adds
+`secure_check: {version: 1, bundle_id, status: "available" | "absent"}`; the ID is
+the exact Bundle fingerprint, not identity metadata. The additive capability
+`features.secure_check` names `secure_check_inventory` / `secure_check_compare`,
+`selection_version: 2`, `max_items: 32` and `read_only: true`.
+
+Inventory requires an initiated Check and Bundle unlock through the existing
+secure FD. It publishes the existing protected inventory format in the owned
+operation directory; this operation does not authorize Import or restore anything.
+Desktop's initial Check chains inventory and comparison, selecting all saved IDs by
+default. Optional custom locations/subsets remain explicit. Desktop may forward the
+Bundle passphrase once into that same bound Check comparison within 120 seconds;
+this transient handoff is cleared on use, cancellation, failure or completion and
+cannot authorize another operation. The Core operations still authenticate their
+own inputs. Comparison requires
+an explicit nonempty v2 subset, the complete authenticated identity-ID mapping and
+its exact Bundle ID. Default destinations are `~/.ssh`; explicit custom directories
+must already exist. Both operations validate/stage the Bundle directly, without
+Restore Prepare/Execute or import consent. Old Bundles without `secure.age` remain
+ordinary Check inputs; explicit protected checking returns `secure_component_unavailable`.
+
+The migration worker authenticates the entire package and reuses
+`archive_validate(..., cryptographic=False)` for bounded manifest/integrity checks
+and OpenSSH public-envelope type/fingerprint validation. It then observes selected
+destinations twice. Check accepts only Bundle authentication, never an individual
+key-unlock challenge. Results are per selected identity, counted once:
+
+| Comparison | Required evidence |
+| --- | --- |
+| `matching` | Safe, stable private and public files exactly match the authenticated saved bytes |
+| `missing` | Both files demonstrably absent at a safe, stable destination; a missing default `.ssh` is not created |
+| `differing` | Safely observed private and/or public bytes differ; public fingerprint equality alone is insufficient |
+| `unverified` | Partial pair, unsafe ownership/modes/links/ACL/path, failed observation or changing target |
+
+Existing destination ancestor pinning, no-follow reads, ownership/mode checks,
+no hardlinks, bounded key sizes and ACL restrictions are reused. Direct directory
+name inspection is bounded; no recursive key discovery occurs. Unsupported or
+unavailable custom directories are Unverified, never Missing. The inherited
+conservative destination contract can reject read-only directories.
+
+Exact bytes establish saved-file equality, including encrypted private files. They
+do **not** freshly prove the encrypted payload's private/public correspondence or
+key usability. Public fingerprint equality alone never establishes a match. Capture,
+Rebuild and Secure Import retain their separate cryptographic validation; Check
+evidence cannot replace it. No remote SSH authentication occurs.
+
+The child sends authenticated file digests/metadata and observations only over its private FD.
+Core validates identity IDs against that binding and publishes `secure-check-result.json`
+(mode 0600, owned 0700 operation directory, bounded to 64 KiB). Its context binds the
+operation, Bundle, exact mapping, `source_validation: saved_files`, observed target digest and
+time. Desktop validates the private file's owner, mode, no-follow/single-link/freshness,
+exact fields, selection and context; it never receives keys. No result is an import
+receipt, authorization or durable cache. Ordinary JSONL/logs contain only bounded
+phase/status evidence and `read_only: true`, `publication_occurred: false`,
+`target_mutation_may_have_started: false`.
+
+`ssh_reference_coverage` in the private context is `not_selected`, `unresolved` or
+`resolved`. Check reuses `identity_dependencies.assess()` with the current operation's
+authenticated selected-pair evidence and destination mapping. Every explicit file
+reference must resolve to exactly one matching selected identity at that same path;
+fresh safe pair observations must match both authenticated file digests. Only this
+complete correspondence can resolve saved-state reference coverage for a locked key.
+It does not change the dependency assessor's cryptographic qualification or grant
+Restore/Import/Git authorization. Missing/partial/unavailable evidence, ambiguous
+mapping, nonportable/unapproved paths, different destinations and unsafe or changed
+targets retain unresolved coverage. No earlier Bundle or operation supplies evidence.
+The public
+coverage label `identity-references` means **SSH key references**, not a private Host
+or a declaration of missing/invalid keys. Remote SSH authentication is never tested.
+Desktop removes only the correlated reference warning; it adds no matching record.
+SSH Configuration remains one aggregate `config` comparison. Legacy partial source
+coverage and independent diagnostics retain their own warnings and counts.
+
+Cancellation, invalid input, changed Bundle, stale selection and interrupted private
+transport return no usable secure evidence. Temporary decrypted staging uses the
+existing protected cleanup; SIGKILL/power loss cannot guarantee cleanup. No Check
+branch reaches importer Apply, directory creation, chmod, SSH publication or Git.
 
 ### Authenticated secure Preview comparison
 

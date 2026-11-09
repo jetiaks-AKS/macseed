@@ -53,15 +53,17 @@ without weakening assertions, skipping tests or changing workflows merely to obt
 
 ## SSH Environment Completion — Developer Environment Closure
 
-**Restoration foundation accepted in `5afa889`; integration qualification open.** Stage 16H identity completion and accepted
+**Restoration, destinations and SSH → Git integration implemented; joint qualification open.** Stage 16H identity completion and accepted
 manual evidence belong to [Roadmap](ROADMAP.md#stage-16--native-macseed-desktop)
 and [Desktop](docs/DESKTOP.md#secure-interactions). Follow the
 [workflow contract](docs/CAPTURE-RESTORE.md#ssh-environment-completion--developer-environment-closure):
 
-- [ ] Complete code review of bounded SSH → Git dependency integration and its
-  focused fixtures; retain the existing transport, privacy and execution fences.
-- [ ] Later qualify joint SSH Configuration + identities E2E, including default/custom
-  destinations, Verification and repeated no-op.
+- [ ] Qualify joint SSH Configuration + identities E2E, including default/custom
+  destinations, dependent Git clones, Verification, read-only Check and repeated no-op.
+- [ ] Qualify the current Secure Check checkpoint on a real Mac and in hosted CI;
+  preserve the accepted Unified Developer UI and separate saved-state correspondence
+  from private-key usability/remote authentication. Local test results alone do not
+  close these gates.
 
 ## Remaining supported-domain Restore qualification
 

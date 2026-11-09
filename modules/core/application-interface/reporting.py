@@ -102,6 +102,8 @@ def opaque(subject):
 
 
 def item(domain, subject):
+    if domain == 'ssh-configuration' and subject == 'identity-references':
+        return subject  # A public coverage label, never a Host or private path.
     if domain == 'vscode-workspaces' and re.fullmatch(r'workspace-[0-9a-f]{64}', subject):
         return subject
     if subject in {'scope', 'secure-selection', 'settings.json', 'config', 'zshrc', 'execute', 'bootstrap'}:

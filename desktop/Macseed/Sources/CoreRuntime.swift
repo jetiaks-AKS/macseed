@@ -35,10 +35,12 @@ extension CoreSecureChallenge: Identifiable {
     @Published private(set) var secureCancellationRequested = false
     private var secureReply: (@Sendable (CoreSecureResponse) -> Void)?
     private(set) var bundleComparisonSupported: Bool?
+    private(set) var secureCheckSupported = false
     private(set) var homebrewGracefulSupported = false
     @Published private(set) var gracefulStopRequested = false
     @Published private(set) var gracefulStopState: GracefulStopState = .idle
     @Published private(set) var gracefulStopMessage: String?
+    @Published private(set) var secureCheck: CoreSecureCheckResult?
     @Published private(set) var sshReview: CoreSSHReview?
     @Published private(set) var restoreIdentityInventory: CoreRestoreIdentityInventory?
     @Published private(set) var capabilities: CoreCapabilities?
@@ -63,9 +65,15 @@ extension CoreSecureChallenge: Identifiable {
     var isActive: Bool { state == .launching || state == .running }
 
     func takeRestoreIdentityInventory() -> CoreRestoreIdentityInventory? {
-        guard state == .completed, operation == .secureRestoreInventory else { return nil }
+        guard state == .completed, [.secureRestoreInventory, .secureCheckInventory].contains(operation) else { return nil }
         defer { restoreIdentityInventory = nil; termination?.restoreIdentityInventory = nil }
         return restoreIdentityInventory
+    }
+
+    func takeSecureCheck() -> CoreSecureCheckResult? {
+        guard state == .completed, operation == .secureCheckCompare else { return nil }
+        defer { secureCheck = nil; termination?.secureCheck = nil }
+        return secureCheck
     }
 
     func takeSSHReview() -> CoreSSHReview? {
@@ -76,7 +84,7 @@ extension CoreSecureChallenge: Identifiable {
 
     func start(_ request: CoreRequest, location: CoreLocation? = nil) {
         guard !isActive else { return }
-        if request.command.operation == .capabilities { bundleComparisonSupported = nil }
+        if request.command.operation == .capabilities { bundleComparisonSupported = nil; secureCheckSupported = false }
         state = .launching
         operationID = request.operationID
         operation = request.command.operation
@@ -91,6 +99,7 @@ extension CoreSecureChallenge: Identifiable {
         capabilities = nil
         restoreIdentityInventory = nil
         sshReview = nil
+        secureCheck = nil
         mutationMayHaveStarted = nil
         publicationOccurred = nil
         stopping = false
@@ -139,7 +148,7 @@ extension CoreSecureChallenge: Identifiable {
                         Task<Void, Never> { @MainActor in
                             guard let self, self.transport === transport, self.operationID == challenge.operationID,
                                   self.isActive, !self.stopping, transport.secureState == .waiting(challenge) else { return }
-                            if [.secureRestoreCompare, .secureRestoreInventory, .sshRestoreReview].contains(self.operation) && challenge.kind != .bundleUnlock {
+                            if [.secureRestoreCompare, .secureRestoreInventory, .sshRestoreReview, .secureCheckInventory, .secureCheckCompare].contains(self.operation) && challenge.kind != .bundleUnlock {
                                 reply(.cancel)
                                 return
                             }
@@ -195,6 +204,7 @@ extension CoreSecureChallenge: Identifiable {
             termination = outcome
             restoreIdentityInventory = outcome.restoreIdentityInventory
             sshReview = outcome.sshReview
+            secureCheck = outcome.secureCheck
             self.transport = nil
             stopping = false
             if let failure = outcome.error { error = failure; state = .failed }
@@ -213,6 +223,7 @@ extension CoreSecureChallenge: Identifiable {
                     capabilities = value
                     coreProductVersion = value.productVersion // Header metadata is sanitized on the log queue.
                     bundleComparisonSupported = value.supportsBundleComparison
+                    secureCheckSupported = value.supportsSecureCheck
                     state = .completed
                 } catch { self.error = error as? CoreRuntimeError ?? .malformedEvent; state = .failed }
             } else { state = .completed } // Operation completion, never a conformity verdict.
@@ -250,11 +261,11 @@ extension CoreSecureChallenge: Identifiable {
         secureChallenge = nil
     }
     @discardableResult func respond(to challenge: CoreSecureChallenge, with response: CoreSecureResponse) -> Bool {
-        guard isActive, !stopping, (operation == .captureExecute || operation == .restoreExecute || operation == .secureRestoreCompare || operation == .secureRestoreInventory || operation == .sshRestoreReview), operationID == challenge.operationID,
+        guard isActive, !stopping, (operation == .captureExecute || operation == .restoreExecute || operation == .secureRestoreCompare || operation == .secureRestoreInventory || operation == .sshRestoreReview || operation == .secureCheckInventory || operation == .secureCheckCompare), operationID == challenge.operationID,
               secureChallenge == challenge, transport?.secureState == .waiting(challenge), let reply = secureReply else { return false }
         clearSecureChallenge()
         if case .cancel = response {
-            if operation == .restoreExecute || operation == .secureRestoreCompare || operation == .secureRestoreInventory || operation == .sshRestoreReview { secureCancellationRequested = true }
+            if operation == .restoreExecute || operation == .secureRestoreCompare || operation == .secureRestoreInventory || operation == .sshRestoreReview || operation == .secureCheckInventory || operation == .secureCheckCompare { secureCancellationRequested = true }
             else { stopping = true }
         }
         reply(response)

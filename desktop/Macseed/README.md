@@ -216,9 +216,13 @@ from execution. Assertion counts are unknown. Hosted configuration, mandatory
 fail-closed `validate`, privacy and timing evidence are in
 [Contributing](../../CONTRIBUTING.md#focused-feedback-and-ci).
 
-Run affected focused harnesses first. Production presentation/state changes include
-both feature tests and PresentationTests; full canonical validation belongs at
-implementation checkpoint closure. Repository regression and Desktop validation
+Use [risk-based local validation](../../CONTRIBUTING.md#risk-based-local-validation):
+incremental changes use relevant feature and/or presentation cases and retain prior
+PASS evidence when the tested code and assumptions are unchanged. Complete suites
+require a concrete justification before execution at a substantive integration/release
+checkpoint or for a demonstrated risk; small corrections do not automatically rerun
+full PresentationTests or feature suites. Mandatory Desktop CI coverage is unchanged.
+Repository regression and Desktop validation
 run sequentially on one local machine because temporary-state observations overlap.
 Documentation-only changes use consistency/link review and `git diff --check`,
 without builds, syntax checks or runtime tests.

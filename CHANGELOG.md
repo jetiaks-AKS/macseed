@@ -11,6 +11,20 @@ The format is based on the principles of **Keep a Changelog**.
 
 ### Added
 
+* **Check This Mac** includes authenticated read-only comparison of saved SSH keys
+  at default/custom locations using only the Bundle passphrase, with contextual
+  retry inside SSH Keys and no local actions after full matches. Exact saved-file matches,
+  missing, different and unverified targets remain distinct; partial coverage cannot
+  report complete success. Ordinary results survive protected-check cancellation;
+  cancelling location edits also preserves the previous key results and mapping.
+  Check groups evidence under Standard Setup and For Experienced Users, with
+  disclosure-aware status labels and unchanged counts.
+  Saved-file equality does not prove fresh private/public correspondence, remote
+  authentication or import consent. Complete, unambiguous same-operation correspondence
+  between configured IdentityFile paths and authenticated matching pairs can clear
+  the reference warning, including for locked keys. SSH Configuration keeps one
+  aggregate `config` result; legacy partial coverage remains Needs Attention.
+
 * SSH dependency qualification for planned topology Git clones: Preview distinguishes
   local readiness, conditional restoration and blocked requirements without testing
   remote authentication. Execute rechecks private evidence after identity import and
@@ -20,16 +34,20 @@ The format is based on the principles of **Keep a Changelog**.
   can be preserved with a separate key advisory, while explicitly approved path
   corrections retain qualified-evidence requirements. Capture and Rebuild share
   an SSH group with independent Configuration and default-off SSH Keys selection.
+  Selected keys support explicit safe existing custom destination directories;
+  defaults remain `~/.ssh`, and destinations never implicitly rewrite IdentityFile.
 
 * Core read-only qualification of selected SSH Host IdentityFile dependencies,
   with safe local pair evidence and authenticated Secure Compare destinations.
-  Findings remain separate from configuration conformity; no path rewriting,
-  automatic v2 publication or additional identity import is enabled.
+  Findings remain separate from configuration conformity; corrections require
+  explicit approval and qualified evidence, while identity import requires its
+  independent selection, cryptographic validation and consent.
 
 * Completed Stage 16H SSH Identities: accepted automatic and manual external
   Capture → Rebuild → Verification, exact bytes, permissions/fingerprints and
   repeated Preview/no-op. Verified bundled age v1.3.2 removes the Desktop
-  age/Homebrew prerequisite; custom restore destinations remain future work.
+  age/Homebrew prerequisite. Optional custom destinations extend this accepted
+  milestone under the independent restoration contract above.
 * Native **Add SSH Identity…** for explicitly chosen safe SSH pairs outside `~/.ssh`.
   Candidates start unchecked and use the existing encrypted Capture/Restore flow,
   restoring under `~/.ssh` with validated names and unchanged v1 package compatibility.
@@ -39,11 +57,11 @@ The format is based on the principles of **Keep a Changelog**.
   startup reminders with read-only status/rechecks for the bundled age runtime.
 
 * Native Secure SSH Capture with explicit, default-off identity selection in
-  Secure Transfer beside Advanced, public fingerprints and native passphrase fields.
+  For Experienced Users → SSH → SSH Keys, public fingerprints and native passphrase fields.
   The existing Core engine validates selected pairs and exports `secure.age` through
   a separate secret FD; stale preparation, cancellation and publication evidence
   retain their safety boundaries.
-* Native Secure SSH Restore with independent, default-off whole-package selection,
+* Native Secure SSH Restore with independent, default-off whole-package or authenticated per-identity selection,
   existing Rebuild Preview/Result counts, FD-only unlock and explicit import consent.
   Validated import evidence survives the following Stop boundary; conflicts preserve
   existing identities. The existing Preview button authenticates and compares the

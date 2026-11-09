@@ -37,6 +37,7 @@ enum CoreOperation: String, Codable, CaseIterable, Sendable {
     case restorePrepare = "restore_prepare", restoreExecute = "restore_execute", secureRestoreCompare = "secure_restore_compare", secureRestoreInventory = "secure_restore_inventory"
     case sshRestoreReview = "ssh_restore_review"
     case environmentCompare = "environment_compare"
+    case secureCheckInventory = "secure_check_inventory", secureCheckCompare = "secure_check_compare"
 }
 
 struct CoreCaptureSelection: Codable, Equatable, Sendable {
@@ -153,6 +154,8 @@ enum CoreCommand: Sendable {
     case secureRestoreCompare(path: String, preparedID: String, selection: CoreRestoreSelection)
     case environmentCompare(generatedDirectory: String, blueprintPath: String?)
     case environmentCompareBundle(path: String)
+    case secureCheckInventory(path: String, bundleID: String)
+    case secureCheckCompare(path: String, bundleID: String)
 
     var operation: CoreOperation {
         switch self {
@@ -167,13 +170,15 @@ enum CoreCommand: Sendable {
         case .secureRestoreInventory: .secureRestoreInventory
         case .secureRestoreCompare: .secureRestoreCompare
         case .environmentCompare, .environmentCompareBundle: .environmentCompare
+        case .secureCheckInventory: .secureCheckInventory
+        case .secureCheckCompare: .secureCheckCompare
         }
     }
     var requiresSecretBridge: Bool {
         switch self {
         case .captureExecute(let selection, _, _, _): !selection.secureIdentities.isEmpty
         case .restoreExecute(_, _, let secure, _, _, _): secure
-        case .secureRestoreCompare, .secureRestoreInventory: true
+        case .secureRestoreCompare, .secureRestoreInventory, .secureCheckInventory, .secureCheckCompare: true
         case .sshRestoreReview(_, _, let secure): secure
         default: false
         }
@@ -213,6 +218,9 @@ enum CoreCommand: Sendable {
             return .object(values)
         case .environmentCompareBundle(let path):
             return .object(["bundle_path": .string(path)])
+        case .secureCheckInventory(let path, let id), .secureCheckCompare(let path, let id):
+            guard path.hasPrefix("/"), !path.contains("\0"), CoreRestoreDestinations.validID(id) else { throw CoreRuntimeError.invalidRequest }
+            return .object(["path": .string(path), "expected_bundle_id": .string(id)])
         case .environmentCompare(let directory, let blueprint):
             return .object(["generated_dir": .string(directory), "blueprint_path": blueprint.map(CoreJSON.string) ?? .null])
         }
@@ -250,12 +258,18 @@ struct CoreRequest: Sendable {
             fields["parameters"] = .object(parameters)
         } else if command.operation == .captureIdentityInspect { throw CoreRuntimeError.invalidRequest }
         if let restoreDestinations {
-            guard [.restorePrepare, .restoreExecute, .secureRestoreCompare, .sshRestoreReview].contains(command.operation),
-                  var parameters = fields["parameters"]?.object, parameters["include_secure"]?.boolean == true else { throw CoreRuntimeError.invalidRequest }
+            guard [.restorePrepare, .restoreExecute, .secureRestoreCompare, .sshRestoreReview, .secureCheckCompare].contains(command.operation),
+                  var parameters = fields["parameters"]?.object,
+                  command.operation == .secureCheckCompare || parameters["include_secure"]?.boolean == true else { throw CoreRuntimeError.invalidRequest }
             try restoreDestinations.validate()
+            if command.operation == .secureCheckCompare {
+                guard restoreDestinations.version == 2, restoreDestinations.items.contains(where: { $0.selected == true }),
+                      parameters["expected_bundle_id"]?.string == restoreDestinations.bundleID else { throw CoreRuntimeError.invalidRequest }
+            }
             parameters["custom_destinations"] = .bool(true)
             fields["parameters"] = .object(parameters)
         }
+        if command.operation == .secureCheckCompare && restoreDestinations == nil { throw CoreRuntimeError.invalidRequest }
         if let sshApprovals {
             guard [.restorePrepare, .restoreExecute, .secureRestoreCompare, .sshRestoreReview].contains(command.operation),
                   var parameters = fields["parameters"]?.object else { throw CoreRuntimeError.invalidRequest }
@@ -329,6 +343,11 @@ struct CoreCapabilities: Decodable, Sendable {
     var supportsSecureRestoreDestinations: Bool { operations.contains("secure_restore_inventory") && features?["secure_restore_destinations"]?.object?["version"]?.integer == 1 }
     var supportsSecureRestoreSelection: Bool { supportsSecureRestoreDestinations && features?["secure_restore_destinations"]?.object?["selection_version"]?.integer == 2 }
     var supportsBundleComparison: Bool { features?["bundle_comparison"]?.object?["version"]?.integer == 1 }
+    var supportsSecureCheck: Bool {
+        let feature = features?["secure_check"]?.object
+        return operations.contains("secure_check_inventory") && operations.contains("secure_check_compare")
+            && feature?["version"]?.integer == 1 && feature?["selection_version"]?.integer == 2 && feature?["read_only"]?.boolean == true
+    }
     var supportsRestoreSelection: Bool { features?["restore_selection"]?.object?["version"]?.integer == 1 }
     enum CodingKeys: String, CodingKey {
         case protocolVersion = "protocol_version", productVersion = "product_version", operations, features

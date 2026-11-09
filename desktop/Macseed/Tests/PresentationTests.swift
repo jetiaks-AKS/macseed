@@ -156,13 +156,19 @@ private struct CaptureRefinementHost: View {
         let visibility = CaptureRefinementState()
         precondition(!visibility.experiencedVisible)
         var windows: [NSWindow] = []
-        defer { windows.forEach { $0.close() } }
+        defer {
+            // These windows exercise content and input, not AppKit window transitions.
+            // Detach every fixture tree before the next async Core/native case.
+            windows.forEach { $0.orderOut(nil); $0.contentView = nil; $0.close() }
+            precondition(windows.allSatisfy { !$0.isVisible && $0.contentView == nil })
+        }
         func host<V: View>(_ content: V, width: CGFloat = 721, dark: Bool = false) -> NSHostingView<some View> {
             let view = NSHostingView(rootView: content.frame(width: width).background(Color(nsColor: .windowBackgroundColor)))
             view.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
             let window = NSWindow(contentRect: .init(x: 0, y: 0, width: width, height: 900),
                 styleMask: [.titled], backing: .buffered, defer: false)
             windows.append(window); window.isReleasedWhenClosed = false
+            window.animationBehavior = .none
             window.contentView = view; window.orderFront(nil)
             return view
         }
@@ -642,7 +648,7 @@ private struct CaptureRefinementHost: View {
         let capture = try String(contentsOfFile: "Sources/CaptureView.swift", encoding: .utf8)
         let capturePresentation = try String(contentsOfFile: "Sources/CapturePresentation.swift", encoding: .utf8)
         let captureSecure = capturePresentation.components(separatedBy: "struct CaptureSecureTransferView: View")[1]
-        precondition(captureSecure.contains("expanded:") && captureSecure.contains("if "))
+        precondition(captureSecure.contains("SelectionCategoryDisclosureStyle()") && captureSecure.contains("if expansion?.wrappedValue ?? expanded"))
         let details = try String(contentsOfFile: "Sources/TaskComponents.swift", encoding: .utf8)
         precondition(details.contains("restorePreview && item.sourceDomain == CoreRestorePreparation.secureDomain"))
         let output = URL(fileURLWithPath: "build/Debug/Stage16HPassphrase")
@@ -832,7 +838,9 @@ private struct CaptureRefinementHost: View {
             } }
         }
         let source = try String(contentsOfFile: "Sources/RestoreView.swift")
-        precondition(source.contains("[.preparing, .rebuilding].contains(model.state) ? runtime.secureChallenge"))
+        precondition(source.contains("runtime.operationID == model.operationID")
+            && source.contains("[.preparing, .rebuilding].contains(model.state)")
+            && source.contains("model.state == .review && runtime.operation == .sshRestoreReview"))
         precondition(source.contains("secureTransferGroup: secureTransferGroup"))
         print("PASS: authenticated match/import/conflict projection; ordinary counts unchanged, one secure pill, no zero pills, strict binding/incomplete gate")
         print("PASS: existing sibling-group Preview and shared metric components at 580/1040pt Light/Dark (12 renders)")
@@ -1081,7 +1089,12 @@ private struct CaptureRefinementHost: View {
         _ = NSApplication.shared
         // Keep ownership of every native fixture window through the last assertion.
         var windows: [NSWindow] = []
-        defer { windows.forEach { $0.close() } }
+        defer {
+            // These windows exercise content and input, not AppKit window transitions.
+            // Detach every fixture tree before the next async Core/native case.
+            windows.forEach { $0.orderOut(nil); $0.contentView = nil; $0.close() }
+            precondition(windows.allSatisfy { !$0.isVisible && $0.contentView == nil })
+        }
         func descendants<T: NSView>(_ view: NSView, _: T.Type) -> [T] {
             (view as? T).map { [$0] } ?? view.subviews.flatMap { descendants($0, T.self) }
         }
@@ -1089,6 +1102,7 @@ private struct CaptureRefinementHost: View {
             let view = NSHostingView(rootView: content.frame(width: width).background(Color(nsColor: .windowBackgroundColor)))
             let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: 500), styleMask: [.titled], backing: .buffered, defer: false)
             windows.append(window)
+            window.animationBehavior = .none
             window.isReleasedWhenClosed = false; window.contentView = view; window.orderFront(nil)
             return (view, window)
         }
@@ -2046,11 +2060,12 @@ private struct CaptureRefinementHost: View {
         let liveRestore = RestorePresentationSection.project(coreGroups)
         precondition(liveRestore.first { $0.id == "Workspace" }!.groups.flatMap(\.domains) == coreGroups[2].domains)
         precondition(liveRestore.last!.groups.flatMap(\.domains) == ["future-domain"])
-        let liveStatus = EnvironmentStatusSection.project(rows, groups: coreGroups)
-        precondition(liveStatus.first { $0.id == "Applications & Tools" }!.entries.contains { $0.id == "vscode-extensions" })
-        precondition(liveStatus.first { $0.id == "Workspace" }!.entries.map(\.id) == coreGroups[2].domains)
-        precondition(liveStatus.last!.entries.contains { $0.id == "future-domain" })
-        print("PASS: Capture taxonomy covers Core registry once, preserves unknown evidence/counts/requests, scopes expansion and leaves Restore/Status placement unchanged")
+        let liveStatus = EnvironmentStatusSection.project(rows)
+        precondition(liveStatus.map(\.id) == ["Standard Setup", "For Experienced Users"])
+        precondition(liveStatus[0].entries.first { $0.id == CaptureHierarchy.Group.vscode.id }!.children.contains { $0.id == "vscode-extensions" })
+        precondition(liveStatus[1].entries.first { $0.id == DeveloperSelectionGroup.workspace.id }!.children.map(\.id) == ["workspace-folders", "vscode-workspaces"])
+        precondition(liveStatus[0].entries.contains { $0.id == "future-domain" })
+        print("PASS: Capture taxonomy covers Core registry once, preserves unknown evidence/counts/requests, scopes selection expansion and keeps Check grouping independent")
     }
 
     @MainActor static func visualContractChecks() {
@@ -4830,6 +4845,16 @@ private struct CaptureRefinementHost: View {
         let plan = try! JSONDecoder().decode(CoreRestorePreparation.self, from: JSONSerialization.data(withJSONObject: raw))
         try! plan.validate(expected: .init(categories: ids, items: [:]), catalog: catalog)
         let preview = RestorePreviewPresentation(plan, catalog: catalog)
+        let coverage = preview.categories.first { $0.id == "ssh-configuration" }!.items.first!
+        precondition(coverage.title == "SSH configuration coverage" && coverage.status == .attention
+            && coverage.reason == "partial_source_coverage" && coverage.action.contains("only part"))
+        for (domain, reason) in [("ssh-configuration", "observation_failed"), ("git-configuration", "partial_source_coverage")] {
+            var other = raw
+            other["plan"] = [["domain": domain, "item_id": "scope", "action": "none", "disposition": "warning", "reason": reason]]
+            let otherPlan = try! JSONDecoder().decode(CoreRestorePreparation.self, from: JSONSerialization.data(withJSONObject: other))
+            let item = RestorePreviewPresentation(otherPlan, catalog: catalog).categories.first!.items.first!
+            precondition(item.title == "Selected area" && item.status == .attention && item.reason == reason)
+        }
         let tasks = RestoreTaskPresentation(preview: preview, plan: plan)
         let domains = tasks.automaticDomains
         let children = RestoreSettingsPresentation.children(domains, categories: preview.categories)
@@ -5165,7 +5190,7 @@ private struct CaptureRefinementHost: View {
         _ = NSApplication.shared
         // Pixel evidence is scoped to category icons; status symbols keep their own semantic colors.
         for scheme in [ColorScheme.light, .dark] {
-            for id in ids + [CoreRestorePreparation.secureDomain, "macos-finder", "homebrew-packages"] {
+            for id in groups.map(\.id) + ids + [CoreRestorePreparation.secureDomain, "macos-finder", "homebrew-packages"] {
                 let icon = WorkspaceCategoryIcon(symbol: "key", domainID: id).padding(8).background(Color.white).environment(\.colorScheme, scheme)
                 let bitmap = NSBitmapImageRep(cgImage: ImageRenderer(content: icon).cgImage!)
                 var blue = false, orange = false
@@ -5175,7 +5200,7 @@ private struct CaptureRefinementHost: View {
                     blue = blue || (c.blueComponent > c.redComponent * 1.4 && c.blueComponent > 0.4)
                     orange = orange || (c.redComponent > c.greenComponent * 1.15 && c.redComponent > 0.5 && c.redComponent > c.blueComponent * 1.4)
                 } }
-                precondition(DeveloperSelectionGroup.group(for: id) == nil ? blue && !orange : orange && !blue, "Icon \(id) \(scheme): blue=\(blue) orange=\(orange)")
+                precondition((groups.map(\.id) + ids + [CoreRestorePreparation.secureDomain]).contains(id) ? orange && !blue : blue && !orange, "Icon \(id) \(scheme): blue=\(blue) orange=\(orange)")
             }
         }
         let capture = try String(contentsOfFile: "Sources/CaptureView.swift")
@@ -5347,7 +5372,45 @@ private struct CaptureRefinementHost: View {
             }
         }
     }
+    @MainActor static func developerIconChecks() {
+        for scheme: ColorScheme in [.light, .dark] {
+            for group in DeveloperSelectionGroup.allCases {
+                for id in [group.id] + group.domains {
+                    precondition(DeveloperSelectionGroup.categoryGroup(for: id) == group)
+                    precondition(WorkspaceCategoryStyle.tint(id, scheme: scheme) == DeveloperSelectionGroup.accent(scheme))
+                }
+            }
+            for id in ["homebrew-packages", "app-store", "macos-settings", "vscode-settings"] {
+                precondition(WorkspaceCategoryStyle.tint(id, scheme: scheme) == .blue)
+            }
+        }
+        let output = URL(fileURLWithPath: "/private/tmp/macseed-check-result-visuals")
+        try! FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+        for scheme: ColorScheme in [.light, .dark] {
+            let view = VStack(alignment: .leading, spacing: 16) {
+                WorkspaceSectionHeader(title: "For Experienced Users")
+                ForEach(DeveloperSelectionGroup.allCases) { group in
+                    VStack(alignment: .leading, spacing: 10) {
+                        WorkspaceCategoryTitle(id: group.id, title: group.title, fallbackSymbol: group.symbol)
+                        ForEach(group.domains, id: \.self) { id in
+                            WorkspaceCategoryTitle(id: id, title: id, fallbackSymbol: group.symbol, developerGroup: group)
+                                .padding(.leading, 24)
+                        }
+                    }
+                }
+                Divider()
+                WorkspaceCategoryTitle(id: "homebrew-packages", title: "Standard Setup", fallbackSymbol: "shippingbox")
+            }.padding(24).frame(width: 620).background(scheme == .dark ? Color.black : Color.white).environment(\.colorScheme, scheme)
+            let renderer = ImageRenderer(content: view); renderer.scale = 2
+            let bitmap = NSBitmapImageRep(cgImage: renderer.cgImage!)
+            try! bitmap.representation(using: .png, properties: [:])!.write(to: output.appendingPathComponent("developer-icons-" + (scheme == .dark ? "dark" : "light") + ".png"))
+        }
+        print("PASS: shared developer accent includes synthetic Git/SSH/Workspace/Shell parents and every child; Standard Setup remains blue")
+    }
+
     @MainActor static func main() async {
+        developerIconChecks()
+        if CommandLine.arguments.contains("--developer-icons-only") { return }
         if CommandLine.arguments.contains("--selection-help-only") { try! await selectionHelpChecks(); return }
         if CommandLine.arguments.contains("--developer-selection-only") { try! await developerSelectionChecks(); return }
         if CommandLine.arguments.contains("--ssh-resolution-only") { try! sshResolutionPresentationChecks(); return }
@@ -5644,7 +5707,7 @@ private struct CaptureRefinementHost: View {
         for technical in ["Choose Blueprint…", "Generated Configuration", "blueprint.path"] {
             precondition(!statusView.contains(technical), "Status uses a Bundle, not internal reference controls")
         }
-        precondition(statusView.contains("EnvironmentComparisonView(result: result)"))
+        precondition(statusView.contains("EnvironmentComparisonView(result: result,") && statusView.contains("secureActions: model.showsSecureRecovery"))
         precondition(statusView.contains("$0 == .needsAttention ? result.needsAttention : ($0.count(result) ?? 0) > 0"))
         precondition(statusView.contains("EnvironmentComparisonMetricsLayout {"))
         precondition(!statusView.contains("Additional applications") && !statusView.contains("additionalExpanded"))
@@ -5662,7 +5725,7 @@ private struct CaptureRefinementHost: View {
         precondition(!statusView.contains("Full Diagnostic Details") && !statusView.contains("fact.predicateTitle"))
         let domainView = statusView.components(separatedBy: "struct EnvironmentComparisonDomain: View")[1].components(separatedBy: "struct EnvironmentComparisonItem: View")[0]
         precondition(domainView.contains("WorkflowCountPill(count: count, label: label, tint: tint)") && domainView.contains("if let counts"))
-        precondition(domainView.contains("WorkspaceCategoryIcon(symbol: category.symbol, domainID: category.id)") && content.contains("DeveloperSelectionGroup.accent(colorScheme)"))
+        precondition(domainView.contains("WorkspaceCategoryIcon(symbol: category.symbol, domainID: category.id)") && content.contains("WorkspaceCategoryStyle.tint(domainID, scheme: colorScheme)"))
         precondition(countPill.contains(".padding(.horizontal, 6).frame(minWidth: 32, minHeight: 23)"))
         precondition(content.contains("Rectangle().fill(Color.primary.opacity(0.22)).frame(height: 1.5)"))
 

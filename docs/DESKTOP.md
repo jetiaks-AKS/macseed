@@ -490,7 +490,8 @@ Native category help is optional: repositories/worktrees, SSH Configuration, SSH
 Workspace Folders, VS Code Workspace, Zsh Configuration and App Store have specific text.
 Other categories, including macOS preferences and unknown IDs, have no info button.
 Required warnings, approvals, destinations and security actions remain outside popovers.
-This consistency refinement awaits final visual and code review.
+Unified Developer UI is visually accepted within this presentation scope. It does
+not close joint SSH E2E, hosted CI or Stage 16/17 qualification.
 
 ### Restore Selection — Visually Accepted
 
@@ -499,10 +500,10 @@ This consistency refinement awaits final visual and code review.
 One ordinary container holds Applications & Tools (App Store Applications, Homebrew
 Applications, Homebrew Packages), macOS Settings and Application Extras → VS Code →
 Extensions / Settings under **Standard Setup**. Below **For Experienced Users**,
-Git, SSH, Workspace and Shell are equal siblings with the same membership and group-header geometry as Capture. This refinement awaits visual review;
+Git, SSH, Workspace and Shell are equal siblings with the accepted membership and group-header geometry of Capture;
 workflow-specific interaction and execution ordering are preserved.
 SSH Keys is present when the Bundle includes `secure.age`. Its default-off checkbox selects the whole
-package. The prior ordinary Selection visual acceptance is retained; Stage 16H
+package unless an authenticated private subset was chosen. The prior ordinary Selection visual acceptance is retained; Stage 16H
 identity workflows have the accepted manual E2E evidence below.
 
 The inspected Bundle is the strict scope ceiling. Absent/Capture-excluded domains
@@ -691,24 +692,20 @@ existing Match / Differences Found / Needs Attention cards. It compares the
 complete selected Bundle reference, independently of Restore defaults or selection.
 Matching requirements remain visible; there is no Issues Only filter.
 
-`EnvironmentComparisonView.visibleSections` presents only existing scoped category
-rows beneath static `WorkspaceSectionHeader` text/dividers, in this order:
+The accepted header, summary cards, badges and footer remain unchanged. The current
+Check-specific category projection uses **Standard Setup** and **For Experienced
+Users**, with the exact category order and disclosure rules documented in
+[Status presentation and counts](#status-presentation-and-counts). This projection
+is implemented and awaiting final visual review; it does not change Capture or
+Rebuild Selection.
 
-- **Applications & Tools:** App Store Applications, Homebrew Applications,
-  Homebrew Packages.
-- **Settings:** macOS Settings, with its existing independently expandable children.
-- **Application Extras:** VS Code Extensions, VS Code Settings.
-- **For Experienced Users:** Git Configuration, Git Repositories / Worktrees,
-  Workspace Folders, SSH Configuration, Shell / Zsh and VS Code Workspace when present.
-- **Other Findings:** unclassified scoped evidence when present.
-
-Empty headings are hidden. There is no expandable section header, Advanced parent
-accordion or VS Code parent accordion. Individual categories retain disclosures,
-status labels, nonzero numeric badges and complete item explanations. Disclosures
-start collapsed; Expand All / Collapse All includes macOS children. These controls
-never run comparison or change the reference. Extras, excluded/no-requirement rows
-and extra-only categories retain their existing main-window visibility rules and
-remain in underlying evidence; independently supported problems are not filtered out.
+Only existing scoped rows appear beneath static `WorkspaceSectionHeader` text/dividers.
+Empty headings are hidden. Section headers have no checkbox or disclosure; logical
+categories retain their status/count columns and independently collapsed children.
+Expand All / Collapse All includes visible parent and child category IDs. These
+controls never run comparison or change the reference. Extras, excluded/no-requirement
+rows and extra-only categories retain their existing main-window visibility rules
+and remain in underlying evidence; independent problems are not filtered out.
 
 The Status-only `EnvironmentComparisonRowLayout` shares the widest visible badge
 combination across sibling categories and children. Longer numbers expand the
@@ -1298,6 +1295,69 @@ Confirmed Cancel returns to selection retaining the Bundle; missing terminal evi
 is interrupted/unknown. Internal staging/reporting I/O failure is not automatically
 `bundle_unavailable`, which describes source availability.
 
+### Protected SSH keys in Check
+
+**Check This Mac** runs ordinary comparison, then checks all saved SSH identities
+when the Bundle contains `secure.age`. It requests the Bundle passphrase through
+the existing secure input. Successful inventory authentication continues directly
+into comparison; no separate key-selection action is required. A Bundle without
+protected keys has no authentication prompt. Default locations are `~/.ssh` unless
+explicit custom locations were configured.
+
+The existing two private Core operations remain separate. Desktop can hand the
+Bundle passphrase once from inventory to comparison within the same read-only Check,
+with the exact Bundle and operation context, for at most 120 seconds. The transient
+handoff is cleared on use, cancellation, failure or completion; it is never reused
+by another Check or Rebuild. Check does not request individual SSH-key passphrases:
+it compares authenticated saved private/public bytes after public metadata validation.
+This proves saved-file equality, not fresh cryptographic private/public correspondence
+or SSH usability. Capture/Rebuild/Import validation remains unchanged. No decrypted
+keys or durable credential cache is retained by Desktop.
+
+Results use **For Experienced Users → SSH → SSH Configuration / SSH Keys** and the
+existing read-only rows/counts. When every saved key matches, SSH Keys shows
+**Already Matches** and its identity rows, without local buttons or a coverage notice.
+For Missing, Different, Unverified or Not Checked, contextual **Check Again** and
+optional **Change Location…** appear immediately below the message, leading aligned
+inside SSH Keys. The status rail retains only status/counts/disclosure. Change Location
+opens the authenticated inventory for existing custom directories or an explicitly
+smaller scope; it only checks those locations and never moves/imports keys.
+Opening and editing the dialog keeps the previous comparison intact. Selection and
+locations remain a transient draft; **Cancel** discards it without a Core operation,
+changed counts, or an unconfirmed mapping. **Check Selected Keys** commits the draft
+and starts a fresh protected comparison, invalidating the old protected evidence.
+The draft is bound to the current Bundle, Check, authenticated inventory and prior
+selection/mapping; changing that context invalidates the draft.
+Protected names/fingerprints appear only there; result rows use “SSH key 1”, etc.
+Each identity contributes once. Unchecked identities are never Matches: partial
+coverage shows **Check Incomplete**, checked matches remain visible, and known
+unchecked identities contribute Unverified counts. Before inventory is available,
+coverage is unknown and no identity count is invented. Remote SSH authentication
+is not tested.
+
+Cancelled, failed, different or incomplete protected checking retains ordinary results and
+offers **Check Again** inside SSH Keys. This retries only the protected operations;
+it does not repeat ordinary domains or require the location dialog. Custom mappings
+remain bound to the same Bundle/context. Full matching coverage hides all local actions.
+A replaced Bundle or invalid private comparison context requires a fresh global
+**Check Again**. Global Check always performs fresh ordinary and protected comparison.
+No Check consent authorizes Secure Import or Rebuild.
+
+**SSH key references** explains unresolved IdentityFile qualification without
+claiming missing or invalid keys. Core can remove this warning when every relevant
+configured path corresponds unambiguously to a safely observed, byte-identical
+authenticated selected pair at its intended destination in the same Check. This
+saved-state correspondence can include locked keys; it does not qualify their
+cryptographic usability. Matching all saved keys at unrelated paths is insufficient.
+Other diagnostics and legacy partial coverage remain. See the
+[Core contract](core/APPLICATION-INTERFACE.md#optional-protected-ssh-check).
+
+The final SSH reference-correlation correction is locally verified by the new
+protected-pair/path/scope cases, full Protocol, PresentationTests and
+EnvironmentStatusTests, and the focused legacy Rebuild label check. That evidence
+does not extend the accepted Unified Developer UI into real-Mac acceptance of the
+new Check transition. Joint SSH E2E and hosted CI qualification remain open.
+
 ### Status presentation and counts
 
 Results show Match, **Differences Found** and Needs Attention; Not Applicable appears
@@ -1315,16 +1375,52 @@ confirmed differences alone produce Differences Found; incomplete run integrity
 prevents a clean conclusion. Category Needs Attention takes precedence when
 independent warnings/gaps coexist with differences.
 
-Details use the [accepted static sections](#environment-status--visually-accepted);
-macOS Settings nests independently collapsed Finder, Dock, Windows, Keyboard,
-Trackpad and Screenshots with Capture's labels. Git Repositories / Worktrees precedes
-Workspace Folders in For Experienced Users. Matching categories show Already
-Matches plus applicable counts; matching leaves use an accessible checkmark without
+Details use two Check-specific read-only sections, with no selection controls:
+
+- **Standard Setup:** App Store Applications, Homebrew Applications, Homebrew
+  Packages, macOS Settings (included Finder/Dock/other settings), Application Extras
+  (VS Code Extensions and VS Code Settings).
+- **For Experienced Users:** Git (Git Configuration, Git Repositories / Worktrees),
+  Workspace (Workspace Folders, VS Code Workspace), SSH (SSH Configuration, SSH Keys),
+  Shell (Zsh Configuration), in that order.
+
+Only evidenced categories appear; empty parents are omitted. Unknown future domains
+retain their original names/evidence at the end of Standard Setup. Section headers
+do not disclose. Logical categories and their children start collapsed, and Expand
+All / Collapse All includes exactly their visible disclosure IDs. Existing row
+geometry, status columns, badges, summary cards and footer remain unchanged.
+Expanded rows suppress an identical aggregate label only when the visible child/leaf
+evidence fully represents it. Additional independent evidence keeps its warning.
+Count badges remain visible; the suppressed status remains in the title's accessible
+value. Standard icons stay blue; developer parents/children use the shared orange.
+
+Matching categories show Already Matches plus applicable counts; matching leaves use an accessible checkmark without
 generic subtitles. Problem rows retain short explanations and independent diagnostics
 correlated by owner/domain/item ID; technical evidence stays in Operation Logs.
 App Store names use validated Bundle labels; missing labels stay neutral, IDs remain
 in Core/model evidence. Absent `stored_preference` means the saved preference is
 not explicitly set, not that a feature is missing or a system default was inferred.
+
+SSH Configuration uses one aggregate `config` comparison as the product contract;
+Check does not add individual Host rows or manufacture Host Matches from aggregate
+equality, and Swift does not parse SSH configuration. An unresolved IdentityFile row
+explains incomplete reference evidence. Complete Core-proven saved-state correspondence
+removes that warning without adding a matching requirement or claiming key usability.
+The underlying unresolved diagnostic remains available without a second generic
+prerequisite sentence. Capture/Rebuild/Import predicates and approvals are unchanged.
+
+A legacy partial snapshot may also have a separate opaque coverage record. Only an
+unresolved SSH coverage owner with a partial source and its own scope-level
+`partial_source_coverage` diagnostic is labelled **SSH configuration coverage**.
+It retains Needs Attention and its original count. **SSH key references** remains
+specific to IdentityFile dependency evidence; unrelated opaque records are not
+renamed and aggregate config Matches do not imply full source coverage.
+Rebuild Preview uses the same **SSH configuration coverage** label only for its typed
+SSH `scope` warning with reason `partial_source_coverage`; behavior and counts are unchanged.
+
+Identical Git/Workspace display names never deduplicate requirements. A checkout and
+a selected Workspace folder may share one canonical destination while retaining two
+logical roles. Existing Core topology owns their dependency/no-duplicate-work behavior.
 
 Category pills count visible logical items; Different/Missing combine once. Each
 legacy repository gets one outcome from Worktree/Origin/Branch evidence: an absent
@@ -1648,13 +1744,14 @@ Stage 16H acceptance. The accepted comparison includes one Secure Transfer
 requirement and disables Rebuild for a confirmed no-op. This closes the supported
 identity checkpoint, not hosted CI, Stage 17 distribution or clean-Mac qualification.
 [SSH Environment Completion — Developer Environment Closure](CAPTURE-RESTORE.md#ssh-environment-completion--developer-environment-closure)
-remains in progress; combined configuration/destination dependency integration
-is not completed by this extension.
+now includes implemented configuration/destination and SSH → Git dependency
+integration; joint real-Mac qualification remains open beyond the earlier acceptance.
 
 Core owns Secure Migration. `CoreRuntime` opens `CoreSecureTransport` only for
 Capture Execute with explicit identity IDs, Restore Execute with explicit
 `include_secure: true`, the selected read-only `secure_restore_compare`, or explicitly requested
-`secure_restore_inventory` operation. Ordinary operations retain their existing launch path.
+`secure_restore_inventory` operation, plus explicitly initiated `secure_check_inventory` /
+`secure_check_compare`. Ordinary operations retain their existing launch path.
 The selected Macseed 1.0 scope requires 16H and bundled age. Pinned, verified age
 v1.3.2 is implemented locally in `Contents/Helpers/age`. `CoreLocationResolver`
 binds every production launch to its app; Core validates the fixed helper path,
@@ -1733,8 +1830,8 @@ Secure Transfer category. No SSH config rewrite, automatic selection, new wizard
 persistent preference is introduced.
 [Secure Migration](toolkit/SSH-IDENTITY-MIGRATION.md#optional-desktop-restore-directories)
 owns safety and compatibility; [Core](core/APPLICATION-INTERFACE.md#private-restore-destinations)
-owns private transport. SSH Environment Completion, combined dependency integration
-and Secure Check remain open.
+owns private transport. Broader SSH Environment Completion qualification
+remains open. Optional Secure Check is implemented under [protected Check](#protected-ssh-keys-in-check).
 
 Secure Execute and authenticated secure comparison open the separate inherited Unix-socket FD bridge. Native secure
 text fields handle Bundle encryption and protected-key unlock, with distinct
@@ -2003,8 +2100,12 @@ real application and packaged privacy qualification remains open.
 [Roadmap](../ROADMAP.md#stage-16--native-macseed-desktop) owns the historical slice
 IDs and completion table; they are identifiers, not a new execution order. Supported
 16B–16G flows, Result/Visual Unification and 16J diagnostics are implemented;
-16H SSH Identities is completed. SSH Environment Completion is the next planned
-checkpoint; remaining 16I/16K cases and Stage 3C recovery stay open.
+16H SSH Identities is completed. SSH Environment Completion's configuration,
+destinations, independent selection and Git dependencies are implemented; joint E2E
+qualification remains open. Unified Developer UI is visually accepted. Secure Check
+is implemented with the saved-state boundary above; its current local validation
+does not establish hosted CI or real-Mac acceptance. Remaining 16I/16K cases and
+Stage 3C recovery stay open.
 Accepted UI/controlled Stop checks do not establish universal native lifecycle safety.
 
 The repository Core/external Python runtime is not an installed-app distribution.

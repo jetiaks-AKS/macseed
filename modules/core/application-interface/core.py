@@ -31,7 +31,7 @@ from reporting import opaque, observation_reporting, observation_failures
 from homebrew_stop import Controller, StopAccepted
 from external_state import pending as external_pending
 import restore_selection
-from secure import launch_channel, import_secure, compare_secure, SecureError
+from secure import launch_channel, import_secure, compare_secure, check_secure, SecureError
 import restore_destinations
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'ssh'))
 import restore_resolution as ssh_resolution
@@ -1142,6 +1142,82 @@ def restore_execute(operation_id, path, disabled_groups, include_secure, expecte
             control_directory.cleanup()
 
 
+def secure_check(operation_id, path, expected_bundle_id, channel, *, inventory=False, destinations=None):
+    sequence = 1
+    safety = dict(read_only=True, publication_occurred=False, target_mutation_may_have_started=False)
+    def event(kind, data=None):
+        nonlocal sequence
+        sequence += 1
+        emit(sequence, kind, operation_id, data)
+    try:
+        if channel is None:
+            raise SecureError('secure_bridge_required')
+        if not inventory and (destinations is None or destinations['version'] != 2
+                              or not restore_destinations.selected_items(destinations)):
+            raise SecureError('secure_input_invalid')
+        with restore_signals(), tempfile.TemporaryDirectory(prefix='macseed-secure-check-') as temporary:
+            source = Path(path)
+            if not stat.S_ISREG(source.lstat().st_mode):
+                raise bundle.Invalid('unsafe Bundle input')
+            source_id = bundle.fingerprint(source)
+            if source_id != expected_bundle_id or (destinations is not None and destinations['bundle_id'] != source_id):
+                raise SecureError('reference_changed')
+            inspected = bundle.inspect_bundle(source, os.environ['HOME'])
+            if not inspected['secure_component']:
+                raise SecureError('secure_component_unavailable')
+            stage = Path(temporary) / 'stage'
+            stage.mkdir(mode=0o700)
+            bundle.unpack(source, stage, os.environ['HOME'], workspace_preview=True)
+            if bundle.fingerprint(source) != source_id:
+                raise SecureError('reference_changed')
+            if inventory:
+                items = compare_secure(ROOT, stage / 'secure.age', channel, operation_id, event, inventory=True)
+            else:
+                identity_evidence = []
+                compared = check_secure(ROOT, stage / 'secure.age', channel, operation_id, event,
+                                        destinations=destinations, identity_evidence=identity_evidence)
+            if bundle.fingerprint(source) != source_id:
+                raise SecureError('reference_changed')
+            if inventory:
+                restore_destinations.publish_inventory(operation_id, source_id, items)
+            else:
+                # Correlate only the selected snapshot's explicit portable paths.
+                # A custom key destination alone never rewrites/approves IdentityFile.
+                coverage = 'not_selected'
+                files = restore_selection.staged_files(stage)
+                categories = bundle.parse_blueprint(files['blueprint.conf'])[1]
+                if categories.get('ssh-configuration'):
+                    from identity_check import reference_coverage
+                    coverage = reference_coverage(files['generated/ssh/config.snapshot'], os.environ['HOME'],
+                                                  identity_evidence, destinations)
+                from datetime import datetime, timezone
+                context = dict(mapping=destinations, target_state=compared['target_state'], source_validation='saved_files',
+                               ssh_reference_coverage=coverage,
+                               observed_at=datetime.now(timezone.utc).isoformat(timespec='microseconds'), **safety)
+                restore_destinations.publish_inventory(operation_id, source_id, compared['items'],
+                    name='secure-check-result.json', context=context)
+            # Authenticated identities, paths and per-identity observations stay
+            # in the existing protected operation directory, never JSONL/logs.
+            event('result', dict(status='authenticated' if inventory else 'checked', **safety))
+            event('completed', dict(status='success', **safety))
+            return 0
+    except SecureError as exc:
+        code = exc.code
+    except Cancelled:
+        code = 'secure_cancelled'
+    except bundle.Unsupported:
+        code = 'unsupported_bundle'
+    except (bundle.Invalid, tarfile.TarError, ValueError, UnicodeError):
+        code = 'bundle_invalid'
+    except OSError:
+        code = 'secure_comparison_unavailable'
+    finally:
+        if channel is not None:
+            channel.close()
+    event('cancelled' if code == 'secure_cancelled' else 'failed', dict(code=code, **safety))
+    return 130 if code == 'secure_cancelled' else 2
+
+
 def environment_compare(operation_id, parameters):
     sequence = 1
     owned = None
@@ -1171,6 +1247,8 @@ def environment_compare(operation_id, parameters):
                 bundle.unpack(source, stage, os.environ["HOME"], workspace_preview=True)
                 if bundle.fingerprint(source) != source_identity:
                     raise ExecuteFailed("reference_changed")
+                state['secure_check'] = dict(version=1, bundle_id=source_identity,
+                    status='available' if (stage / 'secure.age').is_file() else 'absent')
                 files = restore_selection.staged_files(stage)
                 if bundle.workspace_extension_present(files):
                     bundle.validate_workspace(files, home=os.environ['HOME'], exact=True)
@@ -1374,6 +1452,16 @@ def dispatch(version, channel=None):
             if operation == 'capture_execute' and (not isinstance(parameters['expected_prepared_capture_id'], str) or
                     not PREPARED_PLAN_ID.fullmatch(parameters['expected_prepared_capture_id'])):
                 raise ValueError('invalid Capture prepared ID')
+        elif operation in ('secure_check_inventory', 'secure_check_compare'):
+            parameters = value.get('parameters')
+            expected = {'path', 'expected_bundle_id'} | ({'custom_destinations'} if operation == 'secure_check_compare' else set())
+            if (set(value) != required | {'parameters'} or not isinstance(parameters, dict) or set(parameters) != expected
+                    or not isinstance(parameters['path'], str) or not parameters['path'].startswith('/') or '\0' in parameters['path']
+                    or not isinstance(parameters['expected_bundle_id'], str) or not PREPARED_PLAN_ID.fullmatch(parameters['expected_bundle_id'])
+                    or (operation == 'secure_check_compare' and parameters['custom_destinations'] is not True)):
+                raise ValueError('invalid secure Check request')
+            path = parameters['path']
+            include_secure = True
         elif operation in ("secure_restore_inventory", "ssh_restore_review"):
             parameters = value["parameters"]
             expected = {"path", "selection"} if operation == "ssh_restore_review" else {"path"}
@@ -1435,10 +1523,20 @@ def dispatch(version, channel=None):
         emit(1, "failed", operation_id, {"code": "invalid_request"})
         return 2
 
-    if channel is not None and operation != "capture_execute" and (operation not in ("restore_execute", "secure_restore_compare", "secure_restore_inventory", "ssh_restore_review") or not include_secure):
+    if channel is not None and operation != "capture_execute" and (operation not in ("restore_execute", "secure_restore_compare", "secure_restore_inventory", "ssh_restore_review", "secure_check_inventory", "secure_check_compare") or not include_secure):
         channel.close()
         channel = None
     emit(1, "started", operation_id)
+    if operation in ('secure_check_inventory', 'secure_check_compare'):
+        try:
+            mapping = restore_destinations.operation_mapping(operation_id) if operation == 'secure_check_compare' else None
+        except SecureError as exc:
+            if channel is not None:
+                channel.close()
+            emit(2, 'failed', operation_id, dict(code=exc.code, read_only=True, publication_occurred=False, target_mutation_may_have_started=False))
+            return 2
+        return secure_check(operation_id, path, parameters['expected_bundle_id'], channel,
+                            inventory=operation == 'secure_check_inventory', destinations=mapping)
     destinations = None
     ssh_approvals = None
     if operation in ('restore_prepare', 'restore_execute', 'secure_restore_compare', 'ssh_restore_review') and parameters.get('ssh_approvals'):
@@ -1513,8 +1611,9 @@ def dispatch(version, channel=None):
             "protocol_version": PROTOCOL_VERSION,
             "product_version": version,
             "features": {"ssh_identity_resolution": {"version": 1, "review": "ssh_restore_review", "max_items": 32}, "secure_restore_destinations": {"version": 1, "selection_version": 2, "inventory": "secure_restore_inventory", "max_items": 32}, "external_ssh_identities": {"version": 1, "destination": "ssh_directory", "max_items": 32}, "pkg_installer_preparation": {"version": 1}, "bundle_comparison": {"version": 1}, "homebrew_graceful_stop": {"version": 1}, "restore_selection": {"version": 1, "inventory": "bundle_inspect", "selection_modes": ["category", "items"]}},
-            "operations": ["ssh_restore_review", "capabilities", "bundle_inspect", "restore_prepare", "restore_execute", "secure_restore_compare", "secure_restore_inventory", "capture_prepare", "capture_execute", "capture_identity_inspect", "environment_compare"],
+            "operations": ["ssh_restore_review", "capabilities", "bundle_inspect", "restore_prepare", "restore_execute", "secure_restore_compare", "secure_restore_inventory", "capture_prepare", "capture_execute", "capture_identity_inspect", "environment_compare", "secure_check_inventory", "secure_check_compare"],
         }
+        result['features']['secure_check'] = dict(version=1, inventory='secure_check_inventory', compare='secure_check_compare', selection_version=2, max_items=32, read_only=True)
     else:
         try:
             if operation == "restore_prepare":

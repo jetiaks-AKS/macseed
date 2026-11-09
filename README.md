@@ -71,8 +71,13 @@ milestone: capture requirements, select/preview, install manually in Apple App S
 and refresh Core verification. Confirmed identity overlap uses Cask-first precedence;
 automatic MAS development is archived on `archive/mas-automatic-restore-v4`.
 Stage 16H SSH identity migration is completed and manually accepted; identities
-remain opt-in and restore to `~/.ssh`. SSH Environment Completion, including broader
-SSH Configuration and optional custom destinations, is next and planned.
+remain opt-in, with default `~/.ssh` or explicit safe custom destinations. Independent
+SSH Configuration / SSH Keys selection, authorized IdentityFile corrections and
+SSH → Git dependencies are implemented. Unified Developer UI is visually accepted.
+Secure Check compares authenticated saved key files and their configured references;
+it does not prove private-key usability or remote authentication. SSH Configuration
+keeps one aggregate `config` result. Joint real-Mac SSH E2E and hosted qualification
+of the current Secure Check checkpoint remain open.
 Continuing Homebrew qualification, remaining completion/runtime qualification and
 Stage 3C durable recovery remain open. Stage 17 packaged
 clean-Mac qualification and Early Access

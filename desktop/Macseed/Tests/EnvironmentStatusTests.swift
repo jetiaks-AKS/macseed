@@ -374,7 +374,7 @@ private struct StatusAnchorFrames: PreferenceKey {
                     expansion: .constant(true), technicalExpansion: .constant(true)).modifier(WorkspaceCardSurface()),
                     "repositories-" + name.replacingOccurrences(of: " ", with: "-"), width)
             }
-            let matchingSettings = visual.sections.first { $0.id == "Settings" }!.entries[0].children.map { category in
+            let matchingSettings = visual.sections.flatMap(\.entries).first { $0.id == "macos-settings" }!.children.map { category in
                 DisplayCategory(id: category.id, title: category.title, symbol: category.symbol,
                     items: category.items.map { DisplayItem(id: $0.id, title: $0.title, status: .matching, action: "") })
             }
@@ -460,6 +460,47 @@ private struct StatusAnchorFrames: PreferenceKey {
         precondition(!StatusFailure.runtime(.malformedEvent).message.contains("Core"))
         precondition(StatusFailure.runtime(.coreFailure("comparison_reporting_incomplete")).message == StatusFailure.invalidResult.message)
         print("PASS: concise Status failures and summary, retained independent SSH warning and item counts")
+    }
+
+    @MainActor static func legacySSHCoverageChecks() throws {
+        var config = row(0, "matching"); config["domain"] = "ssh-configuration"; config["item_id"] = "config"
+        var raw = payload([config], verdict: "incomplete", alsoIncomplete: true)
+        var records = raw["records"] as! Object
+        records["verification_records"] = [["record_id": "v:0", "domain": "ssh-configuration", "item_id": "config", "predicate": "supported_config_match"]]
+        let opaque = "opaque:" + String(repeating: "a", count: 64)
+        records["coverage_records"] = [["record_id": "c:legacy", "domain": "ssh-configuration", "item_id": opaque, "disposition": "unresolved", "source_status": "partial"]]
+        records["diagnostics"] = [["record_id": "c:legacy", "code": "partial_source_coverage", "severity": "warning", "phase": "scope"]]
+        raw["records"] = records
+        var summary = raw["comparison"] as! Object, counts = summary["counts"] as! [String: Int]
+        counts["unresolved"] = 1; summary["counts"] = counts; raw["comparison"] = summary
+        let legacy = try presentation(raw)
+        let items = legacy.categories.first { $0.id == "ssh-configuration" }!.items
+        precondition(items.count == 2 && items.first { $0.title == "config" }?.status == .matching)
+        let coverage = items.first { $0.title == "SSH configuration coverage" }!
+        precondition(coverage.status == .attention && coverage.action.contains("only part") && coverage.reason!.contains("partial_source_coverage"))
+        precondition(legacy.needsAttention && legacy.counts["matching"] == 1 && legacy.counts["unresolved"] == 1)
+        try secureRender(EnvironmentComparisonView(result: legacy, categoryExpansion: .constant(EnvironmentComparisonView.disclosureIDs(legacy))), name: "legacy-coverage")
+        // The label is grounded in the owner, domain, source status and exact code.
+        // An unrelated opaque warning must never become SSH coverage or key evidence.
+        for variant in ["wrong-owner", "observation", "ready-source", "different-domain", "reference"] {
+            var altered = records
+            var coverageRows = altered["coverage_records"] as! [Object]
+            var diagnostics = altered["diagnostics"] as! [Object]
+            if variant == "wrong-owner" { diagnostics[0]["record_id"] = "unrelated" }
+            if variant == "observation" { diagnostics[0]["code"] = "observation_failed" }
+            if variant == "ready-source" { coverageRows[0]["source_status"] = "observed_present" }
+            if variant == "different-domain" { coverageRows[0]["domain"] = "shell-zsh" }
+            if variant == "reference" {
+                coverageRows[0]["item_id"] = "identity-references"
+                diagnostics[0]["code"] = "prerequisite_unmet"; diagnostics[0]["phase"] = "observation"
+            }
+            altered["coverage_records"] = coverageRows; altered["diagnostics"] = diagnostics; raw["records"] = altered
+            let value = try presentation(raw)
+            precondition(!value.categories.flatMap(\.items).contains { $0.title == "SSH configuration coverage" })
+            precondition(value.needsAttention && value.counts == legacy.counts)
+            if variant == "reference" { precondition(value.categories.flatMap(\.items).contains { $0.title == "SSH key references" }) }
+        }
+        print("PASS: legacy partial SSH coverage has a scoped private-safe label; modern references and unrelated evidence keep their predicates/counts")
     }
 
     static func topologyChecks() throws {
@@ -564,7 +605,7 @@ private struct StatusAnchorFrames: PreferenceKey {
         for predicate in ["worktree", "origin", "branch"] {
             append("git-repositories", "repository-1", predicate == "branch" ? "differing" : "matching", predicate: predicate)
         }
-        append("workspace-folders", "Projects", predicate: "directory")
+        append("workspace-folders", "Infrastructure", predicate: "directory")
         append("ssh-configuration", "config", "unverified", predicate: "file_content", unsupported: true)
         append("shell-zsh", ".zshrc", predicate: "file_content")
         append("vscode-workspaces", "workspace-1", predicate: "folder_relationships")
@@ -575,16 +616,16 @@ private struct StatusAnchorFrames: PreferenceKey {
         raw["reference_presentation"] = ["groups": WorkspacePresentationTaxonomy.Group.allCases.map {
             ["id": $0.title, "domains": $0.domains] as Object
         }, "app_store_names": ["425264550": "Blackmagic Disk Speed Test"],
-        "repository_labels": ["repository-1": "macseed"], "workspace_labels": ["workspace-1": "Project workspace"],
+        "repository_labels": ["repository-1": "Infrastructure"], "workspace_labels": ["workspace-1": "Project workspace"],
         "setting_labels": Dictionary(uniqueKeysWithValues: CaptureMacOSSettingsGroup.domainIDs.map { ($0, ["saved-preference": "Saved preference"]) })] as Object
         let result = try presentation(raw)
         let grouped = EnvironmentComparisonView.visibleSections(result)
-        precondition(grouped.map(\.id) == ["Applications & Tools", "Settings", "Application Extras", "For Experienced Users"])
-        precondition(grouped[0].entries.map(\.id) == ["app-store", "homebrew-casks", "homebrew-packages"])
-        precondition(grouped[1].entries.map(\.id) == ["macos-settings"])
-        precondition(grouped[1].entries[0].children.map(\.id) == CaptureMacOSSettingsGroup.domainIDs)
-        precondition(grouped[2].entries.map(\.id) == ["vscode-extensions", "vscode-settings"])
-        precondition(grouped[3].entries.map(\.id) == WorkspacePresentationTaxonomy.Group.advanced.domains)
+        precondition(grouped.map(\.id) == ["Standard Setup", "For Experienced Users"])
+        precondition(grouped[0].entries.map(\.id) == ["app-store", "homebrew-casks", "homebrew-packages", "macos-settings", CaptureHierarchy.Group.vscode.id])
+        precondition(grouped[0].entries[3].children.map(\.id) == CaptureMacOSSettingsGroup.domainIDs)
+        precondition(grouped[0].entries[4].children.map(\.id) == ["vscode-extensions", "vscode-settings"])
+        precondition(grouped[1].entries.map(\.id) == [DeveloperSelectionGroup.git.id, DeveloperSelectionGroup.workspace.id, DeveloperSelectionGroup.ssh.id, DeveloperSelectionGroup.shell.id])
+        precondition(grouped[1].entries.map { $0.children.map(\.id) } == [["git-configuration", "git-repositories"], ["workspace-folders", "vscode-workspaces"], ["ssh-configuration"], ["shell-zsh"]])
         let projected = grouped.flatMap(\.entries).flatMap { $0.children.isEmpty ? $0.category.items : $0.children.flatMap(\.items) }
         let originals = result.categories.flatMap(\.items)
         precondition(projected.count == originals.count && Set(projected.map(\.id)) == Set(originals.map(\.id)))
@@ -596,35 +637,449 @@ private struct StatusAnchorFrames: PreferenceKey {
             precondition(grouped.flatMap(\.entries).reduce(0) { $0 + result.categoryCount(outcome, category: $1.category, children: $1.children) }
                 == result.categories.reduce(0) { $0 + result.categoryCount(outcome, category: $1) }, "Grouping must not change category counts")
         }
-        precondition(grouped[3].entries.first { $0.id == "ssh-configuration" }!.category.comparisonStatus == .attention)
-        precondition(grouped[1].entries[0].category.comparisonStatus == .different)
+        precondition(grouped[1].entries.first { $0.id == DeveloperSelectionGroup.ssh.id }!.category.comparisonStatus == .attention)
+        precondition(grouped[0].entries[3].category.comparisonStatus == .different)
         precondition(projected.contains { $0.isNormalComparisonMatch } && projected.contains { $0.status == .unsupported })
+        let warning = DisplayItem(id: "ssh-configuration:identity-references", title: "SSH key references", status: .attention, action: "Unverified prerequisite", reason: "prerequisite_unmet")
+        let config = DisplayCategory(id: "ssh-configuration", title: "SSH Configuration", symbol: "key", items: [warning])
+        let parent = DisplayCategory(id: DeveloperSelectionGroup.ssh.id, title: "SSH", symbol: "key", items: [warning])
+        precondition(EnvironmentComparisonDomain.showsAggregateStatus(parent, children: [config], expanded: false))
+        precondition(!EnvironmentComparisonDomain.showsAggregateStatus(parent, children: [config], expanded: true))
+        precondition(!EnvironmentComparisonDomain.showsAggregateStatus(config, expanded: true), "The visible leaf retains the identical warning")
+        let independent = DisplayItem(id: "ssh:independent", title: "Independent warning", status: .attention, action: "Different evidence", reason: nil)
+        let additional = DisplayCategory(id: parent.id, title: parent.title, symbol: parent.symbol, items: [warning, independent])
+        precondition(EnvironmentComparisonDomain.showsAggregateStatus(additional, children: [config], expanded: true), "Never hide additional independent evidence")
+        let missing = DisplayCategory(id: "fixture", title: "Fixture", symbol: "folder", items: [DisplayItem(id: "missing", title: "Missing item", status: .missing, action: "", reason: nil)])
+        precondition(EnvironmentComparisonDomain.showsAggregateStatus(missing, expanded: true), "Specific leaf and aggregate labels remain distinct")
+        precondition(config.comparisonStatusText == "Needs Attention" && missing.comparisonStatusText == "Differences Found")
+        precondition(EnvironmentComparisonDomain.badgeCounts([.match: 2, .missing: 1, .needsAttention: 1]).map { $0.0 } == ["Match", "Differences Found", "Needs Attention"])
         let ids = EnvironmentComparisonView.disclosureIDs(result)
-        precondition(!ids.contains(CaptureHierarchy.sectionID(.vscode)) && !ids.contains(CaptureHierarchy.Group.vscode.id))
-        precondition(ids == Set(result.categories.map(\.id)).union(["macos-settings"]), "Only diagnostic categories disclose; no presentation parents")
+        let parents = Set(["macos-settings", CaptureHierarchy.Group.vscode.id] + DeveloperSelectionGroup.allCases.map(\.id))
+        precondition(ids == Set(result.categories.map(\.id)).union(parents))
+        precondition(!ids.contains("Standard Setup") && !ids.contains("For Experienced Users"), "Section headers never disclose")
         precondition(Set(CaptureMacOSSettingsGroup.domainIDs).isSubset(of: ids))
         precondition(EnvironmentComparisonView.toggledCategories([], ids: ids) == ids)
         precondition(EnvironmentComparisonView.toggledCategories(ids, ids: ids).isEmpty)
         var sparse = payload([row(0, "matching")], verdict: "no_differences_detected")
         let ordinary = try presentation(sparse)
-        precondition(EnvironmentComparisonView.visibleSections(ordinary).map(\.id) == ["Applications & Tools"])
+        precondition(EnvironmentComparisonView.visibleSections(ordinary).map(\.id) == ["Standard Setup"])
         var sparseEvidence = sparse["records"] as! Object
         sparseEvidence["coverage_records"] = [["record_id": "c:none", "domain": "shell-zsh", "item_id": "scope", "disposition": "no_requirement", "source_status": "observed_absent"]]
         sparse["records"] = sparseEvidence
         let absent = try presentation(sparse)
-        precondition(EnvironmentComparisonView.visibleSections(absent).map(\.id) == ["Applications & Tools"], "Absent Advanced scope must stay hidden")
+        precondition(EnvironmentComparisonView.visibleSections(absent).map(\.id) == ["Standard Setup"], "Absent Advanced scope must stay hidden")
         precondition(ComparisonSummaryOutcome.notApplicable.count(absent) == 1, "Authoritative coverage summary remains unchanged")
         var future = row(0, "unverified"); future["domain"] = "future-domain"
         let unknown = try presentation(payload([future], verdict: "incomplete", alsoIncomplete: true))
-        precondition(EnvironmentComparisonView.visibleSections(unknown).map(\.id) == ["Other Findings"])
+        precondition(EnvironmentComparisonView.visibleSections(unknown).map(\.id) == ["Standard Setup"])
+        let sameNames = projected.filter { $0.title == "Infrastructure" }
+        precondition(sameNames.count == 2 && Set(sameNames.map(\.id)).count == 2, "Git and folder requirements never merge by display name")
+        precondition(grouped[1].entries.flatMap(\.children).contains { $0.title == "Git Repositories / Worktrees" })
+        precondition(grouped[1].entries.flatMap(\.children).contains { $0.title == "Workspace Folders" })
+        precondition(EnvironmentStatusSection.project([DisplayCategory(id: "ssh-configuration", title: "SSH Configuration", symbol: "key", items: [])]).isEmpty)
+        try secureRender(EnvironmentComparisonView(result: result, categoryExpansion: .constant([])), name: "all-collapsed", height: 1300)
+        try secureRender(EnvironmentComparisonView(result: result, categoryExpansion: .constant(["macos-settings", CaptureHierarchy.Group.vscode.id])), name: "standard-expanded", height: 1800)
+        try secureRender(EnvironmentComparisonView(result: result, categoryExpansion: .constant(Set(DeveloperSelectionGroup.allCases.map(\.id)))), name: "developer-expanded", height: 1800)
+        try secureRender(EnvironmentComparisonView(result: result, categoryExpansion: .constant(Set(DeveloperSelectionGroup.allCases.map(\.id) + ["git-repositories", "workspace-folders", "ssh-configuration"]))), name: "developer-details", height: 2100)
         let output = URL(fileURLWithPath: "build/Debug/StatusFinalGrouping", isDirectory: true)
         try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
         try data(raw).write(to: output.appendingPathComponent("comparison-fixture.json"))
         print("PASS: Static Status sections preserve every included matching/differing/unsupported item and diagnostic, counts once, hides absent groups, retains unknown evidence and nested disclosures")
     }
 
+    @MainActor static func secureRender<V: View>(_ view: V, name: String, sheet: Bool = false, height: CGFloat = 1000) throws {
+        let directory = URL(fileURLWithPath: "/private/tmp/macseed-check-legacy-visuals")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        for dark in [false, true] {
+            _ = NSApplication.shared
+            NSApp.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+            let root = VStack(alignment: .leading, spacing: 16) {
+                if !sheet { WorkspaceHeader(title: "Check", subtitle: "Compare a saved environment with this Mac.", symbol: "checkmark.circle") }
+                view
+                if !sheet { Spacer(minLength: 0) }
+            }.padding(sheet ? 0 : 24).frame(width: sheet ? 620 : 960, height: sheet ? 460 : height, alignment: .topLeading)
+                .background(Color(nsColor: .windowBackgroundColor)).environment(\.colorScheme, dark ? .dark : .light)
+            let host = NSHostingView(rootView: root)
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: sheet ? 620 : 960, height: sheet ? 460 : height), styleMask: [.borderless], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false; window.contentView = host
+            host.frame = window.contentView!.bounds; host.layoutSubtreeIfNeeded(); host.displayIfNeeded()
+            guard let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { preconditionFailure("Secure Check render unavailable") }
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            try bitmap.representation(using: .png, properties: [:])!.write(to: directory.appendingPathComponent(name + (dark ? "-dark.png" : "-light.png")))
+            window.close()
+        }
+    }
+
+    @MainActor static func secureCheckTests() async throws {
+        let bundleID = String(repeating: "b", count: 64), identityID = String(repeating: "a", count: 64)
+        var ordinary = payload([row(0, "matching")], verdict: "no_differences_detected")
+        var rows = ordinary["comparison_records"] as! [Object]
+        rows[0]["domain"] = "ssh-configuration"; rows[0]["item_id"] = "config"
+        ordinary["comparison_records"] = rows
+        let unchanged = try presentation(ordinary)
+        precondition(unchanged.secureCoverage == nil && unchanged.headline == "No differences detected")
+        try secureRender(EnvironmentComparisonView(result: unchanged, categoryExpansion: .constant(EnvironmentComparisonView.disclosureIDs(unchanged))), name: "ordinary")
+        ordinary["secure_check"] = ["version": 1, "bundle_id": bundleID, "status": "available"]
+        let unchecked = try presentation(ordinary)
+        precondition(unchecked.counts["matching"] == 1 && unchecked.headline == "Check Incomplete" && unchecked.needsAttention)
+        precondition(unchecked.categories.first { $0.id == "secure-ssh-identities" }?.comparisonStatusText == "Not checked")
+        let ssh = EnvironmentComparisonView.visibleSections(unchecked).first { $0.id == "For Experienced Users" }!.entries.first { $0.id == CaptureHierarchy.sshID }!
+        precondition(ssh.children.map(\.id) == ["ssh-configuration", "secure-ssh-identities"])
+        precondition(ssh.category.comparisonStatusText == "Partially checked")
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("macseed-check-ui-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let core = directory.appendingPathComponent("core")
+        try FileManager.default.createDirectory(at: core.appendingPathComponent("modules/core/application-interface"), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: core.appendingPathComponent("config"), withIntermediateDirectories: true)
+        for path in ["modules/core/application-interface/core.py", "config/toolkit.conf", "bootstrap.sh"] { try Data().write(to: core.appendingPathComponent(path)) }
+        try write("#!/bin/bash\nexec python3 -B fixture.py \"$@\"\n", core.appendingPathComponent("modules/core/application-interface/core.sh"))
+        for helper in ["secret_input.py", "age_runtime.py"] {
+            try FileManager.default.copyItem(at: URL(fileURLWithPath: CommandLine.arguments[1]).appendingPathComponent("modules/migration/" + helper), to: core.appendingPathComponent(helper))
+        }
+        try data(ordinary).write(to: core.appendingPathComponent("ordinary.json"))
+        try write("matching", core.appendingPathComponent("mode"))
+        try write(#"""
+        import json, os, sys, time, uuid
+        from pathlib import Path
+        from secret_input import inherited_socket, metadata, receive, response, SecureError
+        request = json.load(sys.stdin); seq = 0
+        def emit(kind, data=None):
+            global seq
+            seq += 1
+            print(json.dumps(dict(protocol_version=1, operation_id=request['operation_id'], sequence=seq, type=kind, data=data or {})), flush=True)
+        safety = dict(read_only=True, publication_occurred=False, target_mutation_may_have_started=False)
+        op = request['operation']; mode = Path('mode').read_text(); emit('started')
+        with Path('operations').open('a') as stream: stream.write(op+'\n')
+        if op == 'capabilities':
+            features = dict(bundle_comparison=dict(version=1))
+            if mode != 'unsupported': features['secure_check'] = dict(version=1, selection_version=2, read_only=True)
+            emit('result', dict(protocol_version=1, product_version='fixture', operations=['environment_compare','secure_check_inventory','secure_check_compare'], features=features))
+            emit('completed'); sys.exit(0)
+        if op == 'environment_compare':
+            assert '--secure-fd' not in sys.argv
+            emit('result', json.loads(Path('ordinary.json').read_text())); emit('completed', safety); sys.exit(0)
+        assert op in ('secure_check_inventory', 'secure_check_compare')
+        channel = inherited_socket(int(sys.argv[-1]))
+        emit('phase_started', dict(phase='secure_compare'))
+        for attempt in range(1,4):
+            challenge = dict(type='challenge', protocol_version=1, operation_id=request['operation_id'], challenge_id=uuid.uuid4().hex, kind='import_confirmation' if mode == 'forbidden_import' else 'ssh_key_unlock' if mode == 'forbidden_key_unlock' else 'bundle_unlock', attempt=attempt)
+            if mode == 'forbidden_key_unlock': challenge['identity'] = dict(name='id_fixture', key_type='ssh-ed25519', fingerprint='SHA256:'+'A'*43)
+            metadata(channel, challenge)
+            try: secret = response(receive(channel, time.monotonic()+10), challenge)
+            except (SecureError, OSError):
+                emit('cancelled', dict(code='secure_cancelled', **safety)); sys.exit(130)
+            if secret == b'fixture secret': break
+        else:
+            emit('failed', dict(code='secure_unlock_rejected', **safety)); sys.exit(2)
+        channel.close()
+        if mode in ('unavailable','reference_changed','timeout'):
+            emit('failed', dict(code=dict(unavailable='secure_payload_invalid',reference_changed='reference_changed',timeout='secure_channel_timeout')[mode], **safety)); sys.exit(2)
+        root = Path(os.environ['TMPDIR'])
+        value = dict(version=1, operation_id=request['operation_id'], bundle_id='b'*64)
+        if op == 'secure_check_inventory':
+            value['items'] = [dict(identity_id=key*64, name=name, key_type='ssh-ed25519', fingerprint='SHA256:'+key.upper()*43) for key,name in [('a','id_fixture_work'),('c','id_fixture_personal')]]
+            filename = 'secure-restore-inventory.json'
+        else:
+            mapping = json.loads((root/'secure-restore-destinations.json').read_text())['mapping']
+            Path('last-mapping.json').write_text(json.dumps(mapping))
+            kind = mode if mode in ('matching','missing','differing','unverified') else 'matching'
+            def observation(item, index):
+                kind = ('matching' if index == 0 else 'missing') if mode == 'mixed' else mode if mode in ('matching','missing','differing','unverified') else 'matching'
+                return dict(identity_id=item['identity_id'], comparison_kind=kind,
+                reason=dict(matching='pair_identical',missing='pair_absent',differing='private_bytes_differ',unverified='unsafe_target')[kind],
+                target_state=None if kind=='unverified' else 'd'*64, private_bytes_match=kind=='matching' if kind in ('matching','differing') else None,
+                public_bytes_match=True if kind in ('matching','differing') else None)
+            value['items'] = [observation(item, index) for index, item in enumerate(mapping['items']) if item['selected']]
+            value['context'] = dict(mapping=mapping, target_state='d'*64, source_validation='saved_files',
+                ssh_reference_coverage='resolved' if kind=='matching' else 'unresolved', observed_at='2026-11-09T10:00:00.000001+00:00', **safety)
+            filename = 'secure-check-result.json'
+            if mode == 'wrong_assurance': value['context']['source_validation'] = 'cryptographic_pair'
+            if mode == 'wrong_operation': value['operation_id'] = 'wrong'
+            if mode == 'wrong_mapping': value['context']['mapping']['items'][0]['directory'] = '/wrong'
+            if mode == 'extra_field': value['context']['unexpected'] = True
+            if mode == 'compensated_field':
+                value['context']['mapping']['items'][1].pop('directory'); value['context']['mapping']['items'][1]['unexpected'] = None
+            if mode == 'duplicate_field':
+                raw = json.dumps(value).replace('"version": 1', '"version": 1, "version": 1', 1)
+            else: raw = json.dumps(value)
+        if op == 'secure_check_inventory': raw = json.dumps(value)
+        fd = os.open(root/filename, os.O_CREAT|os.O_EXCL|os.O_WRONLY, 0o600)
+        with os.fdopen(fd,'w') as stream: stream.write(raw)
+        if mode == 'unsafe_file': (root/filename).chmod(0o644)
+        emit('phase_completed', dict(phase='secure_compare')); emit('result', dict(status='checked', **safety)); emit('completed', safety)
+        """#, core.appendingPathComponent("fixture.py"))
+        let python = URL(fileURLWithPath: CommandLine.arguments[2])
+        let location = CoreLocation(root: core, python: python, home: directory, temporaryBase: directory, toolDirectories: [])
+        let runtime = CoreRuntime(operationLogs: nil)
+        runtime.start(CoreRequest(.capabilities), location: location); await runtime.waitForCompletion()
+        precondition(runtime.secureCheckSupported, "Capability fixture failed: \(String(describing: runtime.error))")
+        let model = EnvironmentStatusModel(runtime: runtime, location: location)
+        let bundle = directory.appendingPathComponent("Fixture.mbt"); try write("fixture", bundle)
+        func operations() throws -> [String] { try String(contentsOf: core.appendingPathComponent("operations")).split(separator: "\n").map(String.init) }
+        func evidence() -> [String] {
+            guard let value = model.presentation else { return [] }
+            return [value.headline, value.summary, String(describing: value.counts.sorted { $0.key < $1.key }), model.secureMessage ?? ""]
+                + value.categories.flatMap(\.items).map { [$0.id, $0.title, $0.status.rawValue, $0.action, $0.reason ?? ""].joined(separator: "|") }
+        }
+        func cancelledDraft(_ name: String) async throws {
+            let before = evidence(), operationsBefore = try operations()
+            let selection = model.selectedSecureIDs, directories = model.secureDirectories
+            model.customizeSSHKeys(); await model.waitForCompletion()
+            precondition(model.showsSecureSelection && evidence() == before)
+            model.setSecureDirectory(directory.appendingPathComponent("Discarded Keys").path, for: identityID)
+            model.selectSecureIdentity(String(repeating: "c", count: 64), included: !selection.contains(String(repeating: "c", count: 64)))
+            precondition(model.selectedSecureIDs == selection && model.secureDirectories == directories && evidence() == before)
+            precondition(model.draftSecureDirectories != directories)
+            for id in model.draftSecureIDs { model.selectSecureIdentity(id, included: false) }
+            model.compareSSHKeys()
+            precondition(model.showsSecureSelection && evidence() == before, "Empty scope never starts a comparison or commits edits")
+            model.cancelSecureSelection()
+            precondition(!model.showsSecureSelection && model.draftSecureIDs.isEmpty && model.draftSecureDirectories.isEmpty)
+            precondition(model.selectedSecureIDs == selection && model.secureDirectories == directories && evidence() == before)
+            precondition(try! operations() == operationsBefore, "Opening/editing/cancelling with authenticated inventory never runs Core")
+            model.customizeSSHKeys(); await model.waitForCompletion()
+            precondition(model.draftSecureIDs == selection && model.draftSecureDirectories == directories, "Cancelled mappings must not return")
+            model.cancelSecureSelection()
+            if name == "differing" { try show("location-cancelled-different") }
+            print("PASS: Change Location Cancel preserves " + name + " evidence, counts, scope and committed mapping without Core operations")
+        }
+        func show(_ name: String) throws {
+            let result = model.presentation!
+            try secureRender(VStack(alignment: .leading, spacing: 16) {
+                Text(result.headline).font(.title2.weight(.semibold))
+                EnvironmentComparisonView(result: result, secureActions: model.showsSecureRecovery ? AnyView(EnvironmentSecureCheckStatus(
+                    message: model.secureCoverageMessage ?? "", available: model.canRetrySSHKeys,
+                    customizable: model.canRetrySSHKeys, customize: model.customizeSSHKeys, check: model.checkSSHKeys)) : nil,
+                    categoryExpansion: .constant(EnvironmentComparisonView.disclosureIDs(result)))
+                EnvironmentStatusActions(model: model, runtime: runtime)
+            }, name: name)
+        }
+        func prompt() async throws -> CoreSecureChallenge {
+            for _ in 0..<500 {
+                if let challenge = model.secureChallenge { return challenge }
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            preconditionFailure("Expected bounded Check authentication prompt")
+        }
+        @discardableResult func finish(cancel: Bool = false, wrongFirst: Bool = false, wrongAll: Bool = false) async throws -> Int {
+            var prompts = 0
+            for _ in 0..<1000 {
+                try await Task.sleep(for: .milliseconds(10))
+                if let challenge = model.secureChallenge {
+                    precondition(challenge.kind == .bundleUnlock, "Check must never request Import consent")
+                    prompts += 1
+                    model.respondToSecureCheck(challenge, cancel ? .cancel : .secret(Data((wrongAll || (wrongFirst && prompts == 1) ? "wrong fixture" : "fixture secret").utf8)))
+                }
+                if !runtime.isActive && !model.secureBusy && model.state != .running { break }
+            }
+            precondition(!runtime.isActive && !model.secureBusy && model.state != .running, "Protected Check did not finish")
+            await model.waitForCompletion()
+            return prompts
+        }
+        // A Bundle without keys remains a single ordinary operation and no prompt.
+        var noKeys = ordinary; noKeys.removeValue(forKey: "secure_check")
+        try data(noKeys).write(to: core.appendingPathComponent("ordinary.json"))
+        model.selectBundle(bundle); model.compare(); await model.waitForCompletion()
+        precondition(model.state == .result && model.secureChallenge == nil && !model.secureCheckAvailable)
+        precondition(try! operations().filter { $0 == "environment_compare" }.count == 1)
+        try show("ordinary")
+        try data(ordinary).write(to: core.appendingPathComponent("ordinary.json"))
+        model.selectBundle(bundle); model.compare()
+        let initial = try await prompt()
+        precondition(model.state == .running && model.secureBusy && runtime.operation == .secureCheckInventory)
+        try secureRender(CaptureSecureInputView(runtime: CoreRuntime(operationLogs: nil), challenge: initial, checking: true), name: "initial-prompt", sheet: true)
+        let promptCount = try await finish()
+        precondition(promptCount == 1, "One Bundle prompt continues inventory to comparison, scoped to this Check only; observed \(promptCount)")
+        precondition(!model.showsSecureSelection && model.selectedSecureIDs.count == 2)
+        precondition(model.presentation?.counts["matching"] == 3 && model.presentation?.headline == "No differences detected")
+        precondition(!model.canRetrySSHKeys && !model.showsSecureRecovery)
+        precondition(try! operations().suffix(3) == ["environment_compare","secure_check_inventory","secure_check_compare"])
+        try show("matching")
+        try await cancelledDraft("Matches")
+        let ordinaryCount = try operations().filter { $0 == "environment_compare" }.count
+        // Recovery offers optional locations/subsets only when there is a difference.
+        try write("missing", core.appendingPathComponent("mode"))
+        model.checkSSHKeys(); try await finish()
+        precondition(model.canRetrySSHKeys && model.showsSecureRecovery)
+        try await cancelledDraft("Missing")
+        try write("matching", core.appendingPathComponent("mode"))
+        // No identity outside the selected subset is falsely matched.
+        model.customizeSSHKeys(); await model.waitForCompletion()
+        precondition(model.showsSecureSelection)
+        let previousEvidence = evidence(), previousOperations = try operations().count
+        try secureRender(EnvironmentSecureSelectionView(model: model), name: "selection-default", sheet: true)
+        model.setSecureDirectory(directory.appendingPathComponent("Custom Keys").path, for: identityID)
+        model.selectSecureIdentity(String(repeating: "c", count: 64), included: false)
+        try secureRender(EnvironmentSecureSelectionView(model: model), name: "selection-custom", sheet: true)
+        precondition(evidence() == previousEvidence && model.selectedSecureIDs.count == 2 && model.secureDirectories.isEmpty)
+        model.compareSSHKeys(); let laterPrompts = try await finish()
+        precondition(try! operations().count == previousOperations + 1)
+        let sent = try JSONDecoder().decode(CoreRestoreDestinations.self, from: Data(contentsOf: core.appendingPathComponent("last-mapping.json")))
+        precondition(sent.items.filter { $0.selected == true }.map(\.identityID) == [identityID])
+        precondition(sent.items.first { $0.identityID == identityID }?.directory == directory.appendingPathComponent("Custom Keys").path)
+        precondition(model.selectedSecureIDs == [identityID] && model.secureDirectories[identityID] != nil && model.draftSecureIDs.isEmpty)
+        precondition(laterPrompts == 1, "No retained passphrase after completed Check")
+        precondition(model.presentation?.counts["matching"] == 2 && model.presentation?.counts["unverified"] == 1)
+        precondition(model.presentation?.headline == "Check Incomplete" && model.presentation?.attentionCount == 1 && model.canRetrySSHKeys)
+        precondition(model.presentation?.categories.first { $0.id == "secure-ssh-identities" }?.items.count == 2)
+        try show("partial")
+        try await cancelledDraft("partial selected subset/custom destination")
+        try write("mixed", core.appendingPathComponent("mode"))
+        model.checkSSHKeys(); try await finish()
+        precondition(model.presentation?.counts["matching"] == 2 && model.presentation?.counts["missing"] == 1)
+        precondition(model.presentation?.counts["unverified"] == 0 && model.presentation?.headline == "Differences Found")
+        precondition(model.canRetrySSHKeys && model.showsSecureRecovery)
+        try show("mixed")
+        for kind in ["missing", "differing", "unverified"] {
+            try write(kind, core.appendingPathComponent("mode"))
+            model.checkSSHKeys(); try await finish()
+            precondition(model.state == .result && model.presentation?.counts[kind] == 2)
+            precondition(model.selectedSecureIDs.count == 2 && model.secureDirectories[identityID] != nil)
+            precondition(model.canRetrySSHKeys && model.showsSecureRecovery)
+            precondition(model.presentation?.headline == (kind == "unverified" ? "Needs Attention" : "Differences Found"))
+            try show(kind)
+            try await cancelledDraft(kind)
+        }
+        try write("matching", core.appendingPathComponent("mode"))
+        model.checkSSHKeys(); try await finish(cancel: true)
+        precondition(model.state == .result && model.presentation?.counts["matching"] == 1 && model.secureMessage?.contains("cancelled") == true)
+        precondition(model.canRetrySSHKeys && model.presentation?.headline == "Check Incomplete")
+        try show("cancelled")
+        model.checkSSHKeys(); let retryPrompts = try await finish(wrongFirst: true)
+        precondition(retryPrompts == 2)
+        precondition(model.presentation?.counts["matching"] == 3 && !model.canRetrySSHKeys && !model.showsSecureRecovery)
+        model.checkSSHKeys(); let exhaustedPrompts = try await finish(wrongAll: true)
+        precondition(exhaustedPrompts == 3 && model.canRetrySSHKeys && model.showsSecureRecovery)
+        precondition(model.presentation?.counts["matching"] == 1 && model.presentation?.headline == "Check Incomplete")
+        precondition(try! operations().filter { $0 == "environment_compare" }.count == ordinaryCount, "Scoped retries cannot rerun ordinary domains")
+        for mode in ["unavailable", "timeout", "wrong_operation", "wrong_mapping", "extra_field", "compensated_field", "duplicate_field", "unsafe_file", "forbidden_import", "forbidden_key_unlock", "wrong_assurance", "reference_changed"] {
+            try write(mode, core.appendingPathComponent("mode"))
+            model.checkSSHKeys(); try await finish()
+            precondition(model.state == .result && model.presentation?.counts["matching"] == 1 && model.secureMessage != nil, "Reject invalid private result: \(mode)")
+            if mode == "unavailable" { try show("unavailable") }
+            if model.requiresFullCheck {
+                precondition(!model.canRetrySSHKeys)
+                let before = try operations().count
+                model.checkSSHKeys(); await model.waitForCompletion()
+                precondition(try! operations().count == before, "Invalid context requires full Check")
+                try write("matching", core.appendingPathComponent("mode"))
+                model.compare(); try await finish()
+            }
+        }
+        let priorID = model.operationID
+        try write("matching", core.appendingPathComponent("mode"))
+        model.compare(); try await finish()
+        precondition(model.operationID != priorID && model.presentation?.counts["matching"] == 3)
+        model.customizeSSHKeys(); await model.waitForCompletion()
+        let staleOperationCount = try operations().count
+        model.setSecureDirectory(directory.appendingPathComponent("Stale Keys").path, for: identityID)
+        model.selectBundle(bundle)
+        model.compareSSHKeys()
+        precondition(try! operations().count == staleOperationCount)
+        precondition(model.state == .choose && model.secureDirectories.isEmpty && model.draftSecureDirectories.isEmpty)
+        model.compare(); try await finish()
+        // A failed initial unlock has no inventory. Authenticating the optional
+        // dialog may load it, but still must not commit scope or change evidence.
+        model.selectBundle(bundle)
+        try write("unavailable", core.appendingPathComponent("mode"))
+        model.compare(); try await finish()
+        let beforeInventoryDraft = evidence()
+        precondition(model.secureInventory == nil && model.selectedSecureIDs.isEmpty)
+        try write("matching", core.appendingPathComponent("mode"))
+        model.customizeSSHKeys(); try await finish()
+        precondition(model.showsSecureSelection && model.draftSecureIDs.count == 2 && model.selectedSecureIDs.isEmpty)
+        precondition(evidence() == beforeInventoryDraft)
+        let afterInventory = try operations().count
+        model.cancelSecureSelection()
+        precondition(evidence() == beforeInventoryDraft && model.selectedSecureIDs.isEmpty && model.secureDirectories.isEmpty)
+        precondition(try! operations().count == afterInventory)
+        model.customizeSSHKeys(); await model.waitForCompletion()
+        precondition(model.draftSecureIDs.count == 2 && model.selectedSecureIDs.isEmpty && evidence() == beforeInventoryDraft)
+        model.cancelSecureSelection()
+        model.compare(); try await finish()
+        try write("unsupported", core.appendingPathComponent("mode"))
+        runtime.start(CoreRequest(.capabilities), location: location); await runtime.waitForCompletion()
+        model.compare(); await model.waitForCompletion()
+        precondition(!model.canCheckSSHKeys && model.presentation?.headline == "Check Incomplete")
+        model.selectBundle(bundle)
+        precondition(model.secureInventory == nil && model.selectedSecureIDs.isEmpty && model.secureDirectories.isEmpty)
+        model.compareSSHKeys(); model.setSecureDirectory("/unconfirmed", for: identityID)
+        precondition(!model.showsSecureSelection && model.draftSecureIDs.isEmpty && model.secureDirectories.isEmpty)
+        var unresolved = ordinary
+        var records = unresolved["records"] as! Object
+        records["coverage_records"] = [["record_id": "c:1", "domain": "ssh-configuration", "item_id": "identity-references", "disposition": "unresolved", "source_status": "unobserved"]]
+        records["diagnostics"] = [["record_id": "c:1", "code": "prerequisite_unmet", "severity": "warning", "phase": "observation"]]
+        unresolved["records"] = records
+        var summary = unresolved["comparison"] as! Object, counts = summary["counts"] as! [String:Int]
+        counts["unresolved"] = 1; summary["counts"] = counts; summary["verdict"] = "incomplete"; summary["also_incomplete"] = true; unresolved["comparison"] = summary
+        let diagnostic = try presentation(unresolved)
+        precondition(diagnostic.categories.flatMap(\.items).contains { $0.title == "SSH key references" && $0.action.contains("not establish") })
+        let mapping: Object = ["version": 2, "bundle_id": bundleID, "items": [["identity_id": identityID, "directory": NSNull(), "selected": true]]]
+        var context: Object = ["mapping": mapping, "target_state": String(repeating: "d", count: 64), "source_validation": "saved_files",
+            "ssh_reference_coverage": "resolved", "observed_at": "2026-11-09T10:00:00.000001+00:00", "read_only": true,
+            "publication_occurred": false, "target_mutation_may_have_started": false]
+        var secure: Object = ["version": 1, "operation_id": "fixture-check", "bundle_id": bundleID, "context": context,
+            "items": [["identity_id": identityID, "comparison_kind": "matching", "reason": "pair_identical", "target_state": String(repeating: "d", count: 64), "private_bytes_match": true, "public_bytes_match": true]]]
+        func reconcile(_ raw: Object) throws -> EnvironmentStatusPresentation {
+            try EnvironmentStatusPresentation(JSONDecoder().decode(CoreComparisonResult.self, from: data(raw)),
+                secureCheck: JSONDecoder().decode(CoreSecureCheckResult.self, from: data(secure)))
+        }
+        let proven = try reconcile(unresolved)
+        precondition(proven.counts["unresolved"] == 0 && proven.counts["matching"] == 2 && !proven.needsAttention)
+        precondition(!proven.categories.flatMap(\.items).contains { $0.title == "SSH key references" })
+        context["ssh_reference_coverage"] = "unresolved"; secure["context"] = context
+        let unproven = try reconcile(unresolved)
+        precondition(unproven.needsAttention && !unproven.secureRequiresRetry)
+        precondition(unproven.counts["unresolved"] == 1 && unproven.counts["matching"] == 2)
+        let reference = unproven.categories.first { $0.id == "ssh-configuration" }!.items.first { $0.title == "SSH key references" }!
+        precondition(reference.action.contains("Saved SSH key files match") && reference.action.contains("does not prove"))
+        precondition(!reference.action.contains("A required inspection prerequisite"), "Do not append the same generic warning")
+        precondition(reference.reason?.contains("prerequisite_unmet") == true, "Diagnostic evidence remains available")
+        precondition(unproven.categories.first { $0.id == "ssh-configuration" }!.items.filter { $0.status == .matching }.map(\.title) == ["config"], "Aggregate verification never manufactures per-Host Matches")
+        // Mirrors the reported shape: one configuration predicate, one unresolved
+        // dependency, three matching saved-file pairs. No claim of private-key usability.
+        let priorSecure = secure
+        let threeIDs = [identityID, String(repeating: "c", count: 64), String(repeating: "e", count: 64)]
+        var threeContext = context
+        threeContext["mapping"] = ["version": 2, "bundle_id": bundleID, "items": threeIDs.map { ["identity_id": $0, "directory": NSNull(), "selected": true] as Object }]
+        secure["context"] = threeContext
+        let item = (secure["items"] as! [Object])[0]
+        secure["items"] = threeIDs.map { id -> Object in var row = item; row["identity_id"] = id; return row }
+        let threeMatching = try reconcile(unresolved)
+        precondition(threeMatching.counts["matching"] == 4 && threeMatching.counts["unresolved"] == 1 && threeMatching.needsAttention && !threeMatching.secureRequiresRetry)
+        try secureRender(EnvironmentComparisonView(result: threeMatching, categoryExpansion: .constant([])), name: "ssh-independent-collapsed")
+        try secureRender(EnvironmentComparisonView(result: threeMatching, categoryExpansion: .constant(EnvironmentComparisonView.disclosureIDs(threeMatching))), name: "ssh-independent-expanded", height: 1200)
+        threeContext["ssh_reference_coverage"] = "resolved"; secure["context"] = threeContext
+        let threeProven = try reconcile(unresolved)
+        precondition(threeProven.counts["matching"] == 4 && threeProven.counts["unresolved"] == 0 && !threeProven.needsAttention)
+        precondition(threeProven.categories.first { $0.id == "ssh-configuration" }!.items.map(\.title) == ["config"], "Resolved reference coverage adds no matching records or Host rows")
+        var legacy = unresolved, legacyRecords = records
+        legacyRecords["coverage_records"] = (records["coverage_records"] as! [Object]) + [
+            ["record_id": "c:legacy", "domain": "ssh-configuration", "item_id": "scope", "disposition": "unresolved", "source_status": "partial"]]
+        legacyRecords["diagnostics"] = (records["diagnostics"] as! [Object]) + [
+            ["record_id": "c:legacy", "code": "partial_source_coverage", "severity": "warning", "phase": "scope"]]
+        legacy["records"] = legacyRecords
+        var legacySummary = summary, legacyCounts = counts
+        legacyCounts["unresolved"] = 2; legacySummary["counts"] = legacyCounts; legacy["comparison"] = legacySummary
+        let legacyProven = try reconcile(legacy)
+        precondition(legacyProven.counts["matching"] == 4 && legacyProven.counts["unresolved"] == 1 && legacyProven.needsAttention)
+        precondition(legacyProven.categories.flatMap(\.items).contains { $0.title == "SSH configuration coverage" && $0.status == .attention })
+        secure = priorSecure
+        context["ssh_reference_coverage"] = "resolved"; secure["context"] = context
+        records["diagnostics"] = (records["diagnostics"] as! [Object]) + [["record_id": "c:1", "code": "partial_source_coverage", "severity": "warning", "phase": "input"]]
+        unresolved["records"] = records
+        let partial = try reconcile(unresolved)
+        precondition(partial.needsAttention, "Correlation must preserve unrelated diagnostic evidence")
+        print("PASS: unified Check, one-use authentication, automatic all-key scope, scoped retry, truthful partial coverage, private decoding and light/dark production Views")
+    }
+
     @MainActor static func main() async throws {
-        if CommandLine.arguments.contains("--status-grouping-only") { try groupedPresentationChecks(); return }
+        try legacySSHCoverageChecks()
+        try await secureCheckTests()
+        if CommandLine.arguments.contains("--secure-check-only") { return }
+        try groupedPresentationChecks()
+        if CommandLine.arguments.contains("--status-grouping-only") { _ = try finalConsistencyChecks(); return }
         try topologyChecks()
         if CommandLine.arguments.contains("--concise-messages-only") { try conciseMessageChecks(); return }
         let finalVisual = try finalConsistencyChecks()
@@ -767,11 +1222,13 @@ private struct StatusAnchorFrames: PreferenceKey {
         for (outcome, expected) in [(ComparisonOutcome.match, 1), (.different, 1), (.missing, 2), (.notApplicable, 1)] {
             precondition(precise.sections.reduce(0) { $0 + $1.entries.reduce(0) { $0 + precise.categoryCount(outcome, category: $1.category, children: $1.children) } } == expected)
         }
-        let workspaceGroup = precise.sections.first { $0.id == "Workspace" }!
-        precondition(workspaceGroup.entries.map(\.id) == ["workspace-folders", "git-repositories"])
-        precondition(precise.categoryCount(.match, category: workspaceGroup.entries[1].category) == 1 && precise.categoryCount(.missing, category: workspaceGroup.entries[1].category) == 1)
-        let sshGroup = precise.sections.first { $0.id == "SSH Configuration" }!
-        precondition(precise.categoryCount(.needsAttention, category: sshGroup.entries[0].category) == 1)
+        let developer = precise.sections.first { $0.id == "For Experienced Users" }!
+        let workspaceGroup = developer.entries.first { $0.id == DeveloperSelectionGroup.workspace.id }!
+        precondition(workspaceGroup.children.map(\.id) == ["workspace-folders"])
+        let repositories = developer.entries.first { $0.id == DeveloperSelectionGroup.git.id }!.children.first { $0.id == "git-repositories" }!
+        precondition(precise.categoryCount(.match, category: repositories) == 1 && precise.categoryCount(.missing, category: repositories) == 1)
+        let sshGroup = developer.entries.first { $0.id == DeveloperSelectionGroup.ssh.id }!
+        precondition(precise.categoryCount(.needsAttention, category: sshGroup.category, children: sshGroup.children) == 1)
         try render(EnvironmentComparisonView(result: precise), name: "EnvironmentStatus-final-groups", width: 1000)
         for width in [1000, 785] {
             let ids = Set(precise.sections.flatMap(\.entries).map(\.id))
@@ -901,7 +1358,7 @@ private struct StatusAnchorFrames: PreferenceKey {
         precondition(ssh.categories[0].items[0].reason!.contains("partial_source_coverage"))
         precondition(ssh.message.contains("Review the affected categories") && ssh.categories[0].title == "SSH Configuration")
         precondition(ssh.counts["matching"] == 1 && ComparisonOutcome.notApplicable.count(ssh) == 0)
-        precondition(ssh.sections.map(\.id) == ["SSH Configuration"])
+        precondition(ssh.sections.map(\.id) == ["For Experienced Users"])
         precondition(ssh.categoryCount(.match, category: ssh.categories[0]) == 0)
         precondition(ssh.categoryCount(.needsAttention, category: ssh.categories[0]) == 1)
 
@@ -919,7 +1376,7 @@ private struct StatusAnchorFrames: PreferenceKey {
         labelsMetadata["setting_labels"] = ["macos-dock": ["item-1": "Magnification"]]
         aggregate["reference_presentation"] = labelsMetadata
         let macOS = try presentation(aggregate)
-        precondition(macOS.sections[0].id == "Settings")
+        precondition(macOS.sections[0].id == "Standard Setup")
         let macOSEntry = macOS.sections[0].entries[0]
         precondition(macOSEntry.category.title == "macOS Settings" && macOSEntry.children.map(\.id) == ["macos-finder", "macos-dock"])
         precondition(macOSEntry.category.comparisonStatusText == "Differences Found")
@@ -938,10 +1395,10 @@ private struct StatusAnchorFrames: PreferenceKey {
         precondition(ComparisonOutcome.allCases.map { macOS.categoryCount($0, category: macOSEntry.category, children: macOSEntry.children) } == [1, 1, 0, 0, 0])
         precondition(EnvironmentComparisonDomain.visibleOutcomes([.match: 1, .different: 1]) == [.match, .different])
 
-        let mainIDs = Set(macOS.sections.flatMap(\.entries).map(\.id))
+        let mainIDs = EnvironmentComparisonView.disclosureIDs(macOS)
         let initiallyExpanded = Set<String>()
         let allExpanded = EnvironmentComparisonView.toggledCategories(initiallyExpanded, ids: mainIDs)
-        precondition(allExpanded == mainIDs && !allExpanded.contains("macos-dock"))
+        precondition(allExpanded == mainIDs && allExpanded.contains("macos-dock") && allExpanded.contains("macos-finder"))
         precondition(EnvironmentComparisonView.toggledCategories(allExpanded, ids: mainIDs).isEmpty)
         let mixedIDs: Set<String> = ["macos-settings", "ssh-configuration"]
         precondition(EnvironmentComparisonView.toggledCategories(["macos-settings"], ids: mixedIDs) == mixedIDs)
@@ -971,24 +1428,15 @@ private struct StatusAnchorFrames: PreferenceKey {
         excludedOnly["records"] = evidence
         let diagnosticOnly = try presentation(excludedOnly)
         precondition(diagnosticOnly.categories[0].items[0].status == .attention)
-        let catalogGroups = [
-            CoreRestoreInspection.Group(id: "Applications", domains: ["homebrew-casks", "app-store", "vscode-extensions"]),
-            CoreRestoreInspection.Group(id: "Homebrew", domains: ["homebrew-packages"]),
-            CoreRestoreInspection.Group(id: "macOS Settings", domains: CaptureMacOSSettingsGroup.domainIDs),
-            CoreRestoreInspection.Group(id: "VS Code Settings", domains: ["vscode-settings"]),
-            CoreRestoreInspection.Group(id: "Git", domains: ["git-configuration"]),
-            CoreRestoreInspection.Group(id: "Workspace", domains: ["workspace-folders", "git-repositories"]),
-            CoreRestoreInspection.Group(id: "Shell", domains: ["shell-zsh"]),
-            CoreRestoreInspection.Group(id: "SSH Configuration", domains: ["ssh-configuration"])]
         let domainIDs = ["shell-zsh", "workspace-folders", "git-repositories", "ssh-configuration", "git-configuration", "vscode-settings", "macos-dock", "vscode-extensions", "homebrew-packages", "app-store", "homebrew-casks"]
-        let ordered = EnvironmentStatusSection.project(domainIDs.map { DisplayCategory(id: $0, title: $0, symbol: "folder", items: []) }, groups: catalogGroups)
-        precondition(ordered.map(\.id) == ["Applications & Tools", "Settings", "Git", "SSH Configuration", "Workspace", "Shell"])
-        precondition(ordered[0].entries.map(\.id) == ["homebrew-casks", "app-store", "homebrew-packages", "vscode-extensions"])
-        precondition(ordered[2].entries.map(\.id) == ["git-configuration"])
-        precondition(ordered[4].entries.map(\.id) == ["workspace-folders", "git-repositories"])
-        let presentedIDs = ordered.flatMap(\.entries).map(\.id)
+        let ordered = EnvironmentStatusSection.project(domainIDs.map { DisplayCategory(id: $0, title: $0, symbol: "folder", items: [DisplayItem(id: $0 + ":fixture", title: "Fixture", status: .matching, action: "", reason: nil)]) })
+        precondition(ordered.map(\.id) == ["Standard Setup", "For Experienced Users"])
+        precondition(ordered[0].entries.map(\.id) == ["app-store", "homebrew-casks", "homebrew-packages", "macos-settings", CaptureHierarchy.Group.vscode.id])
+        precondition(ordered[1].entries[0].children.map(\.id) == ["git-configuration", "git-repositories"])
+        precondition(ordered[1].entries[1].children.map(\.id) == ["workspace-folders"])
+        let presentedIDs = ordered.flatMap(\.entries).flatMap { [$0.id] + $0.children.map(\.id) }
         precondition(Set(presentedIDs).count == presentedIDs.count)
-        let workspaceIDs = Set(ordered[4].entries.map(\.id))
+        let workspaceIDs = Set(ordered[1].entries[1].children.map(\.id) + [DeveloperSelectionGroup.workspace.id])
         precondition(EnvironmentComparisonView.toggledCategories([], ids: workspaceIDs) == workspaceIDs)
         precondition(EnvironmentComparisonView.toggledCategories(workspaceIDs, ids: workspaceIDs).isEmpty)
         print("PASS: Excluded filtering, stable SSH correlation, independent diagnostics, macOS aggregation, semantic mixed statuses and trusted App Store labels")

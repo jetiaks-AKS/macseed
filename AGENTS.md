@@ -21,12 +21,18 @@ Homebrew Setup is implemented; real standard Installer qualification remains ope
 Stage 16H SSH Identities is completed with accepted automatic/manual external
 Capture → Rebuild → Verification, byte matching, permissions/fingerprints and
 repeat/no-op. Identity migration remains opt-in/default-off, encrypted in
-`secure.age`, with all identities restoring into `~/.ssh`. Required bundled age
+`secure.age`, restoring into `~/.ssh` by default or explicitly selected safe existing
+custom directories. Required bundled age
 v1.3.2 removes the Desktop age/Homebrew prerequisite; CLI consent is unchanged.
-SSH Environment Completion — Developer Environment Closure is NEXT / PLANNED:
-SSH Configuration and optional destinations in existing Rebuild Selection, with
-read-only Preview and explicit authorization for configuration corrections. Custom
-restore destinations are not implemented. Continuing Homebrew, remaining 16I/16K,
+SSH Configuration, IdentityFile handling, independent Configuration / SSH Keys
+selection, custom identity destinations and SSH → Git dependencies are implemented.
+Configuration corrections require explicit authorization; Preview remains read-only.
+Unified Developer UI is visually accepted. Secure Check compares authenticated
+saved files and can resolve reference coverage only through complete, unambiguous
+same-operation path/pair correspondence; this proves neither key usability nor remote
+authentication. Check keeps one aggregate SSH Configuration `config` result, with no
+individual Host rows. Joint real-Mac SSH E2E and current Secure Check hosted CI
+qualification remain open. Continuing Homebrew, remaining 16I/16K,
 Stage 3C recovery and Stage 17 distribution qualification remain open. Existing
 durable journals, Stop and safety fences remain implemented. Unified UI Scenario
 Catalog is deferred tooling. Follow the current
@@ -218,7 +224,9 @@ unless temporary-state isolation has explicitly been proven.
 
 ### Mandatory test synchronization
 
-This policy applies to every Macseed implementation checkpoint.
+Keep tests synchronized for every implementation change. Test execution follows
+[risk-based local validation](CONTRIBUTING.md#risk-based-local-validation), not a
+mandatory full-suite cycle after every correction or checkpoint.
 
 - **Before changing production code:** identify tests dependent on the affected
   behavior, API, UI strings, state, file structure and contracts. Search existing
@@ -227,24 +235,33 @@ This policy applies to every Macseed implementation checkpoint.
   as the production change; never defer synchronization until CI fails. Prefer
   behavioral and semantic assertions over fragile source-text matching for
   non-contractual UI presentation.
-- **Before completing a checkpoint:** use focused individual cases during
-  development, then run the complete directly affected test suites against the
-  final implementation. Desktop presentation/state changes require complete
-  `PresentationTests` and the affected feature suites (`CaptureTests`,
-  `RestoreTests`, etc.). A successful Debug build or newly added tests alone are
-  insufficient. Do not automatically run the entire repository regression for
-  small isolated changes; broader integration/release validation remains
-  proportional to the scope.
+- **For incremental changes:** choose focused cases for the changed behavior and
+  affected consumers. Desktop changes use relevant feature and/or presentation
+  cases; complete affected suites are not mandatory after every small correction.
+  A successful Debug build alone does not prove behavioral correctness.
+- **Reuse prior PASS evidence:** record its command, scope, revision/patch context
+  and relevant environment assumptions. Retain it when diff review confirms the
+  tested code, dependencies, fixtures and contracts are unchanged. Revalidate only
+  demonstrated gaps; do not rerun completed suites for adjacent or docs-only edits.
+- **Before any broad test suite:** explain the concrete risk or substantive
+  integration/release checkpoint, why focused cases and prior evidence are
+  insufficient, and the exact command, scope and expected cost. Checkpoint closure
+  alone is not a reason. Respect explicit task limits and stop rules.
+- **Security and CI:** test affected security boundaries with focused positive and
+  fail-closed negative cases. Preserve authentication, consent, privacy, path/link/
+  ownership, freshness, no-clobber and cancellation assertions. Mandatory CI gates
+  and their configured coverage remain required; local evidence reuse cannot replace them.
 - **When a test fails:** determine whether it exposes a real product defect or an
   obsolete assertion before changing code. Never delete, disable, skip or weaken
   valid safety tests merely to obtain PASS.
-- **When validation cannot be completed:** explicitly name each affected suite
-  not executed, explain why and state what remains unverified. Never claim full
-  validation without completing the required affected suites.
+- **At handoff:** distinguish new PASS, reused prior PASS, FAIL/ERROR, SKIP and
+  NOT RUN. Name unexecuted relevant suites, explain the scope decision and disclose
+  unresolved gaps. Never claim a run that did not occur or infer hosted/visual/
+  real-Mac qualification from local evidence.
 
 Documentation-only changes retain the lightweight validation rules above.
 
-Minimum Bash syntax verification:
+For Bash changes, include syntax verification:
 
 ```bash
 find modules scripts -type f -name '*.sh' -print0 | xargs -0 -n1 bash -n

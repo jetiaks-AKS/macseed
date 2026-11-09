@@ -1346,10 +1346,15 @@ Restore Verification reports effective configuration conformity independently of
 the separate `ssh_identity_dependencies` result and Secure Transfer import evidence.
 A verified configuration does not mean verified keys or successful authentication.
 Missing/unverified original references cannot turn matching configuration into a
-publication conflict. Check retains its existing local read-only dependency coverage; it neither
-unlocks `secure.age` nor reuses a previous operation's private authentication.
-Git transport/order, existing conflicting Host correction and Secure Transfer in
-Check remain outside this slice. The [workflow owner](../CAPTURE-RESTORE.md#ssh-environment-completion--developer-environment-closure)
+publication conflict. Ordinary `environment_compare` keeps local read-only dependency
+coverage without unlocking `secure.age`. The separate authenticated
+[Secure Check](../core/APPLICATION-INTERFACE.md#optional-protected-ssh-check) correlates
+saved pairs with their configured paths in the same operation; complete saved-state
+correspondence can resolve its reference warning without qualifying key usability.
+Check keeps one aggregate `config` result and preserves legacy partial coverage.
+No prior operation supplies authentication. [SSH clone dependencies](#ssh-dependencies-of-planned-clones)
+retain their separate cryptographic and execution gates; conflicting existing Host
+correction remains unsupported. The [workflow owner](../CAPTURE-RESTORE.md#ssh-environment-completion--developer-environment-closure)
 tracks the remaining integration qualification.
 
 ## Selected-state consumers

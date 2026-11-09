@@ -384,6 +384,8 @@ class CompareTests(unittest.TestCase):
         self.assertEqual(data['comparison']['counts']['unresolved'], 1)
         self.assertEqual(data['comparison']['verdict'], 'incomplete')
         self.assertIn('prerequisite_unmet', [r['code'] for r in data['records']['diagnostics']])
+        self.assertEqual([r['item_id'] for r in data['records']['coverage_records'] if r['disposition'] == 'unresolved'], ['identity-references'])
+        self.assertEqual(data['secure_check']['status'], 'absent')
         self.assertNotIn('/external', json.dumps(data))
         target.write_bytes(payload.replace(b'~/.ssh/key', b'~/.ssh/renamed'))
         data = self.comparison(bundle_path=str(saved))
@@ -426,6 +428,8 @@ class CompareTests(unittest.TestCase):
     def test_bundle_reference_selection_and_read_only(self):
         path = self.make_bundle(secure=True)
         data = self.comparison(bundle_path=str(path))
+        self.assertEqual(data['secure_check'], dict(version=1, bundle_id=hashlib.sha256(path.read_bytes()).hexdigest(), status='available'))
+        self.assertFalse(any(r['domain'] == 'secure-ssh-identities' for r in data['comparison_records']))
         self.assertEqual(data['comparison']['counts']['matching'], 1)
         self.assertFalse(data['publication_occurred'])
         self.environment['TEST_MODE'] = 'missing'

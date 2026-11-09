@@ -3,8 +3,9 @@
 Macseed has one authoritative Core and two client boundaries. The CLI is
 implemented; native Desktop is under development with supported Capture/Restore/
 Status flows, final Result presentation, persistent diagnostics and bounded secure
-identity interaction implemented. SSH configuration/destination completion,
-recovery/runtime qualification and packaged clean-Mac proof remain open;
+identity interaction implemented. SSH configuration, optional identity destinations,
+SSH → Git dependencies and authenticated read-only Secure Check reuse that Core.
+Joint SSH E2E, recovery/runtime qualification and packaged clean-Mac proof remain open;
 [Roadmap](../../ROADMAP.md) owns stage status and order.
 
 ```text

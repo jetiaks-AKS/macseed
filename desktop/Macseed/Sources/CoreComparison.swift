@@ -2,6 +2,7 @@ import Foundation
 
 // Decodes the existing V1 projection. No observers or comparison predicates live here.
 struct CoreComparisonResult: Decodable {
+    let secureCheck: CoreSecureCheckAvailability?
     let referencePresentation: ReferencePresentation?
     struct ReferencePresentation: Decodable {
         let groups: [CoreRestoreInspection.Group]
@@ -23,6 +24,7 @@ struct CoreComparisonResult: Decodable {
         case readOnly = "read_only", publicationOccurred = "publication_occurred"
         case targetMutationMayHaveStarted = "target_mutation_may_have_started"
         case referencePresentation = "reference_presentation"
+        case secureCheck = "secure_check"
         case comparison, comparisonRecords = "comparison_records", verification, records, extra
     }
     struct Summary: Decodable {
@@ -99,6 +101,7 @@ struct CoreComparisonResult: Decodable {
     // Presentation must fail closed on incomplete/contradictory evidence, especially extras.
     // This checks the wire projection, never derives a replacement Core verdict.
     func validate() throws {
+        try secureCheck?.validate()
         let keys = ["matching", "missing", "differing", "unverified", "unsupported", "unresolved", "extra", "unknown_difference"]
         guard readOnly, !publicationOccurred, !targetMutationMayHaveStarted,
               records.status == "complete", comparison.status == "complete", verification.status == "complete",

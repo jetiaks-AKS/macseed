@@ -53,7 +53,7 @@ if mode == 'import' and len(args) == 9:
 if mode == 'application-export' and len(args) == 6:
     interaction = Input(int(args[3]), args[5])
     args = args[:2]
-if mode == 'application-compare' and len(args) == 5:
+if mode in ('application-compare', 'application-check') and len(args) == 5:
     interaction = Input(int(args[2]), args[4])
     args = args[:1]
 evidence = Evidence(args[2], args[4]) if mode == 'import' and len(args) == 5 else Evidence()
@@ -887,14 +887,34 @@ def run():
                 directory = destinations[key]
                 if directory is not None:
                     # Even an explicitly chosen ~/.ssh must already exist.
-                    with Directory(directory):
-                        pass
+                    if mode != 'application-check':
+                        with Directory(directory):
+                            pass
                     destination_paths[record[0]] = directory
         if context['inventory']:
             if mode != 'application-compare' or mapping is not None:
                 raise SecureError('secure_channel_invalid')
             for (name, kind, fingerprint, _, _), key in zip(records, ids):
                 interaction.inventory_item(dict(identity_id=key, name=name, key_type=kind, fingerprint=fingerprint))
+            return
+        if mode == 'application-check':
+            # Check requires an explicit v2 subset. No consent/import, directory
+            # creation or importer receipt is reachable from this branch.
+            if mapping is None or mapping['version'] != 2 or interaction is None:
+                raise SecureError('secure_input_invalid')
+            # archive_validate(..., cryptographic=False) already authenticated
+            # manifest bytes and checked the OpenSSH public metadata. Check proves
+            # saved-file equality, not fresh private/public correspondence. Import
+            # retains its separate cryptographic validation below.
+            from identity_check import compare
+            from restore_destinations import digest as binding_digest
+            observations = compare(records, destination_paths, home)
+            for key, record, observation in zip(ids, records, observations):
+                name, kind, fingerprint, private, public = record
+                proof = dict(name=name, key_type=kind, fingerprint=fingerprint,
+                             pair_digest=[hashlib.sha256(data).hexdigest() for data in (private, public)])
+                interaction.check_item(dict(identity_id=key, proof=proof, **observation))
+            print(json.dumps({'target_state': binding_digest(observations)}, separators=(',', ':')))
             return
         if mode == 'application-compare':
             # This branch returns before consent, journal/evidence publication,
@@ -1054,7 +1074,7 @@ except Conflict as exc:
         evidence.failed('skipped', 'target_conflict')
     status = 1
 except (Invalid, OSError, tarfile.TarError, subprocess.SubprocessError) as exc:
-    if mode == 'application-compare' and not decryption_started:
+    if mode in ('application-compare', 'application-check') and not decryption_started:
         secure_code = 'secure_comparison_failed'
     say('Migration failed: ' + (str(exc) if isinstance(exc, Invalid) else 'operation failed'))
     reason = 'post_validation_failed' if evidence.phase == 'post_apply' else ('operation_failed' if evidence.phase == 'apply' else (evidence.reason if evidence.reason in ('decrypt_failed', 'input_invalid') else 'operation_failed'))
@@ -1066,7 +1086,7 @@ except KeyboardInterrupt:
     status = 130
 validated_pairs.clear()
 try:
-    if mode != 'application-compare':
+    if mode not in ('application-compare', 'application-check'):
         evidence.publish()
 except (OSError, ValueError, KeyboardInterrupt):
     pass # Evidence transport never changes the standalone import result.

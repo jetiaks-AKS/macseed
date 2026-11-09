@@ -14,10 +14,11 @@ contracts, [TODO](TODO.md) owns concrete unfinished actions, and
 - **Implemented — Qualification Open:** development-runtime execution, completion
   and integration, native Workspace E2E, Homebrew Setup Installer handoff and the
   remaining supported-domain, lifecycle, security and accessibility gates.
-- **Latest checkpoint:** Roadmap/product clarity and contextual Selection guidance
-  are finalized within the accepted scope. Local validation and wording/typography
-  refinements do not close broader visual, hosted CI or release qualification gates.
-  **Next functional checkpoint:** SSH Environment Completion — Developer Environment Closure.
+- **Current checkpoint:** SSH Configuration, optional identity destinations,
+  independent selection and SSH → Git dependency integration are implemented.
+  Unified Developer UI is visually accepted. Secure Check implements authenticated
+  saved-file/reference comparison with one aggregate SSH Configuration result.
+  Local validation does not close its hosted CI or joint real-Mac SSH E2E gates.
 - **Before Macseed 1.0:** finish the remaining Stage 16 and bounded Stage 3C work,
   qualify a fresh development-runtime E2E, then deliver Stage 17 packaging,
   clean-Mac qualification and Early Access. Autonomous signed distribution is planned.
@@ -157,9 +158,11 @@ checks and signed/clean-Mac qualification remain separate.
 
 Automatic and manual external SSH Capture → Rebuild → Verification are accepted,
 including byte matching, permissions/fingerprints and repeated Preview/no-op.
-Migration is opt-in/default-off, encrypted in `secure.age`, and uses bundled age;
-all identities currently restore to `~/.ssh`. Broader SSH Configuration and custom
-restore destinations are planned under the next checkpoint. Stage 17 remains separate.
+At this accepted milestone, migration was opt-in/default-off, encrypted in
+`secure.age`, used bundled age and restored all identities to `~/.ssh`.
+Subsequent configuration/destination integration is tracked under
+[SSH Environment Completion](#ssh-environment-completion--developer-environment-closure);
+it does not expand this historical acceptance. Stage 17 remains separate.
 
 ## Stage 16 — Native Macseed Desktop
 
@@ -211,10 +214,10 @@ Complete one bounded checkpoint at a time, preserving accepted scope and evidenc
 1. **Documentation consolidation and product clarity — Completed within the approved scope.**
    Roadmap, positioning and contextual Selection wording/typography are finalized.
    Remaining qualification gates and completed contracts retain their boundaries.
-2. **[SSH Environment Completion — Developer Environment Closure](#ssh-environment-completion--developer-environment-closure) — Next.**
-   Complete SSH Configuration and optional identity destination integration under
-   the approved Selection/Preview/Rebuild contract. It is planned, not implemented;
-   this documentation task does not start it.
+2. **[SSH Environment Completion — Developer Environment Closure](#ssh-environment-completion--developer-environment-closure) — Implemented; qualification open.**
+   Qualify joint SSH Configuration, identity destinations and dependent Git clones
+   under the accepted Selection/Preview/Rebuild contract, including Verification,
+   read-only Check and repeated no-op. Current Secure Check hosted CI remains open.
 3. **Remaining native Workspace qualification and related supported-scope checks.**
    Use the retained selected Bundle after proving native HOME/Core/journal/preferences
    isolation. Qualify counts, read-only matching and explicit Missing/Different
@@ -245,13 +248,17 @@ Complete one bounded checkpoint at a time, preserving accepted scope and evidenc
 
 ## SSH Environment Completion — Developer Environment Closure
 
-**SSH restoration foundation accepted; integration qualification open.** `5afa889`
+**Implemented; joint qualification open.** `5afa889`
 publishes independent SSH Configuration, explicit IdentityFile corrections, optional
 identity destinations and the unified selection UI. SSH-dependent topology clones
-now have bounded local dependency qualification under Slice 4C code review, reusing
-the existing import → configuration → clone order. Remote authentication and
-representative native joint E2E with custom destinations and repeated no-op remain
-qualification gates; local fixture evidence does not close them.
+have bounded local dependency qualification in `093be20`, reusing the existing
+import → configuration → clone order. Unified Developer UI (`fd68284`) is visually
+accepted. The current uncommitted Secure Check checkpoint compares authenticated
+saved files and proves configured-reference correspondence without claiming key
+usability or remote authentication. Check keeps one aggregate `config` result.
+Representative native joint E2E with default/custom destinations, dependent clones,
+Verification, Check and repeated no-op remains open, as does hosted CI qualification
+of the current checkpoint; local fixture results do not close those gates.
 [Capture / Restore](docs/CAPTURE-RESTORE.md#ssh-environment-completion--developer-environment-closure)
 owns the contract; [TODO](TODO.md#ssh-environment-completion--developer-environment-closure)
 owns unfinished actions. Stage 17 and the other remaining gates are unchanged.

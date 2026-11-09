@@ -20,6 +20,7 @@ struct CoreProcessOutcome: Sendable {
     var processLaunched: Bool? = nil
     var restoreIdentityInventory: CoreRestoreIdentityInventory? = nil
     var sshReview: CoreSSHReview? = nil
+    var secureCheck: CoreSecureCheckResult? = nil
 }
 
 // One owned process group per operation. All blocking I/O runs off the MainActor.
@@ -294,9 +295,24 @@ final class CoreTransport: @unchecked Sendable {
         secretReader.wait()
         if let error = secureChannel?.error { finalError = error; terminal = nil }
         var inventory: CoreRestoreIdentityInventory?
-        if request.command.operation == .secureRestoreInventory, finalError == nil, terminal?.type == "completed", !wasCancelled() {
-            do { inventory = try Self.readRestoreInventory(temporary: temporary, operationID: request.operationID) }
+        if [.secureRestoreInventory, .secureCheckInventory].contains(request.command.operation), finalError == nil, terminal?.type == "completed", !wasCancelled() {
+            do {
+                inventory = try Self.readRestoreInventory(temporary: temporary, operationID: request.operationID)
+                if case .secureCheckInventory(_, let id) = request.command, inventory?.bundleID != id { throw CoreRuntimeError.secureChannelInvalid }
+            }
             catch { finalError = .secureChannelInvalid; terminal = nil }
+        }
+        var secureCheck: CoreSecureCheckResult?
+        if request.command.operation == .secureCheckCompare, finalError == nil, terminal?.type == "completed", !wasCancelled() {
+            do {
+                guard let mapping = request.restoreDestinations else { throw CoreRuntimeError.secureChannelInvalid }
+                let data = try Self.readPrivateInventory(temporary: temporary, name: "secure-check-result.json")
+                try CoreSecureCheckResult.validateFields(data)
+                let value = try JSONDecoder().decode(CoreSecureCheckResult.self, from: data)
+                try value.validate(operationID: request.operationID, mapping: mapping)
+                try Self.validateFields(data, count: 16 + mapping.items.count * 3 + value.items.count * 6)
+                secureCheck = value
+            } catch { finalError = .secureChannelInvalid; terminal = nil }
         }
         var sshReview: CoreSSHReview?
         if request.command.operation == .sshRestoreReview, finalError == nil, terminal?.type == "completed", !wasCancelled() {
@@ -314,7 +330,7 @@ final class CoreTransport: @unchecked Sendable {
         }
         return CoreProcessOutcome(terminal: terminal, exitCode: exitCode, signalled: signalled,
                                   error: finalError, stderr: stderr,
-                                  cancellationRequested: wasCancelled() || secureChannel?.cancellationRequested == true, processLaunched: true, restoreIdentityInventory: inventory, sshReview: sshReview)
+                                  cancellationRequested: wasCancelled() || secureChannel?.cancellationRequested == true, processLaunched: true, restoreIdentityInventory: inventory, sshReview: sshReview, secureCheck: secureCheck)
     }
 
     private static func readRestoreInventory(temporary: URL, operationID: String) throws -> CoreRestoreIdentityInventory {
@@ -355,7 +371,7 @@ final class CoreTransport: @unchecked Sendable {
 
     private static func validateFields(_ data: Data, count: Int) throws {
         // Required fields account for every object key, including duplicates that
-        // a JSON decoder would otherwise collapse. Values contain no nested maps.
+        // a JSON decoder would otherwise collapse. Callers include nested schema keys.
         var quoted = false, escaped = false, fields = 0
         for byte in data {
             if escaped { escaped = false }

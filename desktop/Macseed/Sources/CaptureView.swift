@@ -304,6 +304,8 @@ struct CaptureSecureInputView: View {
     var restoring = false
     var comparing = false
     var customizing = false
+    var checking = false
+    var checkResponse: ((CoreSecureChallenge, CoreSecureResponse) -> Void)? = nil
     @CaptureViewState private var entry = CaptureSecureEntry()
     private var encrypting: Bool { challenge.kind == .bundleEncrypt }
     private var confirmingImport: Bool { challenge.kind == .importConfirmation }
@@ -347,13 +349,14 @@ struct CaptureSecureInputView: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
             HStack {
-                Button(customizing ? "Cancel Unlock" : comparing ? "Cancel Preview" : restoring ? "Cancel Rebuild" : "Cancel Capture", role: .cancel) { entry.clear(); runtime.cancelSecureChallenge(challenge) }
+                Button(checking ? "Cancel Check" : customizing ? "Cancel Unlock" : comparing ? "Cancel Preview" : restoring ? "Cancel Rebuild" : "Cancel Capture", role: .cancel) { entry.clear(); runtime.cancelSecureChallenge(challenge) }
                     .keyboardShortcut(.cancelAction)
                 Spacer()
                 Button(confirmingImport ? "Import SSH Identities" : encrypting ? "Encrypt" : "Unlock") {
                     if confirmingImport { entry.clear(); runtime.respond(to: challenge, with: .confirmImport); return }
                     guard let response = entry.consume(for: challenge.kind) else { return }
-                    runtime.respond(to: challenge, with: response)
+                    if let checkResponse { checkResponse(challenge, response) }
+                    else { runtime.respond(to: challenge, with: response) }
                 }.buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
                     .disabled((!confirmingImport && !entry.valid(for: challenge.kind)) || runtime.secureChallenge != challenge || runtime.stopping)
             }

@@ -23,6 +23,10 @@ enum DeveloperSelectionGroup: String, CaseIterable, Identifiable {
         let id = id == CoreRestorePreparation.secureDomain ? CaptureHierarchy.secureTransferID : id
         return allCases.first { $0.domains.contains(id) }
     }
+    // Styling includes synthetic group headers without changing domain selection.
+    static func categoryGroup(for id: String) -> Self? {
+        allCases.first { $0.id == id } ?? group(for: id)
+    }
     static func label(_ id: String, fallback: String, parent: Self? = nil) -> String {
         let qualified = ["git-configuration": "Git Configuration", "git-repositories": "Git Repositories / Worktrees",
             "ssh-configuration": "SSH Configuration", "workspace-folders": "Workspace Folders",

@@ -70,6 +70,9 @@ enum WorkspaceCategoryStyle {
         ("Settings", ["macos-settings", "macOS Settings", "macos-finder", "macos-dock", "macos-windows", "macos-keyboard", "macos-trackpad", "macos-screenshots", "vscode-settings"]),
         ("Git", ["git-configuration"]), ("SSH Configuration", ["ssh-configuration"]),
         ("Workspace", ["workspace-folders", "git-repositories", "vscode-workspaces"]), ("Shell", ["shell-zsh"])]
+    static func tint(_ id: String?, scheme: ColorScheme) -> Color {
+        id.flatMap(DeveloperSelectionGroup.categoryGroup(for:)) == nil ? .blue : DeveloperSelectionGroup.accent(scheme)
+    }
     static func symbol(_ id: String, fallback: String = "folder") -> String {
         let symbols = ["homebrew-casks": "app", "app-store": "app", "homebrew-packages": "shippingbox",
             "vscode-extensions": "puzzlepiece.extension", "vscode-settings": "slider.horizontal.3",
@@ -109,7 +112,7 @@ struct WorkspaceCategoryIcon: View {
     var domainID: String? = nil
     var body: some View {
         Image(systemName: symbol).fontWeight(.semibold)
-            .foregroundStyle(domainID.flatMap(DeveloperSelectionGroup.group(for:)) == nil ? .blue : DeveloperSelectionGroup.accent(colorScheme))
+            .foregroundStyle(WorkspaceCategoryStyle.tint(domainID, scheme: colorScheme))
             .frame(width: TaskRowLayout.iconWidth).accessibilityHidden(true)
     }
 }

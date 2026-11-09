@@ -64,15 +64,17 @@ def operation_mapping(operation_id):
         raise SecureError('secure_input_invalid') from None
 
 
-def publish_inventory(operation_id, bundle_id, items, *, name=INVENTORY):
+def publish_inventory(operation_id, bundle_id, items, *, name=INVENTORY, context=None):
     directory = Path(os.environ['TMPDIR']).resolve()
     fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     try:
         before = os.fstat(fd)
         if before.st_uid != os.getuid() or stat.S_IMODE(before.st_mode) != 0o700:
             raise SecureError('secure_input_invalid')
-        raw = json.dumps(dict(version=1, operation_id=operation_id, bundle_id=bundle_id, items=items),
-                         separators=(',', ':')).encode()
+        value = dict(version=1, operation_id=operation_id, bundle_id=bundle_id, items=items)
+        if context is not None:
+            value['context'] = context
+        raw = json.dumps(value, separators=(',', ':')).encode()
         if len(raw) > 65536:
             raise SecureError('secure_input_invalid')
         output = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=fd)

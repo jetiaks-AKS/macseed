@@ -83,7 +83,7 @@ class SecureRestoreTests(unittest.TestCase):
     invoke = fixtures.RestorePrepareTests.invoke
     execute = fixtures.RestorePrepareTests.execute
 
-    def fixture(self, protected=False, invalid=False):
+    def fixture(self, protected=False, invalid=False, *, prepare=True):
         if not REAL_AGE:
             self.skipTest('real age unavailable; no installation attempted')
         self.home.chmod(0o700)
@@ -113,12 +113,14 @@ class SecureRestoreTests(unittest.TestCase):
         encrypt(REAL_AGE, payload, self.stage / 'secure.age')
         (self.stage / 'secure.age').chmod(0o600)
         bundle.pack(self.stage, self.archive, '/Users/source')
-        result, events = self.invoke(secure=True)
-        self.assertEqual(result.returncode, 0, events)
-        self.plan = events[1]['data']['prepared_plan_id']
+        self.plan = None
+        if prepare:
+            result, events = self.invoke(secure=True)
+            self.assertEqual(result.returncode, 0, events)
+            self.plan = events[1]['data']['prepared_plan_id']
         return private, public
 
-    def peer(self, answer=None, plan=None, invalid_fd=False, timeout=30, *, operation='restore_execute', mapping=None, comparison=None, approvals=None):
+    def peer(self, answer=None, plan=None, invalid_fd=False, timeout=30, *, operation='restore_execute', mapping=None, comparison=None, approvals=None, expected_bundle_id=None):
         parent, endpoint = socket.socketpair()
         fd = endpoint.fileno()
         identity = os.fstat(fd)
@@ -127,6 +129,10 @@ class SecureRestoreTests(unittest.TestCase):
                    'parameters': {'path': str(self.archive), 'disabled_groups': [], 'include_secure': True,
                                   'expected_prepared_plan_id': plan or self.plan}}
         request['operation'] = operation
+        if operation in ('secure_check_inventory', 'secure_check_compare'):
+            request['parameters'] = dict(path=str(self.archive), expected_bundle_id=expected_bundle_id or bundle.fingerprint(self.archive))
+            (self.private_temp / 'secure-restore-inventory.json').unlink(missing_ok=True)
+            (self.private_temp / 'secure-check-result.json').unlink(missing_ok=True)
         if operation == 'secure_restore_inventory':
             request['parameters'] = {'path': str(self.archive)}
             (self.private_temp / 'secure-restore-inventory.json').unlink(missing_ok=True)
@@ -907,8 +913,8 @@ os.execv(native,[native,*args])
                 self.assertFalse(any(row['type'] == 'ssh_identity_dependencies' for row in events))
                 self.assertFalse((self.home / '.ssh').exists())
 
-    def multiple_fixture(self, *, protected=False, count=2):
-        pairs = {'id_disposable': self.fixture(protected=protected)}
+    def multiple_fixture(self, *, protected=False, count=2, prepare=True):
+        pairs = {'id_disposable': self.fixture(protected=protected, prepare=prepare)}
         for name in ['id_external', 'id_third'][:count - 1]:
             key = self.root / name
             subprocess.run(['ssh-keygen', '-q', '-t', 'ed25519', '-N', '', '-f', str(key)], check=True)

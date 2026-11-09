@@ -52,15 +52,46 @@ unfinished actions and Changelog about completed changes. Preserve released hist
 
 ## Validation and handoff
 
-Run focused existing tests for changed behavior. The canonical full regression
-runner is `scripts/test.sh`; ShellCheck is `scripts/lint.sh`. Use the full suite
-for integration/release gates or justified broad risk, not every small change.
-When Desktop production presentation/state semantics change, focused validation
-must include both the relevant feature tests and `PresentationTests`. Run full
-canonical validation at implementation checkpoint closure. Canonical repository
-regression and Desktop validation must run sequentially unless temporary-state
-isolation has explicitly been proven. Complete one checkpoint at a time without
-unrelated task hopping.
+### Risk-based local validation
+
+Choose validation from the actual diff, affected contracts and demonstrated risk.
+Incremental changes use focused existing cases; neither a small correction nor
+calling it an implementation checkpoint requires complete affected suites.
+
+- **Synchronize tests:** before changing production code, find dependent tests for
+  behavior, APIs, state, UI strings and file contracts. Update obsolete expectations
+  with the change; prefer semantic assertions over incidental source-text matching.
+- **Use focused coverage:** run the smallest cases that cover the changed behavior
+  and affected consumers. Desktop changes need relevant feature and/or presentation
+  cases according to the diff, not automatic full `PresentationTests`, `CaptureTests`
+  or `RestoreTests`. A successful build alone does not prove behavioral correctness.
+- **Reuse prior PASS evidence:** retain its command, scope, revision or patch context,
+  result and relevant environment assumptions. Reuse it when diff review confirms
+  that the tested code, dependencies, fixtures, contracts and assumptions remain
+  unchanged. Revalidate the specific gap when they change or evidence is incomplete;
+  do not restart completed suites merely because adjacent work or documentation changed.
+- **Protect security boundaries:** changes to authentication, consent, validation,
+  privacy, ownership/path/link checks, freshness, no-clobber mutation or cancellation
+  require focused positive and fail-closed negative tests for the affected boundary.
+  Unchanged boundary coverage may reuse valid prior evidence. Never weaken, skip or
+  remove valid safety assertions to obtain PASS.
+- **Justify broader runs before starting:** use complete suites or broad regression
+  at substantive integration/release checkpoints or for a demonstrated risk. State
+  the changed contract or concrete gap, why focused cases and retained evidence are
+  insufficient, the exact proposed scope/command and expected cost. A generic
+  checkpoint-closure rule is not justification. Honor task limits and stop rules;
+  this policy does not authorize otherwise prohibited runs.
+- **Report evidence precisely:** distinguish newly executed PASS, reused prior PASS,
+  FAIL/ERROR, SKIP and NOT RUN, with reasons and remaining uncertainty. Unexecuted
+  suites are never newly passed; retained evidence does not establish a current
+  hosted run, visual acceptance or real-Mac/release qualification.
+
+Mandatory CI gates and their complete configured coverage remain unchanged; local
+evidence reuse never substitutes for required CI execution. Use the canonical
+`scripts/test.sh` runner and `scripts/lint.sh` for ShellCheck. Repository regression
+and Desktop validation remain sequential unless temporary-state isolation is proven.
+Complete one checkpoint at a time without unrelated task hopping. Documentation-only
+edits retain the diff/link and `git diff --check` policy below.
 
 ### Focused feedback and CI
 

@@ -207,6 +207,11 @@ class Input:
         if receive(self.channel, time.monotonic() + WAIT_SECONDS) != b'ACK':
             raise SecureError('secure_channel_invalid')
 
+    def check_item(self, item):
+        metadata(self.channel, dict(type='check_identity', version=1, item=item))
+        if receive(self.channel, time.monotonic() + WAIT_SECONDS) != b'ACK':
+            raise SecureError('secure_channel_invalid')
+
     def finish(self, code):
         metadata(self.channel, {'type': 'finish', 'code': code})
         self.channel.close()

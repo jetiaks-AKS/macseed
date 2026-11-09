@@ -27,7 +27,7 @@ struct EnvironmentStatusView: View {
                         ProgressView().controlSize(.large).frame(width: 40, height: 40).accessibilityHidden(true)
                         VStack(alignment: .leading, spacing: 6) {
                             Text("Checking Your Mac").font(.title2.weight(.bold))
-                            Text(runtime.stopping ? "Stopping check…" : (runtime.currentPhase == "bundle_validation" ? "Validating the saved environment…" : "Checking supported requirements…"))
+                            Text(runtime.stopping ? "Stopping check…" : (model.secureBusy ? "Checking saved SSH keys…" : runtime.currentPhase == "bundle_validation" ? "Validating the saved environment…" : "Checking supported requirements…"))
                                 .font(.callout).foregroundStyle(.secondary)
                         }
                     }
@@ -41,7 +41,12 @@ struct EnvironmentStatusView: View {
                 referenceDetails
                 if let result = model.presentation {
                     Text(result.headline).font(.title2.weight(.semibold))
-                    EnvironmentComparisonView(result: result).id(model.operationID)
+                    EnvironmentComparisonView(result: result,
+                        secureActions: model.showsSecureRecovery ? AnyView(EnvironmentSecureCheckStatus(
+                            message: model.secureCoverageMessage ?? "SSH keys have not been checked.",
+                            busy: model.secureBusy, available: model.canRetrySSHKeys,
+                            customizable: model.canRetrySSHKeys, customize: model.customizeSSHKeys,
+                            check: model.checkSSHKeys, cancel: model.cancel)) : nil).id(model.operationID)
                 }
                 if showsActions { EnvironmentStatusActions(model: model, runtime: runtime) }
             case .failed, .cancelled:
@@ -52,6 +57,12 @@ struct EnvironmentStatusView: View {
                 referenceDetails
             }
         }.modifier(OperationLogPresenter(runtime: runtime))
+            .sheet(item: Binding(get: { model.secureBusy ? model.secureChallenge : nil }, set: { _ in })) { challenge in
+                CaptureSecureInputView(runtime: runtime, challenge: challenge, checking: true, checkResponse: model.respondToSecureCheck)
+            }
+            .sheet(isPresented: Binding(get: { model.showsSecureSelection }, set: { if !$0 { model.cancelSecureSelection() } })) {
+                EnvironmentSecureSelectionView(model: model)
+            }
     }
 
     @ViewBuilder private var referenceDetails: some View {
@@ -116,6 +127,7 @@ struct EnvironmentStatusActions: View {
 // Comparison retains its own truthful status vocabulary, using shared surfaces/disclosures.
 struct EnvironmentComparisonView: View {
     let result: EnvironmentStatusPresentation
+    var secureActions: AnyView? = nil
     var categoryExpansion: Binding<Set<String>>? = nil
     var settingsExpansion: Binding<Bool>? = nil
     var technicalExpansion: Binding<Bool>? = nil
@@ -144,22 +156,13 @@ struct EnvironmentComparisonView: View {
             items: category.items.filter { ![.extra, .excluded, .noRequirement].contains($0.status) && !$0.id.hasPrefix("extra-availability:") })
     }
     static func visibleSections(_ result: EnvironmentStatusPresentation) -> [EnvironmentStatusSection] {
-        let entries = result.sections.flatMap(\.entries).compactMap { entry -> EnvironmentStatusSection.Entry? in
-            let category = visibleCategory(entry.category)
-            guard !category.items.isEmpty else { return nil }
-            return .init(category: category, children: entry.children.map(visibleCategory).filter { !$0.items.isEmpty })
-        }
-        // Reorder existing diagnostic rows; section titles have no state or counts.
-        return CaptureHierarchy.project(WorkspacePresentationTaxonomy.project(entries).flatMap(\.rows)).map { section in
-            let title: String
-            switch section.group {
-            case .applicationsTools: title = "Applications & Tools"
-            case .macOSSettings: title = "Settings"
-            case .vscode: title = "Application Extras"
-            case .advanced: title = "For Experienced Users"
-            case .otherFindings: title = "Other Findings"
+        result.sections.compactMap { section in
+            let entries = section.entries.compactMap { entry -> EnvironmentStatusSection.Entry? in
+                let category = visibleCategory(entry.category)
+                guard !category.items.isEmpty else { return nil }
+                return .init(category: category, children: entry.children.map(visibleCategory).filter { !$0.items.isEmpty })
             }
-            return .init(id: title, entries: section.rows)
+            return entries.isEmpty ? nil : .init(id: section.id, entries: entries)
         }
     }
     static func toggledCategories(_ expanded: Set<String>, ids: Set<String>) -> Set<String> {
@@ -201,7 +204,7 @@ struct EnvironmentComparisonView: View {
                                     if value { ids.insert(entry.id) } else { ids.remove(entry.id) }
                                     if let categoryExpansion { categoryExpansion.wrappedValue = ids } else { expandedCategories = ids }
                                 }), childExpansion: settingsExpansion, treeExpansion: treeExpansion,
-                                categoryCounts: categoryCounts, technicalExpansion: technicalExpansion)
+                                categoryCounts: categoryCounts, technicalExpansion: technicalExpansion, secureActions: secureActions)
                             if entry.id != section.entries.last?.id { Divider() }
                         }
                     }.modifier(WorkspaceCardSurface())
@@ -278,6 +281,7 @@ struct EnvironmentComparisonDomain: View {
     var categoryCounts: [String: [ComparisonOutcome: Int]] = [:]
     var technicalExpansion: Binding<Bool>? = nil
     var depth = 0
+    var secureActions: AnyView? = nil
     @ReferenceViewState<Bool> private var expanded = false
     var body: some View {
         let sharedIDs = sharedObservationItemIDs
@@ -289,9 +293,12 @@ struct EnvironmentComparisonDomain: View {
                             counts: categoryCounts[child.id],
                             expansion: childExpansion ?? treeExpansion.map { WorkflowExpansion.binding(child.id, in: $0) },
                             treeExpansion: treeExpansion, categoryCounts: categoryCounts,
-                            technicalExpansion: technicalExpansion, depth: depth + 1)
+                            technicalExpansion: technicalExpansion, depth: depth + 1, secureActions: secureActions)
                     }
                 } else {
+                    if category.id == "secure-ssh-identities", let secureActions {
+                        secureActions.padding(.leading, CGFloat(depth + 1) * 24 + 34).padding(.vertical, 8)
+                    }
                     if !sharedIDs.isEmpty {
                         Text(category.id.hasPrefix("homebrew-") ? "Couldn’t read Homebrew state." : "Couldn’t read the current state of this category.")
                             .font(.caption).foregroundStyle(.secondary).padding(.vertical, 4)
@@ -311,11 +318,31 @@ struct EnvironmentComparisonDomain: View {
         }.disclosureGroupStyle(TaskDisclosureStyle(contentTrailingInset: 0))
             .padding(.horizontal, depth == 0 ? 16 : 0)
     }
+    private var showsStatus: Bool {
+        Self.showsAggregateStatus(category, children: children, expanded: expansion?.wrappedValue ?? expanded)
+    }
+    static func showsAggregateStatus(_ category: DisplayCategory, children: [DisplayCategory] = [], expanded: Bool) -> Bool {
+        guard expanded else { return true }
+        let visible = EnvironmentComparisonView.visibleCategory(category)
+        if !children.isEmpty {
+            let descendants = children.map(EnvironmentComparisonView.visibleCategory)
+            let items = descendants.flatMap(\.items)
+            guard Set(visible.items.map(\.id)) == Set(items.map(\.id)),
+                  visible.items.allSatisfy({ item in items.contains { $0.id == item.id && $0.status == item.status } }) else { return true }
+            return !descendants.contains { $0.comparisonStatusText == visible.comparisonStatusText }
+        }
+        // Only suppress a repeated label actually displayed by a leaf. Match leaves
+        // use the existing checkmark; Missing/Different/Unverified keep their names.
+        return !visible.items.contains {
+            !$0.isNormalComparisonMatch && ($0.id.hasPrefix("secure-check:unchecked") ? "Not checked" : $0.status.rawValue) == visible.comparisonStatusText
+        }
+    }
     private var title: some View {
         HStack(spacing: 12) {
             WorkspaceCategoryIcon(symbol: category.symbol, domainID: category.id)
-            Text(DeveloperSelectionGroup.label(category.id, fallback: category.title)).font(.body.weight(.medium))
-        }
+            Text(category.id == "ssh-configuration" ? "SSH Configuration" : DeveloperSelectionGroup.label(category.id, fallback: category.title)).font(.body.weight(.medium))
+        }.accessibilityElement(children: .combine)
+            .accessibilityValue(showsStatus ? "" : EnvironmentComparisonView.visibleCategory(category).comparisonStatusText)
     }
     var sharedObservationFailure: Bool { !sharedObservationItemIDs.isEmpty }
     var sharedObservationItemIDs: Set<String> {
@@ -368,6 +395,7 @@ struct EnvironmentComparisonDomain: View {
     private var statusLabel: some View {
         EnvironmentComparisonStatusLabel(status: status,
             title: EnvironmentComparisonView.visibleCategory(category).comparisonStatusText)
+            .opacity(showsStatus ? 1 : 0).accessibilityHidden(!showsStatus)
     }
 }
 
@@ -399,7 +427,7 @@ struct EnvironmentComparisonItem: View {
                 }.frame(maxWidth: .infinity, alignment: .leading).fixedSize(horizontal: false, vertical: true)
                 if item.isNormalComparisonMatch {
                     MatchedLeafIndicator()
-                } else { EnvironmentComparisonStatusLabel(status: item.status) }
+                } else { EnvironmentComparisonStatusLabel(status: item.status, title: item.id.hasPrefix("secure-check:unchecked") ? "Not checked" : nil) }
                 WorkflowCountRailReference(groups: countSamples.map { EnvironmentComparisonDomain.badgeCounts($0).map(\.1) })
             }.padding(.trailing, 26)
         }.padding(.vertical, 7).frame(minHeight: 28)

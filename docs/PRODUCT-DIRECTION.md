@@ -52,11 +52,11 @@ Macseed must remain maintainable by a small developer project. Prefer a reliable
 | macOS Settings | **Primary:** maximize useful **reliably supported** settings | Extend by evidence, with honest stored-value vs effective-behavior Verification and cross-version compatibility. No undocumented/destructive shortcuts. |
 | Saved Environment / Status | **Primary:** reusable reference, explicit comparison and manual reapplication | Preserve the existing Bundle V1 and Core pipeline. No auto cleanup, background drift daemon or separate comparison engine. |
 | VS Code Settings / Extensions | **Application Extras → VS Code:** Extensions and Settings only | Independent item/category selection. New application support requires confirmed demand, a separate product decision, qualified Core support and tests; no placeholders or universal adapter framework. |
-| Git configuration, repositories, linked worktrees | **Advanced — for experienced users** | Keep and qualify current supported scope. Do not reopen unlimited Git topology or transport coverage. |
-| SSH configuration / selected SSH identities | **Advanced / Secure Transfer — for experienced users** | Keep SSH configuration in Advanced and Capture identities in its independent Secure Transfer sibling. Keep the limited Host contract and separately encrypted, strictly opt-in/default-off identity migration. Stage 16H SSH Identities is completed and manually accepted with native Secure Capture, whole-package Restore and bundled age v1.3.2; all identities currently restore to `~/.ssh`. SSH Configuration/destination completion is next, not implemented. |
-| Zsh / Shell | **Advanced — for experienced users** | Retain bounded `.zshrc` contract and its explicit exclusions; do not modify user configurations just to satisfy Discovery. |
-| `.code-workspace` descriptors | **Advanced, default OFF; scope frozen for 1.0:** no ordinary promotion; explicit Capture and Restore selection | Preserve Core, tests, Bundle V1, legacy selected-descriptor Restore, Verification and Status. No feature expansion or dependency auto-selection; only supported names/folder relationships. |
-| Workspace Folders (structure only) | **Collapsed Advanced compatibility selector, default OFF; no ordinary promotion** | Preserve the Core domain, explicit folder-only Capture, descriptor dependencies and folder-only Bundle Restore selectors. Both accepted selection screens expose folders in Advanced. No general file-content migration. |
+| Git configuration, repositories, linked worktrees | **For Experienced Users → Git** | Keep and qualify current supported scope, including implemented bounded SSH clone dependencies. Do not reopen unlimited Git topology or transport coverage. |
+| SSH configuration / selected SSH identities | **For Experienced Users → SSH → Configuration / SSH Keys** | Independent selection; separately encrypted, opt-in/default-off identities. Configuration restoration, explicit IdentityFile corrections, authenticated per-identity selection and safe custom destinations are implemented; `~/.ssh` remains the default. Stage 16H manual acceptance retains its original scope; joint SSH E2E stays open. |
+| Zsh / Shell | **For Experienced Users → Shell** | Retain bounded `.zshrc` contract and its explicit exclusions; do not modify user configurations just to satisfy Discovery. |
+| `.code-workspace` descriptors | **For Experienced Users → Workspace, default OFF; scope frozen for 1.0** | Preserve Core, tests, Bundle V1, legacy selected-descriptor Restore, Verification and Status. No feature expansion or dependency auto-selection; only supported names/folder relationships. |
+| Workspace Folders (structure only) | **For Experienced Users → Workspace, default OFF; no ordinary promotion** | Preserve the Core domain, explicit folder-only Capture, descriptor dependencies and folder-only Bundle Restore selectors. Both accepted selection screens expose folders. No general file-content migration. |
 | Workspace file content transfer | **Deferred possible optional capability**, not required for 1.0 | Only after value, safety, provenance, conflict, permissions, privacy, and transport/storage contract assessment. No general folder migrator/backup. |
 | Universal secrets / passwords / Keychain copy | **Out of scope** | Use existing Apple/third-party mechanisms. SSH identity transfer is a bounded separate exception, not a general vault. |
 | Universal vendor app installers/config adapters | **Out of scope for 1.0** | Existing Stage 11 adapter decision remains deferred; avoid high-maintenance integration catalogs. |
@@ -92,22 +92,22 @@ Capture and Restore Selection use one ordinary accordion:
 - **macOS Settings:** the existing supported domains.
 - **Application Extras → VS Code:** Extensions retain item selection; Settings retains category selection.
 
-A separate **Advanced — For Experienced Users** container exposes Git Configuration,
-Git Repositories / Worktrees, Workspace Folders, SSH Configuration, Shell / Zsh and
-VS Code Workspace when present. Under **For Experienced Users**, Capture and Restore place
-explicit, default-off **Secure Transfer** directly below **Advanced** as an independent
-sibling, with no shared selector. Restore selects the encrypted SSH package as a whole. Descriptors/folders remain
+A separate **For Experienced Users** container exposes sibling Git, SSH, Workspace
+and Shell groups. The accepted Unified Developer UI keeps Configuration and SSH Keys
+independently selectable under SSH, with explicit default-off identity selection.
+Rebuild supports whole-package or authenticated per-identity selection and optional
+safe custom destinations. Descriptors/folders remain
 explicitly selectable under the frozen compatibility contract, without ordinary
 promotion or dependency auto-selection.
 
 **Selection policy — implemented in Capture and Restore:** eligible ordinary
-requirements default ON; Advanced and unknown domains default OFF. Fresh Scan or
-Bundle inspection starts disclosures collapsed. The four group headers and VS Code
-have scoped tri-state masters, with separate ordinary/Advanced Expand/Collapse
+requirements default ON; developer and unknown domains default OFF. Fresh Scan or
+Bundle inspection starts disclosures collapsed. Eligible group headers
+have scoped tri-state masters, with separate Standard Setup/For Experienced Users Expand/Collapse
 controls. Checkbox and disclosure actions are independent. Back/Refresh preserve
 explicit choices; selection changes require fresh preparation. Workspace Folders
-is directly reachable in Advanced, including folder-only scope. Core owns dependency
-validation; empty Advanced-only drafts do not automatically enable Preview.
+is directly reachable under Workspace, including folder-only scope. Core owns dependency
+validation; empty developer-only drafts do not automatically enable Preview.
 
 The inspected Bundle is Restore's strict scope ceiling. Absent/excluded requirements
 and empty groups are hidden; selected limitations remain explainable. Rebuild Preview
@@ -117,12 +117,15 @@ and Result use flat ordered domain lists. Completed Result shows visible planned
 verified requirements and actual problems, omitting pre-existing matches; stopped
 Result retains reported work and uncertainty without inventing unchecked failures.
 
-**Environment Status intentionally differs:** static Applications & Tools, Settings,
-Application Extras and For Experienced Users headings contain ordinary diagnostic
-category rows. There is no parent VS Code/Advanced accordion or selection UI. It
-compares the complete saved reference, including Advanced/descriptors, retaining
-matching requirements, differences, attention and item-level details. Empty headings
-are hidden; numeric rails adapt to visible badge combinations without changing counts.
+**Check remains read-only:** Standard Setup and For Experienced Users group diagnostic
+rows with the established category order, icons, summary cards and numeric badges.
+It compares the saved reference, including developer/descriptors, retaining matching
+requirements, differences, attention and item-level details. SSH Configuration uses
+one aggregate `config` result, never individual Host results. Secure Check can resolve
+reference coverage only through complete same-operation path/pair correspondence
+with authenticated saved keys; byte equality proves neither key usability nor remote
+authentication. Legacy partial coverage stays visible. Empty groups are hidden and
+numeric rails preserve actual counts; no matching records are invented.
 
 VS Code and Advanced are presentation groups, never new Core domains. Core GROUPS,
 Bundle ceilings, IDs, item/category modes, evidence and native accessibility semantics
@@ -188,7 +191,8 @@ The 2026-11-04 product decision includes Secure SSH Desktop (16H) in Macseed 1.0
 Stage 16H SSH Identities is now completed with accepted automatic/manual external
 Capture → Rebuild → Verification, byte matching, permissions/fingerprints and no-op.
 [SSH Environment Completion — Developer Environment Closure](CAPTURE-RESTORE.md#ssh-environment-completion--developer-environment-closure)
-is NEXT / PLANNED, not implemented; all identities currently restore to `~/.ssh`.
+implements configuration restoration, optional safe custom destinations, independent
+selection and bounded SSH → Git dependencies; joint real-Mac qualification remains open.
 Bundled age is required for 1.0 and pinned v1.3.2 is implemented: Desktop Secure Transfer needs
 no separate age/Homebrew installation. CLI installation consent is unchanged; age
 updates arrive with Macseed releases, without a runtime updater. Core Secure
@@ -212,18 +216,19 @@ Possible Saved Environment history/profiles, confirmed-difference preselection f
 ## 6. Working and release discipline
 
 - **One bounded checkpoint at a time:** read/audit contracts → address the selected scope → focused tests → inspect diffs → record accepted evidence → move to next checkpoint.
-- **CI strategy:** use proportional focused verification for each implementation slice and canonical validation at closure. CI #127 is the published baseline, not validation of subsequent changes. Never omit changed-behavior tests or treat historical failures as active debt without evidence.
+- **CI strategy:** follow [risk-based local validation](../CONTRIBUTING.md#risk-based-local-validation): focused cases for incremental changes, reusable unchanged PASS evidence and explicitly justified broader runs for substantive integration/release checkpoints or demonstrated risks. Mandatory CI gates retain their complete configured coverage. CI #127 is a historical baseline, not validation of subsequent changes; preserve changed-behavior tests and do not treat historical failures as active debt without evidence.
 - **Documentation truth:** [Roadmap](../ROADMAP.md) records outcomes/stage status, [TODO](../TODO.md) concrete open actions, [Desktop](DESKTOP.md) as-implemented UX and planned changes clearly separated, [Changelog](../CHANGELOG.md) only completed release-visible work. This document records product decisions; Roadmap alone owns the current execution sequence.
 - **Git:** work on `develop`; preserve `main`, released history and all local commits. Avoid force-push, destructive reset and unreviewed cross-cutting changes. A documentation-only local commit may be kept unpushed and later published with validated implementation to avoid unnecessary hosted CI cycles.
 - **Privacy and safety:** no implicit deletions; Bundle ordinary metadata is private but not encrypted; SSH private identity migration requires explicit consent and its separate encrypted contract. Do not weaken idempotency, failure-state honesty or conflict preservation for UI convenience.
 
 ## 7. Next action
 
-The next approved functional checkpoint is
+Continue qualification of
 **[SSH Environment Completion — Developer Environment Closure](CAPTURE-RESTORE.md#ssh-environment-completion--developer-environment-closure)**,
-currently **PLANNED**, after completed Stage 16H identity migration. Preserve
+whose bounded implementation is complete after Stage 16H identity migration. Preserve
 Selection = configure, Preview = read-only validation and Rebuild = execute;
-configuration corrections require explicit authorization. Custom destinations
-are not implemented. [Roadmap](../ROADMAP.md#current-practical-execution-order)
+configuration corrections require explicit authorization. Unified Developer UI is
+visually accepted; local Secure Check tests, real-Mac joint E2E and hosted CI are
+separate evidence levels. [Roadmap](../ROADMAP.md#current-practical-execution-order)
 owns current execution order and qualification status. Documentation or CI
-maintenance does not start this checkpoint, Stage 17 or workspace content transfer.
+maintenance does not start Stage 17 or workspace content transfer.

@@ -1,10 +1,10 @@
 #!/bin/bash
 source "${SCRIPT_ROOT}/modules/migration/package.sh"
 migration_main() {
-    if [[ $# -eq 7 && "$1" == application-compare && "$2" == --input && "$3" == /* &&
+    if [[ $# -eq 7 && ( "$1" == application-compare || "$1" == application-check ) && "$2" == --input && "$3" == /* &&
             "$4" == --application-channel-fd && "$5" =~ ^[0-9]+$ &&
             "$6" == --operation-id && "$7" =~ ^[a-zA-Z0-9_-]+$ ]]; then
-        migration_run application-compare "$3" "$4" "$5" "$6" "$7"
+        migration_run "$1" "$3" "$4" "$5" "$6" "$7"
     elif [[ $# -eq 13 && "$1" == import && "$2" == --input && "$3" == /* &&
             "$4" == --internal-evidence && "$5" == /* && "$6" == --attempt &&
             "$7" =~ ^[a-zA-Z0-9_-]+$ && "$8" == --application-channel-fd &&

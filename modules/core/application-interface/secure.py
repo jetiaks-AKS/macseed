@@ -17,6 +17,7 @@ import uuid
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'migration'))
 from evidence import read_evidence
 from restore_destinations import digest, selected_items
+from identity_check import valid_result as valid_check_result
 from secret_input import (WAIT_SECONDS, SecureError, inherited_socket,
                           metadata, receive, response, send, valid_challenge, valid_identity, unique_fields)
 
@@ -75,7 +76,7 @@ def import_records(raw):
 
 
 def _run_secure(root, package, channel, operation_id, event, mutation, export_selection=None, record=None,
-                  *, compare=False, expected_target_state=None, destinations=None, inventory=False, identity_evidence=None):
+                  *, compare=False, expected_target_state=None, destinations=None, inventory=False, identity_evidence=None, check=False):
     child = None
     parent, endpoint = socket.socketpair()
     parent.setblocking(False)
@@ -96,7 +97,7 @@ def _run_secure(root, package, channel, operation_id, event, mutation, export_se
                 elif compare:
                     # Like Import, normalize Core's private staging parent (macOS
                     # /var and /tmp aliases), never the package entry itself.
-                    command = ['./scripts/ssh-identity-migrate.sh', 'application-compare', '--input', str(package.parent.resolve() / package.name),
+                    command = ['./scripts/ssh-identity-migrate.sh', 'application-check' if check else 'application-compare', '--input', str(package.parent.resolve() / package.name),
                                '--application-channel-fd', str(endpoint.fileno()), '--operation-id', operation_id]
                 elif expected_target_state is not None:
                     command += ['--expected-target-state', expected_target_state]
@@ -151,10 +152,28 @@ def _run_secure(root, package, channel, operation_id, event, mutation, export_se
                             raise SecureError('secure_channel_invalid')
                         metadata(parent, destinations['items'][destination_index])
                         destination_index += 1
+                    elif isinstance(message, dict) and message.get('type') == 'check_identity':
+                        item = message.get('item')
+                        if (not check or not context_sent or not seen_challenges or len(identities) >= 32
+                                or set(message) != {'type', 'version', 'item'} or type(message['version']) is not int or message['version'] != 1
+                                or not isinstance(item, dict) or not isinstance(item.get('identity_id'), str)
+                                or not re.fullmatch('[0-9a-f]{64}', item['identity_id'])
+                                or not valid_check_result({k: v for k, v in item.items() if k not in ('identity_id', 'proof')})
+                                or any(row['identity_id'] == item['identity_id'] for row in identities)):
+                            raise SecureError('secure_channel_invalid')
+                        proof = item.get('proof')
+                        if (not isinstance(proof, dict) or set(proof) != {'name', 'key_type', 'fingerprint', 'pair_digest'}
+                                or not valid_identity({key: proof[key] for key in ('name', 'key_type', 'fingerprint')})
+                                or not isinstance(proof['pair_digest'], list) or len(proof['pair_digest']) != 2
+                                or any(not isinstance(value, str) or not re.fullmatch('[0-9a-f]{64}', value) for value in proof['pair_digest'])
+                                or digest([proof['name'], proof['key_type'], proof['fingerprint'], *proof['pair_digest']]) != item['identity_id']):
+                            raise SecureError('secure_channel_invalid')
+                        identities.append(item)
+                        send(parent, b'ACK')
                     elif isinstance(message, dict) and message.get('type') == 'restore_identity':
                         item = message.get('identity')
                         fields = {'type', 'version', 'identity'} | ({'target', 'pair_digest'} if not inventory else set())
-                        if (export_selection is not None or not context_sent or not seen_challenges or len(identities) >= 32
+                        if (check or export_selection is not None or not context_sent or not seen_challenges or len(identities) >= 32
                                 or set(message) != fields or type(message['version']) is not int
                                 or message['version'] != (1 if inventory else 2)
                                 or not isinstance(item, dict) or set(item) != {'identity_id', 'name', 'key_type', 'fingerprint'}
@@ -179,7 +198,9 @@ def _run_secure(root, package, channel, operation_id, event, mutation, export_se
                         mutation()
                         send(parent, b'ACK')
                     elif isinstance(message, dict) and message.get('type') == 'challenge':
-                        kinds = {'bundle_encrypt', 'ssh_key_unlock'} if export_selection is not None else {'bundle_unlock'} if compare else {'bundle_unlock', 'ssh_key_unlock', 'import_confirmation'}
+                        kinds = ({'bundle_encrypt', 'ssh_key_unlock'} if export_selection is not None else
+                                 {'bundle_unlock'} if compare else
+                                 {'bundle_unlock', 'ssh_key_unlock', 'import_confirmation'})
                         if (not valid_challenge(message, operation_id, kinds) or message['challenge_id'] in seen_challenges
                                 or len(seen_challenges) >= 32 * 3 + 3 + 1
                                 or (message['attempt'] > 1 and (previous_challenge is None
@@ -240,6 +261,16 @@ def _run_secure(root, package, channel, operation_id, event, mutation, export_se
                     if len(raw_result) > 1024:
                         raise SecureError('secure_comparison_failed')
                     value = json.loads(raw_result)
+                    if check:
+                        observations = [{k: v for k, v in row.items() if k not in ('identity_id', 'proof')} for row in identities]
+                        if value != {'target_state': digest(observations)}:
+                            raise SecureError('secure_comparison_failed')
+                        if identity_evidence is not None:
+                            identity_evidence.extend(dict(row['proof'], identity_id=row['identity_id'],
+                                target='identical' if row['comparison_kind'] == 'matching' else 'unresolved')
+                                for row in identities)
+                        event('phase_completed', {'phase': phase})
+                        return dict(value, items=[{k: v for k, v in row.items() if k != 'proof'} for row in identities])
                     if (not isinstance(value, dict) or set(value) != {'decision', 'target_state'} or
                             value['decision'] not in ('all_match', 'import_required', 'conflict') or
                             (value['decision'] == 'conflict' and value['target_state'] is not None) or
@@ -300,3 +331,10 @@ def compare_secure(root, package, channel, operation_id, event, *, destinations=
         raise SecureError('secure_channel_invalid')
     return _run_secure(root, package, channel, operation_id, event, unexpected_mutation, compare=True,
                        destinations=destinations, inventory=inventory, identity_evidence=identity_evidence)
+
+
+def check_secure(root, package, channel, operation_id, event, *, destinations, identity_evidence=None):
+    # No mutation callback is supplied. The compare relay rejects mutation frames
+    # before dispatch; application-check returns before any importer Apply stage.
+    return _run_secure(root, package, channel, operation_id, event, None,
+                       compare=True, check=True, destinations=destinations, identity_evidence=identity_evidence)
