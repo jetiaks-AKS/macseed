@@ -15,6 +15,7 @@ suites=(PresentationTests SettingsTests HomebrewSetupTests HomebrewPackageTests 
 restore_subsets=(--final-restore-ux-only --assisted-appstore-only)
 stages=("$configuration app build")
 if [[ "${2:-}" == --test ]]; then
+    if [[ "$configuration" == Debug ]]; then stages+=("Compile shared test sources"); fi
     for suite in "${suites[@]}"; do stages+=("Compile $suite" "$suite"); done
     for subset in "${restore_subsets[@]}"; do stages+=("RestoreTests $subset"); done
     if [[ "$configuration" == Release ]]; then stages+=("Release sample exclusion"); fi
@@ -96,16 +97,46 @@ if [[ "${2:-}" == --test ]]; then
         if [[ "$source_file" != Sources/MacseedApp.swift ]]; then presentation_sources+=("$source_file"); fi
     done
     test_compiler_options=("${compiler_options[@]}")
-    # Test executables always rebuild one module. Avoid repeated frontend work
-    # while retaining Debug assertions, debug symbols and -Onone semantics.
+    # Retain Debug assertions, debug symbols and -Onone semantics while
+    # avoiding repeated frontend work within each compilation.
     if [[ "$configuration" == Debug ]]; then test_compiler_options+=(-whole-module-optimization); fi
-    for suite in "${suites[@]}"; do
-        test_sources=("${presentation_sources[@]}")
+    if [[ "$configuration" == Debug ]]; then
+        # Build the common production sources once per invocation. Test bodies
+        # keep internal access and Debug assertions; no persistent result cache.
+        shared_tests="$output_dir/test-support"
+        mkdir -p "$shared_tests"
+        run_stage xcrun swiftc "${test_compiler_options[@]}" -parse-as-library -enable-testing \
+            -module-name MacseedTestSupport -emit-module \
+            -emit-module-path "$shared_tests/MacseedTestSupport.swiftmodule" \
+            -emit-object "${presentation_sources[@]}" -o "$shared_tests/MacseedTestSupport.o"
+    fi
+    compile_test() {
+        local suite=$1
         case "$suite" in
-            OperationLogTests|CoreRuntimeTests) test_sources=(Sources/Core*.swift Sources/OperationLog.swift) ;;
+            OperationLogTests|CoreRuntimeTests)
+                # Preserve these transport/storage suites' smaller source set.
+                xcrun swiftc "${test_compiler_options[@]}" -parse-as-library \
+                    Sources/Core*.swift Sources/OperationLog.swift "Tests/$suite.swift" -o "$output_dir/$suite"
+                ;;
+            *)
+                if [[ "$configuration" == Debug ]]; then
+                    # Preserve #filePath and diagnostics for source-reading tests.
+                    {
+                        printf '@testable import MacseedTestSupport\n'
+                        printf '#sourceLocation(file: "Tests/%s.swift", line: 1)\n' "$suite"
+                        cat "Tests/$suite.swift"
+                    } > "$shared_tests/$suite-entry.swift"
+                    xcrun swiftc "${test_compiler_options[@]}" -parse-as-library -I "$shared_tests" \
+                        "$shared_tests/$suite-entry.swift" "$shared_tests/MacseedTestSupport.o" -o "$output_dir/$suite"
+                else
+                    xcrun swiftc "${test_compiler_options[@]}" -parse-as-library \
+                        "${presentation_sources[@]}" "Tests/$suite.swift" -o "$output_dir/$suite"
+                fi
+                ;;
         esac
-        run_stage xcrun swiftc "${test_compiler_options[@]}" -parse-as-library "${test_sources[@]}" "Tests/$suite.swift" \
-            -o "$output_dir/$suite"
+    }
+    for suite in "${suites[@]}"; do
+        run_stage compile_test "$suite"
         test_arguments=()
         case "$suite" in
             SettingsTests) test_arguments+=("$core_root" "$python_runtime" "$output_dir/Macseed.app") ;;

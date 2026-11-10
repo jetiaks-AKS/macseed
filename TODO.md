@@ -216,11 +216,31 @@ broader Git and macOS 27 gates below remain separate from that completed repair 
   deadlines alone do not establish a stall.
 - [ ] Independently qualify a real approximately 180-second no-progress watchdog
   stall, owned descendant termination and continued independent work.
-- [ ] Account for the **23 tests** in `scripts/test-homebrew-graceful-stop.py`,
-  currently outside canonical/CI coverage, in the canonical regression inventory;
-  verify isolation/coverage without weakening assertions. Explicitly classify the
-  older Stage 1 `scripts/test-restore-cancellation-mocks.py` diagnostic harness and
-  its nonduplicated contracts. Preserve the canonical runner and four-shard CI structure.
+- [ ] **OPEN — mandatory test-coverage qualification before release ([Issue #1](https://github.com/jetiaks-AKS/macseed/issues/1)):**
+  account for all **52 standalone Python methods currently outside canonical Full CI**:
+  `scripts/test-homebrew-graceful-stop.py` (**23**),
+  `scripts/test-restore-cancellation-mocks.py` (**10**),
+  `scripts/test-external-ssh-identities.py` (**10**) and
+  `desktop/Macseed/Tests/BundledAgeTests.py` (**9**). The configured green Full CI
+  #161 covers its existing inventory; it did not qualify these 52 methods and does
+  not establish complete intended release qualification.
+  Record an explicit disposition for every method: mandatory Full CI admission,
+  a separate enforceable integration/release gate, or exclusion only after documented
+  proof of equivalent mandatory coverage at the same architectural boundary.
+  Verify isolation, process ownership, dependencies and hosted suitability before
+  admission; preserve unique negative/security assertions and classify the older
+  cancellation harness's nonduplicated contracts. Preserve the canonical runner
+  and four-shard CI structure. Keep this task open until gated acceptance is demonstrated;
+  the [audit](docs/qualification/TEST-SUITE-AUDIT-2026-11-10.md) itself does not admit tests.
+- [ ] **Before release — separate standalone native integration gate:** explicitly
+  decide and document enforceable qualification for
+  `desktop/Macseed/Tests/ExternalIdentityTests.swift` under Issue #1. This native
+  harness is outside the 52 Python methods and is not qualified by CI #161.
+- [ ] **Before release — separate controlled real-GUI/accessibility gate:** explicitly
+  decide and document qualification for `scripts/test-homebrew-startup.py` under
+  Issue #1, including its interactive environment requirements. It is outside the
+  52 Python methods and is not qualified by CI #161; do not automatically add this
+  GUI work to ordinary hosted jobs.
 - [ ] **16K:** qualify unexercised stale-input/plan and transport/terminal failures,
   close/reopen/quit ownership, plus remaining accessibility and flow/security
   hardening. Retain the accepted real stale_plan/re-preview gate and keep

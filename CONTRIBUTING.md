@@ -130,17 +130,18 @@ global temporary-directory inventory checks still prohibit concurrent suites
 on one host. CI shards use separate VMs.
 
 `scripts/test-timings.json` contains weights, never a second test inventory.
-Weights use completed PASS records from CI #159 (`42779173712`, `dd954c05`),
-with CI #151 (`42463259149`, `441a8e13`) fallback. The file records suite and
-case provenance; failed/partial suite durations and unfinished/failed case times
-are excluded. Completed PASS cases in partial suites remain individual measurements.
-Six unmeasured methods retain conservative estimates. Unknown methods receive at
+Weights use the successful partitions of [CI #161](https://github.com/jetiaks-AKS/macseed/actions/runs/42836491162)
+(`a289442f`): shards 1 and 4 from attempt 1, shards 2 and 3 from attempt 2.
+All 44 suites and 346 methods in the five split suites have PASS measurements;
+failed/unfinished work is excluded. The reduced screenshot backend matrix retains
+its pre-optimization weight conservatively until hosted remeasurement. Local timings
+and estimates are not relabeled as hosted measurements. Unknown methods receive at
 least 60 seconds or their share of the remaining suite budget; new suites receive
 180 seconds. Measured startup overhead is distributed without reducing case times.
-New IDs are always assigned. On these same refreshed weights, the old assignment
-predicts 49 min 34 s for its longest shard; the new assignment predicts 42 min 32 s,
-excluding provisioning and extra split-suite startup. This is a scheduling estimate,
-not a hosted speedup. See the [Phase 1 evidence](docs/qualification/FULL-CI-PHASE1-2026-11-10.md).
+New IDs are always assigned. Refreshed weights predict about 41 min 43 s per shard,
+excluding provisioning and scheduling; that is an estimate, not a new hosted PASS.
+See the [suite audit](docs/qualification/TEST-SUITE-AUDIT-2026-11-10.md) for the complete
+inventory, retained coverage, removed repetitions and baseline attempt distinction.
 
 Each run writes a private ignored `logs/regression/<run>/` directory; `--output`
 can select a new destination. `safe/summary.md` and `.json` list PASS, FAIL, ERROR,
@@ -180,9 +181,21 @@ The required `validate` check retains `if: always()` and dependencies
 cancellation, skipped or missing execution cannot pass the gate.
 The twelve suites and two Restore subsets retain their fixture isolation
 and native assertions; [build.sh](desktop/Macseed/build.sh) owns the inventory.
-Capture/Restore keep `--no-renders`. Debug test executables use Swift whole-module
-compilation while retaining `-Onone`, `-g` and `DEBUG`; the application build is
-unchanged. This reduces repeated frontend work without a shared binary/module cache.
+Capture/Restore keep `--no-renders`. Debug tests compile their common production
+sources once per invocation as an internal, testable Swift module, retaining
+`-Onone`, `-g`, `DEBUG` and whole-module compilation. Ten test executables link that
+object; the two Core transport/storage executables keep their smaller source sets.
+Generated import wrappers preserve original source locations. There is no persistent
+binary/result cache; compile failure stops execution. App and Release builds keep
+their existing source sets and compilation path.
+
+The two additional Restore workflows retain their own fixtures and assertions;
+constant model/decoder groups run once in the mandatory standard invocation.
+Capture's full collector scenario remains production. Its later Workspace and
+application-overlap fixtures omit unrelated collectors only in disposable Core
+copies, retaining actual selected collectors, transport, publication and stale checks.
+Capture emits unbuffered progress and named group timings; the encompassing real-Core
+time includes Workspace/overlap and must not be added to them.
 The runner's selected
 Xcode, SDK, Swift and Xcode-resolved Python are checked before execution. Safe GUI
 session facts help diagnose WindowServer failures; they never replace native tests.

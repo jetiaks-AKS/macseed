@@ -25,7 +25,8 @@ contracts, [TODO](TODO.md) owns concrete unfinished actions, and
   readiness limits. The bounded Capture inventory privacy audit and correction are
   locally verified; partial-selection disclosure needs a product decision.
   Native SSH E2E is deferred to the full application-wide Native Desktop E2E
-  after functional development; hosted CI remains open.
+  after functional development. [Configured Full CI #161 passed](docs/qualification/README.md)
+  at `a289442f`; the subsequent test-optimization checkpoint still needs hosted qualification.
 - **Before Macseed 1.0:** finish the remaining Stage 16 and bounded Stage 3C work,
   qualify a fresh development-runtime E2E, then deliver Stage 17 packaging,
   clean-Mac qualification and Early Access. Autonomous signed distribution is planned.
@@ -226,7 +227,7 @@ Complete one bounded checkpoint at a time, preserving accepted scope and evidenc
    Selection/Preview/Rebuild contract; sandbox and readiness blockers remain.
    The bounded Capture privacy audit is complete; decide disclosure of retained
    partial-selection comparison inventories afterward. Native SSH E2E belongs to
-   step 6 after functional development. Current Secure Check hosted CI remains open.
+   step 6 after functional development.
 3. **Remaining native Workspace qualification and related supported-scope checks.**
    Use the retained selected Bundle after proving native HOME/Core/journal/preferences
    isolation. Qualify counts, read-only matching and explicit Missing/Different
@@ -239,8 +240,16 @@ Complete one bounded checkpoint at a time, preserving accepted scope and evidenc
    follows this implementation rather than being inferred from step 3.
 5. **Remaining Stage 16 qualification.** Close the [supported-domain gates](TODO.md#remaining-supported-domain-restore-qualification),
    Homebrew Setup Installer gate, completion (16I), lifecycle, integration, security,
-   accessibility and runtime hardening (16K). Account for the 23 Graceful Stop tests
-   outside canonical coverage. Recovery gates depend on step 4; preserve accepted
+   accessibility and runtime hardening (16K). Close the **OPEN mandatory pre-release
+   [52-method test-coverage gate (Issue #1)](https://github.com/jetiaks-AKS/macseed/issues/1)**
+   tracked in [TODO](TODO.md#cancellation-recovery-and-runtime-reliability).
+   These standalone Python methods are outside canonical Full CI: configured green
+   #161 does not qualify them or establish complete intended release qualification.
+   Every method needs mandatory admission, a separate enforceable integration/release
+   gate, or documented proof of equivalent mandatory coverage. Separately decide the
+   standalone native integration and controlled real-GUI/accessibility gates before
+   release, without automatically adding GUI work to ordinary hosted jobs.
+   Recovery gates depend on step 4; preserve accepted
    Assisted Restore behavior and distinguish mandatory gates from optional scope.
 6. **Full application-wide Native Desktop E2E after functional development.**
    Run fresh development-runtime Capture → Rebuild → Verify → Check → no-op in an
@@ -285,7 +294,8 @@ Disclosure of retained partial-selection inventories remains a product decision.
 Native Desktop SSH E2E, including Secure Check presentation and Change Location
 cancellation, is deferred to the existing full application-wide Native Desktop E2E
 in [execution step 6](#current-practical-execution-order), after functional development
-and using an isolated macOS test account. Current hosted CI qualification remains open.
+and using an isolated macOS test account. Configured CI PASS remains distinct from
+these native and release gates.
 [Capture / Restore](docs/CAPTURE-RESTORE.md#ssh-environment-completion--developer-environment-closure)
 owns the contract; [TODO](TODO.md#ssh-environment-completion--developer-environment-closure)
 owns unfinished actions. Stage 17 and the other remaining gates are unchanged.

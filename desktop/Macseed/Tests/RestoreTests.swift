@@ -3258,15 +3258,19 @@ import Vision
         let sshHostOnly = CommandLine.arguments.contains("--ssh-host-selection-only") || sshResolutionOnly
         let selectionAccordionOnly = CommandLine.arguments.contains("--selection-accordion-only") || homebrewSetupOnly || secureUIOnly || sshHostOnly || developerOnly
         let refreshCancellationOnly = CommandLine.arguments.contains("--appstore-refresh-cancel-only")
-        if !selectionAccordionOnly && !refreshCancellationOnly { try topologyPreviewChecks() }
+        // These constant model/decoder contracts run in the mandatory standard
+        // invocation. The two additional workflows have independent fixtures
+        // below; repeating the identical contracts adds no workflow coverage.
+        let workflowSubset = CommandLine.arguments.contains("--final-restore-ux-only") || CommandLine.arguments.contains("--assisted-appstore-only")
+        if !selectionAccordionOnly && !refreshCancellationOnly && !workflowSubset { try topologyPreviewChecks() }
         if CommandLine.arguments.contains("--topology-preview-only") { return }
-        if !selectionAccordionOnly && !refreshCancellationOnly { try assistedAppStoreChecks() }
+        if !selectionAccordionOnly && !refreshCancellationOnly && !workflowSubset { try assistedAppStoreChecks() }
         if CommandLine.arguments.contains("--rosetta-only") {
             try taskPresentationChecks()
             print("PASS: Rosetta prerequisite and observation failure in Rebuild Preview and retained diagnostic evidence")
             return
         }
-        if !selectionAccordionOnly && !refreshCancellationOnly && !CommandLine.arguments.contains("--preview-appstore-layout-only") && !CommandLine.arguments.contains("--selection-preview-only") && !CommandLine.arguments.contains("--independent-ownership-only") && !CommandLine.arguments.contains("--review-cancel-only") && !CommandLine.arguments.contains("--restore-macos-only") && !CommandLine.arguments.contains("--pkg-preparation-only") && !CommandLine.arguments.contains("--fix-issues-only") {
+        if !selectionAccordionOnly && !refreshCancellationOnly && !workflowSubset && !CommandLine.arguments.contains("--preview-appstore-layout-only") && !CommandLine.arguments.contains("--selection-preview-only") && !CommandLine.arguments.contains("--independent-ownership-only") && !CommandLine.arguments.contains("--review-cancel-only") && !CommandLine.arguments.contains("--restore-macos-only") && !CommandLine.arguments.contains("--pkg-preparation-only") && !CommandLine.arguments.contains("--fix-issues-only") {
             for id in WorkspaceCategoryStyle.groups.flatMap({ $0.1 }) {
                 let problem = TaskItemPresentation(id: "problem", item: DisplayItem(id: "problem", title: "Problem", status: .attention, action: "Needs inspection"), state: .failed, resultLabels: ["Failed", "Mismatch"])
                 var category = TaskDomainPresentation(id: id, title: id, symbol: "folder", items: [problem], activityState: .working)

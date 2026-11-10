@@ -484,8 +484,27 @@ esac
         self.assertFalse((self.root / 'mutations').exists())
 
     def test_screenshots_cross_version_matrix(self):
-        for source in ('15.7', '26.7.1', '27.2'):
-            for target in ('15.7', '26.7.1', '27.2'):
+        # Versions 15 and 26 select the same production backend. Qualify every
+        # supported version alias cheaply, then cross the two actual backends.
+        # Bundle v1 stores the logical location, never the source OS key name.
+        probe = subprocess.run(['bash', '-c', '''
+source modules/settings/macos/screenshots-observation.sh
+application_observe() { printf '%s\\n' "$fixture_version"; }
+error() { :; }
+for fixture_version in 10.14 10.15 11 12 13 14 15.7 26.7.1 27.2; do
+    screenshots_location_backend || exit 2
+    printf '%s:%s:%s\\n' "$fixture_version" "$SCREENSHOTS_LOCATION_KEY" "$SCREENSHOTS_TARGET_KEY"
+done
+fixture_version=28.0
+screenshots_location_backend
+test "$?" -eq 2 && test "$SCREENSHOTS_LOCATION_REASON" = screenshots_location_unsupported
+'''], cwd=self.project, env=self.environment, capture_output=True, text=True)
+        self.assertEqual(probe.returncode, 0, probe.stderr)
+        self.assertEqual(probe.stdout.splitlines(), [
+            version + ':location:target' for version in ('10.14', '10.15', '11', '12', '13', '14', '15.7', '26.7.1')
+        ] + ['27.2:location-screenshot:target-screenshot'])
+        for source in ('26.7.1', '27.2'):
+            for target in ('26.7.1', '27.2'):
                 with self.subTest(source=source, target=target):
                     fixture = RestorePrepareTests('runTest')
                     fixture.setUp()

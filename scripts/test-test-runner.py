@@ -189,29 +189,34 @@ class RunnerTests(unittest.TestCase):
         self.assertNotIn('"status": "PASS"', output.getvalue())
 
     def test_desktop_stage_summary_records_running_failed_and_not_run(self):
-        # Exercise build.sh's real stage functions without compiling/running
-        # any Desktop suite. The failing child observes its published RUNNING row.
+        # Exercise the real stage functions without building/running Desktop.
+        # Both a failed shared compile and a failed suite must stop later work.
         source = (ROOT / 'desktop/Macseed/build.sh').read_text()
         functions = source[source.index('# One inventory'):source.index('\nbuild_app() {')]
         summary, marker = self.root / 'desktop.md', self.root / 'later'
-        child = self.root / 'failed.py'
-        child.write_text('import os\nfrom pathlib import Path\n'
-            'text=Path(os.environ["MACSEED_DESKTOP_SUMMARY"]).read_text()\n'
-            'assert "| PresentationTests | running |" in text\n'
-            'assert "| Compile SettingsTests | not-run |" in text\nraise SystemExit(17)\n')
-        script = self.root / 'stages.sh'
-        script.write_text('set -euo pipefail\nconfiguration=Debug\n' + functions +
-            '\nrun_stage true\nrun_stage true\nrun_stage "$1" "$3"\ntouch "$4"\n')
-        result = subprocess.run(['bash', str(script), sys.executable, '--test', str(child), str(marker)],
-            env=dict(os.environ, MACSEED_DESKTOP_SUMMARY=str(summary)), capture_output=True, timeout=10)
-        self.assertEqual(result.returncode, 17, result.stderr)
-        text = summary.read_text()
-        for stage, state in [('Debug app build', 'passed'), ('Compile PresentationTests', 'passed'),
-                             ('PresentationTests', 'failed'), ('Compile SettingsTests', 'not-run')]:
-            self.assertIn(f'| {stage} | {state} |', text)
-        self.assertIn('Exit status: 17.', text)
-        self.assertFalse(marker.exists())
-        self.assertFalse(summary.with_suffix('.md.tmp').exists())
+        for completed, failed, later in (
+                (['Debug app build'], 'Compile shared test sources', 'Compile PresentationTests'),
+                (['Debug app build', 'Compile shared test sources', 'Compile PresentationTests'],
+                 'PresentationTests', 'Compile SettingsTests')):
+            with self.subTest(stage=failed):
+                child = self.root / 'failed.py'
+                child.write_text('import os\nfrom pathlib import Path\n'
+                    'text=Path(os.environ["MACSEED_DESKTOP_SUMMARY"]).read_text()\n'
+                    f'assert "| {failed} | running |" in text\n'
+                    f'assert "| {later} | not-run |" in text\nraise SystemExit(17)\n')
+                script = self.root / 'stages.sh'
+                script.write_text('set -euo pipefail\nconfiguration=Debug\n' + functions +
+                    '\n' + 'run_stage true\n' * len(completed) + 'run_stage "$1" "$3"\ntouch "$4"\n')
+                result = subprocess.run(['bash', str(script), sys.executable, '--test', str(child), str(marker)],
+                    env=dict(os.environ, MACSEED_DESKTOP_SUMMARY=str(summary)), capture_output=True, timeout=10)
+                self.assertEqual(result.returncode, 17, result.stderr)
+                text = summary.read_text()
+                for stage, state in ([(name, 'passed') for name in completed] +
+                                     [(failed, 'failed'), (later, 'not-run')]):
+                    self.assertIn(f'| {stage} | {state} |', text)
+                self.assertIn('Exit status: 17.', text)
+                self.assertFalse(marker.exists())
+                self.assertFalse(summary.with_suffix('.md.tmp').exists())
 
     def test_case_sharded_cli_selection_is_read_only(self):
         inventory = re.findall(r'^    (scripts/test-\S+)$', (ROOT / 'scripts/test.sh').read_text(), re.M)

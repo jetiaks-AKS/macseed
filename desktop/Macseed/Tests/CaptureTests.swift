@@ -20,6 +20,23 @@ import SwiftUI
         ["domain": domain, "selection_mode": mode, "status": status, "reason": reason ?? NSNull(),
          "items": items.map { ["item_id": $0, "label": $0] }]
     }
+    static func focusDiscovery(_ core: URL, workspace: Bool) throws {
+        // The preceding realCore scenario covers the full collector boundary.
+        // These fixtures qualify Workspace or application overlap, so retain
+        // their production collectors and omit unrelated observations only in
+        // this disposable copy, as the secure Capture fixture already does.
+        let bootstrap = core.appendingPathComponent("bootstrap.sh")
+        let source = try String(contentsOf: bootstrap, encoding: .utf8)
+        let marker = "source modules/discovery/workspace.sh\n"
+        precondition(source.components(separatedBy: marker).count == 2)
+        var disabled = ["discover_git", "discover_ssh_configuration", "export_vscode_settings",
+                        "export_finder_settings", "export_dock_settings", "export_windows_settings",
+                        "export_keyboard_settings", "export_trackpad_settings", "export_screenshots_settings"]
+        // The neither-folder-nor-repository case still publishes an independent
+        // selected category. Keep the real shell collector for that boundary.
+        if !workspace { disabled += ["discover_workspace", "discover_zsh"] }
+        try write(source.replacingOccurrences(of: marker, with: marker + disabled.map { "\($0)() { return 1; }\n" }.joined()), bootstrap)
+    }
     @MainActor static func sshHostSelectionChecks(model: CaptureModel, runtime: CoreRuntime, core: URL, root: URL) async throws {
         let hosts = ["github", "production", "home-server", "test-vps"]
         try JSONSerialization.data(withJSONObject: [row("ssh-configuration", mode: "items", items: hosts),
@@ -268,12 +285,17 @@ import SwiftUI
         print("PASS: Capture developer siblings, native aggregate states/alignment, default-off/explicit SSH consent, subset preservation, unavailable children and preparation invalidation")
     }
     @MainActor static func main() async throws {
+        setbuf(stdout, nil)
         // Foundation resolves /private/var to /var, while Core requires Python's
         // canonical parent spelling. Use an explicit canonical fixture root.
         let root = URL(fileURLWithPath: "/private/tmp").appendingPathComponent("macseed-desktop-capture-tests-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
         defer { try? FileManager.default.removeItem(at: root) }
         let python = URL(fileURLWithPath: CommandLine.arguments[2])
+        if CommandLine.arguments.contains("--workspace-core-only") || CommandLine.arguments.contains("--overlap-core-only") {
+            try await realCore(root: root, repository: URL(fileURLWithPath: CommandLine.arguments[1]), python: python)
+            return
+        }
         if CommandLine.arguments.contains("--secure-invalidation-only") {
             try await secureCaptureInvalidationCheck(root: root, repository: URL(fileURLWithPath: CommandLine.arguments[1]), python: python)
             return
@@ -859,6 +881,8 @@ import SwiftUI
         preconditionFailure("Fixture did not reach expected phase")
     }
     @MainActor static func realCore(root: URL, repository: URL, python: URL) async throws {
+        let started = ProcessInfo.processInfo.systemUptime
+        defer { print(String(format: "TIMING: CaptureTests.realCore (including Workspace/overlap) %.3f s", ProcessInfo.processInfo.systemUptime - started)) }
         // Automated disposable HOME/tools only; never the real-Mac manual gate.
         let core = root.appendingPathComponent("real-core"), home = root.appendingPathComponent("real-home"), bin = root.appendingPathComponent("real-bin")
         for url in [core.appendingPathComponent("config"), core.appendingPathComponent("scripts"), home, bin] {
@@ -895,6 +919,16 @@ import SwiftUI
         try write("private ordinary state", generated.appendingPathComponent("sentinel"))
         try write("private ordinary selection", core.appendingPathComponent("config/blueprint.conf"))
         let beforeHome = try snapshot(home), beforeConfig = try snapshot(core.appendingPathComponent("config"))
+        if CommandLine.arguments.contains("--workspace-core-only") {
+            // Match the category-only baseline's absent Homebrew fixture.
+            try FileManager.default.removeItem(at: bin.appendingPathComponent("brew"))
+            try await workspacePrepare(root: root, repository: repository, core: core, home: home, bin: bin, python: python)
+            return
+        }
+        if CommandLine.arguments.contains("--overlap-core-only") {
+            try await overlapCore(root: root, core: core, home: home, bin: bin, python: python)
+            return
+        }
         let runtime = CoreRuntime(operationLogs: nil)
         let model = CaptureModel(runtime: runtime, location: CoreLocation(root: core, python: python, home: home, temporaryBase: root, toolDirectories: [bin]))
         model.scan(); await model.waitForCompletion()
@@ -1841,6 +1875,9 @@ import SwiftUI
     }
 
     @MainActor static func workspacePrepare(root: URL, repository: URL, core: URL, home: URL, bin: URL, python: URL) async throws {
+        let started = ProcessInfo.processInfo.systemUptime
+        defer { print(String(format: "TIMING: CaptureTests.workspacePrepare %.3f s", ProcessInfo.processInfo.systemUptime - started)) }
+        try focusDiscovery(core, workspace: true)
         let setup = root.appendingPathComponent("workspace-fixture.py")
         try write("""
         import sys
@@ -1936,6 +1973,9 @@ import SwiftUI
     }
 
     @MainActor static func overlapCore(root: URL, core: URL, home: URL, bin: URL, python: URL) async throws {
+        let started = ProcessInfo.processInfo.systemUptime
+        defer { print(String(format: "TIMING: CaptureTests.overlapCore %.3f s", ProcessInfo.processInfo.systemUptime - started)) }
+        try focusDiscovery(core, workspace: false)
         // A macOS HOME already has Library. Establish it before Discovery so the
         // first catalog cache write does not change the observed top-level folders.
         try FileManager.default.createDirectory(at: home.appendingPathComponent("Library"), withIntermediateDirectories: true)
@@ -2028,6 +2068,8 @@ import SwiftUI
     }
 
     @MainActor static func secureCaptureChecks(root: URL, repository: URL, python: URL) async throws {
+        let started = ProcessInfo.processInfo.systemUptime
+        defer { print(String(format: "TIMING: CaptureTests.secureCaptureChecks %.3f s", ProcessInfo.processInfo.systemUptime - started)) }
         // build.sh places this harness beside the app whose authenticated helper
         // it qualifies. Never search external tools or prepare/download age here.
         let builtApplication = URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL
