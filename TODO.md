@@ -58,12 +58,30 @@ manual evidence belong to [Roadmap](ROADMAP.md#stage-16--native-macseed-desktop)
 and [Desktop](docs/DESKTOP.md#secure-interactions). Follow the
 [workflow contract](docs/CAPTURE-RESTORE.md#ssh-environment-completion--developer-environment-closure):
 
-- [ ] Qualify joint SSH Configuration + identities E2E, including default/custom
-  destinations, dependent Git clones, Verification, read-only Check and repeated no-op.
-- [ ] Qualify the current Secure Check checkpoint on a real Mac and in hosted CI;
-  preserve the accepted Unified Developer UI and separate saved-state correspondence
-  from private-key usability/remote authentication. Local test results alone do not
-  close these gates.
+- [ ] **Next SSH gate:** complete successful isolated Core Git-over-SSH qualification,
+  including import → configuration → clone ordering, Verification and repeat/no-op.
+  Reuse the [2026-11-10 evidence](docs/SSH-E2E-QUALIFICATION-2026-11-10.md) for the
+  accepted Core default/saved-custom lifecycles, security cases and approved-correction
+  follow-up; obtain only the missing transport/integration evidence. The
+  [latest attempt](docs/SSH-E2E-QUALIFICATION-2026-11-10.md#15-remaining-core-git-over-ssh-qualification)
+  remains blocked by nested `sshd` sandbox initialization and coarse Internet
+  readiness. An endpoint-aware readiness design and demonstrably safe SSH transport
+  are required; do not exempt URL strings or bypass network/security checks.
+- [ ] After the Core Git-over-SSH gate, decide explicit Capture disclosure for full
+  comparison inventories retained within partially selected application categories.
+  The [bounded audit and correction](docs/SSH-E2E-QUALIFICATION-2026-11-10.md#16-capture-unselected-inventory-privacy-review)
+  are locally verified; entirely unselected categories are omitted from new Bundles.
+  Approve the disclosure scope before changing UI; retain comparison completeness,
+  the selection ceiling and Bundle V1 compatibility.
+- [ ] Qualify the current Secure Check checkpoint in hosted CI; local results do not
+  close this gate.
+
+Native Desktop SSH E2E, including joint configuration/identity flows, Secure Check
+headline/counts and cancelled Change Location, is deferred to the existing
+[full application-wide Native Desktop E2E](#remaining-mandatory-supported-domain-qualification)
+after functional development, using an isolated macOS test account. Preserve the
+accepted Unified Developer UI and distinguish saved-state correspondence from
+private-key usability and remote authentication.
 
 ## Remaining supported-domain Restore qualification
 
@@ -115,9 +133,11 @@ these tasks require native effects or unexercised writes, not another fixture pa
 
 ### Remaining mandatory supported-domain qualification
 
-- [ ] Complete a fresh full Capture → Rebuild → independent Verify → Check → no-op
-  gate from a newly captured Bundle on the current Mac after explicit scope approval and fresh
-  Preview. Preserve archive/worktree state, resolve or explicitly exclude conflicts
+- [ ] Complete the full application-wide Native Desktop E2E after functional
+  development, using an isolated macOS test account: fresh Capture → Rebuild →
+  independent Verify → Check → no-op from a newly captured Bundle, including the
+  deferred native SSH flows, after explicit scope approval and fresh Preview.
+  Preserve archive/worktree state, resolve or explicitly exclude conflicts
   through supported selection, and
   check repeat/no-op convergence. This does not replace Stage 17 clean-Mac gates.
 - [ ] Run a controlled real Desktop Zsh drift → Preview → Rebuild → Verification

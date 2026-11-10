@@ -339,8 +339,73 @@ class IdentityResolutionTests(unittest.TestCase):
         self.assertTrue(plan['qualified'])
         context = self.execution_context(raw, plan, approvals=approval, bundle_id='a' * 64)
         self.assertTrue(resolution.apply(plan['raw'], str(self.home), context))
+        before = self.state()
+        repeated = self.inspect(raw, approvals=approval)
+        self.assertEqual(repeated['action'], 'noop')
+        self.assertTrue(resolution.public(repeated)['ready'])
+        context = self.execution_context(raw, repeated, approvals=approval, bundle_id='a' * 64)
+        self.assertFalse(resolution.apply(repeated['raw'], str(self.home), context))
+        self.assertEqual(self.state(), before)
         with self.assertRaises(resolution.merge.Refused):
-            self.inspect(raw, approvals=approval) # Corrected existing Host cannot conceal original conflict.
+            self.inspect(raw) # Without approval, the saved configuration still conflicts.
+        additional = self.raw([('one', ['/old-home/key']), ('unapproved', [])])
+        with self.assertRaisesRegex(resolution.merge.Refused, '^original_target_conflict$'):
+            self.inspect(additional, approvals=approval) # A merge must retain the original-Host guard.
+        target = self.home / '.ssh/config'
+        target.write_bytes(target.read_bytes() + b'Host unapproved\n HostName different.invalid\n')
+        before = self.state()
+        with self.assertRaises(resolution.merge.Refused):
+            self.inspect(additional, approvals=approval)
+        self.assertEqual(self.state(), before)
+
+    def test_approved_noop_rejects_unsafe_stale_and_unresolved_targets(self):
+        raw = self.raw([('one', ['/old-home/key'])])
+        approval = self.approval(raw, str(self.key))
+        plan = self.inspect(raw, approvals=approval)
+        context = self.execution_context(raw, plan, approvals=approval, bundle_id='a' * 64)
+        self.assertTrue(resolution.apply(plan['raw'], str(self.home), context))
+        target = self.home / '.ssh/config'
+        expected = target.read_bytes()
+        for unsafe in ('mode', 'symlink', 'hardlink', 'unsupported', 'pending'):
+            with self.subTest(unsafe=unsafe):
+                other = self.home / 'other'
+                if unsafe == 'mode': target.chmod(0o644)
+                elif unsafe == 'symlink': target.rename(other); target.symlink_to(other)
+                elif unsafe == 'hardlink': os.link(target, other)
+                elif unsafe == 'unsupported': target.write_bytes(expected + b'Include other\n')
+                else: (target.parent / '.macseed-ssh-pending-test').mkdir(mode=0o700)
+                before = self.state()
+                with self.assertRaises((OSError, resolution.merge.Refused)):
+                    self.inspect(raw, approvals=approval)
+                self.assertEqual(self.state(), before)
+                if unsafe == 'mode': target.chmod(0o600)
+                elif unsafe == 'symlink': target.unlink(); other.rename(target)
+                elif unsafe == 'hardlink': other.unlink()
+                elif unsafe == 'unsupported': target.write_bytes(expected)
+                else: (target.parent / '.macseed-ssh-pending-test').rmdir()
+        for field, value in (('bundle_id', 'b' * 64), ('approved', False)):
+            stale = json.loads(json.dumps(approval))
+            if field == 'bundle_id': stale[field] = value
+            else: stale['items'][0][field] = value
+            before = self.state()
+            with self.assertRaises(resolution.SecureError): self.inspect(raw, approvals=stale)
+            self.assertEqual(self.state(), before)
+        native_plan = resolution.merge.plan
+        def replaced(*args, **kwargs):
+            result = native_plan(*args, **kwargs)
+            self.assertEqual(result[0], 'noop')
+            replacement = self.home / 'replacement'
+            replacement.write_bytes(expected); replacement.chmod(0o600); replacement.replace(target)
+            return result
+        with patch.object(resolution.merge, 'plan', side_effect=replaced):
+            with self.assertRaisesRegex(resolution.merge.Refused, '^target_changed$'):
+                self.inspect(raw, approvals=approval)
+        self.key.unlink()
+        unresolved = self.inspect(raw, approvals=approval)
+        self.assertEqual(unresolved['action'], 'noop')
+        self.assertFalse(resolution.public(unresolved)['ready'])
+        with self.assertRaises(resolution.SecureError):
+            self.execution_context(raw, unresolved, approvals=approval, bundle_id='a' * 64)
 
     def test_inline_review_qualifies_proposals_without_granting_consent(self):
         self.install()
@@ -748,9 +813,22 @@ class SelectionTests(unittest.TestCase):
         self.assertIn(b'IdentityFile ~/keys/deploy', target.read_bytes())
         self.assertNotIn(b'Host github', target.read_bytes())
         self.assertEqual(result[-2]['data']['verification']['verdict'], 'selected_requirements_verified', result)
+        before = (target.read_bytes(), target.stat().st_ino, target.stat().st_mtime_ns)
         code, repeated = self.ssh_request('restore_prepare', chosen, approval)
         self.assertEqual(code, 0, repeated)
-        self.assertFalse(repeated[-2]['data']['readiness']['ready'], 'original differing Host remains a conflict')
+        repeated = repeated[-2]['data']
+        self.assertTrue(repeated['readiness']['ready'])
+        self.assertEqual(repeated['ssh_resolution']['action'], 'noop')
+        self.assertTrue(repeated['ssh_resolution']['ready'])
+        self.assertFalse(repeated['has_planned_changes'])
+        self.assertEqual((target.read_bytes(), target.stat().st_ino, target.stat().st_mtime_ns), before)
+        target.write_bytes(target.read_bytes() + b'# changed after Prepare\n')
+        changed = target.read_bytes()
+        code, stale = self.ssh_request('restore_execute', chosen, approval, repeated['prepared_plan_id'])
+        self.assertEqual(code, 2); self.assertEqual(stale[-1]['data']['code'], 'stale_plan')
+        self.assertFalse(stale[-1]['data']['publication_occurred'])
+        self.assertFalse(stale[-1]['data']['target_mutation_may_have_started'])
+        self.assertEqual(target.read_bytes(), changed)
         for private in ('/old-home', '~/keys/deploy', str(self.fixture.home), 'production.invalid'):
             self.assertNotIn(private, json.dumps(result))
 

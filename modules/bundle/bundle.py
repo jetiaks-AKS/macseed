@@ -260,8 +260,9 @@ def without_empty_workspace_selection(blueprint):
     return ''.join(output).encode('utf-8')
 
 
-def completeness_files(stage):
-    """Optional, digest-bound full inventories; absent markers mean legacy unknown."""
+def completeness_files(stage, blueprint):
+    """Keep full comparison baselines only for domains with selected requirements."""
+    sections, _ = parse_blueprint(blueprint)
     result = {}
     for domain, inventory in COMPLETE_INVENTORIES.items():
         marker = stage / "generated/provenance" / (domain + ".sha256")
@@ -272,6 +273,10 @@ def completeness_files(stage):
         data = checked_file(stage / name)
         if content != ("complete " + digest(data) + "\n").encode():
             raise Invalid("invalid inventory completeness marker")
+        # Check reports category_excluded without using these inventories.
+        # Validate observed provenance first; exclusion must not conceal bad input.
+        if not sections[domain]:
+            continue
         result[name] = data
         result["generated/provenance/" + domain + ".sha256"] = content
     return result
@@ -539,7 +544,7 @@ def pack(stage, output, home, replacement_sha256=None, *, apply_precedence=True)
     if apply_precedence:
         blueprint, _, _ = application_precedence(blueprint, data)
     files = staged_payload(stage, blueprint)
-    files.update(completeness_files(stage))
+    files.update(completeness_files(stage, blueprint))
     if capabilities.exists() or capabilities.is_symlink():
         selected, _ = parse_blueprint(blueprint)
         data['casks'] = {token: row for token, row in data['casks'].items() if token in selected['homebrew-casks']}

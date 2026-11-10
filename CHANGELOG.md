@@ -210,6 +210,9 @@ The format is based on the principles of **Keep a Changelog**.
 
 ### Fixed
 
+* Capture omits comparison inventories for entirely unselected application
+  categories. Partial selections retain full comparison provenance, and existing
+  Bundle v1 files remain readable.
 * Desktop Rebuild hides an empty Needs Attention summary while preserving real
   issues, unknown outcomes and Verification Not Run. Capture Review and Rebuild
   Preview omit empty numeric metric rows without changing selection or evidence.

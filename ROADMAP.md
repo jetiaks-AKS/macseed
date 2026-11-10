@@ -18,7 +18,14 @@ contracts, [TODO](TODO.md) owns concrete unfinished actions, and
   independent selection and SSH → Git dependency integration are implemented.
   Unified Developer UI is visually accepted. Secure Check implements authenticated
   saved-file/reference comparison with one aggregate SSH Configuration result.
-  Local validation does not close its hosted CI or joint real-Mac SSH E2E gates.
+  [Isolated Core E2E on 2026-11-10](docs/SSH-E2E-QUALIFICATION-2026-11-10.md)
+  passed default and saved custom-location lifecycles. The approved-correction
+  repeat defect is locally fixed and requalified. Successful isolated Core
+  Git-over-SSH qualification remains next and blocked by SSH sandbox and Internet
+  readiness limits. The bounded Capture inventory privacy audit and correction are
+  locally verified; partial-selection disclosure needs a product decision.
+  Native SSH E2E is deferred to the full application-wide Native Desktop E2E
+  after functional development; hosted CI remains open.
 - **Before Macseed 1.0:** finish the remaining Stage 16 and bounded Stage 3C work,
   qualify a fresh development-runtime E2E, then deliver Stage 17 packaging,
   clean-Mac qualification and Early Access. Autonomous signed distribution is planned.
@@ -215,9 +222,11 @@ Complete one bounded checkpoint at a time, preserving accepted scope and evidenc
    Roadmap, positioning and contextual Selection wording/typography are finalized.
    Remaining qualification gates and completed contracts retain their boundaries.
 2. **[SSH Environment Completion — Developer Environment Closure](#ssh-environment-completion--developer-environment-closure) — Implemented; qualification open.**
-   Qualify joint SSH Configuration, identity destinations and dependent Git clones
-   under the accepted Selection/Preview/Rebuild contract, including Verification,
-   read-only Check and repeated no-op. Current Secure Check hosted CI remains open.
+   Next qualify successful isolated Core Git-over-SSH under the accepted
+   Selection/Preview/Rebuild contract; sandbox and readiness blockers remain.
+   The bounded Capture privacy audit is complete; decide disclosure of retained
+   partial-selection comparison inventories afterward. Native SSH E2E belongs to
+   step 6 after functional development. Current Secure Check hosted CI remains open.
 3. **Remaining native Workspace qualification and related supported-scope checks.**
    Use the retained selected Bundle after proving native HOME/Core/journal/preferences
    isolation. Qualify counts, read-only matching and explicit Missing/Different
@@ -233,8 +242,10 @@ Complete one bounded checkpoint at a time, preserving accepted scope and evidenc
    accessibility and runtime hardening (16K). Account for the 23 Graceful Stop tests
    outside canonical coverage. Recovery gates depend on step 4; preserve accepted
    Assisted Restore behavior and distinguish mandatory gates from optional scope.
-6. **Fresh development-runtime Capture → Rebuild → Verify → Check → no-op E2E.**
-   Use current supported scope, confirmed backup protection and independent evidence.
+6. **Full application-wide Native Desktop E2E after functional development.**
+   Run fresh development-runtime Capture → Rebuild → Verify → Check → no-op in an
+   isolated macOS test account, including the deferred native SSH flows. Use current
+   supported scope, confirmed backup protection and independent evidence.
    This gate does not replace packaged clean-Mac qualification.
 7. **[Stage 17 — autonomous distribution](#stage-17--distribution--clean-mac-e2e).**
    Implement and qualify checkout-independent bundled Core/Python/tool placement,
@@ -253,12 +264,28 @@ publishes independent SSH Configuration, explicit IdentityFile corrections, opti
 identity destinations and the unified selection UI. SSH-dependent topology clones
 have bounded local dependency qualification in `093be20`, reusing the existing
 import → configuration → clone order. Unified Developer UI (`fd68284`) is visually
-accepted. The current uncommitted Secure Check checkpoint compares authenticated
+accepted. Secure Check compares authenticated
 saved files and proves configured-reference correspondence without claiming key
 usability or remote authentication. Check keeps one aggregate `config` result.
-Representative native joint E2E with default/custom destinations, dependent clones,
-Verification, Check and repeated no-op remains open, as does hosted CI qualification
-of the current checkpoint; local fixture results do not close those gates.
+[Real-Mac isolated Core qualification at `821ba853`](docs/SSH-E2E-QUALIFICATION-2026-11-10.md)
+passed Capture through Check and repeated no-op for default and saved custom paths,
+plus selected-key import and essential security cases. The approved IdentityFile
+correction repeat defect is [locally fixed and requalified](docs/SSH-E2E-QUALIFICATION-2026-11-10.md#14-approved-correction-no-op-follow-up)
+against baseline `821ba853`; the original failure record is retained.
+
+**Next SSH gate:** successful isolated Core Git-over-SSH qualification, including
+import → configuration → clone ordering, Verification and repeat/no-op. The
+[bounded follow-up](docs/SSH-E2E-QUALIFICATION-2026-11-10.md#15-remaining-core-git-over-ssh-qualification)
+confirmed native `sshd` nested-sandbox denial and an Internet prerequisite applied
+to local clones; no readiness bypass was introduced. The
+[Capture privacy audit and correction](docs/SSH-E2E-QUALIFICATION-2026-11-10.md#16-capture-unselected-inventory-privacy-review)
+are locally verified: new Bundles omit inventories for entirely unselected application
+categories while preserving partial-selection comparison baselines and V1 readers.
+Disclosure of retained partial-selection inventories remains a product decision.
+Native Desktop SSH E2E, including Secure Check presentation and Change Location
+cancellation, is deferred to the existing full application-wide Native Desktop E2E
+in [execution step 6](#current-practical-execution-order), after functional development
+and using an isolated macOS test account. Current hosted CI qualification remains open.
 [Capture / Restore](docs/CAPTURE-RESTORE.md#ssh-environment-completion--developer-environment-closure)
 owns the contract; [TODO](TODO.md#ssh-environment-completion--developer-environment-closure)
 owns unfinished actions. Stage 17 and the other remaining gates are unchanged.

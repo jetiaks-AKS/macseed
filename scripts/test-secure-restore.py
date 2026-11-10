@@ -792,6 +792,24 @@ os.execv(native,[native,*args])
         self.assertEqual(status, 0, events)
         self.assertTrue((directory / 'id_disposable').exists()); self.assertFalse((self.home / '.ssh/id_disposable').exists())
         self.assertIn(b'IdentityFile ~/keys/id_disposable', (self.home / '.ssh/config').read_bytes())
+        before = [(str(path.relative_to(self.home)), path.stat().st_ino, path.stat().st_mtime_ns,
+                   path.read_bytes() if path.is_file() else None) for path in sorted(self.home.rglob('*'))]
+        repeated = self.resolution_prepare(mapping, approval)
+        self.assertTrue(repeated['readiness']['ready'])
+        self.assertEqual(repeated['ssh_resolution']['action'], 'noop')
+        self.assertTrue(repeated['ssh_resolution']['pending'])
+        self.assertFalse(repeated['ssh_resolution']['ready'], 'Locked keys still need fresh authenticated comparison')
+        status, events, challenges = self.peer(operation='secure_restore_compare',
+            plan=repeated['prepared_plan_id'], mapping=mapping, approvals=approval)
+        self.assertEqual(status, 0, events)
+        self.assertEqual([row['kind'] for row in challenges], ['bundle_unlock'])
+        receipt = next(row['data'] for row in events if row['type'] == 'result')
+        self.assertEqual(receipt['decision'], 'all_match')
+        self.assertEqual(receipt['ssh_resolution']['action'], 'noop')
+        self.assertTrue(receipt['ssh_resolution']['ready'])
+        self.assertFalse(receipt['ssh_resolution']['pending'])
+        self.assertEqual(before, [(str(path.relative_to(self.home)), path.stat().st_ino, path.stat().st_mtime_ns,
+            path.read_bytes() if path.is_file() else None) for path in sorted(self.home.rglob('*'))])
 
     def test_inline_secure_review_is_explicit_read_only_and_destination_bound(self):
         self.fixture(protected=True); self.dependency_snapshot(['/old-home/id_disposable'])

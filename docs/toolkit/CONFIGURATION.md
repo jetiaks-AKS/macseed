@@ -30,7 +30,9 @@ and selected Git, Workspace folders/repositories, SSH configuration, Zsh,
 VS Code settings and macOS settings. `workspace.conf`, `vscode-workspaces.conf`
 and `inventory.conf` have no restoration consumer and are excluded. Unselected
 inventory entries are omitted unless digest-bound completeness requires retaining
-the full inventory for Comparison. Retained inventory never expands Apply.
+the full inventory of a partially selected category for Comparison. New Captures
+omit comparison inventories and markers for entirely unselected application
+categories. Retained inventory never expands Apply; existing Bundles remain readable.
 
 Capture stages Discovery, Blueprint and Preview privately; it does not replace
 ordinary source state. Source selection is the Restore ceiling. Restore can
@@ -435,10 +437,13 @@ After complete publication of `brew-casks.conf`, `appstore.conf` or
 `provenance/<domain>.sha256` containing `complete <sha256>` for the exact full
 inventory bytes. Empty inventory can be complete. Missing, invalid or mismatched
 markers mean unknown completeness; legacy state remains compatible. Capture
-retains these inventory/marker pairs even with narrower selection, preventing
-excluded source items from becoming false extras. Without a marker, transfer is
-selected-only. Formulae get no marker because Discovery exports only the
-installed-on-request subset.
+retains these inventory/marker pairs when at least one item in the category is
+selected, preventing excluded source items from becoming false extras. Entirely
+unselected categories have no comparison scope, so new Captures omit their pairs
+after validating observed provenance. Existing V1 Bundles that retain them are
+still accepted; Check reports those domains as `category_excluded`. Without a
+marker, transfer is selected-only. Formulae get no marker because Discovery
+exports only the installed-on-request subset.
 
 All three lists accept blank lines, leading-`#` comments and final entries without
 newline. Read/validate the entire required file before observing/installing; a

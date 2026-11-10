@@ -220,11 +220,13 @@ def inspect(original, home, *, approvals=None, bundle_id=None, destinations=None
         item['status'] in ('local_satisfied', 'no_file_dependency', 'missing') or
         (item['status'] == 'unresolved' and item['reason'] == 'locked_or_invalid_identity') for item in corrections)
     target = target_state(home)
-    # Never let a correction conceal an existing differing selected Host block.
-    _, original_conformity, _ = config.assess(config.payload(config.snapshot(original)[3]), home)
-    if original_conformity in ('conflicting_profiles', 'unsupported', 'unsafe', 'publication_uncertain'):
-        raise merge.Refused('original_target_conflict')
     action, count = merge.plan(config.payload(profiles), home, version=2)
+    # An approved effective match needs no publication. Any mutation still checks
+    # the original Hosts so a correction cannot conceal an existing conflict.
+    _, original_conformity, _ = config.assess(config.payload(config.snapshot(original)[3]), home)
+    if (original_conformity in ('unsupported', 'unsafe', 'publication_uncertain')
+            or (original_conformity == 'conflicting_profiles' and action != 'noop')):
+        raise merge.Refused('original_target_conflict')
     if status == 'partial' and action == 'merge':
         raise merge.Refused('partial_source')
     if not profiles:

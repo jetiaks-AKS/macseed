@@ -213,6 +213,37 @@ esac
         self.assertEqual(row['status'], 'present')
         self.assertEqual(row['items'], [{'item_id': '12345', 'label': 'Public App Name'}])
 
+    def test_unselected_application_inventories_not_saved(self):
+        self.fixture()
+        (self.root / 'bin/mas').write_text('#!/bin/bash\nprintf "%s\\n" "12345 Fixture Selected (1.0)" "67890 Fixture Excluded (2.0)"\n')
+        (self.root / 'bin/code').write_text('#!/bin/bash\nprintf "%s\\n" fixture.selected fixture.excluded\n')
+        prepared = self.prepare(self.selection)
+        for domain in ('app-store', 'vscode-extensions'):
+            row = next(row for row in prepared['inventory'] if row['domain'] == domain)
+            self.assertEqual(len(row['items']), 2)
+        result, events = self.execute(prepared['prepared_capture_id'])
+        self.assertEqual(result.returncode, 0, events)
+        files = bundle.validate_archive(self.root / 'captured.mbt')
+        selected, _ = bundle.parse_blueprint(files['blueprint.conf'])
+        for domain, filename in bundle.COMPLETE_INVENTORIES.items():
+            self.assertEqual(selected[domain], [])
+            self.assertNotIn('generated/' + filename, files)
+            self.assertNotIn('generated/provenance/' + domain + '.sha256', files)
+        self.assertEqual(files['generated/brew-packages.conf'], b'fixture-formula\n')
+
+    def test_partial_app_store_capture_retains_comparison_inventory(self):
+        self.fixture()
+        (self.root / 'bin/mas').write_text('#!/bin/bash\nprintf "%s\\n" "12345 Fixture Selected (1.0)" "67890 Fixture Excluded (2.0)"\n')
+        selection = dict(categories=[], items={'app-store': ['12345']}, secure_identities=[])
+        prepared = self.prepare(selection)
+        result, events = self.execute(prepared['prepared_capture_id'], selection)
+        self.assertEqual(result.returncode, 0, events)
+        files = bundle.validate_archive(self.root / 'captured.mbt')
+        self.assertEqual(bundle.parse_blueprint(files['blueprint.conf'])[0]['app-store'], ['12345'])
+        self.assertEqual(files['generated/appstore.conf'], b'12345|Fixture Selected\n67890|Fixture Excluded\n')
+        self.assertEqual(files['generated/provenance/app-store.sha256'],
+                         ('complete ' + bundle.digest(files['generated/appstore.conf']) + '\n').encode())
+
     def test_stale_ice_capture_with_installed_thaw(self):
         self.fixture()
         app = self.home / 'Applications/Thaw.app'

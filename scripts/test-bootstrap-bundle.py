@@ -266,6 +266,83 @@ class BundleTests(unittest.TestCase):
         with self.assertRaises(bundle.Invalid):
             self.pack()
 
+    def complete_application_inventories(self):
+        inventories = {
+            'homebrew-casks': b'fixture-selected\nfixture-excluded\n',
+            'app-store': b'12345|Fixture Selected\n67890|Fixture Excluded\n',
+            'vscode-extensions': b'fixture.selected\nfixture.excluded\n',
+        }
+        files = {}
+        for domain, raw in inventories.items():
+            files['generated/' + bundle.COMPLETE_INVENTORIES[domain]] = raw
+            files['generated/provenance/' + domain + '.sha256'] = ('complete ' + bundle.digest(raw) + '\n').encode()
+        for name, raw in files.items():
+            bundle.write_file(self.stage / name, raw)
+        return files
+
+    def test_unselected_complete_inventories_omitted_and_legacy_bundle_readable(self):
+        inventories = self.complete_application_inventories()
+        self.pack()
+        files = bundle.validate_archive(self.bundle)
+        self.assertTrue(set(inventories).isdisjoint(files))
+        target = self.root / 'new-unpacked'; target.mkdir()
+        bundle.unpack(self.bundle, target, '/Users/target')
+        self.assertTrue(all(not (target / name).exists() for name in inventories))
+        # Earlier v1 Bundles can carry complete inventories for excluded domains.
+        # Keep reader compatibility and the unchanged selection ceiling.
+        with tarfile.open(self.bundle) as archive:
+            manifest = json.load(archive.extractfile('manifest.json'))
+        legacy = dict(files, **inventories)
+        manifest['files'] = {name: dict(size=len(raw), sha256=bundle.digest(raw)) for name, raw in legacy.items()}
+        legacy['manifest.json'] = json.dumps(manifest).encode()
+        previous = self.root / 'legacy.mbt'
+        with tarfile.open(previous, 'w', format=tarfile.USTAR_FORMAT) as archive:
+            for name, raw in sorted(legacy.items()):
+                entry = tarfile.TarInfo(name); entry.size = len(raw); entry.mode = 0o600
+                archive.addfile(entry, io.BytesIO(raw))
+        restored = bundle.validate_archive(previous)
+        self.assertEqual(bundle.parse_blueprint(restored['blueprint.conf']), bundle.parse_blueprint(files['blueprint.conf']))
+        target = self.root / 'legacy-unpacked'; target.mkdir()
+        bundle.unpack(previous, target, '/Users/target')
+        for name, raw in inventories.items():
+            self.assertEqual((target / name).read_bytes(), raw)
+
+    def test_partially_selected_complete_inventories_remain_full(self):
+        inventories = self.complete_application_inventories()
+        path = self.stage / 'blueprint.conf'
+        raw = path.read_bytes()
+        for domain, item in (('homebrew-casks', 'fixture-selected'), ('app-store', '12345'),
+                             ('vscode-extensions', 'fixture.selected')):
+            raw = raw.replace(('[' + domain + ']\n').encode(), ('[' + domain + ']\n' + item + '\n').encode())
+        path.write_bytes(raw)
+        self.pack()
+        files = bundle.validate_archive(self.bundle)
+        for name, raw in inventories.items():
+            self.assertEqual(files[name], raw)
+        selected, _ = bundle.parse_blueprint(files['blueprint.conf'])
+        self.assertEqual(selected['homebrew-casks'], ['fixture-selected'])
+        self.assertEqual(selected['app-store'], ['12345'])
+        self.assertEqual(selected['vscode-extensions'], ['fixture.selected'])
+
+    def test_unselected_completeness_does_not_hide_unsafe_or_stale_input(self):
+        self.complete_application_inventories()
+        for domain, filename in bundle.COMPLETE_INVENTORIES.items():
+            marker = self.stage / ('generated/provenance/' + domain + '.sha256')
+            inventory = self.stage / ('generated/' + filename)
+            original = marker.read_bytes()
+            with self.subTest(domain=domain, failure='stale'):
+                marker.write_bytes(b'complete ' + b'0' * 64 + b'\n')
+                with self.assertRaises(bundle.Invalid): self.pack()
+                self.assertFalse(self.bundle.exists())
+                marker.write_bytes(original)
+            for path in (marker, inventory):
+                with self.subTest(domain=domain, failure='symlink', path=path.name):
+                    other = path.with_name(path.name + '.saved')
+                    path.rename(other); path.symlink_to(other)
+                    with self.assertRaises(bundle.Invalid): self.pack()
+                    self.assertFalse(self.bundle.exists())
+                    path.unlink(); other.rename(path)
+
     def test_only_selected_git_values_are_carried(self):
         path = self.stage / "blueprint.conf"
         path.write_bytes(path.read_bytes().replace(
