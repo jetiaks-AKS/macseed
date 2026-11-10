@@ -18,7 +18,7 @@ contracts, [TODO](TODO.md) owns concrete unfinished actions, and
   independent selection and SSH → Git dependency integration are implemented.
   Unified Developer UI is visually accepted. Secure Check implements authenticated
   saved-file/reference comparison with one aggregate SSH Configuration result.
-  [Isolated Core E2E on 2026-11-10](docs/SSH-E2E-QUALIFICATION-2026-11-10.md)
+  [Isolated Core E2E on 2026-11-10](docs/qualification/SSH-E2E-2026-11-10.md)
   passed default and saved custom-location lifecycles. The approved-correction
   repeat defect is locally fixed and requalified. Successful isolated Core
   Git-over-SSH qualification remains next and blocked by SSH sandbox and Internet
@@ -267,18 +267,18 @@ import → configuration → clone order. Unified Developer UI (`fd68284`) is vi
 accepted. Secure Check compares authenticated
 saved files and proves configured-reference correspondence without claiming key
 usability or remote authentication. Check keeps one aggregate `config` result.
-[Real-Mac isolated Core qualification at `821ba853`](docs/SSH-E2E-QUALIFICATION-2026-11-10.md)
+[Real-Mac isolated Core qualification at `821ba853`](docs/qualification/SSH-E2E-2026-11-10.md)
 passed Capture through Check and repeated no-op for default and saved custom paths,
 plus selected-key import and essential security cases. The approved IdentityFile
-correction repeat defect is [locally fixed and requalified](docs/SSH-E2E-QUALIFICATION-2026-11-10.md#14-approved-correction-no-op-follow-up)
+correction repeat defect is [locally fixed and requalified](docs/qualification/SSH-E2E-2026-11-10.md#14-approved-correction-no-op-follow-up)
 against baseline `821ba853`; the original failure record is retained.
 
 **Next SSH gate:** successful isolated Core Git-over-SSH qualification, including
 import → configuration → clone ordering, Verification and repeat/no-op. The
-[bounded follow-up](docs/SSH-E2E-QUALIFICATION-2026-11-10.md#15-remaining-core-git-over-ssh-qualification)
+[bounded follow-up](docs/qualification/SSH-E2E-2026-11-10.md#15-remaining-core-git-over-ssh-qualification)
 confirmed native `sshd` nested-sandbox denial and an Internet prerequisite applied
 to local clones; no readiness bypass was introduced. The
-[Capture privacy audit and correction](docs/SSH-E2E-QUALIFICATION-2026-11-10.md#16-capture-unselected-inventory-privacy-review)
+[Capture privacy audit and correction](docs/qualification/SSH-E2E-2026-11-10.md#16-capture-unselected-inventory-privacy-review)
 are locally verified: new Bundles omit inventories for entirely unselected application
 categories while preserving partial-selection comparison baselines and V1 readers.
 Disclosure of retained partial-selection inventories remains a product decision.

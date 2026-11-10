@@ -204,6 +204,11 @@ contracts with one owner; link instead of duplicating them. Feature work does no
 require updating every major document. Prefer concise direct English and do not
 expand Roadmap/Architecture because implementation was complicated.
 
+Keep significant, sanitized E2E/qualification evidence in
+[docs/qualification/](docs/qualification/README.md), not loose in `docs/`.
+Routine test logs and intermediate runs do not become tracked Markdown reports.
+Preserve historical evidence and update links when moving a report.
+
 ## Logging and validation
 
 Use `action`, `success`, `warning`, `error`, `info`, `detail` from

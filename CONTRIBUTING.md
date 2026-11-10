@@ -49,6 +49,10 @@ Identify the owner of a changed fact using the [documentation index](docs/README
 and update it first. Update other documents only if their text becomes inaccurate.
 Keep Architecture about boundaries, Roadmap about outcomes/status, TODO about
 unfinished actions and Changelog about completed changes. Preserve released history.
+Keep only substantive, sanitized E2E/qualification reports under
+[docs/qualification/](docs/qualification/README.md), not the `docs/` root.
+Routine test output stays untracked; Roadmap/TODO link to evidence rather than
+reproduce logs. Preserve historical reports and update moved-file links.
 
 ## Validation and handoff
 

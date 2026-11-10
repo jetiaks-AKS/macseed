@@ -60,16 +60,16 @@ and [Desktop](docs/DESKTOP.md#secure-interactions). Follow the
 
 - [ ] **Next SSH gate:** complete successful isolated Core Git-over-SSH qualification,
   including import → configuration → clone ordering, Verification and repeat/no-op.
-  Reuse the [2026-11-10 evidence](docs/SSH-E2E-QUALIFICATION-2026-11-10.md) for the
+  Reuse the [2026-11-10 evidence](docs/qualification/SSH-E2E-2026-11-10.md) for the
   accepted Core default/saved-custom lifecycles, security cases and approved-correction
   follow-up; obtain only the missing transport/integration evidence. The
-  [latest attempt](docs/SSH-E2E-QUALIFICATION-2026-11-10.md#15-remaining-core-git-over-ssh-qualification)
+  [latest attempt](docs/qualification/SSH-E2E-2026-11-10.md#15-remaining-core-git-over-ssh-qualification)
   remains blocked by nested `sshd` sandbox initialization and coarse Internet
   readiness. An endpoint-aware readiness design and demonstrably safe SSH transport
   are required; do not exempt URL strings or bypass network/security checks.
 - [ ] After the Core Git-over-SSH gate, decide explicit Capture disclosure for full
   comparison inventories retained within partially selected application categories.
-  The [bounded audit and correction](docs/SSH-E2E-QUALIFICATION-2026-11-10.md#16-capture-unselected-inventory-privacy-review)
+  The [bounded audit and correction](docs/qualification/SSH-E2E-2026-11-10.md#16-capture-unselected-inventory-privacy-review)
   are locally verified; entirely unselected categories are omitted from new Bundles.
   Approve the disclosure scope before changing UI; retain comparison completeness,
   the selection ceiling and Bundle V1 compatibility.

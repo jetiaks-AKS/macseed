@@ -22,6 +22,7 @@ English is authoritative. Read from product purpose toward technical contracts:
 | [Distribution](DISTRIBUTION.md) | Planned packaging and clean-Mac qualification |
 | [Roadmap](../ROADMAP.md) | Major stages, status and product outcomes |
 | [TODO](../TODO.md) | Concrete unfinished work |
+| [Qualification evidence](qualification/README.md) | Significant dated E2E/integration reports and their verified scope; routine test output is not committed |
 | [Changelog](../CHANGELOG.md) | Completed release-visible changes and released history |
 | [Contributing](../CONTRIBUTING.md) / [AGENTS](../AGENTS.md) | Contributor/agent workflow and proportional capability qualification |
 | [Git Workflow](git/GIT-WORKFLOW.md) | Everyday branches, worktree safety and the dated local checkout example |
