@@ -19,6 +19,8 @@ CASE_SHARDED = frozenset({
     'scripts/test-restore-prepare.py',
     'scripts/test-capture-api.py',
     'scripts/test-workspace-topology-execute.py',
+    'scripts/test-secure-restore.py',
+    'scripts/test-restore-selection.py',
 })
 QUICK = {
     'scripts/test-test-runner.py': (),
@@ -232,6 +234,7 @@ def execute(row, directory, number):
         report, reason, status, isolated = None, 'invalid_worker_report', 'ERROR', False
     result = dict(suite=row['suite'], ids=row['ids'], status=status, code=code,
                   seconds=round(time.monotonic() - started, 3), reason=reason,
+                  active_case=report.get('active') if report else None,
                   reproduce=reproduction(row), cases=report['cases'] if report else [])
     for case in result['cases'][seen:]:
         print('  {status} {id} {seconds:.3f}s'.format(**case), flush=True)

@@ -5265,6 +5265,10 @@ private struct CaptureRefinementHost: View {
         for flow in [SelectionHelpFlow.capture, .rebuild] {
             for (width, height): (CGFloat, CGFloat) in [(580, 520), (985, 700)] {
                 for dark in [false, true] {
+                    func checkpoint(_ phase: String) {
+                        print("CHECK: selection-help \(flow) \(Int(width))x\(Int(height)) \(dark ? "Dark" : "Light") \(phase)")
+                    }
+                    checkpoint("create-window")
                     NSApp.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
                     let state = SelectionHelpFixtureState()
                     let host = NSHostingView(rootView: SelectionHelpFixtureView(state: state, flow: flow))
@@ -5277,6 +5281,7 @@ private struct CaptureRefinementHost: View {
                         try? await Task.sleep(for: .milliseconds(180))
                         host.layoutSubtreeIfNeeded(); host.displayIfNeeded()
                     }
+                    checkpoint("initial-layout")
                     await settle()
                     let scrolls = descendants(host, NSScrollView.self)
                     precondition(scrolls.count == 1)
@@ -5292,12 +5297,15 @@ private struct CaptureRefinementHost: View {
                         return CGRect(x: frame.maxX - 24, y: frame.midY - 12, width: 24, height: 24)
                     }
                     func press(_ id: String) async {
+                        checkpoint("press-" + id)
                         let frame = trigger(id)
                         let point = host.convert(NSPoint(x: frame.midX, y: host.isFlipped ? frame.midY : host.bounds.height - frame.midY), to: nil)
                         for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+                            checkpoint(type == .leftMouseDown ? "mouse-down" : "mouse-up")
                             window.sendEvent(NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
                                 windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: type == .leftMouseDown ? 1 : 0)!)
                         }
+                        checkpoint("input-returned")
                         await settle()
                     }
                     func screenshot(_ suffix: String, popover: Bool = false) throws {
@@ -5327,6 +5335,7 @@ private struct CaptureRefinementHost: View {
                     // The window is near the screen's bottom edge; native popover
                     // placement, not application offsets, must keep help usable.
                     let screen = window.screen!.visibleFrame
+                    checkpoint("bottom-edge")
                     window.setFrameOrigin(.init(x: screen.minX + 30, y: screen.minY + 8)); await settle()
                     await press("ssh-configuration")
                     precondition(popovers().count == 1)
@@ -5336,20 +5345,24 @@ private struct CaptureRefinementHost: View {
                     // Invoke the native Escape/cancel responder action. The
                     // command-line fixture need not steal application focus.
                     let popup = popovers()[0]
+                    checkpoint("escape")
                     popup.cancelOperation(nil)
                     await settle(); precondition(popovers().isEmpty, "Escape dismisses native help")
                     await press("ssh-configuration")
                     let clipAmount = max(80, scroll.convert(scroll.bounds, to: host).maxY - trigger("ssh-configuration").minY + 12)
+                    checkpoint("resize")
                     window.setContentSize(.init(width: width, height: height - clipAmount)); await settle()
                     precondition(!scroll.convert(scroll.bounds, to: host).contains(trigger("ssh-configuration")), "Resize fixture must clip the source trigger")
                     precondition(popovers().isEmpty, "Clipping the trigger during a resize dismisses help")
                     window.setContentSize(.init(width: width, height: height)); await settle()
                     await reveal("ssh-configuration", atBottom: true)
                     await press("ssh-configuration")
+                    checkpoint("remove-category")
                     state.showsSSH = false; await settle()
                     precondition(popovers().isEmpty, "Removing the source category dismisses help")
                     state.showsSSH = true; await settle()
                     await reveal("ssh-configuration", atBottom: false)
+                    checkpoint("top-edge")
                     window.setFrameOrigin(.init(x: screen.minX + 30, y: screen.maxY - window.frame.height - 8)); await settle()
                     await press("ssh-configuration")
                     precondition(popovers().count == 1 && screen.insetBy(dx: -1, dy: -1).contains(popovers()[0].frame), "Top-edge help remains usable")
@@ -5366,6 +5379,7 @@ private struct CaptureRefinementHost: View {
                     scroll.contentView.scroll(to: .zero); scroll.reflectScrolledClipView(scroll.contentView); await settle()
                     precondition(popovers().isEmpty && !state.selected && !state.categoryExpanded && state.groups == originalGroups)
                     precondition(scroll.convert(scroll.bounds, to: host) == viewport, "Help does not change the list/footer geometry")
+                    checkpoint("close-window")
                     window.close()
                     print("PASS: \(flow) help \(Int(width))x\(Int(height)) \(dark ? "Dark" : "Light"): native toggle/cancel, scroll/clipping/removal dismissal, screen edges, one help, 24pt target and unchanged selection/disclosure/footer")
                 }
@@ -5409,6 +5423,8 @@ private struct CaptureRefinementHost: View {
     }
 
     @MainActor static func main() async {
+        setbuf(stdout, nil)
+        print("CHECK: PresentationTests entry")
         developerIconChecks()
         if CommandLine.arguments.contains("--developer-icons-only") { return }
         if CommandLine.arguments.contains("--selection-help-only") { try! await selectionHelpChecks(); return }
@@ -5470,16 +5486,26 @@ private struct CaptureRefinementHost: View {
         if CommandLine.arguments.contains("--restore-macos-only") { await restoreMacOSChecks(); return }
         if CommandLine.arguments.contains("--workflow-scroll-only") { try! await workflowStatusScrollChecks(); return }
         if CommandLine.arguments.count == 1 {
+            print("CHECK: selectionHelpChecks")
             try! await selectionHelpChecks()
+            print("CHECK: developerSelectionChecks")
             try! await developerSelectionChecks()
+            print("CHECK: secureSelectionChecks")
             try! await secureSelectionChecks()
+            print("CHECK: capturePreviewRefinementChecks")
             try! await capturePreviewRefinementChecks()
+            print("CHECK: previewCleanupChecks")
             try! previewCleanupChecks()
+            print("CHECK: settingsToolsChecks")
             try! await settingsToolsChecks()
+            print("CHECK: homebrewSetupChecks")
             await homebrewSetupChecks()
+            print("CHECK: summaryMetricVisibilityChecks")
             try! await summaryMetricVisibilityChecks()
+            print("CHECK: sidebarLayoutChecks")
             await sidebarLayoutChecks()
         }
+        print("CHECK: runChecks")
         runChecks()
     }
 

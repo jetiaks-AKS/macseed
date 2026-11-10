@@ -1696,7 +1696,10 @@ class ApplicationIdentityTests(unittest.TestCase):
                     bundle.pack(single, output, '/Users/source')
                 saved = bundle.validate_archive(output)
                 self.assertEqual(bundle.parse_blueprint(saved['blueprint.conf'])[0]['app-store'], [])
-                self.assertEqual('generated/appstore.conf' in saved, complete)
+                # Precedence removed the last App Store requirement. Capture
+                # omits excluded-domain inventory even with complete provenance.
+                self.assertNotIn('generated/appstore.conf', saved)
+                self.assertNotIn('generated/provenance/app-store.sha256', saved)
 
 
 if __name__ == '__main__':

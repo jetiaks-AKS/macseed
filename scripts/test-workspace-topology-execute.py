@@ -284,6 +284,19 @@ os.execv(native, [native, *args])
         projected = rows + [folder, workspace]
         dependency.project(projected, dict(rules={self.ids[0]: dict(reason=dependency.CONFLICT)}))
         self.assertTrue(all(row['disposition'] == 'blocked' for row in projected))
+        # The SSH pass must be inert without SSH rules, and cannot replace
+        # independent topology conflicts/unknowns or already-existing folders.
+        preserved = [dict(rows[0], reason='workspace_git_unsupported'),
+                     dict(folder, action='none', disposition='satisfied', reason='workspace_checkout_destination'),
+                     dict(workspace, disposition='unknown', reason='workspace_observation_failed')]
+        before = copy.deepcopy(preserved)
+        dependency.project(preserved, dict(rules={}))
+        self.assertEqual(preserved, before)
+        pending = dict(rows[0], action='clone', disposition='planned', reason=None)
+        projected = [pending, *copy.deepcopy(preserved[1:])]
+        dependency.project(projected, dict(rules={self.ids[0]: dict(reason=dependency.CONFLICT)}))
+        self.assertEqual(projected[0]['disposition'], 'blocked')
+        self.assertEqual(projected[1:], preserved[1:])
         # No explicit dependency and ordered unresolved references remain distinct.
         for references, expected in [(['none'], dependency.READY),
                                      (['~/.ssh/first', '~/.ssh/second'], dependency.MISSING)]:

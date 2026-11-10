@@ -25,14 +25,8 @@ stage_index=0
 stage_started=0
 build_started=$SECONDS
 
-finish() {
-    local status=$? index
-    trap - EXIT
-    if [[ "${stage_results[$stage_index]:-}" == running ]]; then
-        stage_results[$stage_index]=failed
-        stage_seconds[$stage_index]=$((SECONDS - stage_started))
-        printf 'FAIL: %s (exit %s)\n' "${stages[$stage_index]}" "$status" >&2
-    fi
+write_summary() {
+    local status=$1 index
     if [[ -n "${MACSEED_DESKTOP_SUMMARY:-}" ]]; then
         {
             printf '### Desktop build/test\n\nExit status: %s. Elapsed: %s s.\n\n' "$status" "$((SECONDS - build_started))"
@@ -41,8 +35,20 @@ finish() {
                 printf '| %s | %s | %s |\n' "${stages[$index]}" "${stage_results[$index]:-not-run}" "${stage_seconds[$index]:-—}"
             done
             printf '\nAssertion counts: unknown (suite process exit status only).\n'
-        } > "$MACSEED_DESKTOP_SUMMARY" || exit 1
+        } > "$MACSEED_DESKTOP_SUMMARY.tmp" || return 1
+        mv "$MACSEED_DESKTOP_SUMMARY.tmp" "$MACSEED_DESKTOP_SUMMARY"
     fi
+}
+
+finish() {
+    local status=$?
+    trap - EXIT
+    if [[ "${stage_results[$stage_index]:-}" == running ]]; then
+        stage_results[$stage_index]=failed
+        stage_seconds[$stage_index]=$((SECONDS - stage_started))
+        printf 'FAIL: %s (exit %s)\n' "${stages[$stage_index]}" "$status" >&2
+    fi
+    write_summary "$status" || exit 1
     exit "$status"
 }
 trap finish EXIT
@@ -52,12 +58,15 @@ trap 'exit 143' TERM
 run_stage() {
     stage_started=$SECONDS
     stage_results[$stage_index]=running
+    # Keep the current stage and all NOT RUN stages even after hosted SIGKILL.
+    write_summary running
     printf 'Running: %s\n' "${stages[$stage_index]}"
     # Keep errexit active inside build functions; do not invoke this in an if/||.
     "$@"
     stage_results[$stage_index]=passed
     stage_seconds[$stage_index]=$((SECONDS - stage_started))
     stage_index=$((stage_index + 1))
+    write_summary running
 }
 
 build_app() {
@@ -86,12 +95,16 @@ if [[ "${2:-}" == --test ]]; then
     for source_file in Sources/*.swift; do
         if [[ "$source_file" != Sources/MacseedApp.swift ]]; then presentation_sources+=("$source_file"); fi
     done
+    test_compiler_options=("${compiler_options[@]}")
+    # Test executables always rebuild one module. Avoid repeated frontend work
+    # while retaining Debug assertions, debug symbols and -Onone semantics.
+    if [[ "$configuration" == Debug ]]; then test_compiler_options+=(-whole-module-optimization); fi
     for suite in "${suites[@]}"; do
         test_sources=("${presentation_sources[@]}")
         case "$suite" in
             OperationLogTests|CoreRuntimeTests) test_sources=(Sources/Core*.swift Sources/OperationLog.swift) ;;
         esac
-        run_stage xcrun swiftc "${compiler_options[@]}" -parse-as-library "${test_sources[@]}" "Tests/$suite.swift" \
+        run_stage xcrun swiftc "${test_compiler_options[@]}" -parse-as-library "${test_sources[@]}" "Tests/$suite.swift" \
             -o "$output_dir/$suite"
         test_arguments=()
         case "$suite" in
@@ -100,7 +113,14 @@ if [[ "${2:-}" == --test ]]; then
         esac
         case "$suite" in CaptureTests|RestoreTests) test_arguments+=(--no-renders) ;; esac
         # Bash 3.2 treats an empty array as unset with nounset enabled.
-        run_stage "$output_dir/$suite" ${test_arguments[@]+"${test_arguments[@]}"}
+        if [[ "$suite" == PresentationTests ]]; then
+            # Independent of AppKit/MainActor: a stuck native call cannot starve
+            # the deadline. CI #151 took 83 s; preserve the 45-minute job cap.
+            run_stage "$python_runtime" ../../scripts/desktop_test_runner.py --timeout 600 \
+                "$output_dir/$suite" ${test_arguments[@]+"${test_arguments[@]}"}
+        else
+            run_stage "$output_dir/$suite" ${test_arguments[@]+"${test_arguments[@]}"}
+        fi
     done
     for subset in "${restore_subsets[@]}"; do
         run_stage "$output_dir/RestoreTests" "$core_root" "$python_runtime" "$subset" --no-renders

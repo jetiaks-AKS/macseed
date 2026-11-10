@@ -13,6 +13,9 @@ when reports are moved.
 
 ## Reports
 
+- [Full CI Phase 1 — 2026-11-10](FULL-CI-PHASE1-2026-11-10.md) — focused fixes,
+  bounded Desktop diagnostics and case scheduling; exact hosted GUI stall cause
+  and next Full CI qualification remain open.
 - [SSH Core E2E — 2026-11-10](SSH-E2E-2026-11-10.md) — partial
   qualification, focused convergence and Capture privacy follow-ups;
   positive Git-over-SSH and native/hosted gates remain open.

@@ -118,33 +118,37 @@ methods in one process; full IDs from `--list` or `Class.method` are accepted.
 `scripts/test.sh` owns the only suite inventory. `--list` prints the selected plan
 and all partitions as JSON without executing tests. Four CI runners use longest
 estimated work first to balance whole suites and independent methods from
-`test-restore-prepare.py`, `test-capture-api.py` and
-`test-workspace-topology-execute.py`. IDs come from the existing unittest loader;
+`test-restore-prepare.py`, `test-capture-api.py`,
+`test-workspace-topology-execute.py`, `test-secure-restore.py` and
+`test-restore-selection.py`. IDs come from the existing unittest loader;
 setup, cleanup, subtests and conditional skips are retained. The planner checks exact ID union and disjointness,
 missing suites, discovery errors and empty partitions before execution. Methods
-remain sequential in one interpreter per assigned suite. These three suites use
-per-case temporary projects, HOME and safety state, without shared class/module
-fixtures; other suites stay whole. Capture's global temporary-directory inventory
-checks still prohibit concurrent suites on one host. CI shards use separate VMs.
+remain sequential in one interpreter per assigned suite. These five suites use
+per-case temporary projects, HOME and safety state, without shared mutable
+class/module fixtures; other suites stay whole. Capture and secure identity
+global temporary-directory inventory checks still prohibit concurrent suites
+on one host. CI shards use separate VMs.
 
-`scripts/test-timings.json` contains weights, never a second test inventory. Current
-weights use CI #116 (`40519591952`): 42 complete passing whole suites and 177
-completed passing cases in the three split suites. The three failed case durations
-are excluded and explicitly estimated at 60 seconds each. RestorePrepare retains
-its historical suite baseline; no failed/partial partition duration is treated as
-a complete suite measurement. Unmeasured methods receive at least 60 seconds or
-their share of the remaining suite budget; new suites receive a provisional 180
-seconds. Measured suite startup overhead is retained when distributing case work.
-New IDs are always assigned. Keep measurement/estimate provenance when updating weights.
-On these same weights, the previous CI #116 assignment predicts a longest shard
-of 38 min 42 s; the new assignment predicts 31 min 34 s, excluding provisioning.
-This is a planning estimate, not a measured hosted speedup.
+`scripts/test-timings.json` contains weights, never a second test inventory.
+Weights use completed PASS records from CI #159 (`42779173712`, `dd954c05`),
+with CI #151 (`42463259149`, `441a8e13`) fallback. The file records suite and
+case provenance; failed/partial suite durations and unfinished/failed case times
+are excluded. Completed PASS cases in partial suites remain individual measurements.
+Six unmeasured methods retain conservative estimates. Unknown methods receive at
+least 60 seconds or their share of the remaining suite budget; new suites receive
+180 seconds. Measured startup overhead is distributed without reducing case times.
+New IDs are always assigned. On these same refreshed weights, the old assignment
+predicts 49 min 34 s for its longest shard; the new assignment predicts 42 min 32 s,
+excluding provisioning and extra split-suite startup. This is a scheduling estimate,
+not a hosted speedup. See the [Phase 1 evidence](docs/qualification/FULL-CI-PHASE1-2026-11-10.md).
 
 Each run writes a private ignored `logs/regression/<run>/` directory; `--output`
 can select a new destination. `safe/summary.md` and `.json` list PASS, FAIL, ERROR,
 SKIP and NOT RUN, slow suites/cases and exact reproduction commands. Per-suite
 safe logs/JSON include exception types and source locations, unittest setup/body/
-teardown/cleanup time and Prepare/Execute helper counts. Nested timing fields
+teardown/cleanup time, Prepare/Execute helper counts and the active case at interruption.
+An unfinished case remains NOT RUN in the completion inventory; `active_case`
+distinguishes interrupted work from cases that never started. Nested timing fields
 overlap and must not be added together. `raw/` is private local debugging output;
 never upload it. CI publishes only `safe/` as job summaries and seven-day artifacts,
 without exception values, environment, user file contents or Core operation logs.
@@ -176,13 +180,26 @@ The required `validate` check retains `if: always()` and dependencies
 cancellation, skipped or missing execution cannot pass the gate.
 The twelve suites and two Restore subsets retain their fixture isolation
 and native assertions; [build.sh](desktop/Macseed/build.sh) owns the inventory.
-Capture/Restore keep `--no-renders`. The runner's selected
+Capture/Restore keep `--no-renders`. Debug test executables use Swift whole-module
+compilation while retaining `-Onone`, `-g` and `DEBUG`; the application build is
+unchanged. This reduces repeated frontend work without a shared binary/module cache.
+The runner's selected
 Xcode, SDK, Swift and Xcode-resolved Python are checked before execution. Safe GUI
 session facts help diagnose WindowServer failures; they never replace native tests.
 
 `build.sh` optionally writes `MACSEED_DESKTOP_SUMMARY`: fixed stage labels,
 passed/failed/not-run, process exit status and elapsed seconds, with compilation
-separate from execution. Assertion counts remain unknown. CI appends this to
+separate from execution. It publishes the summary atomically at every stage boundary;
+a force-killed job can leave `running`, which is never interpreted as PASS.
+PresentationTests executes under `scripts/desktop_test_runner.py` with a 600-second
+wall deadline independent of MainActor/WindowServer (CI #151 execution: 83 seconds).
+The supervisor retains nonzero exits, checks process ownership before launch,
+cleans observed descendants on timeout/cancellation and rejects unconfirmed cleanup.
+On timeout it emits only allowlisted framework markers and PresentationTests source
+line numbers from a bounded sample; raw stacks are discarded. Native help checkpoints
+identify window creation, layout, input and dismissal phases. No native assertion is
+skipped, and the 45-minute hosted limit remains unchanged. Assertion counts remain
+unknown. CI appends this to
 `GITHUB_STEP_SUMMARY` even after failure and rejects missing reports. Desktop
 uploads no artifacts or raw logs.
 

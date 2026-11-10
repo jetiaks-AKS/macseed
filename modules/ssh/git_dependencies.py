@@ -164,6 +164,11 @@ def project(plan, evidence):
     from topology_preview import dependency_id
     blocked = set()
     for row in plan:
+        # Topology already qualified existing state and its own blockers. Only
+        # propagate new SSH blockers to pending work; a satisfied folder needs
+        # no clone, and an existing conflict/unknown must keep its exact reason.
+        if row['disposition'] != 'planned':
+            continue
         if any(parent in blocked for parent in row.get('dependency_ids', [])):
             row.update(action='inspect', disposition='blocked', reason='workspace_dependency_pending')
         rule = evidence['rules'].get(row.get('checkout_id'))

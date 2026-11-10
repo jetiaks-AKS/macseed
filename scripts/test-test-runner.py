@@ -13,9 +13,10 @@ import sys
 import tempfile
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import test_runner as runner
+import desktop_test_runner as desktop
 from test_unittest import load
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -31,7 +32,7 @@ class RunnerTests(unittest.TestCase):
         dependency.mkdir(parents=True)
         shutil.copy2(ROOT / 'modules/core/application-interface/item_execution.py', dependency)
         shutil.copy2(ROOT / 'modules/core/performance_trace.py', dependency.parent)
-        for name in ('test_runner.py', 'test_unittest.py'):
+        for name in ('test_runner.py', 'test_unittest.py', 'desktop_test_runner.py'):
             shutil.copy2(ROOT / 'scripts' / name, self.root / 'scripts' / name)
         self.inventory = []
 
@@ -54,6 +55,10 @@ class RunnerTests(unittest.TestCase):
         return result, rows
 
     def test_real_ids_are_exact_disjoint_and_new_cases_are_assigned(self):
+        self.assertEqual(runner.CASE_SHARDED, {
+            'scripts/test-restore-prepare.py', 'scripts/test-capture-api.py',
+            'scripts/test-workspace-topology-execute.py', 'scripts/test-secure-restore.py',
+            'scripts/test-restore-selection.py'})
         inventory = re.findall(r'^    (scripts/test-\S+)$', (ROOT / 'scripts/test.sh').read_text(), re.M)
         weights = json.loads((ROOT / 'scripts/test-timings.json').read_text())
         parts = runner.plan(inventory, weights, 4)
@@ -89,6 +94,124 @@ class RunnerTests(unittest.TestCase):
         self.assertGreaterEqual(expanded['a'], 30)
         self.assertGreaterEqual(expanded['b'], 50)
         self.assertTrue(all(value > 0 for value in runner.case_weights('unknown', ['one', 'two'], weights).values()))
+
+    def desktop_command(self, body, timeout=2):
+        return [sys.executable, '-B', str(self.root / 'scripts/desktop_test_runner.py'),
+                '--timeout', str(timeout), sys.executable, '-B', '-c', body]
+
+    def desktop_result(self, body, timeout=2):
+        result = subprocess.run(self.desktop_command(body, timeout), capture_output=True, text=True, timeout=15)
+        rows = [json.loads(line.split(': ', 1)[1]) for line in result.stdout.splitlines()
+                if line.startswith('Desktop supervision: ')]
+        self.assertEqual(len(rows), 1, result.stderr)
+        return result, rows[0]
+
+    def test_desktop_exit_and_observation_failure_are_truthful(self):
+        for code in (0, 17):
+            result, row = self.desktop_result(f'raise SystemExit({code})')
+            self.assertEqual(result.returncode, code)
+            self.assertEqual(row['status'], 'PASS' if code == 0 else 'ERROR')
+            self.assertEqual(row['cleanup'], 'confirmed')
+        output = io.StringIO()
+        with patch.object(desktop, 'process_table', side_effect=OSError('PRIVATE_SENTINEL')), \
+                patch.object(desktop.subprocess, 'Popen') as launch, redirect_stdout(output):
+            self.assertEqual(desktop.run(['unlaunched'], 1), 2)
+        launch.assert_not_called()
+        self.assertNotIn('PRIVATE_SENTINEL', output.getvalue())
+        self.assertIn('observation_error', output.getvalue())
+
+    def test_desktop_deadline_stops_owned_descendants(self):
+        marker = self.root / 'descendant'
+        body = ("import subprocess,sys,time\nfrom pathlib import Path\n"
+                "child=subprocess.Popen([sys.executable,'-c','import time; time.sleep(30)'])\n"
+                f"Path({str(marker)!r}).write_text(str(child.pid))\ntime.sleep(30)")
+        # The budget includes interpreter and descendant startup on hosted runners.
+        result, row = self.desktop_result(body, timeout=3)
+        self.assertEqual(result.returncode, 124)
+        self.assertEqual((row['status'], row['reason'], row['cleanup']), ('ERROR', 'deadline', 'confirmed'))
+        self.assertLess(row['seconds'], 10)
+        with self.assertRaises(ProcessLookupError):
+            os.kill(int(marker.read_text()), 0)
+
+    def test_desktop_surviving_child_cannot_pass(self):
+        marker = self.root / 'descendant'
+        body = ("import subprocess,sys\nfrom pathlib import Path\n"
+                "child=subprocess.Popen([sys.executable,'-c','import time; time.sleep(30)'])\n"
+                f"Path({str(marker)!r}).write_text(str(child.pid))")
+        result, row = self.desktop_result(body)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual((row['reason'], row['cleanup']), ('surviving_processes', 'confirmed'))
+        with self.assertRaises(ProcessLookupError):
+            os.kill(int(marker.read_text()), 0)
+
+    def test_desktop_cancellation_stops_owned_work(self):
+        marker = self.root / 'desktop-started'
+        body = f'import os,time\nfrom pathlib import Path\nPath({str(marker)!r}).write_text(str(os.getpid()))\ntime.sleep(30)'
+        child = subprocess.Popen(self.desktop_command(body, 20), stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        try:
+            end = time.monotonic() + 5
+            while not marker.exists() and child.poll() is None and time.monotonic() < end:
+                time.sleep(.02)
+            self.assertTrue(marker.exists())
+            child.send_signal(signal.SIGTERM)
+            stdout, stderr = child.communicate(timeout=10)
+            self.assertEqual(child.returncode, 143, stderr)
+            self.assertIn(b'"reason": "cancelled"', stdout)
+            self.assertIn(b'"cleanup": "confirmed"', stdout)
+            with self.assertRaises(ProcessLookupError):
+                os.kill(int(marker.read_text()), 0)
+        finally:
+            if child.poll() is None:
+                child.terminate()
+            child.communicate(timeout=10)
+
+    def test_desktop_sample_excludes_raw_process_data(self):
+        def sample(command, **kwargs):
+            Path(command[-1]).write_text('PRIVATE_SENTINEL /Users/private\n'
+                'PresentationTests.swift:42 sendEvent: CFRunLoopRun\n')
+        tree = type('Tree', (), dict(root=123, scan=lambda self: {123: None}))()
+        with patch.object(desktop.sys, 'platform', 'darwin'), patch.object(desktop.subprocess, 'run', side_effect=sample):
+            diagnostic = desktop.sample_owned(tree)
+        self.assertEqual(diagnostic, dict(sample='captured', presentation_lines=[42],
+                                         framework_markers=['CFRunLoopRun', 'sendEvent:']))
+
+    def test_desktop_unconfirmed_cleanup_cannot_pass(self):
+        child = Mock(pid=123, returncode=0)
+        child.poll.return_value = 0
+        tree = Mock()
+        tree.scan.return_value = {123: None}
+        tree.stop.return_value = False
+        output = io.StringIO()
+        with patch.object(desktop, 'process_table'), patch.object(desktop, 'ProcessTree', return_value=tree), \
+                patch.object(desktop.subprocess, 'Popen', return_value=child), redirect_stdout(output):
+            self.assertEqual(desktop.run(['fixture'], 1), 2)
+        self.assertIn('"reason": "unconfirmed_cleanup"', output.getvalue())
+        self.assertNotIn('"status": "PASS"', output.getvalue())
+
+    def test_desktop_stage_summary_records_running_failed_and_not_run(self):
+        # Exercise build.sh's real stage functions without compiling/running
+        # any Desktop suite. The failing child observes its published RUNNING row.
+        source = (ROOT / 'desktop/Macseed/build.sh').read_text()
+        functions = source[source.index('# One inventory'):source.index('\nbuild_app() {')]
+        summary, marker = self.root / 'desktop.md', self.root / 'later'
+        child = self.root / 'failed.py'
+        child.write_text('import os\nfrom pathlib import Path\n'
+            'text=Path(os.environ["MACSEED_DESKTOP_SUMMARY"]).read_text()\n'
+            'assert "| PresentationTests | running |" in text\n'
+            'assert "| Compile SettingsTests | not-run |" in text\nraise SystemExit(17)\n')
+        script = self.root / 'stages.sh'
+        script.write_text('set -euo pipefail\nconfiguration=Debug\n' + functions +
+            '\nrun_stage true\nrun_stage true\nrun_stage "$1" "$3"\ntouch "$4"\n')
+        result = subprocess.run(['bash', str(script), sys.executable, '--test', str(child), str(marker)],
+            env=dict(os.environ, MACSEED_DESKTOP_SUMMARY=str(summary)), capture_output=True, timeout=10)
+        self.assertEqual(result.returncode, 17, result.stderr)
+        text = summary.read_text()
+        for stage, state in [('Debug app build', 'passed'), ('Compile PresentationTests', 'passed'),
+                             ('PresentationTests', 'failed'), ('Compile SettingsTests', 'not-run')]:
+            self.assertIn(f'| {stage} | {state} |', text)
+        self.assertIn('Exit status: 17.', text)
+        self.assertFalse(marker.exists())
+        self.assertFalse(summary.with_suffix('.md.tmp').exists())
 
     def test_case_sharded_cli_selection_is_read_only(self):
         inventory = re.findall(r'^    (scripts/test-\S+)$', (ROOT / 'scripts/test.sh').read_text(), re.M)
@@ -215,6 +338,7 @@ unittest.TestResult._exc_info_to_string = truncate_then_format
         self.assertEqual([row['status'] for row in rows], ['ERROR', 'NOT RUN'])
         self.assertEqual(rows[0]['reason'], 'deadline')
         self.assertEqual(rows[0]['code'], 124)
+        self.assertEqual(rows[0]['active_case'], 'test_a.Fixture.test_fixture')
         self.assertTrue(stopped.is_file())
         self.assertFalse(later.exists())
         with self.assertRaises(ProcessLookupError):
