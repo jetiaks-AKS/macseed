@@ -1,12 +1,14 @@
 # Full CI Phase 1 — 10 November 2026
 
-Status: **IMPLEMENTED / FOCUSED LOCALLY VERIFIED / HOSTED NOT YET VERIFIED**.
-The exact native call responsible for the CI #159 PresentationTests stall remains
-**UNRESOLVED**. This checkpoint bounds that failure and adds diagnostics; it does
-not claim to have reproduced or eliminated the hosted GUI stall.
+Status: **PHASE 1 PUBLISHED / CORE HOSTED PASS / DESKTOP CORRECTION LOCALLY VERIFIED /
+HOSTED RETEST REQUIRED**. CI #160 localized the Desktop stall to native mouse
+tracking in the selection-help fixture. The queued-release correction below is
+locally verified; it does not yet establish that the hosted stall is eliminated.
 
-Base: `develop`, `dd954c05aa9df54d447bea41385c34ab8087ede5`.
-No commit, push, workflow dispatch, full local regression or full Desktop run.
+Initial checkpoint base: `develop`, `dd954c05aa9df54d447bea41385c34ab8087ede5`.
+The initial review did not include publication, workflow dispatch, full local
+regression or a full Desktop run. Phase 1 was subsequently published as
+`363e80adbd45effc8d460826d98831eb4fb96561`; the CI #160 correction remains uncommitted.
 Fast/Full separation and branch protection are unchanged.
 
 ## Evidence and failure causes
@@ -165,6 +167,73 @@ of changed code. Full local Core, complete Secure Restore/Restore Selection, com
 Desktop suites, real-Mac SSH E2E and new hosted CI: **NOT RUN** by task scope. No
 manual visual acceptance is claimed. No cleanup remained unconfirmed.
 
+## CI #160 follow-up — native mouse release delivery
+
+[CI #160](https://github.com/jetiaks-AKS/macseed/actions/runs/42820113112), at
+`363e80adbd45effc8d460826d98831eb4fb96561`, passed lint and all four Core regression
+shards. Desktop failed in PresentationTests; `validate` consequently failed.
+The inspected Desktop job used macOS 26.7.2, Xcode 26.6 and Swift 6.3.3 on
+`macos-26-arm64/20261102.0473.1`.
+
+**Confirmed hosted behavior:** the last checkpoints were
+`selection-help capture 580x520 Light press-git-repositories` and `mouse-down`.
+The safe sample contained `CFRunLoopRun`, `sendEvent:`, `trackMouse:` and
+`PresentationTests.swift` lines 5305, 5326 and 5490 at that revision. The watchdog
+reported ERROR/124, `reason=deadline`, **603.067 s**, `cleanup=confirmed`.
+The first synchronous mouse-down did not return before the deadline.
+
+**Mechanism inferred from the stack and fixture:** `press()` sent mouse-down
+synchronously, then constructed/sent mouse-up only after that call returned.
+[AppKit mouse tracking](https://developer.apple.com/library/archive/documentation/Cocoa/Conceptual/EventOverview/HandlingMouseEvents/HandlingMouseEvents.html)
+can dequeue mouse-up inside the mouse-down call. That makes the fixture's ordering
+a likely circular wait. The safe sample establishes the blocked native path,
+not the complete internal AppKit condition; the corrected hosted run is still needed.
+
+The correction is confined to this test fixture:
+
+- Construct the matching native down/up pair and put mouse-up in the AppKit queue
+  **before** `window.sendEvent(mouseDown)`. Native tracking can consume its release
+  without external mouse input. If the responder returns without consuming it,
+  dequeue and dispatch that release once. Check its type, window, click number and
+  position; queued NSEvent objects need not retain object identity.
+- Own a nested default-mode run loop for the asynchronous help fixture, entered
+  through a run-loop block after the calling actor task suspends. Locally, LLDB
+  confirmed `NSEvent._postAtStart:` calls `CFRunLoopStop`; allowing that stop to
+  reach Swift's outer async-main loop caused premature exit 0 without the matrix.
+  The owned loop continues until the fixture task supplies its success/error
+  result, then propagates that result and confirms return to async main. This
+  handles AppKit stops during both clicking and subsequent popover dismissal.
+- Preserve every existing popover, toggle/cancel, scroll/clipping/removal,
+  resize, screen-edge and selection/disclosure/footer assertion, all eight
+  combinations, appearance restoration and window cleanup. Production UI,
+  existing settling delays, the 600-second CI watchdog and its ownership/cleanup
+  implementation are unchanged. No new sleeps or deadline increases were added.
+
+Final focused validation on local **macOS 27.2 / Swift 6.4.2 / arm64**:
+
+- PresentationTests-only compilation with the canonical Debug options, existing
+  module cache, `-Onone -g -whole-module-optimization`: **PASS, 19.399 s**.
+  Only this executable was recompiled during fixture corrections; no app build.
+- From `desktop/Macseed`:
+  `$(xcrun --find python3) -B ../../scripts/desktop_test_runner.py --timeout 120 build/Debug/PresentationTests --selection-help-only`
+  — **PASS, 37.952 s**, exit 0, `reason=completed`, `cleanup=confirmed`.
+  All eight Capture/Rebuild × 580×520/985×700 × Light/Dark combinations passed;
+  88 paired clicks completed, eight windows closed, and the final async-main
+  return marker was observed. Exit 0 alone was not accepted as matrix completion.
+- Local responders left all 88 releases for explicit queued dispatch; the hosted
+  nested-tracking consumption path remains to be verified on the hosted image.
+- Earlier focused iterations rejected an NSEvent identity assertion and premature
+  exit-0 runs with incomplete coverage. Focused LLDB inspections under the same
+  watchdog identified the run-loop interaction; all reported cleanup confirmed.
+  Final logs/command records remain ignored under `logs/ci-phase1/ci160-*`.
+- `git diff --check`: **PASS**. The protected untracked Swift file retains the
+  SHA-256 recorded below. Production code, CI configuration and Phase 2 design are unchanged.
+
+Full local Core, the full Desktop suite, E2E and a new hosted run: **NOT RUN**.
+CI #160's Core PASS applies to its published SHA. Local GUI success on the newer
+platform does not qualify the hosted tracking branch or the remaining Desktop
+executables. Review and separately authorized publication/hosted validation remain open.
+
 ## Phase 2 recommendation — design only
 
 1. Keep the canonical Full inventory and `validate` aggregate. Run Full on PRs into
@@ -197,7 +266,8 @@ No Phase 2 workflow, trigger, status or protection change is implemented here.
 ## Changed files and remaining gate
 
 - `CONTRIBUTING.md`: runner/diagnostic owner documentation and evidence link.
-- `desktop/Macseed/Tests/PresentationTests.swift`: progress checkpoints only.
+- `desktop/Macseed/Tests/PresentationTests.swift`: progress checkpoints, followed
+  by the CI #160 queued native-release/event-loop correction above.
 - `desktop/Macseed/build.sh`: bounded PresentationTests, persistent stage summary,
   Debug test compilation mode.
 - `docs/qualification/README.md`: report index.
@@ -210,15 +280,16 @@ No Phase 2 workflow, trigger, status or protection change is implemented here.
 - `scripts/test-workspace-topology-execute.py`: SSH propagation preservation checks.
 - `scripts/test_runner.py`: two additional case-sharded suites and active-case evidence.
 
-All changes are unstaged; HEAD remains the stated base. The complete review patch is
-generated locally at `logs/ci-phase1/checkpoint.patch`, including new files. It is an
-ignored review artifact, not a tracked test log. The pre-existing untracked
+The original 12-file checkpoint was published as `363e80adbd45effc8d460826d98831eb4fb96561`.
+Its `logs/ci-phase1/checkpoint.patch` remains an ignored historical review artifact.
+The current correction changes only PresentationTests and this report, unstaged
+on that published HEAD. The pre-existing untracked
 `desktop/Macseed/Tests/NativeSidebarRepro.swift` is unchanged (SHA-256
 `8cf3e1b91ed0b878efe0178be78956f873b5c896ef6f28af2c68e89e0019f7cf`).
 
-Remaining gate: review, then separately authorized publication and one real hosted
-Full run. That run must validate every regression partition and Desktop executable,
-the compiler-mode change on hosted Swift, and whether native help finishes. If it
-stalls, the new checkpoints and bounded safe sample should identify the blocked
-operation. Until that evidence exists, the exact Desktop stall and overall Full CI
-reliability/performance qualification remain open.
+Remaining gate: review this correction, then separately authorize publication and
+a hosted Full run. CI #160 confirms lint/Core and PresentationTests compilation at
+the published SHA; the next run must finish native help and the remaining Desktop
+compilations/executions. No workflow was dispatched or restarted for this correction.
+Hosted resolution of the tracking stall and overall Full CI reliability/performance
+qualification remain open.

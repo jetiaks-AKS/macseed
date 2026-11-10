@@ -5253,6 +5253,31 @@ private struct CaptureRefinementHost: View {
         print("PASS: canonical developer labels/groups/accent, selective native help, protected legacy taxonomy, consent and all-match/Preview semantics")
     }
     @MainActor static func selectionHelpChecks() async throws {
+        // postEvent wakes AppKit by stopping its run loop. Swift's command-line
+        // async-main executor exits when its outer CFRunLoop stops, even if the
+        // test task is suspended. Own a nested loop until this fixture finishes.
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            CFRunLoopPerformBlock(CFRunLoopGetMain(), CFRunLoopMode.defaultMode.rawValue) {
+                MainActor.assumeIsolated {
+                    var result: Result<Void, Error>?
+                    Task { @MainActor in
+                        do { try await selectionHelpChecksInEventLoop(); result = .success(()) }
+                        catch { result = .failure(error) }
+                        CFRunLoopStop(CFRunLoopGetMain())
+                    }
+                    while result == nil {
+                        let status = CFRunLoopRunInMode(.defaultMode, Date.distantFuture.timeIntervalSinceNow, false)
+                        precondition(status != .finished || result != nil, "Native help event loop lost its sources")
+                    }
+                    continuation.resume(with: result!)
+                }
+            }
+            CFRunLoopWakeUp(CFRunLoopGetMain())
+        }
+        await Task.yield()
+        print("PASS: selection-help event loop completed and returned to async main")
+    }
+    @MainActor static func selectionHelpChecksInEventLoop() async throws {
         setbuf(stdout, nil)
         _ = NSApplication.shared; NSApp.setActivationPolicy(.accessory)
         let previousAppearance = NSApp.appearance
@@ -5296,14 +5321,34 @@ private struct CaptureRefinementHost: View {
                         // button. Measure the live row rather than hard-code its position.
                         return CGRect(x: frame.maxX - 24, y: frame.midY - 12, width: 24, height: 24)
                     }
+                    var clickNumber = 0
                     func press(_ id: String) async {
                         checkpoint("press-" + id)
                         let frame = trigger(id)
                         let point = host.convert(NSPoint(x: frame.midX, y: host.isFlipped ? frame.midY : host.bounds.height - frame.midY), to: nil)
-                        for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
-                            checkpoint(type == .leftMouseDown ? "mouse-down" : "mouse-up")
-                            window.sendEvent(NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
-                                windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: type == .leftMouseDown ? 1 : 0)!)
+                        clickNumber += 1
+                        func isClickEvent(_ event: NSEvent, _ type: NSEvent.EventType) -> Bool {
+                            event.type == type && event.windowNumber == window.windowNumber
+                                && event.eventNumber == clickNumber && event.locationInWindow == point
+                        }
+                        let events = [NSEvent.EventType.leftMouseDown, .leftMouseUp].map { type in
+                            NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                windowNumber: window.windowNumber, context: nil, eventNumber: clickNumber, clickCount: 1, pressure: type == .leftMouseDown ? 1 : 0)!
+                        }
+                        // A native tracking loop inside mouseDown must already have
+                        // its paired release available, without external mouse input.
+                        NSApp.postEvent(events[1], atStart: true)
+                        checkpoint("mouse-up-queued")
+                        checkpoint("mouse-down")
+                        window.sendEvent(events[0])
+                        // Responders without a tracking loop leave the release queued.
+                        // Deliver it once, without duplicating a tracked mouse-up.
+                        if let release = NSApp.nextEvent(matching: .leftMouseUp, until: .distantPast, inMode: .eventTracking, dequeue: true) {
+                            precondition(isClickEvent(release, .leftMouseUp), "Fixture must dispatch its own mouse-up")
+                            checkpoint("mouse-up")
+                            window.sendEvent(release)
+                        } else {
+                            checkpoint("mouse-up-tracked")
                         }
                         checkpoint("input-returned")
                         await settle()
