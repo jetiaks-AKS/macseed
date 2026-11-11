@@ -206,6 +206,26 @@ def read_snapshot(path):
         os.close(fd)
 
 
+def profile_assessment(expected, actual):
+    """One conformity algorithm for aggregate verification and private Host detail."""
+    source, _, _ = parse(expected)
+    try:
+        target, rejected, structural = parse(actual)
+    except Invalid:
+        return 'unsupported', 0, {host: 'unsupported' for host in source}
+    # Case variants are ambiguous, never missing or equivalent.
+    aliases = {host.lower(): host for host in target.keys() | rejected}
+    if structural or any(host in rejected or aliases.get(host.lower(), host) != host for host in source):
+        return 'unsupported', len(rejected), {host: 'unsupported' for host in source}
+    states = {host: ('missing' if host not in target else
+                    'matching' if profile_values(entries) == profile_values(target[host]) else 'differing')
+              for host, entries in source.items()}
+    conformity = ('conflicting_profiles' if 'differing' in states.values() else
+                  'missing_profiles' if 'missing' in states.values() else
+                  'exact' if actual == expected else 'profiles_match')
+    return conformity, len(rejected), states
+
+
 def assess(expected, home):
     """Return file equality separately from selected profile conformity."""
     if not os.path.isabs(home):
@@ -231,26 +251,8 @@ def assess(expected, home):
             actual = read_file('config', directory=dfd, private=True)
         except FileNotFoundError:
             return 'absent-config', 'missing_profiles', 0
-        source, _, _ = parse(expected)
-        try:
-            target, rejected, structural = parse(actual)
-        except Invalid:
-            return 'different', 'unsupported', 0
-        # Host arguments are case-sensitive in macOS OpenSSH. Case variants
-        # are not equivalent, but our conservative alias boundary treats them
-        # as ambiguous rather than claiming that a selected profile is absent.
-        target_aliases = {host.lower(): host for host in target.keys() | rejected}
-        if structural or any(host in rejected or target_aliases.get(host.lower(), host) != host
-                             for host in source):
-            conformity = 'unsupported'
-        else:
-            if any(profile_values(entries) != profile_values(target[host]) for host, entries in source.items() if host in target):
-                conformity = 'conflicting_profiles'
-            elif any(host not in target for host in source):
-                conformity = 'missing_profiles'
-            else:
-                conformity = 'exact' if actual == expected else 'profiles_match'
-        return 'identical' if actual == expected else 'different', conformity, len(rejected)
+        conformity, excluded, _ = profile_assessment(expected, actual)
+        return 'identical' if actual == expected else 'different', conformity, excluded
     finally:
         try:
             if opened and stamp(os.fstat(opened[0])) != stamp(os.stat(home, follow_symlinks=False)):

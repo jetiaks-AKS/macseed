@@ -361,7 +361,7 @@ enum RestorePreviewVisibility {
     }
     static func includes(_ domain: TaskDomainPresentation) -> Bool {
         // Key advisories remain evidence, but do not turn matching configuration into work.
-        !items(domain.items).isEmpty || domain.resultCategoryIssue || domain.resultCategoryMessage != nil
+        !items(domain.previewItems).isEmpty || domain.resultCategoryIssue || domain.resultCategoryMessage != nil
             || domain.activityState.map { $0 != .matching } == true
     }
 }
@@ -381,7 +381,11 @@ enum RestorePreviewHierarchy {
     }
     static func summary(_ group: CaptureHierarchy.Group, rows: [TaskDomainPresentation]) -> TaskDomainPresentation {
         TaskDomainPresentation(id: CaptureHierarchy.sectionID(group), title: CaptureHierarchy.sectionTitle(group),
-            symbol: CaptureHierarchy.symbol(group), items: rows.flatMap(\.items), previewOnly: true)
+            symbol: CaptureHierarchy.symbol(group), items: rows.flatMap(\.previewItems), previewOnly: true)
+    }
+    static func summary(_ group: DeveloperSelectionGroup, rows: [TaskDomainPresentation]) -> TaskDomainPresentation {
+        TaskDomainPresentation(id: group.id, title: group.title, symbol: group.symbol,
+            items: rows.flatMap(\.previewItems), previewOnly: true)
     }
     static func titleInset(_ id: String) -> CGFloat {
         if id == CoreRestorePreparation.secureDomain { return CaptureChildRowGrid.leadingInset + 12 }
@@ -491,7 +495,7 @@ struct TaskDomainList: View {
                     RestoreTrailingSample(title: RestorePreviewCategoryStatus.title($0, stateTitles: stateTitles),
                         counts: RestorePreviewMetrics.badges($0))
                 }
-                let items = rows.flatMap(\.items).map { RestoreTrailingSample(title: $0.assistedAppStore?.status.rawValue ?? stateTitles[$0.state] ?? $0.state.rawValue, disclosure: false) }
+                let items = rows.flatMap(\.previewItems).map { RestoreTrailingSample(title: $0.assistedAppStore?.status.rawValue ?? stateTitles[$0.state] ?? $0.state.rawValue, disclosure: false) }
                 // Every visible row uses this hidden width reference. Retaining one
                 // copy per item made expansion build a quadratic number of views.
                 // Equal status, badge counts and disclosure measure identically.
@@ -526,8 +530,7 @@ struct TaskDomainList: View {
                 VStack(spacing: 0) {
                     ForEach(developerGroups) { group in
                         let rows = domains.filter { DeveloperSelectionGroup.group(for: $0.id) == group }
-                        let summary = TaskDomainPresentation(id: group.id, title: group.title, symbol: group.symbol,
-                            items: rows.flatMap(\.items), previewOnly: true)
+                        let summary = RestorePreviewHierarchy.summary(group, rows: rows)
                         previewGroupHeader(summary: summary, developer: true)
                         if expandedIDs.contains(group.id) { previewMembers(rows, parentState: summary.state) }
                         if group != developerGroups.last { Divider().padding(.horizontal, 16) }
@@ -706,7 +709,8 @@ struct TaskDomainList: View {
     }
     private func domainTitle(_ domain: TaskDomainPresentation) -> some View {
         WorkspaceCategoryTitle(id: domain.id, title: captureHierarchy || restorePreviewHierarchy ? CaptureHierarchy.title(domain.id, fallback: domain.title) : domain.title,
-            fallbackSymbol: domain.symbol, developerGroup: captureHierarchy || restorePreviewHierarchy ? DeveloperSelectionGroup.group(for: domain.id) : nil)
+            fallbackSymbol: domain.symbol, developerGroup: !domain.previewItemDetails.isEmpty ? nil
+                : captureHierarchy || restorePreviewHierarchy ? DeveloperSelectionGroup.group(for: domain.id) : nil)
             .frame(maxWidth: .infinity, alignment: .leading)
     }
     private func domainStatus(_ domain: TaskDomainPresentation) -> some View {
@@ -725,7 +729,7 @@ struct RestorePreviewCategoryStatus: View {
     var parentState: TaskRowState? = nil
     var expanded = false
     var isRedundant: Bool {
-        let visible = RestorePreviewVisibility.items(domain.items)
+        let visible = RestorePreviewVisibility.items(domain.previewItems)
         return expanded && parentState == domain.state && [.planned, .attention].contains(domain.state)
             && !visible.isEmpty && visible.allSatisfy { [.planned, .attention].contains($0.state) }
             && domain.activityState == nil && !domain.resultCategoryIssue && domain.resultCategoryMessage == nil
@@ -796,7 +800,7 @@ struct TaskDomainItems: View {
                     Text(message).font(.caption).foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 4)
                 }
-                ForEach(hideMatchingPreviewItems ? RestorePreviewVisibility.items(domain.items) : domain.items) { item in
+                ForEach(hideMatchingPreviewItems ? RestorePreviewVisibility.items(domain.previewItems) : domain.previewItems) { item in
                     if restorePreview {
                         RestorePreviewRow(title: details(item, suppressExplanation: sharedIDs.contains(item.id)),
                             status: TaskStatusLabel(state: item.state, title: item.assistedAppStore?.status.rawValue ?? stateTitles[item.state],

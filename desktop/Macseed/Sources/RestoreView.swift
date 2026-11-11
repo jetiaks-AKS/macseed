@@ -755,7 +755,7 @@ struct RestorePreviewContent: View {
             && prerequisites.conditions.allSatisfy { $0.status == "satisfied" || $0.isSecureLaunchRequirement }
     }
     var allMatchCount: Int? {
-        let items = domains.flatMap(\.items)
+        let items = domains.flatMap(\.previewItems)
         guard alreadyMatches, state == .matching, prerequisitesSatisfied, retryMessage == nil, scopeWarnings.isEmpty, !canRebuild,
               items.allSatisfy(RestorePreviewVisibility.isMatching),
               domains.allSatisfy({ !RestorePreviewVisibility.includes($0) }),
@@ -1505,7 +1505,7 @@ struct RestoreResultContent: View {
 struct RestorePreviewMetrics: View {
     let domains: [TaskDomainPresentation]
     static func counts(_ domains: [TaskDomainPresentation]) -> (changes: Int, attention: Int, matching: Int) {
-        let items = domains.flatMap(\.items)
+        let items = domains.flatMap(\.previewItems)
         return (items.filter { $0.state == .planned }.count,
                 items.filter { [.attention, .unverified].contains($0.state) }.count,
                 items.filter { $0.state == .matching }.count)

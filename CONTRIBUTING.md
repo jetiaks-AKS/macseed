@@ -115,8 +115,8 @@ execution on 23 October 2026 took about 19 seconds. Use focused checks first and
 honor task-specific limits on full local runs. Repeat `--case` to select several
 methods in one process; full IDs from `--list` or `Class.method` are accepted.
 
-`scripts/test.sh` owns the canonical Core suite inventory: **47 suites / 767 Python
-methods**, plus **9 Bundled Age Python methods** owned by Desktop (**776 total**).
+`scripts/test.sh` owns the canonical Core suite inventory: **47 suites / 772 Python
+methods**, plus **9 Bundled Age Python methods** owned by Desktop (**781 total**).
 The admitted Graceful Stop (23), cancellation mocks (10) and external SSH identity
 (10) methods run as three whole suites in mandatory regression. Bundled Age runs
 once in the mandatory Desktop job, outside the Core inventory. Registration is
@@ -151,6 +151,27 @@ The expanded plan predicts about 43 min 58 s per shard (previously 41 min 43 s),
 excluding provisioning and scheduling; that is an estimate, not a new hosted PASS.
 See the [suite audit](docs/qualification/TEST-SUITE-AUDIT-2026-11-10.md) for the complete
 inventory, retained coverage, removed repetitions and baseline attempt distinction.
+
+SSH Host display evidence has focused cases in `test-environment-compare.py`
+(`SSHMergeTests.test_host_evidence_safety_and_bounds` and
+`CompareTests.test_bundle_host_detail_*`) and `test-restore-prepare.py`
+(`RestorePrepareTests.test_ssh_host_preview_*`). They use disposable HOME/Bundle
+fixtures for conformity, selected scope, safety/privacy, unchanged Core aggregate counts,
+global blockers and stale selection/target rejection. Native
+`PresentationTests --ssh-hosts-only` covers strict Host qualification and aggregate
+fallback, consistent Check Host/category/parent/summary counts, independent SSH Keys
+and coverage warnings, direct hierarchy, matching suppression, existing explanation
+placement, owner-bound Preview counts (including all-matching totals), independent
+requirements with coincident labels, aggregate execution/Result fallback,
+log/report privacy, 2048 Hosts and light/dark narrow/wide renders. Existing SSH
+resolution and protected Check cases retain independent key/dependency coverage.
+`EnvironmentStatusTests --secure-check-only` also verifies fresh Host statistics after
+protected results, scoped retries, Check Again and Saved Environment changes.
+`test-secure-restore.py` dependency comparison and custom-correction cases also
+cover Host disposition updates after authenticated comparison, key conflicts,
+target changes during unlock and exclusion of display metadata from Execute receipts.
+These focused checks do not establish hosted CI, manual visual acceptance or real-Mac
+SSH authentication; the historical suite audit remains the baseline inventory.
 
 Each run writes a private ignored `logs/regression/<run>/` directory; `--output`
 can select a new destination. `safe/summary.md` and `.json` list PASS, FAIL, ERROR,

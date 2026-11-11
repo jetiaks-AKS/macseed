@@ -1245,6 +1245,40 @@ mutation is performed. Ordinary records expose aggregate statuses/reasons, not
 Host aliases, users, addresses or identity paths. Selection inventory exposes Host
 aliases as labels and opaque item IDs; directive values use the private review boundary.
 
+### Host detail in Check and Rebuild Preview
+
+Host selection in Capture/Rebuild is unchanged. Check assesses only the saved
+snapshot; Preview assesses the narrowed selection for the current attempt. Both
+reuse `config.profile_assessment` and the existing safe SSH target reader. Optional
+bounded display evidence preserves saved Host order and aliases; it contains no
+directives, addresses, users or identity paths. Unsafe/incomplete target observation
+cannot produce an individual match. Unsupported or unrepresentable snapshots and
+older Core results retain the aggregate fallback.
+
+SSH Configuration remains one aggregate Core `config` comparison requirement. Check
+presentation counts replace that aggregate with qualified selected Host outcomes,
+without counting both. Category, SSH parent and summary statistics agree; Missing
+and Different remain separate. Restore operation counts remain aggregate.
+Rebuild Preview likewise counts qualified Host outcomes in place of their owning
+operation: two permitted Host additions mean two Planned items, even when Core
+publishes one configuration. Other requirements and coverage retain their own counts.
+Partial source coverage, unsupported target scope and IdentityFile diagnostics
+remain independent; omitted source Hosts never become saved requirements. SSH Keys
+keeps its own selection, evidence and counts. Configuration conformity proves
+neither private-key usability nor remote SSH authentication.
+
+Preview displays a missing Host as Changes Planned only when the existing Core
+plan permits creation/addition and operation readiness permits that change.
+Conflicting Hosts are preserved. A shared blocker cannot promise a partial addition;
+Preview retains prerequisites and hides matching rows under its ordinary visibility
+policy. Detail grants no permission: Execute recomputes the existing selection,
+snapshot, dependencies and target binding. Result retains aggregate verification.
+The current `config` owner is not a permanent limit on SSH Configuration requirements;
+future qualified requirements can retain independent identities and evidence in the
+existing hierarchy. This does not enable Include, Match, external sources or new directives.
+The [Protocol contract](../core/APPLICATION-INTERFACE.md#ssh-host-presentation-evidence)
+owns metadata validation and privacy.
+
 ### Read-only IdentityFile dependencies
 
 Restore Prepare assesses the already narrowed snapshot in `modules/ssh/identity_dependencies.py`.

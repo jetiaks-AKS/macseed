@@ -54,12 +54,29 @@ struct TaskItemPresentation: Identifiable {
     var sourceDomain: String? = nil
     var sourceItemID: String? = nil
     var assistedAppStore: AssistedAppStoreItem? = nil
+    var sourceRequirementID: String? {
+        guard let sourceDomain, let sourceItemID else { return nil }
+        return sourceDomain + ":" + sourceItemID
+    }
 }
 struct TaskDomainPresentation: Identifiable {
     let id: String
     let title: String
     let symbol: String
     let items: [TaskItemPresentation]
+    // Qualified detail replaces only its owning requirement in Preview rows/statistics.
+    // Keep original items for execution, receipts and Result accounting.
+    var previewItemDetails: [String: [TaskItemPresentation]] = [:]
+    var sshHostScopeMessage: String? = nil
+    var previewItems: [TaskItemPresentation] {
+        guard previewOnly, !previewItemDetails.isEmpty else { return items }
+        let owners = Dictionary(grouping: items.compactMap(\.sourceRequirementID), by: { $0 })
+        return items.flatMap { item in
+            guard let owner = item.sourceRequirementID, owners[owner]?.count == 1,
+                  let detail = previewItemDetails[owner], !detail.isEmpty else { return [item] }
+            return detail
+        }
+    }
     var activityState: TaskRowState? = nil
     var activityTitle: String? = nil
     var previewOnly = false
@@ -83,6 +100,7 @@ struct TaskDomainPresentation: Identifiable {
         return items.first { ids.contains($0.id) }?.item.reason
     }
     var sharedObservationMessage: String? {
+        if let sshHostScopeMessage { return sshHostScopeMessage }
         guard sharedObservationReason != nil else { return nil }
         return id.hasPrefix("homebrew-") ? "Couldn’t read Homebrew state." : "Couldn’t read the current state of this category."
     }
@@ -107,14 +125,14 @@ struct TaskDomainPresentation: Identifiable {
     var state: TaskRowState {
         if let activityState { return activityState }
         if previewOnly {
-            if items.contains(where: { $0.state == .attention }) { return .attention }
-            if items.contains(where: { $0.state == .unverified }) { return .unverified }
-            return items.contains(where: { $0.state == .planned }) ? .planned : .matching
+            if previewItems.contains(where: { $0.state == .attention }) { return .attention }
+            if previewItems.contains(where: { $0.state == .unverified }) { return .unverified }
+            return previewItems.contains(where: { $0.state == .planned }) ? .planned : .matching
         }
         return .aggregate(items.map(\.state))
     }
     var summary: String {
-        let counts = Dictionary(grouping: items, by: \.state)
+        let counts = Dictionary(grouping: previewItems, by: \.state)
         return TaskRowState.allCases.compactMap { state in
             counts[state].map { "\($0.count) \(state.rawValue.lowercased())" }
         }.joined(separator: " · ")
@@ -132,7 +150,7 @@ struct RestoreTaskPresentation {
         }
     }
     var automaticAttentionCount: Int {
-        automaticDomains.flatMap(\.items).filter { [.attention, .unverified].contains($0.state) }.count
+        automaticDomains.flatMap(\.previewItems).filter { [.attention, .unverified].contains($0.state) }.count
     }
     static func scopeWarningMessages(_ plan: CoreRestorePreparation) -> [String] {
         (plan.scopeWarnings ?? []).map {
@@ -218,7 +236,9 @@ struct RestoreTaskPresentation {
                 }
                 let state: TaskRowState
                 if !executing && result == nil {
-                    state = item.status == .matching ? .matching : item.status == .ready ? .planned
+                    let blockedHosts = entry?.domain == "ssh-configuration" && entry?.itemID == plan.effectiveSSHHosts?.planItemID
+                        && plan.effectiveSSHHosts?.hosts.contains(where: { $0.disposition == "blocked" }) == true
+                    state = blockedHosts ? .attention : item.status == .matching ? .matching : item.status == .ready ? .planned
                         : item.status == .unverified ? .unverified : .attention
                 } else if operation?["reason"]?.string == "cancelled" {
                     state = .waiting
@@ -341,6 +361,35 @@ struct RestoreTaskPresentation {
             var domain = TaskDomainPresentation(id: domainID, title: category.title,
                 symbol: Self.symbol(category.id), items: items, activityState: operationProgress ? Self.executionState(items, activity: result == nil ? activityState : nil) : activityState, previewOnly: !executing && result == nil)
             if domainID == "ssh-configuration" {
+                if !executing && result == nil && !operationProgress, let detail = plan.effectiveSSHHosts,
+                   let requirement = items.first(where: { $0.sourceDomain == domainID && $0.sourceItemID == detail.planItemID }),
+                   let ownerID = requirement.sourceRequirementID {
+                    domain.previewItemDetails[ownerID] = detail.hosts.map { host in
+                        let state: TaskRowState = host.disposition == "satisfied" ? .matching
+                            : host.disposition == "planned" ? .planned : .attention
+                        let id = "restore-host:" + ownerID + ":" + host.itemID
+                        return TaskItemPresentation(id: id,
+                            item: DisplayItem(id: id, title: host.label,
+                                status: state == .matching ? .matching : state == .planned ? .ready : .attention,
+                                action: host.state == "differing"
+                                    ? "This Host differs from the saved configuration. Existing settings will be preserved. Resolve the conflict or exclude this Host, then Refresh Preview." : "",
+                                reason: host.reason), state: state,
+                            previewProblem: state == .attention ? "ssh_host_blocked" : nil,
+                            sourceDomain: domainID, sourceItemID: host.itemID)
+                    }
+                    let owner = plan.plan.first { $0.domain == domainID && $0.itemID == detail.planItemID }
+                    if detail.hosts.contains(where: { $0.state == "unsupported" }) {
+                        domain.sshHostScopeMessage = "The target SSH configuration uses unsupported or ambiguous syntax. Existing settings will be preserved. Resolve it or exclude SSH Configuration, then Refresh Preview."
+                    } else if detail.hosts.contains(where: { $0.state == "unverified" }) {
+                        domain.sshHostScopeMessage = "Current SSH configuration could not be safely inspected. Existing settings will be preserved. Resolve the inspection issue, then Refresh Preview."
+                    } else if owner?.disposition != "satisfied" && detail.hosts.contains(where: { $0.disposition == "blocked" })
+                        && !detail.hosts.contains(where: { $0.state == "differing" })
+                        && !plan.readiness.conditions.contains(where: { !["satisfied", "safely_satisfiable"].contains($0.status) && !$0.isItemLocal && !$0.isSecureLaunchRequirement })
+                        && items.count == 1 {
+                        // The existing Prerequisites/scope rows own shared causes.
+                        domain.sshHostScopeMessage = "SSH Configuration changes are blocked by the current Preview. Existing settings will be preserved. Resolve the reported prerequisites or exclude SSH Configuration, then Refresh Preview."
+                    }
+                }
                 let observed = result?.structuredEvidence?["ssh_identity_dependencies"]
                 if case .array(let findings) = observed?.object?["findings"] {
                     domain.sshKeyAdvisory = CoreSSHResolution.Dependencies(version: 1, findings: findings.compactMap(\.string)).advisory

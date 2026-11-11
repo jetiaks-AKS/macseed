@@ -121,8 +121,15 @@ Result retains reported work and uncertainty without inventing unchecked failure
 rows with the established category order, icons, summary cards and numeric badges.
 It compares the saved reference, including developer/descriptors, retaining matching
 requirements, differences, attention and item-level details. SSH Configuration uses
-one aggregate `config` result, never individual Host results. Secure Check can resolve
-reference coverage only through complete same-operation path/pair correspondence
+one aggregate `config` requirement, with Core-qualified saved Host detail directly
+under its existing collapsed category. Preview uses current selected Host detail,
+ordinary matching suppression and only genuinely authorized planned changes. These
+details add no Core requirements, categories or result-success claims. Check item
+statistics count qualified Hosts in place of their owning aggregate, consistently
+across category, SSH parent and summary cards. Preview counts qualified Host outcomes
+the same way; execution/Result accounting stays aggregate. Independent future SSH
+requirements can use the same hierarchy with their own Core-qualified identities.
+Secure Check can resolve reference coverage only through complete same-operation path/pair correspondence
 with authenticated saved keys; byte equality proves neither key usability nor remote
 authentication. Legacy partial coverage stays visible. Empty groups are hidden and
 numeric rails preserve actual counts; no matching records are invented.

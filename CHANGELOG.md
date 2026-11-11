@@ -11,6 +11,14 @@ The format is based on the principles of **Keep a Changelog**.
 
 ### Added
 
+* SSH Configuration in Check and Rebuild Preview shows qualified saved Host details
+  directly inside the existing category. Check and Preview badges and summary cards
+  count qualified Host outcomes once, alongside independent SSH Keys and coverage
+  warnings; Core execution and Result counts remain aggregate. Preview hides
+  matches and distinguishes permitted additions from preserved conflicts and shared
+  blockers. Older results retain the aggregate fallback. Configuration matches do
+  not prove SSH authentication or key usability.
+
 * **Check This Mac** includes authenticated read-only comparison of saved SSH keys
   at default/custom locations using only the Bundle passphrase, with contextual
   retry inside SSH Keys and no local actions after full matches. Exact saved-file matches,

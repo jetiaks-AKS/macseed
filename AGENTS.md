@@ -30,8 +30,12 @@ Configuration corrections require explicit authorization; Preview remains read-o
 Unified Developer UI is visually accepted. Secure Check compares authenticated
 saved files and can resolve reference coverage only through complete, unambiguous
 same-operation path/pair correspondence; this proves neither key usability nor remote
-authentication. Check keeps one aggregate SSH Configuration `config` result, with no
-individual Host rows. Joint real-Mac SSH E2E and current Secure Check hosted CI
+authentication. Core currently keeps one aggregate SSH Configuration requirement;
+Check and Preview item statistics replace its contribution with qualified Host evidence
+when available, without double counting or changing execution/Result accounting.
+Other qualified requirement identities remain independent in the same hierarchy.
+Rebuild Preview retains ordinary visibility and authoritative plan gates.
+Joint real-Mac SSH E2E and current Secure Check hosted CI
 qualification remain open. Continuing Homebrew, remaining 16I/16K,
 Stage 3C recovery and Stage 17 distribution qualification remain open. Existing
 durable journals, Stop and safety fences remain implemented. Unified UI Scenario

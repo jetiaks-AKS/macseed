@@ -449,6 +449,64 @@ transport return no usable secure evidence. Temporary decrypted staging uses the
 existing protected cleanup; SIGKILL/power loss cannot guarantee cleanup. No Check
 branch reaches importer Apply, directory creation, chmod, SSH publication or Git.
 
+### SSH Host presentation evidence
+
+Successful Bundle-backed `environment_compare` may add
+`reference_presentation.ssh_hosts`; `restore_prepare` may add
+`ssh_host_presentation`. Both use version `1`, `snapshot_id`, `observation_id` and
+an ordered `hosts` array (1–2048 entries). Each entry contains the existing opaque
+Restore `item_id`, a validated ASCII Host `label` (1–160 characters), `state`
+(`matching`, `missing`, `differing`, `unsupported`, `unverified`) and nullable
+`reason`. Reasons are bounded to `target_conflict`, `unsupported_target` and
+`observation_failed`. These are private display metadata, not new requirements.
+
+Check binds `comparison_record_id` to the single `ssh-configuration / config /
+supported_config_match` owner. Host assessment is independent; aggregate success
+never manufactures individual matches. Core validates the complete ordered roster
+against the current snapshot and retains detail only when safe target evidence is
+unchanged across comparison and agrees with the aggregate predicate. Unsupported
+or unavailable observations cannot contain positive Host states.
+Desktop Check statistics replace this one aggregate contribution with the qualified
+Host outcomes at category, SSH parent and summary levels. Independent coverage and
+SSH Keys retain their own counts. Core counts, records and verdict are unchanged.
+
+Preview binds `prepared_plan_id` and `plan_item_id` (`config` or `missing-profiles`)
+to the existing plan. Each Host adds `disposition`: `satisfied`, `planned` or
+`blocked`. `planned` requires an actual permitted aggregate create/add action,
+ready operation prerequisites and no SSH blocker. The metadata neither changes
+the plan ID nor authorizes Execute. Existing freshness/approval/re-entry checks
+remain authoritative; no Host outcomes are inferred for execution or Result.
+Desktop Preview replaces only this owner's contribution with qualified Host
+dispositions in its category/parent/global statistics. Original plan records remain
+intact. A version-1 `config`/`missing-profiles` binding defines the currently supported
+Host evidence, not the category's future requirement inventory. Independent
+domain/item identities keep their own contributions; display labels never bind detail.
+
+When SSH Keys are selected, successful `secure_restore_compare` may return the
+same optional `ssh_host_presentation` container, reprojected using its authenticated
+decision and current SSH resolution. A key conflict blocks missing Host actions;
+qualified explicitly approved corrections can release a pending action. Target
+changes during comparison reject the update as stale. Desktop uses this result
+only after validating the prepared ID, unchanged snapshot/target and Host roster.
+Older Secure Compare results retain the aggregate Preview fallback. Its Execute
+receipt encoder omits this display container; aliases never return in a request.
+
+Desktop validates bounds, unique case-insensitive aliases, alias/ID correspondence,
+owner identity, state/reason consistency and aggregate agreement. Preview also
+checks the exact selected catalog roster/order and current prepared ID. Malformed,
+foreign, duplicate, unexpected or contradictory records are rejected. In Check,
+absent or invalid optional detail uses the valid aggregate fallback; invalid aggregate
+results still fail closed. Preview rejects invalid Host evidence. Older Protocol V1
+clients can ignore it.
+Bundle V1 and SSH snapshot v1/v2 formats are unchanged.
+
+Only aliases and opaque IDs enter this explicit display boundary. No raw SSH
+configuration, directives, usernames, addresses, identity paths or key material are
+emitted. Operation persistence and Diagnostic Reports use their existing allowlist
+projections and omit the whole Host metadata container. Failure/cancellation events
+do not carry it. Independent source-coverage, target-scope, IdentityFile and SSH Keys
+evidence/counts remain unchanged. See [Configuration](../toolkit/CONFIGURATION.md#host-detail-in-check-and-rebuild-preview).
+
 ### Authenticated secure Preview comparison
 
 `secure_restore_compare` is an additive Protocol V1 operation. It recomputes ordinary
@@ -461,9 +519,10 @@ bounded by existing package limits, staged privately and cleaned on handled succ
 failure, cancellation and timeout. Existing process supervision owns cleanup;
 uncatchable OS termination cannot promise cleanup or memory/swap erasure.
 
-Successful result fields are exactly `decision` (`all_match`, `import_required`,
+Successful result fields are `decision` (`all_match`, `import_required`,
 `conflict`), `target_state`, `source_fingerprint`, `prepared_plan_id`, `selection`,
-`include_secure: true`, and `comparison_operation_id`. Source fingerprint matches
+`include_secure: true`, and `comparison_operation_id`, with optional SSH resolution
+and [Host display evidence](#ssh-host-presentation-evidence). Source fingerprint matches
 `plan_diagnostics.bundle`. `selection` echoes the validated request representation
 (or canonical selection when omitted), including whole-domain shorthand for fully
 selected item domains. Native Prepare and Compare share the same compact request;

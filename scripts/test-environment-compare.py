@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Read-only Protocol V1 Compare through production readers on disposable Macs."""
 import hashlib
+import copy
 import importlib.util
 import json
 import os
@@ -19,9 +20,52 @@ sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / 'modules/ssh'))
 import ssh_merge
+import host_presentation
 
 
 class SSHMergeTests(unittest.TestCase):
+    def test_host_evidence_safety_and_bounds(self):
+        raw = b'# toolkit-ssh-snapshot: 1\n# status: ready\n# excluded-profiles: 0\n\n' + self.expected
+        def observe():
+            return host_presentation.observe(raw, str(self.home))
+        self.path.write_bytes(self.expected)
+        self.assertEqual(observe()['hosts'][0]['state'], 'matching')
+        detail = observe()
+        self.assertTrue(host_presentation.valid(detail, raw))
+        for field, value in (('item_id', host_presentation.identity('foreign')), ('label', 'foreign'),
+                             ('state', 'invented'), ('reason', 'target_conflict'), ('hostname', 'private.invalid')):
+            malformed = copy.deepcopy(detail)
+            malformed['hosts'][0][field] = value
+            self.assertFalse(host_presentation.valid(malformed, raw))
+        duplicate = copy.deepcopy(detail); duplicate['hosts'] *= 2
+        self.assertFalse(host_presentation.valid(duplicate, raw))
+        foreign = copy.deepcopy(detail); foreign['snapshot_id'] = 'b' * 64
+        self.assertFalse(host_presentation.valid(foreign, raw))
+        owner = dict(record_id='v:ssh', domain='ssh-configuration', item_id='config', predicate='supported_config_match')
+        mismatch = dict(record_id='v:ssh', domain='ssh-configuration', item_id='config', comparison_kind='missing', support='supported')
+        self.assertIsNone(host_presentation.comparison(detail, [mismatch], [owner], raw))
+        for mode in (0o644, 0o400):
+            self.path.chmod(mode)
+            self.assertEqual(observe()['hosts'][0]['state'], 'unverified')
+        self.path.chmod(0o600)
+        subprocess.run(['/bin/chmod', '+a', 'everyone allow read', str(self.path)], check=True)
+        self.assertEqual(observe()['hosts'][0]['state'], 'unverified')
+        subprocess.run(['/bin/chmod', '-N', str(self.path)], check=True)
+        saved = self.directory / 'saved'
+        self.path.rename(saved)
+        self.path.symlink_to(saved)
+        self.assertEqual(observe()['hosts'][0]['state'], 'unverified')
+        self.path.unlink(); saved.rename(self.path)
+        pending = self.directory / '.macseed-ssh-pending-fixture'
+        pending.mkdir()
+        self.assertEqual(observe()['hosts'][0]['state'], 'unverified')
+        pending.rmdir()
+        with patch.object(host_presentation.merge, 'evidence', side_effect=['a' * 64, 'b' * 64]):
+            self.assertIsNone(observe())
+        oversized = raw.replace(b'Host added', b'Host ' + b'x' * 161)
+        self.assertIsNone(host_presentation.observe(oversized, str(self.home)))
+        self.assertEqual(self.path.read_bytes(), self.expected)
+
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
@@ -194,6 +238,57 @@ ssh_merge.publish(b'Host added\\n    HostName added.invalid\\n', sys.argv[2], ss
 
 
 class CompareTests(unittest.TestCase):
+    def test_bundle_host_detail_scope_counts_and_privacy(self):
+        self.environment['HOME'] = str(self.home.resolve())
+        payload = b'Host zebra\n    HostName secret-address.invalid\n    User privateuser\nHost alpha\n    HostName other.invalid\n'
+        target = self.ssh_reference(payload)
+        cases = [
+            (payload, ['matching', 'matching'], 'matching'),
+            (payload.split(b'Host alpha')[0], ['matching', 'missing'], 'missing'),
+            (payload.replace(b'other.invalid', b'conflict.invalid'), ['matching', 'differing'], 'differing'),
+            (b'Host zebra\n HostName conflicting.invalid\n', ['differing', 'missing'], 'differing'),
+            (b'Include other\n' + payload, ['unsupported', 'unsupported'], 'unverified'),
+        ]
+        for actual, states, aggregate in cases:
+            with self.subTest(states=states):
+                target.write_bytes(actual); target.chmod(0o600)
+                data = self.comparison(bundle_path=str(self.make_bundle()))
+                detail = data['reference_presentation']['ssh_hosts']
+                self.assertEqual([row['label'] for row in detail['hosts']], ['zebra', 'alpha'])
+                self.assertEqual([row['state'] for row in detail['hosts']], states)
+                self.assertEqual(data['comparison']['counts'][aggregate], 1)
+                self.assertEqual(len(data['comparison_records']), 1)
+                self.assertEqual(detail['comparison_record_id'], data['comparison_records'][0]['record_id'])
+                wire = json.dumps(data)
+                for private in ('secret-address.invalid', 'privateuser', 'HostName', 'IdentityFile'):
+                    self.assertNotIn(private, wire)
+                public = dict(data); public.pop('reference_presentation')
+                self.assertNotIn('zebra', json.dumps(public))
+        # Selected snapshot order/scope, never all Hosts in the original target.
+        self.ssh_reference(payload.split(b'Host alpha')[0], partial=True)
+        target.write_bytes(payload); target.chmod(0o600)
+        data = self.comparison(bundle_path=str(self.make_bundle()))
+        self.assertEqual([h['label'] for h in data['reference_presentation']['ssh_hosts']['hosts']], ['zebra'])
+        self.assertEqual(data['comparison']['counts']['matching'], 1)
+        self.assertEqual(data['comparison']['counts']['unresolved'], 1)
+        self.assertNotIn('ssh_hosts', self.comparison()['reference_presentation'])  # Legacy/local reference fallback.
+
+    def test_bundle_host_detail_preserves_identity_and_unsafe_diagnostics(self):
+        self.environment['HOME'] = str(self.home.resolve())
+        payload = b'Host example\n    HostName hidden.invalid\n    IdentityFile ~/.ssh/private_key\n'
+        target = self.ssh_reference(payload, version=2)
+        target.write_bytes(payload); target.chmod(0o600)
+        archive = self.make_bundle()
+        data = self.comparison(bundle_path=str(archive))
+        self.assertEqual(data['reference_presentation']['ssh_hosts']['hosts'][0]['state'], 'matching')
+        self.assertEqual(data['comparison']['counts']['unresolved'], 1)
+        self.assertTrue(any(row['item_id'] == 'identity-references' for row in data['records']['coverage_records']))
+        self.assertNotIn('private_key', json.dumps(data))
+        target.chmod(0o644)
+        data = self.comparison(bundle_path=str(archive))
+        self.assertEqual(data['reference_presentation']['ssh_hosts']['hosts'][0]['state'], 'unverified')
+        self.assertEqual(data['comparison']['counts']['matching'], 0)
+
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)

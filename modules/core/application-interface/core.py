@@ -35,6 +35,7 @@ from secure import launch_channel, import_secure, compare_secure, check_secure, 
 import restore_destinations
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'ssh'))
 import restore_resolution as ssh_resolution
+import host_presentation as ssh_hosts
 import git_dependencies as git_ssh
 
 PROTOCOL_VERSION = 1
@@ -241,6 +242,18 @@ def secure_restore_compare(operation_id, path, disabled_groups, expected_id, sel
                           comparison_operation_id=operation_id)
             if 'ssh_resolution' in plan:
                 result['ssh_resolution'] = ssh_resolution.public(resolved) if resolved else ssh_resolution.blocked()
+            if 'ssh_host_presentation' in plan:
+                raw = bundle.checked_file(stage / 'generated/ssh/config.snapshot')
+                detail = ssh_hosts.observe(raw, os.environ['HOME'])
+                if detail is None or detail['observation_id'] != plan['ssh_host_presentation']['observation_id']:
+                    raise ExecuteFailed('stale_plan')
+                current = dict(plan, readiness=dict(plan['readiness'],
+                    ready=plan['readiness']['ready'] and compared['decision'] != 'conflict'))
+                if 'ssh_resolution' in result:
+                    current['ssh_resolution'] = result['ssh_resolution']
+                detail = ssh_hosts.preview(detail, current, raw)
+                if detail is not None:
+                    result['ssh_host_presentation'] = detail
             event('result', result)
             event('completed', {'status': 'success'})
             return 0
@@ -642,6 +655,15 @@ def prepared_restore(path, disabled_groups, include_secure, selection=None, inst
                  'cask_item_id': restore_selection.identity('homebrew-casks', token)}
                 for app_id, token in sorted(duplicates.items())]
         restore_selection.correlate(summary['plan'], stage)
+        if ssh_evidence is not None:
+            raw = bundle.checked_file(stage / 'generated/ssh/config.snapshot')
+            detail = ssh_hosts.observe(raw, os.environ['HOME'])
+            if ssh_observation() != ssh_evidence:
+                raise PreviewFailed()
+            if detail is not None and detail['observation_id'] == ssh_evidence:
+                detail = ssh_hosts.preview(detail, summary, raw)
+                if detail is not None:
+                    summary['ssh_host_presentation'] = detail
         yield summary, stage, source_identity, stage_identity
 
 
@@ -1266,6 +1288,11 @@ def environment_compare(operation_id, parameters):
                 raise ExecuteFailed("reference_unavailable")
             if blueprint is not None and (not Path(blueprint).is_file() or not os.access(blueprint, os.R_OK)):
                 raise ExecuteFailed("reference_unavailable")
+            host_detail = None
+            if source is not None:
+                _, selected_categories = bundle.parse_blueprint(bundle.checked_file(stage / 'blueprint.conf'))
+                if selected_categories.get('ssh-configuration'):
+                    host_detail = ssh_hosts.observe(bundle.checked_file(generated / 'ssh/config.snapshot'), os.environ['HOME'])
             environment = os.environ.copy()
             # Reference is explicit. No ambient Restore/evidence or snapshot override.
             for name in tuple(environment):
@@ -1351,6 +1378,12 @@ def environment_compare(operation_id, parameters):
                 presentation["repository_labels"] = repository_labels
                 if workspace_files is not None:
                     presentation["workspace_labels"] = workspace_labels
+                if host_detail is not None and ssh_observation() == host_detail['observation_id']:
+                    detail = ssh_hosts.comparison(host_detail, owned.comparison_records,
+                                                  owned.details['verification_records'],
+                                                  bundle.checked_file(generated / 'ssh/config.snapshot'))
+                    if detail is not None:
+                        presentation['ssh_hosts'] = detail
             event("result", dict(state, reference_presentation=presentation))
             if status != 0:
                 codes = {row["code"] for row in owned.details["diagnostics"]}

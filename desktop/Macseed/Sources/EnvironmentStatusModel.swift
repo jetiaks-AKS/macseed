@@ -78,7 +78,7 @@ struct EnvironmentStatusPresentation {
     let technicalFacts: [String: [ComparisonTechnicalFact]]
 
     func categoryCount(_ outcome: ComparisonOutcome, category: DisplayCategory, children: [DisplayCategory] = []) -> Int {
-        // Category badges count the logical rows shown below them, not Core predicates.
+        // Qualified Host rows replace config in Check statistics only.
         let items = children.isEmpty ? category.items : children.flatMap(\.items)
         return items.filter { item in
             switch outcome {
@@ -392,6 +392,32 @@ struct EnvironmentStatusPresentation {
             "macos-windows": ("Windows", "macwindow"), "macos-keyboard": ("Keyboard", "keyboard"),
             "macos-trackpad": ("Trackpad", "hand.draw"), "macos-screenshots": ("Screenshots", "camera"),
             "comparison": ("Check", "checkmark.circle"), "blueprint": ("Blueprint", "doc.text")]
+        var sshHostAttentionDelta = 0
+        if let detail = result.qualifiedSSHHosts,
+           let aggregate = result.comparisonRecords.first(where: { $0.recordID == detail.comparisonRecordID }),
+           let index = grouped[aggregate.domain]?.firstIndex(where: { $0.id == logicalID(aggregate.domain, aggregate.itemID) }) {
+            let items = detail.hosts.map { host in
+                let status: DisplayStatus = host.state == "matching" ? .matching : host.state == "missing" ? .missing
+                    : host.state == "differing" ? .different : host.state == "unsupported" ? .unsupported : .unverified
+                return DisplayItem(id: logicalID(aggregate.domain, aggregate.itemID) + ":" + host.itemID, title: host.label, status: status,
+                    action: host.state == "missing" ? "This saved Host was not found on this Mac."
+                        : host.state == "differing" ? "This Host differs from the saved configuration."
+                        : host.state == "unsupported" ? "The target configuration cannot be safely compared."
+                        : host.state == "unverified" ? "Current SSH configuration could not be safely inspected. Check Again after resolving the inspection issue." : "",
+                    reason: host.reason)
+            }
+            grouped[aggregate.domain]!.replaceSubrange(index...index, with: items)
+            // Replace this predicate's contribution, preserving all other domains,
+            // independent coverage and authenticated SSH key results.
+            counts[aggregate.comparisonKind, default: 0] -= 1
+            if aggregate.support == "unsupported" { counts["unsupported", default: 0] -= 1 }
+            if aggregate.reason == "unknown_difference" { counts["unknown_difference", default: 0] -= 1 }
+            for host in detail.hosts {
+                counts[host.state == "unsupported" ? "unverified" : host.state, default: 0] += 1
+                if host.state == "unsupported" { counts["unsupported", default: 0] += 1 }
+            }
+            if aggregate.comparisonKind == "unverified" { sshHostAttentionDelta = items.count - 1 }
+        }
         categories = order.map { domain in
             DisplayCategory(id: domain, title: DeveloperSelectionGroup.label(domain, fallback: names[domain]?.0 ?? domain), symbol: names[domain]?.1 ?? "folder", items: grouped[domain]!)
         }
@@ -415,8 +441,9 @@ struct EnvironmentStatusPresentation {
         // Unsupported is already inside Unverified. Independent diagnostics without a
         // counted owner, or incomplete predicate sets, have no trustworthy numeric total.
         let secureAttention = (secureCheck?.items.filter { $0.comparisonKind == "unverified" }.count ?? 0) + uncheckedIDs.count
+        let countedAttention = attentionIDs.count + sshHostAttentionDelta + secureAttention
         attentionCount = !needsAttention ? 0 : (!incompleteRepositoryEvidence && !(protectedScope && savedIDs == nil) && attentionIDs.count + secureAttention > 0
-            && independentDiagnostics.allSatisfy { attentionIDs.contains($0.recordID) } ? attentionIDs.count + secureAttention : nil)
+            && independentDiagnostics.allSatisfy { attentionIDs.contains($0.recordID) } ? countedAttention : nil)
         if needsAttention {
             headline = uncheckedScope ? "Check Incomplete" : "Needs Attention"
             message = uncheckedScope ? "Saved SSH keys remain unchecked. Ordinary results and verified matches are retained."

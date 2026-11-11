@@ -5467,10 +5467,308 @@ private struct CaptureRefinementHost: View {
         print("PASS: shared developer accent includes synthetic Git/SSH/Workspace/Shell parents and every child; Standard Setup remains blue")
     }
 
+    @MainActor static func sshHostPresentationChecks() throws {
+        typealias Object = [String: Any]
+        func data(_ object: Object) throws -> Data { try JSONSerialization.data(withJSONObject: object) }
+        let digest = String(repeating: "a", count: 64)
+        func host(_ label: String, _ state: String, _ disposition: String? = nil) -> Object {
+            let reason = ["differing": "target_conflict", "unsupported": "unsupported_target", "unverified": "observation_failed"][state]
+            var row: Object = ["item_id": CoreSSHHosts.identity(label), "label": label, "state": state,
+                "reason": reason as Any? ?? NSNull()]
+            if let disposition { row["disposition"] = disposition }
+            return row
+        }
+        func detail(_ hosts: [Object]) -> Object {
+            ["version": 1, "snapshot_id": digest, "observation_id": digest, "hosts": hosts]
+        }
+        func comparison(_ hosts: [Object], kind: String) -> Object {
+            var counts = Dictionary(uniqueKeysWithValues: ["matching", "missing", "differing", "unverified", "unsupported", "unresolved", "extra", "unknown_difference"].map { ($0, 0) })
+            counts[kind] = 1
+            let unsupported = hosts.contains { $0["state"] as? String == "unsupported" }
+            if unsupported { counts["unsupported"] = 1 }
+            var evidence = detail(hosts); evidence["comparison_record_id"] = "v:ssh"
+            return ["read_only": true, "publication_occurred": false, "target_mutation_may_have_started": false,
+                "comparison": ["status": "complete", "verdict": kind == "matching" ? "no_differences_detected" : kind == "unverified" ? "incomplete" : "differences_detected", "also_incomplete": false, "counts": counts],
+                "comparison_records": [["record_id": "v:ssh", "domain": "ssh-configuration", "item_id": "config", "comparison_kind": kind, "support": unsupported ? "unsupported" : "supported"]],
+                "verification": ["status": "complete"], "extra": ["domains": [], "items": []],
+                "records": ["status": "complete", "verification_records": [["record_id": "v:ssh", "domain": "ssh-configuration", "item_id": "config", "predicate": "supported_config_match"]], "coverage_records": [], "operation_records": [], "diagnostics": []],
+                "reference_presentation": ["groups": [], "app_store_names": [:], "ssh_hosts": evidence]]
+        }
+        func check(_ object: Object) throws -> EnvironmentStatusPresentation {
+            try EnvironmentStatusPresentation(JSONDecoder().decode(CoreComparisonResult.self, from: data(object)))
+        }
+        func checkCounts(_ value: EnvironmentStatusPresentation, match: Int, missing: Int = 0, different: Int = 0, attention: Int = 0) {
+            let parent = value.sections.flatMap(\.entries).first { $0.id == CaptureHierarchy.sshID }!
+            for (outcome, expected) in [(ComparisonOutcome.match, match), (.missing, missing), (.different, different), (.needsAttention, attention)] {
+                precondition(value.categoryCount(outcome, category: parent.category, children: parent.children) == expected)
+                precondition(parent.children.reduce(0) { $0 + value.categoryCount(outcome, category: $1) } == expected)
+            }
+            precondition(value.counts["matching"] == match && value.counts["missing"] == missing && value.counts["differing"] == different)
+            precondition(value.attentionCount == attention)
+            precondition(ComparisonSummaryOutcome.differences.count(value) == missing + different)
+        }
+        let mixed = [host("private-zebra", "matching"), host("alpha", "missing"), host("production", "differing")]
+        let checked = try check(comparison(mixed, kind: "differing"))
+        precondition(checked.categories.count == 1 && checked.categories[0].items.map(\.title) == ["private-zebra", "alpha", "production"])
+        precondition(checked.categories[0].items.map(\.status) == [.matching, .missing, .different])
+        checkCounts(checked, match: 1, missing: 1, different: 1)
+        precondition(ComparisonSummaryOutcome.differences.explanation(checked) == "1 Different · 1 Missing")
+        precondition(checked.categoryCount(.different, category: checked.categories[0]) == 1)
+        precondition(checked.categoryCount(.match, category: checked.categories[0]) == 1)
+        for (states, kind) in [(["matching"], "matching"), (["matching", "matching", "matching"], "matching"), (["missing"], "missing"), (["unsupported", "unsupported", "unsupported"], "unverified"), (["unverified", "unverified", "unverified"], "unverified")] {
+            let value = try check(comparison(states.enumerated().map { host("host-\($0.offset)", $0.element) }, kind: kind))
+            precondition(value.categories[0].items.count == states.count && value.counts[kind] == states.count)
+            checkCounts(value, match: kind == "matching" ? states.count : 0, missing: kind == "missing" ? states.count : 0,
+                attention: kind == "unverified" ? states.count : 0)
+            precondition(value.counts["unsupported"] == (states[0] == "unsupported" ? states.count : 0))
+        }
+        var legacy = comparison(mixed, kind: "differing"); legacy.removeValue(forKey: "reference_presentation")
+        let fallback = try check(legacy)
+        precondition(fallback.categories[0].items.map(\.title) == ["config"])
+        checkCounts(fallback, match: 0, different: 1)
+        var invalid = [mixed + [mixed[0]], [host("foreign/path", "differing")], [host("foreign\n", "differing")], [host("fake", "matching")]]
+        var foreign = mixed; foreign[0]["item_id"] = CoreSSHHosts.identity("other"); invalid.append(foreign)
+        var unexpected = mixed; unexpected[0]["hostname"] = "private.invalid"; invalid.append(unexpected)
+        var contradictory = mixed; contradictory[0]["reason"] = "target_conflict"; invalid.append(contradictory)
+        for rows in invalid {
+            let rejected = try check(comparison(rows, kind: "differing"))
+            precondition(rejected.categories[0].items.map(\.title) == ["config"], "Invalid detail must never produce Host rows")
+            checkCounts(rejected, match: 0, different: 1)
+        }
+        for malformed in [NSNull(), "invalid", ["version": 2], detail([])] as [Any] {
+            var value = comparison(mixed, kind: "differing")
+            var metadata = value["reference_presentation"] as! Object; metadata["ssh_hosts"] = malformed; value["reference_presentation"] = metadata
+            checkCounts(try check(value), match: 0, different: 1)
+        }
+        var invalidAggregate = comparison(mixed, kind: "matching")
+        invalidAggregate["comparison_records"] = []
+        do { _ = try check(invalidAggregate); preconditionFailure("Invalid aggregate accepted by optional-detail fallback") } catch {}
+        let matchingHosts = ["private-zebra", "alpha", "production"].map { host($0, "matching") }
+        let threeMatches = try check(comparison(matchingHosts, kind: "matching"))
+        func coverage(_ value: Object, item: String) -> Object {
+            var value = value, records = value["records"] as! Object, summary = value["comparison"] as! Object
+            var counts = summary["counts"] as! [String: Int]
+            counts["unresolved"]! += 1; summary["counts"] = counts; summary["verdict"] = "incomplete"; summary["also_incomplete"] = true
+            records["coverage_records"] = [["record_id": "c:" + item, "domain": "ssh-configuration", "item_id": item, "disposition": "unresolved", "source_status": item == "scope" ? "partial" : "unobserved"]]
+            records["diagnostics"] = [["record_id": "c:" + item, "code": item == "scope" ? "partial_source_coverage" : "prerequisite_unmet", "severity": "warning", "phase": "scope"]]
+            value["comparison"] = summary; value["records"] = records
+            return value
+        }
+        for item in ["scope", "identity-references"] {
+            let value = try check(coverage(comparison(matchingHosts, kind: "matching"), item: item))
+            checkCounts(value, match: 3, attention: 1)
+            precondition(value.counts["unresolved"] == 1 && value.categories[0].items.count == 4)
+        }
+        let keyIDs = ["b", "c", "d"].map { String(repeating: $0, count: 64) }
+        var keyed = comparison(matchingHosts, kind: "matching")
+        keyed["secure_check"] = ["version": 1, "bundle_id": digest, "status": "available"]
+        var secure: Object = ["version": 1, "operation_id": "count-check", "bundle_id": digest,
+            "context": ["mapping": ["version": 2, "bundle_id": digest, "items": keyIDs.map { ["identity_id": $0, "directory": NSNull(), "selected": true] as Object }],
+                "target_state": digest, "source_validation": "saved_files", "ssh_reference_coverage": "unresolved",
+                "observed_at": "2026-11-11T10:00:00.000001+00:00", "read_only": true, "publication_occurred": false, "target_mutation_may_have_started": false],
+            "items": keyIDs.enumerated().map { index, id in ["identity_id": id, "comparison_kind": index < 2 ? "matching" : "missing",
+                "reason": index < 2 ? "pair_identical" : "pair_absent", "target_state": digest,
+                "private_bytes_match": index < 2 ? true : NSNull(), "public_bytes_match": index < 2 ? true : NSNull()] as Object }]
+        func withKeys(_ value: Object) throws -> EnvironmentStatusPresentation {
+            try EnvironmentStatusPresentation(JSONDecoder().decode(CoreComparisonResult.self, from: data(value)),
+                secureCheck: JSONDecoder().decode(CoreSecureCheckResult.self, from: data(secure)))
+        }
+        let withKeyResults = try withKeys(keyed)
+        checkCounts(withKeyResults, match: 5, missing: 1)
+        precondition(withKeyResults.categoryCount(.match, category: withKeyResults.categories[0]) == 3)
+        precondition(withKeyResults.categoryCount(.match, category: withKeyResults.categories[1]) == 2)
+        checkCounts(try withKeys(coverage(keyed, item: "identity-references")), match: 5, missing: 1, attention: 1)
+        var context = secure["context"] as! Object; context["ssh_reference_coverage"] = "resolved"; secure["context"] = context
+        checkCounts(try withKeys(coverage(keyed, item: "identity-references")), match: 5, missing: 1)
+        checkCounts(try withKeys(coverage(keyed, item: "scope")), match: 5, missing: 1, attention: 1)
+        let rawComparison = try JSONDecoder().decode(CoreComparisonResult.self, from: data(keyed))
+        precondition(rawComparison.comparison.counts["matching"] == 1 && rawComparison.comparisonRecords.count == 1,
+            "Presentation accounting must not mutate the Core aggregate")
+        var unrelated = comparison(matchingHosts, kind: "matching")
+        unrelated["comparison_records"] = (unrelated["comparison_records"] as! [Object]) + (0..<2).map {
+            ["record_id": "v:other-\($0)", "domain": "vscode-settings", "item_id": "settings", "comparison_kind": "matching", "support": "supported"] as Object
+        }
+        var otherSummary = unrelated["comparison"] as! Object, otherCounts = otherSummary["counts"] as! [String: Int]
+        otherCounts["matching"] = 3; otherSummary["counts"] = otherCounts; unrelated["comparison"] = otherSummary
+        let unrelatedCounts = try check(unrelated)
+        precondition(unrelatedCounts.counts["matching"] == 5)
+        let otherCategory = unrelatedCounts.categories.first { $0.id == "vscode-settings" }!
+        precondition(otherCategory.items.count == 1 && unrelatedCounts.categoryCount(.match, category: otherCategory) == 1,
+            "Unrelated predicate totals and existing logical category counts must remain unchanged")
+        // A separate Core-owned requirement in the same category is not replaced
+        // merely because its display label is also a Host alias.
+        var extendedCheck = comparison(matchingHosts, kind: "matching")
+        extendedCheck["comparison_records"] = (extendedCheck["comparison_records"] as! [Object]) + [[
+            "record_id": "v:independent", "domain": "ssh-configuration", "item_id": "alpha", "comparison_kind": "missing", "support": "supported"]]
+        var extendedRecords = extendedCheck["records"] as! Object
+        extendedRecords["verification_records"] = (extendedRecords["verification_records"] as! [Object]) + [[
+            "record_id": "v:independent", "domain": "ssh-configuration", "item_id": "alpha", "predicate": "fixture_requirement"]]
+        extendedCheck["records"] = extendedRecords
+        var extendedSummary = extendedCheck["comparison"] as! Object, extendedCounts = extendedSummary["counts"] as! [String: Int]
+        extendedCounts["missing"] = 1; extendedSummary["counts"] = extendedCounts; extendedSummary["verdict"] = "differences_detected"
+        extendedCheck["comparison"] = extendedSummary
+        let independentCheck = try check(extendedCheck)
+        checkCounts(independentCheck, match: 3, missing: 1)
+        precondition(independentCheck.categories[0].items.count == 4 && Set(independentCheck.categories[0].items.map(\.id)).count == 4)
+        precondition(independentCheck.categories[0].items.filter { $0.title == "alpha" }.count == 2)
+        let selected = CoreRestoreSelection(categories: ["ssh-configuration"], items: [:])
+        let catalog = CoreRestoreInspection.Inventory(groups: [.init(id: "SSH Configuration", domains: ["ssh-configuration"])],
+            inventory: [.init(domain: "ssh-configuration", label: "SSH Configuration", selectionMode: "items", availability: "available", reason: nil,
+                items: ["private-zebra", "alpha", "production"].map { .init(itemID: CoreSSHHosts.identity($0), label: $0) })])
+        func preparation(_ hosts: [Object], disposition: String, ready: Bool) -> Object {
+            var evidence = detail(hosts); evidence["plan_item_id"] = "config"; evidence["prepared_plan_id"] = digest
+            return ["prepared_plan_id": digest, "selection": ["categories": selected.categories, "items": [:]],
+                "selected_groups": ["SSH Configuration"], "selected_categories": ["ssh-configuration"], "selected_item_counts": [:],
+                "include_secure": false, "secure_restore_status": "not_selected", "warning_count": 0, "error_count": 0,
+                "has_planned_changes": disposition == "planned", "plan": [["domain": "ssh-configuration", "item_id": "config", "action": disposition == "planned" ? "create" : "none", "disposition": disposition, "reason": disposition == "conflict" ? "target_conflict" : NSNull()]],
+                "readiness": ["ready": ready, "ready_scope": "environment", "conditions": [], "reentry": "restore_prepare"], "ssh_host_presentation": evidence]
+        }
+        func preview(_ object: Object) throws -> (CoreRestorePreparation, RestoreTaskPresentation) {
+            let plan = try JSONDecoder().decode(CoreRestorePreparation.self, from: data(object))
+            try plan.validate(expected: selected, catalog: catalog)
+            return (plan, RestoreTaskPresentation(preview: RestorePreviewPresentation(plan, catalog: catalog), plan: plan))
+        }
+        func previewCounts(_ tasks: RestoreTaskPresentation, planned: Int, matching: Int, attention: Int = 0) {
+            let domain = tasks.domains.first { $0.id == "ssh-configuration" }!
+            let parent = RestorePreviewHierarchy.summary(DeveloperSelectionGroup.ssh, rows: tasks.domains)
+            for domains in [[domain], [parent], tasks.automaticDomains] {
+                let counts = RestorePreviewMetrics.counts(domains)
+                precondition(counts.changes == planned && counts.matching == matching && counts.attention == attention)
+            }
+            precondition(RestorePreviewMetrics.badges(domain).map(\.1) == RestorePreviewMetrics.badges(parent).map(\.1))
+            precondition(tasks.automaticAttentionCount == attention)
+        }
+        let plannedHosts = [host("private-zebra", "matching", "satisfied"), host("alpha", "missing", "planned"), host("production", "missing", "planned")]
+        let (plan, tasks) = try preview(preparation(plannedHosts, disposition: "planned", ready: true))
+        let domain = tasks.domains[0]
+        precondition(domain.items.count == 1 && domain.previewItems.count == 3 && domain.state == .planned)
+        precondition(RestorePreviewVisibility.items(domain.previewItems).map { $0.item.title } == ["alpha", "production"])
+        previewCounts(tasks, planned: 2, matching: 1)
+        precondition(RestorePreviewMetrics.badges(domain).reduce(0) { $0 + $1.1 } == 2)
+        let subset = CoreRestoreSelection(categories: [], items: ["ssh-configuration": ["alpha", "production"].map(CoreSSHHosts.identity)])
+        var twoHosts = preparation(Array(plannedHosts.dropFirst()), disposition: "planned", ready: true)
+        twoHosts["selection"] = ["categories": subset.categories, "items": subset.items]
+        twoHosts["selected_item_counts"] = ["ssh-configuration": 2]
+        let twoHostPlan = try JSONDecoder().decode(CoreRestorePreparation.self, from: data(twoHosts))
+        try twoHostPlan.validate(expected: subset, catalog: catalog)
+        let twoHostTasks = RestoreTaskPresentation(preview: RestorePreviewPresentation(twoHostPlan, catalog: catalog), plan: twoHostPlan)
+        previewCounts(twoHostTasks, planned: 2, matching: 0)
+        precondition(twoHostPlan.plan.count == 1 && twoHostTasks.domains[0].items.count == 1)
+        let onePlanned = [host("private-zebra", "matching", "satisfied"), host("alpha", "matching", "satisfied"), host("production", "missing", "planned")]
+        previewCounts(try preview(preparation(onePlanned, disposition: "planned", ready: true)).1, planned: 1, matching: 2)
+        let allMatching = ["private-zebra", "alpha", "production"].map { host($0, "matching", "satisfied") }
+        let (_, matchingTasks) = try preview(preparation(allMatching, disposition: "satisfied", ready: true))
+        previewCounts(matchingTasks, planned: 0, matching: 3)
+        let matchingContent = RestorePreviewContent(title: "", state: .matching, domains: matchingTasks.domains, alreadyMatches: true,
+            previewEvaluated: true, prerequisites: .init(conditions: [], ready: true), areas: [], showsActions: false)
+        precondition(matchingContent.allMatchCount == 3 && matchingContent.visibleDomains.isEmpty)
+        var legacyPlan = preparation(plannedHosts, disposition: "planned", ready: true); legacyPlan.removeValue(forKey: "ssh_host_presentation")
+        previewCounts(try preview(legacyPlan).1, planned: 1, matching: 0)
+        var extendedPlan = preparation(plannedHosts, disposition: "planned", ready: true)
+        extendedPlan["plan"] = (extendedPlan["plan"] as! [Object]) + [["domain": "ssh-configuration", "item_id": "independent-requirement",
+            "display_name": "alpha", "action": "create", "disposition": "planned", "reason": NSNull()]]
+        let (extendedCore, extendedTasks) = try preview(extendedPlan)
+        previewCounts(extendedTasks, planned: 3, matching: 1)
+        precondition(extendedCore.plan.count == 2 && extendedTasks.domains[0].items.count == 2 && extendedTasks.domains[0].previewItems.count == 4)
+        precondition(extendedTasks.domains[0].previewItems.filter { $0.item.title == "alpha" }.count == 2)
+        let hostIDs = domain.previewItems.map(\.id)
+        extendedPlan["plan"] = Array((extendedPlan["plan"] as! [Object]).reversed())
+        let (_, reordered) = try preview(extendedPlan)
+        precondition(reordered.domains[0].previewItems.filter { $0.id.hasPrefix("restore-host:") }.map(\.id) == hostIDs,
+            "Host identities belong to the source requirement, never its position or display label")
+        let conflictHosts = [host("private-zebra", "matching", "satisfied"), host("alpha", "missing", "blocked"), host("production", "differing", "blocked")]
+        let (_, blocked) = try preview(preparation(conflictHosts, disposition: "conflict", ready: false))
+        previewCounts(blocked, planned: 0, matching: 1, attention: 2)
+        precondition(blocked.domains[0].state == .attention)
+        precondition(blocked.domains[0].previewItems.last!.item.action.contains("Existing settings will be preserved"))
+        precondition(blocked.domains[0].previewItems[1].item.action.isEmpty)
+        let executing = RestoreTaskPresentation(preview: RestorePreviewPresentation(plan, catalog: catalog), plan: plan, executing: true)
+        precondition(executing.domains.allSatisfy { $0.previewItemDetails.isEmpty && $0.previewItems.count == $0.items.count })
+        precondition(executing.domains.flatMap(\.items).count == 1 && plan.plan.count == 1)
+        var resultDomain = domain; resultDomain.previewOnly = false
+        precondition(resultDomain.previewItems.map(\.id) == domain.items.map(\.id), "Detail must never change Result accounting")
+        for value in [preparation(plannedHosts, disposition: "conflict", ready: false),
+                      preparation(plannedHosts, disposition: "planned", ready: false),
+                      preparation(Array(plannedHosts.reversed()), disposition: "planned", ready: true),
+                      preparation([plannedHosts[0]], disposition: "planned", ready: true)] {
+            do { _ = try preview(value); preconditionFailure("Unbound or falsely planned Host evidence accepted") } catch {}
+        }
+        var stale = preparation(plannedHosts, disposition: "planned", ready: true)
+        stale["prepared_plan_id"] = String(repeating: "b", count: 64)
+        do { _ = try preview(stale); preconditionFailure("Stale Host evidence accepted") } catch {}
+        let globallyBlocked = [host("private-zebra", "matching", "satisfied"), host("alpha", "missing", "blocked"), host("production", "missing", "blocked")]
+        let (_, global) = try preview(preparation(globallyBlocked, disposition: "planned", ready: false))
+        precondition(global.domains[0].state == .attention && global.domains[0].previewItems.allSatisfy { $0.state != .planned })
+        previewCounts(global, planned: 0, matching: 1, attention: 2)
+        var partialPlan = preparation(globallyBlocked, disposition: "planned", ready: false)
+        partialPlan["plan"] = (partialPlan["plan"] as! [Object]) + [["domain": "ssh-configuration", "item_id": "scope", "action": "none",
+            "disposition": "warning", "reason": "partial_source_coverage"]]
+        previewCounts(try preview(partialPlan).1, planned: 0, matching: 1, attention: 3)
+        var secureValues = preparation(plannedHosts, disposition: "planned", ready: true)
+        secureValues["include_secure"] = true; secureValues["secure_restore_status"] = "selected_pending"
+        secureValues["plan_diagnostics"] = ["bundle": digest]
+        secureValues["plan"] = (secureValues["plan"] as! [Object]) + [["domain": "secure-ssh-identities", "item_id": "encrypted_identity_set", "action": "validate_and_import", "disposition": "pending_unlock", "reason": "secure_unlock_required"]]
+        secureValues["readiness"] = ["ready": true, "ready_scope": "environment", "reentry": "restore_prepare", "conditions": [["domain": "secure-ssh-identities", "code": "secure_bridge_required", "status": "external_action_required", "scope": "execution_launch"]]]
+        var securePlan = try JSONDecoder().decode(CoreRestorePreparation.self, from: data(secureValues))
+        try securePlan.validate(expected: selected, catalog: catalog, expectedIncludeSecure: true)
+        var updated = detail(globallyBlocked); updated["plan_item_id"] = "config"; updated["prepared_plan_id"] = digest
+        let secureResult: Object = ["decision": "conflict", "target_state": NSNull(), "source_fingerprint": digest, "prepared_plan_id": digest,
+            "selection": ["categories": selected.categories, "items": [:]], "include_secure": true, "comparison_operation_id": "host-compare", "ssh_host_presentation": updated]
+        let compared = try JSONDecoder().decode(CoreSecureComparison.self, from: data(secureResult))
+        try compared.validate(plan: securePlan, operationID: "host-compare")
+        securePlan.secureComparison = compared
+        let secureTasks = RestoreTaskPresentation(preview: RestorePreviewPresentation(securePlan, catalog: catalog), plan: securePlan)
+        precondition(secureTasks.domains.first { $0.id == "ssh-configuration" }!.previewItems.allSatisfy { $0.state != .planned })
+        precondition(RestorePreviewMetrics.counts(secureTasks.domains).attention == 3, "Two blocked Hosts and one independent key requirement")
+        let receipt = String(data: try JSONEncoder().encode(compared), encoding: .utf8)!
+        precondition(!receipt.contains("ssh_host_presentation") && !receipt.contains("private-zebra"))
+        var forged = secureResult; forged["ssh_host_presentation"] = secureValues["ssh_host_presentation"]
+        do {
+            try JSONDecoder().decode(CoreSecureComparison.self, from: data(forged)).validate(plan: securePlan, operationID: "host-compare")
+            preconditionFailure("Secure conflict retained planned Hosts")
+        } catch {}
+        let large = try check(comparison((0..<2048).map { host("host-\($0)", "matching") }, kind: "matching"))
+        checkCounts(large, match: 2048)
+        let ids = EnvironmentComparisonView.disclosureIDs(large)
+        precondition(!ids.contains(where: { $0.contains("host-") }))
+        let previewIDs = RestorePreviewHierarchy.disclosureIDs(tasks.domains, settings: [])
+        precondition(previewIDs.contains("ssh-configuration") && !previewIDs.contains(where: { $0.contains("restore-host:") }))
+        // Display aliases never survive either persistence/export projection.
+        for payload in [comparison(mixed, kind: "differing"), preparation(plannedHosts, disposition: "planned", ready: true)] {
+            let event = try CoreEvent(line: data(["protocol_version": 1, "operation_id": "ssh-host-fixture", "sequence": 2, "type": "result", "data": payload]))
+            var sanitizer = OperationLogSanitizer()
+            let record = sanitizer.event(event, at: Date())
+            let persisted = String(data: try JSONEncoder().encode(record), encoding: .utf8)!
+            precondition(!persisted.contains("private-zebra") && !persisted.contains("snapshot_id") && !persisted.contains("ssh_hosts"))
+            for fact in record.evidence ?? [] {
+                precondition(!DiagnosticReportPrivacy.text(DiagnosticReportPrivacy.facts(fact)).contains("private-zebra"))
+            }
+        }
+        let output = URL(fileURLWithPath: "build/ssh-host-preview-counts", isDirectory: true)
+        try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+        for (width, scheme) in [(CGFloat(420), ColorScheme.light), (720, .light), (720, .dark)] {
+            for (name, view) in [
+                ("check", AnyView(EnvironmentComparisonView(result: checked, categoryExpansion: .constant(ids)))),
+                ("check-three", AnyView(EnvironmentComparisonView(result: threeMatches, categoryExpansion: .constant(ids)))),
+                ("check-with-keys", AnyView(EnvironmentComparisonView(result: withKeyResults, categoryExpansion: .constant(EnvironmentComparisonView.disclosureIDs(withKeyResults))))),
+                ("preview", AnyView(VStack { RestorePreviewMetrics(domains: blocked.domains); TaskDomainList(domains: blocked.domains, restoreSettingsPreview: true, restorePreviewHierarchy: true, expansion: .constant(previewIDs)) })),
+                ("global-blocker", AnyView(VStack { RestorePreviewMetrics(domains: global.domains); TaskDomainList(domains: global.domains, restoreSettingsPreview: true, restorePreviewHierarchy: true, expansion: .constant(previewIDs)) })),
+                ("planned", AnyView(VStack { RestorePreviewMetrics(domains: twoHostTasks.domains); TaskDomainList(domains: twoHostTasks.domains, restoreSettingsPreview: true, restorePreviewHierarchy: true, expansion: .constant(previewIDs)) })),
+                ("large-collapsed", AnyView(EnvironmentComparisonView(result: large, categoryExpansion: .constant([]))))] {
+                let renderer = ImageRenderer(content: view.padding(20).frame(width: width).background(Color(nsColor: .windowBackgroundColor)).environment(\.colorScheme, scheme))
+                renderer.scale = 2
+                guard let image = renderer.cgImage else { preconditionFailure("SSH fixture render unavailable") }
+                try NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:])!.write(to: output.appendingPathComponent("\(name)-\(Int(width))\(scheme == .dark ? "-dark" : "").png"))
+            }
+        }
+        print("PASS: Check/Preview Host statistics, owner-bound replacement, independent requirements/keys/coverage, unchanged Core/Result accounting, privacy, 2048 Hosts and 21 renders")
+    }
+
     @MainActor static func main() async {
         setbuf(stdout, nil)
         print("CHECK: PresentationTests entry")
         developerIconChecks()
+        if CommandLine.arguments.contains("--ssh-hosts-only") { try! sshHostPresentationChecks(); return }
         if CommandLine.arguments.contains("--developer-icons-only") { return }
         if CommandLine.arguments.contains("--selection-help-only") { try! await selectionHelpChecks(); return }
         if CommandLine.arguments.contains("--developer-selection-only") { try! await developerSelectionChecks(); return }
@@ -5641,6 +5939,7 @@ private struct CaptureRefinementHost: View {
         if CommandLine.arguments.contains("--restore-only") { renderRestoreV2(); return }
         try! captureDisclosureChecks()
         try! sshResolutionPresentationChecks()
+        try! sshHostPresentationChecks()
         let finalItem = TaskItemPresentation(id: "result-item", item: DisplayItem(id: "result-item", title: "Example", status: .information, action: "Confirmed outcome"), state: .completed, resultLabels: ["Applied", "Verified"])
         for state in [TaskRowState.completed, .attention, .failed, .unverified, .notRun] {
             let domain = TaskDomainPresentation(id: "homebrew-casks", title: "Homebrew Applications", symbol: "app", items: [finalItem], confirmedFinalState: state)
@@ -5981,7 +6280,7 @@ private struct CaptureRefinementHost: View {
         precondition(restoreView.contains("var showsFixIssues: Bool { prerequisites.canFixIssues }"))
         precondition(restoreView.contains("if showsFixIssues {") && !restoreView.contains("prerequisites.blockers"))
         let taskSource = try! String(contentsOf: sources.appendingPathComponent("TaskComponents.swift"), encoding: .utf8)
-        precondition(taskSource.contains("private var expanded = []") && taskSource.contains("ForEach(hideMatchingPreviewItems ? RestorePreviewVisibility.items(domain.items) : domain.items)"))
+        precondition(taskSource.contains("private var expanded = []") && taskSource.contains("ForEach(hideMatchingPreviewItems ? RestorePreviewVisibility.items(domain.previewItems) : domain.previewItems)"))
         let previewContent = restoreView.components(separatedBy: "struct RestorePreviewContent: View")[1]
         let previewBody = previewContent.components(separatedBy: "private var previewHeading:")[0]
         let leadingContent = previewContent.components(separatedBy: "private var listLeadingContent:")[1]

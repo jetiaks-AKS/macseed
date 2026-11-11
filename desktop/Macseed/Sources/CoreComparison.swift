@@ -10,7 +10,18 @@ struct CoreComparisonResult: Decodable {
         let repositoryLabels: [String: String]?
         let workspaceLabels: [String: String]?
         let settingLabels: [String: [String: String]]?
-        enum CodingKeys: String, CodingKey { case groups, appStoreNames = "app_store_names", settingLabels = "setting_labels", repositoryLabels = "repository_labels", workspaceLabels = "workspace_labels" }
+        let sshHosts: CoreSSHHosts?
+        enum CodingKeys: String, CodingKey { case groups, sshHosts = "ssh_hosts", appStoreNames = "app_store_names", settingLabels = "setting_labels", repositoryLabels = "repository_labels", workspaceLabels = "workspace_labels" }
+        init(from decoder: Decoder) throws {
+            let values = try decoder.container(keyedBy: CodingKeys.self)
+            groups = try values.decode([CoreRestoreInspection.Group].self, forKey: .groups)
+            appStoreNames = try values.decode([String: String].self, forKey: .appStoreNames)
+            repositoryLabels = try values.decodeIfPresent([String: String].self, forKey: .repositoryLabels)
+            workspaceLabels = try values.decodeIfPresent([String: String].self, forKey: .workspaceLabels)
+            settingLabels = try values.decodeIfPresent([String: [String: String]].self, forKey: .settingLabels)
+            // Reject malformed optional detail without losing a valid aggregate Check.
+            sshHosts = try? values.decodeIfPresent(CoreSSHHosts.self, forKey: .sshHosts)
+        }
     }
     let readOnly: Bool
     let publicationOccurred: Bool
@@ -100,6 +111,10 @@ struct CoreComparisonResult: Decodable {
 
     // Presentation must fail closed on incomplete/contradictory evidence, especially extras.
     // This checks the wire projection, never derives a replacement Core verdict.
+    var qualifiedSSHHosts: CoreSSHHosts? {
+        guard let detail = referencePresentation?.sshHosts else { return nil }
+        do { try detail.validate(comparison: self); return detail } catch { return nil }
+    }
     func validate() throws {
         try secureCheck?.validate()
         let keys = ["matching", "missing", "differing", "unverified", "unsupported", "unresolved", "extra", "unknown_difference"]

@@ -1401,9 +1401,20 @@ App Store names use validated Bundle labels; missing labels stay neutral, IDs re
 in Core/model evidence. Absent `stored_preference` means the saved preference is
 not explicitly set, not that a feature is missing or a system default was inferred.
 
-SSH Configuration uses one aggregate `config` comparison as the product contract;
-Check does not add individual Host rows or manufacture Host Matches from aggregate
-equality, and Swift does not parse SSH configuration. An unresolved IdentityFile row
+SSH Configuration keeps one logical aggregate `config` comparison. When Core supplies
+validated Host evidence, its existing collapsed category shows saved Hosts directly
+as children in canonical order, replacing the technical `config` leaf. No intermediate
+row, subgroup or new disclosure level is added. Individual Matches require Core's
+Host assessment; Swift never parses SSH or derives matches from aggregate equality.
+Check statistics replace the single `config` contribution with each qualified Host
+exactly once: SSH Configuration badges, SSH parent badges and summary cards use the
+same outcomes, keeping Missing and Different separate. Core comparison/Verification
+records and verdict remain aggregate. SSH Keys and independent unresolved coverage
+retain their own counts; Unsupported counts once within Unverified/Needs Attention.
+Absent or invalid optional Host detail keeps the valid aggregate fallback. Fresh
+protected results and Check Again rebuild these statistics without accumulation.
+The direct Host layout is visually accepted; this counting correction is separate.
+An unresolved IdentityFile row
 explains incomplete reference evidence. Complete Core-proven saved-state correspondence
 removes that warning without adding a matching requirement or claiming key usability.
 The underlying unresolved diagnostic remains available without a second generic
@@ -1417,6 +1428,36 @@ specific to IdentityFile dependency evidence; unrelated opaque records are not
 renamed and aggregate config Matches do not imply full source coverage.
 Rebuild Preview uses the same **SSH configuration coverage** label only for its typed
 SSH `scope` warning with reason `partial_source_coverage`; behavior and counts are unchanged.
+
+Rebuild Preview uses the same direct Host hierarchy for the current selected scope,
+with existing Already Matches / Changes Planned / Needs Attention vocabulary.
+`RestorePreviewVisibility` continues to hide matching rows. Planned Hosts require
+the authoritative aggregate plan and operation readiness; conflicting Hosts and
+missing Hosts under shared blockers never promise changes. Existing secondary item
+text explains a confirmed conflict, while shared inspection/prerequisite problems
+use the existing category/Prerequisites presentation and suppression rules. Matching
+and planned rows remain compact. Selection controls and aggregate execution/Result
+are unchanged; Preview evidence is not post-execution success. The optional
+Host projection follows the final Core Secure Compare decision when SSH Keys are
+selected, retaining the aggregate fallback for older responses. The
+[Core metadata](core/APPLICATION-INTERFACE.md#ssh-host-presentation-evidence) is excluded
+from persisted operation logs and Diagnostic Reports.
+
+Check and Preview statistics replace only the requirement that owns qualified Host
+detail. Check uses its comparison record's domain/item identity; Preview keeps
+`TaskDomainPresentation.items` as the original operation projection and keys
+`previewItemDetails` by source domain/item identity. `previewItems` replaces that
+owner once and supplies category/parent badges, Preview metrics, attention summaries
+and the all-matching total. Matching rows still follow ordinary visibility rules.
+Two planned Hosts count as two user-facing items while remaining one Core operation.
+Execution, receipts, Verification and Result continue using the original requirements.
+
+The current Host metadata version qualifies the saved `config` requirement; it is
+not a one-requirement limit on SSH Configuration. Other independently qualified
+requirements retain their own rows and counts, even when display labels coincide.
+Detail identities include their owner; labels never establish ownership. Future
+Core capabilities must supply their own validated identity/evidence before using
+this existing hierarchy. No additional SSH sources or grammar are implemented here.
 
 Identical Git/Workspace display names never deduplicate requirements. A checkout and
 a selected Workspace folder may share one canonical destination while retaining two

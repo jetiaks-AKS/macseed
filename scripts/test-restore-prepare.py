@@ -188,6 +188,76 @@ class RestorePrepareTests(unittest.TestCase):
         self.assertTrue(plan['readiness']['ready'])
         self.assertEqual(target.read_bytes(), original)
 
+    def test_ssh_host_preview_uses_authorized_aggregate_plan(self):
+        blueprint = self.stage / 'blueprint.conf'
+        blueprint.write_text(blueprint.read_text().replace('ssh-configuration="false"', 'ssh-configuration="true"'))
+        directory = self.home / '.ssh'
+        directory.mkdir(mode=0o700)
+        target = directory / 'config'
+        first = b'Host zebra\n    HostName private.invalid\n'
+        second = b'Host alpha\n    HostName other.invalid\n'
+        source = self.stage / 'generated/ssh/config.snapshot'
+        selected = {'categories': ['ssh-configuration'], 'items': {}}
+        for partial, actual, states, dispositions in (
+                (False, first + second, ['matching', 'matching'], ['satisfied', 'satisfied']),
+                (False, first, ['matching', 'missing'], ['satisfied', 'planned']),
+                (False, None, ['missing', 'missing'], ['planned', 'planned']),
+                (False, first.replace(b'private.invalid', b'conflict.invalid'), ['differing', 'missing'], ['blocked', 'blocked']),
+                (True, first, ['matching', 'missing'], ['satisfied', 'blocked']),
+                (True, None, ['missing', 'missing'], ['planned', 'planned']),
+                (False, b'Include other\n' + first, ['unsupported', 'unsupported'], ['blocked', 'blocked'])):
+            with self.subTest(partial=partial, states=states, dispositions=dispositions):
+                source.unlink(missing_ok=True)
+                bundle.write_file(source, (f'# toolkit-ssh-snapshot: 1\n# status: {"partial" if partial else "ready"}\n'
+                                          f'# excluded-profiles: {1 if partial else 0}\n\n').encode() + first + second)
+                if actual is None:
+                    target.unlink(missing_ok=True)
+                else:
+                    target.write_bytes(actual); target.chmod(0o600)
+                self.archive.unlink(missing_ok=True)
+                self.pack()
+                plan = self.plan_result(selection=selected)
+                detail = plan['ssh_host_presentation']
+                self.assertEqual(detail['prepared_plan_id'], plan['prepared_plan_id'])
+                self.assertEqual([h['label'] for h in detail['hosts']], ['zebra', 'alpha'])
+                self.assertEqual([h['state'] for h in detail['hosts']], states)
+                self.assertEqual([h['disposition'] for h in detail['hosts']], dispositions)
+                self.assertEqual(len([r for r in plan['plan'] if r['item_id'] in ('config', 'missing-profiles')]), 1)
+                self.assertEqual(target.read_bytes() if target.exists() else None, actual)
+                self.assertNotIn('private.invalid', json.dumps(plan))
+                public = dict(plan); public.pop('ssh_host_presentation')
+                self.assertNotIn('zebra', json.dumps(public))
+
+    def test_ssh_host_preview_subset_freshness_and_global_blocker(self):
+        target = self.ssh_prerequisite_fixture()
+        source = self.stage / 'generated/ssh/config.snapshot'
+        source.write_bytes(source.read_bytes() + b'Host added\n    HostName added.invalid\n')
+        target.write_bytes(self.ssh_payload); target.chmod(0o600)
+        self.pack()
+        selected = {'categories': ['ssh-configuration'], 'items': {}}
+        first = self.plan_result(selection=selected)
+        item = 'restore:' + hashlib.sha256(b'ssh-configuration\0added').hexdigest()
+        narrowed = {'categories': [], 'items': {'ssh-configuration': [item]}}
+        second = self.plan_result(selection=narrowed)
+        self.assertEqual([h['label'] for h in second['ssh_host_presentation']['hosts']], ['added'])
+        self.assertNotEqual(first['prepared_plan_id'], second['prepared_plan_id'])
+        result, events = self.execute(first['prepared_plan_id'], selection=narrowed)
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(events[-1]['data']['code'], 'stale_plan')
+        target.write_bytes(self.ssh_payload + b'# changed observation\n')
+        result, events = self.execute(second['prepared_plan_id'], selection=narrowed)
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(events[-1]['data']['code'], 'stale_plan')
+        self.assertFalse(events[-1]['data']['publication_started'])
+        # Readiness can block a valid SSH addition for an operation-wide reason.
+        # Use the existing internet prerequisite fixture, not a replacement SSH planner.
+        curl = self.root / 'bin/curl'
+        curl.write_text('#!/bin/bash\nexit 1\n'); curl.chmod(0o700)
+        blocked = self.plan_result()
+        self.assertFalse(blocked['readiness']['ready'])
+        self.assertFalse(any(h['disposition'] == 'planned' for h in blocked['ssh_host_presentation']['hosts']))
+        self.assertFalse((self.root / 'mutations').exists())
+
     def test_ssh_merge_prepare_execute_repeat_and_stale_evidence(self):
         self.allow_application_bootstrap()
         blueprint = self.stage / 'blueprint.conf'
@@ -248,6 +318,7 @@ class RestorePrepareTests(unittest.TestCase):
         self.assertTrue(plan['ssh_resolution']['ready'])
         self.assertTrue(plan['readiness']['ready'])
         self.assertEqual([row['item_id'] for row in rows if row['disposition'] == 'warning'], ['identity-references'])
+        self.assertEqual([row['disposition'] for row in plan['ssh_host_presentation']['hosts']], ['planned'])
         self.assertFalse(any(row['item_id'] == 'publication' for row in rows))
         result, events = self.execute(plan['prepared_plan_id'])
         self.assertEqual(result.returncode, 0, events)
@@ -255,8 +326,10 @@ class RestorePrepareTests(unittest.TestCase):
         self.assertFalse((target.parent / 'key').exists())
         self.assertEqual(events[-2]['data']['verification']['verdict'], 'selected_requirements_verified')
         self.assertEqual(events[-2]['data']['ssh_identity_dependencies']['findings'], ['missing'])
+        self.assertNotIn('ssh_host_presentation', events[-2]['data'])
         plan = self.plan_result()
         self.assertTrue(plan['readiness']['ready'])
+        self.assertEqual([row['state'] for row in plan['ssh_host_presentation']['hosts']], ['matching'])
         self.assertTrue(any(row['domain'] == 'ssh-configuration' and row['item_id'] == 'config'
                             and row['disposition'] == 'satisfied' for row in plan['plan']))
 

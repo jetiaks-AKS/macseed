@@ -1071,6 +1071,53 @@ private struct StatusAnchorFrames: PreferenceKey {
         unresolved["records"] = records
         let partial = try reconcile(unresolved)
         precondition(partial.needsAttention, "Correlation must preserve unrelated diagnostic evidence")
+        // Fresh ordinary/protected results must replace, never accumulate Host counts.
+        func hostFixture(_ states: [String]) -> Object {
+            let kind = states.contains("differing") ? "differing" : states.contains("missing") ? "missing" : "matching"
+            var value = ordinary, records = ordinary["records"] as! Object
+            var fact = rows[0]; fact["comparison_kind"] = kind
+            value["comparison_records"] = [fact]
+            records["verification_records"] = [["record_id": "v:0", "domain": "ssh-configuration", "item_id": "config", "predicate": "supported_config_match"]]
+            value["records"] = records
+            var summary = ordinary["comparison"] as! Object, counts = summary["counts"] as! [String: Int]
+            counts["matching"] = 0; counts[kind] = 1; summary["counts"] = counts
+            summary["verdict"] = kind == "matching" ? "no_differences_detected" : "differences_detected"; value["comparison"] = summary
+            value["reference_presentation"] = ["groups": [], "app_store_names": [:], "ssh_hosts": [
+                "version": 1, "snapshot_id": bundleID, "observation_id": bundleID, "comparison_record_id": "v:0",
+                "hosts": states.enumerated().map { index, state in ["item_id": CoreSSHHosts.identity("host-\(index)"), "label": "host-\(index)",
+                    "state": state, "reason": state == "differing" ? "target_conflict" : NSNull()] as Object }]]
+            return value
+        }
+        func hostCounts(match: Int, missing: Int = 0, different: Int = 0) {
+            let result = model.presentation!
+            let ssh = result.sections.flatMap(\.entries).first { $0.id == CaptureHierarchy.sshID }!
+            precondition(result.counts["matching"] == match && result.counts["missing"] == missing && result.counts["differing"] == different)
+            precondition(result.categoryCount(.match, category: ssh.category, children: ssh.children) == match)
+            precondition(result.categoryCount(.missing, category: ssh.category, children: ssh.children) == missing)
+            precondition(result.categoryCount(.different, category: ssh.category, children: ssh.children) == different)
+        }
+        try write("matching", core.appendingPathComponent("mode"))
+        runtime.start(CoreRequest(.capabilities), location: location); await runtime.waitForCompletion()
+        try data(hostFixture(["matching", "matching", "matching"])).write(to: core.appendingPathComponent("ordinary.json"))
+        model.selectBundle(bundle); model.compare(); try await finish()
+        hostCounts(match: 5) // Three Hosts plus two independently checked keys.
+        try write("mixed", core.appendingPathComponent("mode"))
+        model.checkSSHKeys(); try await finish()
+        hostCounts(match: 4, missing: 1)
+        let previousCheckID = model.operationID
+        try data(hostFixture(["matching", "missing", "differing"])).write(to: core.appendingPathComponent("ordinary.json"))
+        try write("matching", core.appendingPathComponent("mode"))
+        model.compare(); precondition(model.presentation == nil); try await finish()
+        precondition(model.operationID != previousCheckID)
+        hostCounts(match: 3, missing: 1, different: 1)
+        let otherBundle = directory.appendingPathComponent("Other.mbt"); try write("other fixture", otherBundle)
+        try data(ordinary).write(to: core.appendingPathComponent("ordinary.json"))
+        model.selectBundle(otherBundle)
+        precondition(model.presentation == nil && model.secureInventory == nil && model.selectedSecureIDs.isEmpty)
+        model.compare(); try await finish()
+        hostCounts(match: 3) // Legacy config plus two keys; no previous Host evidence.
+        precondition(model.presentation!.categories.first { $0.id == "ssh-configuration" }!.items.map(\.title) == ["config"])
+        print("PASS: Host counts refresh after protected Check, scoped retry, Check Again and Saved Environment changes without accumulation")
         print("PASS: unified Check, one-use authentication, automatic all-key scope, scoped retry, truthful partial coverage, private decoding and light/dark production Views")
     }
 

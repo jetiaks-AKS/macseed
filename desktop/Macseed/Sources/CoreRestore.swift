@@ -99,21 +99,38 @@ struct CoreSecureComparison: Codable, Equatable, Sendable {
     let includeSecure: Bool
     let comparisonOperationID: String
     var sshResolution: CoreSSHResolution? = nil
+    var sshHostPresentation: CoreSSHHosts? = nil
     enum CodingKeys: String, CodingKey {
+        case sshHostPresentation = "ssh_host_presentation"
         case sshResolution = "ssh_resolution"
         case decision, selection, targetState = "target_state", sourceFingerprint = "source_fingerprint"
         case preparedPlanID = "prepared_plan_id", includeSecure = "include_secure", comparisonOperationID = "comparison_operation_id"
     }
     func validate(plan: CoreRestorePreparation, operationID: String, requestSelection: CoreRestoreSelection? = nil) throws {
+        try sshHostPresentation?.validate(update: self, plan: plan)
         func digest(_ value: String?) -> Bool { value?.range(of: "^[0-9a-f]{64}$", options: .regularExpression) != nil }
         guard sshResolution?.valid != false, (plan.sshResolution == nil || sshResolution != nil), plan.includeSecure, includeSecure, selection == (requestSelection ?? plan.selection), preparedPlanID == plan.preparedPlanID,
               sourceFingerprint == plan.planDiagnostics?["bundle"], digest(sourceFingerprint), digest(preparedPlanID),
               comparisonOperationID == operationID, operationID.range(of: "^[A-Za-z0-9_-]{1,64}$", options: .regularExpression) != nil,
               decision == .conflict ? targetState == nil : digest(targetState) else { throw CoreRuntimeError.malformedEvent }
     }
+    // Display aliases never return in an Execute receipt or ordinary request.
+    func encode(to encoder: Encoder) throws {
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(decision, forKey: .decision)
+        try values.encodeIfPresent(targetState, forKey: .targetState)
+        try values.encode(sourceFingerprint, forKey: .sourceFingerprint)
+        try values.encode(preparedPlanID, forKey: .preparedPlanID)
+        try values.encode(selection, forKey: .selection)
+        try values.encode(includeSecure, forKey: .includeSecure)
+        try values.encode(comparisonOperationID, forKey: .comparisonOperationID)
+        try values.encodeIfPresent(sshResolution, forKey: .sshResolution)
+    }
 }
 
 struct CoreRestorePreparation: Decodable {
+    var sshHostPresentation: CoreSSHHosts? = nil
+    var effectiveSSHHosts: CoreSSHHosts? { includeSecure ? secureComparison?.sshHostPresentation : sshHostPresentation }
     var secureComparison: CoreSecureComparison? = nil
     var sshResolution: CoreSSHResolution? = nil
     var effectiveSSHResolution: CoreSSHResolution? { includeSecure ? secureComparison?.sshResolution : sshResolution }
@@ -352,6 +369,7 @@ struct CoreRestorePreparation: Decodable {
     }
     enum CodingKeys: String, CodingKey {
         case effectiveSelection = "effective_selection", applicationDuplicates = "application_duplicates"
+        case sshHostPresentation = "ssh_host_presentation"
         case sshResolution = "ssh_resolution"
         case secureDestinationScope = "secure_destination_scope"
         case scopeWarnings = "scope_warnings"
@@ -367,6 +385,7 @@ struct CoreRestorePreparation: Decodable {
     }
     func validate(expected: CoreRestoreSelection, catalog: CoreRestoreInspection.Inventory, expectedIncludeSecure: Bool = false) throws {
         guard sshResolution?.valid != false else { throw CoreRuntimeError.malformedEvent }
+        try sshHostPresentation?.validate(plan: self, catalog: catalog)
         let effective = effectiveSelection ?? selection
         if effectiveSelection != nil || applicationDuplicates != nil {
             let duplicates = applicationDuplicates ?? []

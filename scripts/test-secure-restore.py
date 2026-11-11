@@ -146,7 +146,9 @@ class SecureRestoreTests(unittest.TestCase):
             request['parameters']['ssh_approvals'] = True
             self.write_approvals(approvals, 'secure-test')
         if comparison is not None:
-            request['parameters']['secure_comparison'] = comparison
+            # Match Desktop's receipt encoder: display evidence is never echoed.
+            request['parameters']['secure_comparison'] = {key: value for key, value in comparison.items()
+                                                          if key != 'ssh_host_presentation'}
         command = ['bash', str(self.project / 'modules/core/application-interface/core.sh'),
                    '--secure-fd', str(99999 if invalid_fd else fd)]
         child = subprocess.Popen(command, cwd=self.project, env=self.environment, pass_fds=(fd,),
@@ -643,8 +645,13 @@ class SecureRestoreTests(unittest.TestCase):
         self.assertEqual(len(findings), 1, events)
         receipt = next(row['data'] for row in events if row['type'] == 'result')
         self.assertEqual(set(receipt), {'decision', 'target_state', 'source_fingerprint', 'prepared_plan_id',
-                                        'selection', 'include_secure', 'comparison_operation_id', 'ssh_resolution'})
-        for private in ('private-host', 'private.invalid', 'id_disposable', 'id_external', str(self.home), '~/.ssh'):
+                                        'selection', 'include_secure', 'comparison_operation_id', 'ssh_resolution', 'ssh_host_presentation'})
+        self.assertEqual([row['label'] for row in receipt['ssh_host_presentation']['hosts']], ['private-host'])
+        public = json.loads(json.dumps(events))
+        for event in public:
+            event.get('data', {}).pop('ssh_host_presentation', None)
+        self.assertNotIn('private-host', json.dumps(public))
+        for private in ('private.invalid', 'id_disposable', 'id_external', str(self.home), '~/.ssh'):
             self.assertNotIn(private, json.dumps(events))
         return plan, findings[0], receipt
 
@@ -781,10 +788,12 @@ os.execv(native,[native,*args])
         self.assertEqual(blocked['ssh_resolution']['dependencies']['findings'], ['unresolved'])
         plan = self.resolution_prepare(mapping, approval)
         self.assertTrue(plan['readiness']['ready'], plan)
+        self.assertEqual(plan['ssh_host_presentation']['hosts'][0]['disposition'], 'blocked')
         status, events, _ = self.peer(operation='secure_restore_compare', plan=plan['prepared_plan_id'], mapping=mapping, approvals=approval)
         self.assertEqual(status, 0, events)
         receipt = next(row['data'] for row in events if row['type'] == 'result')
         self.assertTrue(receipt['ssh_resolution']['ready'])
+        self.assertEqual(receipt['ssh_host_presentation']['hosts'][0]['disposition'], 'planned')
         changed = json.loads(json.dumps(approval)); changed['items'][0]['reference'] = '~/.ssh/id_disposable'
         status, events, _ = self.peer(plan=plan['prepared_plan_id'], mapping=mapping, approvals=changed, comparison=receipt)
         self.assertEqual(status, 2); self.assertEqual(events[-1]['data']['code'], 'stale_plan')
@@ -808,6 +817,7 @@ os.execv(native,[native,*args])
         self.assertEqual(receipt['ssh_resolution']['action'], 'noop')
         self.assertTrue(receipt['ssh_resolution']['ready'])
         self.assertFalse(receipt['ssh_resolution']['pending'])
+        self.assertEqual(receipt['ssh_host_presentation']['hosts'][0]['state'], 'matching')
         self.assertEqual(before, [(str(path.relative_to(self.home)), path.stat().st_ino, path.stat().st_mtime_ns,
             path.read_bytes() if path.is_file() else None) for path in sorted(self.home.rglob('*'))])
 
@@ -859,6 +869,7 @@ os.execv(native,[native,*args])
         self.assertEqual(plan['ssh_identity_dependencies']['findings'], ['missing'])
         self.assertEqual(finding['findings'], ['selected_expected'])
         self.assertEqual(receipt['decision'], 'import_required')
+        self.assertEqual(receipt['ssh_host_presentation']['hosts'][0]['disposition'], 'planned')
         self.assertFalse((self.home / '.ssh').exists())
         directory = self.home / '.ssh'; directory.mkdir(mode=0o700)
         for suffix, raw in (('', private), ('.pub', public)):
@@ -869,9 +880,19 @@ os.execv(native,[native,*args])
         self.assertEqual(plan['ssh_identity_dependencies']['findings'], ['unresolved'])
         self.assertEqual(finding['findings'], ['selected_expected'], 'authenticated encrypted envelope is still not a local unlocked pair')
         self.assertEqual(receipt['decision'], 'all_match')
+        self.assertEqual(receipt['ssh_host_presentation']['hosts'][0]['disposition'], 'planned')
         self.assertEqual(before, [(p.name, p.stat().st_ino, p.stat().st_mtime_ns, p.read_bytes()) for p in sorted(directory.iterdir())])
         self.assertFalse((directory / 'config').exists())
         self.assertFalse((self.project / 'config/generated').exists())
+
+        def changed_config(challenge, _number, _process):
+            if challenge['kind'] == 'bundle_unlock':
+                bundle.write_file(directory / 'config', b'# external change during comparison\n')
+        status, events, _ = self.peer(changed_config, operation='secure_restore_compare', plan=plan['prepared_plan_id'])
+        self.assertEqual(status, 2, events)
+        self.assertEqual(events[-1]['data']['code'], 'stale_plan')
+        self.assertFalse(any('ssh_host_presentation' in event.get('data', {}) for event in events))
+        self.assertEqual((directory / 'config').read_bytes(), b'# external change during comparison\n')
 
     def test_dependency_custom_selected_excluded_and_changed_mapping(self):
         self.multiple_fixture(protected=True)
@@ -905,6 +926,7 @@ os.execv(native,[native,*args])
         _, finding, receipt = self.dependency_compare()
         self.assertEqual(finding['findings'], ['unresolved', 'unsafe_target'])
         self.assertEqual(receipt['decision'], 'conflict')
+        self.assertEqual(receipt['ssh_host_presentation']['hosts'][0]['disposition'], 'blocked')
         self.assertEqual(target.read_bytes(), b'preserve conflict')
         self.assertFalse(Path(str(target) + '.pub').exists())
         self.assertFalse((directory / 'config').exists())
