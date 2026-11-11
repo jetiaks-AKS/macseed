@@ -72,6 +72,23 @@ class RunnerTests(unittest.TestCase):
             self.assertEqual(len(assigned), len(set(assigned)))
             self.assertEqual(sum(any(row['suite'] == suite for row in part) for part in parts), 4)
         self.assertEqual({row['suite'] for part in parts for row in part}, set(inventory))
+        admitted = {'scripts/test-homebrew-graceful-stop.py': 23,
+                    'scripts/test-restore-cancellation-mocks.py': 10,
+                    'scripts/test-external-ssh-identities.py': 10}
+        discovered = {suite: list(load(ROOT / suite)) for suite in inventory if suite.endswith('.py')}
+        for suite, count in admitted.items():
+            self.assertEqual(len(discovered[suite]), count)
+            assigned = [row for part in parts for row in part if row['suite'] == suite]
+            self.assertEqual(len(assigned), 1)
+            self.assertEqual(assigned[0]['ids'], [])  # Whole suite, no duplicate method dispatch.
+        expected = {(suite, key) for suite, ids in discovered.items() for key in ids}
+        assigned = [(row['suite'], key) for part in parts for row in part
+                    if row['suite'] in discovered for key in row['ids'] or discovered[row['suite']]]
+        self.assertEqual(set(assigned), expected)
+        self.assertEqual(len(assigned), len(expected))
+        bundled = 'desktop/Macseed/Tests/BundledAgeTests.py'
+        self.assertNotIn(bundled, inventory)
+        self.assertEqual(len(load(ROOT / bundled)), 9)
         def expanded_load(path):
             suite = path.relative_to(ROOT).as_posix()
             return dict.fromkeys(original[suite] + ['new.method'])
@@ -195,8 +212,9 @@ class RunnerTests(unittest.TestCase):
         functions = source[source.index('# One inventory'):source.index('\nbuild_app() {')]
         summary, marker = self.root / 'desktop.md', self.root / 'later'
         for completed, failed, later in (
-                (['Debug app build'], 'Compile shared test sources', 'Compile PresentationTests'),
-                (['Debug app build', 'Compile shared test sources', 'Compile PresentationTests'],
+                (['Debug app build'], 'BundledAgeTests (Python)', 'Compile shared test sources'),
+                (['Debug app build', 'BundledAgeTests (Python)'], 'Compile shared test sources', 'Compile PresentationTests'),
+                (['Debug app build', 'BundledAgeTests (Python)', 'Compile shared test sources', 'Compile PresentationTests'],
                  'PresentationTests', 'Compile SettingsTests')):
             with self.subTest(stage=failed):
                 child = self.root / 'failed.py'
@@ -217,6 +235,16 @@ class RunnerTests(unittest.TestCase):
                 self.assertIn('Exit status: 17.', text)
                 self.assertFalse(marker.exists())
                 self.assertFalse(summary.with_suffix('.md.tmp').exists())
+        # A missing test tool is a failed mandatory stage, never a skip/PASS.
+        script.write_text('set -euo pipefail\nconfiguration=Debug\n' + functions +
+                          '\nrun_stage true\nrun_stage "$1"\ntouch "$3"\n')
+        result = subprocess.run(['bash', str(script), str(self.root / 'missing-python'), '--test', str(marker)],
+            env=dict(os.environ, MACSEED_DESKTOP_SUMMARY=str(summary)), capture_output=True, timeout=10)
+        self.assertNotEqual(result.returncode, 0, result.stderr)
+        self.assertIn(f'Exit status: {result.returncode}.', summary.read_text())
+        self.assertIn('| BundledAgeTests (Python) | failed |', summary.read_text())
+        self.assertIn('| Compile shared test sources | not-run |', summary.read_text())
+        self.assertFalse(marker.exists())
 
     def test_case_sharded_cli_selection_is_read_only(self):
         inventory = re.findall(r'^    (scripts/test-\S+)$', (ROOT / 'scripts/test.sh').read_text(), re.M)

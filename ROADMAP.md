@@ -219,6 +219,15 @@ implementations or the closed general D1–D4/R5 Restore audit.
 This is the single authoritative execution sequence toward Macseed 1.0.
 Complete one bounded checkpoint at a time, preserving accepted scope and evidence.
 
+**Immediate CI checkpoint, before Fast CI / Full CI separation:** all 52 formerly
+standalone Python methods are registered in mandatory Full CI (43 Core + 9 Desktop).
+The inventory is 47 Core suites / 767 Python methods plus nine Bundled Age methods;
+12 native Desktop suites and two Restore subsets remain. Registration is implemented;
+[Issue #1](https://github.com/jetiaks-AKS/macseed/issues/1) stays open until successful
+hosted execution proves all 52 additions. See the
+[admission evidence](docs/qualification/TEST-SUITE-AUDIT-2026-11-10.md#mandatory-admission-follow-up--11-november-2026).
+No Fast/Full split is implemented by this checkpoint.
+
 1. **Documentation consolidation and product clarity — Completed within the approved scope.**
    Roadmap, positioning and contextual Selection wording/typography are finalized.
    Remaining qualification gates and completed contracts retain their boundaries.
@@ -243,10 +252,9 @@ Complete one bounded checkpoint at a time, preserving accepted scope and evidenc
    accessibility and runtime hardening (16K). Close the **OPEN mandatory pre-release
    [52-method test-coverage gate (Issue #1)](https://github.com/jetiaks-AKS/macseed/issues/1)**
    tracked in [TODO](TODO.md#cancellation-recovery-and-runtime-reliability).
-   These standalone Python methods are outside canonical Full CI: configured green
-   #161 does not qualify them or establish complete intended release qualification.
-   Every method needs mandatory admission, a separate enforceable integration/release
-   gate, or documented proof of equivalent mandatory coverage. Separately decide the
+   All 52 Python methods are now registered in mandatory Core/Desktop CI; hosted
+   qualification remains open. Configured green #161 predates this admission and
+   does not qualify it or establish complete release qualification. Separately decide the
    standalone native integration and controlled real-GUI/accessibility gates before
    release, without automatically adding GUI work to ordinary hosted jobs.
    Recovery gates depend on step 4; preserve accepted

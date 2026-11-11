@@ -216,22 +216,20 @@ broader Git and macOS 27 gates below remain separate from that completed repair 
   deadlines alone do not establish a stall.
 - [ ] Independently qualify a real approximately 180-second no-progress watchdog
   stall, owned descendant termination and continued independent work.
-- [ ] **OPEN — mandatory test-coverage qualification before release ([Issue #1](https://github.com/jetiaks-AKS/macseed/issues/1)):**
-  account for all **52 standalone Python methods currently outside canonical Full CI**:
+- [ ] **IMPLEMENTED registration; HOSTED QUALIFICATION OPEN ([Issue #1](https://github.com/jetiaks-AKS/macseed/issues/1)):**
+  confirm mandatory Full CI execution of all **52 newly admitted Python methods**:
   `scripts/test-homebrew-graceful-stop.py` (**23**),
   `scripts/test-restore-cancellation-mocks.py` (**10**),
   `scripts/test-external-ssh-identities.py` (**10**) and
-  `desktop/Macseed/Tests/BundledAgeTests.py` (**9**). The configured green Full CI
-  #161 covers its existing inventory; it did not qualify these 52 methods and does
-  not establish complete intended release qualification.
-  Record an explicit disposition for every method: mandatory Full CI admission,
-  a separate enforceable integration/release gate, or exclusion only after documented
-  proof of equivalent mandatory coverage at the same architectural boundary.
-  Verify isolation, process ownership, dependencies and hosted suitability before
-  admission; preserve unique negative/security assertions and classify the older
-  cancellation harness's nonduplicated contracts. Preserve the canonical runner
-  and four-shard CI structure. Keep this task open until gated acceptance is demonstrated;
-  the [audit](docs/qualification/TEST-SUITE-AUDIT-2026-11-10.md) itself does not admit tests.
+  `desktop/Macseed/Tests/BundledAgeTests.py` (**9**). The first three suites now belong
+  to canonical Core regression (47 suites / 767 Python methods across four shards);
+  Bundled Age belongs to the mandatory Desktop stage after trusted artifact preparation.
+  Total: 776 mandatory Python methods; all 12 native suites and two Restore subsets
+  remain. Complete this immediate checkpoint **before Fast CI / Full CI separation**.
+  Keep Issue #1 open until mandatory hosted results prove all 52 methods PASS exactly
+  once, with no missing/skipped work. CI #161 predates admission and cannot qualify
+  it. See the [admission follow-up](docs/qualification/TEST-SUITE-AUDIT-2026-11-10.md#mandatory-admission-follow-up--11-november-2026)
+  for focused local evidence, isolation, dependencies and cost estimates.
 - [ ] **Before release — separate standalone native integration gate:** explicitly
   decide and document enforceable qualification for
   `desktop/Macseed/Tests/ExternalIdentityTests.swift` under Issue #1. This native

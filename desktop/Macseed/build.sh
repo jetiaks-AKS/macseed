@@ -15,6 +15,7 @@ suites=(PresentationTests SettingsTests HomebrewSetupTests HomebrewPackageTests 
 restore_subsets=(--final-restore-ux-only --assisted-appstore-only)
 stages=("$configuration app build")
 if [[ "${2:-}" == --test ]]; then
+    stages+=("BundledAgeTests (Python)")
     if [[ "$configuration" == Debug ]]; then stages+=("Compile shared test sources"); fi
     for suite in "${suites[@]}"; do stages+=("Compile $suite" "$suite"); done
     for subset in "${restore_subsets[@]}"; do stages+=("RestoreTests $subset"); done
@@ -92,6 +93,10 @@ run_tests=false
 if [[ "${2:-}" == --test ]]; then run_tests=true; fi
 run_stage build_app
 if [[ "${2:-}" == --test ]]; then
+    # The unittest class prepares both pinned archives through prepare-age.py.
+    # Reuse bounded execution, exact method reports and owned-process cleanup.
+    run_stage "$python_runtime" -B ../../scripts/test_runner.py \
+        desktop/Macseed/Tests/BundledAgeTests.py --
     presentation_sources=()
     for source_file in Sources/*.swift; do
         if [[ "$source_file" != Sources/MacseedApp.swift ]]; then presentation_sources+=("$source_file"); fi

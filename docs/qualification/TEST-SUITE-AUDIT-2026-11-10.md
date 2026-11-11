@@ -1,5 +1,139 @@
 # Test suite audit and optimization — 10 November 2026
 
+## Mandatory admission follow-up — 11 November 2026
+
+**IMPLEMENTED; HOSTED NOT YET VERIFIED.** This follow-up starts at optimization
+commit `aba3c26e2aedee337c18c34d8f28be22a630f91f` and implements
+[Issue #1](https://github.com/jetiaks-AKS/macseed/issues/1). The original audit below
+remains historical evidence, including its “outside Full CI” labels and #161 costs.
+Those labels are superseded by the execution ownership in this section.
+
+| Inventory | Before admission | After admission |
+| --- | ---: | ---: |
+| Canonical Core suites | 44 | 47 |
+| Core Python methods | 724 | 767 |
+| Shell harnesses | 26 | 26 |
+| Core split cases + whole planning units | 346 + 39 | 346 + 42 |
+| Mandatory Desktop Python methods | 0 | 9 |
+| Mandatory Python methods across both jobs | 724 | **776** |
+| Native Desktop suites / Restore subsets | 12 / 2 | 12 / 2 |
+| Identified Python methods outside mandatory CI | 52 | **0** |
+
+Counts were discovered with `test_unittest.load`, not inferred from this table.
+The four-shard plan is deterministic; expanded method union equals discovery with
+no duplicates or omissions. All 52 original method IDs are retained. The existing
+[Python method ledger](#python-method-ledger) lists every method in these four
+files; **every listed method** has the same mandatory owner as its file:
+
+| Source / class | Methods | Mandatory execution owner with current weights |
+| --- | ---: | --- |
+| `scripts/test-homebrew-graceful-stop.py` / `GracefulMocks` | 23 | Core `regression (4/4)`, whole suite through `scripts/test.sh` |
+| `scripts/test-restore-cancellation-mocks.py` / `CancellationMocks` | 10 | Core `regression (2/4)`, whole suite through `scripts/test.sh` |
+| `scripts/test-external-ssh-identities.py` / `ExternalIdentityTests` | 10 | Core `regression (3/4)`, whole suite through `scripts/test.sh` |
+| `desktop/Macseed/Tests/BundledAgeTests.py` / `BundledAgeTests` | 9 | Desktop `build.sh Debug --test`, `BundledAgeTests (Python)` stage |
+
+There is no second Core inventory or duplicate Desktop dispatch. Existing
+`test_runner.py` / `test_unittest.py` own deadlines, method completeness, process
+observation, cleanup and typed results for all four groups. Runner regression now
+checks the full expanded Core union and the 43 + 9 admission. Desktop stage checks
+cover failure and unavailable tools, including failed/not-run summary propagation.
+The workflow retains lint, four independent regression VMs, the existing Desktop
+VM, and the mandatory always-run `validate` aggregate. Fast/Full separation is not
+part of this checkpoint.
+
+### Fixtures and platform prerequisites
+
+Graceful Stop and cancellation mocks now patch HOME to a private per-case directory
+and register cleanup immediately. OwnedBootstrap still receives only a disposable
+mock `bootstrap.sh`. Process observation via `/bin/ps` is required; observation
+failure stops before launch. Birth-checked cleanup and the detached-before-first-
+observation limitation remain intact. External SSH uses temporary keys/HOME,
+absolute `/usr/bin/ssh-keygen`, the real read-only inspection path, and private
+operation controls. Its global temporary-inventory assertion still requires
+sequential execution on one machine. No real Bootstrap or user SSH changes ran.
+
+A focused checkpoint case exposed a stale fixture signature: its mocked
+`prepared_restore` rejected current keyword arguments. The fixture accepts those
+arguments now; cancellation/publication assertions are unchanged. No production
+functionality or existing security assertion was removed or weakened.
+
+Desktop app preparation already verifies the native age artifact. The added
+unittest class fixture calls the same `prepare-age.py` for **both** pinned v1.3.2
+archives in a disposable app, preserving the built native helper. Tests select
+`platform.machine()` for executable fixtures and the opposite artifact for
+wrong-architecture rejection; archive-only tests inspect both targets. Missing
+downloads/tools, corrupt cache, unsafe paths and unsupported hosts fail without
+skip or system-age fallback. Temporary app/HOME cleanup is mandatory.
+
+[GitHub's runner reference](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)
+currently maps `macos-latest` to arm64 and lists separate Intel labels. Both archives
+from the [official v1.3.2 release](https://github.com/FiloSottile/age/releases/tag/v1.3.2)
+were downloaded into an empty disposable cache through the existing trusted
+preparer: arm64 **16.137 s**, amd64 **15.855 s**, **31.995 s total**, 37,483,585 bytes.
+Archive hashes, member rules, binary hashes/architecture and license were verified;
+the host-native arm64 helper passed its version probe. This is local availability
+evidence, not a hosted download guarantee or native Intel execution qualification.
+
+### Focused validation and remaining qualification
+
+No full local Core regression or full Desktop build/regression ran. Selected
+methods used canonical supervision, sequentially; remaining methods are **NOT RUN
+locally**, despite complete discovery/registration. No prior full-suite PASS is
+reused as qualification of these additions.
+
+| Focused evidence | Result |
+| --- | --- |
+| Discovery, exact 47-suite plan, all 767 + 9 IDs, no skipped decorators, native inventories unchanged | PASS |
+| Runner: exact/disjoint inventory, stage summary, discovery failure, Desktop descendant deadline, dirty cleanup, cleanup error | 6 selected methods PASS |
+| Graceful Stop: cask postchecks, channel loss, shared controller, all three preparation/publication checkpoints | 6 selected methods PASS |
+| Cancellation: remembered detached child, denied child, item watchdog, owned normal cancellation | 4 selected methods PASS |
+| External SSH: supported key types/source scope, links/FIFO, operation/count binding | 3 selected methods PASS |
+| Bundled Age: both archives/license, external-age exclusion, cache reuse/rejection/missing downloader, wrong-architecture/runtime failures | 4 selected methods PASS |
+| Canonical shell syntax checks, Desktop `bash -n`, Python AST syntax, `actionlint`, `scripts/lint.sh`, Desktop warning-level ShellCheck | PASS |
+
+The first sandboxed runner attempt returned ERROR before tests because `/bin/ps`
+was denied; focused execution with process observation then passed. The new
+missing-tool summary probe initially assumed exit 127; this host's Bash returns 1
+for the missing absolute executable. It now verifies nonzero exit, the exact
+reported exit, failed stage and no later execution. The stale Graceful Stop mock
+failed before its correction; all three affected checkpoint cases passed afterward.
+An extra default-severity Desktop ShellCheck invocation reported only five existing
+SC2004 style notices; the repository's warning-level policy passes unchanged.
+
+For reproduction, use `./scripts/test.sh --suite <Core source> --case <Class.method>`
+for the named methods above. Bundled Age uses:
+
+```bash
+python3 -B scripts/test_runner.py desktop/Macseed/Tests/BundledAgeTests.py -- \
+  --suite desktop/Macseed/Tests/BundledAgeTests.py \
+  --case BundledAgeTests.test_pinned_archives_and_license \
+  --case BundledAgeTests.test_external_absent_fake_or_different_never_selected \
+  --case BundledAgeTests.test_cache_reuse_and_invalid_cache_rejected \
+  --case BundledAgeTests.test_settings_failures_share_runtime_boundary
+```
+
+### Expected CI cost and acceptance
+
+No hosted timing weights were fabricated. Each newly admitted Core suite uses
+the existing conservative unknown-suite estimate of 180 s: **+540 aggregate runner
+seconds**. Planned shard totals are **2637.709 / 2637.788 / 2638.519 / 2637.832 s**,
+about **43:58** per shard versus **41:43** before admission (+2:15 wall estimate).
+This excludes provisioning, scheduling and tool preparation. The five case-split
+suites, four-shard architecture, prior optimization and all deadlines are preserved.
+
+Desktop adds one stage on its existing VM: revalidation, one additional cold-cache
+architecture download after app preparation, and nine methods. The four selected
+methods took **1.904 s including class setup and supervision** with verified cache.
+Allow a provisional **+3 minutes** for the full added stage, pending hosted timing;
+this is a planning allowance, not measured nine-method runtime or a timeout. Its
+existing runner policy gives a 600-second suite deadline; the Desktop job still
+has its 45-minute limit. Upstream availability and hosted load remain risks.
+
+Keep Issue #1 **open** until a complete mandatory hosted run proves all 52 additions
+PASS exactly once, alongside existing gates. No commit/push or hosted run occurred
+in this checkpoint. `ExternalIdentityTests.swift` and controlled real-GUI startup
+remain separate tracked qualification scopes, outside these 52 methods.
+
 ## Scope and result
 
 Baseline: `develop`, `a289442ffe032c8e5477d2c7cdb84aaf6d7c1f5a`.

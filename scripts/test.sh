@@ -38,7 +38,10 @@ SUITES=(
     scripts/test-item-stall.py
     scripts/test-external-tools.py
     scripts/test-external-process-reliability.py
+    scripts/test-external-ssh-identities.py
     scripts/test-homebrew-capabilities.py
+    scripts/test-homebrew-graceful-stop.py
+    scripts/test-restore-cancellation-mocks.py
     scripts/test-restore-prepare.py
     scripts/test-restore-selection.py
     scripts/test-secure-restore.py

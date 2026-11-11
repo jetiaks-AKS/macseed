@@ -17,14 +17,17 @@ from item_execution import ItemExecutor
 class GracefulMocks(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(prefix='macseed-graceful-mock-')
+        self.addCleanup(self.tmp.cleanup)
         self.base = Path(self.tmp.name)
+        self.home = self.base / 'isolated-home'; self.home.mkdir(mode=0o700)
         self.read_fd, self.write_fd = os.pipe()
         self.control = Controller(self.base, self.read_fd)
         self.state = self.control.state
         self.state.boundary('homebrew')
         self.children = []
-        self.env = patch.dict(os.environ, {KEY: str(self.state.path)})
+        self.env = patch.dict(os.environ, {KEY: str(self.state.path), 'HOME': str(self.home)})
         self.env.start()
+        self.addCleanup(self.env.stop)
     def tearDown(self):
         self.control.close()
         for child in self.children:
@@ -33,7 +36,6 @@ class GracefulMocks(unittest.TestCase):
             child.wait(timeout=3)
         os.close(self.read_fd)
         if self.write_fd is not None: os.close(self.write_fd)
-        self.env.stop(); self.tmp.cleanup()
     def launch(self, command):
         child = subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         self.children.append(child)
@@ -208,7 +210,7 @@ apply_macos_components
         plan = {'prepared_plan_id': plan_id, 'has_executable_changes': True, 'readiness': {'conditions': []}, 'error_count': 0}
         (self.base / 'blueprint.conf').write_text('fixture')
         @contextmanager
-        def prepared(*args):
+        def prepared(*args, **kwargs):
             if point == 'preparation': self.request()
             yield plan, self.base, 'digest', 'digest'
         def publish(stage):

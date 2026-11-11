@@ -5,6 +5,7 @@ import importlib.util
 import io
 import os
 from pathlib import Path
+import platform
 import shutil
 import subprocess
 import sys
@@ -24,17 +25,35 @@ CACHE = DESKTOP / 'build/Dependencies/age-v1.3.2'
 
 
 class BundledAgeTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        # The app build prepares its native artifact only. Test both trusted
+        # archives using the same verifier, without replacing the built helper.
+        temporary = tempfile.TemporaryDirectory(prefix='macseed-age-preparation-', dir='/private/tmp')
+        cls.addClassCleanup(temporary.cleanup)
+        resources = Path(temporary.name) / 'Fixture.app/Contents/Resources'
+        for architecture in runtime.ARTIFACTS:
+            prepare.prepare(resources, architecture, CACHE)
+
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory(prefix='macseed-bundled-age-', dir='/private/tmp')
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
+        self.home = self.root / 'home'; self.home.mkdir(mode=0o700)
+        self.architecture = platform.machine()
+        self.assertIn(self.architecture, runtime.ARTIFACTS)
+        self.other_architecture = 'x86_64' if self.architecture == 'arm64' else 'arm64'
         self.bundle = self.root / 'Fixture.app'
         self.binary = self.bundle / runtime.RELATIVE_EXECUTABLE
         self.binary.parent.mkdir(parents=True)
-        self.raw = prepare.unpack(prepare.read_archive(CACHE / 'age-v1.3.2-darwin-arm64.tar.gz', 'arm64'), 'arm64')[0]
+        self.raw = self.artifact(self.architecture)
         self.binary.write_bytes(self.raw); self.binary.chmod(0o755)
-        self.environment = patch.dict(os.environ, {runtime.DESKTOP_BUNDLE: str(self.bundle), 'PATH': '/usr/bin:/bin'})
+        self.environment = patch.dict(os.environ, {runtime.DESKTOP_BUNDLE: str(self.bundle), 'PATH': '/usr/bin:/bin', 'HOME': str(self.home)})
         self.environment.start(); self.addCleanup(self.environment.stop)
+
+    def artifact(self, architecture):
+        name = 'amd64' if architecture == 'x86_64' else architecture
+        return prepare.unpack(prepare.read_archive(CACHE / f'age-v1.3.2-darwin-{name}.tar.gz', architecture), architecture)[0]
 
     def test_pinned_archives_and_license(self):
         for architecture, name in [('arm64', 'arm64'), ('x86_64', 'amd64')]:
@@ -84,15 +103,24 @@ class BundledAgeTests(unittest.TestCase):
             self.assertNotIn('/usr/bin/curl', command)
             return original_run(command, **kwargs)
         with patch.object(prepare.subprocess, 'run', offline):
-            prepare.prepare(resources, 'arm64', CACHE)
-            prepare.prepare(resources, 'arm64', CACHE)
-        self.assertEqual(hashlib.sha256(self.binary.read_bytes()).hexdigest(), runtime.ARTIFACTS['arm64']['binary'])
+            prepare.prepare(resources, self.architecture, CACHE)
+            prepare.prepare(resources, self.architecture, CACHE)
+        self.assertEqual(hashlib.sha256(self.binary.read_bytes()).hexdigest(), runtime.ARTIFACTS[self.architecture]['binary'])
         self.assertEqual(self.binary.stat().st_mode & 0o777, 0o755)
         self.assertEqual(hashlib.sha256((resources / 'ThirdPartyNotices/age-LICENSE.txt').read_bytes()).hexdigest(), runtime.LICENSE_SHA256)
         invalid = self.root / 'invalid-cache'; invalid.mkdir()
-        (invalid / 'age-v1.3.2-darwin-arm64.tar.gz').write_bytes(b'not an official archive')
+        name = 'amd64' if self.architecture == 'x86_64' else self.architecture
+        (invalid / f'age-v1.3.2-darwin-{name}.tar.gz').write_bytes(b'not an official archive')
         with patch.object(prepare.subprocess, 'run', side_effect=AssertionError('unverified executable/download attempted')):
-            with self.assertRaises(ValueError): prepare.prepare(resources, 'arm64', invalid)
+            with self.assertRaises(ValueError): prepare.prepare(resources, self.architecture, invalid)
+        # Cold-cache dependency failures must propagate; no system age fallback.
+        before = self.binary.read_bytes()
+        for error in (FileNotFoundError('missing download tool'), subprocess.CalledProcessError(22, 'curl')):
+            cache = self.root / 'unavailable-cache'
+            with patch.object(prepare.subprocess, 'run', side_effect=error), self.assertRaises(type(error)):
+                prepare.prepare(resources, self.architecture, cache)
+            self.assertEqual(list(cache.iterdir()), [])
+            self.assertEqual(self.binary.read_bytes(), before)
 
     def test_archive_extra_traversal_duplicate_and_links_rejected(self):
         raw = prepare.read_archive(CACHE / 'age-v1.3.2-darwin-arm64.tar.gz', 'arm64')
@@ -112,7 +140,7 @@ class BundledAgeTests(unittest.TestCase):
     def test_settings_diagnostic_identity_and_read_only(self):
         before = (self.binary.read_bytes(), self.binary.stat().st_mtime_ns, self.binary.stat().st_mode)
         result = runtime.inspect_bundle(str(self.bundle))
-        self.assertEqual(result.diagnostic(), {'schema_version': 1, 'status': 'available', 'version': 'v1.3.2', 'architecture': 'arm64'})
+        self.assertEqual(result.diagnostic(), {'schema_version': 1, 'status': 'available', 'version': 'v1.3.2', 'architecture': self.architecture})
         self.assertEqual(result.executable, runtime.bundled_executable(str(self.bundle)))
         self.assertEqual(before, (self.binary.read_bytes(), self.binary.stat().st_mtime_ns, self.binary.stat().st_mode))
         raw = subprocess.check_output([sys.executable, '-I', '-B', str(Path(runtime.__file__)), '--inspect-bundle', str(self.bundle)])
@@ -126,7 +154,7 @@ class BundledAgeTests(unittest.TestCase):
                 self.binary.write_bytes(self.raw); self.binary.chmod(0o755)
                 if fault == 'missing': self.binary.unlink()
                 if fault == 'corrupt': self.binary.write_bytes(b'not trusted code')
-                if fault == 'wrong_architecture': self.binary.write_bytes(prepare.unpack(prepare.read_archive(CACHE / 'age-v1.3.2-darwin-amd64.tar.gz', 'x86_64'), 'x86_64')[0])
+                if fault == 'wrong_architecture': self.binary.write_bytes(self.artifact(self.other_architecture))
                 if fault == 'mode': self.binary.chmod(0o777)
                 if fault in ('symlink', 'hardlink'):
                     outside = self.root / fault; self.binary.rename(outside)

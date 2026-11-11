@@ -115,7 +115,14 @@ execution on 23 October 2026 took about 19 seconds. Use focused checks first and
 honor task-specific limits on full local runs. Repeat `--case` to select several
 methods in one process; full IDs from `--list` or `Class.method` are accepted.
 
-`scripts/test.sh` owns the only suite inventory. `--list` prints the selected plan
+`scripts/test.sh` owns the canonical Core suite inventory: **47 suites / 767 Python
+methods**, plus **9 Bundled Age Python methods** owned by Desktop (**776 total**).
+The admitted Graceful Stop (23), cancellation mocks (10) and external SSH identity
+(10) methods run as three whole suites in mandatory regression. Bundled Age runs
+once in the mandatory Desktop job, outside the Core inventory. Registration is
+implemented; successful hosted execution of all 52 additions remains open under
+[Issue #1](https://github.com/jetiaks-AKS/macseed/issues/1).
+`--list` prints the selected plan
 and all partitions as JSON without executing tests. Four CI runners use longest
 estimated work first to balance whole suites and independent methods from
 `test-restore-prepare.py`, `test-capture-api.py`,
@@ -132,13 +139,15 @@ on one host. CI shards use separate VMs.
 `scripts/test-timings.json` contains weights, never a second test inventory.
 Weights use the successful partitions of [CI #161](https://github.com/jetiaks-AKS/macseed/actions/runs/42836491162)
 (`a289442f`): shards 1 and 4 from attempt 1, shards 2 and 3 from attempt 2.
-All 44 suites and 346 methods in the five split suites have PASS measurements;
+The original 44 suites and 346 methods in the five split suites have PASS measurements;
 failed/unfinished work is excluded. The reduced screenshot backend matrix retains
 its pre-optimization weight conservatively until hosted remeasurement. Local timings
 and estimates are not relabeled as hosted measurements. Unknown methods receive at
 least 60 seconds or their share of the remaining suite budget; new suites receive
 180 seconds. Measured startup overhead is distributed without reducing case times.
-New IDs are always assigned. Refreshed weights predict about 41 min 43 s per shard,
+New IDs are always assigned. The three newly admitted suites retain the conservative
+180-second unknown-suite weight until complete hosted PASS evidence is available.
+The expanded plan predicts about 43 min 58 s per shard (previously 41 min 43 s),
 excluding provisioning and scheduling; that is an estimate, not a new hosted PASS.
 See the [suite audit](docs/qualification/TEST-SUITE-AUDIT-2026-11-10.md) for the complete
 inventory, retained coverage, removed repetitions and baseline attempt distinction.
@@ -181,6 +190,16 @@ The required `validate` check retains `if: always()` and dependencies
 cancellation, skipped or missing execution cannot pass the gate.
 The twelve suites and two Restore subsets retain their fixture isolation
 and native assertions; [build.sh](desktop/Macseed/build.sh) owns the inventory.
+After app/runtime preparation, its mandatory `BundledAgeTests (Python)` stage uses
+the existing `test_runner.py` / `test_unittest.py` supervision and method reporting.
+The class fixture prepares both pinned arm64 and amd64 archives through
+`prepare-age.py` in a disposable app; it never replaces the built app's native
+helper. Tests execute the host-native helper and validate the opposite architecture
+as data. Missing downloads/tools, invalid cache and unsupported architectures fail;
+there is no system-age fallback or dependency skip. Per-case HOME and app paths
+are disposable. The stage stays visible as passed/failed/not-run in Desktop summary,
+with exact method statuses in the runner output. The Desktop 45-minute job cap stays
+unchanged; hosted cold-cache cost and full hosted qualification remain unmeasured.
 Capture/Restore keep `--no-renders`. Debug tests compile their common production
 sources once per invocation as an internal, testable Swift module, retaining
 `-Onone`, `-g`, `DEBUG` and whole-module compilation. Ten test executables link that

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Stage 1 only: exercise existing cancellation with disposable owned processes.
 
-Run directly, outside a sandbox denying /bin/ps. No real Bootstrap is invoked:
+Run through scripts/test.sh with process observation available. No real Bootstrap is invoked:
 OwnedBootstrap receives a temporary root containing only a mock bootstrap.sh.
 """
 import json
@@ -28,7 +28,11 @@ RESULTS = []
 class CancellationMocks(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(prefix='macseed-cancel-mock-')
+        self.addCleanup(self.tmp.cleanup)
         self.directory = Path(self.tmp.name)
+        self.home = self.directory / 'isolated-home'; self.home.mkdir(mode=0o700)
+        environment = patch.dict(os.environ, {'HOME': str(self.home)})
+        environment.start(); self.addCleanup(environment.stop)
         self.births = {}
         self.process = None
         self.owned = None
@@ -125,7 +129,6 @@ class CancellationMocks(unittest.TestCase):
         finally:
             if self.owned and Path(self.owned.item_state.name).exists():
                 self.owned._collect()
-            self.tmp.cleanup()
 
     def check_tree(self, mode, ignore=False):
         self.launch(mode, ignore=ignore)
