@@ -38,12 +38,13 @@ class ShellRecoveryTests(unittest.TestCase):
         self.set_xattr(target, 'com.apple.TextEncoding', b'utf-8;134217984')
         before = target.stat()
         attributes = c.sources.attributes
-        # OS provenance differs between app origins. Simulate only that opaque
-        # read value; every copy/write/exchange/document-ID operation is real.
+        # Model both source and new-inode provenance: the runner's process
+        # origin need not create it. Only reads are simulated; every native
+        # copy/write/exchange/document-ID operation is real.
         def foreign_origin(fd):
             result = attributes(fd)
-            if os.fstat(fd).st_ino == before.st_ino:
-                result[b'com.apple.provenance'] = b'opaque-source-origin'
+            result[b'com.apple.provenance'] = (b'opaque-source-origin'
+                if os.fstat(fd).st_ino == before.st_ino else b'opaque-created-origin')
             return result
         with patch.object(c.sources, 'attributes', side_effect=foreign_origin):
             with c.sources.parent(str(self.home), '.zshrc') as (fd, name, _):
@@ -69,17 +70,29 @@ class ShellRecoveryTests(unittest.TestCase):
             self.assertFalse(c.publish(value, str(self.home)))
             self.assertEqual(c.base.stamp(target.stat()), stamp)
 
+    def test_v5_source_copy_without_os_provenance(self):
+        c = self.contract
+        attributes = c.sources.attributes
+        def no_origin(fd):
+            result = attributes(fd)
+            result.pop(b'com.apple.provenance', None)
+            return result
+        # The same real safe-save/no-op contract also applies when neither
+        # inode has OS provenance. Never set or clear that xattr on disk.
+        with patch.object(c.sources, 'attributes', side_effect=no_origin):
+            self.test_v5_dynamic_tracked_source_safe_save_and_noop()
+
     def test_v5_source_copy_failures_keep_pending_and_safe_diagnostics(self):
         c = self.contract
         raw = b'eval "$(echo ignored)"\n'
         (self.source / '.zshrc').write_bytes(raw + b"alias fixture='echo A'\n")
         value = c.authorize_capture(c.capture(str(self.source)), str(self.source), [], policy=c.FILE_POLICY)
-        for failure in ('copy-failed', 'lost-attribute', 'changed-provenance', 'quarantine-change', 'source-changed', 'late-staging-change', 'after-publication'):
+        for failure in ('copy-failed', 'lost-attribute', 'changed-provenance', 'quarantine-change', 'lost-quarantine', 'source-changed', 'late-staging-change', 'after-publication'):
             with self.subTest(failure=failure):
                 home = self.root / failure; home.mkdir(mode=0o700)
                 target = home / '.zshrc'; target.write_bytes(raw); target.chmod(0o600); os.chflags(target, 0x40)
                 self.set_xattr(target, 'com.apple.TextEncoding', b'utf-8;134217984')
-                if failure == 'quarantine-change':
+                if failure in ('quarantine-change', 'lost-quarantine'):
                     self.set_xattr(target, 'com.apple.quarantine', b'0083;12345678;Fixture;')
                 original_ino = target.stat().st_ino
                 attributes, native, rename = c.sources.attributes, c.sources.native, c.sources.rename
@@ -93,6 +106,10 @@ class ShellRecoveryTests(unittest.TestCase):
                     ino = os.fstat(fd).st_ino
                     if ino in copied and failure == 'lost-attribute': attrs.pop(b'com.apple.TextEncoding', None)
                     if ino in copied and failure == 'changed-provenance': attrs[b'com.apple.provenance'] = b'unexpected'
+                    # Some macOS hosts copy quarantine exactly. Inject the
+                    # failure explicitly rather than relying on an OS change.
+                    if ino in copied and failure == 'quarantine-change': attrs[b'com.apple.quarantine'] = b'0083;12345678;Changed;'
+                    if ino in copied and failure == 'lost-quarantine': attrs.pop(b'com.apple.quarantine', None)
                     if ino in flushed and failure == 'late-staging-change': attrs.pop(b'com.apple.TextEncoding', None)
                     if exchanged and failure == 'after-publication' and ino != original_ino: attrs.pop(b'com.apple.TextEncoding', None)
                     return attrs

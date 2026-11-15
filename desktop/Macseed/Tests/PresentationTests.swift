@@ -4511,12 +4511,22 @@ private struct CaptureRefinementHost: View {
         for sequence,(kind,data) in enumerate([('started',{}),('result',payload),('completed',{})],1):
             print(json.dumps(dict(protocol_version=1,operation_id=request['operation_id'],sequence=sequence,type=kind,data=data)),flush=True)
         """.write(to: fixture.appendingPathComponent("fixture.py"), atomically: true, encoding: .utf8)
-        let specifications: [(String, String, String, Bool)] =
-            (1...24).map { ("vscode-extensions", $0 == 24 ? "ms-python.python" : "extension-\($0)", "install", $0 == 24) }
-            + (1...4).map { ("git-repositories", $0 == 4 ? "Macseed" : "Repository \($0)", "clone", $0 == 4) }
-            + (1...6).map { ("workspace-folders", $0 == 6 ? "Projects" : "Folder \($0)", "create_directory", $0 == 6) }
-            + [("homebrew-casks", "Firefox", "install", false), ("macos-finder", "com.apple.finder/AppleShowAllExtensions", "set_preference", false)]
-            + (1...16).map { ("app-store", String(123450 + $0), "inspect", $0 == 16) }
+        // Keep fixture construction within the Swift 6.3 type-checking budget.
+        var specifications: [(String, String, String, Bool)] = []
+        for index in 1...24 {
+            specifications.append(("vscode-extensions", index == 24 ? "ms-python.python" : "extension-\(index)", "install", index == 24))
+        }
+        for index in 1...4 {
+            specifications.append(("git-repositories", index == 4 ? "Macseed" : "Repository \(index)", "clone", index == 4))
+        }
+        for index in 1...6 {
+            specifications.append(("workspace-folders", index == 6 ? "Projects" : "Folder \(index)", "create_directory", index == 6))
+        }
+        specifications.append(("homebrew-casks", "Firefox", "install", false))
+        specifications.append(("macos-finder", "com.apple.finder/AppleShowAllExtensions", "set_preference", false))
+        for index in 1...16 {
+            specifications.append(("app-store", String(123450 + index), "inspect", index == 16))
+        }
         let ids = Array(Set(specifications.map { $0.0 })).sorted()
         let catalog = CoreRestoreInspection.Inventory(groups: ids.map { .init(id: $0 == "macos-finder" ? "macOS Settings" : $0, domains: [$0]) },
             inventory: ids.map { .init(domain: $0, label: CaptureCategory.title(for: $0), selectionMode: "category", availability: "available", reason: nil, items: []) })
