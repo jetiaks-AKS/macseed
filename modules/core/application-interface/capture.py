@@ -246,7 +246,9 @@ def prepared(stage, rows, secure, selection, private=None, shell_script_selectio
             files = bundle.staged_payload(stage, raw)
             if chosen.get('ssh-configuration'):
                 bundle.ssh_contract().select_snapshot(files['generated/ssh/config.snapshot'], chosen['ssh-configuration'])
-            if 'shell-zsh' in chosen:
+            # Legacy whole-file snapshots have no alias/script selection.
+            # Their existing staged-payload and Bundle validators still apply.
+            if 'shell-zsh' in chosen and shell is not None:
                 contract = bundle.shell_contract()
                 selected_shell = (shell if shell_script_selection and shell_script_policy in ('opaque-file-v4', 'opaque-file-v5') else
                     contract.snapshot(contract.select_snapshot(files['generated/shell/zshrc.snapshot'], chosen['shell-zsh'])))

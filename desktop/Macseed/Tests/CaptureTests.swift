@@ -980,11 +980,13 @@ import Vision
 
         let captureSummary = CaptureSummaryPresentation.review(categories: model.categories, domainCount: model.selectedDomainCount, itemCount: model.selectedItemCount)
         precondition(captureSummary.domainCount == model.selectedDomainCount && captureSummary.itemCount == model.selectedItemCount)
-        precondition(captureSummary.attentionCount == 2 && captureSummary.unsupportedCount == 2)
+        precondition(!model.supportsManualScripts && model.inventory.first { $0.domain == "shell-zsh" }?.status == "unsupported")
+        precondition(!model.categories.contains { $0.id == "shell-zsh" }, "Legacy unsupported Shell stays in inventory, outside visible category totals")
+        precondition(captureSummary.attentionCount == 2 && captureSummary.unsupportedCount == 1)
         let rows = CaptureReviewRow.project(model.categories)
         precondition(rows.flatMap(\.categories).count == model.categories.count)
         precondition(Set(rows.flatMap(\.categories).map(\.id)) == Set(model.categories.map(\.id)))
-        precondition(rows.map(\.id) == ["app-store", "homebrew-packages", "macos-settings", "vscode-settings", "shell-zsh", "future-domain"])
+        precondition(rows.map(\.id) == ["app-store", "homebrew-packages", "macos-settings", "vscode-settings", "future-domain"])
         precondition(CaptureReviewRow.project([]).isEmpty)
         precondition(SelectionState.mixed.captureTitle == "Partially Selected")
         precondition(CaptureReviewRow.attentionMessage(rows) == "2 categories need attention")
@@ -2139,8 +2141,11 @@ import Vision
             && CaptureReviewPresentation.summary(model.categories(in: .advanced), model: model) == "All Selected")
         for id in ["ssh-configuration", "shell-zsh"] {
             model.selectCategory(id, included: true)
-            precondition(model.selectionState(model.categories.first { $0.id == id }!) == .none)
+            precondition(!model.selection.categories.contains(id) && model.selection.items[id] == nil)
         }
+        precondition(model.selectionState(model.categories.first { $0.id == "ssh-configuration" }!) == .none)
+        precondition(!model.supportsManualScripts && model.inventory.first { $0.domain == "shell-zsh" }?.status == "unavailable")
+        precondition(!model.categories.contains { $0.id == "shell-zsh" }, "Unavailable legacy Shell has no selectable presentation row")
         model.toggleCategories(eligibleControls)
         precondition(model.selectedDomainCount == 0 && model.bulkState(for: eligibleControls).bulkActionTitle == "Select All")
         precondition(CaptureReviewPresentation.attention(model.categories(in: .ordinary), model: model) == "Scan Incomplete",

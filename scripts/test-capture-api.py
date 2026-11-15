@@ -204,6 +204,54 @@ esac
         target.chmod(0o600)
         return target
 
+    def test_legacy_shell_category_capture_with_script_policy(self):
+        self.fixture(shell=True)
+        target = self.home / '.zshrc'
+        original = b'export EDITOR=vi\n'
+        target.write_bytes(original); target.chmod(0o600)
+        before = target.stat()
+        chosen = dict(categories=['shell-zsh'], items={}, secure_identities=[])
+        for policy in ({}, dict(shell_script_policy='opaque-file-v5')):
+            with self.subTest(policy=policy):
+                status, events = self.invoke_capture(selection=chosen, extra=policy)
+                self.assertEqual(status.returncode, 0, events)
+                prepared = events[-2]['data']
+                row = next(row for row in prepared['inventory'] if row['domain'] == 'shell-zsh')
+                self.assertEqual((row['status'], row['selection_mode'], row['items']), ('present', 'category', []))
+                self.assertEqual(prepared['summary'], dict(selected_domains=1, selected_items=0, secure_identity_count=0))
+                self.assertNotIn('shell_scripts', prepared)
+                destination = self.root / ('legacy-policy.mbt' if policy else 'legacy.mbt')
+                status, events = self.invoke_capture('capture_execute', chosen, dict(policy,
+                    destination=str(destination), expected_prepared_capture_id=prepared['prepared_capture_id']))
+                self.assertEqual(status.returncode, 0, events)
+                saved = bundle.validate_archive(destination)
+                self.assertTrue(saved['generated/shell/zshrc.snapshot'].startswith(b'MBT-ZSHRC-1\nstatus=eligible\n'))
+                self.assertIsNone(bundle.shell_aliases(saved['generated/shell/zshrc.snapshot']))
+                self.assertFalse(any(bundle.script_member(name) for name in saved))
+                publication = events[-2]['data']['bundle']
+                self.assertEqual(publication['selected_categories'], ['shell-zsh'])
+                self.assertNotIn('shell-zsh', publication['selected_item_counts'])
+                self.assertEqual(sum(publication['selected_item_counts'].values()), 0)
+                self.assertEqual(publication, bundle.inspect_bundle(destination, str(self.home)))
+        self.assertEqual(target.read_bytes(), original)
+        self.assertEqual((target.stat().st_ino, target.stat().st_mode, target.stat().st_mtime_ns),
+                         (before.st_ino, before.st_mode, before.st_mtime_ns))
+        policy = dict(shell_script_policy='opaque-file-v5')
+        status, events = self.invoke_capture(selection=chosen,
+            extra=dict(policy, shell_script_selection=['0' * 64]))
+        self.assertNotEqual(status.returncode, 0)
+        self.assertEqual(events[-1]['data']['code'], 'invalid_script_consent')
+        status, events = self.invoke_capture(selection=chosen, extra=policy)
+        self.assertEqual(status.returncode, 0, events)
+        prepared = events[-2]['data']
+        target.write_bytes(b'export EDITOR=nano\n')
+        destination = self.root / 'stale-legacy.mbt'
+        status, events = self.invoke_capture('capture_execute', chosen, dict(policy,
+            destination=str(destination), expected_prepared_capture_id=prepared['prepared_capture_id']))
+        self.assertNotEqual(status.returncode, 0)
+        self.assertEqual(events[-1]['data']['code'], 'stale_prepared_capture')
+        self.assertFalse(destination.exists())
+
     def test_shell_alias_capture_selection_bundle_and_readonly_check(self):
         self.fixture(shell=True)
         target = self.home / '.zshrc'
