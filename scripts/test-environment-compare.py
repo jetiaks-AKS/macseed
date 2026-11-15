@@ -931,6 +931,53 @@ class ShellRecoveryTests(unittest.TestCase):
             self.assertNotEqual(self.contract.inspect_scripts(value, str(self.source), requested)[0]['status'], 'qualified')
         self.assertFalse(any(self.home.iterdir()))
 
+    def test_script_inspection_batch_rechecks_all_files_before_return(self):
+        c = self.contract
+        directory = self.source / 'Scripts'; directory.mkdir(mode=0o700)
+        paths = ['Scripts/first.sh', 'Scripts/second.sh']
+        files = [self.source / path for path in paths]
+        original = b'#!/bin/sh\n/usr/bin/uname -s\n'
+        (self.source / '.zshrc').write_text(''.join(
+            f"alias file{index}='$HOME/{path}'\n" for index, path in enumerate(paths)))
+        for policy in (None, c.OPAQUE_POLICY, c.FILE_POLICY):
+            for change in ('content', 'mode', 'missing', 'symlink', 'observation-error'):
+                with self.subTest(policy=policy, change=change):
+                    for path in files:
+                        path.unlink(missing_ok=True)
+                        path.write_bytes(original); path.chmod(0o700)
+                    value = c.capture(str(self.source))
+                    candidates = c.selection_candidates(value, str(self.source), policy=policy)
+                    requested = {row['id']: row['observation_id'] for row in candidates}
+                    reader, observer = c.base.read_file, c.sources.dependency_states
+                    finished = False
+                    def read(name, fd, **kwargs):
+                        nonlocal finished
+                        raw = reader(name, fd, **kwargs)
+                        if name == files[1].name:
+                            finished = True
+                            if change == 'content': files[0].write_bytes(original + b'# changed later\n')
+                            elif change == 'mode': files[0].chmod(0o600)
+                            elif change == 'missing': files[0].unlink()
+                            elif change == 'symlink':
+                                files[0].unlink(); files[0].symlink_to(files[1])
+                        return raw
+                    def observe(*args, **kwargs):
+                        if finished and change == 'observation-error':
+                            raise OSError('fixture observation unavailable')
+                        return observer(*args, **kwargs)
+                    with patch.object(c.base, 'read_file', side_effect=read), patch.object(c.sources, 'dependency_states', side_effect=observe):
+                        results = c.inspect_scripts(value, str(self.source), requested, policy)
+                    self.assertTrue(finished)
+                    self.assertEqual([row['id'] for row in results], list(requested))
+                    self.assertEqual(results[0]['status'], 'unverified')
+                    if change == 'observation-error':
+                        self.assertTrue(all(row['reason'] == 'script_observation_failed' and row['status'] == 'unverified' for row in results))
+                    else:
+                        self.assertEqual(results[0]['reason'], 'script_changed')
+                        self.assertEqual(results[1]['status'], 'qualified')
+                    self.assertEqual(value['scripts'], [], 'Inspection must not grant consent or publish payloads')
+        self.assertFalse(any(self.home.iterdir()))
+
     def test_dependency_reasons_are_per_alias_and_fail_closed(self):
         (self.source / '.zshrc').write_text("alias editor='fixture-editor .'\nalias folder='cd ~/missing-folder'\nalias unknown='echo relative/path'\n")
         value = self.contract.capture(str(self.source))

@@ -211,7 +211,9 @@ import CryptoKit
         let fileStatus = EnvironmentStatusModel(runtime: runtime, location: fileLocation)
         fileStatus.selectBundle(fileArchive); fileStatus.compare(); await fileStatus.waitForCompletion()
         precondition(fileStatus.state == .result && fileStatus.presentation?.counts["matching"] == 1)
-        precondition(fileStatus.presentation?.categories.flatMap(\.items).contains { $0.title == "~/" + script.path && $0.status == .matching } == true)
+        let expectedScriptTitle = "~/" + script.path
+        let checkedScriptItems = fileStatus.presentation?.categories.flatMap(\.items) ?? []
+        precondition(checkedScriptItems.contains { $0.title == expectedScriptTitle && $0.status == .matching })
         fileModel.choose(fileArchive); await fileModel.waitForCompletion(); fileModel.selectShellScript(script.id, included: true)
         fileModel.refreshPreview(); await fileModel.waitForCompletion()
         precondition(fileModel.state == .preview && !fileModel.canRebuild && fileModel.preparation?.shellScripts == nil)

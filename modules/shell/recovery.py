@@ -650,7 +650,7 @@ def inspect_scripts(value, home, requested, policy=None, script_paths=()):
         raise base.Invalid('unsupported_script_policy')
     version = 5 if policy == FILE_POLICY else 4 if policy == OPAQUE_POLICY else value['version']
     candidates = {row['id']: row for row in selection_candidates(value, home, script_paths, policy)}
-    result, payloads = [], []
+    result, payloads, inspected = [], [], set()
     total = 0
     if version == 5:
         observed = sources.dependency_states(value, home, script_paths, transfer=True)
@@ -683,14 +683,26 @@ def inspect_scripts(value, home, requested, policy=None, script_paths=()):
                                 payloads.append(dict(path=row['path'], text=raw.decode('utf-8'), mode=stat.S_IMODE(info.st_mode), sha256=hashlib.sha256(raw).hexdigest(),
                                     **({'managed': bool(check()[1] or sources.MANAGED.search(raw.decode('utf-8')))} if policy == OPAQUE_POLICY else {})))
                     check()
-                fresh = {item['id']: item for item in selection_candidates(value, home, script_paths, policy)}
-                if fresh.get(key) != row:
-                    status, reason = 'unverified', 'script_changed'
+                inspected.add(key)
             except UnicodeError:
                 status, reason = 'unsupported', 'script_format_unsupported'
             except (OSError, ValueError) as exc:
                 status, reason = ('unsupported', 'script_metadata_unsupported') if str(exc) == 'unsupported_metadata' else ('unsupported', 'script_quarantine_invalid') if str(exc) == 'script_quarantine_invalid' else ('unverified', 'script_observation_failed')
         result.append(dict(id=key, observation_id=observation, status=status, reason=reason))
+    if inspected:
+        # Recheck the whole selection once after all reads, so a later read cannot
+        # hide a change to an earlier file. Re-enumerating every file after each
+        # read made maximum-size selections quadratic without stronger evidence.
+        try:
+            fresh = {item['id']: item for item in selection_candidates(value, home, script_paths, policy)}
+        except (OSError, ValueError):
+            for row in result:
+                if row['id'] in inspected:
+                    row.update(status='unverified', reason='script_observation_failed')
+        else:
+            for row in result:
+                if row['id'] in inspected and fresh.get(row['id']) != candidates[row['id']]:
+                    row.update(status='unverified', reason='script_changed')
     if (total > MAX_CONTENT_BYTES if version == 5
             else len(encode(dict(value, scripts=payloads))) > base.MAX_BYTES):
         for row in result:
