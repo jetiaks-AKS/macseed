@@ -87,6 +87,80 @@ import Darwin
         print("PASS: closed sanitizer, nested secrets, private aliases, invalid types/values, counts/reasons and bounded evidence")
     }
 
+    static func diagnosticReliabilityTests() throws {
+        var sanitizer = OperationLogSanitizer()
+        let failures = ["shell_preflight_observation_failed", "shell_preflight_script_consent_required",
+            "shell_staging_metadata_copy_failed", "shell_staging_metadata_copy_mismatch", "shell_staging_target_changed",
+            "shell_exchange_publication_uncertain", "shell_verification_publication_uncertain", "shell_verification_verification_failed",
+            "shell_publication_uncertain", "shell_managed_source_prerequisite", "shell_dependency_prerequisite",
+            "shell_source_prerequisite", "shell_startup_prerequisite", "source_absent", "source_excluded",
+            "comparison_reporting_incomplete", "reference_invalid", "comparison_failed"]
+        for reason in failures {
+            let record = sanitizer.event(try event(1, "operation_record", ["reason": .string(reason),
+                "domain": .string("shell-zsh"), "phase": .string("apply"), "outcome": .string("failure")]), at: Date())
+            check(record.facts?.codes["reason"] == reason && record.facts?.codes["phase"] == "apply")
+            check(record.facts?.codes["outcome"] == "failure" && OperationLogSanitizer.valid(record))
+            check(OperationLogSanitizer.runtimeCode(.coreFailure(reason)) == reason)
+        }
+        for (status, mutation) in [("failed_before_mutation", false), ("failed_after_mutation_may_have_started", true)] {
+            let record = sanitizer.event(try event(2, "failed", ["code": .string("bootstrap_failed"),
+                "execution_status": .string(status), "target_mutation_may_have_started": .bool(mutation),
+                "publication_occurred": .bool(true), "unknown_consequences": .bool(false)]), at: Date())
+            check(record.facts?.codes["execution_status"] == status)
+            check(record.facts?.flags["target_mutation_may_have_started"] == mutation)
+            check(record.facts?.flags["publication_occurred"] == true && record.facts?.flags["unknown_consequences"] == false)
+        }
+        let privateValue = "shell_staging_PRIVATE_DEFINITION"
+        let rejected = sanitizer.event(try event(3, "diagnostic_record", ["code": .string(privateValue),
+            "domain": .string("private-domain"), "phase": .string("private-phase"),
+            "reason": .string("shell_preflight_token_shaped_secret"), "stderr": .string(privateValue)]), at: Date())
+        check(rejected.omitted == true && rejected.facts?.codes.isEmpty == true)
+        check(!String(decoding: try raw(rejected), as: UTF8.self).contains(privateValue))
+
+        let ordinary: [CoreJSON] = (0..<40).map { index in .object([
+            "record_id": .string("v:\(index)"), "domain": .string(index == 39 ? "shell-zsh" : "workspace-folders"),
+            "item_id": .string("/Users/private/\(index)"), "predicate": .string("alias_recovery"),
+            "conformity": .string("verified"), "support": .string("supported")]) }
+        let result = try event(4, "result", [
+            "plan": .array((0..<40).map { _ in .object(["domain": .string("shell-zsh"), "action": .string("none"),
+                "disposition": .string("satisfied"), "reason": .string("match")]) } + [
+                .object(["domain": .string("shell-zsh"), "action": .string("none"), "disposition": .string("blocked"),
+                         "reason": .string("shell_startup_prerequisite")])]),
+            "verification": .object(["status": .string("complete"), "verified_count": .integer(40)]),
+            "records": .object(["status": .string("complete"), "verification_records": .array(ordinary),
+                "diagnostics": .array([.object(["record_id": .string("v:39"), "code": .string("observation_failed"),
+                    "severity": .string("error"), "phase": .string("observation")])])])])
+        let projected = sanitizer.event(result, at: Date())
+        check(projected.omitted == true && projected.evidence?.count == 20 && OperationLogSanitizer.valid(projected))
+        let diagnostic = projected.evidence!.first { $0.codes["section"] == "diagnostics" }!
+        check(diagnostic.codes["domain"] == "shell-zsh" && diagnostic.codes["code"] == "observation_failed")
+        check(projected.evidence!.contains { $0.codes["disposition"] == "blocked" && $0.codes["action"] == "none" })
+        check(projected.evidence!.contains { $0.counts["verified_count"] == 40 })
+        let firstOrdinary = projected.evidence!.firstIndex { $0.codes["disposition"] == "satisfied" || $0.codes["conformity"] == "verified" }!
+        check(projected.evidence!.firstIndex(of: diagnostic)! < firstOrdinary)
+        check(!projected.evidence!.contains { $0.codes["section"] == "verification_records" && $0.references["record_id"] == diagnostic.references["record_id"] })
+        check(sanitizer.event(result, at: Date()).evidence == projected.evidence)
+        check(!String(decoding: try raw(projected), as: UTF8.self).contains("/Users/private"))
+
+        let owner = try event(5, "operation_record", ["record_id": .string("o:0"), "domain": .string("shell-zsh"),
+            "outcome": .string("failure"), "reason": .string("shell_staging_metadata_copy_mismatch")])
+        let finding = try event(6, "diagnostic_record", ["record_id": .string("o:0"),
+            "code": .string("operation_failed"), "severity": .string("error"), "phase": .string("apply")])
+        _ = sanitizer.event(owner, at: Date())
+        check(sanitizer.event(finding, at: Date()).facts?.codes["domain"] == "shell-zsh")
+        _ = sanitizer.event(try event(7, "operation_record", ["record_id": .string("o:0"), "domain": .string("workspace-folders")]), at: Date())
+        check(sanitizer.event(finding, at: Date()).facts?.codes["domain"] == nil) // Conflicting owner is not guessed.
+        var separate = OperationLogSanitizer()
+        check(separate.event(finding, at: Date()).facts?.codes["domain"] == nil) // No cross-operation map.
+        let saturated = separate.event(try event(8, "result", ["coverage_records": .array((0...8192).map { index in
+            .object(["record_id": .string("c:\(index)"), "domain": .string("shell-zsh"), "disposition": .string("resolved")])
+        })]), at: Date())
+        check(saturated.omitted == true && saturated.evidence?.count == 20)
+        let overflow = separate.event(try event(9, "diagnostic_record", ["record_id": .string("c:8192"), "code": .string("observation_failed")]), at: Date())
+        check(overflow.facts?.codes["domain"] == nil)
+        print("PASS: Shell/Check failure codes, distinct mutation outcomes, bounded priority evidence and unambiguous operation-local diagnostic domains")
+    }
+
     static func storageTests(_ root: URL) async throws {
         let store = newStore(root, "private")
         let session = store.begin(request(), coreVersion: "3.4.0")
@@ -348,6 +422,7 @@ import Darwin
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
         defer { try? FileManager.default.removeItem(at: root) }
         try sanitizerTests()
+        try diagnosticReliabilityTests()
         try await storageTests(root)
         try await capTests(root)
         try await crashTests(root)

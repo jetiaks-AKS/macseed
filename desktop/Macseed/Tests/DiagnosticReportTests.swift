@@ -122,6 +122,50 @@ private actor ReportReadGate {
         check(text.contains("Privacy projection:") && text.contains("App version (report host): Unknown"))
         print("PASS: independent allowlist rejects private top-level/nested fields, aliases, arbitrary codes, secrets, paths, invalid counts and versions")
     }
+    static func reliabilityChecks() throws {
+        // Both independently reviewed allowlists must retain the safe production vocabulary.
+        for reason in OperationLogSanitizer.reasons {
+            check(DiagnosticReportPrivacy.code(reason, key: "reason") == reason)
+        }
+        for (key, values) in OperationLogSanitizer.vocabularies {
+            for value in values { check(DiagnosticReportPrivacy.code(value, key: key) == value) }
+        }
+        let failures = ["shell_preflight_observation_failed", "shell_preflight_script_consent_required",
+            "shell_staging_metadata_copy_mismatch", "shell_exchange_publication_uncertain", "shell_verification_publication_uncertain",
+            "shell_publication_uncertain", "shell_tool_missing_prerequisite", "shell_tool_observation_prerequisite",
+            "shell_dependency_missing_prerequisite", "shell_dependency_observation_prerequisite",
+            "shell_directory_missing_prerequisite", "shell_directory_observation_prerequisite",
+            "shell_operand_unsupported_prerequisite", "shell_selection_prerequisite",
+            "invalid_script_consent", "script_transfer_unsupported", "external_identity_changed",
+            "reference_invalid", "comparison_failed", "comparison_reporting_incomplete"]
+        for code in failures {
+            let id = UUID()
+            var sanitizer = OperationLogSanitizer()
+            let source = try CoreEvent(line: JSONEncoder().encode(CoreJSON.object(["protocol_version": .integer(1),
+                "operation_id": .string("fixture"), "sequence": .integer(1), "type": .string("failed"),
+                "data": .object(["code": .string(code), "phase": .string("apply"), "outcome": .string("failure"),
+                    "execution_status": .string("failed_after_mutation_may_have_started"),
+                    "publication_occurred": .bool(true), "target_mutation_may_have_started": .bool(true),
+                    "unknown_consequences": .bool(false), "path": .string("/Users/private/shell.zsh"),
+                    "definition": .string("helper() { PRIVATE_SHELL_SECRET; }"), "stderr": .string("PRIVATE_STDERR")])
+            ])))
+            let persisted = sanitizer.event(source, at: time)
+            var terminal = finish("failed"); terminal.runtimeError = OperationLogSanitizer.runtimeCode(.coreFailure(code))
+            let report = makeReport([header(id), persisted, terminal], id: id).text
+            check(report.contains("Reason: " + code) && report.contains("code=" + code))
+            check(report.contains("phase=apply") && report.contains("outcome=failure"))
+            check(report.contains("execution_status=failed_after_mutation_may_have_started"))
+            check(report.contains("target_mutation_may_have_started: true") && report.contains("unknown_consequences: false"))
+            check(!report.contains("PRIVATE_") && !report.contains("/Users/private") && !report.contains("helper()"))
+        }
+        let id = UUID()
+        var bad = event(1, "diagnostic_record", OperationLogFacts(codes: ["code": "shell_staging_token_shaped_secret", "domain": "private-domain"]))
+        bad.evidence = [OperationLogFacts(codes: ["reason": "shell_preflight_unknown_reason"], references: ["record_id": "anon-012345678901234567890123"])]
+        let rejected = makeReport([header(id), bad, finish()], id: id).text
+        check(!rejected.contains("token_shaped_secret") && !rejected.contains("unknown_reason") && !rejected.contains("private-domain") && !rejected.contains("anon-"))
+        print("PASS: independent allowlists retain production Shell/Check codes and statuses, reject unknown codes and exclude private source data")
+    }
+
     static func write(_ records: [OperationLogRecord], to url: URL) throws {
         let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .millisecondsSince1970
         var bytes = Data()
@@ -133,12 +177,27 @@ private actor ReportReadGate {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
         defer { try? FileManager.default.removeItem(at: root) }
         let id = UUID(), url = root.appendingPathComponent(id.uuidString + ".jsonl")
-        try write([header(id, operation: .environmentCompare), event(1, "started")], to: url)
+        var sanitizer = OperationLogSanitizer()
+        let core = try CoreEvent(line: JSONEncoder().encode(CoreJSON.object(["protocol_version": .integer(1),
+            "operation_id": .string("fixture"), "sequence": .integer(2), "type": .string("result"), "data": .object([
+                "verification": .object(["status": .string("complete"), "unverified_count": .integer(1)]),
+                "records": .object(["status": .string("complete"), "verification_records": .array((0..<40).map { index in
+                    .object(["record_id": .string("v:\(index)"), "domain": .string(index == 39 ? "shell-zsh" : "workspace-folders"),
+                        "item_id": .string("/Users/private/script-\(index)"), "predicate": .string(index == 39 ? "script_file" : "directory"),
+                        "conformity": .string(index == 39 ? "unverified" : "verified")])
+                }), "diagnostics": .array([.object(["record_id": .string("v:39"), "code": .string("shell_dependency_missing_prerequisite"),
+                    "severity": .string("warning"), "phase": .string("observation")])])])
+            ])])))
+        let important = sanitizer.event(core, at: time)
+        try write([header(id, operation: .environmentCompare), event(1, "started"), important], to: url)
         let store = OperationLogStore(directory: root)
         let model = DiagnosticReportModel(id: id, store: store, environment: environment)
         await model.refresh()
         let original = model.snapshot!
         check(original.operationID == id && original.text.contains("Log completeness: Incomplete"))
+        check(original.text.contains("code=shell_dependency_missing_prerequisite") && original.text.contains("domain=shell-zsh"))
+        check(original.text.contains("predicate=script_file") && original.text.contains("Saved diagnostics include omissions"))
+        check(!original.text.contains("anon-") && !original.text.contains("/Users/private") && !original.text.contains("v:39"))
         let pasteboard = NSPasteboard.withUniqueName(); defer { pasteboard.releaseGlobally() }
         check(model.copy(to: pasteboard) && pasteboard.data(forType: .string) == original.utf8)
         check(Data(original.text.utf8) == original.utf8)
@@ -219,7 +278,7 @@ private actor ReportReadGate {
         let app = NSApplication.shared; app.setActivationPolicy(.accessory)
         Task { @MainActor in
             do {
-                contractChecks(); privacyChecks(); try await storeAndSnapshotChecks(); try await performanceAndLifecycleChecks()
+                contractChecks(); privacyChecks(); try reliabilityChecks(); try await storeAndSnapshotChecks(); try await performanceAndLifecycleChecks()
                 print("PASS: DiagnosticReportTests"); exit(0)
             } catch { print("FAIL: DiagnosticReportTests: \(type(of: error))"); exit(1) }
         }

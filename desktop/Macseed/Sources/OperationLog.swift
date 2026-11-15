@@ -100,6 +100,9 @@ struct OperationLogPage: Sendable {
 
 struct OperationLogSanitizer {
     private let salt = UUID().uuidString
+    // Operation-local, salted record references -> closed domain only. Never persisted.
+    // Match Core's 8,192-record reporting bound; an empty domain marks ambiguity.
+    private var ownerDomains: [String: String] = [:]
     private(set) var verificationStatus: String?
     private(set) var detailStatus: String?
     static let events: Set<String> = ["started", "phase_started", "phase_completed", "capture_category", "secure_packaging",
@@ -109,16 +112,16 @@ struct OperationLogSanitizer {
     static let vocabularies: [String: Set<String>] = [
         "phase": ["discovery", "preparation", "validation", "publication", "bundle_creation", "bundle_validation", "bootstrap", "verification", "comparison", "secure_export", "secure_import", "secure_compare", "preview", "execute", "readiness", "capture", "scope", "observation", "apply", "post_apply", "orchestration"],
         "domain": ["orchestration", "verification", "workspace", "workspace-folders", "git-repositories", "vscode-workspaces", "git-configuration", "homebrew-packages", "homebrew-casks", "app-store", "vscode-extensions", "vscode-settings", "shell-zsh", "ssh-configuration", "ssh-identities", "secure-ssh-identities", "ssh-prerequisites", "secure-migration", "launcher", "macos-finder", "macos-dock", "macos-windows", "macos-keyboard", "macos-trackpad", "macos-screenshots"],
-        "action": ["execute", "inspect", "install", "reinstall", "configure", "restore", "clone", "create_workspace", "add_worktree", "switch_branch", "checkout", "verify", "compare", "skip", "noop", "import", "validate_and_import", "export", "create"],
-        "state": ["started", "completed", "failed", "blocked", "conflict", "interrupted", "skipped", "running", "warning", "changed", "already_satisfied", "graceful_stop_accepted", "graceful_stop_unavailable"],
+        "action": ["execute", "inspect", "install", "reinstall", "configure", "restore", "clone", "create_workspace", "add_worktree", "switch_branch", "checkout", "verify", "compare", "skip", "noop", "import", "validate_and_import", "export", "create", "none", "set_setting", "create_directory", "replace_with_backup", "set_preference", "restart_process"],
+        "state": ["applying", "verifying", "satisfied", "started", "completed", "failed", "blocked", "conflict", "interrupted", "skipped", "running", "warning", "changed", "already_satisfied", "graceful_stop_accepted", "graceful_stop_unavailable"],
         "status": ["complete", "partial", "not_run", "unavailable", "invalid", "truncated", "present", "absent", "unsupported", "observation_error", "satisfied", "safely_satisfiable", "external_action_required", "not_selected", "completed", "failed", "cancelled"],
         "outcome": ["success", "failure", "warning", "skipped", "noop", "not_run", "cancelled"],
-        "execution_status": ["not_started", "started", "completed", "failed", "cancelled"],
-        "bootstrap_status": ["not_run", "success", "warning", "failure"],
+        "execution_status": ["not_started", "started", "completed", "failed", "cancelled", "failed_before_mutation", "failed_after_mutation_may_have_started"],
+        "bootstrap_status": ["not_started", "not_run", "success", "warning", "failure"],
         "verdict": ["selected_requirements_verified", "incomplete", "requirements_not_verified", "selected_requirements_not_verified", "differences_detected", "no_differences_detected", "no_comparable_requirements", "no_managed_requirements"],
         "conformity": ["verified", "mismatch", "unverified", "unsupported", "unresolved", "not_applicable"],
         "support": ["supported", "unsupported", "unresolved", "not_applicable"],
-        "disposition": ["satisfied", "planned", "blocked", "unresolved", "selected", "excluded", "supported", "unsupported", "resolved", "no_requirement"],
+        "disposition": ["conflict", "warning", "unknown", "pending_unlock", "satisfied", "planned", "blocked", "unresolved", "selected", "excluded", "supported", "unsupported", "resolved", "no_requirement"],
         "source_status": ["present", "absent", "unavailable", "observation_error", "unsupported", "valid", "invalid", "observed_present", "observed_absent", "partial", "unobserved", "unknown"],
         "severity": ["info", "warning", "error"],
         "comparison_kind": ["matching", "missing", "differing", "unverified", "unsupported", "unresolved", "extra", "unknown_difference"],
@@ -134,7 +137,7 @@ struct OperationLogSanitizer {
         "bundle_invalid", "bundle_unavailable", "unsupported_bundle", "recovery_required", "invalid_selection", "preview_failed", "stale_plan", "stale_prepared_capture",
         "publication_failed", "bootstrap_failed", "process_observation_unavailable", "privileged_lifecycle_unknown", "item_stalled_timeout", "item_install_failed",
         "progress_observation_failed", "observation_failed", "observation_error", "prerequisite_unmet", "unsupported_predicate", "confirmed_mismatch", "unknown_difference",
-        "reference_changed", "reference_unavailable", "comparison_unavailable", "capture_failed", "capture_discovery_failed", "capture_inventory_invalid", "capture_validation_failed",
+        "reference_invalid", "comparison_failed", "comparison_reporting_incomplete", "reference_changed", "reference_unavailable", "comparison_unavailable", "capture_failed", "capture_discovery_failed", "capture_inventory_invalid", "capture_validation_failed",
         "capture_source_unavailable", "invalid_workspace_selection", "workspace_dependency_missing", "workspace_path_conflict",
         "external_identity_unsafe", "external_identity_name_invalid", "external_identity_pair_missing", "external_identity_pair_invalid", "external_identity_changed", "external_identity_duplicate", "external_identity_invalid_request",
         "invalid_destination", "destination_exists", "destination_changed", "secure_bridge_required", "age_unavailable", "secure_bridge_unavailable", "secure_timeout",
@@ -153,6 +156,25 @@ struct OperationLogSanitizer {
         "shell_tool_prerequisite", "shell_tool_missing_prerequisite", "shell_tool_observation_prerequisite",
         "shell_directory_missing_prerequisite", "shell_directory_observation_prerequisite", "shell_dependency_missing_prerequisite",
         "shell_dependency_observation_prerequisite", "shell_operand_unsupported_prerequisite", "shell_operand_prerequisite", "shell_selection_prerequisite",
+        "source_absent", "source_excluded", "shell_publication_uncertain",
+        "shell_managed_source_prerequisite", "shell_dependency_prerequisite", "shell_source_prerequisite", "shell_startup_prerequisite",
+        // Finite codes emitted by aliases.failure_diagnostic; no prefix admission.
+        "shell_preflight_observation_failed", "shell_preflight_target_changed", "shell_preflight_target_conflict",
+        "shell_preflight_publication_uncertain", "shell_preflight_metadata_copy_failed", "shell_preflight_metadata_copy_mismatch",
+        "shell_preflight_unsupported_metadata", "shell_preflight_document_identity_unavailable", "shell_preflight_verification_failed",
+        "shell_preflight_script_consent_required",
+        "shell_staging_observation_failed", "shell_staging_target_changed", "shell_staging_target_conflict",
+        "shell_staging_publication_uncertain", "shell_staging_metadata_copy_failed", "shell_staging_metadata_copy_mismatch",
+        "shell_staging_unsupported_metadata", "shell_staging_document_identity_unavailable", "shell_staging_verification_failed",
+        "shell_staging_script_consent_required",
+        "shell_exchange_observation_failed", "shell_exchange_target_changed", "shell_exchange_target_conflict",
+        "shell_exchange_publication_uncertain", "shell_exchange_metadata_copy_failed", "shell_exchange_metadata_copy_mismatch",
+        "shell_exchange_unsupported_metadata", "shell_exchange_document_identity_unavailable", "shell_exchange_verification_failed",
+        "shell_exchange_script_consent_required",
+        "shell_verification_observation_failed", "shell_verification_target_changed", "shell_verification_target_conflict",
+        "shell_verification_publication_uncertain", "shell_verification_metadata_copy_failed", "shell_verification_metadata_copy_mismatch",
+        "shell_verification_unsupported_metadata", "shell_verification_document_identity_unavailable", "shell_verification_verification_failed",
+        "shell_verification_script_consent_required",
         "invalid_selected_input", "cask_metadata_unavailable", "cask_repair_not_supported", "internet_required", "command_line_tools_required"]).union(CoreRestorePreparation.workspacePreviewReasons.keys)
     static let countKeys: Set<String> = ["duration_ms", "native_exit_code", "native_signal", "warning_count", "error_count", "verified_count", "mismatch_count", "unverified_count", "unsupported_count", "unresolved_count",
         "selected_count", "selected_domains", "selected_items", "secure_identity_count", "matching", "missing", "differing", "unverified", "unsupported", "unresolved", "extra", "unknown_difference"]
@@ -196,6 +218,38 @@ struct OperationLogSanitizer {
         return facts
     }
 
+    private mutating func rememberOwner(_ facts: OperationLogFacts, omitted: inout Bool) {
+        guard let reference = facts.references["record_id"] else { return }
+        let domain = facts.codes["domain"] ?? ""
+        if let previous = ownerDomains[reference] {
+            if previous != domain { ownerDomains[reference] = "" }
+        } else if ownerDomains.count < 8192 {
+            ownerDomains[reference] = domain
+        } else { omitted = true }
+    }
+
+    private func diagnosticContext(_ facts: OperationLogFacts) -> OperationLogFacts {
+        var result = facts
+        if result.codes["domain"] == nil, let reference = result.references["record_id"],
+           let domain = ownerDomains[reference], !domain.isEmpty {
+            result.codes["domain"] = domain
+        }
+        return result
+    }
+
+    private static func evidencePriority(_ facts: OperationLogFacts) -> Int {
+        if ["diagnostics", "observation_diagnostics"].contains(facts.codes["section"] ?? "") { return 1 }
+        if facts.codes["severity"] == "error" || facts.codes["outcome"] == "failure" ||
+            ["failed", "blocked", "conflict"].contains(facts.codes["state"] ?? "") ||
+            ["blocked", "conflict"].contains(facts.codes["disposition"] ?? "") { return 1 }
+        if facts.codes["code"] != nil || facts.codes["reason"].map({ !["ready", "match", "not_selected"].contains($0) }) == true ||
+            facts.codes.contains(where: { key, value in
+                ["severity", "state", "outcome", "conformity", "support", "disposition", "status", "comparison_kind"].contains(key) &&
+                ["error", "failure", "failed", "blocked", "conflict", "warning", "unverified", "unsupported", "unresolved", "unknown", "unknown_difference", "mismatch", "missing", "differing", "observation_error", "external_action_required"].contains(value)
+            }) { return 2 }
+        return 3
+    }
+
     mutating func event(_ event: CoreEvent, at time: Date) -> OperationLogRecord {
         guard Self.events.contains(event.type), event.sequence > 0 else {
             var record = OperationLogRecord(.client, time: time); record.client = .eventSkipped; record.omitted = true
@@ -206,8 +260,38 @@ struct OperationLogSanitizer {
         var omitted = false
         var data = event.data ?? [:]
         if data["phase"] == nil { data["phase"] = event.fields["phase"] }
-        record.facts = project(data, omitted: &omitted)
-        var evidence: [OperationLogFacts] = []
+        var root = project(data, omitted: &omitted)
+        let verification = data["verification"]?.object
+        let containers = [data, verification?["details"]?.object ?? [:], data["records"]?.object ?? [:], data["readiness"]?.object ?? [:]]
+        if ["operation_record", "verification_record", "coverage_record"].contains(event.type) {
+            rememberOwner(root, omitted: &omitted)
+        }
+        // Resolve ownership before selection: the owner may be omitted by the cap,
+        // or follow a diagnostic in the result payload. Never infer from row order.
+        for container in containers {
+            for key in ["operation_records", "verification_records", "coverage_records"] {
+                guard case .array(let rows) = container[key] else { continue }
+                for row in rows {
+                    if let object = row.object {
+                        let facts = project(object, omitted: &omitted)
+                        rememberOwner(facts, omitted: &omitted)
+                    }
+                }
+            }
+        }
+        if event.type == "diagnostic_record" { root = diagnosticContext(root) }
+        record.facts = root
+        var evidence: [(priority: Int, facts: OperationLogFacts)] = []
+        func retain(_ facts: OperationLogFacts, priority: Int) {
+            // Stable within each priority, bounded even for a large result payload.
+            let index = evidence.firstIndex { $0.priority > priority } ?? evidence.count
+            if evidence.count == 20 {
+                omitted = true
+                guard index < 20 else { return }
+                evidence.removeLast()
+            }
+            evidence.insert((priority, facts), at: index)
+        }
         // Preserve the first failing layer even when a large item inventory fills
         // the existing bounded result projection. No raw process text is read.
         if case .array(let rows) = data["observation_diagnostics"] {
@@ -215,7 +299,7 @@ struct OperationLogSanitizer {
                 if let object = row.object {
                     var facts = project(object, omitted: &omitted)
                     facts.codes["section"] = "observation_diagnostics"
-                    evidence.append(facts)
+                    retain(facts, priority: Self.evidencePriority(facts))
                 } else { omitted = true }
             }
             if rows.count > 8 { omitted = true }
@@ -224,7 +308,6 @@ struct OperationLogSanitizer {
             verificationStatus = verificationStatus ?? "partial"; detailStatus = detailStatus ?? "partial"
         }
         // Walk only known containers at fixed depth. Never recursively dump a payload.
-        let verification = data["verification"]?.object
         if let verification {
             verificationStatus = Self.vocabularies["status"]!.contains(verification["status"]?.string ?? "") ? verification["status"]?.string : nil
         }
@@ -235,32 +318,30 @@ struct OperationLogSanitizer {
                          ("verification_details", verification?["details"]?.object), ("records", data["records"]?.object), ("readiness", data["readiness"]?.object)]
         for (section, object) in summaries {
             if let object {
-                var facts = project(object, omitted: &omitted); facts.codes["section"] = section; evidence.append(facts)
+                var facts = project(object, omitted: &omitted); facts.codes["section"] = section; retain(facts, priority: 0)
             }
             if let counts = object?["counts"]?.object {
-                var facts = project(counts, omitted: &omitted); facts.codes["section"] = section; evidence.append(facts)
+                var facts = project(counts, omitted: &omitted); facts.codes["section"] = section; retain(facts, priority: 0)
             }
         }
-        let containers = [data, verification?["details"]?.object ?? [:], data["records"]?.object ?? [:], data["readiness"]?.object ?? [:]]
         for container in containers {
             for key in ["operation_records", "verification_records", "coverage_records", "diagnostics", "module_outcomes", "operation_failures", "conditions", "inventory", "comparison_records", "plan"] {
                 guard let value = container[key] else { continue }
                 guard case .array(let rows) = value else { omitted = true; continue }
-                let available = max(0, 20 - evidence.count)
-                for row in rows.prefix(available) {
+                for row in rows {
                     if let object = row.object {
                         var facts = project(object, omitted: &omitted)
                         if let diagnostic = object["diagnostic"]?.object {
                             let detail = project(diagnostic, omitted: &omitted)
                             for field in ["primitive", "condition"] { facts.codes[field] = detail.codes[field] }
                         }
-                        facts.codes["section"] = key; evidence.append(facts)
+                        if key == "diagnostics" { facts = diagnosticContext(facts) }
+                        facts.codes["section"] = key; retain(facts, priority: Self.evidencePriority(facts))
                     } else { omitted = true }
                 }
-                if rows.count > available { omitted = true }
             }
         }
-        record.evidence = evidence.isEmpty ? nil : evidence
+        record.evidence = evidence.isEmpty ? nil : evidence.map(\.facts)
         record.omitted = omitted
         return record
     }

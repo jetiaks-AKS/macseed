@@ -2269,6 +2269,15 @@ phase/domain/action/reason/count/Verification facts. Client records identify onl
 confirmed transport/stop requests or delivery evidence, without invented Core
 sequences or a promise of safe rollback.
 
+The bounded projection retains summaries and prioritizes diagnostic findings,
+failures and blockers over ordinary rows within the existing 20-evidence limit.
+Omissions remain explicit. An operation-local lookup of salted record references
+can attach a closed domain to a diagnostic from its unambiguous owner; the lookup
+is bounded by Core's 8,192-record reporting limit and is never persisted. Missing,
+conflicting or over-limit ownership leaves the domain unknown. Shell failure-phase
+codes, Check failure codes and before/possible-after-mutation execution statuses
+remain distinct from the overall process result and Verification verdict.
+
 Append and controlled sync preserve complete valid prefixes after a crash. A
 missing finish, invalid terminal evidence or damaged/partial tail does not establish
 success. Persistence failure changes diagnostic availability, not Capture, Restore
@@ -2319,6 +2328,9 @@ Verification status/details completeness/verdict/counters, phase chronology,
 errors/warnings/skipped/unsupported and evidenced Graceful Stop/Force Stop facts.
 Publication, possible target mutation and unknown-consequences flags appear only
 when recorded. Missing facts remain unknown rather than fabricated zero counts.
+
+Safe Shell/Check reason codes, predicates and diagnostic domains survive this
+second projection. Local item/record aliases and their domain lookup do not.
 
 Export excludes even local item aliases, user/object names, paths, filenames,
 repository names/remotes, setting contents, environment, SSH material, credentials,

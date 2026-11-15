@@ -435,6 +435,21 @@ private actor DelayedLogPage {
         check(OperationLogDetailPage.height(["short"]) < 60)
         check(OperationLogDetailPage.height(details) == 220)
         check(OperationLogDetailPage.height([String(repeating: "x", count: 1000)]) == 220)
+        var sanitizer = OperationLogSanitizer()
+        let owner = try! event(11, "operation_record", id: id.uuidString, data: ["record_id": .string("o:0"),
+            "domain": .string("shell-zsh"), "outcome": .string("failure"), "reason": .string("shell_staging_metadata_copy_mismatch")])
+        let diagnostic = try! event(12, "diagnostic_record", id: id.uuidString, data: ["record_id": .string("o:0"),
+            "code": .string("operation_failed"), "severity": .string("error"), "phase": .string("apply")])
+        let safeRecords = [sanitizer.event(owner, at: Date()), sanitizer.event(diagnostic, at: Date())]
+        var shellReport = OperationLogReport()
+        safeRecords.forEach { shellReport.receive($0) }
+        check(shellReport.issues.keys.contains { $0.contains("shell-zsh") && $0.contains("shell_staging_metadata_copy_mismatch") })
+        check(shellReport.issues.keys.contains { $0.contains("shell-zsh") && $0.contains("operation_failed") })
+        let shellRows = safeRecords.enumerated().map { OperationLogRow(id: .init(operation: id, revision: revision, ordinal: $0.offset + 11), record: $0.element) }
+        check(OperationLogPresentation.timeline(shellRows, mode: .all).flatMap(\.rows).map(\.id) == shellRows.map(\.id))
+        check(OperationLogPresentation.timeline(shellRows, mode: .important).isEmpty) // Findings stay in the existing issues summary.
+        let shellDetails = safeRecords.flatMap { OperationLogPresentation.details($0) }
+        check(shellDetails.joined().contains("shell_staging_metadata_copy_mismatch") && shellDetails.joined().contains("shell-zsh"))
         print("PASS: Important is a short issues/key-event report; All groups ordinary evidence and exposes every event; safe source counts/reasons, compact bounded details and complete event copy")
     }
 

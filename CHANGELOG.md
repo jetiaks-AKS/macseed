@@ -252,6 +252,11 @@ The format is based on the principles of **Keep a Changelog**.
 
 ### Fixed
 
+* Operation Logs and Diagnostic Reports retain safe Shell/Check failure reasons,
+  predicates and mutation-status evidence, prioritize failures over ordinary
+  bounded records, and preserve qualified diagnostic domains without exporting
+  private identifiers or source content.
+
 * Capture omits comparison inventories for entirely unselected application
   categories. Partial selections retain full comparison provenance, and existing
   Bundle v1 files remain readable.
