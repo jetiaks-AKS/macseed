@@ -3,23 +3,57 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 configuration="${1:-Debug}"
-case "$configuration" in Debug|Release) ;; *) echo 'Usage: ./build.sh [Debug|Release] [--test]' >&2; exit 2 ;; esac
-if [[ $# -gt 2 || ( $# -eq 2 && "$2" != --test ) ]]; then
-    echo 'Usage: ./build.sh [Debug|Release] [--test]' >&2
+usage() {
+    echo 'Usage: ./build.sh [Debug|Release] [--test [--shard capture|remaining] [--list]]' >&2
     exit 2
+}
+case "$configuration" in Debug|Release) ;; *) usage ;; esac
+if [[ $# -gt 0 ]]; then shift; fi
+run_tests=false
+test_shard=all
+list_tests=false
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --test) [[ "$run_tests" == false ]] || usage; run_tests=true; shift ;;
+        --shard)
+            [[ $# -ge 2 && "$test_shard" == all ]] || usage
+            case "$2" in capture|remaining) test_shard=$2 ;; *) usage ;; esac
+            shift 2 ;;
+        --list) [[ "$list_tests" == false ]] || usage; list_tests=true; shift ;;
+        *) usage ;;
+    esac
+done
+if [[ "$test_shard" != all && ( "$run_tests" != true || "$configuration" != Debug ) ]] ||
+   [[ "$list_tests" == true && "$run_tests" != true ]]; then
+    usage
 fi
 # One inventory drives execution and the optional CI summary. Counts are suite
 # invocations, never assertions; compilation and execution are separate stages.
 suites=(PresentationTests SettingsTests HomebrewSetupTests HomebrewPackageTests HomebrewLaunchTests DiagnosticReportTests OperationLogViewTests OperationLogTests
     CoreRuntimeTests EnvironmentStatusTests CaptureTests RestoreTests)
 restore_subsets=(--final-restore-ux-only --assisted-appstore-only)
+selected_suites=()
+for suite in "${suites[@]}"; do
+    if [[ "$test_shard" == all || ( "$test_shard" == capture && "$suite" == CaptureTests ) ||
+          ( "$test_shard" == remaining && "$suite" != CaptureTests ) ]]; then
+        selected_suites+=("$suite")
+    fi
+done
+# Invalid/empty partitions must fail before building, never silently do no work.
+[[ ${#selected_suites[@]} -gt 0 ]] || exit 2
 stages=("$configuration app build")
-if [[ "${2:-}" == --test ]]; then
-    stages+=("BundledAgeTests (Python)")
+if [[ "$run_tests" == true ]]; then
+    if [[ "$test_shard" != capture ]]; then stages+=("BundledAgeTests (Python)"); fi
     if [[ "$configuration" == Debug ]]; then stages+=("Compile shared test sources"); fi
-    for suite in "${suites[@]}"; do stages+=("Compile $suite" "$suite"); done
-    for subset in "${restore_subsets[@]}"; do stages+=("RestoreTests $subset"); done
+    for suite in "${selected_suites[@]}"; do stages+=("Compile $suite" "$suite"); done
+    if [[ "$test_shard" != capture ]]; then
+        for subset in "${restore_subsets[@]}"; do stages+=("RestoreTests $subset"); done
+    fi
     if [[ "$configuration" == Release ]]; then stages+=("Release sample exclusion"); fi
+fi
+if [[ "$list_tests" == true ]]; then
+    printf '%s\n' "${stages[@]}"
+    exit 0
 fi
 stage_results=()
 stage_seconds=()
@@ -31,7 +65,7 @@ write_summary() {
     local status=$1 index
     if [[ -n "${MACSEED_DESKTOP_SUMMARY:-}" ]]; then
         {
-            printf '### Desktop build/test\n\nExit status: %s. Elapsed: %s s.\n\n' "$status" "$((SECONDS - build_started))"
+            printf '### Desktop build/test (%s)\n\nExit status: %s. Elapsed: %s s.\n\n' "$test_shard" "$status" "$((SECONDS - build_started))"
             printf '| Stage | Result | Elapsed (s) |\n|---|---|---|\n'
             for ((index=0; index<${#stages[@]}; index++)); do
                 printf '| %s | %s | %s |\n' "${stages[$index]}" "${stage_results[$index]:-not-run}" "${stage_seconds[$index]:-—}"
@@ -45,6 +79,10 @@ write_summary() {
 finish() {
     local status=$?
     trap - EXIT
+    if [[ "$status" -eq 0 && "$stage_index" -ne "${#stages[@]}" ]]; then
+        status=1
+        printf 'FAIL: Desktop execution incomplete\n' >&2
+    fi
     if [[ "${stage_results[$stage_index]:-}" == running ]]; then
         stage_results[$stage_index]=failed
         stage_seconds[$stage_index]=$((SECONDS - stage_started))
@@ -89,14 +127,14 @@ build_app() {
         python_runtime="$(xcrun --find python3)"
     fi
 }
-run_tests=false
-if [[ "${2:-}" == --test ]]; then run_tests=true; fi
 run_stage build_app
-if [[ "${2:-}" == --test ]]; then
+if [[ "$run_tests" == true ]]; then
     # The unittest class prepares both pinned archives through prepare-age.py.
     # Reuse bounded execution, exact method reports and owned-process cleanup.
-    run_stage "$python_runtime" -B ../../scripts/test_runner.py \
-        desktop/Macseed/Tests/BundledAgeTests.py --
+    if [[ "$test_shard" != capture ]]; then
+        run_stage "$python_runtime" -B ../../scripts/test_runner.py \
+            desktop/Macseed/Tests/BundledAgeTests.py --
+    fi
     presentation_sources=()
     for source_file in Sources/*.swift; do
         if [[ "$source_file" != Sources/MacseedApp.swift ]]; then presentation_sources+=("$source_file"); fi
@@ -140,7 +178,7 @@ if [[ "${2:-}" == --test ]]; then
                 ;;
         esac
     }
-    for suite in "${suites[@]}"; do
+    for suite in "${selected_suites[@]}"; do
         run_stage compile_test "$suite"
         test_arguments=()
         case "$suite" in
@@ -158,9 +196,11 @@ if [[ "${2:-}" == --test ]]; then
             run_stage "$output_dir/$suite" ${test_arguments[@]+"${test_arguments[@]}"}
         fi
     done
-    for subset in "${restore_subsets[@]}"; do
-        run_stage "$output_dir/RestoreTests" "$core_root" "$python_runtime" "$subset" --no-renders
-    done
+    if [[ "$test_shard" != capture ]]; then
+        for subset in "${restore_subsets[@]}"; do
+            run_stage "$output_dir/RestoreTests" "$core_root" "$python_runtime" "$subset" --no-renders
+        done
+    fi
     if [[ "$configuration" == Release ]]; then
         check_release_samples() {
             if /usr/bin/strings "$output_dir/Macseed.app/Contents/MacOS/Macseed" | /usr/bin/grep -E 'Demo States|Next Sample Event|Personal SSH key|SampleProvider' >/dev/null; then

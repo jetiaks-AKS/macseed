@@ -2,8 +2,10 @@
 """Cheap runner contract checks; no Macseed operations or full regression."""
 import json
 import io
+from collections import Counter
 from contextlib import redirect_stderr, redirect_stdout
 import os
+import plistlib
 from pathlib import Path
 import re
 import shutil
@@ -11,6 +13,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import textwrap
 import time
 import unittest
 from unittest.mock import Mock, patch
@@ -210,6 +213,7 @@ class RunnerTests(unittest.TestCase):
         # Both a failed shared compile and a failed suite must stop later work.
         source = (ROOT / 'desktop/Macseed/build.sh').read_text()
         functions = source[source.index('# One inventory'):source.index('\nbuild_app() {')]
+        preamble = 'set -euo pipefail\nconfiguration=Debug\nrun_tests=true\ntest_shard=all\nlist_tests=false\n'
         summary, marker = self.root / 'desktop.md', self.root / 'later'
         for completed, failed, later in (
                 (['Debug app build'], 'BundledAgeTests (Python)', 'Compile shared test sources'),
@@ -223,7 +227,7 @@ class RunnerTests(unittest.TestCase):
                     f'assert "| {failed} | running |" in text\n'
                     f'assert "| {later} | not-run |" in text\nraise SystemExit(17)\n')
                 script = self.root / 'stages.sh'
-                script.write_text('set -euo pipefail\nconfiguration=Debug\n' + functions +
+                script.write_text(preamble + functions +
                     '\n' + 'run_stage true\n' * len(completed) + 'run_stage "$1" "$3"\ntouch "$4"\n')
                 result = subprocess.run(['bash', str(script), sys.executable, '--test', str(child), str(marker)],
                     env=dict(os.environ, MACSEED_DESKTOP_SUMMARY=str(summary)), capture_output=True, timeout=10)
@@ -236,7 +240,7 @@ class RunnerTests(unittest.TestCase):
                 self.assertFalse(marker.exists())
                 self.assertFalse(summary.with_suffix('.md.tmp').exists())
         # A missing test tool is a failed mandatory stage, never a skip/PASS.
-        script.write_text('set -euo pipefail\nconfiguration=Debug\n' + functions +
+        script.write_text(preamble + functions +
                           '\nrun_stage true\nrun_stage "$1"\ntouch "$3"\n')
         result = subprocess.run(['bash', str(script), str(self.root / 'missing-python'), '--test', str(marker)],
             env=dict(os.environ, MACSEED_DESKTOP_SUMMARY=str(summary)), capture_output=True, timeout=10)
@@ -245,6 +249,172 @@ class RunnerTests(unittest.TestCase):
         self.assertIn('| BundledAgeTests (Python) | failed |', summary.read_text())
         self.assertIn('| Compile shared test sources | not-run |', summary.read_text())
         self.assertFalse(marker.exists())
+
+    def desktop_build_fixture(self):
+        """Exercise canonical dispatch with fake compilers/tests, never native workflows."""
+        native = self.root / 'desktop/Macseed'
+        native.mkdir(parents=True)
+        shutil.copy2(ROOT / 'desktop/Macseed/build.sh', native / 'build.sh')
+        for folder in ('Sources', 'Tests', 'Resources'):
+            (native / folder).mkdir()
+        for path in (ROOT / 'desktop/Macseed/Sources').glob('*.swift'):
+            (native / 'Sources' / path.name).touch()
+        for path in (ROOT / 'desktop/Macseed/Tests').glob('*Tests.swift'):
+            (native / 'Tests' / path.name).touch()
+        (native / 'Info.plist').write_bytes(plistlib.dumps({'CFBundleName': 'Fixture'}))
+        (native / 'Resources/Macseed.icns').touch()
+        preparation = native / 'prepare-runtime.sh'
+        preparation.write_text('#!/bin/bash\nmkdir -p "$1"\n'); preparation.chmod(0o700)
+        tools = self.root / 'tools'; tools.mkdir()
+        entry = tools / 'fixture-python'
+        entry.write_text('#!' + sys.executable + '\n' + textwrap.dedent('''\
+            import json, os, pathlib, sys
+            name, args = pathlib.Path(sys.argv[0]).name, sys.argv[1:]
+            if name == 'fixture-python':
+                if args[0] == '-B': args = args[1:]
+                script = pathlib.Path(args[0]).name
+                if script == 'desktop_test_runner.py':
+                    assert args[1:3] == ['--timeout', '600']
+                    os.execv(args[3], args[3:])
+                assert script == 'test_runner.py'
+                assert args[1:] == ['desktop/Macseed/Tests/BundledAgeTests.py', '--']
+                name = 'BundledAgeTests (Python)'
+            with open(os.environ['DISPATCH_LOG'], 'a') as stream:
+                stream.write(json.dumps([name, *args]) + '\\n')
+            sys.exit(17 if os.environ.get('FAIL_STAGE') == name else 0)
+            '''))
+        entry.chmod(0o700)
+        compiler = tools / 'xcrun'
+        compiler.write_text('#!' + sys.executable + '\n' + textwrap.dedent('''\
+            import os, pathlib, shutil, sys
+            tools = pathlib.Path(__file__).parent
+            args = sys.argv[1:]
+            if args == ['--sdk', 'macosx', '--show-sdk-path']: print('/fixture-sdk')
+            elif args == ['--find', 'python3']: print(tools / 'fixture-python')
+            else:
+                assert args[0] == 'swiftc'
+                output = pathlib.Path(args[args.index('-o') + 1])
+                if os.environ.get('FAIL_STAGE') == 'Compile ' + output.name: sys.exit(19)
+                if os.environ.get('MISSING_EXECUTABLE') != output.name:
+                    shutil.copy2(tools / 'fixture-python', output)
+            '''))
+        compiler.chmod(0o700)
+        environment = dict(os.environ, PATH=str(tools) + os.pathsep + os.environ['PATH'],
+                           DISPATCH_LOG=str(self.root / 'dispatch.jsonl'),
+                           MACSEED_DESKTOP_SUMMARY=str(self.root / 'desktop.md'))
+        return native, environment
+
+    def test_desktop_shards_execute_exact_inventory(self):
+        native, environment = self.desktop_build_fixture()
+        def plan(*args):
+            result = subprocess.run(['bash', str(native / 'build.sh'), 'Debug', '--test', *args, '--list'],
+                env=environment, capture_output=True, text=True, timeout=10)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            return result.stdout.splitlines()
+        whole = plan()
+        parts = [plan('--shard', name) for name in ('capture', 'remaining')]
+        self.assertFalse((native / 'build').exists(), 'Listing must not compile or launch a test')
+        self.assertFalse(Path(environment['DISPATCH_LOG']).exists())
+        shared = ['Debug app build', 'Compile shared test sources']
+        self.assertEqual(Counter(parts[0] + parts[1]), Counter(whole + shared))
+        self.assertEqual(parts[0], [*shared, 'Compile CaptureTests', 'CaptureTests'])
+        units = [stage for stage in whole if stage not in shared and not stage.startswith('Compile ')]
+        self.assertEqual(len(units), 15)  # Twelve native suites, two subsets, pinned-age suite.
+        self.assertEqual(len(set(units)), len(units))
+        for shard, expected in [(None, whole), ('capture', parts[0]), ('remaining', parts[1])]:
+            with self.subTest(shard=shard):
+                trace = Path(environment['DISPATCH_LOG']); trace.unlink(missing_ok=True)
+                args = ['--shard', shard] if shard else []
+                result = subprocess.run(['bash', str(native / 'build.sh'), 'Debug', '--test', *args],
+                    env=environment, capture_output=True, text=True, timeout=30)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual([line.removeprefix('Running: ') for line in result.stdout.splitlines()
+                                  if line.startswith('Running: ')], expected)
+                executed = []
+                for name, *arguments in map(json.loads, trace.read_text().splitlines()):
+                    subsets = [arg for arg in arguments if arg in ('--final-restore-ux-only', '--assisted-appstore-only')]
+                    executed.append(' '.join([name, *subsets]))
+                    if name in ('CaptureTests', 'RestoreTests'):
+                        self.assertIn('--no-renders', arguments)
+                self.assertEqual(executed, [stage for stage in expected if stage not in shared and not stage.startswith('Compile ')])
+                summary = Path(environment['MACSEED_DESKTOP_SUMMARY']).read_text()
+                self.assertIn('Exit status: 0.', summary)
+                self.assertNotRegex(summary, r'\| (?:running|failed|not-run) \|')
+        # New suites inherit the remaining shard without another inventory edit.
+        build = native / 'build.sh'
+        build.write_text(build.read_text().replace('suites=(PresentationTests', 'suites=(FutureTests PresentationTests', 1))
+        self.assertNotIn('FutureTests', plan('--shard', 'capture'))
+        self.assertIn('FutureTests', plan('--shard', 'remaining'))
+        self.assertEqual(Counter(plan('--shard', 'capture') + plan('--shard', 'remaining')), Counter(plan() + shared))
+
+    def test_desktop_shards_reject_invalid_selection_and_failed_execution(self):
+        native, environment = self.desktop_build_fixture()
+        for args in [('Debug', '--shard', 'capture'), ('Debug', '--list'),
+                     ('Release', '--test', '--shard', 'capture'), ('Debug', '--test', '--shard'),
+                     ('Debug', '--test', '--shard', 'unknown'), ('Debug', '--test', '--test'),
+                     ('Debug', '--test', '--shard', 'capture', '--shard', 'remaining')]:
+            result = subprocess.run(['bash', str(native / 'build.sh'), *args], env=environment,
+                capture_output=True, timeout=10)
+            self.assertEqual(result.returncode, 2, args)
+            self.assertFalse((native / 'build').exists())
+        for shard, key, failed, code in [('capture', 'FAIL_STAGE', 'Compile CaptureTests', 19),
+                                        ('capture', 'FAIL_STAGE', 'CaptureTests', 17),
+                                        ('capture', 'MISSING_EXECUTABLE', 'CaptureTests', None),
+                                        ('remaining', 'FAIL_STAGE', 'BundledAgeTests (Python)', 17),
+                                        ('remaining', 'FAIL_STAGE', 'RestoreTests', 17)]:
+            with self.subTest(shard=shard, failure=failed, fault=key):
+                if (native / 'build').exists(): shutil.rmtree(native / 'build')
+                result = subprocess.run(['bash', str(native / 'build.sh'), 'Debug', '--test', '--shard', shard],
+                    env=dict(environment, **{key: failed}), capture_output=True, timeout=30)
+                self.assertNotEqual(result.returncode, 0, result.stderr)
+                if code is not None: self.assertEqual(result.returncode, code, result.stderr)
+                summary = Path(environment['MACSEED_DESKTOP_SUMMARY']).read_text()
+                self.assertIn(f'| {failed} | failed |', summary)
+                self.assertIn(f'Exit status: {result.returncode}.', summary)
+                if shard == 'remaining': self.assertIn('| RestoreTests --assisted-appstore-only | not-run |', summary)
+
+    def test_desktop_incomplete_and_cancelled_execution_cannot_pass(self):
+        source = (ROOT / 'desktop/Macseed/build.sh').read_text()
+        functions = source[source.index('# One inventory'):source.index('\nbuild_app() {')]
+        summary, marker = self.root / 'desktop.md', self.root / 'later'
+        for shard in ('all', 'capture', 'remaining'):
+            for body, code in [('run_stage true\nexit 0\n', 1),
+                               ('cancel() { kill -TERM "$$"; }\nrun_stage cancel\n', 143)]:
+                with self.subTest(shard=shard, code=code):
+                    script = self.root / 'stages.sh'
+                    script.write_text('set -euo pipefail\nconfiguration=Debug\nrun_tests=true\nlist_tests=false\n'
+                        + f'test_shard={shard}\n' + functions + '\n' + body + 'touch "$1"\n')
+                    result = subprocess.run(['bash', str(script), str(marker)],
+                        env=dict(os.environ, MACSEED_DESKTOP_SUMMARY=str(summary)), capture_output=True, timeout=10)
+                    self.assertEqual(result.returncode, code, result.stderr)
+                    self.assertIn(f'Exit status: {code}.', summary.read_text())
+                    self.assertIn('| Compile shared test sources | not-run |', summary.read_text())
+                    self.assertFalse(marker.exists())
+
+    def test_desktop_ci_gates_require_every_shard(self):
+        workflow = (ROOT / '.github/workflows/ci.yml').read_text()
+        jobs = dict(re.findall(r'^  ([\w-]+):\n(.*?)(?=^  [\w-]+:|\Z)', workflow, re.M | re.S))
+        self.assertIn('shard: [capture, remaining]', jobs['desktop-tests'])
+        self.assertIn('fail-fast: false', jobs['desktop-tests'])
+        self.assertIn('runs-on: macos-latest', jobs['desktop-tests'])
+        self.assertIn('timeout-minutes: 45', jobs['desktop-tests'])
+        self.assertIn('run: ./desktop/Macseed/build.sh Debug --test --shard ${{ matrix.shard }}', jobs['desktop-tests'])
+        self.assertNotIn('continue-on-error:', workflow)
+        self.assertIn('shard: [1, 2, 3, 4]', jobs['regression'])
+        for job, required in [('desktop', ['desktop-tests']), ('validate', ['lint', 'regression', 'desktop-tests', 'desktop'])]:
+            block = jobs[job]
+            self.assertIn('if: ${{ always() }}', block)
+            self.assertIn('needs: [' + ', '.join(required) + ']', block)
+            bindings = dict(re.findall(r'(\w+_RESULT): \$\{\{ needs\.([\w-]+)\.result \}\}', block))
+            self.assertEqual(set(bindings.values()), set(required))
+            run = re.search(r'^        run: (.*)', block, re.M)
+            command = textwrap.dedent(block[run.end():]) if run.group(1) == '|' else run.group(1)
+            good = dict.fromkeys(bindings, 'success')
+            self.assertEqual(subprocess.run(['bash', '-e', '-c', command], env=good).returncode, 0)
+            for dependency in bindings:
+                for status in ('failure', 'cancelled', 'skipped', '', 'pending'):
+                    result = subprocess.run(['bash', '-e', '-c', command], env=dict(good, **{dependency: status}))
+                    self.assertNotEqual(result.returncode, 0, (job, dependency, status))
 
     def test_case_sharded_cli_selection_is_read_only(self):
         inventory = re.findall(r'^    (scripts/test-\S+)$', (ROOT / 'scripts/test.sh').read_text(), re.M)

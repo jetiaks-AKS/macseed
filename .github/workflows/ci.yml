@@ -77,10 +77,15 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  desktop:
+  desktop-tests:
+    name: desktop (${{ matrix.shard }})
     runs-on: macos-latest
     needs: [lint]
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [capture, remaining]
     env:
       PYTHONDONTWRITEBYTECODE: '1'
     steps:
@@ -138,7 +143,7 @@ jobs:
         env:
           MACSEED_DESKTOP_SUMMARY: ${{ runner.temp }}/macseed-desktop-summary.md
         shell: bash
-        run: ./desktop/Macseed/build.sh Debug --test
+        run: ./desktop/Macseed/build.sh Debug --test --shard ${{ matrix.shard }}
 
       # The canonical entrypoint emits only stage labels, statuses and durations.
       # No Desktop artifacts, raw output, .app, .mbt or build directory uploads.
@@ -160,18 +165,31 @@ jobs:
           test "$ENVIRONMENT_RESULT" = success
           test "$BUILD_RESULT" = success
 
+  # Keep the required Desktop check stable; every isolated shard is mandatory.
+  desktop:
+    if: ${{ always() }}
+    needs: [desktop-tests]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every Desktop shard
+        env:
+          DESKTOP_TESTS_RESULT: ${{ needs.desktop-tests.result }}
+        run: test "$DESKTOP_TESTS_RESULT" = success
+
   # Preserve the existing combined check name for required-status consumers.
   validate:
     if: ${{ always() }}
-    needs: [lint, regression, desktop]
+    needs: [lint, regression, desktop-tests, desktop]
     runs-on: ubuntu-latest
     steps:
       - name: Require lint, every regression shard and Desktop
         env:
           LINT_RESULT: ${{ needs.lint.result }}
           REGRESSION_RESULT: ${{ needs.regression.result }}
+          DESKTOP_TESTS_RESULT: ${{ needs.desktop-tests.result }}
           DESKTOP_RESULT: ${{ needs.desktop.result }}
         run: |
           test "$LINT_RESULT" = success
           test "$REGRESSION_RESULT" = success
+          test "$DESKTOP_TESTS_RESULT" = success
           test "$DESKTOP_RESULT" = success

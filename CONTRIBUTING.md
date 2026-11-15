@@ -252,18 +252,31 @@ owned cleanup, never success. CI keeps lint and every regression shard mandatory
 `validate` rejects failure, cancellation or missing execution. Concurrency cancels
 stale development runs only within the same workflow and branch/PR group.
 
-Desktop CI uses only `./desktop/Macseed/build.sh Debug --test`, after lint succeeds,
-in parallel with the four Core shards. Each job has its own GitHub-hosted VM,
+Desktop CI uses two partitions of the canonical runner after lint succeeds,
+in parallel with the unchanged four Core shards:
+
+- `./desktop/Macseed/build.sh Debug --test --shard capture` runs `CaptureTests`.
+- `./desktop/Macseed/build.sh Debug --test --shard remaining` runs the other eleven
+  native suites, both Restore subsets and the pinned-age Python suite.
+
+`./desktop/Macseed/build.sh Debug --test` still runs the complete inventory in its
+original order. Add `--list` to print the selected stages without building or
+executing tests. The suite inventory in [build.sh](desktop/Macseed/build.sh) is
+authoritative; the remaining partition automatically includes new native suites.
+Each required suite/subset executes exactly once across the two partitions.
+Each job has its own GitHub-hosted VM,
 checkout, working directory and temporary state; fixture HOME/tools remain local
 to that job. No shared cache, artifact input or external mutable fixture state
-connects Core and Desktop. This does not relax sequential Core/Desktop validation
+connects the jobs. This does not relax sequential Core/Desktop validation
 on a single local machine, where temporary-directory observations can overlap.
-The required `validate` check retains `if: always()` and dependencies
-`[lint, regression, desktop]`; all three must report `success`. Failure,
-cancellation, skipped or missing execution cannot pass the gate.
+The matrix uses `fail-fast: false`. The required `desktop` check aggregates
+`desktop-tests` with `if: always()` and accepts only `success` from the complete
+matrix. The required `validate` check retains `if: always()` and dependencies
+`[lint, regression, desktop-tests, desktop]`; every dependency must report `success`.
+Failure, cancellation, skipped or missing execution cannot pass either gate.
 The twelve suites and two Restore subsets retain their fixture isolation
 and native assertions; [build.sh](desktop/Macseed/build.sh) owns the inventory.
-After app/runtime preparation, its mandatory `BundledAgeTests (Python)` stage uses
+After app/runtime preparation, the remaining shard's mandatory `BundledAgeTests (Python)` stage uses
 the existing `test_runner.py` / `test_unittest.py` supervision and method reporting.
 The class fixture prepares both pinned arm64 and amd64 archives through
 `prepare-age.py` in a disposable app; it never replaces the built app's native
@@ -271,8 +284,11 @@ helper. Tests execute the host-native helper and validate the opposite architect
 as data. Missing downloads/tools, invalid cache and unsupported architectures fail;
 there is no system-age fallback or dependency skip. Per-case HOME and app paths
 are disposable. The stage stays visible as passed/failed/not-run in Desktop summary,
-with exact method statuses in the runner output. The Desktop 45-minute job cap stays
-unchanged; hosted cold-cache cost and full hosted qualification remain unmeasured.
+with exact method statuses in the runner output. Each Desktop shard retains the
+45-minute job cap. Both prepare their own Debug app/runtime and shared test module;
+this deliberately duplicates build work instead of sharing mutable test artifacts.
+The split is locally validated; hosted shard durations and full completion remain
+unqualified until a new approved publication is measured.
 Capture/Restore keep `--no-renders`. Debug tests compile their common production
 sources once per invocation as an internal, testable Swift module, retaining
 `-Onone`, `-g`, `DEBUG` and whole-module compilation. Ten test executables link that
@@ -287,7 +303,8 @@ Capture's full collector scenario remains production. Its later Workspace and
 application-overlap fixtures omit unrelated collectors only in disposable Core
 copies, retaining actual selected collectors, transport, publication and stale checks.
 Capture emits unbuffered progress and named group timings; the encompassing real-Core
-time includes Workspace/overlap and must not be added to them.
+time includes Workspace/overlap and must not be added to them. Its separate Shell-only
+invocation currently uses the same real-Core timing label.
 The runner's selected
 Xcode, SDK, Swift and Xcode-resolved Python are checked before execution. Safe GUI
 session facts help diagnose WindowServer failures; they never replace native tests.
@@ -295,7 +312,11 @@ session facts help diagnose WindowServer failures; they never replace native tes
 `build.sh` optionally writes `MACSEED_DESKTOP_SUMMARY`: fixed stage labels,
 passed/failed/not-run, process exit status and elapsed seconds, with compilation
 separate from execution. It publishes the summary atomically at every stage boundary;
-a force-killed job can leave `running`, which is never interpreted as PASS.
+a force-killed job can leave `running`, which is never interpreted as PASS. An early
+zero exit with unfinished mandatory stages is also rejected. Focused runner-contract
+tests verify the full plan against both partitions, actual dispatch with disposable
+compiler/test stubs, and failure/cancellation/incomplete-result propagation. These
+checks prove scheduling equivalence, not Native suite or hosted acceptance.
 PresentationTests executes under `scripts/desktop_test_runner.py` with a 600-second
 wall deadline independent of MainActor/WindowServer (CI #151 execution: 83 seconds).
 The supervisor retains nonzero exits, checks process ownership before launch,
@@ -307,6 +328,18 @@ skipped, and the 45-minute hosted limit remains unchanged. Assertion counts rema
 unknown. CI appends this to
 `GITHUB_STEP_SUMMARY` even after failure and rejects missing reports. Desktop
 uploads no artifacts or raw logs.
+
+[CI run 43702326961](https://github.com/jetiaks-AKS/macseed/actions/runs/43702326961),
+at `eab50ef`, is the sequential baseline for this split. Lint and all four Core
+shards passed; Desktop reached its 45-minute deadline during
+`RestoreTests --assisted-appstore-only`, with no earlier recorded test failure.
+Capture execution took **24 min 13 s**, including Workspace Prepare **4 min 41 s**,
+application overlap **2 min 48 s** and Secure Capture **7 min 40 s**. Restore
+compilation took **4 min 55 s**, primary execution **3 min 58 s**, and the completed
+final-UX subset about **8 s**. The interrupted assisted subset has no PASS evidence
+from this run. These observed stage intervals establish the bottleneck; they do
+not measure a speedup from the new schedule. Repeated observations, isolated
+fixture copies, security cases and waits remain unchanged.
 
 [CI #108](https://github.com/jetiaks-AKS/macseed/actions/runs/40287367098), at
 `411cd712a1091d67da28b13b6982901259dc00c9` on 26 October 2026, completed lint,
