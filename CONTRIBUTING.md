@@ -115,13 +115,15 @@ execution on 23 October 2026 took about 19 seconds. Use focused checks first and
 honor task-specific limits on full local runs. Repeat `--case` to select several
 methods in one process; full IDs from `--list` or `Class.method` are accepted.
 
-`scripts/test.sh` owns the canonical Core suite inventory: **47 suites / 772 Python
-methods**, plus **9 Bundled Age Python methods** owned by Desktop (**781 total**).
+`scripts/test.sh` owns the canonical Core suite inventory: **47 suites / 855 Python
+methods**, plus **9 Bundled Age Python methods** owned by Desktop (**864 total**).
 The admitted Graceful Stop (23), cancellation mocks (10) and external SSH identity
 (10) methods run as three whole suites in mandatory regression. Bundled Age runs
 once in the mandatory Desktop job, outside the Core inventory. Registration is
-implemented; successful hosted execution of all 52 additions remains open under
-[Issue #1](https://github.com/jetiaks-AKS/macseed/issues/1).
+implemented and [Full CI #163](https://github.com/jetiaks-AKS/macseed/actions/runs/42974858672)
+passed at `7709d56`, including all 52 additions. Separate native/GUI release gates
+under [Issue #1](https://github.com/jetiaks-AKS/macseed/issues/1) remain open. The
+subsequent SSH and Shell checkpoints require their own qualification.
 `--list` prints the selected plan
 and all partitions as JSON without executing tests. Four CI runners use longest
 estimated work first to balance whole suites and independent methods from
@@ -151,6 +153,56 @@ The expanded plan predicts about 43 min 58 s per shard (previously 41 min 43 s),
 excluding provisioning and scheduling; that is an estimate, not a new hosted PASS.
 See the [suite audit](docs/qualification/TEST-SUITE-AUDIT-2026-11-10.md) for the complete
 inventory, retained coverage, removed repetitions and baseline attempt distinction.
+
+Shell alias regression lives in the existing registered suites: six `ShellAliasTests`
+methods in `test-environment-compare.py`, the Shell alias Capture/Check case in
+`test-capture-api.py`, and two Shell alias Preview/Execute cases in
+`test-restore-prepare.py`. The Shell Bundle capability case in `test-bootstrap-bundle.py` covers feature
+negotiation and historical Bundle V1 readers. The existing `test-shell-zsh.sh` preserves whole-file
+compatibility coverage. Native `PresentationTests --shell-aliases-only` checks item
+selection, qualified labels, independent coverage, matching suppression and counts.
+Eleven `ShellSourceTests` cases cover source graphs, ZDOTDIR, conflicts, metadata,
+stale observations, atomic-publication races and inert alias/runtime-dependency
+qualification, including read-only managed sources/dependencies and absolute paths
+under the current HOME. Thirty-five `ShellRecoveryTests` cases cover missing structure,
+ordered relationships, explicit script consent, integrity, managed routes,
+prerequisites, stale/interrupted publication and no-op. They also cover literal
+wrapper transfer with safe executable modes, startup-activation exclusion,
+independent clean-root recovery and qualified existing directory operands. Scripts v5
+cases additionally cover bounded manifests/content, non-executable files, the narrow
+xattr allowlist, quarantine preservation and fail-closed publication, independent
+file plans, source-level Check and tracked dynamic-source safe-save recovery.
+`CaptureTests --shell-prepare-only --no-renders` exercises production native
+Prepare validation and Confirmation with whole-domain/subset Shell consent,
+16-domain/109-item evidence and two SSH identities, plus production Core Prepare
+against a disposable 12-alias HOME. It rejects malformed/unrequested metadata and
+retains default-off script consent; both scenarios also run in the full Capture suite.
+`CaptureTests --shell-custom-only` and `RestoreTests --shell-custom-only` exercise
+the native Custom Commands selection, default-off individual file consent, parent
+checkbox isolation, Back/Next/fresh-observation scope and read-only Confirmation.
+They render 580/985 pt light/dark Selection and Confirmation/Preview fixtures.
+`RestoreTests --shell-recovery-core-only` runs the production Core against a
+disposable saved Bundle and destination HOME: missing/unselected script blocking,
+explicit file authorization, Back/replan, ordered recovery, native Result/Check,
+independent file/declaration differences and matching-item suppression with retained
+partial coverage. It renders
+Selection and Preview for all three dependency states and also runs as part of
+`--shell-custom-only` and the full Restore suite. The focused Core
+`ShellRecoveryTests.test_script_explicit_capture_restore_consent_and_independent_evidence`
+additionally asserts directory, script, alias-file and startup publication order.
+`PresentationTests --shell-aliases-only` additionally renders the existing diagnostic
+Check projection and asserts direct outcomes/counts and flat execution categories.
+The Capture `test_shell_script_selection_candidates_and_exact_capture_scope` and
+Restore `test_shell_script_selection_excludes_unselected_payload_and_binds_plan`
+cases cover additive candidate metadata, exact optional payload scope, malformed
+consent, stale plans, missing dependencies, shared files and repeat/no-op. Earlier
+omitted-field consent cases remain registered for compatibility.
+Capture/Restore recovery
+cases validate consent freshness and independent Verify/Check; native Shell tests
+cover consent validation/defaults and unchanged presentation counts. Additional Capture and Restore
+cases verify source provenance/privacy and approved additions through Protocol V1.
+Use disposable HOME fixtures; never source personal startup files for diagnosis.
+Fast/Full CI separation remains deferred; mandatory suites/scheduling are unchanged.
 
 SSH Host display evidence has focused cases in `test-environment-compare.py`
 (`SSHMergeTests.test_host_evidence_safety_and_bounds` and

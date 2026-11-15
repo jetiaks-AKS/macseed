@@ -84,7 +84,7 @@ def operation_paths(operation_id):
     return paths(value['paths'])
 
 
-def read_pair(source):
+def read_pair(source, *, public_only=False):
     paths([source])
     path = Path(source)
     if (str(path) != source or '..' in path.parts or not NAME.fullmatch(path.name)
@@ -119,8 +119,12 @@ def read_pair(source):
             if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_nlink != 1
                     or stat.S_IMODE(info.st_mode) not in modes or not 1 <= info.st_size <= MAX_KEY):
                 raise ExternalSourceError()
-            with os.fdopen(os.dup(fd), 'rb') as stream:
-                raw = stream.read(MAX_KEY + 1)
+            # Agent qualification needs the expected public key and safe pair
+            # metadata, never the protected private file's contents.
+            raw = b''
+            if suffix or not public_only:
+                with os.fdopen(os.dup(fd), 'rb') as stream:
+                    raw = stream.read(MAX_KEY + 1)
             if len(raw) > MAX_KEY:
                 raise ExternalSourceError()
             files.append((fd, path.name + suffix, info, raw))

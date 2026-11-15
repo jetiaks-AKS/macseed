@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 
 // Decodes the existing V1 projection. No observers or comparison predicates live here.
 struct CoreComparisonResult: Decodable {
@@ -11,7 +12,9 @@ struct CoreComparisonResult: Decodable {
         let workspaceLabels: [String: String]?
         let settingLabels: [String: [String: String]]?
         let sshHosts: CoreSSHHosts?
-        enum CodingKeys: String, CodingKey { case groups, sshHosts = "ssh_hosts", appStoreNames = "app_store_names", settingLabels = "setting_labels", repositoryLabels = "repository_labels", workspaceLabels = "workspace_labels" }
+        let shellScriptLabels: [String: String]?
+        let shellAliasLabels: [String: String]?
+        enum CodingKeys: String, CodingKey { case groups, shellScriptLabels = "shell_script_labels", shellAliasLabels = "shell_alias_labels", sshHosts = "ssh_hosts", appStoreNames = "app_store_names", settingLabels = "setting_labels", repositoryLabels = "repository_labels", workspaceLabels = "workspace_labels" }
         init(from decoder: Decoder) throws {
             let values = try decoder.container(keyedBy: CodingKeys.self)
             groups = try values.decode([CoreRestoreInspection.Group].self, forKey: .groups)
@@ -21,6 +24,18 @@ struct CoreComparisonResult: Decodable {
             settingLabels = try values.decodeIfPresent([String: [String: String]].self, forKey: .settingLabels)
             // Reject malformed optional detail without losing a valid aggregate Check.
             sshHosts = try? values.decodeIfPresent(CoreSSHHosts.self, forKey: .sshHosts)
+            let scripts = try? values.decodeIfPresent([String: String].self, forKey: .shellScriptLabels)
+            shellScriptLabels = scripts.flatMap { labels in
+                let rows = labels.map { CoreShellScript(id: String($0.key.dropFirst("shell-script:".count)), path: $0.value) }
+                return labels.keys.allSatisfy { $0.hasPrefix("shell-script:") } && (try? CoreShellScript.validate(rows)) != nil ? labels : nil
+            }
+            let aliases = try? values.decodeIfPresent([String: String].self, forKey: .shellAliasLabels)
+            shellAliasLabels = aliases.flatMap { labels in
+                labels.count <= 256 && labels.allSatisfy { id, name in
+                    name.range(of: "^[A-Za-z_][A-Za-z0-9_.-]{0,63}\\z", options: .regularExpression) != nil
+                        && id == "shell-alias:" + SHA256.hash(data: Data(name.utf8)).map { String(format: "%02x", $0) }.joined()
+                } ? labels : nil
+            }
         }
     }
     let readOnly: Bool

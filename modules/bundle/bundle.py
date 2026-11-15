@@ -34,6 +34,7 @@ WORKSPACE_EXTENSIONS = {
 }
 _workspace_contract = None
 _ssh_contract = None
+_shell_contract = None
 CATEGORIES = {
     "ssh-configuration": "ssh/config.snapshot",
     "vscode-settings": "vscode/settings.json",
@@ -48,7 +49,7 @@ CATEGORIES = {
 CATEGORY_FLAGS = set(CATEGORIES) | {"git-configuration"}
 # Protocol item selection can narrow a snapshot while retaining its legacy
 # whole-category Blueprint flag and Bundle representation.
-ITEM_SELECTION = SELECTABLE_ITEMS | {"ssh-configuration": CATEGORIES["ssh-configuration"]}
+ITEM_SELECTION = SELECTABLE_ITEMS | {name: CATEGORIES[name] for name in ('ssh-configuration', 'shell-zsh')}
 GROUPS = {
     "Applications": ("homebrew-casks", "app-store", "vscode-extensions"),
     "VS Code Settings": ("vscode-settings",),
@@ -130,6 +131,66 @@ def validate_ssh(files):
     return {'ssh-configuration': 2} if version == 2 else {}
 
 
+def shell_contract():
+    global _shell_contract
+    if _shell_contract is None:
+        spec = importlib.util.spec_from_file_location('shell_aliases', ROOT / 'modules/shell/aliases.py')
+        _shell_contract = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(_shell_contract)
+    return _shell_contract
+
+
+def shell_aliases(raw, files=None):
+    if not raw.startswith((shell_contract().MAGIC, shell_contract().SOURCE_MAGIC, shell_contract().RECOVERY_MAGIC, shell_contract().OPAQUE_MAGIC, shell_contract().FILE_MAGIC)):
+        return None
+    try:
+        payloads = {key: val for key, val in (files or {}).items() if script_member(key)}
+        return shell_contract().snapshot(raw, payloads)
+    except ValueError as exc:
+        raise Invalid('invalid Shell alias snapshot') from exc
+
+
+def script_member(name):
+    return re.fullmatch(r'generated/shell/scripts/[0-9a-f]{64}\.data', name) is not None
+
+
+def shell_load(path):
+    raw = checked_file(path, shell_contract().recovery_contract().MAX_MANIFEST_BYTES)
+    if raw.startswith(shell_contract().FILE_MAGIC):
+        return shell_contract().recovery_contract().load(path)
+    return shell_aliases(raw)
+
+
+def validate_shell(files):
+    raw = files.get('generated/shell/zshrc.snapshot')
+    if raw is None:
+        return {}
+    aliases = shell_aliases(raw, files)
+    if any(script_member(name) for name in files) and (aliases is None or aliases['version'] != 5):
+        raise Invalid('unexpected Scripts payload')
+    if aliases is not None:
+        return {'shell-aliases': aliases['version']}
+    if not raw.startswith(b'MBT-ZSHRC-1\nstatus=eligible\n'):
+        raise Invalid('selected Zsh snapshot is not eligible')
+    return {}
+
+
+def select_shell_aliases(stage, names):
+    path = stage / 'generated/shell/zshrc.snapshot'
+    try:
+        value = shell_load(path)
+        if value is not None and value['version'] == 5:
+            recovery = shell_contract().recovery_contract()
+            recovery.save(path, recovery.select(value, names))
+            return
+        data = shell_contract().select_snapshot(checked_file(path), names)
+    except ValueError as exc:
+        raise Invalid('invalid Shell alias selection') from exc
+    temporary = path.with_name('zshrc.selection')
+    write_file(temporary, data)
+    temporary.replace(path)
+
+
 def workspace_extension_present(files):
     return (any(name in files for name in WORKSPACE_EXTENSIONS) or
             re.search(rb'^TOPOLOGY_VERSION=', files.get('generated/workspace/repositories.conf', b''), re.M) is not None)
@@ -170,6 +231,9 @@ def workspace_stage_files(stage):
 def staged_payload(stage, blueprint):
     files = {path: checked_file(stage / path) for path in required_paths(blueprint) if path != 'blueprint.conf'}
     files['blueprint.conf'] = blueprint
+    shell = files.get('generated/shell/zshrc.snapshot', b'')
+    if shell.startswith(shell_contract().FILE_MAGIC):
+        files.update(shell_contract().recovery_contract().contents(shell_load(stage / 'generated/shell/zshrc.snapshot')))
     topology = 'generated/workspace/topology.json'
     if (stage / topology).exists() or (stage / topology).is_symlink():
         files[topology] = checked_file(stage / topology)
@@ -551,11 +615,8 @@ def pack(stage, output, home, replacement_sha256=None, *, apply_precedence=True)
         if data['casks']:
             files['generated/homebrew-casks.json'] = (json.dumps(data, sort_keys=True) + '\n').encode()
     selected_payload(files, blueprint, home=home)
-    zsh = files.get("generated/shell/zshrc.snapshot")
-    if zsh is not None and not zsh.startswith(b"MBT-ZSHRC-1\nstatus=eligible\n"):
-        raise Invalid("selected Zsh snapshot is not eligible")
     portable_paths(files, home)
-    features = validate_workspace(files, exact=True) | validate_ssh(files)
+    features = validate_workspace(files, exact=True) | validate_ssh(files) | validate_shell(files)
     secure = stage / "secure.age"
     if secure.exists() or secure.is_symlink():
         files["secure.age"] = checked_file(secure, 33 * 1024 * 1024)
@@ -618,6 +679,7 @@ def validate_archive(path, with_provenance=False):
     raw = path.read_bytes()
     offset = 0
     raw_members = []
+    script_count, script_bytes, ordinary_count = 0, 0, 0
     while offset + 512 <= len(raw):
         header = raw[offset:offset + 512]
         if header == bytes(512):
@@ -636,8 +698,20 @@ def validate_archive(path, with_provenance=False):
             raise Invalid("invalid archive header") from exc
         if size > MAX_MEMBER:
             raise Invalid("oversized archive entry")
-        if len(raw_members) >= MAX_ENTRIES:
-            raise Invalid("too many Bundle entries")
+        if script_member(name):
+            script_count += 1
+            script_bytes += size
+            contract = shell_contract().recovery_contract()
+            if script_count > contract.MAX_FILES or size > contract.MAX_FILE_BYTES or script_bytes > contract.MAX_CONTENT_BYTES:
+                raise Invalid('Scripts payload exceeds limits')
+        else:
+            ordinary_count += 1
+            if ordinary_count > MAX_ENTRIES:
+                raise Invalid("too many Bundle entries")
+        if name == 'generated/shell/zshrc.snapshot' and size > shell_contract().recovery_contract().MAX_MANIFEST_BYTES:
+            raise Invalid('oversized Scripts manifest')
+        if name == 'manifest.json' and size > 65536:
+            raise Invalid('oversized Bundle manifest')
         next_offset = offset + 512 + ((size + 511) // 512) * 512
         if next_offset <= offset or next_offset > len(raw):
             raise Invalid("invalid archive entry size")
@@ -648,7 +722,7 @@ def validate_archive(path, with_provenance=False):
     files = {}
     with tarfile.open(path, mode="r:") as tar:
         members = tar.getmembers()
-        if len(members) > MAX_ENTRIES or raw_members != [(m.name, m.size) for m in members]:
+        if raw_members != [(m.name, m.size) for m in members]:
             raise Invalid("too many Bundle entries")
         for member in members:
             name = member.name
@@ -656,10 +730,10 @@ def validate_archive(path, with_provenance=False):
                 member.pax_headers or member.size > MAX_MEMBER or
                 name in files or name.startswith("/") or
                 any(part in ("", ".", "..") for part in name.split("/")) or
-                name not in {"manifest.json", "blueprint.conf", "secure.age", "generated/homebrew-casks.json", *WORKSPACE_EXTENSIONS,
+                (not script_member(name) and name not in {"manifest.json", "blueprint.conf", "secure.age", "generated/homebrew-casks.json", *WORKSPACE_EXTENSIONS,
                              *("generated/" + item for item in (*ITEMS.values(), *CATEGORIES.values())),
                              *("generated/provenance/" + item + ".sha256"
-                               for item in COMPLETE_INVENTORIES)}):
+                               for item in COMPLETE_INVENTORIES)})):
                 raise Invalid("unexpected Bundle entry")
             files[name] = tar.extractfile(member).read()
     if "manifest.json" not in files or "blueprint.conf" not in files:
@@ -677,9 +751,12 @@ def validate_archive(path, with_provenance=False):
     required_features = manifest.get('required_features', {})
     if (not isinstance(required_features, dict) or
             any(type(value) is not int or
-                (value != 2 if key == 'ssh-configuration' else key not in WORKSPACE_EXTENSIONS.values() or value != 1)
+                (value != 2 if key == 'ssh-configuration' else value not in (1, 2, 3, 4, 5) if key == 'shell-aliases'
+                 else key not in WORKSPACE_EXTENSIONS.values() or value != 1)
                 for key, value in required_features.items())):
         raise Unsupported('unsupported Bundle capabilities')
+    if required_features.get('shell-aliases') == 5:
+        expected.update(name for name in files if script_member(name))
     if 'generated/homebrew-casks.json' in files:
         capabilities = cask_capabilities(json.loads(files['generated/homebrew-casks.json']))
         selected, _ = parse_blueprint(files['blueprint.conf'])
@@ -705,7 +782,7 @@ def validate_archive(path, with_provenance=False):
         record = manifest["files"][name]
         if record != {"size": len(data), "sha256": digest(data)}:
             raise Invalid("Bundle integrity mismatch")
-    if required_features != (validate_workspace(files, exact=True) | validate_ssh(files)):
+    if required_features != (validate_workspace(files, exact=True) | validate_ssh(files) | validate_shell(files)):
         raise Invalid('Bundle capabilities do not match payload')
     return (files, provenance) if with_provenance else files
 
@@ -732,13 +809,23 @@ def inspect_bundle(bundle, home):
     counts = {name: len(sections[name]) for name in SELECTABLE_ITEMS if name in sections}
     if categories['ssh-configuration']:
         counts['ssh-configuration'] = len(ssh_snapshot(files['generated/ssh/config.snapshot'])[3])
-    return {
+    shell_candidates = []
+    if categories['shell-zsh']:
+        aliases = shell_aliases(files['generated/shell/zshrc.snapshot'], files)
+        if aliases is not None:
+            counts['shell-zsh'] = len(shell_contract().recovery_contract().requirement_ids(aliases)) if aliases['version'] in (3, 4, 5) else len(aliases['aliases'])
+            if aliases['version'] in (3, 4, 5):
+                shell_candidates = shell_contract().recovery_contract().selection_candidates(aliases)
+    result = {
         "format_version": 1,
         "selected_categories": sorted(name for name, enabled in categories.items() if enabled),
         "selected_item_counts": counts,
         "secure_component": "secure.age" in files,
         "external_tools": provenance,
     }
+    if shell_candidates:
+        result['shell_script_candidates'] = shell_candidates
+    return result
 
 
 def capture_preview(stage, home, *, topology_folders=False):
@@ -1055,9 +1142,7 @@ def main():
         blueprint = checked_file(Path(args[0]) / "blueprint.conf", 65536)
         files = staged_payload(Path(args[0]), blueprint)
         selected_payload(files, blueprint, home=args[1])
-        zsh = files.get("generated/shell/zshrc.snapshot")
-        if zsh is not None and not zsh.startswith(b"MBT-ZSHRC-1\nstatus=eligible\n"):
-            raise Invalid("selected Zsh snapshot is not eligible")
+        validate_shell(files)
         portable_paths(files, args[1])
         validate_workspace(files, exact=True)
         validate_ssh(files)

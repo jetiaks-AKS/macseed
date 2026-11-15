@@ -23,6 +23,7 @@ verification_diagnostic() {
     local owner="$1" code="$2" severity="$3" phase="$4" i
     case "$code" in
         confirmed_mismatch|observation_failed|selected_input_unresolved|unsupported_predicate|operation_failed|partial_source_coverage|external_management|dependency_unavailable|prerequisite_unmet|input_changed|input_invalid) ;;
+        shell_dependency_missing_prerequisite|shell_dependency_observation_prerequisite|shell_tool_missing_prerequisite|shell_tool_observation_prerequisite|shell_directory_missing_prerequisite|shell_directory_observation_prerequisite|shell_operand_unsupported_prerequisite|shell_selection_prerequisite) ;;
         *) return 2 ;;
     esac
     case "$severity" in warning|error) ;; *) return 2 ;; esac

@@ -35,12 +35,14 @@ struct CoreSecureRestoreEvidence {
 
 // Existing Protocol V1 projections only. No Bundle parsing or planning in Swift.
 struct CoreRestoreInspection: Decodable {
+    var shellScriptCandidates: [CoreShellScript]? = nil
     let formatVersion: Int
     let selectedCategories: [String]
     let selectedItemCounts: [String: Int]
     let secureComponent: Bool
     let restoreSelection: Inventory?
     enum CodingKeys: String, CodingKey {
+        case shellScriptCandidates = "shell_script_candidates"
         case formatVersion = "format_version", selectedCategories = "selected_categories"
         case selectedItemCounts = "selected_item_counts", secureComponent = "secure_component", restoreSelection = "restore_selection"
     }
@@ -72,6 +74,8 @@ struct CoreRestoreInspection: Decodable {
         enum CodingKeys: String, CodingKey { case itemID = "item_id", label }
     }
     func validate() throws {
+        try CoreShellScript.validateCandidates(shellScriptCandidates,
+            aliases: Set(restoreSelection?.inventory.first { $0.id == "shell-zsh" && $0.selectionMode == "items" }?.items.map(\.id) ?? []))
         guard formatVersion == 1, Set(selectedCategories).count == selectedCategories.count,
               selectedCategories.count <= 128, selectedItemCounts.count <= 128,
               selectedItemCounts.values.allSatisfy({ (0...2048).contains($0) }) else { throw CoreRuntimeError.malformedEvent }
@@ -129,6 +133,10 @@ struct CoreSecureComparison: Codable, Equatable, Sendable {
 }
 
 struct CoreRestorePreparation: Decodable {
+    var shellSkippedItems: [String]? = nil
+    var shellScripts: [CoreShellScript]? = nil
+    var shellScriptCandidates: [CoreShellScript]? = nil
+    var shellScriptSelection: [String]? = nil
     var sshHostPresentation: CoreSSHHosts? = nil
     var effectiveSSHHosts: CoreSSHHosts? { includeSecure ? secureComparison?.sshHostPresentation : sshHostPresentation }
     var secureComparison: CoreSecureComparison? = nil
@@ -368,6 +376,10 @@ struct CoreRestorePreparation: Decodable {
         enum CodingKeys: String, CodingKey { case diagnostic, domain, code, status, scope, selectedItemIndex = "selected_item_index" }
     }
     enum CodingKeys: String, CodingKey {
+        case shellSkippedItems = "shell_skipped_items"
+        case shellScripts = "shell_scripts"
+        case shellScriptCandidates = "shell_script_candidates"
+        case shellScriptSelection = "shell_script_selection"
         case effectiveSelection = "effective_selection", applicationDuplicates = "application_duplicates"
         case sshHostPresentation = "ssh_host_presentation"
         case sshResolution = "ssh_resolution"
@@ -379,11 +391,31 @@ struct CoreRestorePreparation: Decodable {
         case plan, readiness, hasPlannedChanges = "has_planned_changes", executableChanges = "has_executable_changes", warningCount = "warning_count", errorCount = "error_count"
     }
     func isItemLocalSkip(_ row: Row) -> Bool {
-        row.disposition == "blocked" && row.domain == "homebrew-casks"
+        if row.domain == "shell-zsh", row.action == "none",
+           ["blocked", "conflict", "unknown"].contains(row.disposition), shellSkippedItems?.contains(row.itemID) == true { return true }
+        return row.disposition == "blocked" && row.domain == "homebrew-casks"
             && ["cask_execution_requirements_unsupported", "cask_target_conflict", "cask_rosetta_required"].contains(row.reason ?? "")
             && readiness.conditions.contains { $0.isItemLocal && $0.domain == row.domain && $0.code == row.reason }
     }
     func validate(expected: CoreRestoreSelection, catalog: CoreRestoreInspection.Inventory, expectedIncludeSecure: Bool = false) throws {
+        try CoreShellScript.validate(shellScripts)
+        try CoreShellScript.validateCandidates(shellScriptCandidates, aliases: Set(expected.items["shell-zsh"] ?? []))
+        if let shellSkippedItems {
+            let selected = Set(expected.items["shell-zsh"] ?? [])
+                .union((shellScriptCandidates ?? []).map { "shell-script:" + $0.id })
+            guard shellSkippedItems.count <= 384, Set(shellSkippedItems).count == shellSkippedItems.count,
+                  shellSkippedItems.allSatisfy({ id in
+                      selected.contains(id) && id.range(of: "^shell-(alias|script):[0-9a-f]{64}\\z", options: .regularExpression) != nil
+                        && plan.filter({ $0.domain == "shell-zsh" && $0.itemID == id }).count == 1
+                        && plan.contains { $0.itemID == id && isItemLocalSkip($0) }
+                  }) else { throw CoreRuntimeError.malformedEvent }
+        }
+        if let shellScriptSelection {
+            guard shellScriptSelection.count <= 128, Set(shellScriptSelection).count == shellScriptSelection.count,
+                  shellScriptSelection.allSatisfy({ $0.range(of: "^[0-9a-f]{64}\\z", options: .regularExpression) != nil }),
+                  Set((shellScripts ?? []).map(\.id)).isSubset(of: Set(shellScriptSelection)) else { throw CoreRuntimeError.malformedEvent }
+        }
+        guard shellScripts == nil || expected.items["shell-zsh"]?.isEmpty == false else { throw CoreRuntimeError.malformedEvent }
         guard sshResolution?.valid != false else { throw CoreRuntimeError.malformedEvent }
         try sshHostPresentation?.validate(plan: self, catalog: catalog)
         let effective = effectiveSelection ?? selection

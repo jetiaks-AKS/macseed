@@ -29,6 +29,8 @@ enum CaptureFailure: Error, Equatable {
             case "external_identity_unsafe", "external_identity_pair_missing", "external_identity_pair_invalid", "external_identity_name_invalid", "external_identity_invalid_request", "external_identity_changed":
                 "A manually added SSH pair is missing, unsafe or changed. Scan again and add a supported matching private/public pair."
             case "external_identity_duplicate": "An SSH identity or destination name is duplicated. Review the selected pairs."
+            case "script_transfer_unsupported": "The selected file did not pass safe-transfer checks. Review Selection without this file, or recover it separately."
+            case "invalid_script_consent": "The script selection changed. Scan again and review the files."
             case "invalid_secure_selection": "The selected SSH identities are no longer available. Scan again and review the selection."
             case "secure_bridge_required", "secure_bridge_unavailable": "Secure Capture is unavailable in this session. Review the SSH identity selection."
             case "age_unavailable": "The bundled Secure Transfer tool is missing or damaged. Rebuild or reinstall Macseed, then try again."
@@ -59,6 +61,10 @@ enum CaptureFailure: Error, Equatable {
         }
         return false
     }
+    var isScriptSelectionFailure: Bool {
+        if case .runtime(.coreFailure("script_transfer_unsupported")) = self { return true }
+        return false
+    }
 }
 
 struct CaptureCategory: Identifiable {
@@ -66,7 +72,7 @@ struct CaptureCategory: Identifiable {
     var id: String { row.domain }
     var selectable: Bool { row.status == "present" && (["items", "category"].contains(row.selectionMode)) && (row.selectionMode == "category" || !row.items.isEmpty) }
     var itemSelectable: Bool { selectable && row.selectionMode == "items" }
-    var title: String { Self.title(for: id) }
+    var title: String { id == "shell-zsh" && row.selectionMode == "category" ? "Settings" : Self.title(for: id) }
     static func title(for domain: String) -> String {
         let names = ["homebrew-packages": "Homebrew Packages", "homebrew-casks": "Homebrew Applications", "app-store": "App Store Applications",
                      "vscode-extensions": "VS Code Extensions", "vscode-settings": "VS Code Settings", "git-configuration": "Git Configuration",
@@ -103,14 +109,14 @@ struct CaptureCategory: Identifiable {
             let action: String = selectable ? "Included as a whole category. Individual settings are not separately selectable."
                 : (row.status == "observation_error" ? "Couldn’t read this category. It cannot be selected."
                     : (row.status == "unsupported" ? "This state is not supported for capture." : "No selectable state is available for this category."))
-            items = [DisplayItem(id: "category-state:" + id, title: title, status: status, action: action, reason: row.reason)]
+            items = [DisplayItem(id: "category-state:" + id, title: id == "shell-zsh" ? "Saved Zsh file" : title, status: status, action: action, reason: row.reason)]
         }
         return DisplayCategory(id: id, title: title, symbol: symbol, items: items)
     }
     var notices: [DisplayItem] {
         guard selectable, let reason = row.reason else { return [] }
         return [DisplayItem(id: "category-warning:" + id, title: "Needs Attention", status: .attention,
-                            action: "Some supported state may be unavailable in this category.", reason: reason)]
+                            action: id == "shell-zsh" ? "Some Shell settings or dependencies are outside this capture." : "Some supported state may be unavailable in this category.", reason: reason)]
     }
 }
 
@@ -158,6 +164,187 @@ enum CaptureSelectionScope: CaseIterable {
 }
 
 @MainActor final class CaptureModel: ObservableObject {
+    @Published private(set) var authorizedShellScripts: Set<String> = []
+    @Published private(set) var shellScriptCandidates: [CoreShellScript] = []
+    @Published private(set) var shellScriptInspections: [String: CoreShellScriptInspection] = [:]
+    @Published private(set) var inspectingShellScripts = false
+    @Published private(set) var pendingShellScripts: Set<String> = []
+    private var shellScriptPolicy: String?
+    @Published private(set) var shellInspectionError: String?
+    @Published private(set) var shellParentConsent: ShellParentConsent?
+    private var manualShellScriptPaths: [String: String] = [:]
+    var supportsManualScripts: Bool { shellScriptPolicy == "opaque-file-v5" }
+    private func manualScriptPaths(for ids: Set<String>) -> [String] {
+        ids.sorted().compactMap { manualShellScriptPaths[$0] }
+    }
+    func addShellScripts(_ urls: [URL]) {
+        guard state == .review, !busy, !runtime.isActive, supportsManualScripts, !urls.isEmpty else { return }
+        shellParentConsent = nil; preparation = nil; shellInspectionError = nil
+        inspectingShellScripts = true
+        work = Task {
+            defer { inspectingShellScripts = false }
+            var errors: [String] = []
+            for url in urls {
+                guard url.isFileURL else { errors.append("Choose local script files."); continue }
+                let request = CoreRequest(.captureScriptInspect(scripts: [:]), shellScriptPolicy: "opaque-file-v5", shellScriptPaths: [url.path])
+                runtime.start(request, location: location)
+                await runtime.waitForCompletion()
+                if runtime.state == .cancelled { break }
+                do {
+                    guard runtime.operationID == request.operationID, runtime.state == .completed,
+                          let result = runtime.latestResult else {
+                        throw runtime.error ?? CoreRuntimeError.malformedEvent
+                    }
+                    struct Response: Decodable {
+                        let scripts: [CoreShellScriptInspection]
+                        let shell_script_candidates: [CoreShellScript]
+                        let shell_script_policy: String
+                    }
+                    let response = try result.decodeData(Response.self)
+                    guard response.shell_script_policy == "opaque-file-v5", response.shell_script_candidates.count == 1,
+                          let candidate = response.shell_script_candidates.first else { throw CoreRuntimeError.malformedEvent }
+                    try CoreShellScript.validateCandidates([candidate], aliases: parentShellAliases)
+                    try CoreShellScriptInspection.validate(response.scripts, expected: [candidate.id: candidate.observationID!])
+                    guard let inspection = response.scripts.first, inspection.status == "qualified" else {
+                        errors.append(url.lastPathComponent + ": " + (response.scripts.first?.explanation ?? "Couldn’t inspect this file safely."))
+                        continue
+                    }
+                    if let previous = shellScriptCandidates.first(where: { $0.id == candidate.id }) {
+                        if previous.observationID != candidate.observationID { authorizedShellScripts.remove(candidate.id) }
+                        shellScriptCandidates.removeAll { $0.id == candidate.id }
+                    } else if shellScriptCandidates.count >= 128 {
+                        errors.append(url.lastPathComponent + ": Select up to 128 script files."); continue
+                    }
+                    shellScriptCandidates.append(candidate)
+                    shellScriptCandidates.sort { $0.path < $1.path }
+                    manualShellScriptPaths[candidate.id] = url.path
+                    shellScriptInspections[candidate.id] = inspection
+                    // Picking grants inspection only. Inclusion still needs the
+                    // existing per-file executable consent checkbox.
+                } catch {
+                    let reason: String?
+                    if let error = error as? CoreRuntimeError, case .coreFailure(let code) = error { reason = code }
+                    else { reason = nil }
+                    let explanation = CoreShellScriptInspection(id: "", observationID: "", status: "unsupported",
+                        reason: reason.flatMap { CoreShellScriptInspection.reasons.contains($0) ? $0 : nil } ?? "script_observation_failed").explanation
+                    errors.append(url.lastPathComponent + ": " + explanation)
+                }
+            }
+            shellInspectionError = errors.isEmpty ? nil : errors.joined(separator: "\n")
+        }
+    }
+    private var parentShellAliases: Set<String> {
+        Set(categories.filter { $0.id == "shell-zsh" && $0.selectable && $0.itemSelectable }.flatMap { $0.row.items.map(\.itemID) })
+    }
+    var parentShellScripts: [CoreShellScript] {
+        shellScriptCandidates.filter { (supportsManualScripts || !Set($0.aliasIDs ?? []).isDisjoint(with: parentShellAliases))
+            && (shellScriptInspections[$0.id] == nil || scriptQualified($0)) }
+    }
+    private func scriptQualified(_ script: CoreShellScript) -> Bool {
+        shellScriptInspections[script.id]?.status == "qualified"
+            && shellScriptInspections[script.id]?.observationID == script.observationID
+    }
+    private func qualifyShellScripts(_ additions: Set<String>) {
+        guard state == .review, !runtime.isActive, !additions.isEmpty else { return }
+        let wanted = authorizedShellScripts.union(additions)
+        let candidates = shellScriptCandidates.filter { wanted.contains($0.id) }
+        guard candidates.count == wanted.count else { return }
+        let expected = Dictionary(uniqueKeysWithValues: candidates.map { ($0.id, $0.observationID!) })
+        let policy = shellScriptPolicy
+        shellParentConsent = nil; preparation = nil; shellInspectionError = nil
+        inspectingShellScripts = true; pendingShellScripts = wanted
+        let request = CoreRequest(.captureScriptInspect(scripts: expected), shellScriptPolicy: policy,
+            shellScriptPaths: manualScriptPaths(for: wanted))
+        runtime.start(request, location: location)
+        work = Task {
+            defer { inspectingShellScripts = false; pendingShellScripts = [] }
+            await runtime.waitForCompletion()
+            guard runtime.operationID == request.operationID,
+                  shellScriptCandidates.filter({ wanted.contains($0.id) }) == candidates,
+                  runtime.state == .completed, let result = runtime.latestResult else {
+                authorizedShellScripts.subtract(additions)
+                for id in additions { shellScriptInspections.removeValue(forKey: id) }
+                shellInspectionError = "Couldn’t confirm these files. Select them again to retry, or continue with aliases only."
+                return
+            }
+            do {
+                struct Response: Decodable {
+                    let scripts: [CoreShellScriptInspection]
+                    let shell_script_policy: String?
+                }
+                let response = try result.decodeData(Response.self)
+                guard response.shell_script_policy == policy else { throw CoreRuntimeError.malformedEvent }
+                try CoreShellScriptInspection.validate(response.scripts, expected: expected)
+                authorizedShellScripts.subtract(wanted)
+                for row in response.scripts {
+                    shellScriptInspections[row.id] = row
+                    if row.status == "qualified" { authorizedShellScripts.insert(row.id) }
+                }
+            } catch {
+                authorizedShellScripts.subtract(additions)
+                shellInspectionError = "File checks returned incomplete evidence. No new files are authorized."
+            }
+        }
+    }
+    func selectShellParent(included: Bool) {
+        guard state == .review, !runtime.isActive else { return }
+        let scripts = parentShellScripts
+        let additions = scripts.filter { !authorizedShellScripts.contains($0.id) }
+        if included && !additions.isEmpty {
+            shellParentConsent = ShellParentConsent(aliases: parentShellAliases, candidates: scripts, newScripts: additions)
+            return
+        }
+        shellParentConsent = nil
+        if !included { authorizedShellScripts = [] }
+        selectCategory("shell-zsh", included: included)
+    }
+    func resolveShellParent(_ request: ShellParentConsent, choice: ShellParentConsent.Choice) {
+        guard shellParentConsent?.id == request.id else { return }
+        shellParentConsent = nil
+        guard choice != .cancel, state == .review, !runtime.isActive,
+              request.matches(aliases: parentShellAliases, candidates: parentShellScripts) else { return }
+        if request.selectAliases { selectCategory("shell-zsh", included: true) }
+        if choice == .includeScripts {
+            qualifyShellScripts(Set(request.newScripts.map(\.id)))
+        }
+    }
+    func selectAllShellScripts(included: Bool) {
+        guard state == .review, !runtime.isActive else { return }
+        if included { qualifyShellScripts(Set(availableShellScripts.map(\.id)).subtracting(authorizedShellScripts)) }
+        else { authorizedShellScripts = []; preparation = nil }
+    }
+    func selectCollapsedShellScripts(included: Bool) {
+        guard state == .review, !runtime.isActive else { return }
+        let additions = availableShellScripts.filter { !authorizedShellScripts.contains($0.id) }
+        if included && !additions.isEmpty {
+            shellParentConsent = ShellParentConsent(aliases: parentShellAliases, candidates: parentShellScripts,
+                newScripts: additions, selectAliases: false)
+        } else { selectAllShellScripts(included: included) }
+    }
+    var availableShellScripts: [CoreShellScript] {
+        let aliases = selectedItems["shell-zsh"] ?? []
+        return shellScriptCandidates.filter { (shellScriptInspections[$0.id] == nil || scriptQualified($0))
+            && (shellScriptPolicy == "opaque-file-v5" || !Set($0.aliasIDs ?? []).isDisjoint(with: aliases) || authorizedShellScripts.contains($0.id)) }
+    }
+    var shellSelectionIssue: String? {
+        shellScriptPolicy == nil && !standaloneShellScripts.isEmpty
+            ? "This Core version needs a related alias. Select an alias or deselect the file." : nil
+    }
+    var standaloneShellScripts: [CoreShellScript] {
+        selectedShellScripts.filter { Set($0.aliasIDs ?? []).isDisjoint(with: selectedItems["shell-zsh"] ?? []) }
+    }
+    var selectedShellScripts: [CoreShellScript] { availableShellScripts.filter { authorizedShellScripts.contains($0.id) } }
+    private var shellScriptSelection: [String]? { shellScriptCandidates.isEmpty ? nil : authorizedShellScripts.sorted() }
+    func selectShellScript(_ id: String, included: Bool) {
+        guard state == .review, !runtime.isActive, availableShellScripts.contains(where: { $0.id == id }) else { return }
+        shellParentConsent = nil
+        if included { qualifyShellScripts([id]) } else { authorizedShellScripts.remove(id) }
+        preparation = nil
+    }
+    private func pruneShellScripts() {
+        shellParentConsent = nil
+        authorizedShellScripts.formIntersection(availableShellScripts.map(\.id))
+    }
     @Published private(set) var state: CaptureFlowState = .idle
     @Published private(set) var inventory: [CoreCaptureInventoryRow] = []
     @Published private(set) var selectedCategories: Set<String> = []
@@ -182,8 +369,11 @@ enum CaptureSelectionScope: CaseIterable {
     private var replacementSHA256: String?
     private var work: Task<Void, Never>?
     init(runtime: CoreRuntime, location: CoreLocation? = nil) { self.runtime = runtime; self.location = location }
-    var busy: Bool { addingIdentity || [.scanning, .preparing, .saving].contains(state) }
-    var categories: [CaptureCategory] { inventory.map { CaptureCategory(row: $0) } }
+    var busy: Bool { addingIdentity || inspectingShellScripts || [.scanning, .preparing, .saving].contains(state) }
+    var categories: [CaptureCategory] {
+        inventory.filter { $0.domain != "shell-zsh" || supportsManualScripts || ["present", "observation_error"].contains($0.status) }
+            .map { CaptureCategory(row: $0) }
+    }
     var macOSSettings: CaptureMacOSSettingsGroup { CaptureMacOSSettingsGroup(categories: categories, selected: selectedCategories) }
     func selectMacOSSettings(included: Bool) {
         for domain in macOSSettings.availableIDs { selectCategory(domain, included: included) }
@@ -196,9 +386,12 @@ enum CaptureSelectionScope: CaseIterable {
                                     items: selectedItems.filter { !$0.value.isEmpty && !wholeItems.contains($0.key) }.mapValues { $0.sorted() },
                                     secureIdentities: selectedSecureIdentities.sorted())
     }
-    var selectedDomainCount: Int { selectedCategories.count + selectedItems.filter { !$0.value.isEmpty }.count }
-    var selectedItemCount: Int { selectedItems.values.reduce(0) { $0 + $1.count } }
-    var availableAreaCount: Int { categories.filter(\.selectable).count }
+    var selectedDomainCount: Int { CoreCaptureCounts.domains(categories: selectedCategories, items: selectedItems, scripts: authorizedShellScripts) }
+    var selectedItemCount: Int { selectedItems.values.reduce(0) { $0 + $1.count } + authorizedShellScripts.count }
+    var availableAreaCount: Int {
+        categories.filter(\.selectable).count
+            + (!availableShellScripts.isEmpty ? 1 : 0)
+    }
     var selectionSummary: String {
         let selected = selectedDomainCount
         let available = availableAreaCount
@@ -308,7 +501,7 @@ enum CaptureSelectionScope: CaseIterable {
         guard let summary = preparation?.summary else { return "" }
         return "\(summary.selectedDomains) \(summary.selectedDomains == 1 ? "domain" : "domains") selected · \(summary.selectedItems) \(summary.selectedItems == 1 ? "item" : "items") selected" + secureSummary(summary.secureIdentityCount)
     }
-    var canCreate: Bool { state == .review && (selectedDomainCount > 0 || !selectedSecureIdentities.isEmpty) && !runtime.isActive }
+    var canCreate: Bool { state == .review && !inspectingShellScripts && shellSelectionIssue == nil && shellParentConsent == nil && (selectedDomainCount > 0 || !selectedSecureIdentities.isEmpty) && !runtime.isActive }
     func selectionState(_ category: CaptureCategory) -> SelectionState {
         guard category.selectable else { return .none }
         if !category.itemSelectable { return selectedCategories.contains(category.id) ? .all : .none }
@@ -336,6 +529,7 @@ enum CaptureSelectionScope: CaseIterable {
         preparation = nil
         if category.itemSelectable { selectedItems[domain] = included ? Set(category.row.items.map(\.itemID)) : nil }
         else if included { selectedCategories.insert(domain) } else { selectedCategories.remove(domain) }
+        pruneShellScripts()
     }
     func selectItem(_ domain: String, item: String, included: Bool) {
         guard state == .review, !runtime.isActive, let category = categories.first(where: { $0.id == domain }), category.itemSelectable,
@@ -343,6 +537,7 @@ enum CaptureSelectionScope: CaseIterable {
         preparation = nil
         if included { selectedItems[domain, default: []].insert(item) }
         else { selectedItems[domain]?.remove(item); if selectedItems[domain]?.isEmpty == true { selectedItems[domain] = nil } }
+        pruneShellScripts()
     }
     func toggleAll(in scope: CaptureSelectionScope = .ordinary) {
         toggleCategories(categories(in: scope))
@@ -354,6 +549,9 @@ enum CaptureSelectionScope: CaseIterable {
     }
     func scan() {
         guard !busy, !runtime.isActive else { return }
+        shellScriptCandidates = []; authorizedShellScripts = []; shellParentConsent = nil
+        manualShellScriptPaths = [:]
+        shellScriptInspections = [:]; shellInspectionError = nil; pendingShellScripts = []; shellScriptPolicy = nil
         inventory = []; selectedCategories = []; selectedItems = [:]; preparation = nil; destination = nil
         secureInventory = .unavailable; selectedSecureIdentities = []
         externalSources = [:]; externalCandidates = [:]; identityError = nil
@@ -378,14 +576,18 @@ enum CaptureSelectionScope: CaseIterable {
         }
         preparation = nil; failure = nil
         let expected = selection
-        run(CoreRequest(.capturePrepare(selection: expected), externalIdentityPaths: selectedExternalPaths), state: .preparing, expected: expected)
+        pruneShellScripts()
+        run(CoreRequest(.capturePrepare(selection: expected), externalIdentityPaths: selectedExternalPaths,
+            shellScriptSelection: shellScriptSelection, shellScriptPolicy: shellScriptPolicy,
+            shellScriptPaths: manualScriptPaths(for: authorizedShellScripts)), state: .preparing, expected: expected)
     }
     func editSelection() {
         guard state == .confirmation || canReviewSelection, !runtime.isActive else { return }
         preparation = nil; failure = nil; state = .review
     }
     var canReviewSelection: Bool {
-        state == .failed && !savingAttempted && failure?.isWorkspaceSelectionConflict == true && !runtime.isActive
+        state == .failed && !savingAttempted && (failure?.isWorkspaceSelectionConflict == true
+            || failure?.isScriptSelectionFailure == true) && !runtime.isActive
     }
     func create() {
         guard state == .confirmation, !runtime.isActive, let preparation, let selection = preparation.selection, let destination else { return }
@@ -393,7 +595,8 @@ enum CaptureSelectionScope: CaseIterable {
             fail(.invalidDestination); return
         }
         publicationEvidence = .unknown; publicationMayHaveStarted = false; failure = nil; publication = nil
-        run(CoreRequest(.captureExecute(selection: selection, destination: destination.path, preparedID: preparation.preparedCaptureID, replacementSHA256: replacementSHA256), externalIdentityPaths: selectedExternalPaths), state: .saving, expected: selection)
+        run(CoreRequest(.captureExecute(selection: selection, destination: destination.path, preparedID: preparation.preparedCaptureID, replacementSHA256: replacementSHA256), externalIdentityPaths: selectedExternalPaths, shellScriptIDs: authorizedShellScripts.sorted(), shellScriptSelection: shellScriptSelection, shellScriptPolicy: shellScriptPolicy,
+            shellScriptPaths: manualScriptPaths(for: authorizedShellScripts)), state: .saving, expected: selection)
     }
     private func run(_ request: CoreRequest, state next: CaptureFlowState, expected: CoreCaptureSelection?) {
         savingAttempted = next == .saving
@@ -419,12 +622,14 @@ enum CaptureSelectionScope: CaseIterable {
                         self.state = .result
                     } else {
                         let prepared = try result.decodeData(CoreCapturePreparation.self)
-                        try prepared.validate(expected: expected)
+                        try prepared.validate(expected: expected, expectedScripts: next == .scanning ? nil : shellScriptSelection)
                         inventory = prepared.inventory
                         let remaining = externalCandidates.values.filter { candidate in !prepared.secureIdentities.items.contains { $0.id == candidate.id } }
                         secureInventory = remaining.isEmpty ? prepared.secureIdentities : .init(status: "present", reason: nil,
                             items: prepared.secureIdentities.items + remaining.sorted { $0.label < $1.label })
                         if next == .scanning {
+                            shellScriptCandidates = prepared.shellScriptCandidates ?? []; authorizedShellScripts = []
+                            shellScriptPolicy = prepared.shellScriptPolicies?.contains("opaque-file-v5") == true ? "opaque-file-v5" : nil
                             selectedCategories = []; selectedItems = [:]; self.state = .review
                             for category in categories(in: .ordinary) where category.selectable { selectCategory(category.id, included: true) }
                         } else {
@@ -432,6 +637,15 @@ enum CaptureSelectionScope: CaseIterable {
                             // Confirmation/counts must show that exact new Core scope.
                             for category in categories where category.itemSelectable && expected?.categories.contains(category.id) == true {
                                 selectedItems[category.id] = Set(category.row.items.map(\.itemID))
+                            }
+                            guard prepared.shellScriptPolicy == shellScriptPolicy else { throw CaptureFailure.invalidEvidence }
+                            let freshScripts = prepared.shellScriptCandidates ?? []
+                            guard selectedShellScripts.count == authorizedShellScripts.count,
+                                  selectedShellScripts.allSatisfy({ previous in freshScripts.contains {
+                                      $0.id == previous.id && $0.path == previous.path && $0.observationID == previous.observationID
+                                  }}), authorizedShellScripts.isSubset(of: Set((prepared.shellScripts ?? []).map(\.id))) else {
+                                authorizedShellScripts = []; shellParentConsent = nil
+                                throw CaptureFailure.invalidEvidence
                             }
                             preparation = prepared; self.state = .confirmation
                         }
@@ -484,11 +698,13 @@ enum CaptureSelectionScope: CaseIterable {
         replacementSHA256 = nil; publication = nil; resultNotices = []; publicationEvidence = .notOccurred
         publicationMayHaveStarted = false; failure = nil; operationID = nil
         savingAttempted = false
+        manualShellScriptPaths = [:]
         state = .idle
     }
     func cancelReview() {
         guard state == .review, !runtime.isActive else { return }
         state = .idle; preparation = nil; destination = nil
+        manualShellScriptPaths = [:]
         secureInventory = .unavailable; selectedSecureIdentities = []
         externalSources = [:]; externalCandidates = [:]; identityError = nil
     }

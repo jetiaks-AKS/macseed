@@ -54,7 +54,7 @@ Macseed must remain maintainable by a small developer project. Prefer a reliable
 | VS Code Settings / Extensions | **Application Extras → VS Code:** Extensions and Settings only | Independent item/category selection. New application support requires confirmed demand, a separate product decision, qualified Core support and tests; no placeholders or universal adapter framework. |
 | Git configuration, repositories, linked worktrees | **For Experienced Users → Git** | Keep and qualify current supported scope, including implemented bounded SSH clone dependencies. Do not reopen unlimited Git topology or transport coverage. |
 | SSH configuration / selected SSH identities | **For Experienced Users → SSH → Configuration / SSH Keys** | Independent selection; separately encrypted, opt-in/default-off identities. Configuration restoration, explicit IdentityFile corrections, authenticated per-identity selection and safe custom destinations are implemented; `~/.ssh` remains the default. Stage 16H manual acceptance retains its original scope; joint SSH E2E stays open. |
-| Zsh / Shell | **For Experienced Users → Shell** | Retain bounded `.zshrc` contract and its explicit exclusions; do not modify user configurations just to satisfy Discovery. |
+| Zsh / Shell | **For Experienced Users → Shell** | Current functional priority: Custom Commands (source-aware Aliases & Functions and optional Scripts in Selection), then Variables & PATH and Settings; Plugins & Themes appears only with actual Core support and relevant items. Preserve exclusions and user ownership. |
 | `.code-workspace` descriptors | **For Experienced Users → Workspace, default OFF; scope frozen for 1.0** | Preserve Core, tests, Bundle V1, legacy selected-descriptor Restore, Verification and Status. No feature expansion or dependency auto-selection; only supported names/folder relationships. |
 | Workspace Folders (structure only) | **For Experienced Users → Workspace, default OFF; no ordinary promotion** | Preserve the Core domain, explicit folder-only Capture, descriptor dependencies and folder-only Bundle Restore selectors. Both accepted selection screens expose folders. No general file-content migration. |
 | Workspace file content transfer | **Deferred possible optional capability**, not required for 1.0 | Only after value, safety, provenance, conflict, permissions, privacy, and transport/storage contract assessment. No general folder migrator/backup. |
@@ -228,14 +228,58 @@ Possible Saved Environment history/profiles, confirmed-difference preselection f
 - **Git:** work on `develop`; preserve `main`, released history and all local commits. Avoid force-push, destructive reset and unreviewed cross-cutting changes. A documentation-only local commit may be kept unpushed and later published with validated implementation to avoid unnecessary hosted CI cycles.
 - **Privacy and safety:** no implicit deletions; Bundle ordinary metadata is private but not encrypted; SSH private identity migration requires explicit consent and its separate encrypted contract. Do not weaken idempotency, failure-state honesty or conflict preservation for UI convenience.
 
+The final Shell taxonomy is **Custom Commands**, **Variables & PATH**, and
+**Settings**, with **Plugins & Themes** conditional on independently useful Core
+support and relevant selected/saved items. Custom Commands contains **Aliases &
+Functions** and optional **Scripts** in Capture/Rebuild Selection.
+Aliases & Functions and Scripts are independent user-facing Capture domains while
+sharing the existing physical Shell Core module. Scripts v5 transfers explicitly
+selected Shell/Python files, including supported non-executable files; Add Script
+is a native multi-file picker and never scans or backs up a folder. It preserves
+bytes/modes, explicit consent and destination protection. Aliases & Scripts v5 has
+[real GUI A/B/C acceptance](qualification/SHELL-RECOVERABILITY-2026-11-12.md#real-gui-abc-acceptance--2026-11-15)
+within the saved-definition/file scope; partial Shell coverage remains. Technical
+diagnostics stay in existing details/logs with concise actionable main-screen
+messages. No script editor, launcher or dependency manager is planned for this slice.
+[Roadmap](../ROADMAP.md#post-10--future-direction) retains deferred Scan Folder and
+separate Automation/LaunchAgents evaluation; neither is current implementation.
+
+Startup files, ZDOTDIR, source paths, dependencies and Homebrew initialization are
+provenance/prerequisites within functional items, not permanent extra categories.
+Do not retain a Zsh Configuration wrapper or show empty future categories. Historical
+whole-file requirements use Settings → Saved Zsh file without changing Core identity.
+
+The approved bounded integration reuses existing native Selection groups and keeps
+individual alias rows and checkboxes. Executable files require default-off per-file
+Capture and independent Restore consent; parent selection cannot grant it. Preserve
+workflow differences: read-only compact Capture Confirmation, minimal Capture Result,
+action-focused Preview, flat Rebuild Progress/Result and direct diagnostic Check.
+The [Desktop contract](DESKTOP.md#check-environment-status) owns exact presentation.
+No source-file grouping, search, Show More or new selection mode is approved.
+Detecting more aliases does not authorize further layout changes.
+
+Prioritize Discovery correctness within the existing source-aware Core: distinguish
+detected definitions from supported/capturable requirements, preserve qualified
+portable provenance and definition order, and explain exclusions through existing
+coverage diagnostics. Runtime command-type evidence alone proves neither source
+provenance nor Capture eligibility.
+
 ## 7. Next action
 
-Continue qualification of
-**[SSH Environment Completion — Developer Environment Closure](CAPTURE-RESTORE.md#ssh-environment-completion--developer-environment-closure)**,
-whose bounded implementation is complete after Stage 16H identity migration. Preserve
-Selection = configure, Preview = read-only validation and Rebuild = execute;
-configuration corrections require explicit authorization. Unified Developer UI is
-visually accepted; local Secure Check tests, real-Mac joint E2E and hosted CI are
-separate evidence levels. [Roadmap](../ROADMAP.md#current-practical-execution-order)
-owns current execution order and qualification status. Documentation or CI
-maintenance does not start Stage 17 or workspace content transfer.
+Continue **Shell / Zsh functionality** from the implemented source-aware alias
+Capture, per-item Check and bounded source-file Rebuild path. Complete the remaining
+functional categories and qualify broader dependencies without expanding ownership implicitly.
+Preserve the accepted SSH Host checkpoint and existing product promise. Follow
+**Shell → Stage 3C Recovery → remaining Stage 16 functionality → Stage 17 autonomous
+distribution → final comprehensive qualification → Early Access / Alpha → 1.0**.
+[Roadmap](../ROADMAP.md#current-practical-execution-order) owns order and stage status;
+[TODO](../TODO.md#shell--zsh-functional-completion--current) owns concrete unfinished
+slices. Implementation owners describe only behavior actually delivered.
+
+Fast CI / Full CI separation is deferred. Keep mandatory Full CI, its registered
+coverage and existing scheduling unchanged. Use focused regression, security and
+integration checks during functional work; full application-wide Native Desktop,
+packaged clean-Mac, interoperability, interruption and accessibility qualification
+follow functional development and distribution implementation. Existing open gates
+and future proposals are retained. No ordinary checkpoint closes Stage 16, Stage 3C,
+Stage 17 or release readiness, and no GitHub issue is automatically closed.

@@ -21,6 +21,33 @@ private final class SecureTestClock: @unchecked Sendable {
 }
 
 @main struct CoreRuntimeTests {
+    @MainActor static func agentEnvironment(_ directory: URL) async throws {
+        let original = ProcessInfo.processInfo.environment
+        let names = ["SSH_AUTH_SOCK", "SSH_AGENT_PID", "SSH_ASKPASS"]
+        defer {
+            for name in names {
+                if let value = original[name] { setenv(name, value, 1) }
+                else { unsetenv(name) }
+            }
+        }
+        let socket = directory.appendingPathComponent("agent").path
+        let location = try fixture(directory, body: script([
+            encodedEvent(1, "started"), encodedEvent(2, "result", data: caps), encodedEvent(3, "completed")
+        ], before: "[ \"$SSH_AUTH_SOCK\" = '\(socket)' ] && [ -z \"${SSH_AGENT_PID+x}${SSH_ASKPASS+x}\" ] || exit 9"))
+        setenv("SSH_AGENT_PID", "123", 1)
+        setenv("SSH_ASKPASS", "/untrusted", 1)
+        for value in ["", "relative/socket", "/private/../agent", "/private/agent\n", "/" + String(repeating: "a", count: 1024)] {
+            setenv("SSH_AUTH_SOCK", value, 1)
+            precondition(location.environment(temporary: directory)["SSH_AUTH_SOCK"] == nil)
+        }
+        unsetenv("SSH_AUTH_SOCK")
+        precondition(location.environment(temporary: directory)["SSH_AUTH_SOCK"] == nil)
+        setenv("SSH_AUTH_SOCK", socket, 1)
+        precondition(location.environment(temporary: directory)["SSH_AUTH_SOCK"] == socket)
+        let runtime = await run(location)
+        precondition(runtime.state == .completed && runtime.capabilities?.productVersion == "fixture")
+        print("PASS: GUI agent locator reaches the Core child; unrelated agent/askpass environment stays excluded")
+    }
     static func performanceTraceEnvironment(_ location: CoreLocation, temporary: URL) {
         let names = ["MACSEED_PERFORMANCE_TRACE", "MACSEED_PERFORMANCE_TRACE_DIR", "MACSEED_PERFORMANCE_SCOPE", "PYTHONPATH"]
         let original = ProcessInfo.processInfo.environment
@@ -90,6 +117,10 @@ private final class SecureTestClock: @unchecked Sendable {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("macseed-runtime-tests-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
         defer { try? FileManager.default.removeItem(at: directory) }
+        if CommandLine.arguments.contains("--agent-environment-only") {
+            try await agentEnvironment(directory)
+            return
+        }
         if CommandLine.arguments.contains("--secure-transport-only") || CommandLine.arguments.contains("--secure-context-only") {
             precondition(CommandLine.arguments.count == 4, "Pass repository and Python runtime before --secure-transport-only")
             try await secureTransportTests(directory, repository: URL(fileURLWithPath: CommandLine.arguments[1]),
@@ -151,6 +182,7 @@ private final class SecureTestClock: @unchecked Sendable {
             print("PASS: Swift private control FD, capability binding, repeated Graceful Stop, continued events and real cancellation terminal without TERM/KILL")
             return
         }
+        try await agentEnvironment(directory)
         let valid = [encodedEvent(1, "started"), encodedEvent(2, "result", data: caps), encodedEvent(3, "completed")]
         let success = try fixture(directory, body: script(valid, before: "printf 'not JSON and secrets must not be rendered\\n' >&2"))
         let runtime = await run(success)

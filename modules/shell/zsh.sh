@@ -7,6 +7,10 @@ ZSH_SNAPSHOT_REASON=""
 ZSH_SNAPSHOT_LENGTH=0
 ZSH_SNAPSHOT_OFFSET=0
 ZSH_EXCLUSION_REASON=""
+ZSH_SNAPSHOT_FORMAT=legacy
+ZSH_ALIASES_HELPER="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/aliases.py"
+
+zsh_aliases() { python3 -B "$ZSH_ALIASES_HELPER" "$@"; }
 
 zsh_home_valid() {
     [[ "$HOME" == /* && "$HOME" != *[[:cntrl:]]* &&
@@ -29,6 +33,7 @@ zsh_snapshot_validate() {
     ZSH_SNAPSHOT_REASON=""
     ZSH_SNAPSHOT_LENGTH=0
     ZSH_SNAPSHOT_OFFSET=0
+    ZSH_SNAPSHOT_FORMAT=legacy
 
     [[ -e "$file" || -L "$file" ]] || return 1
     [[ ! -L "$file" && -f "$file" && -r "$file" &&
@@ -38,8 +43,16 @@ zsh_snapshot_validate() {
     [[ "$(stat -f '%Lp' "$file" 2>/dev/null)" == 600 ]] || return 2
     total="$(wc -c < "$file" 2>/dev/null)" || return 2
     total="${total//[[:space:]]/}"
-    [[ "$total" =~ ^[0-9]+$ && $total -le 66000 ]] || return 2
+    [[ "$total" =~ ^[0-9]+$ && $total -le 262144 ]] || return 2
 
+    if [[ "$(head -n 1 "$file")" == MBT-ZSH-ALIASES-[12345] ]]; then
+        zsh_aliases validate "$file" || return 2
+        ZSH_SNAPSHOT_FORMAT=aliases
+        ZSH_SNAPSHOT_STATUS=eligible
+        return 0
+    fi
+
+    [[ $total -le 66000 ]] || return 2
     exec 3< "$file" || return 2
     IFS= read -r schema <&3 && IFS= read -r status <&3 &&
         IFS= read -r reason <&3 && IFS= read -r length <&3 &&
@@ -152,7 +165,7 @@ zsh_snapshot_hazard() {
 }
 
 discover_zsh() {
-    local source_file="$HOME/.zshrc" captured size stripped before after reason
+    local source_file="$HOME/.zshrc" captured="" size stripped before after reason
     local result=0 hazard_result
     action "Inspecting Zsh configuration..."
     if ! zsh_home_valid; then
@@ -207,6 +220,39 @@ discover_zsh() {
                 *) rm -f "$captured"; error "Failed to inspect Zsh configuration"; return 2 ;;
             esac
         fi
+    fi
+
+    # Prefer qualified aliases for new Capture. The eligible whole-file fallback
+    # and historical reader remain available when no aliases can be qualified.
+    local alias_stage alias_result
+    alias_stage="$(mktemp)" || { rm -f "$captured"; return 2; }
+    zsh_aliases capture "$HOME" "$alias_stage"
+    alias_result=$?
+    if [[ $alias_result -eq 0 ]]; then
+        local alias_dir="${ZSH_SNAPSHOT_FILE%/*}"
+        [[ -d "${alias_dir%/*}" && ! -L "${alias_dir%/*}" && ! -L "$alias_dir" && ! -L "$ZSH_SNAPSHOT_FILE" ]] || {
+            rm -f "$captured" "$alias_stage"; return 2;
+        }
+        [[ -d "$alias_dir" ]] || (umask 077; mkdir "$alias_dir") || { rm -f "$captured" "$alias_stage"; return 2; }
+        [[ "$(stat -f '%u' "$alias_dir")" == "$(id -u)" ]] && chmod 700 "$alias_dir" || {
+            rm -f "$captured" "$alias_stage"; return 2;
+        }
+        local alias_publish
+        alias_publish="$(mktemp "$alias_dir/zshrc.snapshot.tmp.XXXXXX")" || { rm -f "$captured" "$alias_stage"; return 2; }
+        if ! cp "$alias_stage" "$alias_publish" || ! chmod 600 "$alias_publish" ||
+           ! zsh_snapshot_validate "$alias_publish" || ! mv -f "$alias_publish" "$ZSH_SNAPSHOT_FILE"; then
+            rm -f "$captured" "$alias_stage" "$alias_publish"
+            return 2
+        fi
+        rm -f "$captured" "$alias_stage"
+        warning "Portable Zsh aliases captured; other Shell configuration remains excluded"
+        return 1
+    fi
+    rm -f "$alias_stage"
+    if [[ $alias_result -gt 1 ]]; then
+        rm -f "$captured"
+        error "Failed to inspect Zsh aliases"
+        return 2
     fi
 
     case "$reason" in
@@ -264,6 +310,10 @@ preview_zsh() {
         absent) preview_record shell-zsh .zshrc none warning source_absent; warning "Zsh configuration absent from source"; return 1 ;;
         excluded) preview_record shell-zsh .zshrc none warning source_excluded; warning "Zsh configuration excluded: $ZSH_SNAPSHOT_REASON"; return 1 ;;
     esac
+    if [[ "$ZSH_SNAPSHOT_FORMAT" == aliases ]]; then
+        zsh_alias_preview
+        return $?
+    fi
     zsh_snapshot_inspect_target
     result=$?
     case "$result" in
@@ -290,6 +340,28 @@ bootstrap_zsh() {
         absent) warning "Zsh configuration absent from source"; return 1 ;;
         excluded) warning "Zsh configuration excluded: $ZSH_SNAPSHOT_REASON"; return 1 ;;
     esac
+    if [[ "$ZSH_SNAPSHOT_FORMAT" == aliases ]]; then
+        local alias_result alias_status alias_diagnostic
+        alias_result="$(zsh_aliases apply "$ZSH_SNAPSHOT_FILE")"
+        alias_status=$?
+        alias_diagnostic="${alias_result##*$'\n'}"
+        if [[ "$alias_diagnostic" =~ ^diagnostic$'\t'(shell_[a-z_]+)$ ]]; then
+            alias_diagnostic="${BASH_REMATCH[1]}"
+            detail "Zsh alias restoration: $alias_diagnostic"
+            declare -F verification_application_operation_hook >/dev/null &&
+                verification_application_operation_hook shell-zsh scope restore failure "$alias_diagnostic"
+            alias_result="${alias_result%%$'\n'*}"
+        fi
+        if [[ "$alias_result" == changed ]]; then MODULE_CHANGED=true; fi
+        if [[ $alias_status -ne 0 ]]; then
+            warning "Zsh alias restoration did not complete; inspect current state before retrying"
+            [[ $alias_status -eq 1 ]] || return 2
+            return 1
+        fi
+        [[ "$alias_result" == changed || "$alias_result" == matching ]] || return 2
+        success "Selected Zsh alias declarations match"
+        return 0
+    fi
     zsh_snapshot_inspect_target
     result=$?
     case "$result" in
@@ -361,6 +433,10 @@ verify_zsh() {
             fi
             return 0 ;;
     esac
+    if [[ "$ZSH_SNAPSHOT_FORMAT" == aliases ]]; then
+        zsh_alias_verify
+        return $?
+    fi
     verification_coverage shell-zsh .zshrc resolved observed_present
     zsh_snapshot_inspect_target
     result=$?
@@ -368,4 +444,57 @@ verify_zsh() {
     case "$result" in 1) kind=absent ;; 3) kind=different ;; esac
     [[ $result -ne 3 ]] || result=1 # Production reader: different regular file.
     verification_result shell-zsh .zshrc file_content "$result" '' "$kind"
+}
+
+zsh_alias_preview() {
+    local rows identity state policy result=0
+    rows="$(zsh_aliases inspect "$ZSH_SNAPSHOT_FILE")" || return 2
+    while IFS=$'\t' read -r identity state policy; do
+        case "$state:$policy" in
+            matching:*) preview_record shell-zsh "$identity" none satisfied ;;
+            missing:create) preview_record shell-zsh "$identity" create planned; preview_action "Would restore selected Shell state" ;;
+            missing:add) preview_record shell-zsh "$identity" set_setting planned; preview_action "Would add a selected Zsh alias to its qualified source" ;;
+            missing:preserve) preview_record shell-zsh "$identity" none blocked target_conflict; result=1 ;;
+            differing:*) preview_record shell-zsh "$identity" none conflict target_conflict; result=1 ;;
+            unverified:*_prerequisite) preview_record shell-zsh "$identity" none blocked "shell_$policy"; result=1 ;;
+            unverified:publication_uncertain) preview_record shell-zsh "$identity" none blocked shell_publication_uncertain; result=1 ;;
+            unverified:*) preview_record shell-zsh "$identity" none blocked observation_failed; result=1 ;;
+            partial:*) preview_record shell-zsh scope none warning partial_source_coverage; result=1 ;;
+            *) return 2 ;;
+        esac
+    done <<< "$rows"
+    return "$result"
+}
+
+zsh_alias_verify() {
+    local rows identity state policy result kind predicate code
+    predicate="$(zsh_aliases predicate "$ZSH_SNAPSHOT_FILE")" || { verification_input_error shell-zsh; return 0; }
+    rows="$(zsh_aliases compare "$ZSH_SNAPSHOT_FILE")" || { verification_input_error shell-zsh; return 0; }
+    while IFS=$'\t' read -r identity state policy; do
+        if [[ "$state" == partial ]]; then
+            verification_coverage shell-zsh scope unresolved partial
+            verification_diagnostic "$GV_LAST_REF" partial_source_coverage warning scope
+            if [[ "$policy" == dependency_unavailable ]]; then
+                verification_diagnostic "$GV_LAST_REF" dependency_unavailable warning scope
+            fi
+            continue
+        fi
+        result=2 kind=unknown code=''
+        case "$state" in
+            matching) result=0 ;;
+            missing) result=1; kind=absent ;;
+            differing) result=1; kind=different ;;
+            unverified)
+                case "$policy" in
+                    dependency_missing_prerequisite|dependency_observation_prerequisite|tool_missing_prerequisite|tool_observation_prerequisite|directory_missing_prerequisite|directory_observation_prerequisite|operand_unsupported_prerequisite|selection_prerequisite) code="shell_$policy" ;;
+                esac ;;
+            *) verification_input_error shell-zsh; return 0 ;;
+        esac
+        verification_coverage shell-zsh "$identity" resolved observed_present
+        if [[ "$identity" == shell-script:* ]]; then
+            verification_result shell-zsh "$identity" script_file "$result" "$code" "$kind"
+        else
+            verification_result shell-zsh "$identity" "$predicate" "$result" "$code" "$kind"
+        fi
+    done <<< "$rows"
 }

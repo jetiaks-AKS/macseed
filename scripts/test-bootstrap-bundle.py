@@ -5,6 +5,7 @@ import fcntl
 import glob
 import io
 import json
+import hashlib
 import os
 from pathlib import Path
 import pty
@@ -55,6 +56,143 @@ class BundleTests(unittest.TestCase):
 
     def pack(self):
         bundle.pack(self.stage, self.bundle, "/Users/source")
+
+    def test_scripts_v5_members_integrity_selection_and_legacy_limits(self):
+        c = bundle.shell_contract().recovery_contract()
+        selection = self.stage / 'blueprint.conf'
+        selection.write_bytes(selection.read_bytes().replace(b'shell-zsh="false"', b'shell-zsh="true"'))
+        text = '#!/bin/sh\n# fixture only\n'
+        value = dict(c.empty_capture(), version=5, scripts=[dict(path=f'Scripts/file-{i}.sh', text=text,
+            sha256=hashlib.sha256(text.encode()).hexdigest(), mode=0o600, managed=False) for i in range(128)])
+        value['scripts'][0]['quarantine'] = c.quarantine_record(b'0083;12345678;Fixture;')
+        path = self.stage / 'generated/shell/zshrc.snapshot'
+        c.save(path, value); self.pack()
+        files = bundle.validate_archive(self.bundle)
+        self.assertEqual(bundle.validate_shell(files), {'shell-aliases': 5})
+        self.assertEqual(sum(bundle.script_member(name) for name in files), 128)
+        self.assertEqual(bundle.inspect_bundle(self.bundle, '/Users/target')['selected_item_counts']['shell-zsh'], 128)
+        self.assertLess(len(files['generated/shell/zshrc.snapshot']), c.MAX_MANIFEST_BYTES)
+        with tarfile.open(self.bundle) as archive:
+            original = {member.name: archive.extractfile(member).read() for member in archive.getmembers()}
+        def corrupted(label, changes):
+            target = self.root / (label + '.mbt')
+            contents = dict(original); changes(contents)
+            with tarfile.open(target, 'w', format=tarfile.USTAR_FORMAT) as archive:
+                for name, raw in contents.items():
+                    member = tarfile.TarInfo(name); member.size = len(raw); member.mode = 0o600
+                    archive.addfile(member, io.BytesIO(raw))
+            with self.assertRaises((bundle.Invalid, bundle.Unsupported)):
+                bundle.validate_archive(target)
+        member = next(name for name in files if bundle.script_member(name))
+        corrupted('changed-bytes', lambda items: items.update({member: b'changed\n'}))
+        def change_and_rehash(items):
+            items[member] = b'changed\n'
+            manifest = json.loads(items['manifest.json'])
+            manifest['files'][member] = dict(size=len(items[member]), sha256=hashlib.sha256(items[member]).hexdigest())
+            items['manifest.json'] = json.dumps(manifest).encode()
+        corrupted('changed-inner-integrity', change_and_rehash)
+        def changed_quarantine(items):
+            name = 'generated/shell/zshrc.snapshot'
+            value = json.loads(items[name][len(c.FILE_MAGIC):])
+            value['scripts'][0]['quarantine']['sha256'] = '0' * 64
+            items[name] = c.FILE_MAGIC + json.dumps(value).encode()
+            manifest = json.loads(items['manifest.json'])
+            manifest['files'][name] = dict(size=len(items[name]), sha256=hashlib.sha256(items[name]).hexdigest())
+            items['manifest.json'] = json.dumps(manifest).encode()
+        corrupted('changed-quarantine-inner-integrity', changed_quarantine)
+        corrupted('unknown-member', lambda items: items.update({'generated/shell/scripts/unknown.data': b'x'}))
+        corrupted('traversal', lambda items: items.update({'generated/shell/scripts/../outside': b'x'}))
+        corrupted('oversized-script', lambda items: items.update({member: b'x' * (c.MAX_FILE_BYTES + 1)}))
+        def downgrade(items):
+            manifest = json.loads(items['manifest.json']); manifest['required_features']['shell-aliases'] = 4
+            items['manifest.json'] = json.dumps(manifest).encode()
+        corrupted('false-legacy-capability', downgrade)
+        target = self.root / 'unpacked'; target.mkdir(mode=0o700)
+        bundle.unpack(self.bundle, target, '/Users/target', workspace_preview=True)
+        chosen = c.file_identity(value['scripts'][0]['path'])
+        bundle.select_shell_aliases(target, [chosen])
+        self.assertEqual(len(list((target / 'generated/shell/scripts').iterdir())), 1)
+        self.assertEqual(len(bundle.shell_load(target / 'generated/shell/zshrc.snapshot')['scripts']), 1)
+
+    def test_shell_alias_extension_and_historical_snapshot_compatibility(self):
+        selection = self.stage / 'blueprint.conf'
+        selection.write_bytes(selection.read_bytes().replace(b'shell-zsh="false"', b'shell-zsh="true"'))
+        payload = b"alias ll='ls -la'\n"
+        legacy = (f'MBT-ZSHRC-1\nstatus=eligible\nreason=-\nlength={len(payload)}\nsha256={hashlib.sha256(payload).hexdigest()}\n---\n'.encode() + payload)
+        path = self.stage / 'generated/shell/zshrc.snapshot'
+        bundle.write_file(path, legacy)
+        self.pack()
+        files = bundle.validate_archive(self.bundle)
+        self.assertEqual(files['generated/shell/zshrc.snapshot'], legacy)
+        self.assertEqual(bundle.validate_shell(files), {})
+        self.bundle.unlink()
+        contract = bundle.shell_contract()
+        rows, _ = contract.classify(payload)
+        extended = contract.encode(rows)
+        path.write_bytes(extended)
+        self.pack()
+        files = bundle.validate_archive(self.bundle)
+        self.assertEqual(files['generated/shell/zshrc.snapshot'], extended)
+        with tarfile.open(self.bundle) as archive:
+            manifest = json.load(archive.extractfile('manifest.json'))
+        self.assertEqual(manifest['version'], 1)
+        self.assertEqual(manifest['required_features'], {'shell-aliases': 1})
+        for features in ({}, {'shell-aliases': 2}, {'shell-aliases': True}, {'unknown': 1}):
+            manifest['required_features'] = features
+            files['manifest.json'] = json.dumps(manifest).encode()
+            changed = self.root / 'changed.mbt'
+            with tarfile.open(changed, 'w', format=tarfile.USTAR_FORMAT) as archive:
+                for name, raw in sorted(files.items()):
+                    info = tarfile.TarInfo(name)
+                    info.size, info.mode = len(raw), 0o600
+                    archive.addfile(info, io.BytesIO(raw))
+            with self.subTest(features=features), self.assertRaises(bundle.Invalid):
+                bundle.validate_archive(changed)
+
+        self.bundle.unlink()
+        extended2 = contract.source_contract().encode(dict(version=2, coverage='partial',
+            roots=['.zshenv', '.zprofile', '.zshrc', '.zlogin'], aliases=[dict(rows[0],
+                source='.config/aliases', chain=['.zshrc', '.config/aliases'], order=1)]))
+        path.write_bytes(extended2)
+        self.pack()
+        files = bundle.validate_archive(self.bundle)
+        self.assertEqual(bundle.validate_shell(files), {'shell-aliases': 2})
+        self.assertEqual(bundle.inspect_bundle(self.bundle, '/Users/target')['selected_item_counts']['shell-zsh'], 1)
+        self.assertEqual(contract.snapshot(extended2)['aliases'][0]['source'], '.config/aliases')
+
+        self.bundle.unlink()
+        value = contract.snapshot(extended2)
+        value.update(version=3, scripts=[], layout=[
+            dict(path='.zshrc', managed=False, closed=True, entries=[dict(source='.config/aliases')]),
+            dict(path='.config/aliases', managed=False, closed=True, entries=[dict(alias=rows[0]['name'])])])
+        extended3 = contract.recovery_contract().encode(value)
+        path.write_bytes(extended3)
+        self.pack()
+        files = bundle.validate_archive(self.bundle)
+        self.assertEqual(bundle.validate_shell(files), {'shell-aliases': 3})
+        self.assertEqual(bundle.inspect_bundle(self.bundle, '/Users/target')['selected_item_counts']['shell-zsh'], 1)
+        self.assertEqual(contract.snapshot(extended3), value)
+
+        self.bundle.unlink()
+        value['version'] = 4
+        path.write_bytes(contract.recovery_contract().encode(value))
+        self.pack()
+        files = bundle.validate_archive(self.bundle)
+        self.assertEqual(bundle.validate_shell(files), {'shell-aliases': 4})
+        self.assertEqual(bundle.inspect_bundle(self.bundle, '/Users/target')['selected_item_counts']['shell-zsh'], 1)
+        with tarfile.open(self.bundle) as archive:
+            manifest = json.load(archive.extractfile('manifest.json'))
+        self.assertEqual(manifest['version'], 1)
+        for feature in (3, 5, True):
+            manifest['required_features'] = {'shell-aliases': feature}
+            files['manifest.json'] = json.dumps(manifest).encode()
+            with tarfile.open(changed, 'w', format=tarfile.USTAR_FORMAT) as archive:
+                for name, raw in sorted(files.items()):
+                    info = tarfile.TarInfo(name)
+                    info.size, info.mode = len(raw), 0o600
+                    archive.addfile(info, io.BytesIO(raw))
+            with self.subTest(feature=feature), self.assertRaises(bundle.Invalid):
+                bundle.validate_archive(changed)
 
     def test_ssh_snapshot_versions_and_bundle_capability(self):
         selection = self.stage / 'blueprint.conf'
@@ -848,13 +986,16 @@ class BundleTests(unittest.TestCase):
         bundle.write_file(self.stage / "generated/appstore.conf", b"")
         bundle.write_file(self.stage / "generated/vscode-extensions.conf", b"")
         fixture = self.root / "capture-runtime"
-        for folder in ("modules/bundle", "modules/apps", "modules/migration", "scripts", "seed", "private-tmp"):
+        for folder in ("modules/bundle", "modules/apps", "modules/migration", "modules/shell", "scripts", "seed", "private-tmp"):
             (fixture / folder).mkdir(parents=True, exist_ok=True)
         shutil.copytree(self.stage, fixture / "seed", dirs_exist_ok=True)
         migration = MODULE.parents[2] / "scripts/ssh-identity-migrate.sh"
         for original, target in (
             (MODULE, fixture / "modules/bundle/bundle.py"),
             (MODULE.with_name("commands.sh"), fixture / "modules/bundle/commands.sh"),
+            (MODULE.parents[1] / "shell/aliases.py", fixture / "modules/shell/aliases.py"),
+            (MODULE.parents[1] / "shell/sources.py", fixture / "modules/shell/sources.py"),
+            (MODULE.parents[1] / "shell/recovery.py", fixture / "modules/shell/recovery.py"),
             (MODULE.parents[1] / "apps/application_identity.py", fixture / "modules/apps/application_identity.py"),
             (migration, fixture / "scripts/ssh-identity-migrate.sh"),
             (migration.parents[1] / "modules/migration/ssh-identities.sh",

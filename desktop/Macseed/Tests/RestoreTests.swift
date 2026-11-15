@@ -2,8 +2,597 @@ import Foundation
 import AppKit
 import SwiftUI
 import Vision
+import CryptoKit
 
 @main struct RestoreTests {
+    @MainActor static func shellRecoveryCoreChecks(repository: URL, python: URL) async throws {
+        setbuf(stdout, nil)
+        let fm = FileManager.default
+        let root = URL(fileURLWithPath: "/private/tmp/macseed-native-shell-recovery-" + UUID().uuidString)
+        try fm.createDirectory(at: root, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+        defer { try? fm.removeItem(at: root) }
+        let setup = root.appendingPathComponent("setup.py")
+        try write("""
+        import os, shutil, sys
+        from pathlib import Path
+        repo, root = map(Path, sys.argv[1:])
+        core, home, source, stage, tools = [root / name for name in ('core', 'home', 'source', 'stage', 'tools')]
+        for path in (core, home, source, stage, tools): path.mkdir(mode=0o700)
+        for name in ('modules', 'bootstrap.sh', 'config/toolkit.conf', 'scripts/install-bs.sh', 'bin/bs'):
+            target=core/name; target.parent.mkdir(parents=True, exist_ok=True)
+            if (repo/name).is_dir(): shutil.copytree(repo/name, target)
+            else: shutil.copy2(repo/name, target)
+        # Only external preflight tools are fixtures; Shell planning/Apply/Verify remain production.
+        for name, body in [('curl','exit 0'), ('xcode-select','exit 0'), ('sw_vers','echo 99'), ('sudo','exit 0')]:
+            path=tools/name; path.write_text('#!/bin/sh\\n'+body+'\\n'); path.chmod(0o700)
+        (tools/'bs').symlink_to(core/'bin/bs')
+        sys.path.insert(0,str(core/'modules/bundle')); import bundle
+        recovery=bundle.shell_contract().recovery_contract()
+        (source/'.config/zsh').mkdir(parents=True)
+        (source/'.local/bin').mkdir(parents=True)
+        (source/'.zshrc').write_text('source "$HOME/.config/zsh/aliases"\\n')
+        (source/'.config/zsh/aliases').write_text("alias platform='$HOME/.local/bin/platform-info'\\n")
+        script=source/'.local/bin/platform-info'
+        script.write_text('#!/bin/bash\\n# Unicode café fixture\\nreport() { for x in one two; do echo $x; done; }\\nif true; then report; fi\\nfixture-unavailable-command\\n'); script.chmod(0o755)
+        os.environ['HOME']=str(source); os.environ.pop('ZDOTDIR',None)
+        value=recovery.capture(str(source))
+        value=recovery.authorize_capture(value,str(source),[recovery.script_id('.local/bin/platform-info')],policy=recovery.FILE_POLICY)
+        assert value['version']==5 and len(value['aliases'])==1 and len(value['scripts'])==1
+        raw='[categories]\\n'+''.join(name+'="'+('true' if name=='shell-zsh' else 'false')+'"\\n' for name in bundle.CATEGORY_FLAGS)
+        raw+=''.join('\\n['+name+']\\n' for name in bundle.ITEMS)
+        bundle.write_file(stage/'blueprint.conf',raw.encode())
+        recovery.save(stage/'generated/shell/zshrc.snapshot',value)
+        bundle.pack(stage,root/'shell-recovery.mbt',str(source))
+        only=recovery.select(value, {recovery.file_identity('.local/bin/platform-info')})
+        recovery.save(stage/'generated/shell/zshrc.snapshot',only)
+        bundle.pack(stage,root/'shell-file.mbt',str(source))
+        # A separate A/B/C Bundle has an unqualified dynamic alias source.
+        (source/'.zshrc').write_text('eval "$(touch "$HOME/startup-must-not-run")"\\n' +
+            "alias fixture_a='echo A'\\nalias fixture_b='$HOME/.local/bin/platform-info'\\n")
+        standalone=source/'.local/bin/standalone'; standalone.write_text('#!/bin/sh\\nprintf "C\\\\n"\\n'); standalone.chmod(0o600)
+        blocked=recovery.authorize_capture(recovery.capture(str(source)),str(source),
+            [recovery.script_id('.local/bin/'+name) for name in ('platform-info','standalone')],
+            policy=recovery.FILE_POLICY,script_paths=['.local/bin/standalone'])
+        recovery.save(stage/'generated/shell/zshrc.snapshot',blocked)
+        bundle.pack(stage,root/'shell-blocked.mbt',str(source))
+        (source/'.zshrc').write_text('source "$HOME/.config/zsh/aliases"\\n')
+        """, setup)
+        let process = Process(); process.executableURL = python
+        process.arguments = ["-B", setup.path, repository.path, root.path]
+        process.environment = ["HOME": root.path, "PATH": "/usr/bin:/bin", "TMPDIR": root.path, "PYTHONDONTWRITEBYTECODE": "1"]
+        try process.run(); process.waitUntilExit(); precondition(process.terminationStatus == 0)
+        let home = root.appendingPathComponent("home"), source = root.appendingPathComponent("source")
+        let archive = root.appendingPathComponent("shell-recovery.mbt")
+        let originalBundle = try Data(contentsOf: archive)
+        let runtime = CoreRuntime(operationLogs: nil)
+        let location = CoreLocation(root: root.appendingPathComponent("core"), python: python, home: home, temporaryBase: root,
+                                    toolDirectories: [root.appendingPathComponent("tools")])
+        try await shellClosureReadOnlyChecks(runtime: runtime, location: location, root: root, source: source)
+        if CommandLine.arguments.contains("--shell-closure-review-only") { return }
+        let model = RestoreModel(runtime: runtime, location: location)
+        model.choose(archive); await model.waitForCompletion()
+        precondition(model.state == .review, "Production Bundle inspection failed")
+        let area = model.selectionAreas.first { $0.id == "shell-zsh" }!, alias = area.items[0].id
+        let script = model.shellScriptCandidates[0]
+        precondition(area.selectionMode == "items" && area.items.map(\.label) == ["platform"] && model.shellScriptCandidates.count == 1)
+        precondition(model.authorizedShellScripts.isEmpty && model.selectionState(area) == .none)
+        model.selectDeveloperGroup(.shell, included: true)
+        precondition(model.shellParentConsent?.newScripts.count == 1 && model.authorizedShellScripts.isEmpty)
+        model.resolveShellParent(model.shellParentConsent!, choice: .aliasesOnly)
+        precondition(model.selectedItemCount == 1 && model.authorizedShellScripts.isEmpty, "Capture payload/parent selection grants no Restore consent")
+        precondition(model.selectionSummary == "Some items excluded", "The footer must agree with mixed Shell parents when Scripts are excluded")
+        let tree = RestoreSelectionPresentation.disclosureIDs(model.selectionAreas, advanced: true).union([ShellCommandPresentation.scriptsID])
+        func snapshot(_ scenario: String, preview: Bool) throws {
+            for dark in [false, true] {
+                try render(model, runtime, state: "shell-custom-acceptance-" + scenario + (preview ? "-preview-" : "-selection-") + (dark ? "dark" : "light"),
+                           expanded: preview, selectionTree: preview ? nil : tree, dark: dark)
+            }
+        }
+        func prepare() async {
+            model.refreshPreview(); await model.waitForCompletion()
+            precondition(model.state == .preview, "Production Shell Preview failed: \(model.failure ?? "")")
+            precondition(model.preparation?.selection.items["shell-zsh"] == [alias])
+        }
+        try snapshot("missing-script", preview: false)
+        await prepare()
+        precondition(!model.canRebuild && model.preparation?.hasComparedExecutableChanges == false)
+        precondition(model.preparation!.plan.contains { $0.itemID == alias && $0.disposition == "blocked" && $0.reason == "shell_dependency_missing_prerequisite" })
+        let blocker = model.preview!.categories.flatMap(\.items).first { $0.title == "platform" }!
+        precondition(blocker.action.contains("missing") && blocker.action.contains("Scripts") && !blocker.action.contains("Install"),
+                     "A missing saved dependency must explain the existing selection route")
+        let missingHome = try fm.contentsOfDirectory(atPath: home.path)
+        precondition(model.preparation?.shellScripts == nil && missingHome.isEmpty)
+        try snapshot("missing-script", preview: true)
+        model.back(); model.selectShellScript(script.id, included: true)
+        precondition(model.state == .review && model.preparation == nil && model.authorizedShellScripts == [script.id])
+        precondition(model.selectionSummary == "Everything selected")
+        try snapshot("authorized", preview: false)
+        await prepare()
+        let authorizedID = model.preparation!.preparedPlanID
+        precondition(model.canRebuild && model.preparation?.shellScripts?.map(\.id) == [script.id])
+        precondition(model.preparation!.plan.contains { $0.itemID == alias && $0.disposition == "planned" })
+        let authorizedHome = try fm.contentsOfDirectory(atPath: home.path)
+        precondition(model.preparation?.selectedItemCounts["shell-zsh"] == 1 && authorizedHome.isEmpty)
+        try snapshot("authorized", preview: true)
+        // Back -> deselect -> fresh blocked plan -> select -> fresh authorized plan.
+        model.back(); model.selectShellScript(script.id, included: false)
+        precondition(model.preparation == nil && !model.canRebuild)
+        precondition(model.selectionSummary == "Some items excluded")
+        await prepare()
+        precondition(!model.canRebuild && model.preparation?.preparedPlanID != authorizedID)
+        model.back(); model.selectShellScript(script.id, included: true); await prepare()
+        precondition(model.canRebuild && model.shellScriptConsentReady)
+        model.requestRebuild(); precondition(model.state == .confirming)
+        model.confirmRebuild(); await model.waitForCompletion()
+        precondition(model.state == .result && model.executionResult?.outcome == .attention,
+                     "Capability 3 retains partial Shell coverage even after successful selected recovery")
+        let verification = model.executionResult?.structuredEvidence?["verification"]?.object
+        precondition(verification?["status"]?.string == "complete" && verification?["verified_count"]?.integer == 2
+                     && verification?["mismatch_count"]?.integer == 0 && verification?["unverified_count"]?.integer == 0
+                     && verification?["unresolved_count"]?.integer == 1)
+        let files = [".local/bin/platform-info", ".config/zsh/aliases", ".zshrc"]
+        for path in files {
+            let actual = try Data(contentsOf: home.appendingPathComponent(path)), expected = try Data(contentsOf: source.appendingPathComponent(path))
+            precondition(actual == expected)
+        }
+        let scriptAttributes = try fm.attributesOfItem(atPath: home.appendingPathComponent(script.path).path)
+        precondition((scriptAttributes[.posixPermissions] as? NSNumber)?.intValue == 0o755)
+        let tasks = RestoreTaskPresentation(preview: model.executionPreview!, plan: model.executionPlan!,
+            events: model.categoryPresentationEvents, result: model.executionResult, operationProgress: true)
+        precondition(tasks.automaticDomains.count == 1 && tasks.automaticDomains[0].items.count == 3,
+                     "Alias, independently restored file and retained Shell coverage")
+        precondition(tasks.automaticDomains[0].items.filter { $0.item.title == "platform" }.count == 1)
+        precondition(tasks.automaticDomains[0].items.first { $0.item.title == "platform" }!.resultLabels.contains("Verified"))
+        precondition(RestoreExecutionCategories.disclosureIDs(tasks.automaticDomains) == ["shell-zsh"], "Progress/Result keep their flat execution category")
+        let status = EnvironmentStatusModel(runtime: runtime, location: location)
+        func check(_ matching: Int, _ differing: Int) async {
+            status.selectBundle(archive); status.compare(); await status.waitForCompletion()
+            precondition(status.state == .result && status.presentation?.counts["matching"] == matching && status.presentation?.counts["differing"] == differing)
+            precondition(status.presentation?.categories.count == 1 && status.presentation?.categories[0].items.count == 3,
+                         "Independent alias and script evidence plus one coverage diagnostic")
+            precondition(status.presentation?.categories[0].items.filter { $0.title == "platform" }.count == 1
+                         && status.presentation?.categories[0].items.filter { $0.title == "Shell coverage" && $0.status == .attention }.count == 1)
+            precondition(EnvironmentComparisonView.disclosureIDs(status.presentation!) == [DeveloperSelectionGroup.shell.id, "shell-zsh", ShellCommandPresentation.aliasesID, ShellCommandPresentation.scriptsID])
+        }
+        await check(2, 0)
+        let stamps = try files.map { try fm.attributesOfItem(atPath: home.appendingPathComponent($0).path)[.modificationDate] as! Date }
+        model.choose(archive); await model.waitForCompletion(); model.selectArea(area.id, included: true)
+        precondition(model.authorizedShellScripts.isEmpty, "Opening a captured Bundle starts fresh Restore consent")
+        try snapshot("already-matches", preview: false)
+        await prepare()
+        precondition(!model.canRebuild && model.preparation?.shellScripts == nil)
+        precondition(model.preparation!.plan.filter { $0.itemID == alias }.allSatisfy { $0.disposition == "satisfied" })
+        let matchingTasks = RestoreTaskPresentation(preview: model.preview!, plan: model.preparation!)
+        let matchingAlias = matchingTasks.domains.flatMap(\.items).first { $0.item.title == "platform" }!
+        precondition(RestorePreviewVisibility.isMatching(matchingAlias))
+        precondition(matchingTasks.domains.flatMap(\.previewItems).filter { !RestorePreviewVisibility.isMatching($0) }.count == 1,
+                     "Matching aliases are hidden; genuine partial coverage remains visible")
+        try snapshot("already-matches", preview: true)
+        let freshStamps = try files.map { try fm.attributesOfItem(atPath: home.appendingPathComponent($0).path)[.modificationDate] as! Date }
+        precondition(stamps == freshStamps)
+        // Each failure is observed without running the transferred code or rewriting it.
+        let targetScript = home.appendingPathComponent(script.path), leaf = home.appendingPathComponent(".config/zsh/aliases")
+        let scriptBytes = try Data(contentsOf: targetScript), aliasBytes = try Data(contentsOf: leaf)
+        // Change bytes only; alias and independent script evidence both detect it.
+        try Data("#!/bin/sh\n/bin/date\n".utf8).write(to: targetScript); await check(0, 2)
+        let unchangedAlias = try Data(contentsOf: leaf)
+        precondition(unchangedAlias == aliasBytes)
+        try scriptBytes.write(to: targetScript)
+        try write("alias platform='pwd'\n", leaf); await check(1, 1)
+        let unchangedScript = try Data(contentsOf: targetScript)
+        precondition(unchangedScript == scriptBytes)
+        try aliasBytes.write(to: leaf); await check(2, 0)
+        let unchangedBundle = try Data(contentsOf: archive)
+        precondition(unchangedBundle == originalBundle)
+        let fileHome = root.appendingPathComponent("file-target")
+        try fm.createDirectory(at: fileHome, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+        let fileLocation = CoreLocation(root: location.root, python: python, home: fileHome, temporaryBase: root,
+                                       toolDirectories: [root.appendingPathComponent("tools")])
+        let fileModel = RestoreModel(runtime: runtime, location: fileLocation)
+        let fileArchive = root.appendingPathComponent("shell-file.mbt")
+        fileModel.choose(fileArchive); await fileModel.waitForCompletion()
+        precondition(fileModel.state == .review && fileModel.availableShellScripts.count == 1 && !fileModel.canPreview)
+        fileModel.selectShellScript(script.id, included: true)
+        precondition(fileModel.selectedItemCount == 1 && fileModel.canPreview && fileModel.selectionSummary == "Everything selected")
+        fileModel.selectShellParent(included: false)
+        precondition(fileModel.authorizedShellScripts.isEmpty && !fileModel.canPreview && fileModel.selectionSummary == "Nothing selected")
+        fileModel.selectShellScript(script.id, included: true)
+        let fileTree = RestoreSelectionPresentation.disclosureIDs(fileModel.selectionAreas, advanced: true).union([ShellCommandPresentation.scriptsID])
+        for dark in [false, true] { try render(fileModel, runtime, state: "shell-custom-file-selection-" + (dark ? "dark" : "light"), selectionTree: fileTree, dark: dark) }
+        fileModel.refreshPreview(); await fileModel.waitForCompletion()
+        precondition(fileModel.state == .preview && fileModel.canRebuild && fileModel.hasAutomaticSelection && fileModel.preparation?.selectedItemCounts["shell-zsh"] == 1)
+        precondition(fileModel.preparation!.plan.contains { $0.itemID == "shell-script:" + script.id && $0.disposition == "planned" })
+        for dark in [false, true] { try render(fileModel, runtime, state: "shell-custom-file-preview-" + (dark ? "dark" : "light"), expanded: true, dark: dark) }
+        fileModel.requestRebuild(); fileModel.confirmRebuild(); await fileModel.waitForCompletion()
+        precondition(fileModel.state == .result)
+        precondition(!fm.fileExists(atPath: fileHome.appendingPathComponent(".zshrc").path) && !fm.fileExists(atPath: fileHome.appendingPathComponent(".config").path))
+        let actualFile = try Data(contentsOf: fileHome.appendingPathComponent(script.path))
+        precondition(actualFile == scriptBytes)
+        let fileStatus = EnvironmentStatusModel(runtime: runtime, location: fileLocation)
+        fileStatus.selectBundle(fileArchive); fileStatus.compare(); await fileStatus.waitForCompletion()
+        precondition(fileStatus.state == .result && fileStatus.presentation?.counts["matching"] == 1)
+        precondition(fileStatus.presentation?.categories.flatMap(\.items).contains { $0.title == "~/" + script.path && $0.status == .matching } == true)
+        fileModel.choose(fileArchive); await fileModel.waitForCompletion(); fileModel.selectShellScript(script.id, included: true)
+        fileModel.refreshPreview(); await fileModel.waitForCompletion()
+        precondition(fileModel.state == .preview && !fileModel.canRebuild && fileModel.preparation?.shellScripts == nil)
+        print("PASS: independent script Selection -> Preview -> Rebuild -> script_file Verify -> Check -> no-op; no alias or startup files created")
+        let blockedHome = root.appendingPathComponent("blocked-target")
+        try fm.createDirectory(at: blockedHome, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+        let startup = blockedHome.appendingPathComponent(".zshrc")
+        let startupBytes = Data("eval \"$(touch \"$HOME/startup-must-not-run\")\"\nreturn\n".utf8)
+        try startupBytes.write(to: startup)
+        let blockedLocation = CoreLocation(root: location.root, python: python, home: blockedHome, temporaryBase: root,
+                                          toolDirectories: [root.appendingPathComponent("tools")])
+        let blocked = RestoreModel(runtime: runtime, location: blockedLocation)
+        let blockedArchive = root.appendingPathComponent("shell-blocked.mbt")
+        blocked.choose(blockedArchive); await blocked.waitForCompletion()
+        blocked.selectArea("shell-zsh", included: true)
+        for candidate in blocked.availableShellScripts { blocked.selectShellScript(candidate.id, included: true) }
+        blocked.refreshPreview(); await blocked.waitForCompletion()
+        precondition(blocked.state == .preview && blocked.canRebuild && blocked.shellScriptConsentReady)
+        let blockedPlan = blocked.preparation!
+        precondition(blockedPlan.shellSkippedItems?.count == 2 && blockedPlan.plan.filter { $0.disposition == "planned" }.count == 2)
+        for candidate in blocked.selectedShellScripts {
+            precondition(blockedPlan.plan.contains { $0.itemID == "shell-script:" + candidate.id && $0.disposition == "planned" })
+            precondition(blocked.preview!.categories.flatMap(\.items).contains { $0.id == "shell-zsh:shell-script:" + candidate.id || $0.title.contains(candidate.path) },
+                         "Every independently selected file, including alias-linked B, appears in native Preview")
+        }
+        var withoutSkip = blockedPlan; withoutSkip.shellSkippedItems = nil
+        precondition(!withoutSkip.plan.contains { withoutSkip.isItemLocalSkip($0) }, "Generic blocked rows never grant a local skip")
+        var invalidSkip = blockedPlan; invalidSkip.shellSkippedItems = ["shell-script:" + blocked.selectedShellScripts[0].id]
+        do { try invalidSkip.validate(expected: blockedPlan.selection, catalog: blocked.inspection!.restoreSelection!); preconditionFailure("A planned operation cannot be marked skipped") }
+        catch { precondition(error is CoreRuntimeError) }
+        blocked.requestRebuild(); blocked.confirmRebuild(); await blocked.waitForCompletion()
+        precondition(blocked.state == .result && blocked.executionResult?.outcome == .attention)
+        let keptStartup = try Data(contentsOf: startup); precondition(keptStartup == startupBytes)
+        precondition(!fm.fileExists(atPath: blockedHome.appendingPathComponent("startup-must-not-run").path))
+        let blockedStatus = EnvironmentStatusModel(runtime: runtime, location: blockedLocation)
+        blockedStatus.selectBundle(blockedArchive); blockedStatus.compare(); await blockedStatus.waitForCompletion()
+        precondition(blockedStatus.state == .result && blockedStatus.presentation?.counts["matching"] == 2 && blockedStatus.presentation?.counts["missing"] == 2)
+        blocked.choose(blockedArchive); await blocked.waitForCompletion(); blocked.selectArea("shell-zsh", included: true)
+        for candidate in blocked.availableShellScripts { blocked.selectShellScript(candidate.id, included: true) }
+        blocked.refreshPreview(); await blocked.waitForCompletion()
+        precondition(blocked.state == .preview && !blocked.canRebuild && blocked.preparation?.shellScripts == nil)
+        print("PASS: blocked aliases retain attention; both v5 scripts appear and execute independently; Check 2 Match / 2 Missing; repeat has no executable work")
+        let trackedHome = root.appendingPathComponent("tracked-target")
+        try fm.createDirectory(at: trackedHome, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+        let trackedSource = trackedHome.appendingPathComponent(".zshrc")
+        let trackedBytes = Data("eval \"$(touch \"$HOME/startup-must-not-run\")\"\nhelper() { :; }\n".utf8)
+        try trackedBytes.write(to: trackedSource)
+        let tracking = Process(); tracking.executableURL = python
+        tracking.arguments = ["-B", "-c", "import os,sys; os.chmod(sys.argv[1],0o640); os.chflags(sys.argv[1],0x40)", trackedSource.path]
+        tracking.environment = ["HOME": trackedHome.path, "PATH": "/usr/bin:/bin", "TMPDIR": root.path]
+        try tracking.run(); tracking.waitUntilExit(); precondition(tracking.terminationStatus == 0)
+        let trackedLocation = CoreLocation(root: location.root, python: python, home: trackedHome, temporaryBase: root,
+                                          toolDirectories: [root.appendingPathComponent("tools")])
+        let tracked = RestoreModel(runtime: runtime, location: trackedLocation)
+        tracked.choose(blockedArchive); await tracked.waitForCompletion(); tracked.selectArea("shell-zsh", included: true)
+        for candidate in tracked.availableShellScripts { tracked.selectShellScript(candidate.id, included: true) }
+        tracked.refreshPreview(); await tracked.waitForCompletion()
+        precondition(tracked.state == .preview && tracked.canRebuild && tracked.preparation?.shellSkippedItems == [])
+        precondition(tracked.preparation!.plan.filter { $0.disposition == "planned" }.count == 4)
+        let fixtureWriter = location.root.appendingPathComponent("modules/shell/sources.py")
+        let productionWriter = try Data(contentsOf: fixtureWriter)
+        defer { try? productionWriter.write(to: fixtureWriter) }
+        try (productionWriter + Data("""
+
+        _fixture_write = write_file
+        def write_file(directory, name, *args, **kwargs):
+            result = _fixture_write(directory, name, *args, **kwargs)
+            if name == 'observed': raise base.Invalid('metadata_copy_mismatch')
+            return result
+
+        """.utf8)).write(to: fixtureWriter)
+        tracked.requestRebuild(); tracked.confirmRebuild(); await tracked.waitForCompletion()
+        precondition(tracked.state == .result && tracked.executionResult?.outcome == .failedAfterMutation)
+        precondition(tracked.categoryPresentationEvents.contains { $0.type == "operation_record" && $0.data?["reason"]?.string == "shell_staging_metadata_copy_mismatch" })
+        let failedTasks = RestoreTaskPresentation(preview: tracked.executionPreview!, plan: tracked.executionPlan!,
+            events: tracked.categoryPresentationEvents, result: tracked.executionResult, executing: true, operationProgress: true)
+        let visible = RestoreResultDetails.domains(failedTasks.automaticDomains, result: tracked.executionResult)
+        let split = RestoreExecutionCategories.resultDomains(visible)
+        let aliasResult = split.first { $0.id == "shell-zsh" }!
+        let scriptResult = split.first { $0.id == ShellCommandPresentation.scriptsID }!
+        precondition(aliasResult.items.allSatisfy { $0.sourceItemID?.hasPrefix("shell-script:") != true })
+        precondition(scriptResult.items.count == 2 && scriptResult.items.allSatisfy(RestoreResultDetails.verified))
+        precondition(!scriptResult.resultCategoryIssue && RestoreResultDetails.title(scriptResult) == "Complete")
+        precondition(split.flatMap(\.items).map(\.id).sorted() == visible.flatMap(\.items).map(\.id).sorted())
+        precondition(RestoreExecutionCategories.disclosureIDs(split).contains(ShellCommandPresentation.scriptsID))
+        try productionWriter.write(to: fixtureWriter)
+        let restoredScripts = tracked.selectedShellScripts.map { trackedHome.appendingPathComponent($0.path) }
+        let restoredStamps = try restoredScripts.map { try fm.attributesOfItem(atPath: $0.path)[.modificationDate] as! Date }
+        for _ in 0..<2 {
+            tracked.refreshPreview(); await tracked.waitForCompletion()
+            precondition(tracked.state == .preview && !tracked.canRebuild && tracked.preparation?.shellScripts == nil)
+            let plan = tracked.preparation!
+            precondition(plan.plan.filter { $0.itemID.hasPrefix("shell-alias:") }.allSatisfy { $0.reason == "shell_publication_uncertain" })
+            let tasks = RestoreTaskPresentation(preview: tracked.preview!, plan: plan)
+            let counts = RestorePreviewMetrics.counts(tasks.automaticDomains)
+            precondition(counts.changes == 0 && counts.attention == 3 && counts.matching == 2)
+            precondition(tasks.automaticDomains.flatMap(\.items).filter { $0.sourceItemID?.hasPrefix("shell-script:") == true }.allSatisfy(RestorePreviewVisibility.isMatching))
+        }
+        precondition(ShellCommandPresentation.dependencyExplanation("shell_publication_uncertain")?.contains("recovery evidence") == true)
+        let pending = try fm.contentsOfDirectory(at: trackedHome, includingPropertiesForKeys: nil).filter { $0.lastPathComponent.hasPrefix(".macseed-shell-pending-") }
+        precondition(pending.count == 1)
+        // Reviewed archival is fixture setup, never automatic production recovery.
+        try fm.moveItem(at: pending[0], to: trackedHome.appendingPathComponent("reviewed-" + pending[0].lastPathComponent))
+        tracked.refreshPreview(); await tracked.waitForCompletion()
+        precondition(tracked.canRebuild && tracked.preparation?.shellScripts == nil)
+        precondition(tracked.preparation!.plan.filter { $0.disposition == "planned" }.count == 2)
+        tracked.requestRebuild(); tracked.confirmRebuild(); await tracked.waitForCompletion()
+        precondition(tracked.state == .result && tracked.executionResult?.outcome == .attention, "Partial Shell coverage remains visible")
+        let trackedResult = try Data(contentsOf: trackedSource)
+        precondition(trackedResult == trackedBytes + Data("alias fixture_a='echo A'\nalias fixture_b='$HOME/.local/bin/platform-info'\n".utf8))
+        let retryStamps = try restoredScripts.map { try fm.attributesOfItem(atPath: $0.path)[.modificationDate] as! Date }
+        precondition(retryStamps == restoredStamps, "Already matching scripts are never rewritten on alias retry")
+        precondition(!fm.fileExists(atPath: trackedHome.appendingPathComponent("startup-must-not-run").path))
+        let trackedStatus = EnvironmentStatusModel(runtime: runtime, location: trackedLocation)
+        trackedStatus.selectBundle(blockedArchive); trackedStatus.compare(); await trackedStatus.waitForCompletion()
+        precondition(trackedStatus.state == .result && trackedStatus.presentation?.counts["matching"] == 4 && trackedStatus.presentation?.counts["missing"] == 0)
+        tracked.choose(blockedArchive); await tracked.waitForCompletion(); tracked.selectArea("shell-zsh", included: true)
+        for candidate in tracked.availableShellScripts { tracked.selectShellScript(candidate.id, included: true) }
+        tracked.refreshPreview(); await tracked.waitForCompletion()
+        precondition(tracked.state == .preview && !tracked.canRebuild && tracked.preparation?.shellScripts == nil)
+        print("PASS: dynamic UF_TRACKED source A/B/C -> 4 planned -> Restore -> Check 4 Match -> no-op; source prefix retained and no startup execution")
+        print("PASS: production Core -> native Rebuild missing/authorized/matching Selection/Preview, explicit consent, Back/replan, Execute/Verify/Check, independent file/declaration failures and unchanged flat counts")
+    }
+
+    @MainActor static func shellClosureReadOnlyChecks(runtime: CoreRuntime, location: CoreLocation, root: URL, source: URL) async throws {
+        // Reuse the production Bundle fixture, but do not repeat the accepted Restore
+        // execution chain. Preview/Check observe a known disposable target directly.
+        let home = root.appendingPathComponent("closure-target"), fm = FileManager.default
+        try fm.createDirectory(at: home, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+        let target = CoreLocation(root: location.root, python: location.python, home: home, temporaryBase: root,
+                                 toolDirectories: [root.appendingPathComponent("tools")])
+        let model = RestoreModel(runtime: runtime, location: target)
+        model.choose(root.appendingPathComponent("shell-file.mbt")); await model.waitForCompletion()
+        precondition(model.state == .review && !model.canPreview && model.authorizedShellScripts.isEmpty)
+        let script = model.shellScriptCandidates[0], identity = "shell-script:" + model.shellScriptCandidates[0].id
+        model.selectShellScript(script.id, included: true)
+        precondition(model.selectedItemCount == 1 && model.selection.items["shell-zsh"] == [identity] && model.selection.categories.isEmpty)
+        model.refreshPreview(); await model.waitForCompletion()
+        func preview(_ disposition: String, coverage: Bool, requirements: Int = 1) {
+            precondition(model.state == .preview)
+            let plan = model.preparation!, tasks = RestoreTaskPresentation(preview: model.preview!, plan: plan)
+            precondition(plan.selectedItemCounts["shell-zsh"] == 1 && plan.plan.filter { $0.domain == "shell-zsh" && $0.itemID != "scope" }.count == requirements)
+            precondition(plan.plan.filter { $0.domain == "shell-zsh" && $0.itemID != "scope" }.allSatisfy { $0.disposition == disposition })
+            precondition(plan.plan.contains { $0.domain == "shell-zsh" && $0.itemID == "scope" } == coverage)
+            precondition(tasks.automaticAttentionCount == (coverage ? 1 : 0))
+            precondition(model.canRebuild == (disposition == "planned"))
+        }
+        preview("planned", coverage: false)
+        precondition(model.preparation?.selection.items["shell-zsh"] == [identity])
+        print("COUNTS Preview file-only missing: requirements=script_file(platform-info); changes=1 match=0 attention=0; Rebuild enabled")
+        for dark in [false, true] { try render(model, runtime, state: "shell-custom-closure-file-missing-" + (dark ? "dark" : "light"), expanded: true, dark: dark) }
+        let path = home.appendingPathComponent(script.path)
+        try fm.createDirectory(at: path.deletingLastPathComponent(), withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        try Data(contentsOf: source.appendingPathComponent(script.path)).write(to: path)
+        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: path.path)
+        let status = EnvironmentStatusModel(runtime: runtime, location: target)
+        status.selectBundle(root.appendingPathComponent("shell-file.mbt")); status.compare(); await status.waitForCompletion()
+        precondition(status.state == .result)
+        let checked = status.presentation!
+        precondition(checked.counts["matching"] == 1 && checked.counts["unresolved"] == 0 && !checked.needsAttention)
+        precondition(checked.categories.count == 1 && checked.categories[0].id == "shell-zsh" && checked.categories[0].title == "Custom Commands")
+        precondition(checked.categories[0].items.count == 1 && checked.categories[0].items[0].title == "~/" + script.path && checked.categories[0].items[0].status == .matching)
+        precondition(EnvironmentComparisonView.disclosureIDs(checked) == [DeveloperSelectionGroup.shell.id, "shell-zsh", ShellCommandPresentation.scriptsID], "Check keeps its existing hierarchy")
+        if !CommandLine.arguments.contains("--no-renders") {
+            for dark in [false, true] {
+                NSApp.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+                let content = EnvironmentComparisonView(result: checked, categoryExpansion: .constant(EnvironmentComparisonView.disclosureIDs(checked)))
+                    .padding(24).frame(width: 985, height: 650, alignment: .top).background(Color(nsColor: .windowBackgroundColor))
+                let host = NSHostingView(rootView: content)
+                let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 985, height: 650), styleMask: [.borderless], backing: .buffered, defer: false)
+                window.isReleasedWhenClosed = false; window.contentView = host; host.frame = window.contentView!.bounds
+                host.layoutSubtreeIfNeeded(); host.displayIfNeeded()
+                let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds)!
+                host.cacheDisplay(in: host.bounds, to: bitmap)
+                try bitmap.representation(using: .png, properties: [:])!.write(to: root.appendingPathComponent("ShellClosure-Check-file-\(dark ? "dark" : "light").png"))
+                let recognition = VNRecognizeTextRequest(); recognition.recognitionLevel = .accurate
+                try VNImageRequestHandler(cgImage: bitmap.cgImage!, options: [:]).perform([recognition])
+                let lines = (recognition.results ?? []).compactMap { $0.topCandidates(1).first?.string }
+                precondition(lines.contains { $0.contains("Custom Commands") } && !lines.contains { $0.contains("Aliases & Functions") }, "The file result must have an accurate visible category title")
+                window.close()
+            }
+        }
+        model.refreshPreview(); await model.waitForCompletion(); preview("satisfied", coverage: false)
+        precondition(RestoreTaskPresentation(preview: model.preview!, plan: model.preparation!).domains.flatMap(\.previewItems).allSatisfy(RestorePreviewVisibility.isMatching))
+        print("COUNTS Check/Preview file-only known target: requirements=script_file(platform-info); match=1 attention=0 changes=0; Rebuild disabled; matching hidden")
+        for dark in [false, true] { try render(model, runtime, state: "shell-custom-closure-file-matching-" + (dark ? "dark" : "light"), expanded: true, dark: dark) }
+        for file in [".zshrc", ".config/zsh/aliases"] {
+            let destination = home.appendingPathComponent(file)
+            try fm.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+            try Data(contentsOf: source.appendingPathComponent(file)).write(to: destination)
+        }
+        model.choose(root.appendingPathComponent("shell-recovery.mbt")); await model.waitForCompletion()
+        model.selectArea("shell-zsh", included: true); model.selectShellScript(script.id, included: true)
+        model.refreshPreview(); await model.waitForCompletion(); preview("satisfied", coverage: true, requirements: 2)
+        status.selectBundle(root.appendingPathComponent("shell-recovery.mbt")); status.compare(); await status.waitForCompletion()
+        precondition(status.state == .result && status.presentation?.counts["matching"] == 2 && status.presentation?.counts["unresolved"] == 1 && status.presentation?.needsAttention == true)
+        precondition(status.presentation?.categories[0].title == "Custom Commands")
+        print("COUNTS Check/Preview alias+file: requirements=alias_recovery(platform), script_file(platform-info), scope(partial); match=2 attention=1 changes=0; Rebuild disabled")
+        let alias = model.selection.items["shell-zsh"]![0]
+        model.back(); model.selectItem("shell-zsh", item: alias, included: false)
+        precondition(model.authorizedShellScripts == [script.id] && model.selectedItemCount == 1 && model.preparation == nil)
+        model.refreshPreview(); await model.waitForCompletion(); preview("satisfied", coverage: false)
+        precondition(model.preparation?.selection.items["shell-zsh"] == [identity])
+        print("COUNTS Preview after alias deselection: requirements=script_file(platform-info); match=1 attention=0 changes=0; fresh Preview retains independent file consent")
+        print("PASS: targeted production Core -> native script-only scope, visible Check file category, exact counters and preserved alias coverage; no Restore execution repeated")
+    }
+
+    @MainActor static func shellParentUIChecks(core: URL, source: URL, python: URL, root: URL) async throws {
+        let path = core.appendingPathComponent("inspection.json"), original = try Data(contentsOf: core.appendingPathComponent("inspection.json"))
+        defer { try! original.write(to: path) }
+        let aliases = (1...12).map { "shell-alias:" + String(format: "%064x", $0) }
+        let scriptPath = ".local/bin/ui-fixture"
+        let scriptID = SHA256.hash(data: Data(("shell-script:" + scriptPath).utf8)).map { String(format: "%02x", $0) }.joined()
+        let rows: [[String: Any]] = [
+            ["domain": "shell-zsh", "label": "Aliases & Functions", "selection_mode": "items", "availability": "available", "items": aliases.map { ["item_id": $0, "label": $0] }],
+            ["domain": "homebrew-casks", "label": "Homebrew Applications", "selection_mode": "items", "availability": "available", "items": [["item_id": "fixture-app", "label": "Fixture App"]]],
+            ["domain": "homebrew-packages", "label": "Homebrew Packages", "selection_mode": "items", "availability": "available", "items": [["item_id": "fixture-package", "label": "Fixture Package"]]]]
+        try JSONSerialization.data(withJSONObject: ["format_version": 1, "selected_categories": [],
+            "selected_item_counts": ["shell-zsh": 12, "homebrew-casks": 1, "homebrew-packages": 1], "secure_component": false,
+            "restore_selection": ["groups": [["id": "Shell", "domains": ["shell-zsh"]], ["id": "Homebrew", "domains": ["homebrew-casks", "homebrew-packages"]]], "inventory": rows],
+            "shell_script_candidates": [["id": scriptID, "path": scriptPath, "alias_ids": aliases, "observation_id": String(repeating: "e", count: 64), "independent": true]]]).write(to: path)
+        let runtime = CoreRuntime(operationLogs: nil)
+        let model = RestoreModel(runtime: runtime, location: CoreLocation(root: core, python: python, home: root, temporaryBase: root, toolDirectories: []))
+        model.choose(source); await model.waitForCompletion()
+        precondition(model.state == .review && model.shellScriptCandidates.count == 1)
+        let tree = RestoreSelectionPresentation.disclosureIDs(model.selectionAreas, advanced: true).subtracting([ShellCommandPresentation.scriptsID])
+        func click(_ label: String, state: NSControl.StateValue) {
+            let host = NSHostingView(rootView: RestoreSelectionContent(model: model, expansion: .constant(tree)))
+            let window = NSWindow(contentRect: .init(x: 0, y: 0, width: 985, height: 1100), styleMask: [.borderless], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false; window.contentView = host
+            defer { window.contentView = nil; window.close() }
+            host.layoutSubtreeIfNeeded()
+            func find(_ view: NSView) -> NSButton? {
+                if let button = view as? NSButton, button.accessibilityLabel() == label { return button }
+                return view.subviews.lazy.compactMap(find).first
+            }
+            let button = find(host)!
+            precondition(button.isEnabled && button.state == state)
+            button.performClick(nil)
+        }
+        for label in ["Select Shell", "Select Custom Commands"] {
+            model.selectArea("shell-zsh", included: true)
+            precondition(model.selectedItems["shell-zsh"]?.count == 12 && model.authorizedShellScripts.isEmpty)
+            click(label, state: .mixed)
+            precondition(model.developerGroupState(.shell) == .none && model.shellParentConsent == nil)
+            let before = model.selection
+            click(label, state: .off)
+            precondition(model.shellParentConsent?.newScripts.map(\.id) == [scriptID] && model.selection == before)
+            model.resolveShellParent(model.shellParentConsent!, choice: .cancel)
+            precondition(model.selection == before && model.authorizedShellScripts.isEmpty)
+            click(label, state: .off)
+            model.resolveShellParent(model.shellParentConsent!, choice: .includeScripts)
+            precondition(model.developerGroupState(.shell) == .all && model.authorizedShellScripts == [scriptID])
+            model.selectItem("shell-zsh", item: aliases[0], included: false)
+            precondition(model.authorizedShellScripts == [scriptID])
+            model.selectItem("shell-zsh", item: aliases[0], included: true)
+            click(label, state: .on)
+            precondition(model.developerGroupState(.shell) == .none && model.authorizedShellScripts.isEmpty && model.shellParentConsent == nil)
+        }
+        let before = model.selection
+        for choice in [ShellParentConsent.Choice.aliasesOnly, .cancel, .includeScripts] {
+            click("Select Scripts", state: .off)
+            precondition(model.shellParentConsent?.selectAliases == false && model.shellParentConsent?.keepSelectionTitle == "Keep current selection")
+            model.resolveShellParent(model.shellParentConsent!, choice: choice)
+            precondition(model.selection.categories == before.categories && model.selectedItems["shell-zsh"]?.isEmpty != false)
+            precondition(model.authorizedShellScripts == (choice == .includeScripts ? [scriptID] : []))
+        }
+        click("Select Scripts", state: .on)
+        precondition(model.authorizedShellScripts.isEmpty && model.shellParentConsent == nil)
+        print("PASS: Rebuild native Shell/Custom Commands 12-of-12 aliases, 0-of-1 scripts: mixed/all clear; none requests exact consent; Cancel preserves; Scripts-only context; alias deselection preserves scripts")
+    }
+
+    @MainActor static func shellCustomChecks(core: URL, source: URL, python: URL, root: URL) async throws {
+        try await shellParentUIChecks(core: core, source: source, python: python, root: root)
+        let inspectionPath = core.appendingPathComponent("inspection.json"), mode = core.appendingPathComponent("mode")
+        let original = try Data(contentsOf: inspectionPath), originalMode = try? Data(contentsOf: mode)
+        let requestsPath = core.appendingPathComponent("requests.jsonl"), originalRequests = try? Data(contentsOf: core.appendingPathComponent("requests.jsonl"))
+        defer {
+            try! original.write(to: inspectionPath)
+            if let originalMode { try! originalMode.write(to: mode) } else { try? FileManager.default.removeItem(at: mode) }
+            if let originalRequests { try! originalRequests.write(to: requestsPath) } else { try? FileManager.default.removeItem(at: requestsPath) }
+        }
+        let aliases = (1...3).map { "shell-alias:" + String(repeating: String($0), count: 64) }
+        func script(_ path: String, _ ids: [String]) -> [String: Any] {
+            ["id": SHA256.hash(data: Data(("shell-script:" + path).utf8)).map { String(format: "%02x", $0) }.joined(),
+             "path": path, "alias_ids": ids, "observation_id": String(repeating: "e", count: 64)]
+        }
+        let candidates = [script(".local/bin/platform-info", Array(aliases.prefix(2))), script(".local/bin/version-info", [aliases[2]])]
+        let rows: [[String: Any]] = [["domain": "shell-zsh", "label": "Aliases & Functions", "selection_mode": "items", "availability": "available",
+            "reason": NSNull(), "items": zip(aliases, ["platform", "system-info", "version"]).map { ["item_id": $0, "label": $1] }]]
+        var inspection: [String: Any] = ["format_version": 1, "selected_categories": ["shell-zsh"], "selected_item_counts": ["shell-zsh": 3], "secure_component": false,
+            "restore_selection": ["groups": [["id": "Shell", "domains": ["shell-zsh"]]], "inventory": rows], "shell_script_candidates": candidates]
+        try JSONSerialization.data(withJSONObject: inspection).write(to: inspectionPath)
+        try write("shell-custom", mode)
+        let runtime = CoreRuntime(operationLogs: nil)
+        let model = RestoreModel(runtime: runtime, location: CoreLocation(root: core, python: python, home: root, temporaryBase: root, toolDirectories: []))
+        model.choose(source); await model.waitForCompletion()
+        precondition(model.state == .review && model.authorizedShellScripts.isEmpty && model.shellScriptCandidates.count == 2)
+        let initial = model.selection
+        model.selectDeveloperGroup(.shell, included: true)
+        precondition(model.shellParentConsent?.newScripts.count == 2 && model.selection == initial && !model.canPreview)
+        model.resolveShellParent(model.shellParentConsent!, choice: .cancel)
+        precondition(model.selection == initial && model.authorizedShellScripts.isEmpty)
+        model.selectDeveloperGroup(.shell, included: true)
+        model.resolveShellParent(model.shellParentConsent!, choice: .aliasesOnly)
+        precondition(model.selectedItemCount == 3 && model.authorizedShellScripts.isEmpty)
+        precondition(model.developerGroupState(.shell) == .mixed)
+        model.refreshPreview(); await model.waitForCompletion()
+        precondition(model.state == .preview && !model.canRebuild && model.preparation?.shellScripts == nil)
+        precondition(model.preparation!.plan.allSatisfy { $0.disposition == "blocked" })
+        model.back()
+        let shared = candidates[0]["id"] as! String, other = candidates[1]["id"] as! String
+        model.selectDeveloperGroup(.shell, included: true)
+        model.resolveShellParent(model.shellParentConsent!, choice: .includeScripts)
+        precondition(model.authorizedShellScripts == [shared, other])
+        precondition(model.developerGroupState(.shell) == .all)
+        model.selectDeveloperGroup(.shell, included: true)
+        precondition(model.shellParentConsent == nil && model.authorizedShellScripts == [shared, other])
+        model.selectAllShellScripts(included: false)
+        precondition(model.authorizedShellScripts.isEmpty && model.developerGroupState(.shell) == .mixed)
+        model.selectAllShellScripts(included: true)
+        precondition(model.authorizedShellScripts == [shared, other] && model.shellParentConsent == nil)
+        model.selectShellScript(other, included: false)
+        model.selectDeveloperGroup(.shell, included: true)
+        precondition(model.shellParentConsent?.newScripts.map(\.id) == [other])
+        model.resolveShellParent(model.shellParentConsent!, choice: .aliasesOnly)
+        precondition(model.authorizedShellScripts == [shared])
+        model.selectDeveloperGroup(.shell, included: true)
+        model.resolveShellParent(model.shellParentConsent!, choice: .cancel)
+        precondition(model.authorizedShellScripts == [shared] && model.selectedItemCount == 3)
+        model.selectItem("shell-zsh", item: aliases[2], included: false)
+        precondition(model.authorizedShellScripts == [shared] && model.selectedItemCount == 2)
+        model.selectItem("shell-zsh", item: aliases[0], included: false)
+        model.selectItem("shell-zsh", item: aliases[1], included: false)
+        precondition(model.authorizedShellScripts == [shared] && !model.canPreview && model.shellSelectionIssue != nil)
+        model.selectItem("shell-zsh", item: aliases[0], included: true)
+        model.selectItem("shell-zsh", item: aliases[1], included: true)
+        precondition(model.shellSelectionIssue == nil && model.canPreview)
+        let tree = RestoreSelectionPresentation.disclosureIDs(model.selectionAreas, advanced: true).union([ShellCommandPresentation.scriptsID])
+        for dark in [false, true] { try render(model, runtime, state: "shell-custom-selection-" + (dark ? "dark" : "light"), selectionTree: tree, dark: dark) }
+        model.refreshPreview(); await model.waitForCompletion()
+        precondition(model.state == .preview && model.canRebuild && model.preparation?.shellScripts?.count == 1)
+        precondition(model.preparation?.selectedItemCounts["shell-zsh"] == 2 && model.shellScriptConsentReady)
+        for dark in [false, true] { try render(model, runtime, state: "shell-custom-preview-" + (dark ? "dark" : "light"), expanded: true, dark: dark) }
+        model.requestRebuild(); precondition(model.state == .confirming && model.authorizedShellScripts == [shared])
+        model.cancelRebuildConfirmation(); model.back()
+        precondition(model.state == .review && model.authorizedShellScripts == [shared])
+        model.selectShellScript(shared, included: false)
+        precondition(model.preparation == nil)
+        model.refreshPreview(); await model.waitForCompletion()
+        precondition(model.state == .preview && !model.canRebuild)
+        model.back(); model.selectShellScript(shared, included: true)
+        try write("shell-custom-matching", mode)
+        model.refreshPreview(); await model.waitForCompletion()
+        precondition(model.state == .preview && !model.canRebuild && model.preparation?.shellScripts == nil)
+        let tasks = RestoreTaskPresentation(preview: model.preview!, plan: model.preparation!)
+        precondition(tasks.domains.allSatisfy { !RestorePreviewVisibility.includes($0) }, "Matching aliases must remain suppressed in Preview")
+        model.back()
+        var changedCandidates = candidates
+        changedCandidates[0]["observation_id"] = String(repeating: "f", count: 64)
+        inspection["shell_script_candidates"] = changedCandidates
+        try JSONSerialization.data(withJSONObject: inspection).write(to: inspectionPath)
+        model.refreshPreview(); await model.waitForCompletion()
+        precondition(model.state == .failed && model.technicalReason == "script_selection_changed"
+                     && model.authorizedShellScripts.isEmpty && model.preparation == nil,
+                     "A changed payload at the same path cannot inherit Restore authorization")
+        model.back(); model.choose(source); await model.waitForCompletion()
+        precondition(model.authorizedShellScripts.isEmpty, "Bundle re-entry cannot inherit Restore consent")
+        model.selectDeveloperGroup(.shell, included: true)
+        let stalePrompt = model.shellParentConsent!
+        inspection.removeValue(forKey: "shell_script_candidates")
+        try JSONSerialization.data(withJSONObject: inspection).write(to: inspectionPath)
+        model.choose(source); await model.waitForCompletion()
+        model.resolveShellParent(stalePrompt, choice: .includeScripts)
+        precondition(model.state == .review && model.shellScriptCandidates.isEmpty)
+        model.selectDeveloperGroup(.shell, included: true)
+        precondition(model.shellParentConsent == nil && model.authorizedShellScripts.isEmpty && model.developerGroupState(.shell) == .all)
+        let requests = try String(contentsOf: core.appendingPathComponent("requests.jsonl"), encoding: .utf8)
+        precondition(!requests.contains("restore_execute"), "UI fixture never mutates")
+        print("PASS: native Rebuild Scripts default-off, shared file selection, consent-independent Preview blockers, read-only Confirmation, matching suppression, counts and Bundle re-entry")
+    }
     private final class SecureExpansion: ObservableObject { @Published var ids: Set<String> = [] }
     private struct SecureSelectionHost: View {
         @ObservedObject var expansion: SecureExpansion
@@ -1595,11 +2184,11 @@ import Vision
         precondition(model.state == .preview && model.preparation?.selection.items[ssh.id]?.count == 4)
         print("PASS: Rebuild Host full/subset/empty scope, exact canonical Preview, invalidation, independent Secure Transfer and native disclosure")
     }
-    @MainActor static func render(_ model: RestoreModel, _ runtime: CoreRuntime, state: String, expanded: Bool = false, settingsOnly: Bool = false, selectionTree: Set<String>? = nil) throws {
+    @MainActor static func render(_ model: RestoreModel, _ runtime: CoreRuntime, state: String, expanded: Bool = false, settingsOnly: Bool = false, selectionTree: Set<String>? = nil, dark: Bool = false) throws {
         guard !CommandLine.arguments.contains("--no-renders") else { return }
         _ = NSApplication.shared
-        NSApp.appearance = NSAppearance(named: .aqua)
-        for width in (Self.finalUXFixtures ? [420, 785, 985] : [785, 985]) {
+        NSApp.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+        for width in (state.hasPrefix("shell-custom") ? [580, 985] : Self.finalUXFixtures ? [420, 785, 985] : [785, 985]) {
             let selection = model.selection
             let preparedID = model.preparation?.preparedPlanID
             let workspace = VStack(alignment: .leading, spacing: 20) {
@@ -1652,6 +2241,25 @@ import Vision
             window.isReleasedWhenClosed = false; window.contentView = host
             host.frame = window.contentView!.bounds
             host.layoutSubtreeIfNeeded(); host.displayIfNeeded()
+            if state.hasPrefix("shell-custom-acceptance-") {
+                func boxes(_ view: NSView) -> [NSButton] {
+                    if let button = view as? NSButton, button.target is NativeSelectionCheckbox.Coordinator { return [button] }
+                    return view.subviews.flatMap(boxes)
+                }
+                let controls = boxes(host)
+                if model.state == .review {
+                    precondition(controls.first { $0.accessibilityLabel() == "platform" }?.state == .on)
+                    let script = model.shellScriptCandidates[0]
+                    precondition(controls.first { $0.accessibilityLabel() == "~/" + script.path }?.state
+                                 == (model.authorizedShellScripts.contains(script.id) ? .on : .off))
+                    precondition(controls.first { $0.accessibilityLabel() == "Select Scripts" }?.state
+                                 == (model.authorizedShellScripts.contains(script.id) ? .on : .off))
+                    for label in ["Select Shell", "Select Custom Commands"] {
+                        precondition(controls.first { $0.accessibilityLabel() == label }?.state
+                                     == (model.authorizedShellScripts.contains(script.id) ? .on : .mixed))
+                    }
+                } else { precondition(controls.isEmpty, "Preview is read-only") }
+            }
             if state == "ssh-host-selection" {
                 func boxes(_ view: NSView) -> [NSButton] {
                     if let button = view as? NSButton, button.target is NativeSelectionCheckbox.Coordinator { return [button] }
@@ -1669,6 +2277,25 @@ import Vision
             host.cacheDisplay(in: host.bounds, to: bitmap)
             precondition(bitmap.pixelsWide == Int(CGFloat(width) * window.backingScaleFactor))
             try bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: "build/Debug/RestoreUnified-\(state)\(expanded ? "-expanded" : "")-\(width).png"))
+            if state.hasPrefix("shell-custom-file-preview-"), model.canRebuild {
+                let recognition = VNRecognizeTextRequest(); recognition.recognitionLevel = .accurate
+                try VNImageRequestHandler(cgImage: bitmap.cgImage!, options: [:]).perform([recognition])
+                precondition((recognition.results ?? []).contains { $0.boundingBox.minY < 0.12 && $0.topCandidates(1).first?.string == "Rebuild" },
+                             "Standalone file recovery must expose the production footer's Rebuild action at both widths")
+            }
+            if state.hasPrefix("shell-custom-acceptance-"), model.state == .preview, width == 985, !dark {
+                let recognition = VNRecognizeTextRequest(); recognition.recognitionLevel = .accurate
+                try VNImageRequestHandler(cgImage: bitmap.cgImage!, options: [:]).perform([recognition])
+                let lines = (recognition.results ?? []).compactMap { $0.topCandidates(1).first?.string }
+                let plannedFiles = model.preparation?.shellScripts ?? []
+                // OCR may include the adjacent system symbol in the title line.
+                precondition(lines.filter { $0.range(of: "^[^A-Za-z]*Scripts[^A-Za-z]*$", options: .regularExpression) != nil }.count == (plannedFiles.isEmpty ? 0 : 1),
+                             "Scripts is a separate Preview child only for actual Core-authorized writes: \(lines)")
+                precondition(!lines.contains { $0.contains("Executable files to restore") })
+                for script in plannedFiles {
+                    precondition(lines.filter { $0.contains(script.path) }.count == 1, "Shared dependency is displayed exactly once")
+                }
+            }
             precondition(model.selection == selection && model.preparation?.preparedPlanID == preparedID)
             if CommandLine.arguments.contains("--preview-appstore-layout-only"), state.hasPrefix("layout-") {
                 func findScroll(_ view: NSView) -> NSScrollView? {
@@ -3236,6 +3863,9 @@ import Vision
     }
 
     @MainActor static func main() async throws {
+        if CommandLine.arguments.contains("--shell-recovery-core-only") || CommandLine.arguments.contains("--shell-closure-review-only") {
+            try await shellRecoveryCoreChecks(repository: URL(fileURLWithPath: CommandLine.arguments[1]), python: URL(fileURLWithPath: CommandLine.arguments[2])); return
+        }
         if CommandLine.arguments.contains("--secure-passphrase-only") || CommandLine.arguments.contains("--bundled-age-only") {
             try await securePassphraseChecks(repository: URL(fileURLWithPath: CommandLine.arguments[1]), python: URL(fileURLWithPath: CommandLine.arguments[2])); return
         }
@@ -3256,7 +3886,9 @@ import Vision
         let developerOnly = CommandLine.arguments.contains("--developer-selection-only")
         let sshResolutionOnly = CommandLine.arguments.contains("--ssh-resolution-only")
         let sshHostOnly = CommandLine.arguments.contains("--ssh-host-selection-only") || sshResolutionOnly
-        let selectionAccordionOnly = CommandLine.arguments.contains("--selection-accordion-only") || homebrewSetupOnly || secureUIOnly || sshHostOnly || developerOnly
+        let shellUIOnly = CommandLine.arguments.contains("--shell-ui-only")
+        let shellCustomOnly = CommandLine.arguments.contains("--shell-custom-only") || shellUIOnly
+        let selectionAccordionOnly = CommandLine.arguments.contains("--selection-accordion-only") || homebrewSetupOnly || secureUIOnly || sshHostOnly || developerOnly || shellCustomOnly
         let refreshCancellationOnly = CommandLine.arguments.contains("--appstore-refresh-cancel-only")
         // These constant model/decoder contracts run in the mandatory standard
         // invocation. The two additional workflows have independent fixtures
@@ -3331,7 +3963,8 @@ import Vision
         }
         let repo = URL(fileURLWithPath: CommandLine.arguments[1])
         let python = URL(fileURLWithPath: CommandLine.arguments[2])
-        let root = URL(fileURLWithPath: "/private/tmp").appendingPathComponent("macseed-desktop-restore-" + UUID().uuidString)
+        let root = (shellUIOnly ? FileManager.default.temporaryDirectory : URL(fileURLWithPath: "/private/tmp"))
+            .appendingPathComponent("macseed-desktop-restore-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
         let core = root.appendingPathComponent("fake")
@@ -3477,6 +4110,25 @@ import Vision
                 selected_groups=groups, selected_categories=selected_categories,selected_item_counts={k:len(v) for k,v in selected_items.items()},
                 include_secure=False,secure_restore_status='not_selected',plan=plan,readiness=dict(ready=not conditions or mode in ('safe','satisfied'),ready_scope='environment',conditions=conditions,reentry='restore_prepare'),
                 has_planned_changes=mode not in ('no_changes','no_changes_attention'),warning_count=1 if mode=='attention' else 0,error_count=0)
+            if mode.startswith('shell-custom'):
+                candidates=json.loads(Path('inspection.json').read_text()).get('shell_script_candidates',[])
+                scripts=request['parameters'].get('shell_script_selection')
+                if scripts is not None: result['shell_script_selection']=scripts
+                result['shell_script_candidates']=[dict(item,alias_ids=[alias for alias in item['alias_ids'] if alias in selected_items.get('shell-zsh',[])])
+                    for item in candidates if item['id'] in (scripts or []) and set(item['alias_ids']) & set(selected_items.get('shell-zsh',[]))]
+                required=[]
+                for row in plan:
+                    if row['domain']!='shell-zsh': continue
+                    row['item_id']=row['selection_item_id']
+                    dependencies=[item for item in candidates if row['item_id'] in item['alias_ids']]
+                    matching=mode=='shell-custom-matching'
+                    allowed=all(item['id'] in (scripts or []) for item in dependencies)
+                    row.update(disposition='satisfied' if matching else 'planned' if allowed else 'blocked',
+                        action='none' if matching or not allowed else 'create', reason=None if matching or allowed else 'dependency_prerequisite')
+                    if allowed and not matching: required.extend(item for item in dependencies if item['id'] not in [x['id'] for x in required])
+                if required: result['shell_scripts']=[dict(id=row['id'],path=row['path']) for row in required]
+                result['has_executable_changes']=any(row['disposition']=='planned' for row in plan)
+                result['has_planned_changes']=result['has_executable_changes']
             if mode=='ssh-resolution':
                 approved=request['parameters'].get('ssh_approvals') is True
                 if approved:
@@ -3743,6 +4395,15 @@ import Vision
         let location = CoreLocation(root: core, python: python, home: root, temporaryBase: root, toolDirectories: [])
         let model = RestoreModel(runtime: runtime, location: location)
         let source = root.appendingPathComponent("sample.mbt")
+        if shellUIOnly {
+            try await shellCustomChecks(core: core, source: source, python: python, root: root)
+            return
+        }
+        if shellCustomOnly || !CommandLine.arguments.dropFirst(3).contains(where: { $0.hasSuffix("-only") }) {
+            try await shellCustomChecks(core: core, source: source, python: python, root: root)
+            try await shellRecoveryCoreChecks(repository: repo, python: python)
+            if shellCustomOnly { return }
+        }
         if developerOnly || !CommandLine.arguments.dropFirst(3).contains(where: { $0.hasSuffix("-only") }) {
             try await developerSelectionChecks(core: core, source: source, repo: repo, python: python, root: root)
             if developerOnly { return }

@@ -54,6 +54,13 @@ struct CoreLocation: Sendable {
             environment["MACSEED_DESKTOP_BUNDLE"] = applicationBundle.path
         }
         let parent = ProcessInfo.processInfo.environment
+        // Pass only the GUI runtime's agent locator. Core independently checks
+        // socket ownership, proves possession and binds fresh Prepare evidence.
+        if let socket = parent["SSH_AUTH_SOCK"], socket.hasPrefix("/"), socket.utf8.count <= 1024,
+           !socket.unicodeScalars.contains(where: { $0.value < 32 || $0.value == 127 }),
+           !socket.split(separator: "/").contains("..") {
+            environment["SSH_AUTH_SOCK"] = socket
+        }
         if parent["MACSEED_PERFORMANCE_TRACE"] == "1" {
             environment["MACSEED_PERFORMANCE_TRACE"] = "1"
             if let directory = parent["MACSEED_PERFORMANCE_TRACE_DIR"], !directory.isEmpty {

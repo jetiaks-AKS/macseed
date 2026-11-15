@@ -21,6 +21,8 @@ class InvalidSelection(Exception):
 
 
 def identity(domain, source):
+    if domain == 'shell-zsh':
+        return source if re.fullmatch(r'shell-script:[0-9a-f]{64}', source) else bundle.shell_contract().identity(source)
     if domain == 'vscode-workspaces':
         return source
     return 'restore:' + hashlib.sha256((domain + '\0' + source).encode()).hexdigest()
@@ -54,18 +56,27 @@ def inventory(files):
                            for row in contract.objects(files[contract.VSCODE])['items']}
     rows = []
     sources = {}
+    shell_names = {}
     for domain in (*bundle.SELECTABLE_ITEMS, *bundle.CATEGORIES):
         items = sections.get(domain, [])
         if domain == 'ssh-configuration' and categories[domain]:
             items = list(bundle.ssh_snapshot(files['generated/ssh/config.snapshot'])[3])
+        if domain == 'shell-zsh' and categories[domain]:
+            aliases = bundle.shell_aliases(files['generated/shell/zshrc.snapshot'], files)
+            if aliases is not None:
+                items = [row['name'] for row in aliases['aliases']]
+                if aliases['version'] in (4, 5):
+                    shell_names = {bundle.shell_contract().recovery_contract().file_identity(row['path']): row['path'] for row in aliases['scripts']}
+                    items += list(shell_names)
         if domain == 'workspace-folders':
             items = [value for value in items if folders.get(value) == 'workspace']
         sources[domain] = {identity(domain, source): source for source in items}
         if len(sources[domain]) != len(items):
             raise bundle.Invalid('ambiguous Restore selection inventory')
-        item_mode = domain in bundle.SELECTABLE_ITEMS or (domain == 'ssh-configuration' and bool(items))
+        item_mode = domain in bundle.SELECTABLE_ITEMS or (domain in ('ssh-configuration', 'shell-zsh') and bool(items))
         available = bool(items) if item_mode else categories[domain]
-        rows.append({'domain': domain, 'label': LABELS[domain],
+        display_label = ('Aliases & Functions' if item_mode else 'Settings') if domain == 'shell-zsh' else LABELS[domain]
+        rows.append({'domain': domain, 'label': display_label,
                      'selection_mode': 'items' if item_mode else 'category',
                      'availability': 'available' if available else 'unavailable',
                      'capture_selected': bool(categories.get(domain, False) or sections.get(domain, [])),
@@ -73,7 +84,7 @@ def inventory(files):
                      'reason': None if available else 'no_selectable_content',
                      'items': [{'item_id': key, 'label': label(app_names.get(value, value) if domain == 'app-store' else
                                 repository_names.get(value, value) if domain == 'git-repositories' else
-                                workspace_names.get(value, value) if domain == 'vscode-workspaces' else value, domain)} for key, value in sources[domain].items()]})
+                                workspace_names.get(value, value) if domain == 'vscode-workspaces' else shell_names.get(value, value) if domain == 'shell-zsh' else value, domain)} for key, value in sources[domain].items()]})
     return {'groups': [{'id': group, 'domains': list(domains)} for group, domains in bundle.GROUPS.items()],
             'inventory': rows}, sources
 
@@ -90,6 +101,11 @@ def canonical(stage):
         hosts = bundle.ssh_snapshot(bundle.checked_file(stage / 'generated/ssh/config.snapshot'))[3]
         if hosts:
             items['ssh-configuration'] = sorted(identity('ssh-configuration', host) for host in hosts)
+    if categories['shell-zsh']:
+        aliases = bundle.shell_load(stage / 'generated/shell/zshrc.snapshot')
+        if aliases is not None:
+            items['shell-zsh'] = sorted(bundle.shell_contract().recovery_contract().requirement_ids(aliases) if aliases['version'] in (3, 4, 5) else
+                [identity('shell-zsh', row['name']) for row in aliases['aliases']])
     return {'categories': sorted(domain for domain in bundle.CATEGORIES if categories[domain] and domain not in items),
             'items': items}
 
@@ -127,6 +143,8 @@ def narrow(stage, selection, disabled_groups):
             bundle.select_ssh_profiles(stage, selected_items['ssh-configuration'])
         else:
             chosen.remove('ssh-configuration')
+    if 'shell-zsh' in selected_items:
+        bundle.select_shell_aliases(stage, selected_items['shell-zsh'])
     sections, categories = bundle.parse_blueprint(bundle.checked_file(stage / 'blueprint.conf'))
     flags = {domain: categories[domain] and domain in chosen for domain in bundle.CATEGORY_FLAGS}
     raw = '[categories]\n' + ''.join(f'{domain}="{str(value).lower()}"\n' for domain, value in sorted(flags.items()))

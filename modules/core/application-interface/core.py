@@ -177,8 +177,8 @@ def restore_signals():
         signal.signal(signal.SIGTERM, previous_term)
 
 
-def restore_prepare(path, disabled_groups, include_secure, selection=None, installer_preparations=None, destinations=None, ssh_approvals=None):
-    with restore_signals(), prepared_restore(path, disabled_groups, include_secure, selection, installer_preparations, workspace_preview=True, destinations=destinations, ssh_approvals=ssh_approvals) as (summary, _stage, _source, _staged):
+def restore_prepare(path, disabled_groups, include_secure, selection=None, installer_preparations=None, destinations=None, ssh_approvals=None, shell_script_selection=None):
+    with restore_signals(), prepared_restore(path, disabled_groups, include_secure, selection, installer_preparations, workspace_preview=True, destinations=destinations, ssh_approvals=ssh_approvals, shell_script_selection=shell_script_selection) as (summary, _stage, _source, _staged):
         return summary
 
 
@@ -195,7 +195,7 @@ def valid_comparison(value):
              (value['decision'] != 'conflict' and isinstance(value['target_state'], str) and PREPARED_PLAN_ID.fullmatch(value['target_state']))))
 
 
-def secure_restore_compare(operation_id, path, disabled_groups, expected_id, selection, channel, destinations=None, inventory=False, ssh_approvals=None):
+def secure_restore_compare(operation_id, path, disabled_groups, expected_id, selection, channel, destinations=None, inventory=False, ssh_approvals=None, shell_script_selection=None):
     sequence = 1
     def event(kind, data=None):
         nonlocal sequence
@@ -204,7 +204,7 @@ def secure_restore_compare(operation_id, path, disabled_groups, expected_id, sel
     try:
         if channel is None:
             raise SecureError('secure_bridge_required')
-        with restore_signals(), prepared_restore(path, disabled_groups, True, selection, workspace_preview=True, destinations=destinations, ssh_approvals=ssh_approvals) as (plan, stage, source_id, _):
+        with restore_signals(), prepared_restore(path, disabled_groups, True, selection, workspace_preview=True, destinations=destinations, ssh_approvals=ssh_approvals, shell_script_selection=shell_script_selection) as (plan, stage, source_id, _):
             if not inventory and plan['prepared_plan_id'] != expected_id:
                 raise ExecuteFailed('stale_plan')
             if any(row['domain'] == 'secure-ssh-identities' and row.get('scope') != 'execution_launch'
@@ -286,7 +286,7 @@ def restore_unpack(*args, **kwargs):
 
 
 @contextmanager
-def prepared_restore(path, disabled_groups, include_secure, selection=None, installer_preparations=None, *, workspace_preview=False, destinations=None, ssh_approvals=None):
+def prepared_restore(path, disabled_groups, include_secure, selection=None, installer_preparations=None, *, workspace_preview=False, destinations=None, ssh_approvals=None, shell_script_selection=None):
     if bundle.RECOVERY.exists() or bundle.RECOVERY.is_symlink():
         raise RecoveryRequired()
     input_path = Path(path)
@@ -311,6 +311,18 @@ def prepared_restore(path, disabled_groups, include_secure, selection=None, inst
         except restore_selection.InvalidSelection:
             raise InvalidSelection() from None
         bundle.narrow(stage, disabled_groups, workspace_preview=workspace_preview)
+        if shell_script_selection is not None:
+            shell_path = stage / 'generated/shell/zshrc.snapshot'
+            shell = (bundle.shell_load(shell_path)
+                     if 'shell-zsh' in restore_selection.canonical(stage)['items'] else None)
+            candidates = (bundle.shell_contract().recovery_contract().selection_candidates(shell)
+                          if shell is not None and shell['version'] in (3, 4, 5) else [])
+            if not set(shell_script_selection) <= {row['id'] for row in candidates}:
+                raise InvalidSelection()
+            if shell is not None and shell['version'] in (3, 4, 5):
+                recovery = bundle.shell_contract().recovery_contract()
+                shell['scripts'] = [row for row in shell['scripts'] if recovery.script_id(row['path']) in shell_script_selection]
+                recovery.save(shell_path, shell)
         topology_preview = None
         git_ssh_evidence = None
         topology_files = None
@@ -323,6 +335,12 @@ def prepared_restore(path, disabled_groups, include_secure, selection=None, inst
             topology_files = files
             preview_blueprint = private / 'preview.blueprint'
         requested_selection = restore_selection.canonical(stage)
+        shell_value = None
+        shell_evidence = None
+        if 'shell-zsh' in requested_selection['items']:
+            shell_value = bundle.shell_load(stage / 'generated/shell/zshrc.snapshot')
+            if shell_value is not None and shell_value['version'] in (2, 3, 4, 5):
+                shell_evidence = bundle.shell_contract().evidence(shell_value, os.environ['HOME'])
         ssh_evidence = (ssh_observation()
                         if 'ssh-configuration' in requested_selection['categories'] or
                         'ssh-configuration' in requested_selection['items'] else None)
@@ -496,6 +514,16 @@ def prepared_restore(path, disabled_groups, include_secure, selection=None, inst
                 label = sections["git-repositories"][int(row["item_id"]) - 1]
                 if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_. -]{0,127}", label, re.ASCII):
                     row.setdefault("display_name", label)
+        shell_path = stage / 'generated/shell/zshrc.snapshot'
+        if categories['shell-zsh'] and shell_path.is_file():
+            aliases = bundle.shell_load(shell_path)
+            if aliases is not None:
+                labels = {bundle.shell_contract().identity(row['name']): row['name'] for row in aliases['aliases']}
+                if aliases['version'] in (4, 5):
+                    labels.update((bundle.shell_contract().recovery_contract().file_identity(row['path']), row['path']) for row in aliases['scripts'])
+                for row in records:
+                    if row['domain'] == 'shell-zsh' and row['item_id'] in labels:
+                        row['display_name'] = labels[row['item_id']]
         # A terminal item-local Preview decision takes precedence over a later
         # inspection prerequisite for that same item. Keep unrelated/global gates.
         for condition in requirements['conditions']:
@@ -577,7 +605,9 @@ def prepared_restore(path, disabled_groups, include_secure, selection=None, inst
             "scope_warnings": sorted({module_domains.get(item["module"], "preview")
                 for item in modules if item["status"] == "warning" and not any(
                     (row["domain"] == module_domains.get(item["module"]) or
-                     (module_domains.get(item["module"]) == "macOS Settings" and row["domain"].startswith("macos-")))
+                     (module_domains.get(item["module"]) == "macOS Settings" and row["domain"].startswith("macos-")) or
+                     (item["module"] == "preview_workspace_topology" and row["domain"] in
+                      ("git-repositories", "workspace-folders", "vscode-workspaces")))
                     and row["disposition"] not in ("planned", "satisfied") for row in records)}),
             "plan": records,
             "readiness": requirements,
@@ -587,8 +617,33 @@ def prepared_restore(path, disabled_groups, include_secure, selection=None, inst
             "error_count": sum(item["status"] == "error" for item in modules),
             "preview_detail_level": "selected_requirements",
         }
+        if shell_value is not None and shell_value['version'] in (3, 4, 5):
+            recovery = bundle.shell_contract().recovery_contract()
+            # Bind native per-file consent to the same validated payload used by
+            # this plan, including matching files that need no publication.
+            summary['shell_script_candidates'] = recovery.selection_candidates(shell_value)
+            scripts = recovery.restore_scripts(shell_value, os.environ['HOME'])
+            if scripts:
+                summary['shell_scripts'] = scripts
+            if shell_value['version'] == 5:
+                # The v5 publisher omits rejected groups and independently
+                # qualifies each saved file. Bind that skip decision to the
+                # prepared plan; clients must not infer it from generic warnings.
+                summary['shell_skipped_items'] = sorted(row['item_id'] for row in records
+                    if row['domain'] == 'shell-zsh' and row['action'] == 'none'
+                    and row['item_id'].startswith(('shell-alias:', 'shell-script:'))
+                    and row['disposition'] in ('blocked', 'conflict', 'unknown'))
+        if shell_script_selection is not None:
+            summary['shell_script_selection'] = sorted(shell_script_selection)
         if 'ssh-configuration' in requested_selection['items']:
             summary['selected_item_counts']['ssh-configuration'] = len(requested_selection['items']['ssh-configuration'])
+        if 'shell-zsh' in requested_selection['items']:
+            summary['selected_item_counts']['shell-zsh'] = len(requested_selection['items']['shell-zsh'])
+        if not requirements['ready'] or summary['error_count']:
+            for row in records:
+                if row['domain'] == 'shell-zsh' and row['item_id'].startswith(('shell-alias:', 'shell-script:')) and row['disposition'] == 'planned':
+                    row.update(action='none', disposition='blocked', reason='prerequisite_unmet')
+            summary['has_executable_changes'] = any(row['disposition'] == 'planned' for row in records) or include_secure
         dependencies = ((ssh_resolution.dependencies.projection(resolved['dependencies']), resolved['dependency_digest'])
                         if resolved else ssh_dependencies(stage, requested_selection))
         if (private / 'ssh-original.snapshot').exists():
@@ -614,6 +669,10 @@ def prepared_restore(path, disabled_groups, include_secure, selection=None, inst
             if ssh_observation() != ssh_evidence:
                 raise PreviewFailed()
             identity['ssh_observation'] = ssh_evidence
+        if shell_evidence is not None:
+            if bundle.shell_contract().evidence(shell_value, os.environ['HOME']) != shell_evidence:
+                raise PreviewFailed()
+            identity['shell_observation'] = shell_evidence
         if topology_preview is not None:
             identity['workspace_observation'] = topology_preview['fingerprint']
             if git_ssh_evidence['rules']:
@@ -664,6 +723,8 @@ def prepared_restore(path, disabled_groups, include_secure, selection=None, inst
                 detail = ssh_hosts.preview(detail, summary, raw)
                 if detail is not None:
                     summary['ssh_host_presentation'] = detail
+        if shell_evidence is not None:
+            bundle.write_file(private / 'shell-observation', shell_evidence.encode())
         yield summary, stage, source_identity, stage_identity
 
 
@@ -814,7 +875,7 @@ def restore_graceful_result(state, owned, failure):
     return failure('cancelled', 130)
 
 
-def restore_execute(operation_id, path, disabled_groups, include_secure, expected_id, channel=None, selection=None, secure_comparison=None, destinations=None, ssh_approvals=None):
+def restore_execute(operation_id, path, disabled_groups, include_secure, expected_id, channel=None, selection=None, secure_comparison=None, destinations=None, ssh_approvals=None, shell_script_ids=(), shell_script_selection=None):
     sequence = 1  # started has already been emitted by main().
     state = {"prepared_plan_id": None, "execution_status": "not_started",
              "unknown_consequences": False,
@@ -903,7 +964,7 @@ def restore_execute(operation_id, path, disabled_groups, include_secure, expecte
                 state['unknown_consequences'] = True
                 raise ExecuteFailed('privileged_lifecycle_unknown')
             event("phase_started", {"phase": "preparation"})
-            with prepared_restore(path, disabled_groups, include_secure, selection, workspace_preview=True, destinations=destinations, ssh_approvals=ssh_approvals) as (plan, stage, source_id, stage_id):
+            with prepared_restore(path, disabled_groups, include_secure, selection, workspace_preview=True, destinations=destinations, ssh_approvals=ssh_approvals, shell_script_selection=shell_script_selection) as (plan, stage, source_id, stage_id):
                 event("phase_completed", {"phase": "preparation"})
                 if plan["prepared_plan_id"] != expected_id:
                     state["plan_validation"] = {"check": "prepared_plan_id", "expected_id": expected_id,
@@ -932,6 +993,8 @@ def restore_execute(operation_id, path, disabled_groups, include_secure, expecte
                 if not plan["has_executable_changes"] and any(
                         row.get("scope") == "item" for row in plan["readiness"]["conditions"]):
                     raise ExecuteFailed("no_executable_work")
+                if set(shell_script_ids) != {row['id'] for row in plan.get('shell_scripts', [])}:
+                    raise ExecuteFailed('script_consent_required')
                 sections, categories = bundle.parse_blueprint((stage / "blueprint.conf").read_bytes())
                 secure_only = include_secure and not any(categories.values()) and not any(
                     sections.get(name) for name in bundle.SELECTABLE_ITEMS)
@@ -962,6 +1025,15 @@ def restore_execute(operation_id, path, disabled_groups, include_secure, expecte
                     raise RecoveryRequired()
                 workspace_environment = {}
                 ssh_environment = {}
+                shell_environment = {}
+                if categories.get('shell-zsh'):
+                    shell_value = bundle.shell_load(stage / 'generated/shell/zshrc.snapshot')
+                    if shell_value is not None and shell_value['version'] in (2, 3, 4, 5):
+                        current_shell = bundle.shell_contract().evidence(shell_value, os.environ['HOME'])
+                        if bundle.checked_file(stage.parent / 'shell-observation').decode() != current_shell:
+                            raise ExecuteFailed('stale_plan')
+                        shell_environment['MACSEED_SHELL_EXPECTED_EVIDENCE'] = current_shell
+                        shell_environment['MACSEED_SHELL_SCRIPT_APPROVALS'] = json.dumps(shell_script_ids)
                 if categories.get('ssh-configuration'):
                     current_ssh = ssh_observation()
                     bound_ssh = hashlib.sha256(json.dumps(current_ssh, sort_keys=True,
@@ -1030,6 +1102,9 @@ def restore_execute(operation_id, path, disabled_groups, include_secure, expecte
                 environment.update(workspace_environment)
                 environment.pop('MACSEED_SSH_EXPECTED_EVIDENCE', None)
                 environment.update(ssh_environment)
+                environment.pop('MACSEED_SHELL_EXPECTED_EVIDENCE', None)
+                environment.pop('MACSEED_SHELL_SCRIPT_APPROVALS', None)
+                environment.update(shell_environment)
                 environment['MACSEED_WORKSPACE_CLONE_REQUIRED'] = str(workspace_clone).lower()
                 if ENABLED:
                     bootstrap_trace_start = monotonic()
@@ -1375,6 +1450,19 @@ def environment_compare(operation_id, parameters):
             # Labels belong only to successful display metadata, never diagnostic/failure records.
             presentation = dict(state["reference_presentation"])
             if status == 0:
+                shell_path = generated / 'shell/zshrc.snapshot'
+                if source is not None and shell_path.is_file():
+                    aliases = bundle.shell_load(shell_path)
+                    if aliases is not None:
+                        owners = {row['item_id'] for row in owned.details['verification_records']
+                                  if row['domain'] == 'shell-zsh' and row['predicate'] in ('alias_definition', 'alias_recovery')}
+                        if aliases['version'] in (4, 5):
+                            presentation['shell_script_labels'] = {bundle.shell_contract().recovery_contract().file_identity(row['path']): row['path']
+                                for row in aliases['scripts'] if any(owner['domain'] == 'shell-zsh'
+                                    and owner['predicate'] == 'script_file' and owner['item_id'] == bundle.shell_contract().recovery_contract().file_identity(row['path'])
+                                    for owner in owned.details['verification_records'])}
+                        presentation['shell_alias_labels'] = {bundle.shell_contract().identity(row['name']): row['name']
+                            for row in aliases['aliases'] if bundle.shell_contract().identity(row['name']) in owners}
                 presentation["repository_labels"] = repository_labels
                 if workspace_files is not None:
                     presentation["workspace_labels"] = workspace_labels
@@ -1437,6 +1525,7 @@ def dispatch(version, channel=None):
                  "MACSEED_APPLICATION_SECURE_VERIFY_ONLY", "MACSEED_SECURE_EVIDENCE_FD",
                  "MACSEED_SECURE_ATTEMPT", "MACSEED_SECURE_EXIT", "MACSEED_REPORT_FD",
                  "MACSEED_REPORT_COUNT", "MACSEED_REPORT_INVALID", "MACSEED_APPLICATION_CAPTURE",
+                 "MACSEED_SHELL_SCRIPT_APPROVALS", "MACSEED_SHELL_EXPECTED_EVIDENCE",
                  "MACSEED_CAPTURE_INVENTORY", "MACSEED_ITEM_STATE_DIR", pkg_preparation.CONTEXT):
         os.environ.pop(name, None)
     try:
@@ -1452,6 +1541,10 @@ def dispatch(version, channel=None):
         if not isinstance(value["operation"], str):
             raise ValueError("invalid operation")
         operation = value["operation"]
+        try:
+            bundle.shell_contract().recovery_contract().expand_request(value)
+        except (OSError, ValueError, TypeError):
+            raise ValueError("invalid Scripts request manifest") from None
         required = {"protocol_version", "operation_id", "operation"}
         if operation == "capabilities":
             if set(value) != required:
@@ -1468,14 +1561,27 @@ def dispatch(version, channel=None):
                     continue
                 if not isinstance(path_value, str) or not path_value.startswith("/") or "\0" in path_value:
                     raise ValueError("invalid reference path")
+        elif operation == 'capture_script_inspect':
+            parameters = value.get('parameters')
+            if (set(value) != required | {'parameters'} or not isinstance(parameters, dict)
+                    or not {'scripts'} <= set(parameters) or set(parameters) - {'scripts', 'shell_script_policy', 'shell_script_paths'} or not isinstance(parameters['scripts'], dict)
+                    or not (0 if parameters.get('shell_script_paths') else 1) <= len(parameters['scripts']) <= (128 if parameters.get('shell_script_policy') == 'opaque-file-v5' else 16)
+                    or any(not isinstance(key, str) or not PREPARED_PLAN_ID.fullmatch(key)
+                           or not isinstance(observation, str) or not PREPARED_PLAN_ID.fullmatch(observation)
+                           for key, observation in parameters['scripts'].items())):
+                raise ValueError('invalid script inspection scope')
+            if 'shell_script_policy' in parameters and parameters['shell_script_policy'] not in ('opaque-file-v4', 'opaque-file-v5'):
+                raise ValueError('unsupported script policy')
         elif operation in ("capture_prepare", "capture_execute", "capture_identity_inspect"):
             if set(value) != required | {"parameters"} or not isinstance(value['parameters'], dict):
                 raise ValueError('invalid Capture parameters')
             parameters = value['parameters']
             expected = ({'external_identities'} if operation == 'capture_identity_inspect' else
                         {'selection'} if operation == 'capture_prepare' else {'selection', 'destination', 'expected_prepared_capture_id'})
-            optional = {'external_identities'} | ({'replacement_sha256'} if operation == 'capture_execute' else set())
+            optional = {'external_identities'} | ({'shell_script_selection', 'shell_script_policy', 'shell_script_paths'} if operation != 'capture_identity_inspect' else set()) | ({'replacement_sha256', 'shell_script_ids'} if operation == 'capture_execute' else set())
             replacement = 'replacement_sha256' in parameters
+            if 'shell_script_policy' in parameters and parameters['shell_script_policy'] not in ('opaque-file-v4', 'opaque-file-v5'):
+                raise ValueError('unsupported script policy')
             if 'external_identities' in parameters and parameters['external_identities'] is not True:
                 raise ValueError('invalid external identity reference')
             if not expected <= set(parameters) or set(parameters) - expected - optional or (operation == 'capture_execute' and parameters['selection'] is None):
@@ -1517,10 +1623,10 @@ def dispatch(version, channel=None):
             if operation in ("restore_execute", "secure_restore_compare"):
                 expected = expected | {"expected_prepared_plan_id"}
             optional = ({'selection', 'installer_preparations'} if operation == 'restore_prepare' else
-                        {'selection', 'secure_comparison'} if operation == 'restore_execute' else
+                        {'selection', 'secure_comparison', 'shell_script_ids'} if operation == 'restore_execute' else
                         {'selection'} if operation == 'secure_restore_compare' else set())
             if operation != 'bundle_inspect':
-                optional |= {'custom_destinations', 'ssh_approvals'}
+                optional |= {'custom_destinations', 'ssh_approvals', 'shell_script_selection'}
             if not isinstance(parameters, dict) or not expected <= set(parameters) or set(parameters) - expected - optional:
                 raise ValueError("invalid Bundle parameters")
             if 'installer_preparations' in parameters:
@@ -1552,6 +1658,25 @@ def dispatch(version, channel=None):
         else:
             emit(1, "failed", operation_id, {"code": "unsupported_operation"})
             return 2
+        if operation in ('capture_prepare', 'capture_execute', 'capture_script_inspect') and 'shell_script_paths' in parameters:
+            paths = parameters['shell_script_paths']
+            if (parameters.get('shell_script_policy') not in ('opaque-file-v4', 'opaque-file-v5') or not isinstance(paths, list)
+                    or not 1 <= len(paths) <= (128 if parameters.get('shell_script_policy') == 'opaque-file-v5' else 16)
+                    or any(not isinstance(path, str) or not path.startswith('/') or len(path.encode()) > 1024
+                           or any(ord(c) < 32 or ord(c) == 127 for c in path) for path in paths)):
+                raise ValueError('invalid manual script paths')
+        if operation in ('capture_execute', 'restore_execute') and 'shell_script_ids' in parameters:
+            script_ids = parameters['shell_script_ids']
+            if (not isinstance(script_ids, list) or len(script_ids) > (128 if operation == 'restore_execute' or parameters.get('shell_script_policy') == 'opaque-file-v5' else 16)
+                    or any(not isinstance(key, str) or not PREPARED_PLAN_ID.fullmatch(key) for key in script_ids)
+                    or len(set(script_ids)) != len(script_ids)):
+                raise ValueError('invalid script consent')
+        if operation in ('capture_prepare', 'capture_execute', 'restore_prepare', 'restore_execute', 'secure_restore_compare') and 'shell_script_selection' in parameters:
+            selected_scripts = parameters['shell_script_selection']
+            if (not isinstance(selected_scripts, list) or len(selected_scripts) > (128 if operation.startswith(('restore_', 'secure_restore_')) or parameters.get('shell_script_policy') == 'opaque-file-v5' else 16)
+                    or any(not isinstance(key, str) or not PREPARED_PLAN_ID.fullmatch(key) for key in selected_scripts)
+                    or len(set(selected_scripts)) != len(selected_scripts)):
+                raise ValueError('invalid script selection')
     except (KeyError, ValueError, UnicodeError):
         emit(1, "failed", operation_id, {"code": "invalid_request"})
         return 2
@@ -1613,7 +1738,7 @@ def dispatch(version, channel=None):
         return secure_restore_compare(operation_id, path, [], None, {'categories': [], 'items': {}}, channel, inventory=True)
     if operation == "environment_compare":
         return environment_compare(operation_id, parameters)
-    if operation in ('capture_prepare', 'capture_execute', 'capture_identity_inspect'):
+    if operation in ('capture_prepare', 'capture_execute', 'capture_identity_inspect', 'capture_script_inspect'):
         from capture import capture, CaptureError
         sequence = 1
         def capture_event(kind, data=None):
@@ -1631,28 +1756,29 @@ def dispatch(version, channel=None):
         if len(disabled_groups) != len(set(disabled_groups)) or any(item not in bundle.GROUPS for item in disabled_groups):
             emit(2, 'failed', operation_id, {'code': 'invalid_selection'})
             return 2
-        return secure_restore_compare(operation_id, path, disabled_groups, expected_id, parameters.get('selection'), channel, destinations, ssh_approvals=ssh_approvals)
+        return secure_restore_compare(operation_id, path, disabled_groups, expected_id, parameters.get('selection'), channel, destinations, ssh_approvals=ssh_approvals, shell_script_selection=parameters.get('shell_script_selection'))
     if operation == "restore_execute":
         if len(disabled_groups) != len(set(disabled_groups)) or any(item not in bundle.GROUPS for item in disabled_groups):
             emit(2, "failed", operation_id, {"code": "invalid_selection",
                                                "publication_occurred": False,
                                                "target_mutation_may_have_started": False})
             return 2
-        return restore_execute(operation_id, path, disabled_groups, include_secure, expected_id, channel, parameters.get("selection"), parameters.get("secure_comparison"), destinations, ssh_approvals)
+        return restore_execute(operation_id, path, disabled_groups, include_secure, expected_id, channel, parameters.get("selection"), parameters.get("secure_comparison"), destinations, ssh_approvals, parameters.get("shell_script_ids", []), parameters.get('shell_script_selection'))
     if operation == "capabilities":
         result = {
             "protocol_version": PROTOCOL_VERSION,
             "product_version": version,
             "features": {"ssh_identity_resolution": {"version": 1, "review": "ssh_restore_review", "max_items": 32}, "secure_restore_destinations": {"version": 1, "selection_version": 2, "inventory": "secure_restore_inventory", "max_items": 32}, "external_ssh_identities": {"version": 1, "destination": "ssh_directory", "max_items": 32}, "pkg_installer_preparation": {"version": 1}, "bundle_comparison": {"version": 1}, "homebrew_graceful_stop": {"version": 1}, "restore_selection": {"version": 1, "inventory": "bundle_inspect", "selection_modes": ["category", "items"]}},
-            "operations": ["ssh_restore_review", "capabilities", "bundle_inspect", "restore_prepare", "restore_execute", "secure_restore_compare", "secure_restore_inventory", "capture_prepare", "capture_execute", "capture_identity_inspect", "environment_compare", "secure_check_inventory", "secure_check_compare"],
+            "operations": ["ssh_restore_review", "capabilities", "bundle_inspect", "restore_prepare", "restore_execute", "secure_restore_compare", "secure_restore_inventory", "capture_prepare", "capture_execute", "capture_identity_inspect", "capture_script_inspect", "environment_compare", "secure_check_inventory", "secure_check_compare"],
         }
+        result['features']['shell_script_transfer'] = dict(version=5, policy='opaque-file-v5', legacy_policies=['opaque-file-v4'], inspection='capture_script_inspect', max_files=128, max_file_bytes=1048576, max_content_bytes=16777216, max_manifest_bytes=262144, request_manifest='shell-scripts-request.json')
         result['features']['secure_check'] = dict(version=1, inventory='secure_check_inventory', compare='secure_check_compare', selection_version=2, max_items=32, read_only=True)
     else:
         try:
             if operation == "restore_prepare":
                 if len(disabled_groups) != len(set(disabled_groups)) or any(item not in bundle.GROUPS for item in disabled_groups):
                     raise InvalidSelection()
-                result = restore_prepare(path, disabled_groups, include_secure, parameters.get("selection"), parameters.get("installer_preparations"), destinations, ssh_approvals)
+                result = restore_prepare(path, disabled_groups, include_secure, parameters.get("selection"), parameters.get("installer_preparations"), destinations, ssh_approvals, parameters.get('shell_script_selection'))
             else:
                 input_path = Path(path)
                 mode = input_path.lstat().st_mode

@@ -122,7 +122,7 @@ struct OperationLogSanitizer {
         "source_status": ["present", "absent", "unavailable", "observation_error", "unsupported", "valid", "invalid", "observed_present", "observed_absent", "partial", "unobserved", "unknown"],
         "severity": ["info", "warning", "error"],
         "comparison_kind": ["matching", "missing", "differing", "unverified", "unsupported", "unresolved", "extra", "unknown_difference"],
-        "predicate": ["exists", "installed", "configured", "matching", "repository", "branch", "remote", "identity", "settings", "folder_exists", "package_installed", "configuration_matches", "identity_pair_matches_package", "identity_set_matches_package", "directory", "file_content", "stored_preference", "direct_global_value", "supported_config_match", "worktree", "origin", "revision", "topology", "folder_relationships"],
+        "predicate": ["exists", "installed", "configured", "matching", "repository", "branch", "remote", "identity", "settings", "folder_exists", "package_installed", "configuration_matches", "identity_pair_matches_package", "identity_set_matches_package", "directory", "file_content", "alias_definition", "alias_recovery", "script_file", "stored_preference", "direct_global_value", "supported_config_match", "worktree", "origin", "revision", "topology", "folder_relationships"],
         "scope": ["operation", "item", "execution_launch"],
         "tool": ["homebrew", "other"],
         "probe": ["version", "prefix", "inventory", "metadata", "capability", "read"],
@@ -149,6 +149,10 @@ struct OperationLogSanitizer {
         "ready", "authorization_required", "unsupported_interactive_operation", "vscode_cli_required", "vscode_cli_unavailable", "vscode_cli_ambiguous",
         "git_required", "git_unavailable", "repository_target_conflict", "mas_required", "mas_unavailable", "age_required", "homebrew_installation_requires_interaction",
         "homebrew_capability_unavailable", "homebrew_metadata_incompatible", "cask_launchctl_observation_failed", "missing_required_dependency", "secure_bridge_required",
+        "script_transfer_unsupported", "invalid_script_consent",
+        "shell_tool_prerequisite", "shell_tool_missing_prerequisite", "shell_tool_observation_prerequisite",
+        "shell_directory_missing_prerequisite", "shell_directory_observation_prerequisite", "shell_dependency_missing_prerequisite",
+        "shell_dependency_observation_prerequisite", "shell_operand_unsupported_prerequisite", "shell_operand_prerequisite", "shell_selection_prerequisite",
         "invalid_selected_input", "cask_metadata_unavailable", "cask_repair_not_supported", "internet_required", "command_line_tools_required"]).union(CoreRestorePreparation.workspacePreviewReasons.keys)
     static let countKeys: Set<String> = ["duration_ms", "native_exit_code", "native_signal", "warning_count", "error_count", "verified_count", "mismatch_count", "unverified_count", "unsupported_count", "unresolved_count",
         "selected_count", "selected_domains", "selected_items", "secure_identity_count", "matching", "missing", "differing", "unverified", "unsupported", "unresolved", "extra", "unknown_difference"]

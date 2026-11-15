@@ -14,7 +14,8 @@ over broad shallow coverage.
 Applications are installed again, repositories are cloned from remotes, and
 supported settings are restored. Macseed does not clone a Mac or transfer
 arbitrary user files, application databases, caches, sessions or local project data.
-Explicitly selected SSH identities can travel in an encrypted payload. Macseed
+Explicitly selected script files can travel under a bounded safety contract;
+selected SSH identities use a separate encrypted payload. Macseed
 does not replace Migration Assistant or Time Machine.
 
 ## Use Macseed today
@@ -38,13 +39,24 @@ Supported state is grouped by how people use it:
   VS Code settings and extensions.
 - **For Experienced Users:** optional Git configuration, repositories and supported
   worktrees, Workspace folder structure, supported SSH host settings, encrypted SSH
-  identity migration, standalone Zsh configuration and supported VS Code workspace
+  identity migration, supported Zsh aliases and explicitly selected Shell/Python
+  scripts, legacy Zsh configuration and supported VS Code workspace
   relationships. Folders and workspace references do not transfer project files;
   repository restoration does not copy local changes.
 
 Capture produces one private `.mbt` Saved Environment. Its normal configuration is
 **not encrypted**; review it and transfer it privately. Only the optional SSH
 identity payload is encrypted.
+
+Desktop Scripts v5 supports automatic alias-linked discovery and native multi-file
+**Add Script…**, including standalone executable/non-executable files. It preserves
+supported modes, bytes and quarantine in Bundle V1, safely creates missing parents during
+Rebuild and checks files independently. Limits and exclusions are in the
+[Scripts contract](docs/toolkit/CONFIGURATION.md#script-files-capability-5).
+Aliases & Scripts v5 is **Implemented / Real GUI E2E Accepted** within its
+[documented A/B/C scope](docs/qualification/SHELL-RECOVERABILITY-2026-11-12.md#real-gui-abc-acceptance--2026-11-15).
+Partial Shell coverage remains a limitation. Scripts is not a directory backup,
+editor or launcher.
 
 Global Verification reports selected requirements after Apply. **Check** compares
 a Saved Environment read-only, explaining confirmed matches, differences and

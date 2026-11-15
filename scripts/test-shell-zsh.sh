@@ -64,7 +64,12 @@ check "absent artifact validates" 0 zsh_snapshot_validate
 assert "absent status" assert_status absent
 assert "absent carries no payload" assert_no_payload
 
-printf 'alias ll="ls -la"\n# preserved trailing line\n' > "$HOME/.zshrc"
+printf 'alias ll="ls -la"\n' > "$HOME/.zshrc"
+check "new static aliases use item-level Capture" 1 discover_zsh
+check "source-aware alias artifact validates" 0 zsh_snapshot_validate
+assert "new aliases declare capability 3 recovery format" test "$(head -n 1 "$ZSH_SNAPSHOT_FILE")" = MBT-ZSH-ALIASES-3
+
+printf 'export EDITOR=vim\n# preserved trailing line\n' > "$HOME/.zshrc"
 check "simple source eligible" 0 discover_zsh
 check "eligible artifact validates" 0 zsh_snapshot_validate
 assert "eligible status" assert_status eligible
@@ -80,7 +85,7 @@ MODULE_CHANGED=false
 check "Bootstrap restores absent target" 0 bootstrap_zsh
 assert "Bootstrap records mutation" test "$MODULE_CHANGED" = true
 assert "restored mode is private" test "$(stat -f '%Lp' "$HOME/.zshrc")" = 600
-assert "restored bytes match" cmp -s "$HOME/.zshrc" <(printf 'alias ll="ls -la"\n# preserved trailing line\n')
+assert "restored bytes match" cmp -s "$HOME/.zshrc" <(printf 'export EDITOR=vim\n# preserved trailing line\n')
 MODULE_CHANGED=false
 check "identical Bootstrap is no-op" 0 bootstrap_zsh
 assert "identical run records no mutation" test "$MODULE_CHANGED" = false
@@ -158,7 +163,7 @@ check "sourced dependency excluded" 1 discover_zsh
 check "dependency artifact validates" 0 zsh_snapshot_validate
 assert "dependency reason" assert_reason dependency
 printf 'alias normal="true"\n' > "$HOME/.zshrc"
-check "eligible after exclusions" 0 discover_zsh
+check "source-aware aliases after exclusions" 1 discover_zsh
 rm "$HOME/.zshrc"
 check "eligible to absent transition" 1 discover_zsh
 check "transition validates" 0 zsh_snapshot_validate
@@ -184,7 +189,7 @@ chmod 000 "$HOME/.zshrc"
 check "unreadable source is observation error" 2 discover_zsh
 chmod 600 "$HOME/.zshrc"
 
-printf 'alias safe="true"\n' > "$HOME/.zshrc"
+printf 'export EDITOR=vim\n' > "$HOME/.zshrc"
 check "eligible before publication failure" 0 discover_zsh
 before="$(shasum -a 256 "$ZSH_SNAPSHOT_FILE")"
 mv() { return 1; }
@@ -195,6 +200,17 @@ cp() { return 1; }
 check "observation failure returns error" 2 discover_zsh
 unset -f cp
 assert "observation failure preserves snapshot" test "$(shasum -a 256 "$ZSH_SNAPSHOT_FILE")" = "$before"
+
+printf 'source optional.zsh\nalias portable="ls -la"\n' > "$HOME/.zshrc"
+mv() { return 1; }
+check "alias publication failure returns error" 2 discover_zsh
+unset -f mv
+assert "alias publication failure preserves previous snapshot" test "$(shasum -a 256 "$ZSH_SNAPSHOT_FILE")" = "$before"
+check "mixed source retains portable aliases" 1 discover_zsh
+check "alias extension validates" 0 zsh_snapshot_validate
+assert "mixed source uses additive format" test "$ZSH_SNAPSHOT_FORMAT" = aliases
+assert "alias snapshot stays private" test "$(stat -f '%Lp' "$ZSH_SNAPSHOT_FILE")" = 600
+assert "excluded dependency is not stored" bash -c '! grep -q optional.zsh "$1"' _ "$ZSH_SNAPSHOT_FILE"
 
 write_raw eligible - 1 "$(printf x | shasum -a 256 | cut -d ' ' -f1)" x
 check "valid raw eligible" 0 zsh_snapshot_validate

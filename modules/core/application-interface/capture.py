@@ -81,7 +81,7 @@ def selection_for(selection, rows, secure):
         if (not isinstance(wanted, list) or not all(isinstance(x, str) for x in wanted) or
                 len(wanted) != len(set(wanted)) or set(wanted) - set(available)):
             raise CaptureError('invalid_selection')
-        if domain != 'ssh-configuration' or wanted:
+        if domain not in ('ssh-configuration', 'shell-zsh') or row['selection_mode'] != 'items' or wanted:
             chosen[domain] = sorted(available[x] for x in wanted)
     candidates = {entry['item_id']: entry for entry in secure.get('items', [])}
     if set(identities) - set(candidates) or (identities and secure['status'] != 'present'):
@@ -218,15 +218,41 @@ def included_settings(stage, row):
             for line in projection.stdout.decode('utf-8').splitlines()]
 
 
-def prepared(stage, rows, secure, selection):
+def functional_domain_count(chosen, scripts, rows):
+    # Shell remains one physical Core module. File consent selects a separate
+    # functional domain; alias definitions and saved files are distinct objects.
+    whole_shell = any(row['domain'] == 'shell-zsh' and row['selection_mode'] == 'category' for row in rows)
+    return sum(domain != 'shell-zsh' or bool(items) or whole_shell for domain, items in chosen.items()) + bool(scripts)
+
+
+def prepared(stage, rows, secure, selection, private=None, shell_script_selection=None, shell_script_policy=None):
     chosen, identities, canonical = selection_for(selection, rows, secure) if selection is not None else ({}, [], None)
     chosen, effective, duplicates = application_scope(stage, chosen, rows, canonical)
+    shell_scripts, shell_observation, shell_candidates = [], None, []
+    selected_script_count = 0
+    shell_path = stage / 'generated/shell/zshrc.snapshot'
+    if any(row['domain'] == 'shell-zsh' and row['status'] == 'present' for row in rows):
+        shell = bundle.shell_load(shell_path)
+        if shell is not None and shell['version'] in (3, 4, 5):
+            shell_candidates = bundle.shell_contract().recovery_contract().selection_candidates(shell, os.environ['HOME'], policy=shell_script_policy or 'opaque-file-v5')
+    if shell_script_selection and shell_script_policy in ('opaque-file-v4', 'opaque-file-v5'):
+        if selection is None or not set(shell_script_selection) <= {row['id'] for row in shell_candidates}:
+            raise CaptureError('invalid_script_consent')
+        chosen.setdefault('shell-zsh', [])
+        selected_script_count = len(set(shell_script_selection))
     if selection is not None:
         raw = blueprint_data(chosen)
         try:
             files = bundle.staged_payload(stage, raw)
             if chosen.get('ssh-configuration'):
                 bundle.ssh_contract().select_snapshot(files['generated/ssh/config.snapshot'], chosen['ssh-configuration'])
+            if 'shell-zsh' in chosen:
+                contract = bundle.shell_contract()
+                selected_shell = (shell if shell_script_selection and shell_script_policy in ('opaque-file-v4', 'opaque-file-v5') else
+                    contract.snapshot(contract.select_snapshot(files['generated/shell/zshrc.snapshot'], chosen['shell-zsh'])))
+                if selected_shell['version'] in (3, 4, 5):
+                    shell_scripts = contract.recovery_contract().script_candidates(selected_shell, os.environ['HOME'], policy=shell_script_policy)
+                    shell_observation = contract.source_contract().dependency_states(selected_shell, os.environ['HOME'], transfer=shell_script_policy == 'opaque-file-v5')
         except (bundle.Invalid, OSError, ValueError) as exc:
             raise CaptureError('capture_inventory_invalid') from exc
         try:
@@ -243,6 +269,16 @@ def prepared(stage, rows, secure, selection):
         if path.is_file():
             fingerprints[str(path.relative_to(stage))] = bundle.digest(bundle.checked_file(path))
     binding = {'schema': 1, 'inputs': fingerprints, 'inventory': rows, 'secure': secure, 'selection': canonical}
+    if shell_observation is not None:
+        binding['shell_dependencies'] = shell_observation
+        if private is not None:
+            private['shell_dependencies'] = shell_observation
+    if shell_script_selection is not None:
+        if not set(shell_script_selection) <= {row['id'] for row in shell_scripts}:
+            raise CaptureError('invalid_script_consent')
+        binding['shell_script_selection'] = sorted(shell_script_selection)
+    if shell_script_policy is not None:
+        binding['shell_script_policy'] = shell_script_policy
     if duplicates:
         binding.update(effective_selection=effective, application_duplicates=duplicates)
     prepared_id = bundle.digest(json.dumps(binding, sort_keys=True, separators=(',', ':')).encode())
@@ -254,8 +290,16 @@ def prepared(stage, rows, secure, selection):
         public_rows.append(public_row)
     public_secure = {**secure, 'items': [{k: v for k, v in entry.items() if not k.startswith('_')} for entry in secure['items']]}
     result = {'prepared_capture_id': prepared_id, 'inventory': public_rows, 'secure_identities': public_secure,
-              'selection': canonical, 'summary': {'selected_domains': len(chosen),
-               'selected_items': sum(len(values) for values in chosen.values()), 'secure_identity_count': len(identities)}}
+              'selection': canonical, 'summary': {'selected_domains': functional_domain_count(chosen, shell_script_selection, rows),
+               'selected_items': sum(len(values) for values in chosen.values()) + selected_script_count, 'secure_identity_count': len(identities)}}
+    if shell_scripts:
+        result['shell_scripts'] = shell_scripts
+    result['shell_script_policies'] = ['opaque-file-v4', 'opaque-file-v5']
+    if shell_candidates:
+        result['shell_script_candidates'] = shell_candidates
+    if shell_script_policy is not None:
+        result['shell_script_policy'] = shell_script_policy
+        result['shell_script_selection'] = sorted(shell_script_selection or [])
     if duplicates:
         result.update(effective_selection=effective, application_duplicates=duplicates)
     return result, chosen, identities
@@ -263,6 +307,28 @@ def prepared(stage, rows, secure, selection):
 
 def capture(root, operation, parameters, channel, event):
     from secret_input import PrivateTemporaryDirectory, SecureError
+    if operation == 'capture_script_inspect':
+        try:
+            recovery = bundle.shell_contract().recovery_contract()
+            home = os.environ['HOME']
+            value = recovery.capture(home, allow_empty=bool(parameters.get('shell_script_paths')))
+            paths = recovery.manual_paths(value, home, parameters.get('shell_script_paths', []))
+            candidates = recovery.selection_candidates(value, home, paths, parameters.get('shell_script_policy'))
+            added = [row for row in candidates if row['path'] in paths]
+            if len(added) != len(paths):
+                states = recovery.sources.dependency_states(value, home, paths, transfer=parameters.get('shell_script_policy') == 'opaque-file-v5')
+                limit = 'script_count_limit' if parameters.get('shell_script_policy') == 'opaque-file-v5' else 'script_limit'
+                raise CaptureError(limit if all(states[path][0] == 'ready' for path in paths)
+                                   else 'script_observation_failed')
+            requested = parameters['scripts'] or {row['id']: row['observation_id'] for row in added}
+            result = recovery.inspect_scripts(value, home, requested, parameters.get('shell_script_policy'), paths)
+        except (OSError, ValueError) as exc:
+            reason = str(exc)
+            raise CaptureError(reason if reason == 'script_path_unsupported' else 'capture_source_unavailable') from exc
+        event('result', {'scripts': result, 'shell_script_policy': parameters.get('shell_script_policy'),
+                         **({'shell_script_candidates': added} if paths else {})})
+        event('completed')
+        return 0
     target = destination(parameters['destination'], parameters.get('replacement_sha256')) if operation == 'capture_execute' else None
     published = False
     try:
@@ -280,10 +346,47 @@ def capture(root, operation, parameters, channel, event):
             rows, secure, environment = scan(root, stage, event)
             if paths:
                 secure = add_external(secure, external_inventory(root, stage, paths))
-            result, chosen, identities = prepared(stage, rows, secure, parameters['selection'])
+            private = {}
+            script_selection = parameters.get('shell_script_selection')
+            script_policy = parameters.get('shell_script_policy')
+            if parameters.get('shell_script_paths'):
+                if operation == 'capture_execute' and set(parameters.get('shell_script_ids', [])) != set(script_selection or []):
+                    raise CaptureError('invalid_script_consent')
+                # The picker only supplies references. Existing recovery owns all
+                # reads/validation and stages the negotiated payload before planning.
+                # Unselected manual files never enter the staged snapshot.
+                contract = bundle.shell_contract().recovery_contract()
+                shell_path = stage / 'generated/shell/zshrc.snapshot'
+                shell = bundle.shell_load(shell_path) if shell_path.exists() else contract.empty_capture()
+                if shell is None and not (parameters['selection'] or {}).get('items', {}).get('shell-zsh') and 'shell-zsh' not in (parameters['selection'] or {}).get('categories', []):
+                    shell = contract.empty_capture()
+                if shell is None or shell['version'] not in (3, 4, 5) or not script_selection or parameters['selection'] is None:
+                    raise CaptureError('invalid_script_consent')
+                try:
+                    manual = contract.manual_paths(shell, os.environ['HOME'], parameters['shell_script_paths'])
+                    if not {contract.script_id(path) for path in manual} <= set(script_selection):
+                        raise CaptureError('invalid_script_consent')
+                    shell = contract.authorize_capture(shell, os.environ['HOME'], script_selection,
+                                                       policy=script_policy, script_paths=manual)
+                except (OSError, ValueError) as exc:
+                    raise CaptureError('script_transfer_unsupported') from exc
+                contract.save(shell_path, shell)
+                row = next(row for row in rows if row['domain'] == 'shell-zsh')
+                row.update(status='present', selection_mode='items')
+                if not shell['aliases']:
+                    row['reason'] = None
+            result, chosen, identities = prepared(stage, rows, secure, parameters['selection'], private, script_selection, script_policy)
             if identities and DESKTOP_BUNDLE in os.environ and not age_executable():
                 raise CaptureError('age_unavailable')
             if operation == 'capture_prepare':
+                if script_selection:
+                    contract = bundle.shell_contract()
+                    original = bundle.checked_file(stage / 'generated/shell/zshrc.snapshot')
+                    shell = bundle.shell_load(stage / 'generated/shell/zshrc.snapshot') if script_policy in ('opaque-file-v4', 'opaque-file-v5') else contract.snapshot(contract.select_snapshot(original, chosen['shell-zsh']))
+                    try:
+                        contract.recovery_contract().authorize_capture(shell, os.environ['HOME'], script_selection, private.get('shell_dependencies'), script_policy)
+                    except (OSError, ValueError) as exc:
+                        raise CaptureError('script_transfer_unsupported') from exc
                 event('result', result)
                 event('completed')
                 return 0
@@ -297,6 +400,26 @@ def capture(root, operation, parameters, channel, event):
             blueprint(stage, chosen)
             if chosen.get('ssh-configuration'):
                 bundle.select_ssh_profiles(stage, chosen['ssh-configuration'])
+            if chosen.get('shell-zsh') and not (script_policy in ('opaque-file-v4', 'opaque-file-v5') and parameters.get('shell_script_ids')):
+                bundle.select_shell_aliases(stage, chosen['shell-zsh'])
+            approvals = parameters.get('shell_script_ids', [])
+            if script_selection is not None and set(approvals) != set(script_selection):
+                raise CaptureError('invalid_script_consent')
+            if approvals:
+                shell_path = stage / 'generated/shell/zshrc.snapshot'
+                if 'shell-zsh' not in chosen:
+                    raise CaptureError('invalid_script_consent')
+                contract = bundle.shell_contract()
+                shell = bundle.shell_load(shell_path)
+                if shell['version'] not in (3, 4, 5):
+                    raise CaptureError('invalid_script_consent')
+                try:
+                    shell = contract.recovery_contract().authorize_capture(shell, os.environ['HOME'], approvals, private.get('shell_dependencies'), script_policy)
+                    if script_policy in ('opaque-file-v4', 'opaque-file-v5'):
+                        shell = contract.recovery_contract().select(shell, {*chosen['shell-zsh'], *('shell-script:' + key for key in approvals)})
+                except (OSError, ValueError) as exc:
+                    raise CaptureError('script_transfer_unsupported') from exc
+                contract.recovery_contract().save(shell_path, shell)
             # The selected Blueprint/input validators and portability checks remain production-owned.
             preview = stage / '.capture-preview.conf'
             bundle.write_file(preview, bundle.capture_preview(stage, os.environ['HOME']))
@@ -396,6 +519,35 @@ def ssh_row(destination_path, source, status, reason):
         output.write(json.dumps(value, sort_keys=True) + '\n')
 
 
+def shell_row(destination_path, source, status, reason):
+    entries, mode = [], 'category'
+    if status != 'observation_error':
+        try:
+            raw = bundle.checked_file(Path(source), 66000)
+            aliases = bundle.shell_aliases(raw)
+            if aliases is not None:
+                mode = 'items'
+                status, reason = 'present', 'source_partial' if aliases['coverage'] == 'partial' else None
+                entries = [dict(item_id=bundle.shell_contract().identity(row['name']), label=row['name'], _source=row['name'])
+                           for row in aliases['aliases']]
+            elif raw.startswith(b'MBT-ZSHRC-1\nstatus=eligible\n'):
+                status, reason = 'present', None
+            elif raw.startswith(b'MBT-ZSHRC-1\nstatus=absent\n'):
+                status, reason = 'unavailable', 'source_absent'
+            elif raw.startswith(b'MBT-ZSHRC-1\nstatus=excluded\n'):
+                status, reason = 'unsupported', 'source_excluded'
+            else:
+                raise ValueError()
+        except FileNotFoundError:
+            status, reason = 'unavailable', 'source_absent'
+        except (OSError, ValueError, bundle.Invalid):
+            status, reason = 'observation_error', 'inventory_invalid'
+    value = dict(domain='shell-zsh', status=status, reason=reason or None, selection_mode=mode, items=entries)
+    with open(destination_path, 'a', encoding='utf-8') as output:
+        os.chmod(destination_path, 0o600)
+        output.write(json.dumps(value, sort_keys=True) + '\n')
+
+
 def row(destination_path):
     fields = sys.stdin.buffer.read(MAX_INVENTORY + 1).decode().split('\0')
     if fields[-1] != '' or len(fields) < 4:
@@ -423,7 +575,9 @@ def row(destination_path):
 
 
 if __name__ == '__main__':
-    if len(sys.argv) == 6 and sys.argv[1] == '--ssh-row':
+    if len(sys.argv) == 6 and sys.argv[1] == '--shell-row':
+        shell_row(*sys.argv[2:])
+    elif len(sys.argv) == 6 and sys.argv[1] == '--ssh-row':
         ssh_row(*sys.argv[2:])
     elif len(sys.argv) == 6 and sys.argv[1] == '--workspace-row':
         workspace_row(*sys.argv[2:])

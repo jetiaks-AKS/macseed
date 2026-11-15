@@ -168,9 +168,21 @@ struct CaptureView: View {
                             manualIDs: model.manualIdentityIDs, checkingIdentity: model.addingIdentity,
                             identityError: model.identityError, cancelIdentity: model.cancel)),
                         developerSelection: { group in AnyView(NativeSelectionCheckbox("", state: model.developerGroupState(group),
-                            accessibilityTitle: "Select " + group.title) { model.selectDeveloperGroup(group, included: $0) }
+                            accessibilityTitle: "Select " + group.title, mixedSelectsAll: group != .shell) { model.selectDeveloperGroup(group, included: $0) }
                             .disabled(!model.developerGroupAvailable(group) || model.state != .review || runtime.isActive)) },
                         developerSummary: { DeveloperSelectionGroup.summary(model.developerGroupState($0), available: model.developerGroupAvailable($0)) },
+                        shellCustomCommands: model.supportsManualScripts || model.categories.contains { $0.id == "shell-zsh" && $0.itemSelectable },
+                        shellCommandsSelection: AnyView(NativeSelectionCheckbox("", state: model.developerGroupState(.shell),
+                            accessibilityTitle: "Select Custom Commands", mixedSelectsAll: false) { model.selectDeveloperGroup(.shell, included: $0) }
+                            .disabled(!model.developerGroupAvailable(.shell) || runtime.isActive)),
+                        shellScripts: AnyView(ShellScriptSelectionView(scripts: model.shellScriptCandidates,
+                            available: Set(model.availableShellScripts.map(\.id)), selected: model.authorizedShellScripts,
+                            editable: !runtime.isActive, flow: .capture,
+                            expanded: WorkflowExpansion.binding(ShellCommandPresentation.scriptsID, in: treeExpansion), select: model.selectShellScript,
+                            selectAll: model.selectAllShellScripts, inspections: model.shellScriptInspections,
+                            inspecting: model.inspectingShellScripts, pending: model.pendingShellScripts, inspectionError: model.shellSelectionIssue ?? model.shellInspectionError,
+                            collapsedSelection: model.selectCollapsedShellScripts,
+                            addScript: model.supportsManualScripts ? chooseScripts : nil)),
                         summary: { CaptureReviewPresentation.summary($0.flatMap(\.categories), model: model) },
                         attention: { CaptureReviewPresentation.attention($0.flatMap(\.categories), model: model) }) { row in
                         if row.id == "macos-settings" {
@@ -180,7 +192,7 @@ struct CaptureView: View {
                                 expansion: WorkflowExpansion.binding(row.id, in: treeExpansion),
                                 displayTitle: DeveloperSelectionGroup.title(category.id, fallback: category.title),
                                 leadingInset: CaptureChildRowGrid.leadingInset,
-                                hierarchyIndent: CaptureReviewPresentation.hierarchyStep * (CaptureHierarchy.group(for: category.id) == .vscode ? 2 : 1))
+                                hierarchyIndent: CaptureReviewPresentation.hierarchyStep * (CaptureHierarchy.group(for: category.id) == .vscode || (category.id == "shell-zsh" && category.itemSelectable) ? 2 : 1))
                         }
                     }
                     if !model.canCreate { Text("Choose supported state to capture.").foregroundStyle(.secondary) }
@@ -206,14 +218,15 @@ struct CaptureView: View {
                     Text(CaptureModel.confirmationPrivacyMessage(includesSSHIdentities: !selection.secureIdentities.isEmpty))
                         .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                     let tasks = CaptureTaskPresentation(categories: prepared.inventory.map { CaptureCategory(row: $0) }, selection: selection,
-                        phase: .confirmation, secureIdentities: prepared.secureIdentities.items)
+                        phase: .confirmation, secureIdentities: prepared.secureIdentities.items, standaloneScripts: model.standaloneShellScripts)
                     TaskDomainList(domains: tasks.domains, stateTitles: [.planned: "Ready to Save"], compactReadyItems: true, title: "Included in this capture",
                         captureHierarchy: true, settingsCategories: CaptureSettingsPresentation.children(tasks.domains),
                         settingLabels: CaptureSettingsPresentation.labels(prepared.inventory),
-                        expansion: treeExpansion)
+                        expansion: treeExpansion, captureShellScripts: model.shellScriptCandidates.isEmpty ? nil : model.selectedShellScripts,
+                        captureShellScriptInspections: model.shellScriptInspections)
                 }
             case .result:
-                if let result = model.resultPresentation { CaptureResultContent(result: result) }
+                if let result = model.resultPresentation { CaptureResultContent(result: result, expansion: treeExpansion) }
             case .failed, .cancelled:
                 if model.state == .failed, let failure = model.failure, failure.isOutdatedPreparation {
                     Text(failure.presentationTitle).font(.title2.weight(.bold)).accessibilityAddTraits(.isHeader)
@@ -242,6 +255,7 @@ struct CaptureView: View {
             }
             if showsActions { CaptureActionsView(model: model, runtime: runtime) }
         }.modifier(OperationLogPresenter(runtime: runtime))
+            .modifier(ShellParentConsentAlert(request: model.shellParentConsent, flow: .capture, resolve: model.resolveShellParent))
             .sheet(item: Binding(get: { runtime.operationID == model.operationID ? runtime.secureChallenge : nil }, set: { _ in })) { challenge in
                 CaptureSecureInputView(runtime: runtime, challenge: challenge).id(challenge.id)
                     .interactiveDismissDisabled()
@@ -256,6 +270,27 @@ struct CaptureView: View {
     private var selectionSummary: CaptureSummaryPresentation {
         CaptureSummaryPresentation.review(categories: model.state == .review ? model.categories : model.categories.filter { model.selectionState($0) != .none }, domainCount: model.selectedDomainCount, itemCount: model.selectedItemCount,
             selectedDomains: Set(model.selection.categories).union(model.selection.items.keys), secureIdentityCount: model.selectedSecureIdentities.count)
+    }
+    static func scriptPicker() -> NSOpenPanel {
+        let panel = NSOpenPanel()
+        panel.title = "Add Script"
+        panel.prompt = "Add Script"
+        panel.message = "Choose Shell or Python script files inside your home folder. Files are checked without running them and added unchecked."
+        panel.canChooseFiles = true; panel.canChooseDirectories = false
+        panel.canCreateDirectories = false; panel.allowsMultipleSelection = true
+        panel.resolvesAliases = false; panel.showsHiddenFiles = true
+        // No extension filter: Core validates paths, metadata and file content.
+        return panel
+    }
+    private func chooseScripts() {
+        let panel = Self.scriptPicker()
+        let receive: (NSApplication.ModalResponse) -> Void = { response in
+            guard response == .OK else { return }
+            treeExpansion.wrappedValue.insert(ShellCommandPresentation.scriptsID)
+            model.addShellScripts(panel.urls)
+        }
+        if let window = NSApp.keyWindow { panel.beginSheetModal(for: window, completionHandler: receive) }
+        else { panel.begin(completionHandler: receive) }
     }
     private func chooseSSHIdentity() {
         let panel = NSOpenPanel()
@@ -275,6 +310,8 @@ struct CaptureView: View {
     }
     private func disclosureIDs(in scope: CaptureSelectionScope) -> Set<String> {
         let ids = model.categories.map(\.id) + [CaptureHierarchy.secureTransferID]
+            + (model.supportsManualScripts || model.categories.contains { $0.id == "shell-zsh" && $0.itemSelectable } ? [ShellCommandPresentation.commandsID] : [])
+            + (model.supportsManualScripts || !model.shellScriptCandidates.isEmpty ? [ShellCommandPresentation.scriptsID] : [])
         return (scope == .advanced ? DeveloperSelectionGroup.disclosureIDs(ids) : CaptureHierarchy.disclosureIDs(ids, scope: scope))
             .subtracting(model.categories.filter { !CaptureCategorySelectionView.hasDisclosure($0) }.map(\.id))
     }
@@ -410,7 +447,8 @@ struct CaptureActionsView: View {
             }
             switch model.state {
             case .review:
-                Button("Cancel") { model.cancelReview() }.disabled(runtime.isActive)
+                Button("Cancel") { if model.inspectingShellScripts { model.cancel() } else { model.cancelReview() } }
+                    .disabled(runtime.stopping || (runtime.isActive && !model.inspectingShellScripts))
                 Spacer()
                 Button("Choose Destination…", action: chooseDestination).buttonStyle(.borderedProminent).disabled(!model.canCreate || runtime.isActive)
             case .confirmation:

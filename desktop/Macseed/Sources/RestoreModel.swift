@@ -84,18 +84,37 @@ struct RestorePreviewPresentation {
             }
             let reasonMessage: String?
             switch row.reason {
-            case "partial_source_coverage": reasonMessage = "The saved SSH configuration covers only part of the source configuration."
-            case "source_absent": reasonMessage = "No SSH configuration was captured in this saved environment."
-            case "source_excluded": reasonMessage = "The captured SSH configuration is not eligible for restoration."
+            case "partial_source_coverage": reasonMessage = row.domain == "shell-zsh"
+                ? ShellCommandPresentation.coverageSummary
+                : "The saved SSH configuration covers only part of the source configuration."
+            case "source_absent": reasonMessage = row.domain == "shell-zsh"
+                ? "No Shell configuration was captured in this saved environment."
+                : "No SSH configuration was captured in this saved environment."
+            case "source_excluded": reasonMessage = row.domain == "shell-zsh"
+                ? "The saved Shell file is not eligible for restoration."
+                : "The captured SSH configuration is not eligible for restoration."
+            case "shell_managed_source_prerequisite": reasonMessage = "Source is managed externally. Restore it through its manager or Workspace, then refresh."
+            case "shell_dependency_prerequisite": reasonMessage = "Required file unavailable. Go Back to review Scripts, or restore it separately."
+            case "shell_tool_prerequisite", "shell_tool_missing_prerequisite", "shell_tool_observation_prerequisite",
+                 "shell_directory_missing_prerequisite", "shell_directory_observation_prerequisite", "shell_dependency_missing_prerequisite",
+                 "shell_dependency_observation_prerequisite", "shell_operand_unsupported_prerequisite", "shell_operand_prerequisite", "shell_selection_prerequisite":
+                reasonMessage = ShellCommandPresentation.dependencyExplanation(row.reason)!
+            case "shell_source_prerequisite", "shell_startup_prerequisite": reasonMessage = "Source or path dependency unverified. Resolve it, then refresh."
             case "observation_failed": reasonMessage = "Current state could not be inspected reliably."
-            case "target_conflict": reasonMessage = "Conflict: existing state differs from the saved environment and will be preserved."
+            case "target_conflict": reasonMessage = row.domain == "shell-zsh" && row.disposition == "blocked"
+                ? "Alias cannot be added safely. Review its source and dependencies."
+                : row.domain == "shell-zsh" ? "Saved alias or dependency conflicts. Review existing files."
+                : "Conflict: existing state differs from the saved environment and will be preserved."
             case "privileged_lifecycle_unknown": reasonMessage = "External work may still be running. Inspect it before another Rebuild."
             default: reasonMessage = row.reason.flatMap { CoreRestorePreparation.workspacePreviewReasons[$0] }
             }
             let inventoryLabel = row.selectionItemID.flatMap { id in catalog.inventory.first { $0.id == row.domain }?.items.first { $0.id == id }?.label }
             let isSSHCoverage = row.domain == "ssh-configuration" && row.itemID == "scope"
                 && row.disposition == "warning" && row.reason == "partial_source_coverage"
-            let title = isSSHCoverage ? "SSH configuration coverage" : row.isSSHDependency ? "SSH key references" : row.isSecureImport ? "Encrypted SSH identity package" : inventoryLabel ?? row.displayName ?? (row.itemID.hasPrefix("opaque:") ? "Private item" : (row.itemID == "scope" ? "Selected area" : row.itemID))
+            let isShellCoverage = row.domain == "shell-zsh" && row.itemID == "scope"
+                && row.disposition == "warning" && row.reason == "partial_source_coverage"
+            let legacyShell = row.domain == "shell-zsh" && catalog.inventory.first(where: { $0.id == row.domain })?.selectionMode == "category"
+            let title = isShellCoverage ? ShellCommandPresentation.coverageTitle : legacyShell ? "Saved Zsh file" : isSSHCoverage ? "SSH configuration coverage" : row.isSSHDependency ? "SSH key references" : row.isSecureImport ? "Encrypted SSH identity package" : inventoryLabel ?? row.displayName ?? (row.itemID.hasPrefix("opaque:") ? "Private item" : (row.itemID == "scope" ? "Selected area" : row.itemID))
             let action = row.assistedAppStoreItem?.message ?? row.unsupportedRepairExplanation ?? row.diagnostic?.explanation ?? reasonMessage ?? (row.authorizationRequired == true ? message + " · Administrator authorization required" : message)
             let conditional = ["workspace_dependency_pending", "workspace_commit_after_clone", "git_ssh_restore_pending"].contains(row.reason ?? "")
             rows[row.domain, default: []].append(DisplayItem(id: "restore-\(index)", title: title, status: status, action: action, reason: row.reason, restoreReadyText: status == .ready ? (row.isSSHDependency ? "After Secure Transfer" : conditional ? "Conditional" : Self.readyText(action: row.action)) : nil))
@@ -272,6 +291,73 @@ struct RestoreProgressRow {
 
 @MainActor final class RestoreModel: ObservableObject {
     static let shared = RestoreModel(runtime: .shared)
+    @Published private(set) var authorizedShellScripts: Set<String> = []
+    @Published private(set) var shellParentConsent: ShellParentConsent?
+    private var parentShellAliases: Set<String> {
+        Set(eligibleAreas.filter { $0.id == "shell-zsh" && $0.selectionMode == "items" }.flatMap { $0.items.map(\.id) })
+    }
+    var parentShellScripts: [CoreShellScript] {
+        shellScriptCandidates.filter { $0.independent == true || !Set($0.aliasIDs ?? []).isDisjoint(with: parentShellAliases) }
+    }
+    func selectShellParent(included: Bool) {
+        guard state == .review, !busy, !runtime.isActive else { return }
+        let scripts = parentShellScripts
+        let additions = scripts.filter { !authorizedShellScripts.contains($0.id) }
+        if included && !additions.isEmpty {
+            shellParentConsent = ShellParentConsent(aliases: parentShellAliases, candidates: scripts, newScripts: additions)
+            return
+        }
+        shellParentConsent = nil
+        if !included { authorizedShellScripts = []; invalidate() }
+        selectArea("shell-zsh", included: included)
+    }
+    func resolveShellParent(_ request: ShellParentConsent, choice: ShellParentConsent.Choice) {
+        guard shellParentConsent?.id == request.id else { return }
+        shellParentConsent = nil
+        guard choice != .cancel, state == .review, !busy, !runtime.isActive,
+              request.matches(aliases: parentShellAliases, candidates: parentShellScripts) else { return }
+        if request.selectAliases { selectArea("shell-zsh", included: true) }
+        if choice == .includeScripts {
+            for script in request.newScripts { selectShellScript(script.id, included: true) }
+        }
+    }
+    func selectAllShellScripts(included: Bool) {
+        guard state == .review, !busy, !runtime.isActive else { return }
+        for script in availableShellScripts { selectShellScript(script.id, included: included) }
+    }
+    func selectCollapsedShellScripts(included: Bool) {
+        guard state == .review, !busy, !runtime.isActive else { return }
+        let additions = availableShellScripts.filter { !authorizedShellScripts.contains($0.id) }
+        if included && !additions.isEmpty {
+            shellParentConsent = ShellParentConsent(aliases: parentShellAliases, candidates: parentShellScripts,
+                newScripts: additions, selectAliases: false)
+        } else { selectAllShellScripts(included: included) }
+    }
+    var shellScriptCandidates: [CoreShellScript] { inspection?.shellScriptCandidates ?? [] }
+    var availableShellScripts: [CoreShellScript] {
+        let aliases = selectedItems["shell-zsh"] ?? []
+        return shellScriptCandidates.filter { $0.independent == true || !Set($0.aliasIDs ?? []).isDisjoint(with: aliases) || authorizedShellScripts.contains($0.id) }
+    }
+    var shellSelectionIssue: String? {
+        selectedShellScripts.contains { $0.independent != true && Set($0.aliasIDs ?? []).isDisjoint(with: selectedItems["shell-zsh"] ?? []) }
+            ? "This saved file needs a related alias. Select an alias or deselect the file." : nil
+    }
+    var standaloneShellScripts: [CoreShellScript] {
+        selectedShellScripts.filter { $0.independent == true && Set($0.aliasIDs ?? []).isDisjoint(with: selectedItems["shell-zsh"] ?? []) }
+    }
+    private var requirementItems: [String: Set<String>] {
+        var items = selectedItems
+        for script in standaloneShellScripts { items["shell-zsh", default: []].insert("shell-script:" + script.id) }
+        return items
+    }
+    var selectedShellScripts: [CoreShellScript] { availableShellScripts.filter { authorizedShellScripts.contains($0.id) } }
+    private var shellScriptSelection: [String]? { shellScriptCandidates.isEmpty ? nil : authorizedShellScripts.sorted() }
+    var shellScriptConsentReady: Bool { Set((preparation?.shellScripts ?? []).map(\.id)).isSubset(of: authorizedShellScripts) }
+    func selectShellScript(_ id: String, included: Bool) {
+        guard state == .review, !busy, !runtime.isActive, availableShellScripts.contains(where: { $0.id == id }) else { return }
+        if included { authorizedShellScripts.insert(id) } else { authorizedShellScripts.remove(id) }
+        invalidate()
+    }
     @Published private(set) var state: RestoreFlowState = .choose
     @Published private(set) var operationID: String?
     @Published private(set) var source: URL?
@@ -325,7 +411,7 @@ struct RestoreProgressRow {
         return previewSelectionState("app-store") != .none
     }
     var hasAutomaticSelection: Bool {
-        includeSecure || selectedCategories.contains { $0 != "app-store" } || selectedItems.contains { $0.key != "app-store" && !$0.value.isEmpty }
+        includeSecure || selectedCategories.contains { $0 != "app-store" } || requirementItems.contains { $0.key != "app-store" && !$0.value.isEmpty }
     }
     var appStorePresentation: AppStoreRestorePresentation {
         if state == .result, let preview = executionPreview, let plan = executionPlan {
@@ -581,22 +667,29 @@ struct RestoreProgressRow {
 
     var busy: Bool { retryingPrerequisites || state == .inspecting || state == .preparing || state == .confirming || state == .rebuilding }
     var areas: [CoreRestoreInspection.Area] { inspection?.restoreSelection?.inventory ?? [] }
-    var selectionAreas: [CoreRestoreInspection.Area] { RestoreSelectionPresentation.includedAreas(inspection) }
+    var selectionAreas: [CoreRestoreInspection.Area] {
+        RestoreSelectionPresentation.includedAreas(inspection).map { area in
+            guard area.id == "shell-zsh", area.selectionMode == "items" else { return area }
+            return CoreRestoreInspection.Area(domain: area.domain, label: area.label, selectionMode: area.selectionMode,
+                availability: area.availability, sourcePresent: area.sourcePresent, captureSelected: area.captureSelected,
+                reason: area.reason, items: area.items.filter { !$0.id.hasPrefix("shell-script:") })
+        }
+    }
     var eligibleAreas: [CoreRestoreInspection.Area] { selectionAreas.filter(\.selectable) }
     private var defaultAreas: [CoreRestoreInspection.Area] {
         eligibleAreas.filter { CaptureHierarchy.ordinaryGroups.contains(WorkspacePresentationTaxonomy.group(for: $0.id)) }
     }
     var groups: [CoreRestoreInspection.Group] { inspection?.restoreSelection?.groups ?? [] }
     var selection: CoreRestoreSelection {
-        let whole = areas.filter { $0.selectionMode == "items" && selectionState($0) == .all }.map(\.id)
+        let whole = areas.filter { $0.selectionMode == "items" && selectionState($0) == .all && $0.id != "shell-zsh" }.map(\.id)
         return CoreRestoreSelection(categories: selectedCategories.union(whole).sorted(),
-            items: selectedItems.filter { !$0.value.isEmpty && !whole.contains($0.key) }.mapValues { $0.sorted() })
+            items: requirementItems.filter { !$0.value.isEmpty && !whole.contains($0.key) }.mapValues { $0.sorted() })
     }
     var canonicalSelection: CoreRestoreSelection {
-        CoreRestoreSelection(categories: selectedCategories.sorted(), items: selectedItems.filter { !$0.value.isEmpty }.mapValues { $0.sorted() })
+        CoreRestoreSelection(categories: selectedCategories.sorted(), items: requirementItems.filter { !$0.value.isEmpty }.mapValues { $0.sorted() })
     }
-    var selectedAreaCount: Int { selectedCategories.count + selectedItems.filter { !$0.value.isEmpty }.count }
-    var selectedItemCount: Int { selectedItems.values.reduce(0) { $0 + $1.count } }
+    var selectedAreaCount: Int { selectedCategories.count + requirementItems.filter { !$0.value.isEmpty }.count }
+    var selectedItemCount: Int { requirementItems.values.reduce(0) { $0 + $1.count } }
     var selectionCategoryCounts: (fully: Int, partially: Int, notSelected: Int) {
         eligibleAreas.reduce(into: (fully: 0, partially: 0, notSelected: 0)) { counts, area in
             switch selectionState(area) {
@@ -616,7 +709,8 @@ struct RestoreProgressRow {
         if includeSecure && selectedAreaCount == 0 { return "SSH Keys selected" }
         return switch bulkState {
         case .all:
-            inspection?.secureComponent == true && (!includeSecure || (destinationInventory != nil && !allIdentitiesSelected))
+            (inspection?.secureComponent == true && (!includeSecure || (destinationInventory != nil && !allIdentitiesSelected)))
+                || parentShellScripts.contains { !authorizedShellScripts.contains($0.id) }
                 ? "Some items excluded" : "Everything selected"
         case .mixed: "Some items excluded"
         case .none: "Nothing selected"
@@ -625,9 +719,10 @@ struct RestoreProgressRow {
     var bulkState: SelectionState {
         let available = eligibleAreas
         if !available.isEmpty && available.allSatisfy({ selectionState($0) == .all }) { return .all }
+        if available.isEmpty && !parentShellScripts.isEmpty && parentShellScripts.allSatisfy({ authorizedShellScripts.contains($0.id) }) { return .all }
         return selectedAreaCount == 0 ? .none : .mixed
     }
-    var canPreview: Bool { !busy && !runtime.isActive && (selectedAreaCount > 0 || includeSecure) && source != nil && inspection != nil }
+    var canPreview: Bool { shellSelectionIssue == nil && shellParentConsent == nil && !busy && !runtime.isActive && (selectedAreaCount > 0 || includeSecure) && source != nil && inspection != nil }
     var previewNeedsRefresh: Bool {
         preparation.map { $0.selection != canonicalSelection || $0.includeSecure != includeSecure } ?? false
     }
@@ -637,6 +732,7 @@ struct RestoreProgressRow {
             // A conflict with no proposed action is retained by the existing
             // consumer; environmental blockers are owned by Core readiness.
             if row.isSecureImport { return !plan.secureComparedReady }
+            if plan.isItemLocalSkip(row) { return false }
             if row.disposition == "conflict" && row.action == "none" { return false }
             return ["conflict", "blocked", "unknown", "pending_unlock"].contains(row.disposition) && !plan.isItemLocalSkip(row) && row.assistedAppStoreItem == nil
         }
@@ -689,11 +785,12 @@ struct RestoreProgressRow {
     }
     func cancelRebuildConfirmation() { if state == .confirming { state = .preview } }
     func confirmRebuild() {
-        guard state == .confirming, !runtime.isActive, let source, let plan = preparation, let preview,
+        guard state == .confirming, shellScriptConsentReady, !runtime.isActive, let source, let plan = preparation, let preview,
               plan.readiness.ready, plan.sshDependenciesReady, plan.errorCount == 0, plan.hasComparedExecutableChanges, plan.selection == canonicalSelection, plan.includeSecure == includeSecure,
               !includeSecure || plan.secureComparedReady else { return }
         let request = CoreRequest(.restoreExecute(path: source.path, disabledGroups: [], includeSecure: includeSecure,
-                                                preparedID: plan.preparedPlanID, selection: selection, secureComparison: plan.secureComparison), restoreDestinations: privateDestinations, sshApprovals: privateSSHApprovals)
+                                                preparedID: plan.preparedPlanID, selection: selection, secureComparison: plan.secureComparison), restoreDestinations: privateDestinations, sshApprovals: privateSSHApprovals,
+            shellScriptIDs: (plan.shellScripts ?? []).map(\.id), shellScriptSelection: shellScriptSelection)
         progressScope = RestoreProgressRow.freeze(preview: preview, plan: plan)
         executionPreview = preview; executionPlan = plan
         executionStartedAt = Date(); executionFinishedAt = nil
@@ -929,7 +1026,8 @@ struct RestoreProgressRow {
         let expected = canonicalSelection
         let expectedSecure = includeSecure
         let requestSelection = selection
-        let request = CoreRequest(.restorePrepare(path: source.path, disabledGroups: [], includeSecure: includeSecure, selection: requestSelection, installerPreparations: installerPreparations), restoreDestinations: privateDestinations, sshApprovals: privateSSHApprovals)
+        let expectedScripts = shellScriptSelection
+        let request = CoreRequest(.restorePrepare(path: source.path, disabledGroups: [], includeSecure: includeSecure, selection: requestSelection, installerPreparations: installerPreparations), restoreDestinations: privateDestinations, sshApprovals: privateSSHApprovals, shellScriptSelection: expectedScripts)
         invalidate(); failure = nil; technicalReason = nil; state = .preparing
         appStoreRefreshState = .idle
         if appStoreRefresh {
@@ -966,7 +1064,7 @@ struct RestoreProgressRow {
                 if expectedSecure {
                     // Reuse Prepare's bounded wire representation. The canonical
                     // scope above still validates Core's expansion against inventory.
-                    let compare = CoreRequest(.secureRestoreCompare(path: source.path, preparedID: data.preparedPlanID, selection: requestSelection), restoreDestinations: privateDestinations, sshApprovals: privateSSHApprovals)
+                    let compare = CoreRequest(.secureRestoreCompare(path: source.path, preparedID: data.preparedPlanID, selection: requestSelection), restoreDestinations: privateDestinations, sshApprovals: privateSSHApprovals, shellScriptSelection: expectedScripts)
                     guard await receive(compare) else { return }
                     guard let result = runtime.latestResult else { throw CoreRuntimeError.malformedEvent }
                     let comparison = try result.decodeData(CoreSecureComparison.self)
@@ -975,6 +1073,18 @@ struct RestoreProgressRow {
                         throw CoreRuntimeError.malformedEvent
                     }
                     data.secureComparison = comparison
+                }
+                guard data.shellScriptSelection == expectedScripts else { throw CoreRuntimeError.malformedEvent }
+                if !authorizedShellScripts.isEmpty {
+                    let fresh = data.shellScriptCandidates ?? []
+                    guard selectedShellScripts.count == authorizedShellScripts.count,
+                          selectedShellScripts.allSatisfy({ previous in fresh.contains {
+                              $0.id == previous.id && $0.path == previous.path && $0.observationID == previous.observationID
+                          }}) else {
+                        authorizedShellScripts = []
+                        fail("Saved scripts changed or could not be confirmed. Open the saved environment again and review Scripts.", code: "script_selection_changed")
+                        return
+                    }
                 }
                 preparation = data; preview = RestorePreviewPresentation(data, catalog: catalog); state = .preview
             } catch { fail("Rebuild Preview did not provide complete, consistent evidence. Refresh Preview before rebuilding.", code: "invalid_result") }
@@ -986,7 +1096,11 @@ struct RestoreProgressRow {
         invalidate(); state = inspection == nil ? .choose : .review
     }
     func cancel() { if busy { cancelRequested = true; invalidate(); runtime.cancel() } }
-    private func invalidate() { dismissInstallerPreparation(); preparation = nil; preview = nil }
+    private func invalidate() {
+        shellParentConsent = nil
+        authorizedShellScripts.formIntersection(availableShellScripts.map(\.id))
+        dismissInstallerPreparation(); preparation = nil; preview = nil
+    }
     private func receive(_ request: CoreRequest, alreadyStarted: Bool = false) async -> Bool {
         if !alreadyStarted {
             if cancelRequested {

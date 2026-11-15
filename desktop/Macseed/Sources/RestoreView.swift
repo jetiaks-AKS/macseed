@@ -83,7 +83,7 @@ struct RestoreAreaSelectionView: View {
             if area.id == "ssh-configuration", (expansion?.wrappedValue ?? expanded), model.sshResolutionSupported {
                 Color.clear.frame(height: 0).task(id: model.sshReviewTrigger) { model.reviewSSHReferences() }
             }
-            if !notices.isEmpty { ItemDetails(items: notices).padding(.leading, RestoreRowGrid.titleInset + hierarchyIndent) }
+            if !notices.isEmpty { ItemDetails(items: notices, compactAttention: true).padding(.leading, RestoreRowGrid.titleInset + hierarchyIndent) }
         }.padding(.leading, 16 + CaptureChildRowGrid.leadingInset).padding(.trailing, 16)
     }
     static func hasDisclosure(_ area: CoreRestoreInspection.Area) -> Bool { !area.items.isEmpty }
@@ -112,7 +112,7 @@ struct RestoreAreaSelectionView: View {
                 CaptureStatusText(title: "Needs Attention", state: .attention)
             }
             if area.selectable && area.selectionMode == "items" {
-                CaptureStatusText(title: "\(model.selectedItems[area.id]?.count ?? 0) of \(area.items.count) selected", secondary: true)
+                CaptureStatusText(title: CaptureStatusText.selectionCount(model.selectedItems[area.id]?.count ?? 0, total: area.items.count), secondary: true)
             }
         }
     }
@@ -146,6 +146,7 @@ enum RestoreSelectionPresentation {
     static func disclosureIDs(_ areas: [CoreRestoreInspection.Area], advanced: Bool, secureAvailable: Bool = false) -> Set<String> {
         if advanced {
             let ids = areas.map(\.id) + (secureAvailable ? [CaptureHierarchy.secureTransferID] : [])
+                + (areas.contains { $0.id == "shell-zsh" && $0.selectionMode == "items" } ? [ShellCommandPresentation.commandsID] : [])
             return DeveloperSelectionGroup.disclosureIDs(ids).subtracting(areas.filter { !RestoreAreaSelectionView.hasDisclosure($0) }.map(\.id))
         }
         let sections = CaptureHierarchy.project(areas.filter { $0.id != "ssh-configuration" }).filter {
@@ -199,6 +200,7 @@ struct RestoreSelectionContent: View {
     private var areas: [CoreRestoreInspection.Area] { RestoreSelectionPresentation.ordered(model.selectionAreas) }
     private func disclosureIDs(advanced: Bool) -> Set<String> {
         RestoreSelectionPresentation.disclosureIDs(areas, advanced: advanced, secureAvailable: model.inspection?.secureComponent == true)
+            .union(advanced && !model.shellScriptCandidates.isEmpty ? [ShellCommandPresentation.scriptsID] : [])
     }
     private var treeExpansion: Binding<Set<String>> {
         if let expansion { return expansion }
@@ -222,17 +224,28 @@ struct RestoreSelectionContent: View {
                     title: "For Experienced Users", expanded: treeExpansion)),
                 secureTransferGroup: secureTransferGroup,
                 developerSelection: { group in AnyView(NativeSelectionCheckbox("", state: model.developerGroupState(group),
-                    accessibilityTitle: "Select " + group.title) { model.selectDeveloperGroup(group, included: $0) }
+                    accessibilityTitle: "Select " + group.title, mixedSelectsAll: group != .shell) { model.selectDeveloperGroup(group, included: $0) }
                     .disabled(!model.developerGroupAvailable(group) || model.state != .review || model.runtime.isActive)) },
                 developerSummary: { DeveloperSelectionGroup.summary(model.developerGroupState($0), available: model.developerGroupAvailable($0)) },
+                shellCustomCommands: areas.contains { $0.id == "shell-zsh" && $0.selectionMode == "items" },
+                shellCommandsSelection: AnyView(NativeSelectionCheckbox("", state: model.developerGroupState(.shell),
+                    accessibilityTitle: "Select Custom Commands", mixedSelectsAll: false) { model.selectDeveloperGroup(.shell, included: $0) }
+                    .disabled(!model.developerGroupAvailable(.shell) || model.runtime.isActive)),
+                shellScripts: AnyView(ShellScriptSelectionView(scripts: model.shellScriptCandidates,
+                    available: Set(model.availableShellScripts.map(\.id)), selected: model.authorizedShellScripts,
+                    editable: !model.runtime.isActive, flow: .rebuild,
+                    expanded: WorkflowExpansion.binding(ShellCommandPresentation.scriptsID, in: treeExpansion), select: model.selectShellScript,
+                    selectAll: model.selectAllShellScripts, inspectionError: model.shellSelectionIssue, collapsedSelection: model.selectCollapsedShellScripts)),
                 summary: { RestoreSelectionPresentation.summary($0, model: model) },
                 attention: { rows in rows.contains { !$0.selectable || $0.reason != nil } ? "Saved Requirements Need Attention" : nil }) { area in
+                    if area.id != "shell-zsh" || !area.items.isEmpty || area.selectionMode != "items" {
                     RestoreAreaSelectionView(model: model, area: area,
                         expansion: WorkflowExpansion.binding(area.id, in: treeExpansion),
-                        hierarchyIndent: CaptureReviewPresentation.hierarchyStep * (CaptureHierarchy.group(for: area.id) == .vscode ? 2 : 1))
+                        hierarchyIndent: CaptureReviewPresentation.hierarchyStep * (CaptureHierarchy.group(for: area.id) == .vscode || (area.id == "shell-zsh" && area.selectionMode == "items") ? 2 : 1))
+                    }
                 }
             if !model.canPreview { Text("Choose requirements for this rebuild.").foregroundStyle(.secondary) }
-        }
+        }.modifier(ShellParentConsentAlert(request: model.shellParentConsent, flow: .rebuild, resolve: model.resolveShellParent))
     }
     private var secureTransferGroup: AnyView? {
         guard model.inspection?.secureComponent == true else { return nil }
@@ -614,7 +627,8 @@ struct RestoreView: View {
                         appStore: model.appStoreSelected ? tasks.appStore : nil, reviewAppStore: { model.reviewAppStore() },
                         showsActions: showsPreviewActions, needsRefresh: model.previewNeedsRefresh, retryMessage: model.prerequisiteRetryMessage, retrying: model.retryingPrerequisites,
                         checkAgain: { Task { await model.checkPrerequisites() } },
-                        back: { model.back() }, refresh: { model.refreshPreview() }, rebuild: { model.requestRebuild() }, canRebuild: model.canRebuild, reviewModel: model)
+                        back: { model.back() }, refresh: { model.refreshPreview() }, rebuild: { model.requestRebuild() }, canRebuild: model.canRebuild, reviewModel: model,
+                        plannedShellScripts: prepared.plan.contains { $0.domain == "shell-zsh" && $0.disposition == "planned" } ? prepared.shellScripts ?? [] : [])
                 }
             case .rebuilding:
                 if let preview = model.executionPreview, let plan = model.executionPlan {
@@ -680,9 +694,13 @@ struct RestoreView: View {
                 ForEach(model.confirmationMessages, id: \.self) { message in
                     Text(message).foregroundStyle(.secondary)
                 }
+                if let scripts = model.preparation?.shellScripts, !scripts.isEmpty {
+                    Text("You selected \(scripts.count) executable \(scripts.count == 1 ? "file" : "files") for restoration. Rebuild will write these files without running them or replacing existing scripts.").foregroundStyle(.secondary)
+                    CaptureIncludedSettingsList(labels: scripts.map { "~/" + $0.path })
+                }
                 HStack {
                     Button("Cancel", role: .cancel) { model.cancelRebuildConfirmation() }
-                    Button("Rebuild") { model.confirmRebuild() }.buttonStyle(.borderedProminent)
+                    Button("Rebuild") { model.confirmRebuild() }.buttonStyle(.borderedProminent).disabled(!model.shellScriptConsentReady)
                 }
             }.padding(24).frame(width: 420).interactiveDismissDisabled()
         }
@@ -739,6 +757,7 @@ struct RestorePreviewContent: View {
     var rebuild: (() -> Void)? = nil
     var canRebuild = false
     var reviewModel: RestoreModel? = nil
+    var plannedShellScripts: [CoreShellScript] = []
     var showsFixIssues: Bool { prerequisites.canFixIssues }
     var visibleDomains: [TaskDomainPresentation] { domains.filter(RestorePreviewVisibility.includes) }
     var visibleSettings: [TaskDomainPresentation] { settingsCategories.filter(RestorePreviewVisibility.includes) }
@@ -789,8 +808,9 @@ struct RestorePreviewContent: View {
                     return previewDomain
                 }, leadingContent: listLeadingContent,
                     restoreSettingsPreview: true, restorePreviewHierarchy: true, settingsCategories: visibleSettings, itemTitles: itemTitles,
-                    expansion: categoryExpansion.map { binding in Binding(get: { binding.wrappedValue ? RestorePreviewHierarchy.disclosureIDs(visibleDomains, settings: visibleSettings) : [] }, set: { binding.wrappedValue = !$0.isEmpty }) },
-                    settingsExpansion: categoryExpansion, prerequisiteReasons: prerequisites.sharedReasons)
+                    expansion: categoryExpansion.map { binding in Binding(get: { binding.wrappedValue ? RestorePreviewHierarchy.disclosureIDs(visibleDomains, settings: visibleSettings)
+                        .union(plannedShellScripts.isEmpty ? [] : [ShellCommandPresentation.scriptsID]) : [] }, set: { binding.wrappedValue = !$0.isEmpty }) },
+                    settingsExpansion: categoryExpansion, prerequisiteReasons: prerequisites.sharedReasons, plannedShellScripts: plannedShellScripts)
                 .environment(\.restoreTrailingSamples, manualWork.map { [RestoreTrailingSample(title: $0.categoryStatus, disclosure: false)] } ?? [])
                 // Use the workspace's outer padding for the native scrollbar;
                 // keep the scroll content and its status column at their existing width.
@@ -990,6 +1010,23 @@ struct RestoreExecutionCategories: View {
     var reviewAppStore: (() -> Void)? = nil
     var resultTrailingSamples: [RestoreTrailingSample]? = nil
     @RestoreViewState private var expandedCategories: Set<String> = []
+    // Split only Result presentation. Preserve physical Core IDs, each row's
+    // verification evidence and the authoritative summary's original domains.
+    static func resultDomains(_ domains: [TaskDomainPresentation]) -> [TaskDomainPresentation] {
+        domains.flatMap { domain in
+            guard domain.id == "shell-zsh" else { return [domain] }
+            let scripts = domain.items.filter { $0.sourceItemID?.hasPrefix("shell-script:") == true }
+            guard !scripts.isEmpty else { return [domain] }
+            let aliases = domain.items.filter { $0.sourceItemID?.hasPrefix("shell-script:") != true }
+            let aliasDomain = TaskDomainPresentation(id: domain.id, title: domain.title, symbol: domain.symbol,
+                items: aliases, activityState: domain.activityState, resultCategoryIssue: domain.resultCategoryIssue,
+                resultProblemDomains: domain.resultProblemDomains, resultCategoryMessage: domain.resultCategoryMessage,
+                resultProblemMessages: domain.resultProblemMessages, confirmedFinalState: domain.confirmedFinalState)
+            let scriptDomain = TaskDomainPresentation(id: ShellCommandPresentation.scriptsID, title: "Scripts",
+                symbol: "applescript", items: scripts)
+            return (aliases.isEmpty && !domain.resultCategoryIssue ? [] : [aliasDomain]) + [scriptDomain]
+        }
+    }
     static func disclosureIDs(_ domains: [TaskDomainPresentation], appStore: AppStoreRestorePresentation? = nil) -> Set<String> {
         Set(domains.flatMap { [$0.id] + Array(disclosureIDs($0.resultChildren)) }
             + (appStore?.items.isEmpty == false ? ["app-store"] : []))
@@ -1007,6 +1044,15 @@ struct RestoreExecutionCategories: View {
         }
         return result
     }
+    static func sectionTitle(_ domain: TaskDomainPresentation) -> String? {
+        if domain.id == ShellCommandPresentation.scriptsID { return "For Experienced Users" }
+        if DeveloperSelectionGroup.group(for: domain.id) != nil { return "For Experienced Users" }
+        switch CaptureHierarchy.group(for: domain.id) {
+        case .applicationsTools, .macOSSettings, .vscode: return "Standard Setup"
+        case .advanced: return "For Experienced Users"
+        case .otherFindings: return nil
+        }
+    }
     private func categoryTitle(_ domain: TaskDomainPresentation) -> some View {
         WorkspaceCategoryTitle(id: domain.id, title: domain.title, fallbackSymbol: domain.symbol)
     }
@@ -1018,12 +1064,13 @@ struct RestoreExecutionCategories: View {
     }
     @Environment(\.workflowListViewport) private var pinnedList
     var body: some View {
+        let presentationDomains = resultStatuses ? Self.resultDomains(domains) : domains
         VStack(alignment: .leading, spacing: pinnedList ? 12 : 20) {
             if resultStatuses && (!domains.isEmpty || appStore != nil) {
                 HStack {
                     Text("Details by Category").font(.headline).accessibilityAddTraits(.isHeader)
                     Spacer()
-                    let ids = Self.disclosureIDs(domains, appStore: appStore)
+                    let ids = Self.disclosureIDs(presentationDomains, appStore: appStore)
                     if !ids.isEmpty {
                         Button(WorkflowExpansion.allExpanded(expandedCategories, available: ids) ? "Collapse All" : "Expand All") {
                             expandedCategories = Self.toggledCategories(expandedCategories, ids: ids)
@@ -1041,9 +1088,14 @@ struct RestoreExecutionCategories: View {
             }
             if !domains.isEmpty || appStore?.items.isEmpty == false {
                 WorkflowList {
-                    let rows = Self.orderedRows(domains.filter { $0.id != "app-store" }, appStore: appStore)
+                    let ordered = Self.orderedRows(domains.filter { $0.id != "app-store" }, appStore: appStore)
+                    let rows = resultStatuses ? Self.resultDomains(ordered) : ordered
                     VStack(spacing: 0) {
-                        ForEach(rows) { domain in
+                        ForEach(Array(rows.enumerated()), id: \.element.id) { index, domain in
+                            if let section = Self.sectionTitle(domain), index == 0 || Self.sectionTitle(rows[index - 1]) != section {
+                                WorkspaceSectionHeader(title: section)
+                                    .padding(.horizontal, 16)
+                            }
                             if domain.id == "app-store", let appStore {
                                 AppStoreRestoreResultRow(summary: appStore, review: reviewAppStore, expansion: Binding(
                                     get: { expandedCategories.contains("app-store") },
@@ -1055,7 +1107,7 @@ struct RestoreExecutionCategories: View {
                                     get: { expandedCategories.contains(domain.id) },
                                     set: { value in
                                         if value { expandedCategories.insert(domain.id) } else { expandedCategories.remove(domain.id) }
-                                    }), treeExpansion: $expandedCategories)
+                                    }), treeExpansion: $expandedCategories, rebuildResult: true)
                             } else {
                             ViewThatFits(in: .horizontal) {
                                 HStack(spacing: 12) {
@@ -1083,8 +1135,8 @@ struct RestoreExecutionCategories: View {
 // Narrow rows retain the status origin below the title and use the full row width.
 struct RestoreResultColumns: Layout {
     // Preserve the previous 36pt disclosure indentation plus 16pt child inset.
-    static func titleInset(depth: Int, item: Bool = false) -> CGFloat {
-        CGFloat(depth) * (36 + 16) + (item ? 36 : 0)
+    static func titleInset(depth: Int, item: Bool = false, step: CGFloat = 36 + 16) -> CGFloat {
+        CGFloat(depth) * step + (item ? 36 : 0)
     }
     private func geometry(_ width: CGFloat, _ subviews: Subviews) -> (lane: CGFloat, stacked: Bool) {
         let lane = min(width, max(subviews[1].sizeThatFits(.unspecified).width, subviews[2].sizeThatFits(.unspecified).width))
@@ -1204,11 +1256,14 @@ struct RestoreResultCategoryHeader: View {
     let counts: [(String, Int)]
     var depth = 0
     var expanded = false
+    var showsStatus = true
+    var hierarchyStep: CGFloat = 36 + 16
     var body: some View {
         RestoreResultColumns {
             WorkspaceCategoryTitle(id: id, title: title, fallbackSymbol: symbol)
-                .padding(.leading, RestoreResultColumns.titleInset(depth: depth)).fixedSize(horizontal: false, vertical: true)
-            RestoreTrailingControls(status: RestoreResultStatusLabel(state: state, title: status),
+                .padding(.leading, RestoreResultColumns.titleInset(depth: depth, step: hierarchyStep)).fixedSize(horizontal: false, vertical: true)
+            RestoreTrailingControls(status: RestoreResultStatusLabel(state: state, title: status)
+                .opacity(showsStatus ? 1 : 0).accessibilityHidden(!showsStatus),
                 counts: counts, expanded: expanded, statusWidth: TaskRowLayout.statusWidth)
                 .frame(maxWidth: .infinity, alignment: .leading)
             RestoreTrailingReference(statusWidth: TaskRowLayout.statusWidth)
@@ -1222,6 +1277,11 @@ struct RestoreFinalDomain: View {
     var expansion: Binding<Bool>? = nil
     var treeExpansion: Binding<Set<String>>? = nil
     var depth = 0
+    var childrenByID: [String: [TaskDomainPresentation]] = [:]
+    var itemExplanations: [String: String] = [:]
+    var hierarchyStep: CGFloat = 36 + 16
+    // Capture Result also uses this view and retains its accepted presentation.
+    var rebuildResult = false
     @RestoreViewState private var expanded = false
     static let outcomes = ["Success", "Needs Attention", "Skipped"]
     // One requirement, one badge group. Operation and Verification evidence stay independent.
@@ -1267,35 +1327,57 @@ struct RestoreFinalDomain: View {
         default: .secondary
         }
     }
+    var categoryExplanation: String? {
+        guard domain.resultCategoryIssue else { return nil }
+        let message = domain.resultCategoryExplanation
+        guard rebuildResult, message == "Some selected requirements in this category could not be resolved." else { return message }
+        let explainedScopes = Set(domain.resultVisibleItems.filter {
+            $0.sourceItemID == "scope" && RestoreResultDetails.needsAttention($0)
+        }.compactMap(\.sourceDomain))
+        let problemScopes = domain.resultProblemDomains.isEmpty ? [domain.id] : domain.resultProblemDomains
+        if problemScopes.isSubset(of: explainedScopes) { return nil }
+        return "Some requirements remain unresolved. See View Log."
+    }
     var body: some View {
         let sharedIDs = domain.sharedObservationItemIDs
+        let children = childrenByID[domain.id] ?? domain.resultChildren
+        let isExpanded = expansion?.wrappedValue ?? expanded
+        let childScopes = Set(children.map(\.id)).union(children.flatMap(\.resultProblemDomains))
+        let independentIssue = domain.resultCategoryIssue && (domain.resultProblemDomains.isEmpty
+            || !domain.resultProblemDomains.isSubset(of: childScopes))
+        let statusInChildren = isExpanded && !children.isEmpty && (rebuildResult
+            ? !independentIssue : RestoreResultDetails.title(domain) == "Needs Attention" && !domain.resultCategoryIssue)
         VStack(alignment: .leading, spacing: 0) {
             Button {
                 if let expansion { expansion.wrappedValue.toggle() } else { expanded.toggle() }
             } label: {
                 RestoreResultCategoryHeader(id: domain.id, title: domain.title, symbol: domain.symbol,
-                    state: Self.finalStatus(domain), status: RestoreResultDetails.title(domain), counts: Self.counts(domain), depth: depth,
-                    expanded: expansion?.wrappedValue ?? expanded)
+                    state: Self.finalStatus(domain), status: RestoreResultDetails.title(domain),
+                    counts: rebuildResult && depth >= 2 ? [] : Self.counts(domain), depth: depth,
+                    expanded: isExpanded, showsStatus: !statusInChildren, hierarchyStep: hierarchyStep)
             }.buttonStyle(.plain).accessibilityValue((expansion?.wrappedValue ?? expanded) ? "Expanded" : "Collapsed")
             if expansion?.wrappedValue ?? expanded {
                 VStack(alignment: .leading, spacing: 0) {
-                    if !domain.resultChildren.isEmpty {
-                        ForEach(domain.resultChildren) { child in
+                    if !children.isEmpty {
+                        ForEach(children) { child in
                             RestoreFinalDomain(domain: child,
                                 expansion: treeExpansion.map { WorkflowExpansion.binding(child.id, in: $0) },
-                                treeExpansion: treeExpansion, depth: depth + 1)
+                                treeExpansion: treeExpansion, depth: depth + 1,
+                                childrenByID: childrenByID, itemExplanations: itemExplanations, hierarchyStep: hierarchyStep,
+                                rebuildResult: rebuildResult)
                         }
                     } else {
                         ForEach(domain.resultVisibleItems) { item in
                             RestoreResultItemRow(item: item, notRun: domain.executionStatus == .notRun, depth: depth,
-                                suppressExplanation: sharedIDs.contains(item.id))
+                                suppressExplanation: itemExplanations[item.id] == nil && sharedIDs.contains(item.id),
+                                explanation: itemExplanations[item.id], hierarchyStep: hierarchyStep, conciseDiagnostics: rebuildResult)
                         }
-                        if let message = domain.sharedObservationMessage {
+                        if itemExplanations.isEmpty, let message = domain.sharedObservationMessage {
                             Text(message).font(.caption).foregroundStyle(.secondary).padding(.vertical, 4)
                         }
                     }
-                    if domain.resultCategoryIssue {
-                        Text(domain.resultCategoryExplanation)
+                    if let categoryExplanation {
+                        Text(categoryExplanation)
                             .font(.caption).foregroundStyle(.orange).padding(.vertical, 4)
                     }
                 }.padding(.vertical, 4)
@@ -1309,28 +1391,48 @@ struct RestoreResultItemRow: View {
     let notRun: Bool
     let depth: Int
     var suppressExplanation = false
+    var explanation: String? = nil
+    var hierarchyStep: CGFloat = 36 + 16
+    var conciseDiagnostics = false
+    var detail: String? {
+        let original = RestoreResultDetails.explanation(item)
+        guard conciseDiagnostics, original == "A prerequisite or selected requirement needs attention." else { return original }
+        if item.sourceDomain == "shell-zsh", (item.previewProblem ?? item.item.reason) == "partial_source_coverage" {
+            return ShellCommandPresentation.coverageSummary
+        }
+        return "This requirement needs review. See View Log."
+    }
     var body: some View {
-        RestoreResultColumns {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(item.item.title)
-                if !suppressExplanation, RestoreFinalDomain.showsItemDetails(item), let explanation = RestoreResultDetails.explanation(item) {
-                    Text(explanation).font(.caption).foregroundStyle(.secondary)
-                }
-                if let url = item.assistedAppStore?.productURL { AppStoreProductButton(url: url) }
-            }.padding(.leading, RestoreResultColumns.titleInset(depth: depth, item: true))
-                .frame(maxWidth: .infinity, alignment: .leading).fixedSize(horizontal: false, vertical: true)
-            RestoreTrailingControls(status: VStack(alignment: .leading, spacing: 4) {
-                ForEach(RestoreFinalDomain.visibleLabels(item, notRun: notRun), id: \.self) { label in
-                    HStack(spacing: 7) {
-                        Image(systemName: label == "Verified" ? "checkmark.shield" : label == "Failed" || label == "Mismatch" ? "xmark.circle" : ["Unverified", "Outcome Unknown"].contains(label) ? "questionmark.circle" : "circle.fill")
-                            .frame(width: TaskRowLayout.iconWidth).accessibilityHidden(true)
-                        Text(label)
-                    }.font(.callout).foregroundStyle(label == "Verified"
-                        ? RestoreStatusTone.success.color : RestoreResultDetails.group(item) == "Needs Attention" ? .orange : .secondary)
-                        .accessibilityElement(children: .combine)
-                }
-            }, counts: [], statusWidth: TaskRowLayout.statusWidth)
-            RestoreTrailingReference(statusWidth: TaskRowLayout.statusWidth)
+        VStack(alignment: .leading, spacing: 4) {
+            RestoreResultColumns {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(item.item.title)
+                    if explanation == nil, !suppressExplanation, RestoreFinalDomain.showsItemDetails(item), let detail {
+                        Text(detail).font(.caption).foregroundStyle(.secondary)
+                    }
+                    if let url = item.assistedAppStore?.productURL { AppStoreProductButton(url: url) }
+                }.padding(.leading, RestoreResultColumns.titleInset(depth: depth, item: true, step: hierarchyStep))
+                    .frame(maxWidth: .infinity, alignment: .leading).fixedSize(horizontal: false, vertical: true)
+                RestoreTrailingControls(status: VStack(alignment: .leading, spacing: 4) {
+                    ForEach(RestoreFinalDomain.visibleLabels(item, notRun: notRun), id: \.self) { label in
+                        let iconOnlyAttention = label == "Needs Attention" && !suppressExplanation
+                            && (explanation != nil || RestoreResultDetails.explanation(item) != nil)
+                        HStack(spacing: 7) {
+                            Image(systemName: label == "Needs Attention" ? TaskRowState.attention.symbol : label == "Verified" ? "checkmark.shield" : label == "Failed" || label == "Mismatch" ? "xmark.circle" : ["Unverified", "Outcome Unknown"].contains(label) ? "questionmark.circle" : "circle.fill")
+                                .frame(width: TaskRowLayout.iconWidth).accessibilityHidden(true)
+                            if !iconOnlyAttention { Text(label) }
+                        }.font(.callout).foregroundStyle(label == "Verified"
+                            ? RestoreStatusTone.success.color : RestoreResultDetails.group(item) == "Needs Attention" ? .orange : .secondary)
+                            .accessibilityElement(children: .ignore).accessibilityLabel(label)
+                    }
+                }, counts: [], statusWidth: TaskRowLayout.statusWidth)
+                RestoreTrailingReference(statusWidth: TaskRowLayout.statusWidth)
+            }
+            if let explanation, !suppressExplanation {
+                Text(explanation).font(.caption).foregroundStyle(.secondary)
+                    .padding(.leading, RestoreResultColumns.titleInset(depth: depth, item: true, step: hierarchyStep))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }.padding(.vertical, 7).frame(minHeight: 28)
     }
 }
@@ -1356,11 +1458,19 @@ struct RestoreResultSummaryView: View {
     let summary: RestoreResultSummary
     let outcome: RestoreExecutionPresentation.Outcome
     var verificationNotRun = false
+    var verification: RestoreVerificationSummary? = nil
     static func completionTitle(_ outcome: RestoreExecutionPresentation.Outcome) -> String {
         [.clean, .attention].contains(outcome) ? "Complete" : "Verification"
     }
     var attentionExplanation: String? {
         guard summary.attentionCount != 0 || !summary.issues.isEmpty else { return nil }
+        // A category diagnostic can leave the operation issue total unknown.
+        // Show the existing Core unresolved total with its precise meaning;
+        // never infer a total from repeated category/leaf warning labels.
+        if !verificationNotRun, summary.automaticAttentionCount == nil, summary.manualAttentionCount == 0,
+           let verification, verification.complete, let count = verification.unresolved, count > 0 {
+            return "\(count) Unresolved"
+        }
         return summary.attentionCaption.isEmpty ? "Rebuild work needs review" : summary.attentionCaption
     }
     var body: some View {
@@ -1490,7 +1600,8 @@ struct RestoreResultContent: View {
                 }
             }
             RestoreResultSummaryView(summary: summary, outcome: result.outcome,
-                verificationNotRun: RestoreResultDetails.stoppedWithoutVerification(result))
+                verificationNotRun: RestoreResultDetails.stoppedWithoutVerification(result),
+                verification: RestoreVerificationSummary(payload: result.structuredEvidence))
             if !domains.isEmpty || manual?.items.isEmpty == false {
                 RestoreExecutionCategories(domains: domains, showsWarnings: false, resultStatuses: true,
                     appStore: manual, reviewAppStore: reviewAppStore,

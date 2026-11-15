@@ -70,9 +70,13 @@ def snapshot(name, entries):
 
 
 def findings(rule, home, *, authenticated=(), destinations=None):
+    # Keep established local/import paths stable. Only an initially agent-backed
+    # reference can use that mode during binding and per-clone revalidation.
+    agents = ([row['reference'] for row in rule['references'] if row['reason'] == 'agent_key_qualified']
+              if 'references' in rule else None)
     return identities.assess(rule['snapshot'].encode(), str(home), authenticated=authenticated,
         destinations=destinations, approved_paths=rule['approved_paths'],
-        verified_import=bool(authenticated))[0]['references']
+        verified_import=bool(authenticated), agent_references=agents)[0]['references']
 
 
 def qualify(name, files, home, *, pending_secure=False, approved_paths=()):

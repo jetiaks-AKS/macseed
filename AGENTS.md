@@ -39,7 +39,12 @@ Joint real-Mac SSH E2E and current Secure Check hosted CI
 qualification remain open. Continuing Homebrew, remaining 16I/16K,
 Stage 3C recovery and Stage 17 distribution qualification remain open. Existing
 durable journals, Stop and safety fences remain implemented. Unified UI Scenario
-Catalog is deferred tooling. Follow the current
+Catalog is deferred tooling. Aliases & Scripts v5 has bounded real GUI A/B/C
+acceptance; partial Shell coverage remains. The current functional priority is
+Shell / Zsh Completion, with standalone Zsh Functions next, followed by Stage 3C
+Recovery, remaining Stage 16 functionality, Stage 17 distribution, final comprehensive
+qualification and Early Access / 1.0. Fast/Full CI separation is deferred; retain all
+mandatory coverage. Follow the current
 [execution order](ROADMAP.md#current-practical-execution-order), one checkpoint
 at a time without unrelated task hopping; historical slice IDs are unchanged.
 Stage 17 owns packaging and clean-Mac qualification.
@@ -285,6 +290,27 @@ Homebrew installation. Real workflows require authorization for their side effec
 Finish substantial changes with scope/contracts/security review, appropriate
 focused validation, `git diff --check`, status and documentation ownership review.
 Report validation, limitations and publication state precisely.
+
+## Temporary Artifacts and Automatic Cleanup
+
+These rules are mandatory for every future Macseed Codex task:
+
+- Create a unique task-owned directory under `$TMPDIR` for disposable work;
+  prefer temporary locations outside the repository.
+- Automatically remove task-owned disposable files on completion. Use ordinary
+  lifecycle cleanup (`defer` or exit/signal traps) for failures and interruptions;
+  preserve necessary unfinished evidence and report anything that remains.
+- Do not accumulate generated snapshots, fixtures or test reports under
+  `build/Debug`. Retain screenshots only when necessary for user review and prefer
+  concise text evidence over large or duplicated collections.
+- Preserve the most recent usable Debug app and its required runtime files.
+  Never delete unrelated files, development files or uncommitted source changes.
+- Establish ownership and purpose before removing artifacts. Never delete unknown
+  files solely because of their location or ignored status. Do not use destructive
+  Git cleanup commands, including `git clean -fdx` or `git reset --hard`.
+- Report generated artifacts, cleanup actions and remaining disk usage at handoff.
+
+Use task lifecycle cleanup, not a daemon, scheduled cleaner or maintenance framework.
 
 ## Git process
 

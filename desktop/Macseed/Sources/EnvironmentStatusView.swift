@@ -135,6 +135,7 @@ struct EnvironmentComparisonView: View {
     private var expandedIDs: Set<String> { categoryExpansion?.wrappedValue ?? expandedCategories }
     static func disclosureIDs(_ result: EnvironmentStatusPresentation) -> Set<String> {
         Set(visibleSections(result).flatMap(\.entries).flatMap { [$0.id] + $0.children.map(\.id) })
+            .union(result.categories.flatMap { EnvironmentComparisonDomain.shellChildren($0).map(\.id) })
     }
     private var categoryIDs: Set<String> { Self.disclosureIDs(result) }
     private var treeExpansion: Binding<Set<String>> {
@@ -197,7 +198,7 @@ struct EnvironmentComparisonView: View {
                     WorkspaceSectionHeader(title: section.id)
                     VStack(spacing: 0) {
                         ForEach(section.entries) { entry in
-                            EnvironmentComparisonDomain(category: entry.category, children: entry.children, technicalFacts: result.technicalFacts, counts: Dictionary(uniqueKeysWithValues: ComparisonOutcome.allCases.map { ($0, result.categoryCount($0, category: entry.category, children: entry.children)) }), expansion: Binding(
+                            EnvironmentComparisonDomain(category: entry.category, children: entry.children, technicalFacts: result.technicalFacts, coverageHelp: result.coverageHelp, counts: Dictionary(uniqueKeysWithValues: ComparisonOutcome.allCases.map { ($0, result.categoryCount($0, category: entry.category, children: entry.children)) }), expansion: Binding(
                                 get: { expandedIDs.contains(entry.id) },
                                 set: { value in
                                     var ids = expandedIDs
@@ -274,6 +275,7 @@ struct EnvironmentComparisonDomain: View {
     let category: DisplayCategory
     var children: [DisplayCategory] = []
     var technicalFacts: [String: [ComparisonTechnicalFact]] = [:]
+    var coverageHelp: [String: String] = [:]
     var counts: [ComparisonOutcome: Int]? = nil
     var expansion: Binding<Bool>? = nil
     var childExpansion: Binding<Bool>? = nil
@@ -283,14 +285,36 @@ struct EnvironmentComparisonDomain: View {
     var depth = 0
     var secureActions: AnyView? = nil
     @ReferenceViewState<Bool> private var expanded = false
+    static func shellChildren(_ category: DisplayCategory) -> [DisplayCategory] {
+        guard category.id == "shell-zsh", category.items.contains(where: {
+            $0.id.hasPrefix("shell-zsh:shell-alias:") || $0.id.hasPrefix("shell-zsh:shell-script:")
+        }) else { return [] }
+        let scripts = category.items.filter { $0.id.hasPrefix("shell-zsh:shell-script:") }
+        let aliases = category.items.filter { !$0.id.hasPrefix("shell-zsh:shell-script:") }
+        return [(ShellCommandPresentation.aliasesID, "Aliases & Functions", "terminal", aliases),
+                (ShellCommandPresentation.scriptsID, "Scripts", "applescript", scripts)].compactMap { id, title, symbol, items in
+            items.isEmpty ? nil : DisplayCategory(id: id, title: title, symbol: symbol, items: items)
+        }
+    }
+    private var childCategories: [DisplayCategory] { children.isEmpty ? Self.shellChildren(category) : children }
     var body: some View {
         let sharedIDs = sharedObservationItemIDs
         DisclosureGroup(isExpanded: expansion ?? $expanded) {
             VStack(alignment: .leading, spacing: 0) {
-                if !children.isEmpty {
-                    ForEach(children) { child in
-                        EnvironmentComparisonDomain(category: child, technicalFacts: technicalFacts,
-                            counts: categoryCounts[child.id],
+                if !childCategories.isEmpty {
+                    ForEach(childCategories) { child in
+                        EnvironmentComparisonDomain(category: child, technicalFacts: technicalFacts, coverageHelp: coverageHelp,
+                            counts: categoryCounts[child.id] ?? Dictionary(uniqueKeysWithValues: ComparisonOutcome.allCases.map { outcome in
+                                (outcome, child.items.filter { item in
+                                    switch outcome {
+                                    case .match: item.status == .matching
+                                    case .missing: item.status == .missing
+                                    case .different: item.status == .different
+                                    case .needsAttention: [.attention, .unresolved, .unverified, .unsupported].contains(item.status)
+                                    case .notApplicable: item.status == .noRequirement
+                                    }
+                                }.count)
+                            }),
                             expansion: childExpansion ?? treeExpansion.map { WorkflowExpansion.binding(child.id, in: $0) },
                             treeExpansion: treeExpansion, categoryCounts: categoryCounts,
                             technicalExpansion: technicalExpansion, depth: depth + 1, secureActions: secureActions)
@@ -305,7 +329,8 @@ struct EnvironmentComparisonDomain: View {
                     }
                     ForEach(EnvironmentComparisonView.visibleCategory(category).items) { item in
                         EnvironmentComparisonItem(item: item, facts: technicalFacts[item.id] ?? [],
-                            depth: depth + 1, technicalExpansion: technicalExpansion, suppressExplanation: sharedIDs.contains(item.id))
+                            depth: depth + 1, technicalExpansion: technicalExpansion, suppressExplanation: sharedIDs.contains(item.id),
+                            coverageHelp: coverageHelp[item.id])
                     }
                 }
             }.padding(.vertical, 4)
@@ -319,35 +344,28 @@ struct EnvironmentComparisonDomain: View {
             .padding(.horizontal, depth == 0 ? 16 : 0)
     }
     private var showsStatus: Bool {
-        Self.showsAggregateStatus(category, children: children, expanded: expansion?.wrappedValue ?? expanded)
+        Self.showsAggregateStatus(category, children: childCategories, expanded: expansion?.wrappedValue ?? expanded)
     }
     static func showsAggregateStatus(_ category: DisplayCategory, children: [DisplayCategory] = [], expanded: Bool) -> Bool {
-        guard expanded else { return true }
+        guard expanded, !children.isEmpty else { return true }
         let visible = EnvironmentComparisonView.visibleCategory(category)
-        if !children.isEmpty {
-            let descendants = children.map(EnvironmentComparisonView.visibleCategory)
-            let items = descendants.flatMap(\.items)
-            guard Set(visible.items.map(\.id)) == Set(items.map(\.id)),
-                  visible.items.allSatisfy({ item in items.contains { $0.id == item.id && $0.status == item.status } }) else { return true }
-            return !descendants.contains { $0.comparisonStatusText == visible.comparisonStatusText }
-        }
-        // Only suppress a repeated label actually displayed by a leaf. Match leaves
-        // use the existing checkmark; Missing/Different/Unverified keep their names.
-        return !visible.items.contains {
-            !$0.isNormalComparisonMatch && ($0.id.hasPrefix("secure-check:unchecked") ? "Not checked" : $0.status.rawValue) == visible.comparisonStatusText
-        }
+        let descendants = children.map(EnvironmentComparisonView.visibleCategory)
+        let items = descendants.flatMap(\.items)
+        guard Set(visible.items.map(\.id)) == Set(items.map(\.id)),
+              visible.items.allSatisfy({ item in items.contains { $0.id == item.id && $0.status == item.status } }) else { return true }
+        return !descendants.contains { $0.comparisonStatusText == visible.comparisonStatusText }
     }
     private var title: some View {
         HStack(spacing: 12) {
             WorkspaceCategoryIcon(symbol: category.symbol, domainID: category.id)
-            Text(category.id == "ssh-configuration" ? "SSH Configuration" : DeveloperSelectionGroup.label(category.id, fallback: category.title)).font(.body.weight(.medium))
+            Text(!Self.shellChildren(category).isEmpty ? "Custom Commands" : category.id == "ssh-configuration" ? "SSH Configuration" : DeveloperSelectionGroup.label(category.id, fallback: category.title)).font(.body.weight(.medium))
         }.accessibilityElement(children: .combine)
             .accessibilityValue(showsStatus ? "" : EnvironmentComparisonView.visibleCategory(category).comparisonStatusText)
     }
     var sharedObservationFailure: Bool { !sharedObservationItemIDs.isEmpty }
     var sharedObservationItemIDs: Set<String> {
         let items = EnvironmentComparisonView.visibleCategory(category).items
-        guard children.isEmpty else { return [] }
+        guard childCategories.isEmpty else { return [] }
         let candidates = items.filter { item in
             guard item.status == .unverified, let facts = technicalFacts[item.id], facts.count == 1, let fact = facts.first else { return false }
             return fact.result == "unverified" && fact.reason == "observation_failed"
@@ -415,19 +433,27 @@ struct EnvironmentComparisonItem: View {
     var depth = 0
     var technicalExpansion: Binding<Bool>? = nil
     var suppressExplanation = false
+    var coverageHelp: String? = nil
     @Environment(\.comparisonCountSamples) private var countSamples
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             EnvironmentComparisonRowLayout(depth: depth, itemIndent: true) {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(item.title)
+                    if let coverageHelp {
+                        HStack(spacing: 8) {
+                            Text(item.title)
+                            ContextualHelpButton(id: "check.help." + item.id, title: item.title, description: coverageHelp,
+                                hint: "Shows coverage details without changing this Mac.")
+                        }
+                    } else { Text(item.title) }
                     if !suppressExplanation, let explanation = item.comparisonExplanation {
                         Text(explanation).font(.caption).foregroundStyle(.secondary)
                     }
                 }.frame(maxWidth: .infinity, alignment: .leading).fixedSize(horizontal: false, vertical: true)
                 if item.isNormalComparisonMatch {
                     MatchedLeafIndicator()
-                } else { EnvironmentComparisonStatusLabel(status: item.status, title: item.id.hasPrefix("secure-check:unchecked") ? "Not checked" : nil) }
+                } else { EnvironmentComparisonStatusLabel(status: item.status, title: item.id.hasPrefix("secure-check:unchecked") ? "Not checked" : nil,
+                    showsTitle: !(item.status == .attention && !suppressExplanation && item.comparisonExplanation != nil)) }
                 WorkflowCountRailReference(groups: countSamples.map { EnvironmentComparisonDomain.badgeCounts($0).map(\.1) })
             }.padding(.trailing, 26)
         }.padding(.vertical, 7).frame(minHeight: 28)
@@ -449,9 +475,15 @@ enum EnvironmentComparisonPalette {
 private struct EnvironmentComparisonStatusLabel: View {
     let status: DisplayStatus
     var title: String? = nil
+    var showsTitle = true
     var body: some View {
-        Label(title ?? status.rawValue, systemImage: status.symbol).font(.callout)
-            .foregroundStyle(EnvironmentComparisonPalette.color(for: status))
+        Group {
+            if showsTitle { Label(title ?? status.rawValue, systemImage: status.symbol) }
+            else {
+                Label(title ?? status.rawValue, systemImage: status.symbol).labelStyle(.iconOnly)
+                    .accessibilityElement(children: .ignore).accessibilityLabel(title ?? status.rawValue)
+            }
+        }.font(.callout).foregroundStyle(EnvironmentComparisonPalette.color(for: status))
     }
 }
 
@@ -507,6 +539,7 @@ enum ComparisonSummaryOutcome: String, CaseIterable, Identifiable {
         }
     }
     func explanation(_ result: EnvironmentStatusPresentation) -> String {
+        if self == .needsAttention, let breakdown = result.attentionBreakdown { return breakdown }
         guard self == .differences else { return outcome.explanation }
         return [ComparisonOutcome.different, .missing].compactMap { kind in
             let count = kind.count(result)
@@ -522,6 +555,7 @@ struct ComparisonMetricCard: View {
     var body: some View {
         WorkspaceMetricCard(title: outcome.title, value: count.map(String.init), symbol: outcome.symbol,
             tint: outcome.tint, explanation: explanation)
+            .accessibilityLabel(outcome.title + (explanation.isEmpty ? "" : ". " + explanation))
     }
 }
 

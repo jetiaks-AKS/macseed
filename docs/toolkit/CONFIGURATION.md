@@ -117,33 +117,625 @@ application prerequisites/exits have their own Core contract.
 
 ## Shell / Zsh configuration
 
-Only `$HOME/.zshrc` is supported. Discovery reads it as data without prompting.
-Readable eligible regular files are `eligible`, confirmed absence is `absent`.
-Symlinks, external ownership, sensitive assignments/credential URLs, absolute
-`/Users/<name>/`, `/opt/homebrew` or `/usr/local` paths, external `source` / `.`,
-`eval`, command substitution and unsupported type/content produce `excluded`.
-Reasons are `external-owner`, `sensitive-content`, `portability`, `dependency`,
-`unsupported-source`. Read/observation errors return `2` and preserve the old
-snapshot. Static checks detect known risks, not every secret/dependency/side effect.
+Shell sources are observed strictly as data. Discovery never starts Zsh, sources
+files or evaluates expressions. New Capture prefers qualified alias items. Eligible standalone whole-file Capture
+remains the fallback when no aliases qualify. Source-aware aliases extend the first independent-alias slice with bounded
+startup/source relationships and safe additions to qualified existing files.
+New Desktop captures use capability 3 for alias/source recovery and explicitly
+negotiated Scripts capability 5 for file transfer. Legacy capability 4 remains
+readable under its original limits. Aliases & Scripts v5 is **Implemented / Real
+GUI E2E Accepted** within the [four-object A/B/C scope](../qualification/SHELL-RECOVERABILITY-2026-11-12.md#real-gui-abc-acceptance--2026-11-15).
+Broader dynamic/managed-source recovery and hosted qualification remain open.
 
-`config/generated/shell/zshrc.snapshot` contains `MBT-ZSHRC-1`, `status`, `reason`,
-`length`, `sha256`, separator `---`, then exact `.zshrc` bytes only for eligible
-state. Absent/excluded states have no payload. Length/hash are validated before
-use; a malformed selected snapshot returns `2`. Publishing absent/excluded
-replaces an earlier eligible payload. Snapshot mode is `0600`. Discovery,
-validation, Preview and Verify never execute it.
+The capability taxonomy is **Shell → Custom Commands / Variables & PATH / Settings**.
+Capture/Rebuild Selection groups **Aliases & Functions / Scripts** under Custom
+Commands; other workflows retain their existing projections, as specified by
+[Desktop](../DESKTOP.md#check-environment-status).
+Only populated supported categories appear, except Scripts remains available in
+Capture so users can add files when Discovery found none. **Plugins & Themes** is a conditional
+fourth category, reserved until useful Core support and selected/saved items exist.
+Startup files, ZDOTDIR, source paths and dependencies are provenance, not additional
+categories. Legacy whole-file requirements appear as **Settings → Saved Zsh file**
+with their existing Core identity and restoration policy. Functions, Variables & PATH,
+Shell Settings and Plugins & Themes are future capabilities, not empty placeholders.
 
-Blueprint category is `shell-zsh`. Without Blueprint, an older generated tree
-with no snapshot skips the domain; explicit selection requires the snapshot.
-Selected absent/excluded state warns and offers no restoration. Preview never
-prints content, commands, addresses or values.
+### Historical whole-file snapshots
 
-Bootstrap creates `.zshrc` only for confirmed absence and safe HOME, with `0600`
-staged publication. Verify checks bytes, type, ownership and mode without Zsh.
-An identical regular target is preserved including its mode; a different file
-warns without backup, merge or replacement. Symlink/unexpected type/observation
-error blocks creation. Other Zsh startup files, sourced trees, frameworks and
-automatic HOME/Homebrew-prefix rewriting are unsupported.
+`config/generated/shell/zshrc.snapshot` retains the `MBT-ZSHRC-1` reader: `status`,
+`reason`, `length`, `sha256`, separator `---`, then exact bytes for `eligible` state.
+Absent/excluded states contain no payload. Existing hazard reasons remain
+`external-owner`, `sensitive-content`, `portability`, `dependency` and
+`unsupported-source`. Known hazards include credential assignments/URLs, absolute
+user/Homebrew paths, sourced files, `eval` and substitutions; a marker alone does
+not prove external dotfile ownership. Symlinks and unsupported source types remain
+excluded. Read failures preserve previous generated state. Snapshot mode is `0600`.
+Historical eligible snapshots retain byte comparison and absent-target-only Restore;
+identical regular targets keep their mode and differing files are never replaced.
+
+### First-generation alias compatibility
+
+The same generated path can contain `MBT-ZSH-ALIASES-1` followed by strict JSON:
+`version: 1`, `coverage: complete|partial`, and an ordered `aliases` array of
+`{name, statement}`. First-generation Capture recorded partial coverage. The bounded
+contract accepts at most 256 independent definitions in 64 KiB, with ordinary ASCII
+names and one literal single- or double-quoted command per definition. Alias bodies
+are at most 2048 characters. Quotes, comments and supported escaped newlines are
+recognized structurally; the supported statement and command text are preserved,
+without execution or HOME/prefix rewriting. Only names and opaque requirement IDs
+cross public inventory/status boundaries; command text stays in the private Bundle.
+
+The first grammar excludes global/suffix/dynamic aliases, duplicates, redefinitions,
+removed aliases, aliases depending on other alias names, compound command bodies,
+substitutions, credential-like values and machine-specific absolute paths. Definitions
+inside conditionals, functions, groups or multiline tests are not extracted as
+unconditional requirements. Here-documents, ambiguous/unterminated syntax and
+unsupported alias-command mutation fail closed. Static secret checks cover known
+forms; they cannot prove that arbitrary user configuration contains no private data.
+Unrelated complete `source`, initialization, function or variable statements can
+remain excluded without discarding otherwise supported top-level aliases.
+
+Bundle remains `MBT-BUNDLE-1`; alias payloads require the additive manifest feature
+`"shell-aliases": 1`. Existing Bundle/snapshot readers remain available, and older
+clients reject this unknown required capability rather than interpreting it as a
+whole-file snapshot. Strict schema, bounds, unique names and declaration validation
+apply at both producer and consumer boundaries. Selection narrows the payload in
+saved order through Core; aliases are individually selectable under `shell-zsh`
+without new categories or Blueprint section formats. CLI's existing whole-category
+selection includes all saved aliases.
+
+Preview, Verification and Check use one `alias_definition` requirement per selected
+alias. Matching compares the supported literal command value; missing, differing
+and unverified are distinct. Partial source coverage remains a separate diagnostic,
+never an additional matching alias. No whole-file aggregate is counted alongside
+alias requirements. These results prove saved declarations, not that a running
+interactive shell loaded them, that an external command exists or that all startup
+options/dependencies are portable.
+
+Capability 1 creates a missing `.zshrc` only after existing explicit approval and fresh
+Core preparation. It writes selected declarations in order to a private staging
+file, fsyncs and uses no-clobber publication; an intervening target is preserved.
+Owned HOME/ancestors, regular files, permissions, ACLs, links and stable observations
+are checked without evaluating content. Existing user files may retain macOS
+`UF_TRACKED` document identity metadata during reads; other flags fail closed, and
+private snapshots require no flags. Existing matching definitions are no-op;
+a differing alias is a conflict. A missing alias in an existing file is Missing in
+Check but blocked in Preview: this slice does not append, merge, back up or replace
+user-managed configuration. Unsafe/unobservable state is unverified, never absence.
+Operation-wide blockers cannot produce planned alias actions. Post-publication
+uncertainty remains an error with mutation evidence; no automatic rollback occurs.
+
+In capability 1, alternate `ZDOTDIR`, known startup-location/options redirects and
+compiled startup files block qualification. Other startup files are inspected only for these bounded
+prerequisites; their contents are not captured. Zsh's actual
+[startup order](https://zsh.sourceforge.io/Doc/Release/Files.html) distinguishes
+`.zshenv`, login `.zprofile`, interactive `.zshrc` and login `.zlogin`, with `ZDOTDIR`
+and RCS options affecting loading. [Grammar and quoting](https://zsh.sourceforge.io/Doc/Release/Shell-Grammar.html)
+and [alias semantics](https://zsh.sourceforge.io/Doc/Release/Shell-Builtin-Commands.html#index-alias)
+inform this conservative subset; inspection does not execute those startup paths.
+
+### Source-aware aliases (capability 2)
+
+Capability-2 source payloads use `MBT-ZSH-ALIASES-2`, `version: 2`, partial coverage,
+four ordered startup `roots`, and ordered alias records containing `name`, exact
+supported `statement`, portable `source`, `chain` and positive `order`. Bundle V1
+requires `"shell-aliases": 2`; capability 1 and historical whole-file readers retain
+their original meaning. A Bundle contains one Shell representation, preventing
+whole-file/item-level overlap. Requirement identity remains SHA-256 of the exact
+alias name; source nodes never become extra Match or Planned requirements.
+
+Capability 2 accepts names matching `[A-Za-z_][A-Za-z0-9_.-]{0,63}`, including dotted
+names. The literal single- or double-quoted command and original statement bytes
+remain unchanged. In addition to the original command forms, it accepts bounded
+HOME-relative command/argument references and inert `source`/`.` aliases with exactly
+one HOME-relative operand. `$HOME/` and `${HOME}/` references require an outer
+single-quoted alias value so they remain literal until invocation; unquoted `~/`
+inside the value is also supported. Inner double quotes can protect a HOME-relative
+path containing spaces. Path components remain bounded ASCII, with no empty,
+leading/trailing-space, traversal or `.git` components. Quoted tildes are not
+interpreted as HOME references. Arbitrary parameters, substitutions, compound
+commands, sensitive literals and nonportable
+absolute paths remain excluded. No captured alias body is executed during any
+Macseed operation. Previously accepted literal forms retain their reader meaning;
+the extension does not reinterpret literal operands as portable dependencies.
+Capability 1 retains its original name/command grammar.
+
+Discovery inspects `.zshenv`, `.zprofile`, `.zshrc`, `.zlogin`, an explicitly qualified
+HOME-contained environment ZDOTDIR, or one literal HOME-relative ZDOTDIR assignment
+in the initial `.zshenv`. Static unconditional `source` and `.` accept explicit
+`$HOME/`, `${HOME}/`, unquoted `~/`, or literal absolute paths under the exact current
+HOME boundary. Only that observed HOME prefix becomes portable source provenance;
+the original source statement and alias command bytes are never rewritten. Other
+users' paths, HOME-prefix lookalikes and traversal are rejected. No cwd/PATH lookup
+or directory crawling occurs. Nested references are bounded
+by depth 8, 32 files, 256 KiB total input, 64 KiB per file/snapshot, 512-character paths,
+128-character components and 256 aliases. Repeated references/cycles, compiled files,
+ambiguous startup redirection and unsafe parents fail closed.
+Paths containing spaces require quotes; an unquoted multiword `source` operand is
+not interpreted as one path.
+Unrelated unsupported statements can retain independent declarations with incomplete
+coverage; conditional declarations, duplicates/overrides and known function/alias
+dependencies are not promoted to supported requirements.
+An unconditional literal absolute HOME-contained source can still be inspected after
+unknown initialization because resolving that path needs no variable expansion.
+This proves a static declaration/source relationship, not that a running shell
+reached it. Unknown initialization continues to block automatic writes; conditional
+source relationships and uncertain HOME-relative expansion remain unqualified.
+
+Owned, safely readable sources under Git/dotfile management can supply declarations
+for Capture and Check. Management markers and file comments do not authorize
+changes: creating or modifying alias source files in managed directories, or adding
+to files marked as managed/generated, remains blocked. Matching declarations are
+read-only no-ops. Parent identities and observed directory management markers join
+the private freshness evidence; permissions, ACLs, file flags, link restrictions,
+observation bounds and selected-only serialization remain in force.
+
+Detection and Capture eligibility are separate claims. A named alias declaration
+can be present in an inspected source yet excluded by the current supported name
+or command grammar, portability/privacy checks, dependency ambiguity or source
+qualification. Only qualified declarations become selectable requirements and
+contribute to item counts; excluded definitions remain part of incomplete coverage.
+The existing `source_partial` Capture reason and `partial_source_coverage` diagnostic
+describe that boundary without exporting excluded command text or creating extra
+requirements. Absence from the qualified set does not prove absence from the shell.
+
+Runtime `whence` evidence identifies command types for that session only. It cannot
+establish a definition's source chain, loading order, portability or eligibility.
+Functions are not aliases; commands absent from a session are not invented as
+requirements. Diagnosis reads qualified source files as data and never executes
+startup files. Expand supported cases only from source evidence and focused tests;
+do not infer a parser defect from runtime names alone. Preserve the
+[accepted Shell UI](../DESKTOP.md#check-environment-status) as coverage grows.
+
+Check compares selected declarations at their qualified source and chain. Missing
+relationships, unsafe observation and ambiguous names are Unverified, not absent.
+Matching alias results remain independent of the partial Shell coverage warning.
+This establishes textual declarations, not effective interactive startup behavior.
+
+An alias that invokes a HOME-relative script or `source`/`.` carries a runtime
+prerequisite derived from its validated command. That reference is not a startup
+edge: Discovery does not traverse its contents, and Capture never copies the script.
+Metadata observation requires owned, qualified parents and a regular owned file,
+safe permissions/ACLs/flags, one link and, for direct execution, owner execute
+permission. A Git/dotfile-management marker alone does not disqualify an otherwise
+safe existing dependency: this is metadata-only observation, without mutation of
+the dependency or manager resources. Missing dependencies remain missing; unsafe
+owners/permissions/ACLs/flags, symlinks, hardlinks, compiled source alternatives and
+unobservable state remain unqualified. Parent and management-marker observations
+are bound alongside the dependency file metadata. These checks establish bounded
+local availability only, not matching script contents, trusted behavior or runtime
+usability. The alias declaration and referenced script are separate claims.
+
+Missing/unqualified runtime prerequisites add the existing `dependency_unavailable`
+diagnostic to the same partial-coverage record. A matching alias remains Match;
+dependencies add no items or counts. New insertion is blocked until prerequisites
+qualify, except an inert reload reference to the source file already authorized for
+creation. Scripts, source links and prerequisites are never installed implicitly.
+Dependency metadata participates in Prepare/Apply freshness checks; completed
+matching declarations remain an honest no-op even when coverage needs attention.
+
+Rebuild can create an absent qualified file when its parent and source relationship
+already exist, or add selected missing independent aliases to an existing file only
+when the inspected graph is closed and statically supported. Missing unselected
+source dependencies, unknown/dynamic statements, conflicts and ambiguous definitions
+block the selected mutation scope. Source relationships and directories are never
+created implicitly. Added declarations preserve selected order; the exact existing
+bytes remain an immutable prefix, with a required newline boundary if necessary.
+Conflicting definitions are never replaced. Older capability-1 snapshots still use
+absent-`.zshrc` creation only; they do not silently acquire insertion semantics.
+
+Core binds private source-file observation digests into fresh Prepare/Execute identity,
+including comments and inode changes. Publication rechecks source evidence and pinned
+parents, stages privately, preserves existing mode/group and bounded extended
+attributes, uses full fsync and Darwin no-clobber creation or atomic exchange, and
+verifies both published data and the displaced predecessor. Existing-file additions
+reject ACLs and all file flags; read-only matching accepts the qualified UF_TRACKED
+case. Other permissions/ownership/link/metadata uncertainty blocks publication.
+
+Atomic exchange is not inode compare-and-swap: a last-gap concurrent writer is detected
+by inspecting the displaced predecessor. Both versions remain in an owned private
+`.macseed-shell-pending-*` directory on uncertainty; no rollback or deletion follows.
+Successful exchanges retain `.macseed-shell-predecessor-*` evidence. Pending evidence
+blocks fresh writes until separately reconciled. Multi-file work is not transactional:
+a later failure retains completed changes and reports mutation/Verification honestly.
+No operation modifies real developer dotfiles during fixture validation.
+
+### Selected recovery (capability 3)
+
+Declaration/legacy wrapper Capture uses `MBT-ZSH-ALIASES-3` and Bundle V1's required feature
+`"shell-aliases": 3`. It preserves the v2 alias grammar, identities, exact declaration
+bytes and portable source chains, adding a bounded `layout` and optional `scripts`.
+Layout records contain HOME-relative paths, ordered selected alias/source entries,
+observed management evidence and whether the source slice is statically closed.
+Selection prunes unselected declarations, edges and script payloads together. Readers
+validate the complete traversal against saved chains/order; malformed, cyclic,
+extra or inconsistent entries fail closed. Total snapshot limits remain 64 KiB.
+Capabilities 1/2 and historical whole-file snapshots keep their previous contracts.
+
+For closed, qualified slices, Rebuild creates missing HOME-relative directories with
+mode `0700`, source files with `0600`, and normalized static
+`source "$HOME/relative/path"` relationships. Only selected definitions and their
+required relationships are reconstructed; arbitrary initialization and original
+whole-file content are not transferred. Existing files keep their exact byte prefix,
+mode/group and supported metadata. Existing selected relationships must be an ordered
+prefix that can safely be completed by appending. Conflicts, reordered relationships,
+unknown target initialization, unsupported metadata and unsafe paths block changes.
+A narrow exception permits creating a missing default `.zshrc` with selected
+independent standard commands (including ordinary `ls` display/sort flags), even
+when unrelated initialization in the original source was excluded. This never
+copies or runs that initialization, inserts a source edge, changes an existing
+file, or qualifies a mixed selection containing dependent aliases. Partial
+coverage remains explicit.
+Connecting a dormant existing file is allowed only when its entire static content
+is the selected slice; unknown code cannot be activated by adding a source link.
+Qualified alternate ZDOTDIR can be observed, but reconstructing its assignment is
+not part of this slice: the target startup location must already match.
+
+Dependencies and leaf files publish before the startup relationships that activate
+them. Prepare binds source/dependency/ancestor observations and installed-tool
+metadata; Execute recomputes them before publication and Apply rechecks again.
+Publication uses the existing no-clobber/exchange and retained-predecessor machinery.
+Multi-file work is not atomic. An interrupted attempt can retain directories, files
+or pending evidence; it reports uncertainty and never deletes or rolls back user
+state. A later inspection must qualify retained state before retrying.
+
+### Opaque executable files (capability 4)
+
+Executable transfer is **default off**, separately from alias selection. Scan uses
+only the existing static source graph and dependency metadata: portable paths,
+stable file IDs, associated alias IDs and freshness observations. Several aliases
+share one candidate. No HOME crawl, dynamic inference or recursive script discovery
+occurs. Unknown dependencies remain incomplete coverage. Existing source management
+and ancestor evidence remains bound to preparation; no Git ownership is bypassed.
+
+Selecting an individual file or accepting the existing parent Include dialog
+explicitly authorizes reading that exact file set. Desktop automatically invokes
+`capture_script_inspect`, shows **Checking…**, and prevents final Prepare until it
+finishes. There is no manual inspection action. Qualified files remain selected;
+rejected files remain unselected with sanitized reasons. Rejection/cancellation
+preserves unrelated alias choices; cancellation permits retry without a new Scan.
+Prepare and Execute repeat eligibility/freshness checks. Rejected Prepare returns
+to retained Selection for a fresh choice and preparation. Disclosure never grants
+permission, and newly discovered files never inherit it.
+
+Explicit `shell_script_policy: "opaque-file-v4"` selects `MBT-ZSH-ALIASES-4` and
+Bundle V1's required feature `"shell-aliases": 4`. It preserves the same declaration,
+source-layout and dependency identities. Older capabilities 1/2/3 retain their
+reader meaning; clients omitting this policy keep the existing v3 wrapper policy.
+The v4 reader transfers a bounded UTF-8 Shell or Python file as exact bytes, including Unicode,
+CRLF, comments, functions, conditions, loops and complex commands. It does not
+interpret their program semantics. The first line must identify `/bin/sh`,
+`/bin/bash`, `/bin/zsh` or `/usr/bin/python3`, or use `/usr/bin/env` with exactly
+`sh`, `bash`, `zsh`, `python3` or `python` (no interpreter options). Binary/control data and other encodings/interpreters are
+outside this contract. Limits are 16 files, 8 KiB per file and 64 KiB for the entire
+serialized snapshot. UTF-8/JSON expansion counts toward the aggregate limit.
+
+### Script files (capability 5)
+
+**Implemented / Real GUI E2E Accepted (2026-11-15), within the documented A/B/C scope.** Desktop negotiates
+`opaque-file-v5`. Within unchanged `MBT-BUNDLE-1`, required feature
+`"shell-aliases": 5` identifies `MBT-ZSH-ALIASES-5`; older readers must reject this
+capability instead of treating it as v4. Existing Bundles are never rewritten.
+Legacy capabilities 1–4 retain their original readers and limits.
+
+The simultaneous v5 limits are **128 files**, **1 MiB of original UTF-8 content per
+file**, and **16 MiB of original content per Bundle**. The Shell snapshot contains
+bounded metadata only: source layout plus each script's stable path-derived ID,
+normalized HOME-relative path, original byte length, SHA-256, supported original
+mode, source-management observation, explicit file-transfer consent marker,
+exact member reference and quarantine state. Raw bytes occupy separate
+`generated/shell/scripts/<64-hex-id>.data` members. The manifest is capped at
+256 KiB; its alias/startup/source structure retains the 64-KiB limit. Member IDs,
+paths, lengths, hashes, duplicates and total content are validated before use.
+Only this namespace permits up to 128 extra archive entries. The existing 32-entry
+budget for other entries, 33-MiB member limit and 48-MiB total Bundle limit remain;
+combining large Scripts and Secure payloads can still exceed the total Bundle limit.
+Capture, Bundle write/read, Prepare, Execute and Check use the same validation.
+The operation-scoped request representation is specified in
+[Core interface](../core/APPLICATION-INTERFACE.md#shell-alias-requirements).
+
+V5 supports Shell/Python files with the supported shebangs listed for v4 above.
+Executable or extensionless files require that interpreter evidence; an executable
+filename extension never qualifies code. Non-executable UTF-8 `.sh`, `.bash`,
+`.zsh` and `.py` files may instead identify their language by extension, while all
+content/path/metadata checks still apply. No executable bit is added. File transfer
+does not establish direct-invocation readiness: an alias still requires an
+executable dependency. Standalone file restoration does not install or require an
+interpreter; it proves file conformity, not runtime usability.
+
+Capture's **Add Script…** is a compact action inside expanded Scripts. The native
+picker accepts multiple files, including repeat selections from different folders,
+without aliases or directory scanning. Core deduplicates verified file identity
+and safe normalized paths with automatic alias-linked candidates, preserving alias
+associations. Picking authorizes read-only qualification; files are added unchecked
+and inclusion remains explicit. Rejections explain the relevant limit or safety
+condition without disclosing code. Manual locations last only for that Capture
+session. Scripts transfers selected files, never directory contents; it provides no
+editor, launcher, dependency manager or general-purpose backup.
+
+Aliases & Functions and Scripts are independent **functional domains** in Capture
+Selection, Confirmation and Result. Core's aggregation counts either populated
+selection once, both twice and neither zero; physical `shell-zsh` and historical
+Bundle IDs remain unchanged. Capture Selected Items counts each selected alias
+definition and each unique selected script file independently: 12 aliases plus one
+linked file contribute 13 items; plus three files, 15 items. Manual/automatic
+discovery of the same file contributes only one Scripts item. Result derives these
+counts from the persisted alias/file identities and validates them against
+Confirmation; it does not display the physical module count. Physical Bundle/Restore
+requirement counts remain unchanged. Check separately
+reports each saved file's bytes/mode/quarantine evidence, including associated files.
+
+V5 uses a closed extended-attribute policy. `com.apple.TextEncoding`,
+`com.apple.metadata:kMDItemDownloadedDate`, `com.apple.metadata:kMDItemWhereFroms`,
+`com.apple.lastuseddate#PS` and OS-created `com.apple.provenance` are permitted as
+annotations, without transferring them or treating them as trust evidence. Reads
+retain the existing bounds of 32 attributes, 8 KiB of names and 32 KiB per value.
+Unknown attributes and resource forks remain unsupported.
+
+`com.apple.quarantine` is separate [macOS quarantine](https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/LaunchServicesKeys.html#//apple_ref/doc/uid/20001431-113253) security state. Each v5 file record must contain
+`quarantine`: either `null` for observed absence or
+`{version:1,data:<canonical-base64>,sha256:<digest>}`. The original attribute is
+limited to 256 bytes and a validated four-field record (hexadecimal flags and
+timestamp, bounded printable agent, optional UUID). It is preserved byte for byte;
+flags and event identifiers are never cleared or rewritten to imply trust. No
+arbitrary attribute names or other metadata payloads are accepted. The 256-KiB
+manifest limit includes this field. Inner and outer checksums detect corruption,
+not source authenticity.
+
+Restore applies the validated attribute to the private temporary file **before**
+atomic no-clobber publication, then verifies the published attribute. Unexpected
+inherited quarantine, application failures or unverifiable publication fail closed;
+no existing destination attribute is replaced or removed. Check requires exact
+quarantine state as well as bytes/mode: missing or changed quarantine differs,
+malformed or unreadable metadata is unverified. Match means saved-file conformity,
+not trusted code, Gatekeeper approval or permission to execute. Macseed never runs
+the script. Legacy v4 retains its provenance-only xattr policy.
+
+The following file safety and Restore rules apply to both v4 and v5.
+
+Files must be regular, owned, single-link and safely located under HOME. Symlinks,
+hardlinks, unsafe ancestors, ACLs and file flags are rejected. Extended attributes
+follow the version-specific policy above; quarantine/resource forks are never
+silently discarded. Protected credential
+locations, startup/source files and compiled startup files cannot be payloads.
+V4 requires owner-readable/executable modes; v5 also supports non-executable
+owner-readable modes (for example `0400`, `0600`, `0640`, `0700`, `0750`, `0755`).
+Shared-write and special bits remain prohibited; supported modes are preserved exactly. Metadata and bytes are checked
+for concurrent changes. Existing conflicting or unsafe targets are preserved.
+
+Known private-key/token patterns, literal credential assignments and credential
+URLs fail closed. Runtime credential references do not themselves copy credentials.
+These checks cannot prove absence of secrets. Normal Bundle data is unencrypted;
+explicit consent is required even when no indicator is found. Absence of an
+indicator does not certify safety, portability or behavior. For directly invoked alias dependencies the interpreter is a
+known target prerequisite; dependencies inside opaque code remain unresolved and
+are never recursively included or executed. Restored code may run in a later user
+session. Shell does not test network connectivity, credentials or remote services.
+
+Historical capability 3 retains its bounded ASCII static-wrapper grammar (128
+lines/16 statements) and known command availability checks. Unsupported wrappers
+are not silently reinterpreted as v4. Capture must explicitly negotiate the new
+policy. Files outside either contract must be recovered through their owner or an
+explicitly selected qualified Git/Workspace checkout, followed by fresh observation.
+No second Git, Workspace or file-migration engine is introduced.
+
+Bundle inspection offers only saved qualified payloads for Rebuild Selection,
+with independent default-off Restore consent. An empty `shell_script_selection`
+removes payloads from the temporary plan but retains dependency evidence: missing
+unselected files block dependent aliases. Matching files require no write.
+Execute requires authorization for exactly the selected missing writes.
+Deselecting the last associated alias retains an independently selected file and
+its consent. Capabilities 4/5 support saving/restoring that file on its own, with no
+alias declarations, source files or startup edges. Its stable `shell-script:`
+identity appears independently in v5 Rebuild Preview even when selected aliases
+reference it. Each saved file has its own destination qualification and operation;
+an unsafe alias-source group contributes no writes and cannot suppress safe files.
+Shared files still produce one file row. Existing physical Bundle/Restore selection
+counts retain alias-associated accounting; explicit `shell_script_selection` binds
+the separately selected files. Capture functional counts and Check predicates are
+unchanged. Capabilities 3/4 retain their existing planning behavior. Back/Next retains
+choices; a fresh Scan/Bundle resets consent.
+
+Each saved script has an exact HOME-relative destination, byte content, SHA-256 and
+validated original mode. V4 embeds text; v5 uses the separate members above. Both
+retain a Boolean source-management observation;
+a missing managed file requires recovery through its owner/Git/Workspace, while an
+existing matching file can be verified without mutation. Readers independently
+validate content, integrity and either its selected direct-execution alias
+association or explicit standalone-file scope. Startup files, selected source files and files
+also referenced by a source/reload alias cannot become executable payloads. On the
+target, an existing startup `source` edge to the proposed script blocks transfer,
+even if the script is missing. Explicit consent cannot authorize this activation.
+Restore's existing confirmation requires separate explicit
+per-file authorization before creating a missing script. Missing safe parents inside
+the destination HOME are created with mode `0700`, in dependency order before files,
+using the existing descriptor-based checks and no-clobber publisher. Existing differing or
+unsafe files are preserved. Matching bytes/mode and version-specific metadata require no consent or write.
+Scripts are never executed by Capture, Restore, Verification or Check. Saved files
+are unencrypted and checksums do not authenticate their author; the confirmation
+asks the user to trust the saved environment before authorizing executable writes.
+
+Capabilities 3/4/5 emit one `alias_recovery` predicate per alias. Verification and
+Check also emit one `script_file` predicate per explicitly saved capability-4/5 file,
+including a file associated with selected aliases. Shared aliases reuse the same
+file observation; the file is counted once. This adds one comparison requirement
+per associated saved file to the previous alias-only total. Rebuild v5 also exposes
+those existing file identities for alias-linked payloads;
+standalone files retain their existing identity. No file predicate is inferred from an unselected dependency,
+and capabilities 1/2/3 retain their historical predicates.
+The file predicate distinguishes Match (exact bytes/mode and qualified metadata),
+Missing (confirmed absence), Different (bytes, supported mode or v5 quarantine differ), and
+Unverified (unsafe or incomplete observation), independently of alias/source
+prerequisites. It does not claim an alias was restored or code was executed.
+For capability-4/5 aliases, Check distinguishes saved-source evidence from Restore
+editing prerequisites. A safely read and parsed source, with its saved source chain
+still qualified, can prove a declaration Missing or Different even when unrelated
+dynamic startup code prevents additions. Ambiguous definitions, an unqualified
+source chain, unsafe/unreadable sources or changing observations remain Unverified.
+This is evidence about the saved declaration, not proof of the dynamically resolved
+Shell environment. Shell coverage stays partial; a Missing Check result does not
+authorize source editing or remove any Restore prerequisite.
+V5 can publish independently qualified scripts while leaving blocked alias/source
+groups untouched. Preview retains each blocked requirement and Shell coverage;
+partial execution verifies every published file and retains unresolved selected
+requirements in Verification/Check, reporting attention.
+V5 can append missing literal declarations to an existing, readable known source
+even when unrelated dynamic startup commands prevent whole-environment qualification.
+The saved source chain must still be qualified. The bounded parser must prove that
+the original statements remain unchanged and the appended declarations are complete,
+unconditional statements at EOF. Conflicting/duplicate names, functions or removals
+using those names, ambiguous syntax, unqualified explicit source edges, dormant
+activation and managed destinations remain blocked. This establishes saved-source
+definitions, not the effective state produced by executing dynamic configuration.
+
+For qualified v5 source appends, the existing atomic safe-save publisher supports
+`UF_TRACKED` only with valid document IDs and filesystem support for document IDs
+and atomic exchange. It stages the exact original bytes plus the alias suffix,
+copies validated ownership/mode/xattr metadata and sets tracking on the staging file.
+For these v5 source updates only, opaque OS-created `com.apple.provenance` on a
+new staging inode may retain that inode's own OS-created value after `fcopyfile`.
+Macseed neither parses, sets nor removes it and makes no trust decision from its
+contents, following [Apple's guidance on OS-owned metadata](https://developer.apple.com/forums/thread/855525).
+Every other copied attribute must match exactly; this exception never includes
+quarantine. Source and displaced-file metadata remain exact. Staged metadata is
+bound before exchange and must remain exact on the published inode. A missing or
+unexpectedly changed attribute fails closed. Scripts v5 payload/xattr rules and
+legacy source copying are unchanged.
+The kernel preserves the original document ID at the source path during exchange;
+the inode changes. Tracking is never cleared. Prepare binds the document ID along
+with existing source evidence; publication rechecks both files and verifies document
+IDs, flags, metadata and content after exchange. Failure retains the existing pending
+journal and available versions for inspection, never a destructive automatic rollback.
+This includes pre-publication staging failures: a pending directory is not proof
+that the source was replaced. Existing pending evidence blocks retries until
+separately reviewed; neither Check nor Refresh Preview clears or ignores it.
+Preview retains `shell_publication_uncertain` instead of reducing that known
+condition to a generic read failure. Apply diagnostics retain a bounded phase and
+reason code in the existing technical log/operation evidence, without source text
+or exception paths.
+Other file flags, legacy writers and opaque script-file publication retain their
+existing restrictions. Disposable Core/Native tests and the accepted real A/B/C
+workflow qualify this mechanism within the saved-definition scope; they do not
+qualify every dynamic startup configuration.
+An alias Match requires the
+qualified definition/chain and currently observable dependencies. Transferred
+scripts additionally require exact bytes/mode and qualified metadata. Capability 3
+checks known wrapper commands; capability 4 checks the interpreter only. Matching
+opaque bytes does not establish body dependencies, safe behavior or successful execution. Non-transferred local files are only metadata-qualified; their
+contents, transitive dependencies and behavior remain unproven. Ordinary commands
+are observed without execution in the fixed system/Homebrew executable locations;
+unsafe/unavailable tools or unqualified path operands remain prerequisites. A
+literal `cd` alias with exactly one portable HOME-relative operand can qualify an
+existing owned safe directory, including an independently restored managed checkout.
+Its ancestor/management evidence is bound to Prepare/Apply; a missing, linked or
+unsafe directory stays a prerequisite. Shell never creates that Workspace directory
+implicitly. Literal quoted tildes retain their legacy meaning and are not rewritten.
+Per-alias diagnostics distinguish a missing executable from failed safe observation,
+a missing HOME-relative directory from unsafe access, and unknown operands from
+known absence. A blocker for another selected alias is never reported as a missing
+command for this alias. No tool is installed implicitly. Missing dependencies cannot yield a Match merely because
+the declaration exists. Independently matching aliases keep Match and are suppressed
+in Preview. V5 selected script payloads have the independent file requirements
+described above; unsaved dependencies, directories and consent add no requirements.
+Capabilities 3/4 retain their historical Preview accounting.
+Selected aliases retain independent partial Shell coverage. A capability-4/5 file-only
+selection has no alias/startup coverage requirement: Preview, Verification and Check
+report its file conformity and actual blockers without inheriting unselected source
+diagnostics. Opaque body dependencies and behavior remain explicitly unproven;
+their absence from this file-only diagnostic count does not certify execution.
+This proves static recovery/availability, not successful execution, interactive
+startup, remote access or a command's intended outcome.
+
+Managed directory *names* are not ownership evidence. Actual `.git`/`.chezmoiroot`
+markers, managed/generated file comments, link/ownership evidence constrain writes.
+Saved managed source paths are never synthesized as unmanaged replacements.
+The supported route is to restore the matching repository through existing Workspace
+capabilities, or restore through the responsible manager, then Refresh Preview.
+An already matching qualified tree can Verify/Check/no-op; incomplete managed sources
+remain blocked. Macseed does not infer a clone URL, run a manager, retarget links,
+or silently add Workspace selections. Stow symlinks and unqualified manager layouts
+require separate resolution. A safely readable script owned by a manager may be
+explicitly captured under the negotiated transfer contract; its source is never mutated.
+
+| Recovery scenario | Current recovery result |
+| --- | --- |
+| Closed static alias, or selected independent standard command in a new default `.zshrc` | Clean-HOME creation, Verify, Check, repeat/no-op |
+| Alias in a qualified static source chain | Missing directories/files/edges reconstructed in order |
+| Existing safe connected file | Prefix-preserving insertion; conflicting definitions/order blocked |
+| Selected qualified script file | Separate Capture and Restore consent; exact bytes and supported original mode |
+| Missing dependency without payload | Selected alias retained as a prerequisite; no false Match/planned write |
+| Existing non-transferred local dependency | Metadata availability only; opaque behavior/transitive scope remains incomplete |
+| Existing qualified managed checkout and HOME-relative `cd` destination | Read-only Match; resolve missing/changed managed files through their owner |
+| Missing installed tool, dynamic initialization, unsafe paths | Explicit Needs Attention; no speculative installation or rewrite |
+
+The sanitized `infra` fixtures exercise a sourced HOME-relative directory alias,
+including a managed source and separately restored destination. `adns` fixtures
+exercise local executable dependencies, safe `0755` wrappers and the v3 rejection
+of complex control flow. Capability-4 fixtures separately prove inert transfer of
+complex Unicode Shell files, including file-only scope, without qualifying their
+behavior or bypassing managed-source recovery. Discovery count alone cannot close the
+Shell Aliases checkpoint. V5 focused fixtures cover multi-file manual Capture,
+non-executable/Python/extensionless files, separate members and resource boundaries,
+legacy compatibility, no-clobber Restore and independent file Check. The separately
+accepted real A/B/C workflow captured two aliases and two files, established four
+Missing results after controlled removal, restored all four through the GUI, then
+reported four Match and a fresh no-op Preview. Independent inspection confirmed
+source bytes, document identity and required metadata. The known partial Shell
+coverage warning remains outside this acceptance. These fixtures had no quarantine;
+positive quarantine preservation retains its focused-test evidence. Hosted and
+clean-Mac qualification remain separate open gates.
+
+### Remaining Shell recovery integration (planned)
+
+The [12-alias recoverability assessment](../qualification/SHELL-RECOVERABILITY-2026-11-12.md)
+retains historical evidence of remaining gaps beyond the accepted A/B/C slice, not
+completion of Shell. The following work is
+planned Core integration; it is not implemented by the Capture Prepare correction.
+Keep the accepted individual alias selection and presentation counts unchanged.
+
+| Dependency | Next bounded Core work | Existing owner and acceptance boundary |
+| --- | --- | --- |
+| Startup/source reconstruction | Classify required static source edges separately from excluded initialization; bind selected edges, order and conflicts into fresh plans. Extend only proven independent slices. | Shell source/recovery contracts; no startup execution, unknown initialization copy or dormant-code activation. |
+| SSH-backed aliases | Associate qualified local references with existing selected SSH configuration/key requirements where evidence is unambiguous; report unresolved local prerequisites separately. | Existing SSH Configuration and Secure Migration; preserve consent and SSH-before-Git ordering. No second SSH engine. |
+| Git/Workspace-managed sources | Relate portable source paths and directory operands to explicitly selected qualified checkouts/folders. Reuse Workspace preparation/execution, then re-observe Shell before authorizing changes. | Existing Git/Workspace ownership, hooks, conflict, freshness and no-clobber gates. No inferred clone URL, silent selection or dotfiles manager. |
+| VS Code CLI | Qualify the CLI entrypoint independently from app installation; expose an unmet local prerequisite and reuse existing application/provider setup where supported. | Existing VS Code/application capabilities; no speculative install or unmanaged symlink. |
+| Script or Git-backed recovery | Use the existing per-file consent contract for qualifying scripts; otherwise identify an explicitly selected qualified source checkout or an owner-provided recovery step. Re-observe after recovery. | Existing Shell transfer and Workspace engines; retain size/path/metadata/integrity gates, unresolved transitive dependencies and no execution during inspection/transfer/Verification. |
+
+Implement one bounded dependency path at a time with sanitized source/destination
+fixtures covering Capture → Rebuild → Verify → Check → no-op, missing prerequisites,
+conflicts, consent and stale evidence. New Core dependency evidence must not create
+duplicate requirements/counts or let Desktop infer readiness. Cross-domain scheduling
+must reuse the existing Bootstrap/Restore order; a fresh Preview after separately
+completed prerequisites remains the safe boundary until an integration is qualified.
+
+Correct restoration of a saved alias declaration/source chain does **not** require
+external network connectivity or successful remote authentication. Those are distinct
+operational claims. Qualify required local files/tools under their owning contracts;
+report opaque behavior and unresolved dependencies honestly without converting a
+network outage into a declaration mismatch or claiming command execution succeeded.
+These broader dependencies do not reopen the accepted four-object checkpoint.
+Standalone Zsh Functions is next under the Roadmap; this documentation update
+does not implement it or change the later Stage 3C order.
+
+Functions, variables/PATH, Shell Settings, broader alias forms, metadata-safe updates
+and framework/plugin prerequisites remain the
+[next bounded slices](../../TODO.md#shell--zsh-functional-completion--current).
+Oh My Zsh and plugin-manager configuration is distinct from installed frameworks;
+Homebrew initialization is distinct from a portable static value. Neither silent
+installation nor arbitrary sourcing is part of this contract.
+
+The subsequent dependency slices must distinguish configuration from prerequisites:
+
+| Arrangement | Candidate configuration | Separate dependency / current exclusion |
+|---|---|---|
+| Homebrew initialization | Explicit target-qualified initialization intent | `brew shellenv` emits PATH and related exports for the installed prefix; its output is not a portable literal. Never replace Intel/Apple Silicon paths inside arbitrary commands. |
+| Oh My Zsh | Ordered plugin names, theme and declared custom locations | Installed framework/plugin code and custom overrides have load-order dependencies. Names alone cannot prove availability or equivalent behavior. |
+| Antidote and sourced scripts | Ordered declarative plugin references or individually qualified file relationships | Generated sourced loaders, downloaded plugin repositories and arbitrary script bodies are not this alias payload. |
+| User-managed dotfiles | Explicit ownership and selected portable requirements | Repository checkout, symlinks, secrets and machine-local paths require their own contract; a matching marker is only an exclusion signal. |
+
+These are proposed boundaries, not implemented framework migration. Primary references:
+[Homebrew shellenv](https://docs.brew.sh/Manpage#shellenv-shell-),
+[Oh My Zsh customization](https://github.com/ohmyzsh/ohmyzsh/wiki/Customization),
+and [Antidote plugin lists and generated loaders](https://antidote.sh/usage).
 
 ## macOS settings
 
@@ -945,9 +1537,21 @@ key discovery or remote authentication probe occurs. At most 32 distinct literal
 destinations are qualified, using the existing per-profile reference/location
 bounds and a 1 MiB budget for private dependency details; excess rows stay
 unqualified. Planned configuration must also fit the Clone Executor's unchanged
-128 KiB inert-config limit. All explicit ordered file references must qualify; implicit files, agents
-and `IdentityFile none` remain unassessed remote authentication inputs. Unsupported
+128 KiB inert-config limit. All explicit ordered file references must qualify; implicit files,
+unbound agent identities and `IdentityFile none` remain unassessed remote authentication inputs. Unsupported
 local configuration remains unresolved rather than being interpreted speculatively.
+
+An existing destination identity can qualify through the runtime's `SSH_AUTH_SOCK`
+without captured SSH configuration or keys. Core requires a safe explicit file pair,
+reads only its public key for this path, and uses native `ssh-add -T` to obtain and
+verify a fresh signature from the expected key. Listing an agent's keys is insufficient.
+The socket must be user-owned inside a private, safely traversed directory. Public
+key bytes, pair metadata and socket identity enter private plan evidence; the proof
+is repeated during authoritative Execute preparation and before clone admission.
+A changed endpoint, key or file binding invalidates the prepared plan. Agent failure
+cannot retain an earlier qualification. Desktop forwards only its own agent locator;
+it never starts an agent, loads/unlocks keys or inherits Terminal credentials.
+This proves local possession, not Git server authorization or remote authentication.
 
 Only fixed clone reasons enter ordinary events; no Host/key relationship or extra
 dependency task is published. Private per-clone evidence extends the existing

@@ -16,9 +16,13 @@ capture_observe() {
     fi
     local file
     file="$BLUEPRINT_GENERATED_DIR/$(python3 -B modules/core/application-interface/capture.py --path "$domain")" || return 2
-    if [[ "$domain" == vscode-workspaces || "$domain" == ssh-configuration ]]; then
+    if [[ "$domain" == vscode-workspaces || "$domain" == ssh-configuration || "$domain" == shell-zsh ]]; then
         local collector=--workspace-row
         [[ "$domain" != ssh-configuration ]] || collector=--ssh-row
+        [[ "$domain" != shell-zsh ]] || collector=--shell-row
+        if [[ "$domain" == shell-zsh && "$status" != observation_error && -f "$file" ]]; then
+            zsh_snapshot_validate "$file" || { status=observation_error; reason=inventory_invalid; }
+        fi
         python3 -B modules/core/application-interface/capture.py "$collector" \
             "$MACSEED_CAPTURE_INVENTORY" "$file" "$status" "$reason"
         return $?

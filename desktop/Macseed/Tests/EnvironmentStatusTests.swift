@@ -645,7 +645,7 @@ private struct StatusAnchorFrames: PreferenceKey {
         let parent = DisplayCategory(id: DeveloperSelectionGroup.ssh.id, title: "SSH", symbol: "key", items: [warning])
         precondition(EnvironmentComparisonDomain.showsAggregateStatus(parent, children: [config], expanded: false))
         precondition(!EnvironmentComparisonDomain.showsAggregateStatus(parent, children: [config], expanded: true))
-        precondition(!EnvironmentComparisonDomain.showsAggregateStatus(config, expanded: true), "The visible leaf retains the identical warning")
+        precondition(EnvironmentComparisonDomain.showsAggregateStatus(config, expanded: true), "A final functional category retains its aggregate warning")
         let independent = DisplayItem(id: "ssh:independent", title: "Independent warning", status: .attention, action: "Different evidence", reason: nil)
         let additional = DisplayCategory(id: parent.id, title: parent.title, symbol: parent.symbol, items: [warning, independent])
         precondition(EnvironmentComparisonDomain.showsAggregateStatus(additional, children: [config], expanded: true), "Never hide additional independent evidence")

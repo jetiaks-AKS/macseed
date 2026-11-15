@@ -129,7 +129,7 @@ private struct MacseedSettingsScene: Scene {
         } else if runtime.operation == .captureExecute {
             alert.informativeText = "Capture will stop. A published file or temporary state may remain. Scan again before another attempt."
         } else {
-            alert.informativeText = runtime.operation == .environmentCompare || runtime.operation == .capabilities
+            alert.informativeText = runtime.operation == .environmentCompare || runtime.operation == .capabilities || runtime.operation == .captureScriptInspect
                 ? "The read-only check will stop. Check again to inspect current state."
                 : "Completed changes may remain. Inspect current state before another rebuild."
         }

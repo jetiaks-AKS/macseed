@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 
 // Lossless JSON values: future fields stay available without a parallel domain model.
 indirect enum CoreJSON: Codable, Equatable, Sendable {
@@ -34,6 +35,7 @@ indirect enum CoreJSON: Codable, Equatable, Sendable {
 enum CoreOperation: String, Codable, CaseIterable, Sendable {
     case capabilities, bundleInspect = "bundle_inspect"
     case capturePrepare = "capture_prepare", captureExecute = "capture_execute", captureIdentityInspect = "capture_identity_inspect"
+    case captureScriptInspect = "capture_script_inspect"
     case restorePrepare = "restore_prepare", restoreExecute = "restore_execute", secureRestoreCompare = "secure_restore_compare", secureRestoreInventory = "secure_restore_inventory"
     case sshRestoreReview = "ssh_restore_review"
     case environmentCompare = "environment_compare"
@@ -145,6 +147,7 @@ enum CoreCommand: Sendable {
     case capabilities
     case bundleInspect(path: String)
     case captureIdentityInspect
+    case captureScriptInspect(scripts: [String: String])
     case capturePrepare(selection: CoreCaptureSelection?)
     case captureExecute(selection: CoreCaptureSelection, destination: String, preparedID: String, replacementSHA256: String? = nil)
     case restorePrepare(path: String, disabledGroups: [String], includeSecure: Bool, selection: CoreRestoreSelection? = nil, installerPreparations: [String]? = nil)
@@ -162,6 +165,7 @@ enum CoreCommand: Sendable {
         case .capabilities: .capabilities
         case .bundleInspect: .bundleInspect
         case .captureIdentityInspect: .captureIdentityInspect
+        case .captureScriptInspect: .captureScriptInspect
         case .capturePrepare: .capturePrepare
         case .captureExecute: .captureExecute
         case .restorePrepare: .restorePrepare
@@ -197,6 +201,13 @@ enum CoreCommand: Sendable {
         case .sshRestoreReview(let path, let value, let secure):
             return .object(["path": .string(path), "include_secure": .bool(secure), "selection": try JSONDecoder().decode(CoreJSON.self, from: JSONEncoder().encode(value))])
         case .captureIdentityInspect: return .object([:])
+        case .captureScriptInspect(let scripts):
+            guard scripts.count <= 128,
+                  scripts.allSatisfy({ key, value in
+                      key.range(of: "^[0-9a-f]{64}\\z", options: .regularExpression) != nil
+                      && value.range(of: "^[0-9a-f]{64}\\z", options: .regularExpression) != nil
+                  }) else { throw CoreRuntimeError.invalidRequest }
+            return .object(["scripts": .object(scripts.mapValues(CoreJSON.string))])
         case .capturePrepare(let value): return .object(["selection": try selection(value)])
         case .captureExecute(let value, let destination, let id, let replacement):
             var parameters: [String: CoreJSON] = ["selection": try selection(value), "destination": .string(destination), "expected_prepared_capture_id": .string(id)]
@@ -235,20 +246,59 @@ struct CoreRequest: Sendable {
     let externalIdentityPaths: [String]
     let restoreDestinations: CoreRestoreDestinations?
     let sshApprovals: CoreSSHApprovals?
-    init(_ command: CoreCommand, operationID: String = UUID().uuidString, externalIdentityPaths: [String] = [], restoreDestinations: CoreRestoreDestinations? = nil, sshApprovals: CoreSSHApprovals? = nil) {
+    let shellScriptIDs: [String]
+    let shellScriptSelection: [String]?
+    let shellScriptPolicy: String?
+    let shellScriptPaths: [String]
+    init(_ command: CoreCommand, operationID: String = UUID().uuidString, externalIdentityPaths: [String] = [], restoreDestinations: CoreRestoreDestinations? = nil, sshApprovals: CoreSSHApprovals? = nil, shellScriptIDs: [String] = [], shellScriptSelection: [String]? = nil, shellScriptPolicy: String? = nil, shellScriptPaths: [String] = []) {
         self.command = command
         self.operationID = operationID
         self.externalIdentityPaths = externalIdentityPaths
         self.restoreDestinations = restoreDestinations
         self.sshApprovals = sshApprovals
+        self.shellScriptIDs = shellScriptIDs
+        self.shellScriptSelection = shellScriptSelection
+        self.shellScriptPolicy = shellScriptPolicy
+        self.shellScriptPaths = shellScriptPaths
     }
-    func encoded() throws -> Data {
+    func encoded() throws -> Data { try wire().request }
+    func wire() throws -> (request: Data, manifest: Data?) {
         guard operationID.range(of: "^[A-Za-z0-9_-]{1,64}$", options: .regularExpression) != nil else {
             throw CoreRuntimeError.invalidRequest
         }
         var fields: [String: CoreJSON] = ["protocol_version": .integer(1), "operation_id": .string(operationID),
                                           "operation": .string(command.operation.rawValue)]
         if let parameters = try command.parameters() { fields["parameters"] = parameters }
+        if !shellScriptPaths.isEmpty {
+            guard [.capturePrepare, .captureExecute, .captureScriptInspect].contains(command.operation),
+                  ["opaque-file-v4", "opaque-file-v5"].contains(shellScriptPolicy ?? ""), shellScriptPaths.count <= (shellScriptPolicy == "opaque-file-v5" ? 128 : 16),
+                  shellScriptPaths.allSatisfy({ $0.hasPrefix("/") && $0.utf8.count <= 1024 && !$0.unicodeScalars.contains(where: { $0.value < 32 || $0.value == 127 }) }),
+                  var parameters = fields["parameters"]?.object else { throw CoreRuntimeError.invalidRequest }
+            parameters["shell_script_paths"] = .array(shellScriptPaths.map(CoreJSON.string))
+            fields["parameters"] = .object(parameters)
+        } else if case .captureScriptInspect(let scripts) = command, scripts.isEmpty { throw CoreRuntimeError.invalidRequest }
+        if !shellScriptIDs.isEmpty {
+            guard [.captureExecute, .restoreExecute].contains(command.operation), shellScriptIDs.count <= 128,
+                  Set(shellScriptIDs).count == shellScriptIDs.count,
+                  shellScriptIDs.allSatisfy({ $0.range(of: "^[0-9a-f]{64}\\z", options: .regularExpression) != nil }),
+                  var parameters = fields["parameters"]?.object else { throw CoreRuntimeError.invalidRequest }
+            parameters["shell_script_ids"] = .array(shellScriptIDs.sorted().map(CoreJSON.string))
+            fields["parameters"] = .object(parameters)
+        }
+        if let shellScriptSelection {
+            guard [.capturePrepare, .captureExecute, .restorePrepare, .restoreExecute, .secureRestoreCompare].contains(command.operation),
+                  shellScriptSelection.count <= 128, Set(shellScriptSelection).count == shellScriptSelection.count,
+                  shellScriptSelection.allSatisfy({ $0.range(of: "^[0-9a-f]{64}\\z", options: .regularExpression) != nil }),
+                  var parameters = fields["parameters"]?.object else { throw CoreRuntimeError.invalidRequest }
+            parameters["shell_script_selection"] = .array(shellScriptSelection.sorted().map(CoreJSON.string))
+            fields["parameters"] = .object(parameters)
+        }
+        if let shellScriptPolicy {
+            guard [.capturePrepare, .captureExecute, .captureScriptInspect].contains(command.operation),
+                  ["opaque-file-v4", "opaque-file-v5"].contains(shellScriptPolicy ?? ""), var parameters = fields["parameters"]?.object else { throw CoreRuntimeError.invalidRequest }
+            parameters["shell_script_policy"] = .string(shellScriptPolicy)
+            fields["parameters"] = .object(parameters)
+        }
         if !externalIdentityPaths.isEmpty {
             guard [.capturePrepare, .captureExecute, .captureIdentityInspect].contains(command.operation),
                   externalIdentityPaths.count <= 32, Set(externalIdentityPaths).count == externalIdentityPaths.count,
@@ -277,9 +327,27 @@ struct CoreRequest: Sendable {
             parameters["ssh_approvals"] = .bool(true)
             fields["parameters"] = .object(parameters)
         }
-        let data = try JSONEncoder().encode(CoreJSON.object(fields))
+        var data = try JSONEncoder().encode(CoreJSON.object(fields))
+        if data.count <= 4096 { return (data, nil) }
+        guard [.capturePrepare, .captureExecute, .captureScriptInspect, .restorePrepare, .restoreExecute, .secureRestoreCompare].contains(command.operation),
+              var parameters = fields["parameters"]?.object else { throw CoreRuntimeError.requestTooLarge }
+        var references: [String: CoreJSON] = [:]
+        for key in ["scripts", "shell_script_paths", "shell_script_ids", "shell_script_selection"] {
+            if let value = parameters.removeValue(forKey: key) { references[key] = value }
+        }
+        if var selection = parameters["selection"]?.object, var items = selection["items"]?.object,
+           let shell = items.removeValue(forKey: "shell-zsh") {
+            references["shell_items"] = shell
+            selection["items"] = .object(items); parameters["selection"] = .object(selection)
+        }
+        guard !references.isEmpty else { throw CoreRuntimeError.requestTooLarge }
+        let manifest = try JSONEncoder().encode(CoreJSON.object(["version": .integer(5), "operation_id": .string(operationID), "parameters": .object(references)]))
+        guard manifest.count <= 262144 else { throw CoreRuntimeError.requestTooLarge }
+        parameters["script_manifest"] = .string(SHA256.hash(data: manifest).map { String(format: "%02x", $0) }.joined())
+        fields["parameters"] = .object(parameters)
+        data = try JSONEncoder().encode(CoreJSON.object(fields))
         guard data.count <= 4096 else { throw CoreRuntimeError.requestTooLarge }
-        return data
+        return (data, manifest)
     }
 }
 

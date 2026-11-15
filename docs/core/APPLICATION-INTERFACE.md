@@ -36,11 +36,12 @@ Prepared IDs are 64 lowercase hexadecimal characters.
 | `capabilities` | Omit `parameters` | Returns `protocol_version`, `product_version`, `operations` |
 | `bundle_inspect` | `path` | Returns Bundle summary and Core-owned `restore_selection` inventory; no Apply |
 | `capture_identity_inspect` | `external_identities: true` | One explicit SSH source pair; safe candidate metadata only, no unlock |
-| `capture_prepare` | `selection`, optional `external_identities: true` | Private staged observation and prepared selection |
-| `capture_execute` | `selection`, `destination`, `expected_prepared_capture_id`, optional `replacement_sha256`, `external_identities: true` | Fresh observation and Bundle publication |
-| `restore_prepare` | `path`, `disabled_groups`, `include_secure`, optional `selection`, `installer_preparations`, `custom_destinations: true` | Bundle validation, Preview and prerequisites; no publication or Apply |
-| `restore_execute` | `path`, `disabled_groups`, `include_secure`, `expected_prepared_plan_id`, optional `selection`, `secure_comparison`, `custom_destinations: true` | Fresh preparation, local-state publication and restoration |
-| `secure_restore_compare` | `path`, `disabled_groups`, `include_secure: true`, `expected_prepared_plan_id`, optional `selection`, `custom_destinations: true` | Authenticated read-only comparison of the selected encrypted package; separate secure FD required |
+| `capture_script_inspect` | `scripts: {id: observation_id}` | Explicit bounded read-only content eligibility; no Discovery/publication/consent grant |
+| `capture_prepare` | `selection`, optional `external_identities: true`, `shell_script_selection` | Private staged observation and prepared selection |
+| `capture_execute` | `selection`, `destination`, `expected_prepared_capture_id`, optional `replacement_sha256`, `external_identities: true`, `shell_script_ids`, `shell_script_selection` | Fresh observation and Bundle publication |
+| `restore_prepare` | `path`, `disabled_groups`, `include_secure`, optional `selection`, `installer_preparations`, `custom_destinations: true`, `shell_script_selection` | Bundle validation, Preview and prerequisites; no publication or Apply |
+| `restore_execute` | `path`, `disabled_groups`, `include_secure`, `expected_prepared_plan_id`, optional `selection`, `secure_comparison`, `custom_destinations: true`, `shell_script_ids`, `shell_script_selection` | Fresh preparation, local-state publication and restoration |
+| `secure_restore_compare` | `path`, `disabled_groups`, `include_secure: true`, `expected_prepared_plan_id`, optional `selection`, `custom_destinations: true`, `shell_script_selection` | Authenticated read-only comparison of the selected encrypted package; separate secure FD required |
 | `secure_restore_inventory` | `path` | Explicit authenticated read-only inventory; separate secure FD, private result only |
 | `secure_check_inventory` | `path`, `expected_bundle_id` | Explicit authenticated inventory for read-only Check; separate secure FD required |
 | `secure_check_compare` | `path`, `expected_bundle_id`, `custom_destinations: true` | Read-only comparison of an explicit v2 identity subset and private destination mapping |
@@ -448,6 +449,165 @@ Cancellation, invalid input, changed Bundle, stale selection and interrupted pri
 transport return no usable secure evidence. Temporary decrypted staging uses the
 existing protected cleanup; SIGKILL/power loss cannot guarantee cleanup. No Check
 branch reaches importer Apply, directory creation, chmod, SSH publication or Git.
+
+### Shell alias requirements
+
+Bundle V1 negotiates `shell-aliases: 1` for the original `.zshrc` alias payload
+`shell-aliases: 2` for portable source-chain provenance, or `shell-aliases: 3`
+for selected structure/dependency recovery, or `shell-aliases: 4` for explicitly
+negotiated opaque executable-file transfer, or `shell-aliases: 5` for bounded
+Scripts manifests and separate byte members. Core inventory
+exposes ordinary `shell-zsh` items with `shell-alias:` SHA-256 identities derived
+from exact names. Selection narrows saved order; Preview and `alias_definition`
+(v1/v2) or `alias_recovery` (v3/v4/v5) Verification/Comparison records retain independent requirement identities, without
+a whole-file aggregate. Partial coverage remains a separate scope diagnostic.
+Successful Bundle-backed Check may add `reference_presentation.shell_alias_labels`;
+Desktop validates name/ID correspondence and otherwise keeps neutral labels. Command
+text never enters public records, requests or display metadata. Existing explicit
+Restore approval/fresh preparation applies; Preview cannot plan blocked insertion
+or ignore operation-wide prerequisites. The [Shell contract](../toolkit/CONFIGURATION.md#shell--zsh-configuration)
+owns parsing, filesystem/publication rules and historical snapshot compatibility.
+Capture/Restore Prepare may add `shell_scripts: [{id, path}]` for the selected
+scope. Paths are bounded HOME-relative display metadata; IDs are SHA-256 of
+`"shell-script:" + path`. Associated dependency files do not add physical Restore
+requirements for their aliases; Capture counts independently selected files as
+separate objects. Capabilities 4/5 permit
+a standalone `shell-script:` + file-ID requirement when its aliases are unselected;
+this adds one real file item, with `script_file` Verification, and no startup mutation. Capture Execute may
+send `shell_script_ids` (unique, at most 128 for v5; 16 for legacy Capture) to authorize reading/saving those
+specific candidates. Restore Execute must send exactly the current missing-script
+IDs to authorize executable publication; omitted consent fails before mutation.
+Consent is operation-specific, never inferred from saved payloads or environment.
+Script contents never enter ordinary events or diagnostic logs.
+Successful Check may expose validated `reference_presentation.shell_script_labels`
+for all owned capability-4/5 file requirements, including files associated with selected
+aliases. Each saved payload contributes one `script_file` Verification/Check
+requirement. V5 Preview also emits that file identity for alias-linked payloads;
+physical selection counts remain unchanged. Desktop checks path/ID correspondence and the
+`script_file` record before using the label; it never infers script execution.
+
+Capture Scan/Prepare and Bundle Inspect may add `shell_script_candidates` rows with
+`id`, `path`, `alias_ids` and `observation_id`. IDs/paths retain the rules above;
+alias IDs must be unique members of the same item-mode Shell inventory. Saved v4/v5
+candidates add `independent: true` and may have an empty alias association; their
+file IDs also appear in Core selection inventory and are displayed only in Scripts. The
+observation ID is a 64-character lowercase SHA-256 digest. Capture metadata binds
+source/dependency observations without reading script bodies; Bundle candidates
+derive only from validated saved payloads. Swift never infers associations from text.
+Restore Prepare also returns this metadata for its selected payload scope, including
+matching files that require no write. The native client compares authorized IDs,
+paths and observation IDs with the reviewed Bundle candidates before accepting the
+Preview; changed or missing evidence clears authorization and requires reopening
+the Bundle. `shell_scripts` continues to describe actual missing-file writes only.
+V5 Restore Prepare additionally returns `shell_skipped_items`, the unique selected
+alias/file identities whose rejected groups produce no writes. Each identity must
+correspond to exactly one Shell plan row with no action and a blocked, conflict or
+unknown disposition. This decision is bound into `prepared_plan_id`, recomputed at
+Execute and consumed by native gating; a generic warning alone never permits a
+skip. Safe file operations remain executable alongside skipped aliases. The
+publisher retains per-file consent, full selected-state freshness, no-clobber and
+post-publication verification; incomplete selected recovery reports attention.
+Legacy readers, the Bundle format, Capture counts and Check predicates are unchanged.
+
+`capture_script_inspect` accepts `scripts`, an exact nonempty map of at most
+128 candidate IDs with v5 (16 with the legacy policies) to reviewed observation IDs (both lowercase SHA-256 strings).
+It re-observes the bounded static Shell graph without running Discovery or writing
+generated state, and reads only requested candidates whose metadata still matches.
+The result is `scripts: [{id, observation_id, status, reason}]`; status is
+`qualified`, `unsupported` or `unverified`. Only qualified rows have a null reason.
+Sanitized reasons distinguish unsupported format/permissions/limits/dependencies,
+sensitive indicators, changed evidence and failed observation. No bytes, command
+values or paths enter this response. The client validates exact scope and evidence
+before retaining the explicitly authorized file selection. Desktop invokes it
+automatically after exact-file authorization, never through a separate action.
+The response cannot grant consent; final Prepare/Execute retain all existing content and freshness checks.
+
+With `shell_script_policy: "opaque-file-v5"`, Capture inspection, Prepare and
+Execute accept `shell_script_paths`: up to 128 explicitly picked absolute paths,
+each at most 1024 UTF-8 bytes, inside HOME. The legacy v4 policy retains its
+16-file restriction. Core normalizes verified file identity through the existing
+Shell contract; there is no directory crawl. Inspection may use an empty `scripts`
+map to qualify picked files and returns their `shell_script_candidates`
+(HOME-relative paths, stable IDs, alias associations and fresh observation IDs),
+plus per-file results. Zero-alias Capture is supported. Native inspects individual
+additions so one rejection preserves other valid files. Picking grants no inclusion
+consent. Prepare/Execute accept only selected file references, repeat validation
+and bind staged manifest/content hashes and source observations into freshness.
+Execute requires exact file consent; there is no new Restore or Check operation.
+
+`features.shell_script_transfer` advertises version `5`, policy `opaque-file-v5`,
+`legacy_policies: ["opaque-file-v4"]`, inspection `capture_script_inspect`,
+`max_files: 128`, `max_file_bytes: 1048576`, `max_content_bytes: 16777216`,
+`max_manifest_bytes: 262144`, and request manifest `shell-scripts-request.json`.
+Capture advertises `shell_script_policies: ["opaque-file-v4", "opaque-file-v5"]`
+even with no candidates. It echoes and binds the chosen policy and exact
+`shell_script_selection`; unknown policies fail closed and omission retains v3.
+V5 payloads declare Bundle feature 5; v4 is never silently upgraded on read.
+V5 quarantine state participates in saved-file integrity, preparation freshness and
+Check. Attribute values remain private Bundle metadata, never public JSONL fields;
+inspection exposes only a sanitized qualification or rejection reason.
+The [Shell contract](../toolkit/CONFIGURATION.md#script-files-capability-5) owns
+format, privacy, metadata and content limits.
+
+The generic Protocol V1 request remains **4096 bytes**. When file references do not
+fit, Native writes an operation-private `shell-scripts-request.json` under Core's
+existing TMPDIR, removes those fields from the wire request and supplies
+`script_manifest: "<SHA-256 of exact manifest bytes>"`. The manifest is bounded to
+256 KiB, mode 0600, owned, regular and single-link in an owned 0700 operation
+directory. It has `{version: 5, operation_id, parameters}`; only `scripts`,
+`shell_script_paths`, `shell_script_ids`, `shell_script_selection` and `shell_items`
+are permitted. `shell_items` supplies the otherwise absent `selection.items.shell-zsh`
+subset, bounded to 384 alias/file identities. Duplicate fields, conflicting inline
+fields, stale operation/hash, unsafe files, unknown fields and oversized control
+data fail closed. Expanded fields pass the ordinary operation validators again.
+The manifest cannot expand unrelated parameters or transport file content. Native
+cleans it with the existing operation directory on completion/cancellation.
+
+Core's Capture summary counts selected Aliases & Functions and Scripts as separate
+functional domains, without another Shell parent contribution or changing
+`shell-zsh`. Native's protocol aggregation applies that contract in live Selection;
+Confirmation validates Core preparation; Result projects functional counts from
+Bundle inspection's existing `shell_script_candidates` identities/alias associations
+and physical `selected_item_counts`, then validates both against preparation.
+Capture Selected Items counts alias definitions and unique selected script files
+separately, including alias-linked files. Bundle/Restore physical counts and Check
+evidence semantics are unchanged. Thus,
+with 11 other selected domains, the four alias/script states produce 13/12/12/11
+domains; visibility alone contributes nothing.
+
+Optional `shell_script_selection` is a unique list of at most 128 valid script IDs
+(legacy Capture policies retain 16),
+including an explicit empty list. Capture Prepare validates content after this
+explicit per-file authorization and binds the selection in its prepared identity.
+Execute requires `shell_script_ids` to equal that selection. Restore Prepare filters
+the temporary selected payload to these IDs, retaining alias/dependency evidence;
+missing unselected dependencies remain blockers. It echoes `shell_script_selection`
+and binds it into the prepared identity, including secure comparison/re-entry.
+Execute still requires exactly the currently missing selected writes in
+`shell_script_ids`. Unknown IDs, unselected requirement scope and stale plans fail closed.
+Omitting the new field retains the earlier consent protocol. The fields themselves do not change legacy contracts. V4/v5 standalone scope adds
+only the actual independent file requirements described above. Native Selection collects
+default-off file consent. Direct Scripts bulk selection resolves to exact reviewed
+eligible IDs and automatically preflights newly authorized Capture files; collapsed selection shows executable disclosure in the native dialog.
+Parent selection requires a separate informed choice before adding executable
+permissions. Its pending file/observation snapshot cannot authorize changed or newly
+discovered candidates. Capture and Restore permissions remain independent.
+Confirmation only summarizes consent and discloses the ordinary
+unencrypted-code boundary. File/association/observation metadata is not persisted in
+operation logs or Diagnostic Reports.
+
+Shell Verification diagnostics retain explicit `shell_*_prerequisite` codes for
+missing versus unobservable commands, files and folders, unsupported operands and
+selected-scope blockers. Comparison preserves these codes without changing
+conformity or counts. Unknown codes remain rejected.
+
+Capability-2/3 source observations join the private Prepare/Execute identity and are
+rechecked at the Bootstrap Apply boundary; comments and inode changes invalidate
+stale plans. Source relationships and unsaved dependencies never add logical
+requirements or counters; explicitly saved v4/v5 files retain their version-specific
+identities described above. Existing-file additions use the existing `set_setting`
+action, approved execution and predecessor-preserving publication. Pending publication
+evidence blocks fresh mutation; this does not implement Stage 3C reconciliation.
 
 ### SSH Host presentation evidence
 

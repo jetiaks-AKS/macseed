@@ -7,6 +7,50 @@ Close future gates with the evidence location, revision, host/runtime, selected 
 and result. Preserve accepted evidence and obtain only missing evidence under the
 authorized gate; an interrupted run is not a full PASS and does not justify broad reruns.
 
+## Shell / Zsh functional completion — current
+
+Follow the approved order: **Shell → Stage 3C → remaining Stage 16 functionality →
+Stage 17 distribution → final comprehensive qualification → Alpha → 1.0**.
+The [Shell contract](docs/toolkit/CONFIGURATION.md#shell--zsh-configuration) owns the
+bounded source-aware alias slice. Legacy whole-file behavior remains supported; this does not
+complete Shell or prove effective interactive-shell state.
+
+The accepted [Aliases & Scripts v5 A/B/C checkpoint](docs/qualification/SHELL-RECOVERABILITY-2026-11-12.md#real-gui-abc-acceptance--2026-11-15)
+does not qualify every dynamic or managed Shell configuration. Preserve that
+bounded acceptance and the existing partial-coverage warning.
+
+- [ ] **Standalone Zsh Functions — next:** classify bounded definitions, call/alias dependencies, side effects,
+  name conflicts and portable reconstruction; implement only qualified constructs.
+- [ ] **Variables & PATH**: separate portable static values, HOME-relative references,
+  ordered path entries, secrets and dynamic initialization; qualify Apple Silicon /
+  Intel Homebrew prerequisites without rewriting arbitrary commands or paths.
+- [ ] **Settings**: qualify options, history settings (not history contents), completion,
+  key bindings, prompt configuration and supported hooks.
+- [ ] Extend startup/source dependencies beyond the implemented bounded static chains
+  and qualified ZDOTDIR where required by functional items. These are provenance,
+  never extra UI categories; no execution during observation or unqualified source insertion.
+- [ ] **Plugins & Themes** (conditional): separate Oh My Zsh, Homebrew and plugin-manager
+  configuration from installed prerequisites, nonportable state and external dotfile
+  ownership. Show this category only after Core functionality and relevant items
+  exist. No silent installation, arbitrary sourcing or unmanaged overwrite.
+- [ ] Qualify each completed Shell slice with focused Core/native security,
+  compatibility, conflict, approval and repeat/no-op cases. Final full application
+  Native Desktop/packaged clean-Mac qualification remains a later distinct gate.
+- [ ] Evaluate and qualify the [remaining Core dependency integration](docs/toolkit/CONFIGURATION.md#remaining-shell-recovery-integration-planned)
+  beyond the accepted A/B/C scope: managed-dotfile/source relationships, existing
+  SSH requirements, Git/Workspace-owned sources, VS Code CLI and unresolved script
+  dependencies. Retain the [historical gap matrix](docs/qualification/SHELL-RECOVERABILITY-2026-11-12.md),
+  reuse existing owners and preserve explicit prerequisites. Declaration recovery
+  does not prove runtime behavior or remote authentication. These gaps do not
+  reopen the accepted checkpoint or reorder the Functions-first sequence.
+
+Scan Folder and Automation remain deferred in Roadmap, outside the accepted
+checkpoint. Hosted qualification still requires separately approved publication.
+
+**Next functional checkpoint after Shell completion:** Stage 3C reconciliation in
+[Cancellation, recovery and runtime reliability](#cancellation-recovery-and-runtime-reliability).
+Do not begin that implementation as part of the alias slice.
+
 ## Complete Workspace & Git Worktree Restoration
 
 Follow the [capability checkpoint and accepted bounded Core E2E scope](ROADMAP.md#complete-workspace--git-worktree-restoration);
@@ -58,7 +102,7 @@ manual evidence belong to [Roadmap](ROADMAP.md#stage-16--native-macseed-desktop)
 and [Desktop](docs/DESKTOP.md#secure-interactions). Follow the
 [workflow contract](docs/CAPTURE-RESTORE.md#ssh-environment-completion--developer-environment-closure):
 
-- [ ] **Next SSH gate:** complete successful isolated Core Git-over-SSH qualification,
+- [ ] **Retained SSH gate (final qualification phase):** complete successful isolated Core Git-over-SSH qualification,
   including import → configuration → clone ordering, Verification and repeat/no-op.
   Reuse the [2026-11-10 evidence](docs/qualification/SSH-E2E-2026-11-10.md) for the
   accepted Core default/saved-custom lifecycles, security cases and approved-correction
@@ -140,8 +184,11 @@ these tasks require native effects or unexercised writes, not another fixture pa
   Preserve archive/worktree state, resolve or explicitly exclude conflicts
   through supported selection, and
   check repeat/no-op convergence. This does not replace Stage 17 clean-Mac gates.
-- [ ] Run a controlled real Desktop Zsh drift → Preview → Rebuild → Verification
-  → independent check → idempotent Preview gate, with safe backup.
+- [ ] Qualify broader Zsh configurations beyond the accepted Aliases & Scripts v5
+  A/B/C GUI test: controlled drift → Preview → Rebuild → Verification → independent
+  check → idempotent Preview, with safe backup and explicitly agreed additional scope.
+  The accepted four-object test already proved 4 Match and zero planned changes;
+  this remaining gate must not reopen that completed acceptance.
 - [ ] Close the remaining supported Git/SSH configuration, VS Code and macOS
   settings qualification matrix: matching state, drift, conflicts, observation
   failure and repeat/no-op. Preserve accepted flows and record any unsupported
@@ -216,20 +263,14 @@ broader Git and macOS 27 gates below remain separate from that completed repair 
   deadlines alone do not establish a stall.
 - [ ] Independently qualify a real approximately 180-second no-progress watchdog
   stall, owned descendant termination and continued independent work.
-- [ ] **IMPLEMENTED registration; HOSTED QUALIFICATION OPEN ([Issue #1](https://github.com/jetiaks-AKS/macseed/issues/1)):**
-  confirm mandatory Full CI execution of all **52 newly admitted Python methods**:
-  `scripts/test-homebrew-graceful-stop.py` (**23**),
-  `scripts/test-restore-cancellation-mocks.py` (**10**),
-  `scripts/test-external-ssh-identities.py` (**10**) and
-  `desktop/Macseed/Tests/BundledAgeTests.py` (**9**). The first three suites now belong
-  to canonical Core regression (47 suites / 767 Python methods across four shards);
-  Bundled Age belongs to the mandatory Desktop stage after trusted artifact preparation.
-  Total: 776 mandatory Python methods; all 12 native suites and two Restore subsets
-  remain. Complete this immediate checkpoint **before Fast CI / Full CI separation**.
-  Keep Issue #1 open until mandatory hosted results prove all 52 methods PASS exactly
-  once, with no missing/skipped work. CI #161 predates admission and cannot qualify
-  it. See the [admission follow-up](docs/qualification/TEST-SUITE-AUDIT-2026-11-10.md#mandatory-admission-follow-up--11-november-2026)
-  for focused local evidence, isolation, dependencies and cost estimates.
+The 52 formerly standalone Python methods were admitted to mandatory Full CI;
+[CI #163](https://github.com/jetiaks-AKS/macseed/actions/runs/42974858672) passed at
+`7709d56`. This closes that execution-evidence gap, not the separate native/GUI
+release gates below. Preserve every registered test and existing scheduling;
+Fast/Full CI separation is deferred. [Issue #1](https://github.com/jetiaks-AKS/macseed/issues/1)
+is not automatically closed. The [historical admission report](docs/qualification/TEST-SUITE-AUDIT-2026-11-10.md#mandatory-admission-follow-up--11-november-2026)
+remains unchanged; current inventory belongs to CONTRIBUTING.
+
 - [ ] **Before release — separate standalone native integration gate:** explicitly
   decide and document enforceable qualification for
   `desktop/Macseed/Tests/ExternalIdentityTests.swift` under Issue #1. This native

@@ -9,7 +9,9 @@ from pathlib import Path
 import shutil
 import subprocess
 import signal
+import socket
 import sys
+import tempfile
 import time
 import unittest
 from unittest import mock
@@ -149,6 +151,174 @@ os.execv(native, [native, *args])
         self.assertEqual(events[-1]['data']['code'], 'stale_plan')
         self.assertFalse(events[-1]['data']['publication_started'])
         self.assertFalse((self.root / 'mutations').exists())
+
+    def agent_fixture(self):
+        self.ssh_clone(local=True, references=['~/.ssh/id_fixture'])
+        key = self.home / '.ssh/id_fixture'
+        subprocess.run(['/usr/bin/ssh-keygen', '-q', '-t', 'ed25519', '-N', 'fixture-only', '-f', str(key)], check=True)
+        askpass = self.root / 'fixture-askpass'
+        askpass.write_text('#!/bin/sh\nprintf "%s\\n" fixture-only\n')
+        askpass.chmod(0o700)
+        return key
+
+    def start_agent(self, key=None):
+        # Unix socket paths have a small platform limit; own and clean this short
+        # directory as well as the ordinary fixture tree. Never use the real agent.
+        temporary = tempfile.TemporaryDirectory(prefix='macseed-agent-test-', dir='/private/tmp')
+        self.addCleanup(temporary.cleanup)
+        socket = str(Path(temporary.name) / 'agent')
+        process = subprocess.Popen(['/usr/bin/ssh-agent', '-D', '-a', socket],
+                                   stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        def stop():
+            if process.poll() is None:
+                process.terminate()
+                try:
+                    process.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    process.kill(); process.wait(timeout=3)
+        self.addCleanup(stop)
+        deadline = time.monotonic() + 3
+        while not Path(socket).exists() and process.poll() is None and time.monotonic() < deadline:
+            time.sleep(.01)
+        self.assertTrue(Path(socket).exists(), 'disposable agent failed to start')
+        environment = dict(PATH='/usr/bin:/bin', SSH_AUTH_SOCK=socket, SSH_ASKPASS_REQUIRE='force',
+                           SSH_ASKPASS=str(self.root / 'fixture-askpass'), DISPLAY='fixture')
+        if key:
+            subprocess.run(['/usr/bin/ssh-add', str(key)], env=environment, stdin=subprocess.DEVNULL,
+                           capture_output=True, timeout=5, check=True)
+        self.environment['SSH_AUTH_SOCK'] = socket
+        return process, environment
+
+    def assert_agent_stale(self, plan):
+        result, events = self.execute(plan['prepared_plan_id'])
+        self.assertEqual(result.returncode, 2, events)
+        self.assertEqual(events[-1]['data']['code'], 'stale_plan')
+        self.assertFalse(events[-1]['data']['publication_started'])
+        self.assertFalse((self.root / 'mutations').exists())
+
+    def test_ssh_agent_git_only_proof_and_restore(self):
+        key = self.agent_fixture()
+        _, environment = self.start_agent(key)
+        sys.path.insert(0, str(fixture.ROOT / 'modules/ssh'))
+        sys.path.insert(0, str(fixture.ROOT / 'modules/bootstrap/workspace'))
+        import git_dependencies as dependency
+        files = {str(p.relative_to(self.stage)): p.read_bytes() for p in self.stage.rglob('*') if p.is_file()}
+        self.assertNotIn('generated/ssh/config.snapshot', files)
+        rows = [dict(domain='git-repositories', item_id='1', checkout_id=self.ids[0], action='clone',
+                     disposition='planned', reason=None, dependency_ids=[])]
+        receipt = dict(identity_id='a' * 64, name=key.name, target='identical',
+                       pair_digest=[hashlib.sha256(p.read_bytes()).hexdigest() for p in (key, Path(str(key) + '.pub'))])
+        original = dependency.identities.read_pair
+        def public_only(source, **kwargs):
+            self.assertTrue(kwargs.get('public_only'), 'agent proof must never read private bytes')
+            value = original(source, **kwargs)
+            self.assertEqual(value[1], b'')
+            return value
+        with mock.patch.dict(os.environ, SSH_AUTH_SOCK=environment['SSH_AUTH_SOCK']), \
+                mock.patch.object(dependency.identities, 'read_pair', side_effect=public_only):
+            evidence = dependency.assess(files, self.home, rows)
+            rule = evidence['rules'][self.ids[0]]
+            self.assertEqual(rule['reason'], dependency.READY)
+            self.assertEqual(rule['references'][0]['reason'], 'agent_key_qualified')
+            self.assertEqual(evidence['fingerprint'], dependency.assess(files, self.home, rows)['fingerprint'])
+            self.assertTrue(dependency.revalidate(rule, self.home))
+            dependency.bind_imports(evidence, self.home)
+            self.assertTrue(dependency.revalidate(rule, self.home))
+            dependency.bind_imports(evidence, self.home, authenticated=[receipt])
+            self.assertTrue(dependency.revalidate(rule, self.home))
+            conflicting = copy.deepcopy(evidence)
+            wrong_receipt = dict(receipt, pair_digest=['0' * 64, '0' * 64])
+            dependency.bind_imports(conflicting, self.home, authenticated=[wrong_receipt])
+            self.assertFalse(dependency.revalidate(conflicting['rules'][self.ids[0]], self.home))
+        plan = self.prepare()
+        self.assertEqual(self.git_rows(plan)[0]['reason'], 'git_ssh_local_ready')
+        self.assertNotIn(environment['SSH_AUTH_SOCK'], json.dumps(plan))
+        self.assertNotIn('id_fixture', json.dumps(plan))
+        self.restore()  # Existing wrapper clones only the disposable local remote.
+        self.assertEqual((self.root / 'mutations').read_text().splitlines(), ['clone'])
+
+    def test_ssh_agent_absent_wrong_identity_and_https(self):
+        self.agent_fixture()
+        self.environment.pop('SSH_AUTH_SOCK', None)
+        self.assertEqual(self.git_rows(self.prepare())[0]['reason'], 'git_ssh_identity_unresolved')
+        wrong = self.home / '.ssh/wrong'
+        subprocess.run(['/usr/bin/ssh-keygen', '-q', '-t', 'ed25519', '-N', 'fixture-only', '-f', str(wrong)], check=True)
+        self.start_agent(wrong)
+        row = self.git_rows(self.prepare())[0]
+        self.assertEqual((row['disposition'], row['reason']), ('blocked', 'git_ssh_identity_unresolved'))
+        self.assertFalse((self.root / 'mutations').exists())
+        self.ssh_clone(remote='https://example.invalid/team/repo.git')
+        self.restore()
+
+    def test_ssh_agent_replaced_between_prepare_execute(self):
+        key = self.agent_fixture()
+        self.start_agent(key)
+        plan = self.prepare()
+        self.assertEqual(self.git_rows(plan)[0]['reason'], 'git_ssh_local_ready')
+        self.start_agent(key)  # Same public key, different endpoint is still stale.
+        self.assert_agent_stale(plan)
+
+    def test_ssh_agent_unavailable_between_prepare_execute(self):
+        key = self.agent_fixture()
+        process, _ = self.start_agent(key)
+        plan = self.prepare()
+        self.assertEqual(self.git_rows(plan)[0]['reason'], 'git_ssh_local_ready')
+        process.terminate(); process.wait(timeout=3)
+        self.assert_agent_stale(plan)
+
+    def test_ssh_agent_key_removed_between_prepare_execute(self):
+        key = self.agent_fixture()
+        _, environment = self.start_agent(key)
+        plan = self.prepare()
+        self.assertEqual(self.git_rows(plan)[0]['reason'], 'git_ssh_local_ready')
+        subprocess.run(['/usr/bin/ssh-add', '-d', str(key) + '.pub'], env=environment,
+                       capture_output=True, timeout=5, check=True)
+        self.assert_agent_stale(plan)
+
+    def test_ssh_agent_proof_binding_safety_and_deadline(self):
+        key = self.agent_fixture()
+        _, environment = self.start_agent(key)
+        sys.path.insert(0, str(fixture.ROOT / 'modules/ssh'))
+        import identity_dependencies as dependency
+        with mock.patch.dict(os.environ, SSH_AUTH_SOCK=environment['SSH_AUTH_SOCK']):
+            proof = dependency.qualify_agent(key, time.monotonic() + 5)
+            self.assertEqual(proof['reason'], 'agent_key_qualified')
+            with mock.patch.dict(os.environ, SSH_AUTH_SOCK=environment['SSH_AUTH_SOCK'].replace('/private/tmp/', '/tmp/', 1)):
+                through_alias = dependency.qualify_agent(key, time.monotonic() + 5)
+                self.assertEqual(through_alias['reason'], 'agent_key_qualified')
+                self.assertNotEqual(through_alias['agent_binding'], proof['agent_binding'])
+            # Same signing key but changed public-file evidence is a new binding.
+            public = Path(str(key) + '.pub')
+            public.write_bytes(public.read_bytes().rstrip() + b' changed-comment\n')
+            changed = dependency.qualify_agent(key, time.monotonic() + 5)
+            self.assertNotEqual(changed['binding'], proof['binding'])
+            key.chmod(0o644)
+            with self.assertRaises(dependency.ExternalSourceError):
+                dependency.qualify_agent(key, time.monotonic() + 5)
+            key.chmod(0o600)
+            endpoint = Path(environment['SSH_AUTH_SOCK'])
+            alias = endpoint.parent / 'alias'
+            alias.symlink_to(endpoint)
+            parent_alias = self.root / 'agent-directory-alias'
+            parent_alias.symlink_to(endpoint.parent)
+            for invalid in (str(alias), str(parent_alias / endpoint.name), 'relative', str(endpoint.parent / 'absent')):
+                with mock.patch.dict(os.environ, SSH_AUTH_SOCK=invalid):
+                    self.assertIsNone(dependency.qualify_agent(key, time.monotonic() + 5))
+            endpoint.parent.chmod(0o755)
+            try:
+                self.assertIsNone(dependency.qualify_agent(key, time.monotonic() + 5))
+            finally:
+                endpoint.parent.chmod(0o700)
+            # A socket that accepts requests but never signs cannot qualify, and
+            # the owned native proof process must be stopped within the deadline.
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as stalled:
+                stalled_path = str(endpoint.parent / 'stalled')
+                stalled.bind(stalled_path); stalled.listen(1)
+                with mock.patch.dict(os.environ, SSH_AUTH_SOCK=stalled_path):
+                    started = time.monotonic()
+                    with self.assertRaises(OSError):
+                        dependency.qualify_agent(key, started + .25)
+                    self.assertLess(time.monotonic() - started, 3)
 
     def test_ssh_local_configuration_clone_and_stale_config(self):
         self.ssh_clone(local=True)

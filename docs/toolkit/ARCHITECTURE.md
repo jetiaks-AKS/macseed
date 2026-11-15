@@ -65,6 +65,18 @@ than replacing them. Desktop must not parse terminal/log output, emulate
 interactive CLI workflows or implement its own Capture, Restore, Verify,
 Compare or secure importer.
 
+Shell remains one physical Core module. Capture's functional aggregation counts
+Aliases & Functions and Scripts independently without renaming `shell-zsh` or
+historical Bundle identities. Scripts v5 composes the existing Shell validators,
+no-clobber recovery and file-level Check with a bounded manifest and separate raw
+members inside `MBT-BUNDLE-1`; legacy payload readers retain their contracts.
+The native picker supplies explicit file references, never its own discovery or
+execution engine. [Configuration](CONFIGURATION.md#script-files-capability-5)
+owns resource/security limits; [Desktop](../DESKTOP.md#check-environment-status)
+owns interaction and bounded GUI acceptance. Workspace reconstructs directory
+structure and Git repositories; Scripts transfers selected files. Neither is a
+general folder-content backup, script editor, launcher or dependency manager.
+
 ## External tool compatibility boundary
 
 External tools are concrete providers behind small domain-owned adapters. Core

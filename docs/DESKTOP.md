@@ -148,7 +148,7 @@ The approved target grouping is:
 - **For Experienced Users (Selection only, awaiting visual review):** four equal
   sibling groups: **Git** (Configuration, Repositories / Worktrees), **SSH**
   (Configuration, SSH Keys), **Workspace** (Folders, VS Code Workspace), and
-  **Shell** (Zsh Configuration). Each has an orange title, leading disclosure and
+  **Shell** (Aliases & Functions; legacy snapshots under Settings). Each has an orange title, leading disclosure and
   native aggregate checkbox/status. Child categories remain independent. This
   projection does not change the shared taxonomy or any read-only screen.
 
@@ -169,7 +169,8 @@ Status compares the complete saved reference, including developer requirements.
 across workflows. Four developer headings are used in Selection, Capture Confirmation
 and Rebuild Preview; only Selection has group checkboxes and contextual help.
 Capture Result retains its publication summary; Rebuild Progress/Result retain flat
-ordered domain lists. Environment Status retains static section headings and expandable
+ordered category rows under **Standard Setup** and **For Experienced Users** section
+headings. Environment Status retains static section headings and expandable
 diagnostic categories, without Selection parent accordions. Grouping adds no requirements
 or counts. Core IDs, Bundle ceilings, default selection and cancellation baselines are
 unchanged; edits still require fresh preparation.
@@ -355,11 +356,14 @@ when its count is positive.
 
 ### Capture Review — selection and disclosure
 
-The ordinary group headers, Git, SSH, Workspace, Shell, SSH Keys and VS Code have native tri-state masters:
+The ordinary group headers, Git, SSH, Workspace, Shell, Custom Commands, SSH Keys and VS Code have native tri-state masters:
 **checked** means all eligible descendants, **unchecked** none, and **mixed** a
 partial selection. Clicking checked clears the eligible scope; clicking unchecked
 or mixed selects that group's eligible scope. SSH preserves an existing identity
 subset: its group can remain mixed until the user explicitly changes SSH Keys.
+Shell and Custom Commands include eligible files but require an explicit native
+confirmation before adding executable-file consent. Scripts has an exact-scope
+master and individual checkboxes; Capture automatically checks files after explicit authorization.
 `DeveloperSelectionGroup` derives state from the existing model maps and invokes
 existing category/key selection methods; ordinary `CaptureGroupControls` is unchanged.
 `NativeSelectionCheckbox` retains native checkbox/accessibility
@@ -455,8 +459,9 @@ repeated category tree, hidden full inventory or per-category success list.
 
 Publication with selected-scope limitations retains Save Complete and adds a
 separate amber **Needs Attention** card counting distinct affected Core domains,
-followed only by affected selected categories and concise safe explanations with
-View Log guidance. Independent
+followed only by affected selected categories using the existing Rebuild Result
+disclosure headers and item rows. Expansion reveals the actual requirement or
+coverage explanation; View Log retains technical evidence. Independent
 issues remain separate; duplicate evidence does not create extra issues.
 Unselected SSH observations and unsupported/unavailable inventory are not failed
 saved requirements. Missing selected evidence remains unverified, not an all-clear
@@ -467,15 +472,18 @@ claim. Failed, interrupted or uncertain publication must not render success.
 render it, using `CaptureBundleLocationView` and the existing fixed footer actions
 View Log, Capture Again and Done. Publication proves the saved Bundle, not
 application health or target verification. See [Capture](#capture-this-mac)
-for the publication and re-entry contract. The final current Capture Result layout
-is **Visually Accepted** within the Capture UI scope above.
+for the publication and re-entry contract. The previous minimal outcome layout is
+**Visually Accepted**; the affected-category disclosure extension requires final
+user visual acceptance.
 
 ### Canonical developer presentation
 
 `DeveloperSelectionGroup` owns display names, parent membership and the existing warm-orange
 accent only. Git → Configuration / Repositories / Worktrees; SSH → Configuration / SSH Keys;
-Workspace → Folders / VS Code Workspace; Shell → Zsh Configuration appear under
-**For Experienced Users** in Selection, Capture Confirmation and Rebuild Preview.
+Workspace → Folders / VS Code Workspace appear under **For Experienced Users**.
+Shell uses Custom Commands → Aliases & Functions / Scripts in Selection and read-only
+Capture Confirmation; Rebuild Preview retains Shell → Aliases & Functions with compact
+context for actual planned file writes. This is not a universal workflow hierarchy.
 Standalone categories use qualified names (Git Configuration, SSH Configuration,
 Workspace Folders); there is no visible generic Advanced heading. Legacy taxonomy IDs
 remain internal for selection eligibility and operation ordering.
@@ -487,7 +495,7 @@ ordering, counters and task identity. These screens reuse names and category col
 not Selection controls. Secure Transfer remains the technical operation name.
 
 Native category help is optional: repositories/worktrees, SSH Configuration, SSH Keys,
-Workspace Folders, VS Code Workspace, Zsh Configuration and App Store have specific text.
+Workspace Folders, VS Code Workspace, Shell and App Store have specific text.
 Other categories, including macOS preferences and unknown IDs, have no info button.
 Required warnings, approvals, destinations and security actions remain outside popovers.
 Unified Developer UI is visually accepted within this presentation scope. It does
@@ -564,12 +572,15 @@ evaluated selection, no pending actions/problems and confirmed manual requiremen
 Its count includes the evaluated automatic and manual items. The existing no-op
 Rebuild gate remains unchanged; empty, failed and incomplete Preview cannot show it.
 
-Nonzero **Planned** and **Attention** badges appear only on Applications & Tools,
-macOS Settings, Application Extras and the included developer group headers. Green
-Match badges are omitted; matching totals remain in the summary. Expanded
-intermediate categories omit a generic status only when it repeats their parent
-and visible leaves; collapsed or distinct conditions retain status text. Leaf
-actions/errors remain explicit. Group totals aggregate original plan rows once.
+Nonzero **Planned** and **Attention** badges appear on the first two category
+levels, including developer parents and their functional categories. Deeper categories
+and item leaves have no numeric badges. Green Match badges are omitted; matching
+totals remain in the summary. Expanded containers suppress redundant aggregate status
+text when visible children explain it; final functional categories keep their status
+through disclosure. Independent warnings remain visible. Planned/Attention leaves
+use the existing accessible status icon without repeated generic text; specific
+Missing, Different, Unverified and Failed statuses and explanations remain explicit.
+Group totals aggregate original plan rows once.
 All expandable automatic rows have far-right chevrons. Expand All / Collapse
 All sits beside Automatic Rebuild Tasks (or For Experienced Users when it is the
 only visible group) and controls its group, VS Code, domain and
@@ -586,12 +597,13 @@ content grid; see [workflow layout](#workflow-layout-and-disclosure).
 
 ### Restore Progress — Visually Accepted
 
-`RestoreRebuildProgressContent` and `RestoreExecutionCategories` render one flat
-bordered list of selected automatic domain rows, without Applications & Tools,
-Settings, Git or Workspace section headings. Order is Homebrew Applications,
-Homebrew Packages, existing macOS Settings domain(s), VS Code Extensions, VS Code
-Settings, Git Configuration, Git Repositories / Worktrees, Workspace Folders, SSH
-Configuration, Shell / Zsh and VS Code Workspace. Missing domains are not invented;
+`RestoreRebuildProgressContent` and `RestoreExecutionCategories` render flat
+automatic domain rows under static **Standard Setup** and **For Experienced Users**
+headings, without Selection's nested parent tree. Standard Setup orders Homebrew
+Applications, Homebrew Packages, macOS Settings, VS Code Extensions and VS Code
+Settings. For Experienced Users orders Git Configuration, Git Repositories / Worktrees,
+Workspace Folders, VS Code Workspace, SSH Configuration and Shell / Zsh.
+Missing domains are not invented;
 unknown selected domains follow the known rows. Stable Core IDs and existing row
 names remain unchanged. Manual App Store work is not an executing automatic row.
 
@@ -608,7 +620,8 @@ rollback. Handled stop, failed and unknown outcomes remain distinct under the
 
 `RestoreResultContent` keeps the operation outcome heading, a Rebuild Summary
 completion/Verification card and conditional Needs Attention card, one flat
-**Details by Category** container, legend and fixed Done / Refresh
+**Details by Category** container with the same two static section headings,
+legend and fixed Done / Refresh
 Preview / View Log actions. Refresh Preview remains outcome-dependent. Domain order
 matches Progress, with App Store Applications first when supported manual work is
 outstanding. Categories start collapsed; nested macOS categories, item explanations
@@ -626,6 +639,11 @@ a clean zero-issue result omits it. Unknown counts stay unnumbered. The completi
 Verification card always remains; there is no separate Skipped summary card or
 Verification-details panel.
 Confirmed Stopped with Verification not run retains neutral **Not Run** presentation.
+When a complete authoritative Verification reports unresolved scope and the ordinary
+attention summary has no exact count, the card can show **N Unresolved**. It does
+not replace known issue/manual-work counts or infer a number from incomplete evidence.
+The accepted Result case retains **8 Verified / 1 Unresolved**; this is separate
+from Capture's saved-item totals and Check's conformity totals.
 
 `RestoreResultDetails` omits pre-existing matches and empty categories, retaining
 planned-and-verified requirements, confirmed changes and actual problems or uncertain
@@ -696,8 +714,9 @@ The accepted header, summary cards, badges and footer remain unchanged. The curr
 Check-specific category projection uses **Standard Setup** and **For Experienced
 Users**, with the exact category order and disclosure rules documented in
 [Status presentation and counts](#status-presentation-and-counts). This projection
-is implemented and awaiting final visual review; it does not change Capture or
-Rebuild Selection.
+is accepted within the [Aliases & Scripts A/B/C scope](qualification/SHELL-RECOVERABILITY-2026-11-12.md#real-gui-abc-acceptance--2026-11-15);
+broader supported-domain qualification remains separate. It does not change Capture
+or Rebuild Selection.
 
 Only existing scoped rows appear beneath static `WorkspaceSectionHeader` text/dividers.
 Empty headings are hidden. Section headers have no checkbox or disclosure; logical
@@ -1382,7 +1401,8 @@ Details use two Check-specific read-only sections, with no selection controls:
   (VS Code Extensions and VS Code Settings).
 - **For Experienced Users:** Git (Git Configuration, Git Repositories / Worktrees),
   Workspace (Workspace Folders, VS Code Workspace), SSH (SSH Configuration, SSH Keys),
-  Shell (Zsh Configuration), in that order.
+  Shell → Custom Commands (separate Aliases & Functions and Scripts categories;
+  legacy snapshots under Settings), in that order.
 
 Only evidenced categories appear; empty parents are omitted. Unknown future domains
 retain their original names/evidence at the end of Standard Setup. Section headers
@@ -1458,6 +1478,195 @@ requirements retain their own rows and counts, even when display labels coincide
 Detail identities include their owner; labels never establish ownership. Future
 Core capabilities must supply their own validated identity/evidence before using
 this existing hierarchy. No additional SSH sources or grammar are implemented here.
+
+Capture/Rebuild Selection uses **Shell → Custom Commands → Aliases & Functions /
+Scripts**. Individual aliases retain their existing native rows and checkboxes.
+Custom Commands reuses the nested group header used by VS Code; Scripts reuses
+native category disclosure and item selection. Scripts lists each detected
+file candidate once, including shared dependencies. Capture initially exposes
+metadata-only dependencies with available checkboxes after a related alias is
+selected. A checkbox explicitly authorizes its exact file and immediately starts
+Core preflight. The existing parent Include dialog authorizes its exact reviewed
+file set and starts the same operation. **Checking…** appears in the existing row
+and header; final Prepare is disabled while it is pending. There is no separate
+inspection button or screen. Qualified files retain selection; rejected files
+remain unselected with sanitized reasons. Ordinary alias selection survives a
+script rejection. Cancel stops the pending check and permits retry without Scan.
+Known rejected files remain explained and outside the eligible parent scope.
+
+**Variables & PATH** and **Settings** remain planned; **Plugins & Themes** is conditional
+on useful Core support and relevant items. Empty future categories are hidden.
+Historical whole-file snapshots retain **Shell → Settings → Saved Zsh file**, their
+`shell-zsh` identity and behavior. Source files, ZDOTDIR and dependency directories
+do not become disclosure levels. There is no extra Zsh Configuration wrapper.
+
+Names are display metadata; Swift never decodes command bodies or resolves source
+paths. Check/Preview count each alias once, with independent **Shell coverage**
+attention. Matching rows remain suppressed in Preview. Coverage text
+explicitly distinguishes matching aliases from other unsupported/unincluded Shell
+state. Core alone qualifies missing source structure/dependencies and additions to
+original files; conflicts and unqualified prerequisites remain blocked. No source-file aggregate inflates
+item counts. Invalid optional Check labels fall back to “Shell alias”. See the
+[Shell contract](toolkit/CONFIGURATION.md#shell--zsh-configuration).
+
+Capability-3/4 executable transfer and v5 script-file inclusion are default off. Scripts has the same native
+none/mixed/all checkbox as other selection groups, plus individual file checkboxes.
+Its checkbox selects the exact currently eligible files; it never grants wildcard
+permission. Shell and Custom Commands include eligible scripts in their selection
+state: all aliases with scripts excluded is **Partially Selected**. Rebuild's footer
+likewise reports **Some items excluded** while eligible scripts remain excluded.
+Selecting either parent presents one native confirmation only when it would add script permissions:
+**Aliases only** preserves existing manual script choices, **Include N scripts**
+authorizes the listed file identities, and **Cancel** leaves selection unchanged.
+The reviewed candidates and observation identities must still match when accepted.
+Clicking a mixed or fully selected Shell / Custom Commands parent clears all its
+children without consent; only an empty parent starts inclusion. Individual alias
+deselection preserves independently authorized scripts. Main selection headers keep
+All Selected / Partially Selected / Not Selected; nested item-count rows show
+`N of M selected` only when N is positive, with no status text at zero.
+Individual files, expanded Scripts, Aliases & Functions and group deselection do not
+prompt. Selecting collapsed Scripts uses the same native confirmation so executable
+disclosure is visible at authorization; **Keep current selection** and **Cancel**
+preserve all choices, and **Include N scripts** does not select additional aliases.
+Unchanged authorized files do not prompt again. Expanding/collapsing never
+grants consent. Selecting an alias proposes associated files without selecting them.
+Deselecting their last alias retains independently authorized file choices. The
+existing Scripts checkbox can keep the file selected on its own under capabilities 4/5.
+Capture/Rebuild then creates no unselected aliases or source relationships. Legacy
+capability-3 files still require an associated alias. Back/Next preserves explicit choices; a fresh
+Capture Scan or newly opened Bundle clears them. Both workflows bind selected files
+to fresh Core evidence; changed or unconfirmed files invalidate authorization.
+Rebuild offers only saved payloads and requires independent consent;
+Capture authorization is never inherited. Core validates content, scope and freshness;
+Swift never reads bodies. Each selected v5 script has its own Selection/Preview
+identity, including an alias-linked file; repeated discoveries never add another
+file item. An independently selected v4/v5 file without selected aliases has one
+Core-qualified file identity in the same Shell module. Its Preview row stays under
+Scripts. Progress/Result use flat rows within their two static sections; Result
+separates Aliases & Functions from Scripts, and Check reports file conformity.
+Selection keeps one visible safety line: **Script files are saved unencrypted.**
+in Capture; **Restore trusted scripts only. They may run later.** in Rebuild.
+The warning is inside expanded Scripts only. Collapsed Scripts shows the ordinary
+category row; Info retains the full safety explanation. The bulk dialog shows the
+exact reviewed-file count and shortest unambiguous filename suffixes, with
+Aliases only first, explicit Include, and Cancel. Scripts' checkbox/count covers
+currently eligible files; pending checks and disabled files explain checking, unsupported
+content, failed observation or the need to select a related alias.
+Capture's **Add Script…** action sits left aligned inside expanded Scripts, below
+its security line and above the candidates. The header retains its checkbox, icon,
+title, selection status and disclosure chevron. Add Script remains reachable with
+empty Discovery and accepts multiple files through the native macOS picker; repeat
+picks can come from different folders. Core qualifies and deduplicates files; new
+candidates remain unchecked. V5 includes recognized non-executable Shell/Python
+files without changing their original modes. There is no Scan Folder button.
+
+Capture Selection, Confirmation and Result count Aliases & Functions and Scripts
+as independent functional domains through the Core aggregation contract. They keep
+one physical Shell module. Each selected alias definition and each unique selected
+script file contributes one Selected Item, including files referenced by aliases.
+Manual/automatic discoveries of the same file count once. Result derives functional
+counts from validated saved-file identities, while physical Bundle and Rebuild/Check
+counts retain their own semantics. A selected file remains one item after its aliases
+are deselected.
+The primary UI shows concise safety text, actionable rejection reasons and statuses.
+It does not repeat generic inspection explanations for every unexamined candidate.
+Existing details/logs retain sanitized diagnostics; no code contents enter logs.
+V5 accepts the documented ordinary macOS xattrs and preserves quarantine; unsupported
+metadata produces a concise rejection. Raw quarantine/origin values are not UI diagnostics.
+Aliases & Scripts v5 is **Implemented / Real GUI E2E Accepted** within the
+[four-object A/B/C scope](qualification/SHELL-RECOVERABILITY-2026-11-12.md#real-gui-abc-acceptance--2026-11-15):
+final Check reports four Match, and fresh Preview reports four Already Match with
+zero changes. The existing partial Shell coverage warning remains; this does not
+qualify every dynamic startup configuration or unrelated visual/release gates.
+
+The existing native information popover beside Scripts explains per-file consent,
+qualification, unencrypted storage, limited sensitive-content detection, non-execution
+and unresolved opaque-body dependencies; Rebuild help also explains
+independent authorization, protected existing files and later startup execution.
+Opening help never changes consent or disclosure state; keyboard and accessibility
+actions use the same native control as other category help.
+Capture's partial-alias note is **Some Shell settings or dependencies are outside
+this capture.** The Aliases & Functions help retains the wider scope explanation.
+
+Confirmation remains read-only: the existing Shell content summarizes selected
+aliases and executable files with the ordinary unencrypted-Bundle disclosure. The
+old global script checkbox list is removed. Capture Result retains Save Complete,
+publication metrics, destination and attention. Affected categories reuse Rebuild
+Result's expandable category headers, counts and item rows. Shell warnings appear
+under Shell → Custom Commands → Aliases & Functions; category-level `source_partial`
+evidence appears once as **Shell coverage**, without invented failed aliases/files.
+Other supported categories retain their own requirement or coverage explanations.
+Selected child warnings propagate as **Needs Attention** through Custom Commands
+and Shell in Confirmation, including collapsed headers. Affected parents never use
+Ready wording; clean siblings may remain Ready to Save. Result's separate attention
+message identifies incomplete Shell coverage only from Core `source_partial` evidence,
+without treating successful publication as a failure or naming an unproven missing file.
+The Scripts confirmation list has one warning: **Selected script files will be
+saved unencrypted.** It does not repeat the consent policy.
+Prepared Scripts uses **Ready to Save / N items included**. Genuine selected-file
+issues use **Needs Attention**; an unrelated alias-coverage warning does not change
+Scripts readiness. Functional-category status remains visible through disclosure.
+Rebuild Preview retains its existing action-focused developer hierarchy and hides
+matching items. Shell has separate **Aliases & Functions** and **Scripts** children.
+Associated dependency writes appear once per file in a compact subordinate list,
+without logical-item counts or operation badges. That list disappears when matching
+or blocked; a missing unselected dependency remains an actionable blocker under its
+alias. Independently selected v4 files instead use their real Core file requirement
+rows under Scripts, including blockers and ordinary counts. Matching rows remain
+hidden. No synthetic task or duplicate Planned count is added.
+Blockers keep short visible reasons and a next action. Per-alias Core reasons
+distinguish missing commands, missing folders/files, unsafe observation and
+unqualified operands. Check and Preview share those factual explanations;
+uncertainty never becomes an installation instruction or a planned change. Missing versus unsafe files,
+uncaptured scripts and declaration versus dependency conflicts are not distinguished
+unless Core evidence supports the distinction. Planned-file lists omit repeated
+non-execution explanations already available at selection.
+It has no Custom Commands tree or selection controls. Final Rebuild confirmation
+summarizes previously authorized writes without another checkbox list. Progress
+and Result stay execution-oriented, with flat category rows under **Standard Setup**
+and **For Experienced Users** and unchanged receipt/Verification
+operation accounting. Result partitions physical `shell-zsh` rows by their existing
+requirement identities into **Aliases & Functions** and **Scripts**. Verified
+independent scripts remain visible when alias restoration fails; the presentation
+does not change results or summary totals. A pending Shell publication is shown as
+recovery evidence requiring review, with its concrete reason retained in View Log;
+Refresh Preview does not clear that evidence or enable unsafe retries.
+Check uses Shell → Custom Commands with separate
+**Aliases & Functions** and **Scripts** children, retaining matching rows and
+independent coverage. Every saved capability-4/5 payload has one real Core file
+requirement, even when associated with selected aliases; shared scripts are counted
+once. File labels come from the qualified payload and predicate owner.
+[Configuration](toolkit/CONFIGURATION.md#shell--zsh-configuration) owns file comparison and
+the additional Verification/Check requirement accounting. File-only Capture
+Confirmation omits the Scan's unselected alias-coverage notice; other warnings remain.
+Check shows **Some Shell settings or dependencies are outside the saved scope.**
+for qualified partial coverage, with the full explanation in the existing information
+popover. Independent additional problems on the same row stay visible. Statuses,
+coverage evidence and requirement states are preserved. Needs Attention retains
+its existing total; the same card explains its record-derived unverified requirements
+and incomplete coverage. Independent uncounted diagnostics retain a nonnumeric
+summary. Selection keeps All/Partially/Not Selected and positive nested item counts;
+selected parent warnings also visibly say **Needs Attention**, with existing help.
+Known `partial_source_coverage` plus `dependency_unavailable` scope diagnostics
+use the same concise coverage text; details retain both codes. Independent errors
+remain visible. A rejected `script_transfer_unsupported` Prepare can return to
+retained Selection without rescanning. No rejected prepared result is reused, and
+subsequent Prepare rechecks eligibility, selected scope and freshness.
+Capability 3 retains partial Shell coverage even when every selected alias and
+qualified dependency matches. That no-op Preview hides matching aliases but keeps
+the coverage warning; it cannot show the global **Everything Already Matches** card.
+Successful recovery can therefore show a Verified alias alongside an overall
+Needs Attention result. File bytes/mode and declaration/source conformity are
+checked without running the script; neither proves its runtime behavior.
+
+The Shell hierarchy, individual controls, Confirmation organization, action-focused
+Preview, separate Check alias/script categories and Capture Result disclosures are
+accepted within the real GUI A/B/C checkpoint. The accepted Rebuild Progress/Result
+uses flat rows within the two static sections described above. Broader Zsh scenarios
+and application-wide Native/packaged qualification remain open. No source-file grouping, search, Show
+More or new selection mode is introduced. More discovered aliases alone does not
+authorize further layout changes. Local renders do not establish user acceptance
+or full Native Desktop/packaged release qualification.
 
 Identical Git/Workspace display names never deduplicate requirements. A checkout and
 a selected Workspace folder may share one canonical destination while retaining two

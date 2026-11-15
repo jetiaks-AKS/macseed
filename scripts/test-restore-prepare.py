@@ -71,7 +71,7 @@ class RestorePrepareTests(unittest.TestCase):
             bundle.write_file(self.stage / "secure.age", b"age-encryption.org/v1\nprivate-ciphertext")
         bundle.pack(self.stage, self.archive, "/Users/source")
 
-    def invoke(self, *, groups=(), secure=False, path=None, selection=None, installer_preparations=None):
+    def invoke(self, *, groups=(), secure=False, path=None, selection=None, installer_preparations=None, shell_script_selection=None):
         request = {"protocol_version": 1, "operation_id": "prepare-1",
                    "operation": "restore_prepare",
                    "parameters": {"path": str(path or self.archive),
@@ -80,6 +80,8 @@ class RestorePrepareTests(unittest.TestCase):
             request["parameters"]["selection"] = selection
         if installer_preparations is not None:
             request["parameters"]["installer_preparations"] = installer_preparations
+        if shell_script_selection is not None:
+            request['parameters']['shell_script_selection'] = shell_script_selection
         result = subprocess.run(
             ["bash", str(self.project / "modules/core/application-interface/core.sh")],
             input=json.dumps(request).encode(), cwd=self.project, env=self.environment,
@@ -91,7 +93,7 @@ class RestorePrepareTests(unittest.TestCase):
         self.assertFalse(list(self.private_temp.glob("mbt-bundle-*")))
         return result, events
 
-    def execute(self, plan_id, *, groups=(), secure=False, path=None, selection=None):
+    def execute(self, plan_id, *, groups=(), secure=False, path=None, selection=None, shell_script_ids=None, shell_script_selection=None):
         request = {"protocol_version": 1, "operation_id": "execute-1",
                    "operation": "restore_execute",
                    "parameters": {"path": str(path or self.archive),
@@ -99,6 +101,10 @@ class RestorePrepareTests(unittest.TestCase):
                                   "expected_prepared_plan_id": plan_id}}
         if selection is not None:
             request["parameters"]["selection"] = selection
+        if shell_script_ids is not None:
+            request['parameters']['shell_script_ids'] = shell_script_ids
+        if shell_script_selection is not None:
+            request['parameters']['shell_script_selection'] = shell_script_selection
         result = subprocess.run(
             ["bash", str(self.project / "modules/core/application-interface/core.sh")],
             input=json.dumps(request).encode(), cwd=self.project, env=self.environment,
@@ -187,6 +193,490 @@ class RestorePrepareTests(unittest.TestCase):
         self.assertFalse(any(row['disposition'] != 'satisfied' for row in rows), rows)
         self.assertTrue(plan['readiness']['ready'])
         self.assertEqual(target.read_bytes(), original)
+
+    def shell_alias_fixture(self):
+        contract = bundle.shell_contract()
+        aliases, _ = contract.classify(b"alias zebra='ls -la'\nalias alpha='git status'\n")
+        blueprint = self.stage / 'blueprint.conf'
+        blueprint.write_text(blueprint.read_text().replace('shell-zsh="false"', 'shell-zsh="true"'))
+        bundle.write_file(self.stage / 'generated/shell/zshrc.snapshot', contract.encode(aliases))
+        self.pack()
+        return {'categories': [], 'items': {'shell-zsh': [contract.identity(row['name']) for row in aliases]}}
+
+    def test_shell_alias_preview_independent_scope_and_conflicts(self):
+        selection = self.shell_alias_fixture()
+        target = self.home / '.zshrc'
+        for actual, expected in ((None, ['planned', 'planned']),
+                                 (b"alias zebra='ls -la'\n", ['satisfied', 'blocked']),
+                                 (b"alias zebra='ls'\nalias alpha='git status'\n", ['conflict', 'satisfied']),
+                                 (b"alias zebra='ls -la'\nalias alpha='git status'\n", ['satisfied', 'satisfied'])):
+            if actual is None:
+                target.unlink(missing_ok=True)
+            else:
+                target.write_bytes(actual)
+            plan = self.plan_result(selection=selection)
+            rows = [r for r in plan['plan'] if r['item_id'] != 'scope']
+            self.assertEqual([r['disposition'] for r in rows], expected)
+            self.assertEqual([r['display_name'] for r in rows], ['zebra', 'alpha'])
+            self.assertEqual(plan['selected_item_counts']['shell-zsh'], 2)
+            self.assertEqual(len(plan['plan']), 3)
+            self.assertEqual(target.read_bytes() if target.exists() else None, actual)
+            self.assertNotIn('git status', json.dumps(plan))
+        subset = {'categories': [], 'items': {'shell-zsh': [selection['items']['shell-zsh'][1]]}}
+        plan = self.plan_result(selection=subset)
+        self.assertEqual([r['display_name'] for r in plan['plan'] if r['item_id'] != 'scope'], ['alpha'])
+        target.unlink()
+        self.select_formula()
+        self.formula_cli()
+        self.archive.unlink()
+        self.pack()
+        (self.root / 'bin/curl').write_text('#!/bin/bash\nexit 1\n')
+        blocked = self.plan_result()
+        self.assertFalse(blocked['readiness']['ready'])
+        self.assertFalse(any(r['disposition'] == 'planned' for r in blocked['plan'] if r['domain'] == 'shell-zsh'))
+        self.assertFalse(target.exists())
+
+    def test_shell_dependency_diagnostics_agree_between_preview_and_check(self):
+        self.shell_alias_fixture()
+        recovery = bundle.shell_contract().recovery_contract()
+        source = self.root.resolve() / 'dependency-source'; source.mkdir(mode=0o700)
+        text = "alias editor='macseed-fixture-editor-9ac3 .'\nalias folder='cd ~/missing-folder'\n"
+        (source / '.zshrc').write_text(text)
+        value = recovery.capture(str(source))
+        (self.home / '.zshrc').write_text(text)
+        (self.stage / 'generated/shell/zshrc.snapshot').write_bytes(recovery.encode(value))
+        self.archive.unlink(); self.pack()
+        selection = dict(categories=[], items={'shell-zsh': [recovery.base.identity(name) for name in ('editor', 'folder')]})
+        expected = {recovery.base.identity('editor'): 'shell_tool_missing_prerequisite',
+                    recovery.base.identity('folder'): 'shell_directory_missing_prerequisite'}
+        plan = self.plan_result(selection=selection)
+        rows = [row for row in plan['plan'] if row['domain'] == 'shell-zsh' and row['item_id'] != 'scope']
+        self.assertEqual({row['item_id']: row['reason'] for row in rows}, expected)
+        self.assertEqual([row['disposition'] for row in rows], ['blocked', 'blocked'])
+        self.assertFalse(plan['has_executable_changes'])
+        self.assertEqual(plan['selected_item_counts']['shell-zsh'], 2)
+        request = dict(protocol_version=1, operation_id='dependency-check', operation='environment_compare', parameters=dict(bundle_path=str(self.archive)))
+        result = subprocess.run(['bash', str(self.project / 'modules/core/application-interface/core.sh')], cwd=self.project,
+            env=self.environment, input=json.dumps(request).encode(), capture_output=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stdout)
+        report = next(json.loads(line)['data'] for line in result.stdout.splitlines() if json.loads(line)['type'] == 'result')
+        compared = [row for row in report['comparison_records'] if row['domain'] == 'shell-zsh']
+        self.assertEqual({row['item_id']: row['reason'] for row in compared}, expected)
+        self.assertEqual([row['comparison_kind'] for row in compared], ['unverified', 'unverified'])
+        self.assertEqual(len(compared), 2)
+        self.assertEqual((self.home / '.zshrc').read_text(), text)
+        self.assertFalse((self.home / 'missing-folder').exists())
+
+    def test_shell_alias_execute_explicit_approval_stale_and_noop(self):
+        selection = self.shell_alias_fixture()
+        target = self.home / '.zshrc'
+        self.allow_application_bootstrap()
+        plan = self.plan_result(selection=selection)
+        self.assertFalse(target.exists())
+        result, events = self.execute('0' * 64, selection=selection)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(target.exists())
+        target.write_text("alias existing='ls'\n")
+        result, events = self.execute(plan['prepared_plan_id'], selection=selection)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(target.read_text(), "alias existing='ls'\n")
+        target.unlink()
+        plan = self.plan_result(selection=selection)
+        result, events = self.execute(plan['prepared_plan_id'], selection=selection)
+        self.assertEqual(result.returncode, 0, events)
+        self.assertEqual(target.read_bytes(), b"alias zebra='ls -la'\nalias alpha='git status'\n")
+        before = target.stat().st_mtime_ns
+        plan = self.plan_result(selection=selection)
+        self.assertFalse(plan['has_executable_changes'])
+        self.assertEqual([r['disposition'] for r in plan['plan'] if r['item_id'] != 'scope'], ['satisfied'] * 2)
+        result, events = self.execute(plan['prepared_plan_id'], selection=selection)
+        self.assertEqual(result.returncode, 0, events)
+        self.assertEqual(target.stat().st_mtime_ns, before)
+
+    def test_scripts_v5_alias_linked_execute_and_check(self):
+        self.test_shell_recovery_execute_consent_verify_check_and_noop(policy='opaque-file-v5')
+
+    def test_v5_dynamic_tracked_aliases_execute_and_check(self):
+        self.test_scripts_v5_independent_preview_execute_with_blocked_aliases(blocked=False)
+
+    def test_v5_staging_failure_refresh_and_reviewed_retry(self):
+        self.shell_alias_fixture()
+        c = bundle.shell_contract().recovery_contract()
+        source = self.root.resolve() / 'source-home'; source.mkdir(mode=0o700)
+        raw = b'eval "$(touch "$HOME/startup-must-not-run")"\n'
+        definitions = b"alias fixture_a='echo A'\nalias fixture_b='$HOME/scripts/b.sh'\n"
+        (source / '.zshrc').write_bytes(raw + definitions)
+        (source / 'scripts').mkdir()
+        paths = ['scripts/b.sh', 'scripts/c']
+        for path in paths:
+            file = source / path; file.write_bytes(b'#!/bin/sh\nprintf fixture\n'); file.chmod(0o700)
+        ids = [c.script_id(path) for path in paths]
+        value = c.authorize_capture(c.capture(str(source)), str(source), ids, policy=c.FILE_POLICY, script_paths=paths)
+        c.save(self.stage / 'generated/shell/zshrc.snapshot', value)
+        self.archive.unlink(); self.pack(); self.allow_application_bootstrap()
+        target = self.home / '.zshrc'; target.write_bytes(raw); target.chmod(0o644); os.chflags(target, 0x40)
+        before = c.base.stamp(target.stat())
+        selection = dict(categories=[], items={'shell-zsh': sorted(c.requirement_ids(value))})
+        writer = self.project / 'modules/shell/sources.py'
+        production = writer.read_bytes()
+        # Only the disposable Core copy injects a real staging failure after the
+        # observed backup is written. All orchestration/status paths are production.
+        writer.write_bytes(production + b'''
+_fixture_write = write_file
+def write_file(directory, name, *args, **kwargs):
+    result = _fixture_write(directory, name, *args, **kwargs)
+    if name == 'observed': raise base.Invalid('metadata_copy_mismatch')
+    return result
+''')
+        plan = self.plan_result(selection=selection, shell_script_selection=ids)
+        result, events = self.execute(plan['prepared_plan_id'], selection=selection,
+                                     shell_script_selection=ids, shell_script_ids=ids)
+        self.assertEqual(result.returncode, 2, events)
+        failure = events[-1]['data']
+        self.assertEqual(failure['code'], 'bootstrap_failed')
+        self.assertEqual((failure['verification']['verified_count'], failure['verification']['unverified_count']), (2, 2))
+        self.assertTrue(any(e['type'] == 'operation_record' and e['data'].get('reason') == 'shell_staging_metadata_copy_mismatch' for e in events), events)
+        self.assertEqual((target.read_bytes(), c.base.stamp(target.stat())), (raw, before))
+        pending, = self.home.glob('.macseed-shell-pending-*')
+        self.assertEqual({p.name for p in pending.iterdir()}, {'observed'})
+        stamps = {path: c.base.stamp((self.home / path).stat()) for path in paths}
+        for path in paths: self.assertEqual((self.home / path).read_bytes(), (source / path).read_bytes())
+        writer.write_bytes(production)
+        for _ in range(2):
+            refresh = self.plan_result(selection=selection, shell_script_selection=ids)
+            self.assertFalse(refresh['has_executable_changes'])
+            self.assertEqual([row['reason'] for row in refresh['plan'] if row['item_id'].startswith('shell-alias:')],
+                             ['shell_publication_uncertain'] * 2)
+            self.assertEqual([row['disposition'] for row in refresh['plan'] if row['item_id'].startswith('shell-script:')], ['satisfied'] * 2)
+            self.assertNotIn('shell_scripts', refresh)
+            self.assertEqual([state for _, state, _ in c.comparison(value, str(self.home))['rows']], ['unverified'] * 2 + ['matching'] * 2)
+        # Simulate a separately reviewed archival action, ONLY in this fixture.
+        # Production never ignores or automatically removes an existing pending.
+        pending.rename(pending.with_name('reviewed-' + pending.name))
+        retry = self.plan_result(selection=selection, shell_script_selection=ids)
+        self.assertTrue(retry['has_executable_changes'])
+        self.assertEqual(len([r for r in retry['plan'] if r['disposition'] == 'planned']), 2)
+        self.assertNotIn('shell_scripts', retry)
+        result, events = self.execute(retry['prepared_plan_id'], selection=selection, shell_script_selection=ids)
+        self.assertEqual(result.returncode, 0, events)
+        self.assertEqual(target.read_bytes(), raw + definitions)
+        self.assertEqual([state for _, state, _ in c.comparison(value, str(self.home))['rows']], ['matching'] * 4)
+        self.assertEqual(stamps, {path: c.base.stamp((self.home / path).stat()) for path in paths})
+        self.assertFalse(self.plan_result(selection=selection, shell_script_selection=ids)['has_executable_changes'])
+        self.assertFalse((self.home / 'startup-must-not-run').exists())
+
+    def test_scripts_v5_independent_preview_execute_with_blocked_aliases(self, blocked=True):
+        self.shell_alias_fixture()
+        c = bundle.shell_contract().recovery_contract()
+        source = self.root.resolve() / 'scripts-source'; source.mkdir(mode=0o700)
+        dynamic = b'eval "$(touch "$HOME/startup-must-not-run")"\nhelper() { :; }\n'
+        definitions = b"alias fixture_a='echo A'\nalias fixture_b='$HOME/fixtures/b.sh'\n"
+        (source / '.zshrc').write_bytes(dynamic + definitions)
+        (source / 'fixtures').mkdir()
+        paths = ['fixtures/b.sh', 'fixtures/nested/c']
+        for path, mode in zip(paths, (0o700, 0o600)):
+            script = source / path; script.parent.mkdir(exist_ok=True)
+            script.write_bytes(b'#!/bin/sh\n# Never execute this captured fixture\nprintf "fixture\\n"\n')
+            script.chmod(mode)
+        subprocess.run(['/usr/bin/xattr', '-w', 'com.apple.quarantine', '0083;12345678;MacseedFixture;',
+                        str(source / paths[0])], check=True)
+        ids = [c.script_id(path) for path in paths]
+        value = c.authorize_capture(c.capture(str(source)), str(source), ids,
+                                    policy=c.FILE_POLICY, script_paths=paths)
+        c.save(self.stage / 'generated/shell/zshrc.snapshot', value)
+        self.archive.unlink(); self.pack(); self.allow_application_bootstrap()
+        blocked_source = dynamic + (b'return\n' if blocked else b'')
+        target = self.home / '.zshrc'; target.write_bytes(blocked_source); target.chmod(0o644)
+        os.chflags(target, 0x40)
+        original = (target.read_bytes(), c.base.stamp(target.stat()))
+        selection = dict(categories=[], items={'shell-zsh': sorted(c.requirement_ids(value))})
+        plan = self.plan_result(selection=selection, shell_script_selection=ids)
+        rows = {row['item_id']: row for row in plan['plan']}
+        self.assertEqual(plan['selection'], selection)
+        self.assertTrue(plan['readiness']['ready'] and plan['has_executable_changes'])
+        self.assertEqual(set(plan['shell_skipped_items']), {c.base.identity(row['name']) for row in value['aliases']} if blocked else set())
+        for alias in value['aliases']:
+            row = rows[c.base.identity(alias['name'])]
+            self.assertEqual((row['disposition'], row['reason']), ('blocked', 'shell_source_prerequisite') if blocked else ('planned', None))
+        for path in paths:
+            row = rows[c.file_identity(path)]
+            self.assertEqual((row['disposition'], row['action'], row['display_name']), ('planned', 'create', path))
+        self.assertEqual(rows['scope']['reason'], 'partial_source_coverage')
+        self.assertEqual(len(rows), 5)
+        self.assertEqual({row['id'] for row in plan['shell_scripts']}, set(ids))
+        result, events = self.execute(plan['prepared_plan_id'], selection=selection, shell_script_selection=ids)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(events[-1]['data']['code'], 'script_consent_required')
+        self.assertFalse((self.home / 'fixtures').exists())
+        # Evidence for blocked sources is still bound: no writes from a stale plan.
+        target.write_bytes(blocked_source + b'# changed since Prepare\n')
+        result, events = self.execute(plan['prepared_plan_id'], selection=selection,
+                                      shell_script_selection=ids, shell_script_ids=ids)
+        self.assertEqual(events[-1]['data']['code'], 'stale_plan')
+        self.assertFalse((self.home / 'fixtures').exists())
+        original = (target.read_bytes(), c.base.stamp(target.stat()))
+        with c.sources.parent(str(self.home), '.zshrc') as (fd, name, _):
+            _, info, attributes = c.sources.mutable_file(fd, name, tracked=True)
+            document = c.sources.document_id(fd, name, info)
+        plan = self.plan_result(selection=selection, shell_script_selection=ids)
+        result, events = self.execute(plan['prepared_plan_id'], selection=selection,
+                                      shell_script_selection=ids, shell_script_ids=ids)
+        self.assertEqual(result.returncode, 0, events)
+        verified = next(e['data']['verification'] for e in events if e['type'] == 'result')
+        self.assertEqual((verified['verified_count'], verified['mismatch_count']), (2, 2) if blocked else (4, 0))
+        for path in paths:
+            self.assertEqual((self.home / path).read_bytes(), (source / path).read_bytes())
+            self.assertEqual((self.home / path).stat().st_mode & 0o777, (source / path).stat().st_mode & 0o777)
+        self.assertEqual(subprocess.check_output(['/usr/bin/xattr', '-p', 'com.apple.quarantine', str(self.home / paths[0])]),
+                         subprocess.check_output(['/usr/bin/xattr', '-p', 'com.apple.quarantine', str(source / paths[0])]))
+        if blocked:
+            self.assertEqual((target.read_bytes(), c.base.stamp(target.stat())), original)
+        else:
+            self.assertEqual(target.read_bytes(), original[0] + definitions)
+            with c.sources.parent(str(self.home), '.zshrc') as (fd, name, _):
+                _, after, actual_attributes = c.sources.mutable_file(fd, name, tracked=True)
+                self.assertEqual((c.sources.document_id(fd, name, after), actual_attributes), (document, attributes))
+                self.assertEqual(c.base.stamp(after)[2:6], original[1][2:6])
+        self.assertFalse((self.home / 'startup-must-not-run').exists())
+        self.assertEqual([state for row, state, _ in c.comparison(value, str(self.home))['rows']],
+                         ['missing', 'missing', 'matching', 'matching'] if blocked else ['matching'] * 4)
+        again = self.plan_result(selection=selection, shell_script_selection=ids)
+        self.assertFalse(again['has_executable_changes'])
+        self.assertNotIn('shell_scripts', again)
+        # A file-only repeat is a true no-op, with no alias-source prerequisites.
+        only = dict(categories=[], items={'shell-zsh': sorted(c.file_identity(path) for path in paths)})
+        plan = self.plan_result(selection=only, shell_script_selection=ids)
+        stamps = {path: c.base.stamp((self.home / path).stat()) for path in paths}
+        result, events = self.execute(plan['prepared_plan_id'], selection=only, shell_script_selection=ids)
+        self.assertEqual(result.returncode, 0, events)
+        self.assertEqual(stamps, {path: c.base.stamp((self.home / path).stat()) for path in paths})
+
+    def test_shell_recovery_execute_consent_verify_check_and_noop(self, policy=None):
+        self.shell_alias_fixture()
+        recovery = bundle.shell_contract().recovery_contract()
+        source = self.root.resolve() / 'source-home'; source.mkdir(mode=0o700)
+        (source / '.config/zsh').mkdir(parents=True)
+        (source / '.local/bin').mkdir(parents=True)
+        (source / '.zshrc').write_text('source "$HOME/.config/zsh/aliases"\n')
+        (source / '.config/zsh/aliases').write_text("alias infra='cd $HOME/Projects/infra'\nalias adns='$HOME/.local/bin/adns'\n")
+        script = source / '.local/bin/adns'
+        script.write_text('#!/bin/bash\n# Platform details\n/usr/bin/sw_vers -productVersion\n'); script.chmod(0o755)
+        if policy == recovery.FILE_POLICY:
+            subprocess.run(['/usr/bin/xattr', '-w', 'com.apple.quarantine', '0083;12345678;MacseedFixture;', str(script)], check=True)
+        value = recovery.capture(str(source))
+        ids = [recovery.script_id('.local/bin/adns')]
+        value = recovery.authorize_capture(value, str(source), ids, policy=policy)
+        recovery.save(self.stage / 'generated/shell/zshrc.snapshot', value)
+        self.archive.unlink(); self.pack(); self.allow_application_bootstrap()
+        missing_directory = self.plan_result()
+        self.assertTrue(all(row['disposition'] == 'blocked' for row in missing_directory['plan'] if row['item_id'].startswith('shell-alias:')))
+        self.assertFalse((self.home / 'Projects/infra').exists())
+        (self.home / 'Projects/infra').mkdir(parents=True)  # Separately satisfied Workspace prerequisite.
+        plan = self.plan_result()
+        self.assertEqual([row['id'] for row in plan['shell_scripts']], ids)
+        self.assertEqual(plan['selected_item_counts']['shell-zsh'], 2)
+        self.assertTrue(plan['has_executable_changes'])
+        self.environment['MACSEED_SHELL_SCRIPT_APPROVALS'] = json.dumps(ids)
+        result, events = self.execute(plan['prepared_plan_id'])
+        self.environment.pop('MACSEED_SHELL_SCRIPT_APPROVALS')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(events[-1]['data']['code'], 'script_consent_required')
+        self.assertFalse((self.home / '.zshrc').exists())
+        self.assertFalse((self.home / '.local').exists())
+        # A stale target is rejected even with script authorization.
+        (self.home / '.zshrc').write_text('# new target edit\n')
+        result, events = self.execute(plan['prepared_plan_id'], shell_script_ids=ids)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse((self.home / '.local').exists())
+        plan = self.plan_result()
+        result, events = self.execute(plan['prepared_plan_id'], shell_script_ids=ids)
+        self.assertEqual(result.returncode, 0, events)
+        verified = next(e['data']['verification'] for e in events if e['type'] == 'result')
+        self.assertEqual(verified['status'], 'complete')
+        self.assertEqual(verified['mismatch_count'], 0)
+        self.assertTrue(any(e['type'] == 'verification_record' and e['data'].get('predicate') == 'alias_recovery' for e in events))
+        self.assertEqual((self.home / '.local/bin/adns').read_bytes(), script.read_bytes())
+        request = dict(protocol_version=1, operation_id='recovery-check', operation='environment_compare', parameters=dict(bundle_path=str(self.archive)))
+        checked = subprocess.run(['bash', str(self.project / 'modules/core/application-interface/core.sh')],
+            cwd=self.project, env=self.environment, input=json.dumps(request).encode(), capture_output=True, timeout=30)
+        self.assertEqual(checked.returncode, 0, checked.stdout)
+        data = next(json.loads(line)['data'] for line in checked.stdout.splitlines() if json.loads(line)['type'] == 'result')
+        files = int(policy == 'opaque-file-v5')
+        self.assertEqual(data['comparison']['counts']['matching'], 3 + files)  # Two aliases, Workspace Folder, and v5 file evidence.
+        self.assertEqual(sum(row['domain'] == 'shell-zsh' and row['comparison_kind'] == 'matching' for row in data['comparison_records']), 2 + files)
+        self.assertEqual(set(data['reference_presentation']['shell_alias_labels'].values()), {'infra', 'adns'})
+        if files:
+            self.assertEqual(data['reference_presentation']['shell_script_labels'], {recovery.file_identity('.local/bin/adns'): '.local/bin/adns'})
+        self.assertNotIn('#!/bin/bash', json.dumps(data))
+        self.assertEqual((self.home / '.local/bin/adns').stat().st_mode & 0o777, 0o755)
+        plan = self.plan_result()
+        self.assertFalse(plan['has_executable_changes'])
+        self.assertNotIn('shell_scripts', plan)
+        stamp = (self.home / '.local/bin/adns').stat().st_mtime_ns
+        result, events = self.execute(plan['prepared_plan_id'])
+        self.assertEqual(result.returncode, 0, events)
+        self.assertEqual((self.home / '.local/bin/adns').stat().st_mtime_ns, stamp)
+        (self.home / '.local/bin/adns').chmod(0o600)
+        plan = self.plan_result()
+        self.assertFalse(plan['has_executable_changes'])
+        self.assertEqual([row['disposition'] for row in plan['plan'] if row['item_id'].startswith('shell-alias:')], ['satisfied', 'blocked'])
+
+    def test_shell_script_selection_excludes_unselected_payload_and_binds_plan(self):
+        self.shell_alias_fixture()
+        recovery = bundle.shell_contract().recovery_contract()
+        source = self.root.resolve() / 'selected-source'; source.mkdir(mode=0o700)
+        (source / '.local/bin').mkdir(parents=True)
+        for name in ('shared', 'other'):
+            path = source / '.local/bin' / name
+            path.write_text('#!/bin/sh\n/bin/date\n'); path.chmod(0o700)
+        (source / '.zshrc').write_text("alias one='$HOME/.local/bin/shared'\nalias two='$HOME/.local/bin/shared'\nalias other='$HOME/.local/bin/other'\n")
+        ids = [recovery.script_id('.local/bin/' + name) for name in ('shared', 'other')]
+        value = recovery.authorize_capture(recovery.capture(str(source)), str(source), ids)
+        (self.stage / 'generated/shell/zshrc.snapshot').write_bytes(recovery.encode(value))
+        self.archive.unlink(); self.pack(); self.allow_application_bootstrap()
+        inspected = bundle.inspect_bundle(self.archive, str(self.home))
+        self.assertEqual(len(inspected['shell_script_candidates']), 2)
+        chosen = dict(categories=[], items={'shell-zsh': [recovery.base.identity(name) for name in ('one', 'two')]})
+        blocked = self.plan_result(selection=chosen, shell_script_selection=[])
+        self.assertNotIn('shell_scripts', blocked)
+        self.assertEqual(blocked['shell_script_candidates'], [])
+        self.assertFalse(blocked['has_executable_changes'])
+        self.assertTrue(all(row['disposition'] == 'blocked' for row in blocked['plan'] if row['item_id'].startswith('shell-alias:')))
+        invalid, _ = self.invoke(selection=chosen, shell_script_selection=[ids[1]])
+        self.assertNotEqual(invalid.returncode, 0, 'Unselected alias cannot authorize a captured script')
+        plan = self.plan_result(selection=chosen, shell_script_selection=[ids[0]])
+        self.assertEqual(plan['shell_script_selection'], [ids[0]])
+        self.assertEqual([row['id'] for row in plan['shell_scripts']], [ids[0]])
+        self.assertEqual([row['id'] for row in plan['shell_script_candidates']], [ids[0]])
+        self.assertEqual(plan['shell_script_candidates'][0]['observation_id'], next(
+            row['observation_id'] for row in inspected['shell_script_candidates'] if row['id'] == ids[0]))
+        self.assertEqual(set(plan['shell_script_candidates'][0]['alias_ids']), set(chosen['items']['shell-zsh']))
+        self.assertEqual(plan['selected_item_counts']['shell-zsh'], 2)
+        result, events = self.execute(plan['prepared_plan_id'], selection=chosen, shell_script_selection=[ids[0]])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(events[-1]['data']['code'], 'script_consent_required')
+        result, events = self.execute(plan['prepared_plan_id'], selection=chosen, shell_script_selection=[], shell_script_ids=[ids[0]])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse((self.home / '.zshrc').exists())
+        result, events = self.execute(plan['prepared_plan_id'], selection=chosen, shell_script_selection=[ids[0]], shell_script_ids=[ids[0]])
+        self.assertEqual(result.returncode, 0, events)
+        self.assertTrue((self.home / '.local/bin/shared').is_file())
+        self.assertFalse((self.home / '.local/bin/other').exists())
+        verified = [e['data'] for e in events if e['type'] == 'verification_record' and e['data'].get('domain') == 'shell-zsh']
+        self.assertEqual([row['conformity'] for row in verified], ['verified', 'verified'])
+        repeated = self.plan_result(selection=chosen, shell_script_selection=[ids[0]])
+        self.assertFalse(repeated['has_executable_changes'])
+        self.assertNotIn('shell_scripts', repeated)
+        self.assertEqual(repeated['shell_script_candidates'], plan['shell_script_candidates'],
+                         'Matching files retain consent evidence without inventing planned work')
+        before = (self.home / '.local/bin/shared').stat().st_mtime_ns
+        result, events = self.execute(repeated['prepared_plan_id'], selection=chosen, shell_script_selection=[ids[0]])
+        self.assertEqual(result.returncode, 0, events)
+        self.assertEqual((self.home / '.local/bin/shared').stat().st_mtime_ns, before)
+
+    def test_shell_managed_source_prerequisite_verify_after_external_restore(self):
+        self.shell_alias_fixture()
+        recovery = bundle.shell_contract().recovery_contract()
+        source = self.root.resolve() / 'managed-source'; source.mkdir(mode=0o700)
+        (source / '.config/dotfiles/.git').mkdir(parents=True)
+        root_text = 'export FIXTURE_CONTEXT=stable\nsource "$HOME/.config/dotfiles/aliases"\n'
+        alias_text = "alias infra='cd $HOME/Projects/infra'\n"
+        (source / '.zshrc').write_text(root_text)
+        (source / '.config/dotfiles/aliases').write_text(alias_text)
+        value = recovery.capture(str(source))
+        (self.stage / 'generated/shell/zshrc.snapshot').write_bytes(recovery.encode(value))
+        self.archive.unlink(); self.pack(); self.allow_application_bootstrap()
+        plan = self.plan_result()
+        aliases = [row for row in plan['plan'] if row['item_id'].startswith('shell-alias:')]
+        self.assertEqual([(row['disposition'], row['reason']) for row in aliases], [('blocked', 'shell_managed_source_prerequisite')])
+        self.assertFalse((self.home / '.config').exists())
+        # Simulate independently restored checkouts and owner-provided startup relationship.
+        shutil.copytree(source / '.config', self.home / '.config')
+        (self.home / '.zshrc').write_text(root_text)
+        (self.home / 'Projects/infra').mkdir(parents=True)
+        managed = self.home / '.config/dotfiles/aliases'; before = managed.read_bytes(); stamp = managed.stat().st_mtime_ns
+        plan = self.plan_result()
+        self.assertFalse(plan['has_executable_changes'])
+        result, events = self.execute(plan['prepared_plan_id'])
+        self.assertEqual(result.returncode, 0, events)
+        verified = [event['data'] for event in events if event['type'] == 'verification_record' and event['data'].get('domain') == 'shell-zsh']
+        self.assertEqual([(row['predicate'], row['conformity']) for row in verified], [('alias_recovery', 'verified')])
+        request = dict(protocol_version=1, operation_id='managed-check', operation='environment_compare', parameters=dict(bundle_path=str(self.archive)))
+        checked = subprocess.run(['bash', str(self.project / 'modules/core/application-interface/core.sh')],
+            cwd=self.project, env=self.environment, input=json.dumps(request).encode(), capture_output=True, timeout=30)
+        self.assertEqual(checked.returncode, 0, checked.stdout)
+        data = next(json.loads(line)['data'] for line in checked.stdout.splitlines() if json.loads(line)['type'] == 'result')
+        self.assertEqual([row['comparison_kind'] for row in data['comparison_records'] if row['domain'] == 'shell-zsh'], ['matching'])
+        self.assertFalse(self.plan_result()['has_executable_changes'])
+        self.assertEqual(managed.read_bytes(), before)
+        self.assertEqual(managed.stat().st_mtime_ns, stamp)
+        self.assertEqual((self.home / '.zshrc').read_text(), root_text)
+
+    def test_shell_source_restore_add_freshness_and_noop(self):
+        self.shell_alias_fixture()
+        contract = bundle.shell_contract()
+        (self.home / '.config').mkdir()
+        root = self.home / '.zshrc'
+        root.write_text(f'source "{self.home}/.config/aliases"\n')
+        target = self.home / '.config/aliases'
+        (self.home / '.config/runtime').mkdir()
+        (self.home / '.config/runtime/.git').mkdir()
+        script = self.home / '.config/runtime/helper.sh'
+        script.write_text('#!/bin/sh\ntouch "$HOME/must-not-run"\n'); script.chmod(0o700)
+        target.write_text("# keep comment\nalias c.='code .'\nalias run_local='$HOME/.config/runtime/helper.sh'\n")
+        target.write_bytes(target.read_bytes() + b'alias reload_local="source ~/.zshrc"\n')
+        value = contract.source_contract().capture(str(self.home))
+        (self.stage / 'generated/shell/zshrc.snapshot').write_bytes(contract.source_contract().encode(value))
+        self.archive.unlink(); self.pack(); self.allow_application_bootstrap()
+        target.write_text("# keep comment\nalias c.='code .'\n")
+        script.chmod(0o600)
+        blocked = self.plan_result()
+        blocked_aliases = [row for row in blocked['plan'] if row['domain'] == 'shell-zsh' and row['item_id'] != 'scope']
+        self.assertEqual([row['disposition'] for row in blocked_aliases], ['satisfied', 'blocked', 'blocked'])
+        self.assertTrue(all(row['action'] == 'none' for row in blocked_aliases))
+        script.chmod(0o700)
+        script_before = script.read_bytes()
+        script_metadata = contract.stamp(script.stat())
+        plan = self.plan_result()
+        aliases = [row for row in plan['plan'] if row['domain'] == 'shell-zsh' and row['item_id'] != 'scope']
+        self.assertEqual([row['disposition'] for row in aliases], ['satisfied', 'planned', 'planned'])
+        self.assertEqual(plan['selected_item_counts']['shell-zsh'], 3)
+        self.assertNotIn('.config/aliases', json.dumps(plan))
+        target.write_bytes(target.read_bytes() + b'# unrelated edit after Preview\n')
+        before = target.read_bytes()
+        result, events = self.execute(plan['prepared_plan_id'])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(target.read_bytes(), before)
+        plan = self.plan_result()
+        result, events = self.execute(plan['prepared_plan_id'])
+        self.assertEqual(result.returncode, 0, events)
+        self.assertEqual(target.read_bytes(), before + b"alias run_local='$HOME/.config/runtime/helper.sh'\n" + b'alias reload_local="source ~/.zshrc"\n')
+        verified = next(event['data']['verification'] for event in events if event['type'] == 'result')
+        self.assertEqual(verified['status'], 'complete')
+        self.assertEqual(verified['mismatch_count'], 0)
+        self.assertEqual(root.read_text(), f'source "{self.home}/.config/aliases"\n')
+        self.assertEqual(script.read_bytes(), script_before)
+        self.assertEqual(contract.stamp(script.stat()), script_metadata)
+        plan = self.plan_result()
+        self.assertFalse(plan['has_executable_changes'])
+        self.assertFalse((self.home / 'must-not-run').exists())
+        stamp = target.stat().st_mtime_ns
+        result, events = self.execute(plan['prepared_plan_id'])
+        self.assertEqual(result.returncode, 0, events)
+        self.assertEqual(target.stat().st_mtime_ns, stamp)
+
+        # A writer after Execute's fresh preparation must still fail closed at Apply.
+        target.write_text("alias c.='code .'\n")
+        plan = self.plan_result()
+        shell_module = self.project / 'modules/shell/zsh.sh'
+        shell_module.write_text(shell_module.read_text().replace('bootstrap_zsh() {\n',
+            'bootstrap_zsh() {\n    printf "# concurrent fixture edit\\n" >> "$HOME/.config/aliases"\n', 1))
+        result, events = self.execute(plan['prepared_plan_id'])
+        self.assertNotIn(b"alias run_local=", target.read_bytes())
+        self.assertIn(b'# concurrent fixture edit', target.read_bytes())
+        final = next(event['data'] for event in events if event['type'] == 'result')
+        self.assertEqual(final['verification']['status'], 'complete')
+        self.assertGreater(final['verification']['mismatch_count'], 0)
 
     def test_ssh_host_preview_uses_authorized_aggregate_plan(self):
         blueprint = self.stage / 'blueprint.conf'
@@ -3787,6 +4277,62 @@ class TopologyPreviewTests(unittest.TestCase):
         self.assertEqual(first['prepared_plan_id'], self.preview()['prepared_plan_id'])
         self.assertTrue(first['readiness']['ready'])
         self.assertFalse(first['has_executable_changes'])
+
+    def test_git_only_ssh_qualification_and_topology_warning_scope(self):
+        self.paths, self.branches, self.parents = self.paths[:1], ['main'], [0]
+        self.configure(folders=['VSCode'])
+        directory = self.home / '.ssh'
+        directory.mkdir(mode=0o700)
+        config = directory / 'config'
+        config.write_text('Host github.com\n    HostName github.com\n    User git\n    IdentityFile ~/.ssh/id_fixture\n')
+        config.chmod(0o600)
+        repositories = self.stage / self.contract.REPOSITORIES
+        https = 'https://example.invalid/team/repo.git'
+        remote = 'git@github.com:fixture/repo.git'
+        repositories.write_text(repositories.read_text().replace(https, remote))
+        git_config = self.base / '.git/config'
+        git_config.write_text(git_config.read_text().replace(https, remote))
+        self.archive.unlink(); self.pack()
+        only_git = self.selection([0])
+        local = self.preview(selection=only_git)
+        self.assertEqual(self.git_rows(local)[0]['disposition'], 'satisfied')
+        self.assertFalse(local['has_executable_changes'], 'An existing checkout needs no SSH credential qualification')
+
+        shutil.rmtree(self.home / 'Projects')
+        missing = self.preview(selection=only_git)
+        row = self.git_rows(missing)[0]
+        self.assertEqual((row['disposition'], row['reason']), ('blocked', 'git_ssh_identity_unresolved'))
+        self.assertFalse(missing['has_executable_changes'])
+        self.assertNotIn('Workspace', missing['scope_warnings'], 'The Git item already explains the topology warning')
+        with_folder = self.preview(selection=self.selection([0], ['VSCode']))
+        folders = [row for row in with_folder['plan'] if row['domain'] == 'workspace-folders']
+        self.assertEqual([(row['item_id'], row['action']) for row in folders], [('VSCode', 'create_directory')])
+        self.assertTrue(with_folder['has_executable_changes'], 'An independent folder remains available')
+
+        repositories.write_text(repositories.read_text().replace(remote, https))
+        self.archive.unlink(); self.pack()
+        public = self.preview(selection=only_git)
+        self.assertEqual((self.git_rows(public)[0]['action'], self.git_rows(public)[0]['reason']), ('clone', None))
+        self.assertTrue(public['has_executable_changes'] and public['readiness']['ready'])
+        self.assertNotIn('ssh-configuration', public['selected_categories'])
+        self.assertNotIn('ssh-configuration', public['selection']['items'])
+        self.assertFalse(public['include_secure'])
+
+        repositories.write_text(repositories.read_text().replace(https, remote))
+        self.archive.unlink(); self.pack()
+        key = directory / 'id_fixture'
+        subprocess.run(['/usr/bin/ssh-keygen', '-q', '-t', 'ed25519', '-N', '', '-f', str(key)], check=True)
+        qualified = self.preview(selection=only_git)
+        self.assertEqual((self.git_rows(qualified)[0]['disposition'], self.git_rows(qualified)[0]['reason']),
+                         ('planned', 'git_ssh_local_ready'))
+        self.assertTrue(qualified['has_executable_changes'] and qualified['readiness']['ready'])
+        self.assertFalse(qualified['include_secure'], 'Existing destination credentials do not require Bundle imports')
+        key.unlink(); key.with_suffix('.pub').unlink()
+        subprocess.run(['/usr/bin/ssh-keygen', '-q', '-t', 'ed25519', '-N', 'fixture-only', '-f', str(key)], check=True)
+        locked = self.preview(selection=only_git)
+        self.assertEqual((self.git_rows(locked)[0]['disposition'], self.git_rows(locked)[0]['reason']),
+                         ('blocked', 'git_ssh_identity_unresolved'))
+        self.assertFalse(locked['has_executable_changes'], 'A protected key is not assumed unlocked by an agent or Keychain')
 
     def test_ordinary_missing_clone_and_shared_folder_destination(self):
         self.paths, self.branches, self.parents = self.paths[:1], ['main'], [0]

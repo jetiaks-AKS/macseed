@@ -75,7 +75,9 @@ struct EnvironmentStatusPresentation {
     let secureCoverage: String?
     let secureRequiresRetry: Bool
     let attentionCount: Int?
+    let attentionBreakdown: String?
     let technicalFacts: [String: [ComparisonTechnicalFact]]
+    let coverageHelp: [String: String]
 
     func categoryCount(_ outcome: ComparisonOutcome, category: DisplayCategory, children: [DisplayCategory] = []) -> Int {
         // Qualified Host rows replace config in Check statistics only.
@@ -170,6 +172,20 @@ struct EnvironmentStatusPresentation {
                 && diagnostics.contains { $0.recordID == coverage.recordID && $0.code == "partial_source_coverage" && $0.phase == "scope" }
         }.map(\.itemID))
         func title(_ identity: String, domain: String) -> String {
+            if domain == "shell-zsh" {
+                if result.records.verificationRecords.contains(where: { $0.domain == domain && $0.itemID == identity && $0.predicate == "file_content" }) { return "Saved Zsh file" }
+                if identity == "scope", coverageRecords.contains(where: { $0.domain == domain && $0.itemID == identity && $0.disposition == "unresolved" && $0.sourceStatus == "partial" }) {
+                    return ShellCommandPresentation.coverageTitle
+                }
+                if let label = result.referencePresentation?.shellAliasLabels?[identity],
+                   result.records.verificationRecords.contains(where: { $0.domain == domain && $0.itemID == identity && ["alias_definition", "alias_recovery"].contains($0.predicate ?? "") }) { return label }
+                if identity.hasPrefix("shell-script:") {
+                    if let path = result.referencePresentation?.shellScriptLabels?[identity],
+                       result.records.verificationRecords.contains(where: { $0.domain == domain && $0.itemID == identity && $0.predicate == "script_file" }) { return "~/" + path }
+                    return "Shell script"
+                }
+                if identity.hasPrefix("shell-alias:") { return "Shell alias" }
+            }
             if domain == "ssh-configuration", partialSSHCoverage.contains(identity) { return "SSH configuration coverage" }
             if domain == "ssh-configuration", identity == "identity-references" { return "SSH key references" }
             if domain == "vscode-workspaces", identity != "scope" {
@@ -208,17 +224,26 @@ struct EnvironmentStatusPresentation {
             case "matching": status = .matching; action = "Matches the selected reference."
             case "missing":
                 status = .missing
-                if row.domain.hasPrefix("macos-"), owner?.predicate == "stored_preference", row.reason == "confirmed_mismatch" {
+                if row.domain == "shell-zsh", owner?.predicate == "script_file" {
+                    action = "The saved script file is missing."
+                } else if row.domain.hasPrefix("macos-"), owner?.predicate == "stored_preference", row.reason == "confirmed_mismatch" {
                     action = "Saved preference is not explicitly set on this Mac."
                 } else {
                     action = row.domain == "app-store"
                         ? "The App Store requirement was not found. A Homebrew installation does not confirm the App Store version."
                         : "Reference requirement was not found on this Mac."
                 }
-            case "differing": status = .different; action = "Current state differs from the selected reference."
+            case "differing":
+                status = .different
+                action = row.domain == "shell-zsh" && owner?.predicate == "script_file"
+                    ? "File contents or permissions differ from the saved script." : "Current state differs from the selected reference."
             default:
                 status = row.support == "unsupported" ? .unsupported : .unverified
                 switch row.reason {
+                case _ where row.domain == "shell-zsh" && owner?.predicate == "script_file" && row.support == "supported":
+                    action = "Couldn’t inspect the script safely. Check its path, ownership, permissions and metadata."
+                case _ where row.domain == "shell-zsh" && ShellCommandPresentation.dependencyExplanation(row.reason) != nil:
+                    action = ShellCommandPresentation.dependencyExplanation(row.reason)!
                 case "unknown_difference": action = "Couldn’t determine how this requirement differs."
                 case "observation_failed": action = "Couldn’t read the current state."
                 default: action = row.support == "unsupported" ? "This requirement cannot be checked in this version." : "Couldn’t verify this requirement."
@@ -235,6 +260,8 @@ struct EnvironmentStatusPresentation {
                 ? (secureCheck?.items.allSatisfy { $0.comparisonKind == "matching" } == true
                     ? "Saved SSH key files match, but not every IdentityFile dependency is qualified. File equality alone does not prove that each configured reference identifies a usable key."
                     : "Not every configured IdentityFile path and key pair could be qualified. This does not establish that a key is missing or invalid.")
+                : row.domain == "shell-zsh" && row.itemID == "scope" && row.sourceStatus == "partial"
+                    ? "Selected Shell requirements are shown separately. Other Shell configuration and unresolved source dependencies are outside the saved scope; this attention does not mean matching aliases failed verification. Matching script bytes and metadata do not prove execution, safety or availability of dependencies inside the script."
                 : row.domain == "ssh-configuration" && partialSSHCoverage.contains(row.itemID) ? diagnosticMessage("partial_source_coverage")
                 : row.disposition == "unresolved" ? "The selected reference requirement could not be resolved."
                 : (row.disposition == "excluded" ? "Excluded from the selected comparison scope." : "No requirement in the selected scope.")
@@ -254,6 +281,8 @@ struct EnvironmentStatusPresentation {
             let expectedDiagnostic = fact.map { row in
                 (diagnostic.code == "confirmed_mismatch" && ["missing", "differing"].contains(row.comparisonKind))
                     || (["observation_failed", "prerequisite_unmet", "unsupported_predicate"].contains(diagnostic.code) && row.comparisonKind == "unverified")
+                    || (row.domain == "shell-zsh" && row.comparisonKind == "unverified" && diagnostic.code == row.reason
+                        && ShellCommandPresentation.dependencyExplanation(row.reason) != nil)
             } ?? false
             // Expected predicate diagnostics explain the typed result; independent warnings retain attention.
             add(domain, DisplayItem(id: owner != nil || coverage != nil ? logicalID(domain, identity) : "diagnostic:\(index)", title: title(identity, domain: domain), status: attention && !expectedDiagnostic ? .attention : .information,
@@ -418,8 +447,28 @@ struct EnvironmentStatusPresentation {
             }
             if aggregate.comparisonKind == "unverified" { sshHostAttentionDelta = items.count - 1 }
         }
+        var coverageHelp: [String: String] = [:]
+        // Condense only the known partial-coverage explanation. Independent errors
+        // on this same row remain visible rather than being moved into help.
+        for coverage in coverageRecords where coverage.domain == "shell-zsh" && coverage.itemID == "scope"
+            && coverage.disposition == "unresolved" && coverage.sourceStatus == "partial" {
+            guard !result.comparisonRecords.contains(where: { $0.domain == coverage.domain && $0.itemID == coverage.itemID }),
+                  !owners.contains(where: { $0.domain == coverage.domain && $0.itemID == coverage.itemID }),
+                  coverageRecords.filter({ $0.domain == coverage.domain && $0.itemID == coverage.itemID }).count == 1,
+                  diagnostics.filter({ $0.recordID == coverage.recordID }).allSatisfy({
+                      ["partial_source_coverage", "dependency_unavailable"].contains($0.code) && $0.severity == "warning" && $0.phase == "scope"
+                  }), let index = grouped[coverage.domain]?.firstIndex(where: { $0.id == "shell-zsh:scope" }) else { continue }
+            let item = grouped[coverage.domain]![index]
+            coverageHelp[item.id] = item.action
+            grouped[coverage.domain]![index] = DisplayItem(id: item.id, title: item.title, status: item.status,
+                action: ShellCommandPresentation.coverageSummary, reason: item.reason)
+        }
+        self.coverageHelp = coverageHelp
         categories = order.map { domain in
-            DisplayCategory(id: domain, title: DeveloperSelectionGroup.label(domain, fallback: names[domain]?.0 ?? domain), symbol: names[domain]?.1 ?? "folder", items: grouped[domain]!)
+            let legacyShell = domain == "shell-zsh" && result.records.verificationRecords.contains { $0.domain == domain && $0.predicate == "file_content" }
+            let scriptShell = domain == "shell-zsh" && result.records.verificationRecords.contains { $0.domain == domain && $0.predicate == "script_file" }
+            // Keep Check's existing single category, with a title that also covers files.
+            return DisplayCategory(id: domain, title: DeveloperSelectionGroup.label(domain, fallback: legacyShell ? "Settings" : scriptShell ? "Custom Commands" : names[domain]?.0 ?? domain), symbol: names[domain]?.1 ?? "folder", items: grouped[domain]!)
         }
         sections = EnvironmentStatusSection.project(categories)
         let independentUnverified = result.comparisonRecords.contains { $0.comparisonKind == "unverified" && !dependentRepositoryRecords.contains($0.recordID) }
@@ -444,6 +493,17 @@ struct EnvironmentStatusPresentation {
         let countedAttention = attentionIDs.count + sshHostAttentionDelta + secureAttention
         attentionCount = !needsAttention ? 0 : (!incompleteRepositoryEvidence && !(protectedScope && savedIDs == nil) && attentionIDs.count + secureAttention > 0
             && independentDiagnostics.allSatisfy { attentionIDs.contains($0.recordID) } ? countedAttention : nil)
+        let unresolved = Dictionary(grouping: coverageRecords.filter { $0.disposition == "unresolved" }, by: \.domain)
+        let coverageIDs = Set(unresolved.values.flatMap { $0 }.map(\.recordID))
+        let unverifiedCount = attentionIDs.subtracting(coverageIDs).count + sshHostAttentionDelta + secureAttention
+        var breakdown: [String] = []
+        if unverifiedCount > 0 { breakdown.append("\(unverifiedCount) unverified requirement\(unverifiedCount == 1 ? "" : "s")") }
+        for domain in unresolved.keys.sorted() {
+            let count = Set(unresolved[domain]!.map(\.recordID)).count
+            let label = domain == "shell-zsh" ? "Shell" : CaptureCategory.title(for: domain)
+            breakdown.append("\(count) incomplete \(label) coverage")
+        }
+        attentionBreakdown = attentionCount != nil && !breakdown.isEmpty ? breakdown.joined(separator: " · ") : nil
         if needsAttention {
             headline = uncheckedScope ? "Check Incomplete" : "Needs Attention"
             message = uncheckedScope ? "Saved SSH keys remain unchecked. Ordinary results and verified matches are retained."

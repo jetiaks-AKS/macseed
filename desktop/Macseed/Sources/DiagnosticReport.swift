@@ -269,6 +269,7 @@ struct DiagnosticReportBuilder {
     private static func operation(_ value: CoreOperation) -> String {
         switch value {
         case .captureIdentityInspect: return "Capture / SSH Identity Inspection"
+        case .captureScriptInspect: return "Capture / Script Eligibility"
         case .capturePrepare: return "Capture / Prepare"
         case .captureExecute: return "Capture / Execute"
         case .bundleInspect: return "Rebuild / Inspect"

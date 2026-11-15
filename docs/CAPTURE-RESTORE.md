@@ -10,7 +10,7 @@ Install/Repair, complete visual effects or packaged clean-Mac readiness.
 ## What travels
 
 Capture observes Homebrew/App Store applications, VS Code extensions/settings,
-global Git configuration, supported SSH Host profiles, standalone Zsh `.zshrc`,
+global Git configuration, supported SSH Host profiles, standalone Zsh `.zshrc` or qualified static aliases,
 Workspace folders/repositories and supported macOS settings. Blueprint selects
 categories and items; values remain in Generated Configuration. With no Blueprint,
 the established all-inclusive compatibility behavior applies. Application Capture
@@ -42,6 +42,72 @@ previews them, and the user installs manually through Apple App Store before
 refreshing Core verification. Confirmed shared identity gives Homebrew Cask
 precedence; unresolved identity preserves both requirements. Automatic MAS
 development is [archived](toolkit/ARCHITECTURE.md), outside the current workflow.
+
+Shell Capture preserves historical standalone snapshots and discovers independent
+static aliases across qualified startup files and bounded HOME-relative source chains.
+Capture/Rebuild Selection uses **Shell → Custom Commands → Aliases & Functions /
+Scripts**, with individual alias rows and default-off per-file script consent.
+**Add Script…** inside expanded Capture Scripts opens the native multiple-file picker,
+including when no aliases or scripts were discovered. Picked standalone files are
+checked by Core, deduplicated with alias-linked files and added unchecked. Select
+their checkboxes to authorize inclusion. Rejected files show a reason; other valid
+files in the same picker selection remain available. No script is run or changed.
+Parent selection requires a separate informed choice before granting executable
+transfer. Selecting a Capture file explicitly authorizes its automatic Core check;
+only qualified files retain selection. No separate inspection action is required. Unsupported files stay visible as dependencies
+and do not prevent alias-only Capture. A rejected script Prepare can return to
+retained Selection; the next Prepare revalidates all current evidence. Core preserves
+portable provenance and reconstructs selected closed static source chains, including
+qualified missing directories/files and required source relationships. Existing
+content and conflicting definitions are preserved. Selected script
+files, executable or non-executable, require per-file consent in Capture Selection and independently in Rebuild
+Selection; Capture consent is not inherited. Confirmation is read-only and summarizes
+the selected files and unencrypted-code boundary inside Shell. Preview shows actual
+actions/blockers with compact script context; Progress/Result use flat category rows
+under Standard Setup / For Experienced Users, and Check
+keeps direct diagnostics and matching results. No file metadata inflates alias counts. Capabilities 4/5 also allow an independently
+selected file without aliases; this is one file requirement, with no alias or
+startup reconstruction. See the [workflow-specific Desktop contract](DESKTOP.md#check-environment-status). Arbitrary
+file migration and unresolved dependencies remain outside the qualified scope. Capability-3/4/5
+Verification/Check includes qualified dependencies; partial Shell coverage remains
+separate. Repeat Restore converges to no-op within that supported scope.
+
+Scripts v5 uses unchanged `MBT-BUNDLE-1` with a bounded manifest and separate raw
+file members: up to 128 files, 1 MiB each, and 16 MiB aggregate original content.
+Harmless macOS encoding/download annotations are allowed under a closed policy.
+Quarantine is preserved before atomic publication and checked afterward; it never
+becomes a trust or execution grant. Existing targets are never overwritten.
+Supported Shell/Python files can be executable or non-executable; extensionless
+files need a supported shebang. Original supported permissions and bytes are
+preserved. Missing safe parent directories inside destination HOME are created
+as 0700 before file publication. Ownership, symlink, source freshness, no-clobber,
+Git-managed destination and independent Restore consent checks remain enforced.
+Legacy capabilities 1/2/3/4 remain readable under their original contracts.
+File transfer never establishes safe execution or internal dependency availability.
+Sensitive-content indicators block transfer, but absence of an indicator does not
+prove a secret-free file; normal Bundle contents remain unencrypted.
+
+Capture counts Aliases & Functions and Scripts independently as functional domains
+in Selection, Confirmation and Result, while retaining one physical Shell Core
+module. Each selected alias and each unique selected script counts once; manual
+and alias-linked discovery of the same file is deduplicated. Check emits file-level
+bytes/mode evidence separately from aliases.
+Scripts transfers explicitly selected files, not directories. It is not a script
+editor, launcher, dependency manager or general-purpose backup. Scan Folder and
+Automation/LaunchAgents are deferred in the [Roadmap](../ROADMAP.md#post-10--future-direction).
+**Aliases & Scripts v5 — Implemented / Real GUI E2E Accepted.** The
+[A/B/C evidence](qualification/SHELL-RECOVERABILITY-2026-11-12.md#real-gui-abc-acceptance--2026-11-15)
+records two aliases and two scripts captured, deliberately removed and restored,
+four final Match results, a no-op Preview and independent source-integrity checks.
+The existing partial Shell coverage warning remains outside that accepted scope.
+Legacy whole-file requirements use **Settings → Saved Zsh file** and retain absent-
+target-only restoration. **Variables & PATH**, broader **Settings**, functions and
+conditional **Plugins & Themes** remain future Shell slices. Apart from the Scripts
+entry needed to add files, no empty future categories,
+source browser or background monitoring is introduced. The
+[Shell contract](toolkit/CONFIGURATION.md#shell--zsh-configuration) owns exact safety
+and compatibility limits. Functional fixtures do not qualify effective interactive
+startup or full Native Desktop/packaged clean-Mac E2E.
 
 ## Bundle and selection
 

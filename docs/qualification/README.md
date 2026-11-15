@@ -21,6 +21,11 @@ The subsequent optimization checkpoint remains **HOSTED NOT YET VERIFIED**.
 
 ## Reports
 
+- [Shell alias recoverability — 2026-11-12](SHELL-RECOVERABILITY-2026-11-12.md) —
+  historical read-only 12-alias gap assessment and the **2026-11-15 accepted real
+  GUI A/B/C workflow**, independent integrity postflight and final fixture cleanup;
+  broader dynamic/managed-source coverage remains partial.
+
 - [Test suite audit and optimization — 2026-11-10](TEST-SUITE-AUDIT-2026-11-10.md) —
   complete source inventory, CI #161 timing evidence, bounded optimizations and
   focused local validation; optimized hosted Full CI remains unmeasured.

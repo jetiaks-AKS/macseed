@@ -4,6 +4,78 @@ private typealias CapturePresentationState<Value> = SwiftUI.State<Value>
 
 enum CaptureItemRole { case wholeCategory, categoryWarning, selectedSubdomain, configuration }
 
+enum ShellCommandPresentation {
+    static let commandsID = "presentation.shell.commands"
+    static let aliasesID = "presentation.shell.aliases"
+    static let scriptsID = "presentation.shell.scripts"
+    static let captureConsent = "Script files are saved unencrypted."
+    static let restoreConsent = "Restore trusted scripts only. They may run later."
+    static let captureHelp = "Selecting a file explicitly authorizes Macseed to read and check that file before including it. Files are saved unencrypted. Checks can flag suspected sensitive content but cannot prove that a file contains no secrets. Macseed preserves qualified file bytes without executing or interpreting program behavior. Dependencies may remain unknown, and restored code may run later. Capture and Restore require separate consent."
+    static let restoreHelp = "Restoring executable code requires explicit authorization for each file. Capture consent does not grant Restore consent. File conformity does not prove safe or successful execution; script dependencies may remain unknown. Existing files are protected against unsafe replacement. Macseed does not execute scripts during Restore or Verification. Restored Shell configuration may execute them in a later interactive session."
+    static let coverageTitle = "Shell coverage"
+    static let coverageSummary = "Some Shell settings or dependencies are outside the saved scope."
+    static func dependencyExplanation(_ reason: String?) -> String? {
+        switch reason {
+        case "shell_publication_uncertain": "Shell recovery evidence needs review before retrying. See View Log."
+        case "shell_tool_missing_prerequisite": "Required command not found. Make it available, then refresh."
+        case "shell_tool_prerequisite", "shell_tool_observation_prerequisite": "Command path safety is unverified. Check ownership and parent-directory permissions, then refresh."
+        case "shell_directory_missing_prerequisite": "Required folder is missing. Restore its folder or repository, then refresh."
+        case "shell_directory_observation_prerequisite": "Couldn’t inspect the required folder safely. Check access and ownership, then refresh."
+        case "shell_dependency_missing_prerequisite": "Required file is missing. Review Scripts or recover it separately, then refresh."
+        case "shell_dependency_observation_prerequisite": "Couldn’t inspect the required file safely. Check access and ownership, then refresh."
+        case "shell_operand_unsupported_prerequisite", "shell_operand_prerequisite": "Path dependency is not qualified. Review it separately, then refresh."
+        case "shell_selection_prerequisite": "Selected Shell recovery has unresolved prerequisites. Review the other blockers, then refresh."
+        default: nil
+        }
+    }
+}
+
+// One reviewed parent-checkbox action. This is an immutable consent snapshot,
+// not a new selection engine; the workflow models still select exact Core IDs.
+struct ShellParentConsent: Identifiable {
+    enum Choice { case aliasesOnly, includeScripts, cancel }
+    let id = UUID()
+    let aliases: Set<String>
+    let candidates: [CoreShellScript]
+    let newScripts: [CoreShellScript]
+    var selectAliases = true
+    var keepSelectionTitle: String { selectAliases ? "Aliases only" : "Keep current selection" }
+    var keepSelectionExplanation: String {
+        selectAliases ? "Aliases only keeps your existing script choices." : "Keep current selection leaves all choices unchanged."
+    }
+    var fileSummary: String {
+        newScripts.map { script in
+            let parts = script.path.split(separator: "/")
+            for count in 1...parts.count {
+                let suffix = parts.suffix(count).joined(separator: "/")
+                if newScripts.filter({ $0.path == suffix || $0.path.hasSuffix("/" + suffix) }).count == 1 { return suffix }
+            }
+            return script.path
+        }.joined(separator: "\n")
+    }
+    func matches(aliases: Set<String>, candidates: [CoreShellScript]) -> Bool {
+        self.aliases == aliases && self.candidates == candidates
+    }
+}
+
+struct ShellParentConsentAlert: ViewModifier {
+    let request: ShellParentConsent?
+    let flow: SelectionHelpFlow
+    let resolve: (ShellParentConsent, ShellParentConsent.Choice) -> Void
+    func body(content: Content) -> some View {
+        content.alert("Include executable scripts?", isPresented: Binding(get: { request != nil }, set: { _ in }), presenting: request) { pending in
+            Button(pending.keepSelectionTitle) { resolve(pending, .aliasesOnly) }
+            Button("Include \(pending.newScripts.count) \(pending.newScripts.count == 1 ? "script" : "scripts")") { resolve(pending, .includeScripts) }
+            Button("Cancel", role: .cancel) { resolve(pending, .cancel) }
+        } message: { pending in
+            Text((flow == .capture ? ShellCommandPresentation.captureConsent : ShellCommandPresentation.restoreConsent)
+                + (flow == .capture ? " Selected files are checked before inclusion; unsupported files stay excluded." : "")
+                + " " + pending.keepSelectionExplanation + "\n\n"
+                + pending.fileSummary)
+        }
+    }
+}
+
 // Display names and developer groups only. Workflow owners retain selection,
 // execution order and read-only comparison layout.
 enum DeveloperSelectionGroup: String, CaseIterable, Identifiable {
@@ -25,12 +97,14 @@ enum DeveloperSelectionGroup: String, CaseIterable, Identifiable {
     }
     // Styling includes synthetic group headers without changing domain selection.
     static func categoryGroup(for id: String) -> Self? {
-        allCases.first { $0.id == id } ?? group(for: id)
+        if [ShellCommandPresentation.commandsID, ShellCommandPresentation.aliasesID, ShellCommandPresentation.scriptsID].contains(id) { return .shell }
+        return allCases.first { $0.id == id } ?? group(for: id)
     }
     static func label(_ id: String, fallback: String, parent: Self? = nil) -> String {
+        if id == "shell-zsh", ["Settings", "Custom Commands"].contains(fallback) { return fallback }
         let qualified = ["git-configuration": "Git Configuration", "git-repositories": "Git Repositories / Worktrees",
             "ssh-configuration": "SSH Configuration", "workspace-folders": "Workspace Folders",
-            "shell-zsh": "Zsh Configuration", "vscode-workspaces": "VS Code Workspace",
+            "shell-zsh": "Aliases & Functions", "vscode-workspaces": "VS Code Workspace",
             CaptureHierarchy.secureTransferID: "SSH Keys", CoreRestorePreparation.secureDomain: "SSH Keys"]
         if let parent, group(for: id) == parent {
             return ["git-configuration": "Configuration", "git-repositories": "Repositories / Worktrees",
@@ -51,6 +125,8 @@ enum DeveloperSelectionGroup: String, CaseIterable, Identifiable {
             let children = Set(ids).intersection(group.domains)
             if !children.isEmpty { result.formUnion(children); result.insert(group.id) }
         }
+        if ids.contains(ShellCommandPresentation.commandsID) { result.insert(ShellCommandPresentation.commandsID) }
+        if ids.contains(ShellCommandPresentation.scriptsID) { result.insert(ShellCommandPresentation.scriptsID) }
         return result
     }
     static func state(_ children: [SelectionState]) -> SelectionState {
@@ -67,10 +143,14 @@ enum DeveloperSelectionGroup: String, CaseIterable, Identifiable {
     func developerCategories(_ group: DeveloperSelectionGroup) -> [CaptureCategory] { categories.filter { group.domains.contains($0.id) } }
     func developerGroupAvailable(_ group: DeveloperSelectionGroup) -> Bool {
         developerCategories(group).contains(where: \.selectable)
+            || (group == .shell && !availableShellScripts.isEmpty)
             || (group == .ssh && secureInventory.status == "present" && !secureInventory.items.isEmpty)
     }
     func developerGroupState(_ group: DeveloperSelectionGroup) -> SelectionState {
         var states = developerCategories(group).filter(\.selectable).map(selectionState)
+        if group == .shell && !parentShellScripts.isEmpty {
+            states.append(SelectionState.summarize(selected: authorizedShellScripts, children: parentShellScripts.map(\.id)))
+        }
         if group == .ssh && secureInventory.status == "present" && !secureInventory.items.isEmpty {
             states.append(SelectionState.summarize(selected: selectedSecureIdentities, children: secureInventory.items.map(\.id)))
         }
@@ -78,6 +158,7 @@ enum DeveloperSelectionGroup: String, CaseIterable, Identifiable {
     }
     func selectDeveloperGroup(_ group: DeveloperSelectionGroup, included: Bool) {
         guard state == .review, !runtime.isActive else { return }
+        if group == .shell { selectShellParent(included: included); return }
         for category in developerCategories(group) { selectCategory(category.id, included: included) }
         if group == .ssh && (!included || selectedSecureIdentities.isEmpty) { selectAllSecureIdentities(included: included) }
     }
@@ -86,10 +167,13 @@ enum DeveloperSelectionGroup: String, CaseIterable, Identifiable {
 @MainActor extension RestoreModel {
     func developerAreas(_ group: DeveloperSelectionGroup) -> [CoreRestoreInspection.Area] { selectionAreas.filter { group.domains.contains($0.id) } }
     func developerGroupAvailable(_ group: DeveloperSelectionGroup) -> Bool {
-        developerAreas(group).contains(where: \.selectable) || (group == .ssh && inspection?.secureComponent == true)
+        developerAreas(group).contains(where: \.selectable) || (group == .shell && !parentShellScripts.isEmpty) || (group == .ssh && inspection?.secureComponent == true)
     }
     func developerGroupState(_ group: DeveloperSelectionGroup) -> SelectionState {
         var states = developerAreas(group).filter(\.selectable).map(selectionState)
+        if group == .shell && !parentShellScripts.isEmpty {
+            states.append(SelectionState.summarize(selected: authorizedShellScripts, children: parentShellScripts.map(\.id)))
+        }
         if group == .ssh && inspection?.secureComponent == true {
             states.append(!includeSecure ? .none : destinationInventory == nil ? .all
                 : SelectionState.summarize(selected: selectedIdentityIDs, children: destinationInventory!.items.map(\.id)))
@@ -98,6 +182,7 @@ enum DeveloperSelectionGroup: String, CaseIterable, Identifiable {
     }
     func selectDeveloperGroup(_ group: DeveloperSelectionGroup, included: Bool) {
         guard state == .review, !busy, !runtime.isActive else { return }
+        if group == .shell { selectShellParent(included: included); return }
         for area in developerAreas(group) { selectArea(area.id, included: included) }
         // Existing Secure Transfer owns whole-package consent and preserves an
         // authenticated nonempty subset; this action neither unlocks nor imports.
@@ -110,13 +195,14 @@ enum SelectionCategoryHelp {
     static func text(_ id: String, flow: SelectionHelpFlow) -> String? {
         let capture = flow == .capture
         switch id {
+        case ShellCommandPresentation.scriptsID: return capture ? ShellCommandPresentation.captureHelp : ShellCommandPresentation.restoreHelp
         case "git-repositories": return (capture ? "Saves repository and worktree setup." : "Recreates supported repositories and worktrees from remotes.") + " Local changes and untracked files are not transferred. Remote access is required for cloning."
         case "ssh-configuration": return (capture ? "Saves supported Host profiles and IdentityFile references." : "Restores supported Host profiles without overwriting conflicting settings. Path corrections require explicit approval.") + " Keys are selected separately. Configuration matching does not verify keys or remote authentication."
         case CaptureHierarchy.secureTransferID: return (capture ? "Selected SSH identities are encrypted separately. Other saved settings are not encrypted. Keep the Bundle passphrase safe."
             : "Explicitly selected SSH identities are imported only after authentication and confirmation. Existing keys won't be overwritten. Customize supports individual keys and safe destination folders.") + " Key availability does not confirm remote authentication."
         case "workspace-folders": return (capture ? "Saves folder structure only." : "Recreates folder structure only.") + " Files and folder contents are not transferred."
         case "vscode-workspaces": return (capture ? "Saves supported VS Code workspace references." : "Recreates supported VS Code workspace references when their selected folders and repositories are available.") + " Project files are not transferred."
-        case "shell-zsh": return (capture ? "Saves supported Zsh configuration." : "Restores supported Zsh configuration with existing conflict checks.") + " External tools, plugins and machine-specific paths may need separate setup."
+        case "shell-zsh": return (capture ? "Saves supported alias declarations from qualified Shell sources." : "Restores selected aliases to qualified source files without replacing conflicting definitions.") + " Other Shell configuration and startup behavior may remain outside the saved scope. Historical whole-file snapshots retain their original restoration limits."
         case "app-store": return (capture ? "Saves selected App Store application requirements." : "Guides you through installing selected apps in the App Store, then checking them.") + " Apps, account credentials and application data are not copied."
         default: return nil
         }
@@ -191,6 +277,30 @@ struct SelectionCategoryTitle: View {
     var toggle: (() -> Void)? = nil
     var information: String? = nil
     var helpPresentation: Binding<Bool>? = nil
+    private var helpTitle: String { DeveloperSelectionGroup.label(id, fallback: title) }
+    var body: some View {
+        HStack(spacing: 8) {
+            if let toggle {
+                Button(action: toggle) { WorkspaceCategoryTitle(id: id, title: title, fallbackSymbol: symbol, developerGroup: DeveloperSelectionGroup.group(for: id)) }.buttonStyle(.plain)
+            } else { WorkspaceCategoryTitle(id: id, title: title, fallbackSymbol: symbol, developerGroup: DeveloperSelectionGroup.group(for: id)) }
+            if let description = SelectionCategoryHelp.text(id, flow: flow) {
+                ContextualHelpButton(id: "selection.help." + id, title: helpTitle, description: description,
+                    information: information, helpPresentation: helpPresentation,
+                    hint: "Shows information without changing selection.")
+            }
+        }
+    }
+}
+
+// The existing native category-help control, also used for Shell coverage details.
+// Keep the same target, popover and dismissal behavior; no selection action lives here.
+struct ContextualHelpButton: View {
+    let id: String
+    let title: String
+    let description: String
+    var information: String? = nil
+    var helpPresentation: Binding<Bool>? = nil
+    let hint: String
     @Environment(\.selectionHelpID) private var activeHelpID
     @CapturePresentationState private var showingHelp = false
     private var help: Binding<Bool> {
@@ -201,32 +311,25 @@ struct SelectionCategoryTitle: View {
             else if activeHelpID.wrappedValue == id { activeHelpID.wrappedValue = nil }
         })
     }
-    private var helpTitle: String { DeveloperSelectionGroup.label(id, fallback: title) }
     var body: some View {
-        HStack(spacing: 8) {
-            if let toggle {
-                Button(action: toggle) { WorkspaceCategoryTitle(id: id, title: title, fallbackSymbol: symbol, developerGroup: DeveloperSelectionGroup.group(for: id)) }.buttonStyle(.plain)
-            } else { WorkspaceCategoryTitle(id: id, title: title, fallbackSymbol: symbol, developerGroup: DeveloperSelectionGroup.group(for: id)) }
-            if let description = SelectionCategoryHelp.text(id, flow: flow) {
-                Button { help.wrappedValue.toggle() } label: {
-                    Image(systemName: "info.circle.fill").foregroundStyle(Color(nsColor: .secondaryLabelColor))
-                        .frame(width: 24, height: 24).contentShape(Rectangle())
-                }
-                    .buttonStyle(.borderless).help("About " + helpTitle)
-                    .accessibilityLabel("About " + helpTitle).accessibilityHint("Shows information without changing selection.")
-                    .accessibilityIdentifier("selection.help." + id)
-                    .background {
-                        if help.wrappedValue { SelectionHelpVisibility { help.wrappedValue = false }.accessibilityHidden(true) }
-                    }
-                    .popover(isPresented: help, arrowEdge: .bottom) {
-                        VStack(alignment: .leading, spacing: 10) {
-                            Text(helpTitle).font(.headline)
-                            Text(description).font(.callout)
-                            if let information { Text(information).font(.callout).foregroundStyle(.secondary) }
-                        }.fixedSize(horizontal: false, vertical: true).padding(16).frame(width: 340)
-                    }
-            }
-        }.onDisappear { help.wrappedValue = false }
+        Button { help.wrappedValue.toggle() } label: {
+            Image(systemName: "info.circle.fill").foregroundStyle(Color(nsColor: .secondaryLabelColor))
+                .frame(width: 24, height: 24).contentShape(Rectangle())
+        }
+        .buttonStyle(.borderless).help("About " + title)
+        .accessibilityLabel("About " + title).accessibilityHint(hint)
+        .accessibilityIdentifier(id)
+        .background {
+            if help.wrappedValue { SelectionHelpVisibility { help.wrappedValue = false }.accessibilityHidden(true) }
+        }
+        .popover(isPresented: help, arrowEdge: .bottom) {
+            VStack(alignment: .leading, spacing: 10) {
+                Text(title).font(.headline)
+                Text(description).font(.callout)
+                if let information { Text(information).font(.callout).foregroundStyle(.secondary) }
+            }.fixedSize(horizontal: false, vertical: true).padding(16).frame(width: 340)
+        }
+        .onDisappear { help.wrappedValue = false }
     }
 }
 
@@ -235,16 +338,19 @@ struct SelectionCategoryTitle: View {
 struct SelectionCategoryDisclosureStyle: DisclosureGroupStyle {
     func makeBody(configuration: Configuration) -> some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 14) {
-                configuration.label.frame(maxWidth: .infinity, alignment: .leading)
-                Button { configuration.isExpanded.toggle() } label: {
-                    Image(systemName: "chevron.right").rotationEffect(.degrees(configuration.isExpanded ? 90 : 0))
-                        .font(.caption.weight(.semibold)).foregroundStyle(.secondary).frame(width: RestoreRowGrid.disclosureWidth, height: 48)
-                }.buttonStyle(.plain).accessibilityLabel("Show category details")
-                    .accessibilityValue(configuration.isExpanded ? "Expanded" : "Collapsed")
-            }.frame(minHeight: 48)
+            Self.header(expanded: configuration.isExpanded, toggle: { configuration.isExpanded.toggle() }) { configuration.label }
             if configuration.isExpanded { configuration.content.padding(.trailing, 26) }
         }
+    }
+    static func header<Label: View>(expanded: Bool, toggle: @escaping () -> Void, @ViewBuilder label: () -> Label) -> some View {
+        HStack(spacing: 14) {
+            label().frame(maxWidth: .infinity, alignment: .leading)
+            Button(action: toggle) {
+                Image(systemName: "chevron.right").rotationEffect(.degrees(expanded ? 90 : 0))
+                    .font(.caption.weight(.semibold)).foregroundStyle(.secondary).frame(width: RestoreRowGrid.disclosureWidth, height: 48)
+            }.buttonStyle(.plain).accessibilityLabel("Show category details")
+                .accessibilityValue(expanded ? "Expanded" : "Collapsed")
+        }.frame(minHeight: 48)
     }
 }
 
@@ -329,10 +435,10 @@ enum CaptureHierarchy {
         categories.filter { CaptureHierarchy.group(for: $0.id) == group && $0.id != "ssh-configuration" }
     }
     static func selectionLabel(_ category: CaptureCategory, model: CaptureModel) -> String {
-        guard model.selectionState(category) != .none else { return "Not Selected" }
         if category.itemSelectable {
-            return "\(model.selectedItems[category.id]?.count ?? 0) of \(category.row.items.count) selected"
+            return CaptureStatusText.selectionCount(model.selectedItems[category.id]?.count ?? 0, total: category.row.items.count)
         }
+        guard model.selectionState(category) != .none else { return "Not Selected" }
         return "Selected"
     }
     static func attention(_ categories: [CaptureCategory], model: CaptureModel) -> String? {
@@ -384,8 +490,12 @@ struct CaptureStatusText: View {
     var state: TaskRowState? = nil
     var secondary = false
     static let textInset = TaskRowLayout.iconWidth + 7
+    static func selectionCount(_ selected: Int, total: Int) -> String {
+        selected > 0 ? "\(selected) of \(total) selected" : ""
+    }
     var body: some View {
-        if let state { TaskStatusLabel(state: state, title: title) }
+        if title.isEmpty { Color.clear.frame(height: 1).accessibilityHidden(true) }
+        else if let state { TaskStatusLabel(state: state, title: title) }
         else {
             HStack(spacing: 7) {
                 Color.clear.frame(width: TaskRowLayout.iconWidth, height: 1).accessibilityHidden(true)
@@ -399,15 +509,9 @@ struct CaptureGroupStatus: View {
     let summary: String
     var attention: String? = nil
     var body: some View {
-        CaptureStatusText(title: summary, secondary: true)
-            .overlay(alignment: .leading) {
-                if attention != nil {
-                    Image(systemName: "exclamationmark.triangle").frame(width: TaskRowLayout.iconWidth)
-                        .foregroundStyle(.orange).accessibilityHidden(true)
-                }
-            }
+        CaptureStatusText(title: attention == nil ? summary : "Needs Attention", state: attention == nil ? nil : .attention, secondary: true)
             .help(attention ?? summary).accessibilityElement(children: .ignore)
-            .accessibilityLabel(summary + (attention.map { ". " + $0 } ?? ""))
+            .accessibilityLabel(attention == nil ? summary : "Needs Attention")
     }
 }
 
@@ -474,7 +578,9 @@ struct CaptureGroupHeader: View {
     }
     @ViewBuilder private var label: some View {
         if let summary {
-            CaptureRowColumns(title: titleLabel, status: CaptureGroupStatus(summary: summary, attention: attention))
+            let warningInChildren = expanded?.wrappedValue == true && attention != nil
+            CaptureRowColumns(title: titleLabel, status: CaptureGroupStatus(
+                summary: warningInChildren ? "" : summary, attention: warningInChildren ? nil : attention))
                 .padding(.trailing, 26)
         } else {
             titleLabel.frame(maxWidth: .infinity, alignment: .leading)
@@ -517,6 +623,9 @@ struct CaptureGroupedContent<Row: Identifiable, RowContent: View>: View where Ro
     var secureTransferGroup: AnyView? = nil
     var developerSelection: ((DeveloperSelectionGroup) -> AnyView)? = nil
     var developerSummary: ((DeveloperSelectionGroup) -> String)? = nil
+    var shellCustomCommands = false
+    var shellCommandsSelection: AnyView? = nil
+    var shellScripts: AnyView? = nil
     let summary: ([Row]) -> String
     let attention: ([Row]) -> String?
     @ViewBuilder let rowContent: (Row) -> RowContent
@@ -610,7 +719,15 @@ struct CaptureGroupedContent<Row: Identifiable, RowContent: View>: View where Ro
                 tint: advancedTint, titleTint: advancedTint, attention: attention(children),
                 selection: developerSelection?(group), expanded: WorkflowExpansion.binding(group.id, in: $expanded))
             if expanded.contains(group.id) {
-                members(children)
+                if group == .shell && shellCustomCommands {
+                    CaptureGroupHeader(title: "Custom Commands", summary: developerSummary?(group) ?? summary(children), symbol: "terminal",
+                        tint: advancedTint, attention: attention(children), nested: true, selection: shellCommandsSelection,
+                        expanded: WorkflowExpansion.binding(ShellCommandPresentation.commandsID, in: $expanded))
+                    if expanded.contains(ShellCommandPresentation.commandsID) {
+                        members(children)
+                        if let shellScripts { shellScripts }
+                    }
+                } else { members(children) }
                 if group == .ssh, let secureTransferGroup {
                     if !children.isEmpty { Divider().padding(.horizontal, 16) }
                     secureTransferGroup
@@ -628,27 +745,97 @@ struct CaptureGroupedContent<Row: Identifiable, RowContent: View>: View where Ro
     }
 }
 
+// Existing native category/item controls; qualification remains Core-owned.
+struct ShellScriptSelectionView: View {
+    let scripts: [CoreShellScript]
+    let available: Set<String>
+    let selected: Set<String>
+    let editable: Bool
+    let flow: SelectionHelpFlow
+    @Binding var expanded: Bool
+    let select: (String, Bool) -> Void
+    let selectAll: (Bool) -> Void
+    var inspections: [String: CoreShellScriptInspection]? = nil
+    var inspecting = false
+    var pending: Set<String> = []
+    var inspectionError: String? = nil
+    var collapsedSelection: ((Bool) -> Void)? = nil
+    var addScript: (() -> Void)? = nil
+    var body: some View {
+        if !scripts.isEmpty || addScript != nil {
+            VStack(alignment: .leading, spacing: 0) {
+                HStack(spacing: 12) {
+                    NativeSelectionCheckbox("", state: SelectionState.summarize(selected: selected, children: scripts.filter { available.contains($0.id) }.map(\.id)),
+                        accessibilityTitle: "Select Scripts", setIncluded: { included in
+                            if included && !expanded, let collapsedSelection { collapsedSelection(included) }
+                            else { selectAll(included) }
+                        })
+                        .disabled(!editable || available.isEmpty).frame(width: 28).padding(.leading, 24)
+                        .help(flow == .capture ? ShellCommandPresentation.captureConsent : ShellCommandPresentation.restoreConsent)
+                    // Reuse the category header without an empty DisclosureGroup:
+                    // its label would give the Info button a disclosure AX role.
+                    SelectionCategoryDisclosureStyle.header(expanded: expanded, toggle: { expanded.toggle() }) {
+                        CaptureRowColumns(title: SelectionCategoryTitle(id: ShellCommandPresentation.scriptsID,
+                            title: "Scripts", symbol: "applescript", flow: flow, toggle: { expanded.toggle() }),
+                            status: CaptureStatusText(title: inspecting ? "Checking…" : scripts.isEmpty ? "" : available.isEmpty ? "Unavailable" : CaptureStatusText.selectionCount(selected.intersection(available).count, total: available.count), secondary: true))
+                    }
+                }
+                if expanded {
+                    Text(flow == .capture ? ShellCommandPresentation.captureConsent : ShellCommandPresentation.restoreConsent)
+                        .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                        .padding(.leading, 64).padding(.vertical, 6)
+                    if let addScript {
+                        Button("Add Script…", action: addScript).disabled(!editable)
+                            .controlSize(.small).accessibilityIdentifier("capture.addScript")
+                            .padding(.leading, 64).padding(.bottom, 8)
+                    }
+                    if let inspectionError {
+                        Text(inspectionError).font(.callout).foregroundStyle(.orange)
+                            .fixedSize(horizontal: false, vertical: true).padding(.leading, 64).padding(.vertical, 6)
+                    }
+                    ForEach(scripts) { script in
+                        CaptureItemSelectionRow(title: "~/" + script.path, included: Binding(
+                            get: { selected.contains(script.id) }, set: { select(script.id, $0) }))
+                            .disabled(!editable || !available.contains(script.id))
+                            .help(available.contains(script.id) ? "Explicit authorization for this file only."
+                                : inspections != nil && inspections?[script.id]?.status != "qualified"
+                                    ? inspections?[script.id]?.explanation ?? "Selecting authorizes this file’s automatic checks."
+                                    : "Select a related alias first.")
+                            .padding(.leading, 36)
+                        if let inspections, pending.contains(script.id) || (inspections[script.id] != nil && inspections[script.id]?.status != "qualified") {
+                            Text(pending.contains(script.id) ? "Checking…" : inspections[script.id]?.explanation ?? "")
+                                .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                                .padding(.leading, 76).padding(.bottom, 6)
+                        }
+                    }
+                }
+            }.padding(.leading, 16 + CaptureChildRowGrid.leadingInset).padding(.trailing, 16)
+        }
+    }
+}
+
 // Read-only presentation of existing selection, preparation and publication facts.
 struct CaptureTaskPresentation {
     enum Phase { case confirmation, progress, result }
     let domains: [TaskDomainPresentation]
     init(categories: [CaptureCategory], selection: CoreCaptureSelection, phase: Phase,
          capturedDomains: Set<String>? = nil, publication: CoreCapturePublication? = nil, notices: [DisplayCategory] = [],
-         secureIdentities: [CoreCaptureSecureInventory.Identity] = []) {
-        let selected = phase == .result ? publication?.bundle.capturedDomains ?? capturedDomains ?? [] : Set(selection.categories).union(selection.items.keys)
+         secureIdentities: [CoreCaptureSecureInventory.Identity] = [], standaloneScripts: [CoreShellScript] = []) {
+        var selected = phase == .result ? publication?.bundle.capturedDomains ?? capturedDomains ?? [] : Set(selection.categories).union(selection.items.keys)
+        if !standaloneScripts.isEmpty { selected.insert("shell-zsh") }
         var output: [TaskDomainPresentation] = []
         let ordered = phase != .progress ? CaptureReviewRow.project(categories).flatMap(\.categories) : categories
         for category in ordered where selected.contains(category.id) {
             let isMacOS = CaptureMacOSSettingsGroup.domainIDs.contains(category.id)
             let domainID = isMacOS ? "macos-settings" : category.id
-            let chosen = Set(selection.items[category.id] ?? category.row.items.map(\.itemID))
+            let chosen = Set(selection.items[category.id] ?? (selection.categories.contains(category.id) ? category.row.items.map(\.itemID) : []))
             let resultBound = publication?.publicationOccurred == true && publication?.bundle.capturedDomains.contains(category.id) == true
-            let exactItems = resultBound && publication?.bundle.selectedItemCounts[category.id] == chosen.count
+            let exactItems = resultBound && publication?.bundle.selectedItemCounts[category.id] == chosen.count + (category.id == "shell-zsh" ? standaloneScripts.count : 0)
             let realCategoryItems = phase != .progress && category.row.selectionMode == "category" && !category.row.items.isEmpty
             let facts = realCategoryItems ? category.row.items.map {
                 DisplayItem(id: $0.itemID, title: $0.label.hasPrefix("opaque:") ? "Private item" : $0.label,
                             status: .ready, action: "Supported state available to save.")
-            } : category.display.items.filter { !category.itemSelectable || chosen.contains($0.id) }
+            } : category.display.items.filter { category.row.selectionMode != "items" || chosen.contains($0.id) }
             let resultKnown = resultBound && (category.row.selectionMode == "category" || exactItems)
             let state: TaskRowState = phase == .progress ? .waiting : phase == .result ? (resultKnown ? .completed : .unverified) : .planned
             let wholeCategory = phase != .progress && category.row.selectionMode == "category" && !realCategoryItems
@@ -663,13 +850,23 @@ struct CaptureTaskPresentation {
                         reason: nil), state: state,
                     captureRole: role)
             }
+            if category.id == "shell-zsh" {
+                items += standaloneScripts.map { script in
+                    let id = "shell-zsh:shell-script:" + script.id
+                    return TaskItemPresentation(id: id, item: DisplayItem(id: id, title: "~/" + script.path,
+                        status: .ready, action: "Selected file bytes will be saved."), state: state)
+                }
+            }
             if phase == .result && !resultKnown {
                 items = [TaskItemPresentation(id: category.id + ":content-evidence", item: DisplayItem(id: category.id + ":content-evidence",
                     title: category.title, status: .information, action: "The category was saved, but its exact item contents were not reported."),
                     state: .unverified, captureRole: .wholeCategory)]
             }
+            // Scan notices describe the whole alias inventory. File-only consent
+            // has no selected alias/startup requirement; keep every other warning.
+            let fileOnlyShell = category.id == "shell-zsh" && chosen.isEmpty && !standaloneScripts.isEmpty
             let warnings = phase == .result ? notices.filter { $0.id == category.id }.flatMap(\.items)
-                : phase == .confirmation ? category.notices : []
+                : phase == .confirmation ? category.notices.filter { !fileOnlyShell || $0.reason != "source_partial" } : []
             items += warnings.map { item in TaskItemPresentation(id: category.id + ":" + item.id + ":notice", item: item, state: .attention,
                 captureRole: phase != .progress ? .categoryWarning : nil) }
             if let index = output.firstIndex(where: { $0.id == domainID }) {
@@ -1077,28 +1274,68 @@ struct CaptureResultPresentation {
     let attention: [DisplayCategory]
     var affectedCount: Int { attention.count }
     var attentionSummary: String { "\(affectedCount) affected \(affectedCount == 1 ? "category" : "categories")" }
+    var resultHierarchy: (roots: [TaskDomainPresentation], children: [String: [TaskDomainPresentation]], explanations: [String: String]) {
+        var children: [String: [TaskDomainPresentation]] = [:]
+        var explanations: [String: String] = [:]
+        func domain(_ category: DisplayCategory) -> TaskDomainPresentation {
+            let items = category.items.map { item in
+                let id = category.id + ":" + item.id + ":" + item.status.rawValue + ":" + (item.reason ?? "")
+                explanations[id] = Self.explanation(item, domain: category.id)
+                let title: String
+                if item.reason == "source_partial" {
+                    title = category.id == "shell-zsh" ? ShellCommandPresentation.coverageTitle : "Category coverage"
+                } else if item.status == .unverified { title = "Capture evidence" }
+                else if item.title == "Needs Attention" {
+                    title = item.reason == "observation_failed" ? "Category observation" : item.reason == "tool_unavailable" ? "Required tool" : "Capture details"
+                } else { title = item.title }
+                return TaskItemPresentation(id: id,
+                    item: DisplayItem(id: item.id, title: title, status: item.status, action: "", reason: item.reason),
+                    state: .attention, captureRole: .categoryWarning, resultLabels: ["Needs Attention"],
+                    sourceDomain: category.id, sourceItemID: id)
+            }
+            return TaskDomainPresentation(id: category.id, title: category.title, symbol: category.symbol, items: items)
+        }
+        func parent(_ id: String, _ title: String, _ symbol: String, _ rows: [TaskDomainPresentation]) -> TaskDomainPresentation {
+            children[id] = rows
+            return TaskDomainPresentation(id: id, title: title, symbol: symbol, items: rows.flatMap(\.items))
+        }
+        let roots = EnvironmentStatusSection.project(attention).flatMap(\.entries).map { entry in
+            guard !entry.children.isEmpty else { return domain(entry.category) }
+            let rows = entry.children.map { category -> TaskDomainPresentation in
+                let leaf = domain(category)
+                guard category.id == "shell-zsh" else { return leaf }
+                return parent(ShellCommandPresentation.commandsID, "Custom Commands", "terminal", [leaf])
+            }
+            return parent(entry.id, entry.category.title, entry.category.symbol, rows)
+        }
+        return (roots, children, explanations)
+    }
     init(publication: CoreCapturePublication, notices: [DisplayCategory], secureIdentityCount: Int = 0) {
         destination = URL(fileURLWithPath: publication.destination)
-        let domains = publication.bundle.capturedDomains.count
-        let items = publication.bundle.itemCount
+        let domains = publication.bundle.functionalDomainCount
+        let items = publication.bundle.capturedItemCount
         scope = "\(domains) \(domains == 1 ? "domain" : "domains") · \(items) \(items == 1 ? "item" : "items") saved"
             + (publication.bundle.secureComponent ? " · \(secureIdentityCount) SSH \(secureIdentityCount == 1 ? "identity" : "identities") encrypted" : "")
         var grouped: [DisplayCategory] = []
         for notice in notices where publication.bundle.capturedDomains.contains(notice.id) {
             let index = grouped.firstIndex { $0.id == notice.id }
             var issues = index.map { grouped[$0].items } ?? []
-            for item in notice.items where item.requiresAttention && !issues.contains(item) { issues.append(item) }
+            for item in notice.items where item.requiresAttention && !issues.contains(where: {
+                $0.id == item.id && $0.status == item.status && $0.reason == item.reason
+            }) { issues.append(item) }
             guard !issues.isEmpty else { continue }
             let category = DisplayCategory(id: notice.id, title: CaptureCategory.title(for: notice.id), symbol: notice.symbol, items: issues)
             if let index { grouped[index] = category } else { grouped.append(category) }
         }
         attention = grouped
     }
-    static func explanation(_ item: DisplayItem) -> String {
+    static func explanation(_ item: DisplayItem, domain: String? = nil) -> String {
         // Event reasons stay in the log; never expose raw diagnostic content.
         if item.status == .unverified { return "The selected category's capture details could not be confirmed." }
         return switch item.reason {
-        case "source_partial": "Some supported state could not be included."
+        case "source_partial": domain == "shell-zsh"
+            ? "Shell coverage is incomplete. Supported state was saved; some Shell configuration or dependencies remain outside the saved scope."
+            : "Saved supported state may be incomplete in this category."
         case "tool_unavailable": "A required tool was unavailable for part of this category."
         case "observation_failed": "Some selected state could not be read."
         default: "Some selected state may be unavailable in this saved category."
@@ -1145,24 +1382,26 @@ struct CaptureResultOutcomes: View {
 
 struct CaptureResultContent: View {
     let result: CaptureResultPresentation
+    var expansion: Binding<Set<String>>? = nil
+    @CapturePresentationState private var expanded: Set<String> = []
+    private var treeExpansion: Binding<Set<String>> { expansion ?? $expanded }
     var body: some View {
+        let hierarchy = result.resultHierarchy
         WorkflowList {
             CaptureResultOutcomes(result: result)
             CaptureBundleLocationView(destination: result.destination, showsReveal: true)
                 .padding(14).frame(maxWidth: .infinity, alignment: .leading)
                 .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 8))
             if !result.attention.isEmpty {
-                VStack(alignment: .leading, spacing: 14) {
-                    ForEach(result.attention) { category in
-                        VStack(alignment: .leading, spacing: 4) {
-                            Label { Text(category.title).font(.callout.weight(.semibold)) } icon: {
-                                Image(systemName: "exclamationmark.triangle").foregroundStyle(.orange)
-                            }
-                            Text(category.items.map(CaptureResultPresentation.explanation).joined(separator: "\n") + " See View Log for details.")
-                                .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                        }
+                VStack(spacing: 0) {
+                    ForEach(hierarchy.roots) { domain in
+                        RestoreFinalDomain(domain: domain, expansion: WorkflowExpansion.binding(domain.id, in: treeExpansion),
+                            treeExpansion: treeExpansion, childrenByID: hierarchy.children, itemExplanations: hierarchy.explanations,
+                            hierarchyStep: CaptureReviewPresentation.hierarchyStep)
+                        if domain.id != hierarchy.roots.last?.id { Divider() }
                     }
-                }.frame(maxWidth: .infinity, alignment: .leading)
+                }.modifier(WorkspaceCardSurface())
+                    .environment(\.restoreTrailingSamples, RestoreTrailingSample.result(hierarchy.roots + hierarchy.children.values.flatMap { $0 }, appStore: nil))
                     .accessibilityIdentifier("capture.result.affected-categories")
             }
         }

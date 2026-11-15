@@ -387,6 +387,11 @@ enum RestorePreviewHierarchy {
         TaskDomainPresentation(id: group.id, title: group.title, symbol: group.symbol,
             items: rows.flatMap(\.previewItems), previewOnly: true)
     }
+    static func memberCounts(_ domain: TaskDomainPresentation) -> [(String, Int)] {
+        // VS Code members sit below Application Extras / VS Code (level 3).
+        // Other domain headers are level 2, or standalone level 1 findings.
+        CaptureHierarchy.group(for: domain.id) == .vscode ? [] : RestorePreviewMetrics.badges(domain)
+    }
     static func titleInset(_ id: String) -> CGFloat {
         if id == CoreRestorePreparation.secureDomain { return CaptureChildRowGrid.leadingInset + 12 }
         let group = CaptureHierarchy.group(for: id)
@@ -413,6 +418,9 @@ struct TaskDomainList: View {
     var expansion: Binding<Set<String>>? = nil
     var settingsExpansion: Binding<Bool>? = nil
     var prerequisiteReasons: [String: Set<String>] = [:]
+    var captureShellScripts: [CoreShellScript]? = nil
+    var captureShellScriptInspections: [String: CoreShellScriptInspection] = [:]
+    var plannedShellScripts: [CoreShellScript] = []
     @TaskViewState<Set<String>> private var expanded = []
     @Environment(\.colorScheme) private var colorScheme
     static func disclosureIDs(_ domains: [TaskDomainPresentation], settings: [TaskDomainPresentation]) -> Set<String> {
@@ -420,6 +428,7 @@ struct TaskDomainList: View {
     }
     private var availableIDs: Set<String> {
         restorePreviewHierarchy ? RestorePreviewHierarchy.disclosureIDs(domains, settings: settingsCategories)
+            .union(plannedShellScripts.isEmpty ? [] : [ShellCommandPresentation.scriptsID])
             : Self.disclosureIDs(domains, settings: settingsCategories)
     }
     private var treeExpansion: Binding<Set<String>> { Binding(get: { expandedIDs }, set: setExpanded) }
@@ -459,13 +468,19 @@ struct TaskDomainList: View {
                             advancedControls: AnyView(CaptureExpandButton(ids: captureDisclosureIDs(in: .advanced),
                                 title: "For Experienced Users", expanded: treeExpansion)),
                             secureTransferGroup: captureSecureTransferGroup,
-                            summary: { $0.isEmpty && captureSecureTransferGroup == nil ? "Not Included" : captureResultLayout ? "Saved" : "Ready to Save" },
+                            shellCustomCommands: domains.contains { $0.id == "shell-zsh" && $0.items.contains { $0.id.hasPrefix("shell-zsh:shell-alias:") || $0.id.hasPrefix("shell-zsh:shell-script:") } },
+                            shellScripts: captureShellScripts.map { AnyView(captureScripts($0)) },
+                            summary: { rows in
+                                if rows.contains(where: { [TaskRowState.attention, .unverified, .failed, .partial].contains($0.state) }) { return "Needs Attention" }
+                                return rows.isEmpty && captureSecureTransferGroup == nil ? "Not Included" : captureResultLayout ? "Saved" : "Ready to Save"
+                            },
                             attention: { $0.contains { [TaskRowState.attention, .unverified, .failed, .partial].contains($0.state) } ? "Needs Attention" : nil }) { domain in
                             if domain.id == "macos-settings", !settingsCategories.isEmpty {
                                 captureSettings(domain)
-                            } else {
-                                domainRow(domain)
-                                    .padding(.leading, CaptureChildRowGrid.leadingInset)
+                            } else if domain.id != "shell-zsh" || domain.items.contains(where: { $0.id.hasPrefix("shell-zsh:shell-alias:") }) || captureShellScripts == nil {
+                                domainRow(TaskDomainPresentation(id: domain.id, title: domain.title, symbol: domain.symbol,
+                                    items: domain.items.filter { !$0.id.hasPrefix("shell-zsh:shell-script:") }, activityState: domain.activityState))
+                                    .padding(.leading, CaptureChildRowGrid.leadingInset + (domain.id == "shell-zsh" && domain.items.contains { $0.id.hasPrefix("shell-zsh:shell-alias:") } ? CaptureReviewPresentation.hierarchyStep : 0))
                             }
                         }
                     } else {
@@ -532,7 +547,38 @@ struct TaskDomainList: View {
                         let rows = domains.filter { DeveloperSelectionGroup.group(for: $0.id) == group }
                         let summary = RestorePreviewHierarchy.summary(group, rows: rows)
                         previewGroupHeader(summary: summary, developer: true)
-                        if expandedIDs.contains(group.id) { previewMembers(rows, parentState: summary.state) }
+                        if expandedIDs.contains(group.id) {
+                            let fileItems = rows.flatMap(\.items).filter { $0.sourceItemID?.hasPrefix("shell-script:") == true }
+                            let fileIDs = Set(fileItems.compactMap(\.sourceItemID))
+                            let dependencyFiles = plannedShellScripts.filter { !fileIDs.contains("shell-script:" + $0.id) }
+                            let aliasRows = rows.map { domain in
+                                domain.id == "shell-zsh" && !fileItems.isEmpty
+                                    ? TaskDomainPresentation(id: domain.id, title: domain.title, symbol: domain.symbol,
+                                        items: domain.items.filter { $0.sourceItemID?.hasPrefix("shell-script:") != true }, previewOnly: true) : domain
+                            }.filter { !$0.items.isEmpty }
+                            previewMembers(aliasRows, parentState: summary.state)
+                            if group == .shell && (!RestorePreviewVisibility.items(fileItems).isEmpty || !dependencyFiles.isEmpty) {
+                                let fileDomain = TaskDomainPresentation(id: ShellCommandPresentation.scriptsID, title: "Scripts", symbol: "applescript", items: fileItems, previewOnly: true)
+                                DisclosureGroup(isExpanded: WorkflowExpansion.binding(ShellCommandPresentation.scriptsID, in: treeExpansion)) {
+                                    TaskDomainItems(domain: fileDomain, stateTitles: stateTitles, restorePreview: true,
+                                        previewTitleInset: 36 + RestorePreviewHierarchy.titleInset("shell-zsh"), hideMatchingPreviewItems: true)
+                                    CaptureIncludedSettingsList(labels: dependencyFiles.map { "~/" + $0.path })
+                                        .padding(.leading, 36 + RestorePreviewHierarchy.titleInset("shell-zsh"))
+                                        .padding(.vertical, 8)
+                                } label: {
+                                    RestorePreviewRow(title: WorkspaceCategoryTitle(id: ShellCommandPresentation.scriptsID,
+                                        title: "Scripts", fallbackSymbol: "applescript", developerGroup: .shell),
+                                        status: Group {
+                                            if !fileDomain.items.isEmpty {
+                                                RestorePreviewCategoryStatus(domain: fileDomain, stateTitles: stateTitles,
+                                                    parentState: summary.state, expanded: expandedIDs.contains(ShellCommandPresentation.scriptsID))
+                                            }
+                                        }, counts: RestorePreviewMetrics.badges(fileDomain), titleInset: RestorePreviewHierarchy.titleInset("shell-zsh"),
+                                        expanded: expandedIDs.contains(ShellCommandPresentation.scriptsID)).padding(.vertical, 6)
+                                }.disclosureGroupStyle(TaskDisclosureStyle(includesIndicator: false, contentTrailingInset: 0))
+                                    .padding(.horizontal, 16).accessibilityIdentifier("restore.preview.shell-scripts")
+                            }
+                        }
                         if group != developerGroups.last { Divider().padding(.horizontal, 16) }
                     }
                 }
@@ -577,8 +623,10 @@ struct TaskDomainList: View {
                 Text(subgroup ? "VS Code" : summary.title)
                     .font(subgroup ? .body.weight(.medium) : .headline)
                     .foregroundStyle(developer ? tint : .primary)
-            }, status: RestorePreviewCategoryStatus(domain: summary, stateTitles: stateTitles),
-                counts: subgroup ? [] : RestorePreviewMetrics.badges(summary),
+            }, status: RestorePreviewCategoryStatus(domain: summary, stateTitles: stateTitles,
+                parentState: subgroup || summary.state == .attention ? summary.state : nil,
+                expanded: expandedIDs.contains(id), containsCategories: true),
+                counts: RestorePreviewMetrics.badges(summary),
                 // Preserve the former leading indicator's 12pt slot + 12pt gap.
                 titleInset: 24 + (subgroup ? CaptureReviewPresentation.hierarchyStep : 0),
                 expanded: expandedIDs.contains(id),
@@ -635,7 +683,42 @@ struct TaskDomainList: View {
         }
     }
     private func captureDisclosureIDs(in scope: CaptureSelectionScope) -> Set<String> {
-        CaptureHierarchy.disclosureIDs(domains.map(\.id) + settingsCategories.map(\.id), scope: scope)
+        let shell = domains.contains { $0.id == "shell-zsh" && $0.items.contains { $0.id.hasPrefix("shell-zsh:shell-alias:") || $0.id.hasPrefix("shell-zsh:shell-script:") } }
+        return CaptureHierarchy.disclosureIDs(domains.map(\.id) + settingsCategories.map(\.id)
+            + (shell ? [ShellCommandPresentation.commandsID] : [])
+            + (captureShellScripts == nil ? [] : [ShellCommandPresentation.scriptsID]), scope: scope)
+    }
+
+    private func captureScripts(_ scripts: [CoreShellScript]) -> some View {
+        // Confirmation already binds these selected files to preparation. Keep
+        // their exact-file qualification independent of alias coverage warnings.
+        let ready = scripts.allSatisfy { script in
+            guard let inspection = captureShellScriptInspections[script.id] else { return false }
+            return inspection.status == "qualified" && inspection.observationID == script.observationID
+        }
+        return DisclosureGroup(isExpanded: WorkflowExpansion.binding(ShellCommandPresentation.scriptsID, in: treeExpansion)) {
+            VStack(alignment: .leading, spacing: 6) {
+                if !scripts.isEmpty {
+                    CaptureIncludedSettingsList(labels: scripts.map { "~/" + $0.path })
+                    Text("Selected script files will be saved unencrypted.")
+                        .font(.callout).foregroundStyle(.secondary)
+                } else { Text("No script files selected for transfer.").font(.callout).foregroundStyle(.secondary) }
+            }.padding(.vertical, 6)
+        } label: {
+            CaptureRowColumns(title: WorkspaceCategoryTitle(id: ShellCommandPresentation.scriptsID,
+                title: "Scripts", fallbackSymbol: "applescript", developerGroup: .shell),
+                status: VStack(alignment: .leading, spacing: 3) {
+                    if scripts.isEmpty {
+                        CaptureStatusText(title: "0 files selected", secondary: true)
+                    } else {
+                        TaskStatusLabel(state: ready ? .planned : .attention, title: ready ? "Ready to Save" : nil)
+                        Text("\(scripts.count) \(scripts.count == 1 ? "item" : "items") included")
+                            .font(.caption).foregroundStyle(.secondary).padding(.leading, CaptureStatusText.textInset)
+                    }
+                })
+        }.disclosureGroupStyle(TaskDisclosureStyle())
+            .padding(.leading, 16 + CaptureChildRowGrid.leadingInset + CaptureReviewPresentation.hierarchyStep)
+            .padding(.trailing, 16)
     }
 
     private func domainRow(_ domain: TaskDomainPresentation, previewParentState: TaskRowState? = nil) -> some View {
@@ -650,7 +733,7 @@ struct TaskDomainList: View {
                 RestorePreviewRow(title: domainTitle(domain),
                     status: RestorePreviewCategoryStatus(domain: domain, stateTitles: stateTitles,
                         parentState: previewParentState, expanded: expandedIDs.contains(domain.id)),
-                    counts: restorePreviewHierarchy ? [] : RestorePreviewMetrics.badges(domain),
+                    counts: restorePreviewHierarchy ? RestorePreviewHierarchy.memberCounts(domain) : RestorePreviewMetrics.badges(domain),
                     titleInset: restorePreviewHierarchy ? RestorePreviewHierarchy.titleInset(domain.id) : 0,
                     expanded: expandedIDs.contains(domain.id),
                     statusWidth: restorePreviewHierarchy && domain.id == CoreRestorePreparation.secureDomain ? nil : TaskRowLayout.statusWidth).padding(.vertical, 6)
@@ -669,7 +752,7 @@ struct TaskDomainList: View {
                         TaskSettingsCategoryDetails(domain: child, stateTitles: stateTitles, compactReadyItems: compactReadyItems,
                             settingLabels: settingLabels[child.id] ?? [], itemTitles: itemTitles,
                             expansion: settingsExpansion ?? WorkflowExpansion.binding(child.id, in: treeExpansion),
-                            restorePreview: restoreSettingsPreview, showsPreviewCounts: !restorePreviewHierarchy, captureResultLayout: captureResultLayout,
+                            restorePreview: restoreSettingsPreview, captureResultLayout: captureResultLayout,
                             hideMatchingPreviewItems: restorePreviewHierarchy, previewParentState: previewParentState)
                     }
                     let known = Set(settingsCategories.flatMap(\.items).map(\.id))
@@ -728,19 +811,20 @@ struct RestorePreviewCategoryStatus: View {
     let stateTitles: [TaskRowState: String]
     var parentState: TaskRowState? = nil
     var expanded = false
+    var containsCategories = false
     var isRedundant: Bool {
         let visible = RestorePreviewVisibility.items(domain.previewItems)
-        return expanded && parentState == domain.state && [.planned, .attention].contains(domain.state)
-            && !visible.isEmpty && visible.allSatisfy { [.planned, .attention].contains($0.state) }
-            && domain.activityState == nil && !domain.resultCategoryIssue && domain.resultCategoryMessage == nil
+        guard expanded, !visible.isEmpty, domain.activityState == nil,
+              !domain.resultCategoryIssue, domain.resultCategoryMessage == nil else { return false }
+        return containsCategories
     }
     static func title(_ domain: TaskDomainPresentation, stateTitles: [TaskRowState: String]) -> String {
         guard !domain.items.isEmpty else { return "No Requirements" }
         return stateTitles[domain.state] ?? (domain.state == .unverified ? "Needs Attention" : domain.state.rawValue)
     }
     var body: some View {
-        // Only expanded intermediate rows can omit a generic status already
-        // stated by their parent and visible leaves. Collapsed/distinct states keep it.
+        // Expanded containers move aggregate status to child categories. Functional
+        // categories keep their status when individual items become visible.
         if !isRedundant {
             TaskStatusLabel(state: domain.items.isEmpty ? .notRun : domain.state,
                 title: Self.title(domain, stateTitles: stateTitles),
@@ -802,9 +886,11 @@ struct TaskDomainItems: View {
                 }
                 ForEach(hideMatchingPreviewItems ? RestorePreviewVisibility.items(domain.previewItems) : domain.previewItems) { item in
                     if restorePreview {
+                        let statusTitle = item.assistedAppStore?.status.rawValue ?? stateTitles[item.state] ?? item.state.rawValue
                         RestorePreviewRow(title: details(item, suppressExplanation: sharedIDs.contains(item.id)),
                             status: TaskStatusLabel(state: item.state, title: item.assistedAppStore?.status.rawValue ?? stateTitles[item.state],
-                                showsTitle: item.state != .matching),
+                                showsTitle: item.state != .matching && statusTitle != "Changes Planned" && !(statusTitle == "Needs Attention"
+                                    && !sharedIDs.contains(item.id) && !item.item.action.isEmpty)),
                             titleInset: previewTitleInset).padding(.vertical, 7)
                     } else { TaskTextStatusLayout {
                         details(item, suppressExplanation: sharedIDs.contains(item.id)).fixedSize(horizontal: false, vertical: true)
@@ -915,7 +1001,9 @@ struct RestoreSettingPreviewLeaf: View {
         }.frame(maxWidth: .infinity, alignment: .leading)
     }
     private var status: some View {
-        TaskStatusLabel(state: item.state, title: stateTitles[item.state], showsTitle: item.state != .matching)
+        TaskStatusLabel(state: item.state, title: stateTitles[item.state], showsTitle: item.state != .matching
+            && (stateTitles[item.state] ?? item.state.rawValue) != "Changes Planned"
+            && !((stateTitles[item.state] ?? item.state.rawValue) == "Needs Attention" && !item.item.action.isEmpty))
     }
 }
 

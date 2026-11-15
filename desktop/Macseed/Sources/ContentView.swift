@@ -379,6 +379,7 @@ struct StatusLabel: View {
 
 struct ItemDetails: View {
     let items: [DisplayItem]
+    var compactAttention = false
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             ForEach(items) { item in
@@ -388,7 +389,9 @@ struct ItemDetails: View {
                         Text(item.action).font(.callout).foregroundStyle(.secondary)
                     }
                     Spacer()
-                    StatusLabel(status: item.status)
+                    if compactAttention && item.status == .attention && !item.action.isEmpty {
+                        StatusLabel(status: item.status).labelStyle(.iconOnly)
+                    } else { StatusLabel(status: item.status) }
                 }
             }
         }.padding(.vertical, 8)
@@ -401,12 +404,14 @@ struct NativeSelectionCheckbox: NSViewRepresentable {
     let title: String
     let state: SelectionState
     let accessibilityTitle: String
+    let mixedSelectsAll: Bool
     let setIncluded: (Bool) -> Void
 
-    init(_ title: String, state: SelectionState, accessibilityTitle: String? = nil, setIncluded: @escaping (Bool) -> Void) {
+    init(_ title: String, state: SelectionState, accessibilityTitle: String? = nil, mixedSelectsAll: Bool = true, setIncluded: @escaping (Bool) -> Void) {
         self.title = title
         self.state = state
         self.accessibilityTitle = accessibilityTitle ?? title
+        self.mixedSelectsAll = mixedSelectsAll
         self.setIncluded = setIncluded
     }
     init(_ title: String, isOn: Binding<Bool>, accessibilityTitle: String? = nil) {
@@ -437,8 +442,9 @@ struct NativeSelectionCheckbox: NSViewRepresentable {
         var control: NativeSelectionCheckbox
         init(_ control: NativeSelectionCheckbox) { self.control = control }
         @objc func toggle(_ sender: NSButton) {
-            // Mixed -> all; all -> none, regardless of AppKit's three-state cycle.
-            control.setIncluded(control.state != .all)
+            // Consent-bearing parents can clear a mixed selection in one click.
+            // Use the model state, independently of AppKit's three-state cycle.
+            control.setIncluded(control.state == .none || (control.state == .mixed && control.mixedSelectsAll))
         }
     }
 }

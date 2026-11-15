@@ -93,9 +93,12 @@ final class CoreTransport: @unchecked Sendable {
         lock.unlock()
         if reused { return failure(.invalidLifecycle) }
         let requestBytes: Data
+        let scriptManifest: Data?
         do {
             guard secureChallenge == nil || request.command.requiresSecretBridge else { throw CoreRuntimeError.invalidRequest }
-            requestBytes = try request.encoded()
+            let wire = try request.wire()
+            requestBytes = wire.request
+            scriptManifest = wire.manifest
             try location.validate(for: request.command, secureTransportAvailable: secureChallenge != nil)
         }
         catch { return failure(error as? CoreRuntimeError ?? .invalidRequest) }
@@ -108,6 +111,10 @@ final class CoreTransport: @unchecked Sendable {
                                                      attributes: [.posixPermissions: 0o700]) }
         catch { return failure(.ioFailed(Int32(errno))) }
         defer { try? FileManager.default.removeItem(at: temporary) }
+        if let scriptManifest {
+            guard FileManager.default.createFile(atPath: temporary.appendingPathComponent("shell-scripts-request.json").path,
+                contents: scriptManifest, attributes: [.posixPermissions: 0o600]) else { return failure(.invalidRequest) }
+        }
         if !request.externalIdentityPaths.isEmpty {
             do {
                 let bytes = try JSONSerialization.data(withJSONObject: ["version": 1, "operation_id": request.operationID, "paths": request.externalIdentityPaths])

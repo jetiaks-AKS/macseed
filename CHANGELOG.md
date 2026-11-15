@@ -11,6 +11,40 @@ The format is based on the principles of **Keep a Changelog**.
 
 ### Added
 
+* Git Rebuild can use an existing encrypted destination SSH key through a verified
+  SSH agent, including Git-only Bundles. Fresh signature checks bind the expected
+  public key and agent endpoint to Prepare/Execute without reading private-key
+  contents or claiming remote authentication.
+
+* Shell Capture discovers supported static aliases through qualified startup files,
+  ZDOTDIR and bounded HOME-relative source relationships. Selection, Check and
+  Rebuild preserve per-alias identity, portable source provenance and accurate counts.
+  Rebuild can add missing independent aliases to qualified existing source files or
+  reconstruct selected static source files, directories and required relationships.
+  Optional bounded script wrappers require explicit per-file Capture/Restore consent;
+  recovery verification includes qualified dependencies and existing HOME-relative
+  directory operands. Independent standard aliases can be recovered into a new
+  default startup file without copying excluded initialization. Conflicting definitions and
+  managed sources are preserved. Atomic publication retains predecessor evidence; uncertain work stays
+  blocked. Historical whole-file and first-generation alias snapshots remain readable.
+  Native Capture/Rebuild Selection groups Aliases & Functions and explicitly selected
+  Scripts under Custom Commands. Confirmation is read-only; Preview, Progress,
+  Result and Check retain their workflow-specific layouts and counts.
+  Scripts v5 uses a bounded manifest and separate byte members inside Bundle V1:
+  128 files, 1 MiB each and 16 MiB total, retaining legacy v4 readers. A narrow macOS
+  metadata policy permits ordinary annotations and preserves quarantine through
+  atomic restoration and Check. The expanded
+  Scripts Add Script picker supports multiple standalone executable/non-executable
+  Shell/Python files and supported extensionless scripts, with explicit consent,
+  original modes, safe missing parents and independent Check. Capture counts
+  Aliases & Functions and Scripts independently without splitting Shell Core.
+  Real GUI A/B/C acceptance confirms two aliases and two scripts restored after
+  controlled removal, four final Match results and a no-op Preview; partial Shell
+  coverage and broader hosted/release qualification remain separate.
+  Historical files remain under Settings; partial
+  coverage explanations distinguish matching aliases from unhandled Shell state.
+  Functions, Variables & PATH, broader Settings and Plugins & Themes remain planned.
+
 * SSH Configuration in Check and Rebuild Preview shows qualified saved Host details
   directly inside the existing category. Check and Preview badges and summary cards
   count qualified Host outcomes once, alongside independent SSH Keys and coverage

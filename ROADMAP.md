@@ -14,22 +14,36 @@ contracts, [TODO](TODO.md) owns concrete unfinished actions, and
 - **Implemented — Qualification Open:** development-runtime execution, completion
   and integration, native Workspace E2E, Homebrew Setup Installer handoff and the
   remaining supported-domain, lifecycle, security and accessibility gates.
-- **Current checkpoint:** SSH Configuration, optional identity destinations,
-  independent selection and SSH → Git dependency integration are implemented.
-  Unified Developer UI is visually accepted. Secure Check implements authenticated
-  saved-file/reference comparison with one aggregate SSH Configuration result.
-  [Isolated Core E2E on 2026-11-10](docs/qualification/SSH-E2E-2026-11-10.md)
-  passed default and saved custom-location lifecycles. The approved-correction
-  repeat defect is locally fixed and requalified. Successful isolated Core
-  Git-over-SSH qualification remains next and blocked by SSH sandbox and Internet
-  readiness limits. The bounded Capture inventory privacy audit and correction are
-  locally verified; partial-selection disclosure needs a product decision.
-  Native SSH E2E is deferred to the full application-wide Native Desktop E2E
-  after functional development. [Configured Full CI #161 passed](docs/qualification/README.md)
-  at `a289442f`; the subsequent test-optimization checkpoint still needs hosted qualification.
-- **Before Macseed 1.0:** finish the remaining Stage 16 and bounded Stage 3C work,
-  qualify a fresh development-runtime E2E, then deliver Stage 17 packaging,
-  clean-Mac qualification and Early Access. Autonomous signed distribution is planned.
+- **Current functional priority:** Shell / Zsh Completion, with standalone Zsh
+  Functions next after the accepted Aliases & Scripts v5 checkpoint. The final functional taxonomy is Custom Commands
+  (Aliases & Functions / Scripts in Selection),
+  Variables & PATH and Settings, with Plugins & Themes conditional on qualified
+  support and relevant items; remaining capabilities stay open. Existing SSH Host
+  presentation, independent identity selection and SSH → Git integration are preserved.
+  Prioritize practical source-to-target recovery, including qualified structure and
+  dependencies; discovery counts alone do not close the checkpoint. The bounded
+  native Selection/consent integration preserves individual aliases and each
+  workflow's accepted presentation; unrelated visual gates remain open. Greater coverage
+  does not authorize further layout changes.
+- **Aliases & Scripts v5 — Implemented / Real GUI E2E Accepted (2026-11-15):** independent Add Script
+  selection and alias-linked discovery, executable/non-executable Shell/Python
+  transfer in Bundle V1, bounded resources, quarantine preservation, protected parent creation and file-level
+  Check. Aliases & Functions and Scripts count as separate Capture functional
+  domains without splitting Shell Core. The accepted A/B/C workflow captured,
+  deliberately removed and restored two aliases and two scripts, ending with
+  four Match and a no-op Preview. Independent integrity and final fixture-cleanup
+  checks passed. [Evidence and limits](docs/qualification/SHELL-RECOVERABILITY-2026-11-12.md#real-gui-abc-acceptance--2026-11-15)
+  retain partial Shell coverage; hosted/release qualification remains separate.
+- **Retained qualification evidence:** [Full CI #163](https://github.com/jetiaks-AKS/macseed/actions/runs/42974858672)
+  passed at `7709d56`, including the 52 admitted Python methods. The SSH presentation
+  checkpoint at `7cf6c402` has its own [CI #164](https://github.com/jetiaks-AKS/macseed/actions/runs/43005030411);
+  its initial in-progress state is not hosted qualification. Historical isolated SSH
+  evidence, Git-over-SSH sandbox/readiness limits, native Workspace and other open
+  gates remain recorded below and in TODO.
+- **Before Macseed 1.0:** finish Shell, Stage 3C and remaining Stage 16 functionality;
+  implement Stage 17 autonomous distribution; then complete comprehensive Native
+  Desktop/packaged clean-Mac qualification and Early Access. No stage is closed by
+  an ordinary functional checkpoint.
 
 Follow the [Current Execution Order](#current-practical-execution-order); a listed
 priority is not authorization to start another checkpoint. Implementation, local
@@ -216,63 +230,52 @@ implementations or the closed general D1–D4/R5 Restore audit.
 
 ## Current Execution Order
 
-This is the single authoritative execution sequence toward Macseed 1.0.
-Complete one bounded checkpoint at a time, preserving accepted scope and evidence.
+This is the single authoritative execution sequence toward Macseed 1.0, revised
+by the approved Shell-first decision. Complete one bounded checkpoint at a time.
 
-**Immediate CI checkpoint, before Fast CI / Full CI separation:** all 52 formerly
-standalone Python methods are registered in mandatory Full CI (43 Core + 9 Desktop).
-The inventory is 47 Core suites / 767 Python methods plus nine Bundled Age methods;
-12 native Desktop suites and two Restore subsets remain. Registration is implemented;
-[Issue #1](https://github.com/jetiaks-AKS/macseed/issues/1) stays open until successful
-hosted execution proves all 52 additions. See the
-[admission evidence](docs/qualification/TEST-SUITE-AUDIT-2026-11-10.md#mandatory-admission-follow-up--11-november-2026).
-No Fast/Full split is implemented by this checkpoint.
+1. **Shell / Zsh Completion — current functional priority.** Aliases & Scripts v5
+   has real GUI A/B/C acceptance within its documented scope. Next complete
+   standalone Zsh Functions, then Variables & PATH and Shell Settings, plus useful
+   Plugins & Themes only when independently qualified. Startup/source relationships
+   remain provenance and dependencies within these categories.
+   Preserve legacy snapshots and existing approved capabilities. The
+   [Shell contract](docs/toolkit/CONFIGURATION.md#shell--zsh-configuration) owns actual
+   behavior; [TODO](TODO.md#shell--zsh-functional-completion--current) owns open slices.
+2. **Stage 3C Recovery — immediately after Shell functional completion.** Extend
+   existing durable lifecycle/admission journals and Stop/fences with operation-owned
+   reconciliation for ordinary Cask/DMG resources and uncertain process outcomes.
+   Allow fresh preparation/execution only after authoritative reconciliation under
+   the [Core contract](docs/core/APPLICATION-INTERFACE.md#stage-3c-reconciliation-boundary).
+   Unknown/foreign evidence stays blocked: no automatic journal clearing, unrelated
+   volume detachment, user-data deletion or whole-Mac rollback.
+3. **Remaining Stage 16 functional completion.** Close outstanding implementation
+   gaps in existing supported capabilities, including remaining 16I/16K work, without
+   reopening accepted UI, Assisted Restore or completed D1–D4/R5 behavior. Preserve
+   Homebrew Setup, Workspace, SSH, security, lifecycle and accessibility qualification
+   requirements separately from implementation status.
+4. **[Stage 17 — autonomous distribution](#stage-17--distribution--clean-mac-e2e).**
+   Implement checkout-independent bundled Core/Python/runtime, a managed writable
+   workspace, signing, notarization and DMG delivery. Packaging implementation does
+   not itself establish clean-Mac or release qualification.
+5. **Final comprehensive qualification.** Complete full application-wide Native
+   Desktop Capture → Rebuild → Verify → Check → no-op in an isolated macOS account,
+   packaged clean-Mac E2E, supported-platform/interoperability matrices, real
+   Restore/Check, security, interruption/recovery and accessibility release gates.
+   This includes deferred native SSH and Workspace E2E, isolated Git-over-SSH,
+   Homebrew Setup Installer qualification and all retained supported-domain gates.
+   Establish native HOME/Core/journal/preferences isolation and backup protection
+   before those workflows. Separate standalone native integration and controlled
+   real-GUI gates under [Issue #1](https://github.com/jetiaks-AKS/macseed/issues/1)
+   remain open despite the Python admission PASS; no issue is automatically closed.
+6. **[Early Access / Alpha](#early-access--alpha) → [Macseed 1.0](#macseed-10).**
+   Validate with external technical users, resolve observed issues and complete
+   release preparation only after mandatory gates and supported limits are recorded.
 
-1. **Documentation consolidation and product clarity — Completed within the approved scope.**
-   Roadmap, positioning and contextual Selection wording/typography are finalized.
-   Remaining qualification gates and completed contracts retain their boundaries.
-2. **[SSH Environment Completion — Developer Environment Closure](#ssh-environment-completion--developer-environment-closure) — Implemented; qualification open.**
-   Next qualify successful isolated Core Git-over-SSH under the accepted
-   Selection/Preview/Rebuild contract; sandbox and readiness blockers remain.
-   The bounded Capture privacy audit is complete; decide disclosure of retained
-   partial-selection comparison inventories afterward. Native SSH E2E belongs to
-   step 6 after functional development.
-3. **Remaining native Workspace qualification and related supported-scope checks.**
-   Use the retained selected Bundle after proving native HOME/Core/journal/preferences
-   isolation. Qualify counts, read-only matching and explicit Missing/Different
-   handoff without Apply. Preserve the accepted bounded Core E2E and Phase 6 scope.
-4. **Bounded Stage 3C recovery/reconciliation.** Extend existing durable journals,
-   Stop and safety fences with operation-owned evidence, reconciliation and safe
-   re-entry under the [Core contract](docs/core/APPLICATION-INTERFACE.md#stage-3c-reconciliation-boundary).
-   Uncertain or foreign evidence stays blocked; no automatic journal clearing or
-   rollback. Successful blocking is not completed recovery; recovery qualification
-   follows this implementation rather than being inferred from step 3.
-5. **Remaining Stage 16 qualification.** Close the [supported-domain gates](TODO.md#remaining-supported-domain-restore-qualification),
-   Homebrew Setup Installer gate, completion (16I), lifecycle, integration, security,
-   accessibility and runtime hardening (16K). Close the **OPEN mandatory pre-release
-   [52-method test-coverage gate (Issue #1)](https://github.com/jetiaks-AKS/macseed/issues/1)**
-   tracked in [TODO](TODO.md#cancellation-recovery-and-runtime-reliability).
-   All 52 Python methods are now registered in mandatory Core/Desktop CI; hosted
-   qualification remains open. Configured green #161 predates this admission and
-   does not qualify it or establish complete release qualification. Separately decide the
-   standalone native integration and controlled real-GUI/accessibility gates before
-   release, without automatically adding GUI work to ordinary hosted jobs.
-   Recovery gates depend on step 4; preserve accepted
-   Assisted Restore behavior and distinguish mandatory gates from optional scope.
-6. **Full application-wide Native Desktop E2E after functional development.**
-   Run fresh development-runtime Capture → Rebuild → Verify → Check → no-op in an
-   isolated macOS test account, including the deferred native SSH flows. Use current
-   supported scope, confirmed backup protection and independent evidence.
-   This gate does not replace packaged clean-Mac qualification.
-7. **[Stage 17 — autonomous distribution](#stage-17--distribution--clean-mac-e2e).**
-   Implement and qualify checkout-independent bundled Core/Python/tool placement,
-   a managed writable workspace, signing/notarization and DMG delivery after the
-   agreed Stage 16 closure. UI acceptance does not start packaging automatically.
-8. **Clean-Mac qualification and [Early Access](#early-access--alpha).** Qualify full
-   packaged workflows on each claimed platform, then validate with external technical
-   users and resolve observed compatibility/UX failures before public launch.
-9. **[Macseed 1.0](#macseed-10).** Close mandatory product gates, document supported
-   scope/limits and complete Early Access qualification before release.
+**Fast CI / Full CI separation is deferred.** Preserve the existing mandatory Full
+CI, every registered test and current optimization/scheduling. Functional checkpoints
+use focused regression, security and integration checks; they do not trigger full
+application-wide E2E. Hosted, visual, real-Mac and release qualification are distinct.
+Historical milestones and all later proposals below retain their recorded scope.
 
 ## SSH Environment Completion — Developer Environment Closure
 
@@ -290,7 +293,7 @@ plus selected-key import and essential security cases. The approved IdentityFile
 correction repeat defect is [locally fixed and requalified](docs/qualification/SSH-E2E-2026-11-10.md#14-approved-correction-no-op-follow-up)
 against baseline `821ba853`; the original failure record is retained.
 
-**Next SSH gate:** successful isolated Core Git-over-SSH qualification, including
+**Retained SSH gate (final qualification phase):** successful isolated Core Git-over-SSH qualification, including
 import → configuration → clone ordering, Verification and repeat/no-op. The
 [bounded follow-up](docs/qualification/SSH-E2E-2026-11-10.md#15-remaining-core-git-over-ssh-qualification)
 confirmed native `sshd` nested-sandbox denial and an Internet prerequisite applied
@@ -301,7 +304,7 @@ categories while preserving partial-selection comparison baselines and V1 reader
 Disclosure of retained partial-selection inventories remains a product decision.
 Native Desktop SSH E2E, including Secure Check presentation and Change Location
 cancellation, is deferred to the existing full application-wide Native Desktop E2E
-in [execution step 6](#current-practical-execution-order), after functional development
+in [execution step 5](#current-practical-execution-order), after functional development
 and using an isolated macOS test account. Configured CI PASS remains distinct from
 these native and release gates.
 [Capture / Restore](docs/CAPTURE-RESTORE.md#ssh-environment-completion--developer-environment-closure)
@@ -377,6 +380,25 @@ implied by completed Stage 16J.
 Workspace file-content transfer, additional application adapters, Environment
 Manager capabilities and automatic updates are not prerequisites for Macseed 1.0.
 General backup and unrestricted file migration remain outside product scope.
+
+### Scripts improvements (post-1.0)
+
+**Deferred; not implemented.** Evaluate Scan Folder with bounded recursive candidate
+discovery, preview and explicit individual selection. Deduplicate with automatic
+alias-linked and manually added files. Selecting a folder must never automatically
+include its contents or turn it into a Workspace/file-backup payload. Persistent
+scan locations or profiles are optional only if later use justifies them.
+
+### Automation / LaunchAgents (future evaluation)
+
+**Separate future module; not a commitment for v1.0.** Evaluate Capture/Restore of
+selected user jobs from `~/Library/LaunchAgents`: preserve and validate plists,
+resolve supported HOME-relative paths and identify dependencies on captured
+Scripts. Enabling/activating restored jobs requires explicit user authorization;
+restoration must not run them automatically. Initial scope excludes system
+LaunchDaemons. Evaluate cron and other automation mechanisms separately later.
+These ideas do not reorder Shell completion, Stage 3C, remaining Stage 16,
+distribution, signing/notarization, final qualification and release preparation.
 
 **Possible, demand-driven Environment Manager capabilities:** independent Profiles,
 Saved Environment History, Semantic Comparison, Drift Detection and explicit

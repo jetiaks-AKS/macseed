@@ -550,6 +550,7 @@ enum OperationLogPresentation {
     static func operation(_ value: CoreOperation?) -> String {
         switch value {
         case .captureIdentityInspect: "Capture · Inspect SSH Identity"
+        case .captureScriptInspect: "Capture · Inspect Script Eligibility"
         case .capturePrepare: "Capture · Scan and Prepare"
         case .captureExecute: "Capture · Save Environment"
         case .bundleInspect: "Rebuild · Inspect Environment"

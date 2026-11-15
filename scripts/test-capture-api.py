@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Disposable fixtures for the production structured Capture boundary."""
 import importlib.util
+import hashlib
 import json
 import os
 import plistlib
@@ -26,6 +27,103 @@ from secret_input import receive
 
 
 class CaptureTests(unittest.TestCase):
+    def test_shell_capture_counts_distinguish_aliases_and_saved_files(self):
+        self.fixture(shell=True)
+        directory = self.home / 'Scripts'; directory.mkdir(mode=0o700)
+        paths = [directory / name for name in ('linked', 'independent-one', 'independent-two')]
+        for path in paths:
+            path.write_bytes(b'#!/bin/sh\necho fixture\n'); path.chmod(0o700)
+        (self.home / '.zshrc').write_text("alias linked='$HOME/Scripts/linked'\n" + ''.join(
+            f"alias independent_{index}='pwd'\n" for index in range(11)))
+        contract = bundle.shell_contract(); recovery = contract.recovery_contract()
+        linked = recovery.script_id('Scripts/linked')
+        all_scripts = {recovery.script_id('Scripts/' + path.name) for path in paths}
+        policy = dict(shell_script_policy='opaque-file-v5', shell_script_paths=list(map(str, paths)))
+        result, events = self.invoke_capture('capture_script_inspect', extra=dict(policy, scripts={}))
+        self.assertEqual(result.returncode, 0, events)
+        self.assertEqual({row['id'] for row in events[-2]['data']['shell_script_candidates']}, all_scripts)
+        for label, aliases, scripts in [('aliases', True, set()), ('scripts', False, all_scripts),
+                                        ('linked', True, {linked}), ('three', True, all_scripts),
+                                        ('duplicate', True, {linked}), ('neither', False, set())]:
+            with self.subTest(selection=label):
+                categories = ['homebrew-packages'] + (['shell-zsh'] if aliases else [])
+                chosen = dict(categories=categories, items={}, secure_identities=[])
+                selected = dict(policy, shell_script_selection=sorted(scripts), shell_script_paths=[
+                    str(path) for path in paths if recovery.script_id('Scripts/' + path.name) in scripts])
+                if not scripts: selected.pop('shell_script_paths')
+                if label == 'duplicate': selected['shell_script_paths'] += [str(directory) + '/./linked']
+                result, events = self.invoke_capture(selection=chosen, extra=selected)
+                self.assertEqual(result.returncode, 0, (label, events))
+                prepared = events[-2]['data']
+                self.assertEqual(prepared['summary'], dict(selected_domains=1 + int(aliases) + bool(scripts),
+                    selected_items=1 + (12 if aliases else 0) + len(scripts), secure_identity_count=0))
+                destination = self.root / (label + '.mbt')
+                result, events = self.invoke_capture('capture_execute', chosen, dict(selected,
+                    shell_script_ids=sorted(scripts), destination=str(destination),
+                    expected_prepared_capture_id=prepared['prepared_capture_id']))
+                self.assertEqual(result.returncode, 0, events)
+                saved = bundle.validate_archive(destination)
+                shell = bundle.shell_aliases(saved['generated/shell/zshrc.snapshot'], saved) if 'generated/shell/zshrc.snapshot' in saved else None
+                alias_ids = {contract.identity(row['name']) for row in shell['aliases']} if shell else set()
+                file_ids = {recovery.file_identity(row['path']) for row in shell['scripts']} if shell else set()
+                self.assertTrue(alias_ids.isdisjoint(file_ids))
+                self.assertEqual(len(alias_ids), 12 if aliases else 0)
+                self.assertEqual(file_ids, {'shell-script:' + key for key in scripts})
+                self.assertEqual(prepared['summary']['selected_items'], 1 + len(alias_ids | file_ids))
+                publication = events[-2]['data']['bundle']
+                self.assertEqual({row['id'] for row in publication.get('shell_script_candidates', [])}, scripts)
+                # The publication still exposes the same physical Restore counts;
+                # Capture's functional projection also uses the saved file identities.
+                expected_physical = (12 if aliases else 0) + len(scripts - ({linked} if aliases else set()))
+                self.assertEqual(publication['selected_item_counts'].get('shell-zsh', 0), expected_physical)
+                self.assertEqual(publication, bundle.inspect_bundle(destination, str(self.home)))
+
+    def test_v5_request_manifest_maximum_selection_and_fail_closed(self):
+        self.fixture(shell=True)
+        directory = self.home / 'Scripts'; directory.mkdir(mode=0o700)
+        paths = []
+        for index in range(128):
+            path = directory / f'file-{index:03}.sh'
+            path.write_bytes(b'echo fixture\n'); path.chmod(0o600); paths.append(str(path))
+        private = self.root / 'scripts-request'; private.mkdir(mode=0o700)
+        control = private / 'shell-scripts-request.json'
+        self.environment['TMPDIR'] = str(private)
+        request = dict(protocol_version=1, operation_id='scripts-maximum', operation='capture_script_inspect',
+                       parameters=dict(shell_script_policy='opaque-file-v5'))
+        fields = dict(scripts={}, shell_script_paths=paths)
+        def invoke(body, mode=0o600):
+            control.write_bytes(body); control.chmod(mode)
+            request['parameters']['script_manifest'] = hashlib.sha256(body).hexdigest()
+            result = subprocess.run(['bash', str(self.project / 'modules/core/application-interface/core.sh')],
+                cwd=self.project, env=self.environment, input=json.dumps(request).encode(), capture_output=True, timeout=30)
+            return result, [json.loads(line) for line in result.stdout.splitlines()]
+        raw = json.dumps(dict(version=5, operation_id=request['operation_id'], parameters=fields)).encode()
+        self.assertGreater(len(raw), 4096)
+        result, events = invoke(raw)
+        self.assertEqual(result.returncode, 0, events)
+        data = events[-2]['data']
+        self.assertEqual(len(data['shell_script_candidates']), 128)
+        self.assertTrue(all(row['status'] == 'qualified' for row in data['scripts']))
+        # Bound actual maximum request metadata, with UTF-8 JSON escaping included.
+        maximum = dict(shell_script_paths=['/' + 'a' * 1019 + str(i).zfill(4) for i in range(128)],
+            shell_script_ids=[row['id'] for row in data['scripts']], shell_script_selection=[row['id'] for row in data['scripts']],
+            scripts={row['id']: row['observation_id'] for row in data['scripts']}, shell_items=['shell-alias:' + str(i).zfill(64) for i in range(384)])
+        self.assertLess(len(json.dumps(dict(version=5, operation_id='x'*64, parameters=maximum)).encode()), 262144)
+        bad = [raw + b' ' * 262144,
+               json.dumps(dict(version=5, operation_id='another-operation', parameters=fields)).encode(),
+               json.dumps(dict(version=5, operation_id=request['operation_id'], parameters=dict(fields, shell_script_paths=paths + [paths[0]]))).encode(),
+               json.dumps(dict(version=5, operation_id=request['operation_id'], parameters=dict(fields, destination='/tmp/unrelated'))).encode()]
+        for body in bad:
+            result, events = invoke(body)
+            self.assertEqual(result.returncode, 2, events)
+            self.assertEqual(events[-1]['data']['code'], 'invalid_request')
+        result, events = invoke(raw, 0o644)
+        self.assertEqual(result.returncode, 2, events)
+        control.unlink(); control.symlink_to(directory / 'file-000.sh')
+        result = subprocess.run(['bash', str(self.project / 'modules/core/application-interface/core.sh')],
+            cwd=self.project, env=self.environment, input=json.dumps(request).encode(), capture_output=True, timeout=30)
+        self.assertEqual(result.returncode, 2)
+
     def setUp(self):
         fixtures.RestorePrepareTests.setUp(self)
         self.root = self.root.resolve()
@@ -36,7 +134,7 @@ class CaptureTests(unittest.TestCase):
         (self.root / 'bin/sw_vers').write_text('#!/bin/bash\necho 26.7.1\n')
 
 
-    def fixture(self, real=False, workspace=False, ssh=False):
+    def fixture(self, real=False, workspace=False, ssh=False, shell=False):
         (self.project / 'scripts').mkdir(exist_ok=True)
         shutil.copy2(ROOT / 'scripts/ssh-identity-migrate.sh', self.project / 'scripts/ssh-identity-migrate.sh')
         self.home.chmod(0o700)
@@ -67,13 +165,15 @@ esac
             entry.write_text(entry.read_text().replace(marker, marker + '\n'.join(
                 name + '() { return 1; }' for name in disabled
                 if not (workspace and name == 'discover_workspace')
-                and not (ssh and name == 'discover_ssh_configuration')) + '\n'))
+                and not (ssh and name == 'discover_ssh_configuration')
+                and not (shell and name == 'discover_zsh')) + '\n'))
         self.selection = {'categories': ['homebrew-packages'], 'items': {}, 'secure_identities': []}
 
     def invoke_capture(self, operation='capture_prepare', selection=None, extra=None, channel=None, timeout=30):
         request = {'protocol_version': 1, 'operation_id': 'capture-test', 'operation': operation,
                    'parameters': {'selection': selection}}
         request['parameters'].update(extra or {})
+        if operation == 'capture_script_inspect': request['parameters'].pop('selection')
         command = ['bash', str(self.project / 'modules/core/application-interface/core.sh')]
         kwargs = {}
         if channel is not None:
@@ -103,6 +203,418 @@ esac
                            b'Host production\n HostName production.invalid\n User deploy\n' + suffix)
         target.chmod(0o600)
         return target
+
+    def test_shell_alias_capture_selection_bundle_and_readonly_check(self):
+        self.fixture(shell=True)
+        target = self.home / '.zshrc'
+        original = b"source optional.zsh\nalias zebra='ls -la'\nalias alpha='git status'\nexport API_TOKEN=private_fixture\n"
+        target.write_bytes(original)
+        os.chflags(target, 0x00000040)  # macOS document tracking must not exclude read-only Capture.
+        row = next(row for row in self.prepare()['inventory'] if row['domain'] == 'shell-zsh')
+        self.assertEqual((row['status'], row['selection_mode'], row['reason']), ('present', 'items', 'source_partial'))
+        self.assertEqual([entry['label'] for entry in row['items']], ['zebra', 'alpha'])
+        chosen = dict(categories=[], items={'shell-zsh': [row['items'][1]['item_id']]}, secure_identities=[])
+        prepared = self.prepare(chosen)
+        self.assertEqual(prepared['summary'], dict(selected_domains=1, selected_items=1, secure_identity_count=0))
+        result, events = self.execute(prepared['prepared_capture_id'], chosen)
+        self.assertEqual(result.returncode, 0, events)
+        archive = self.root / 'captured.mbt'
+        files = bundle.validate_archive(archive)
+        snapshot = bundle.shell_aliases(files['generated/shell/zshrc.snapshot'])
+        self.assertEqual([entry['name'] for entry in snapshot['aliases']], ['alpha'])
+        self.assertNotIn(b'private_fixture', files['generated/shell/zshrc.snapshot'])
+        self.assertNotIn(b'optional.zsh', files['generated/shell/zshrc.snapshot'])
+        self.assertEqual(target.read_bytes(), original)
+        # This saved capability-3 alias has excluded startup context. Absence
+        # cannot prove recoverability; the existing Check contract is unverified.
+        self.assertFalse(snapshot['layout'][0]['closed'])
+        for actual, expected in ((original, 'matching'), (b"alias other='ls'\n", 'unverified'),
+                                 (b"alias alpha='git diff'\n", 'differing')):
+            target.write_bytes(actual)
+            if expected == 'unverified':
+                self.assertEqual(bundle.shell_contract().recovery_contract().plan(snapshot, str(self.home))['reason'], 'source_prerequisite')
+            before = target.stat()
+            request = dict(protocol_version=1, operation_id='alias-check', operation='environment_compare', parameters=dict(bundle_path=str(archive)))
+            checked = subprocess.run(['bash', str(self.project / 'modules/core/application-interface/core.sh')], cwd=self.project,
+                                     env=self.environment, input=json.dumps(request).encode(), capture_output=True, timeout=30)
+            self.assertEqual(checked.returncode, 0, checked.stdout)
+            data = next(json.loads(line)['data'] for line in checked.stdout.splitlines() if json.loads(line)['type'] == 'result')
+            self.assertEqual([r['comparison_kind'] for r in data['comparison_records']], [expected])
+            self.assertEqual(data['comparison']['counts'][expected], 1)
+            self.assertEqual(data['comparison']['counts']['unresolved'], 1)
+            self.assertEqual(data['reference_presentation']['shell_alias_labels'], {row['items'][1]['item_id']: 'alpha'})
+            self.assertNotIn('git status', json.dumps(data))
+            self.assertEqual(target.read_bytes(), actual)
+            self.assertEqual(target.stat().st_mtime_ns, before.st_mtime_ns)
+
+    def test_shell_recovery_capture_script_consent_and_freshness(self):
+        self.fixture(shell=True)
+        (self.home / '.local/bin').mkdir(parents=True)
+        script = self.home / '.local/bin/adns'
+        script.write_text('#!/bin/bash\n/usr/bin/sw_vers -productVersion\n'); script.chmod(0o755)
+        (self.home / '.zshrc').write_text("alias adns='$HOME/.local/bin/adns'\n")
+        row = next(row for row in self.prepare()['inventory'] if row['domain'] == 'shell-zsh')
+        chosen = dict(categories=[], items={'shell-zsh': [row['items'][0]['item_id']]}, secure_identities=[])
+        prepared = self.prepare(chosen)
+        candidates = prepared['shell_scripts']
+        self.assertEqual(len(candidates), 1)
+        self.assertEqual(prepared['summary']['selected_items'], 1)
+        extra = dict(destination=str(self.root / 'script.mbt'), expected_prepared_capture_id=prepared['prepared_capture_id'],
+                     shell_script_ids=[candidates[0]['id']])
+        # Metadata is bound before consent; a changed script cannot be captured.
+        script.write_text('#!/bin/bash\n# Platform details\n/usr/bin/sw_vers -buildVersion\n')
+        result, events = self.invoke_capture('capture_execute', chosen, extra)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(events[-1]['data']['code'], 'stale_prepared_capture')
+        self.assertFalse((self.root / 'script.mbt').exists())
+        extra['expected_prepared_capture_id'] = self.prepare(chosen)['prepared_capture_id']
+        result, events = self.invoke_capture('capture_execute', chosen, extra)
+        self.assertEqual(result.returncode, 0, events)
+        files = bundle.validate_archive(self.root / 'script.mbt')
+        value = bundle.shell_aliases(files['generated/shell/zshrc.snapshot'])
+        self.assertEqual(value['version'], 3)
+        self.assertEqual(value['scripts'][0]['text'], script.read_text())
+        self.assertEqual(value['scripts'][0]['mode'], 0o755)
+        self.assertNotIn('#!/bin/bash', json.dumps(events))
+        self.assertEqual(next(e['data'] for e in events if e['type'] == 'result')['bundle']['selected_item_counts']['shell-zsh'], 1)
+
+    def test_shell_script_selection_candidates_and_exact_capture_scope(self):
+        for malformed in [None, True, 'a' * 64, ['a' * 64] * 2, ['a' * 64 + '\n'], [17], [f'{i:064x}' for i in range(17)]]:
+            result, events = self.invoke_capture(extra={'shell_script_selection': malformed})
+            self.assertEqual(result.returncode, 2)
+            self.assertEqual(events[-1]['data']['code'], 'invalid_request')
+        self.fixture(shell=True)
+        (self.home / '.local/bin').mkdir(parents=True)
+        for name, text in [('shared', '#!/bin/sh\n/bin/date\n'), ('other', '#!/bin/sh\ntouch "$HOME/must-not-run"\n')]:
+            path = self.home / '.local/bin' / name
+            path.write_text(text); path.chmod(0o700)
+        (self.home / '.zshrc').write_text("alias one='$HOME/.local/bin/shared'\nalias two='$HOME/.local/bin/shared'\nalias other='$HOME/.local/bin/other'\n")
+        scan = self.prepare()
+        candidates = scan['shell_script_candidates']
+        self.assertEqual(len(candidates), 2)
+        shared = next(row for row in candidates if row['path'].endswith('/shared'))
+        other = next(row for row in candidates if row['path'].endswith('/other'))
+        self.assertEqual(len(shared['alias_ids']), 2)
+        self.assertNotIn('shell_scripts', scan)
+        self.assertNotIn('must-not-run', json.dumps(scan))
+        inspected, events = self.invoke_capture('capture_script_inspect', extra={'scripts': {
+            row['id']: row['observation_id'] for row in candidates}})
+        self.assertEqual(inspected.returncode, 0, events)
+        qualification = {row['id']: row for row in events[-2]['data']['scripts']}
+        self.assertEqual(qualification[shared['id']]['status'], 'qualified')
+        self.assertEqual(qualification[other['id']]['status'], 'unsupported')
+        self.assertEqual(qualification[other['id']]['reason'], 'script_dynamic_or_dependency')
+        self.assertFalse(any(event['type'] == 'capture_category' for event in events), 'Targeted inspection never reruns Discovery')
+        self.assertNotIn('must-not-run', json.dumps(events))
+        self.assertFalse((self.home / 'must-not-run').exists())
+        stale, events = self.invoke_capture('capture_script_inspect', extra={'scripts': {shared['id']: '0' * 64}})
+        self.assertEqual(stale.returncode, 0)
+        self.assertEqual(events[-2]['data']['scripts'][0]['reason'], 'script_changed')
+        for scope in [{}, {'invalid': shared['observation_id']}, {shared['id']: True}]:
+            invalid, events = self.invoke_capture('capture_script_inspect', extra={'scripts': scope})
+            self.assertEqual(invalid.returncode, 2)
+            self.assertEqual(events[-1]['data']['code'], 'invalid_request')
+        chosen = dict(categories=['shell-zsh'], items={}, secure_identities=[])
+        result, events = self.invoke_capture(selection=chosen, extra={'shell_script_selection': [other['id']]})
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(events[-1]['data']['code'], 'script_transfer_unsupported')
+        self.assertFalse((self.home / 'must-not-run').exists())
+        alias_only, events = self.invoke_capture(selection=chosen, extra={'shell_script_selection': []})
+        self.assertEqual(alias_only.returncode, 0, events)
+        self.assertEqual(events[-2]['data']['summary']['selected_items'], 3)
+        result, events = self.invoke_capture(selection=chosen, extra={'shell_script_selection': [shared['id']]})
+        self.assertEqual(result.returncode, 0, events)
+        prepared = events[-2]['data']
+        self.assertEqual(prepared['summary']['selected_items'], 3)
+        self.assertEqual(prepared['shell_script_candidates'], candidates)
+        extra = dict(destination=str(self.root / 'selected-script.mbt'), expected_prepared_capture_id=prepared['prepared_capture_id'],
+                     shell_script_selection=[shared['id']])
+        result, events = self.invoke_capture('capture_execute', chosen, extra)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(events[-1]['data']['code'], 'invalid_script_consent')
+        result, events = self.invoke_capture('capture_execute', chosen, dict(extra, shell_script_selection=[], shell_script_ids=[shared['id']]))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(events[-1]['data']['code'], 'stale_prepared_capture')
+        self.assertFalse((self.root / 'selected-script.mbt').exists())
+        result, events = self.invoke_capture('capture_execute', chosen, dict(extra, shell_script_ids=[shared['id']]))
+        self.assertEqual(result.returncode, 0, events)
+        files = bundle.validate_archive(self.root / 'selected-script.mbt')
+        value = bundle.shell_aliases(files['generated/shell/zshrc.snapshot'])
+        self.assertEqual([row['path'] for row in value['scripts']], ['.local/bin/shared'])
+        self.assertEqual(len(value['aliases']), 3)
+        inspected = bundle.inspect_bundle(self.root / 'selected-script.mbt', str(self.home))
+        self.assertEqual(len(inspected['shell_script_candidates']), 1)
+        self.assertEqual(inspected['shell_script_candidates'][0]['alias_ids'], shared['alias_ids'])
+        self.assertEqual(inspected['selected_item_counts']['shell-zsh'], 3)
+
+    def test_opaque_script_capture_policy_consent_bytes_and_stale(self):
+        self.fixture(shell=True)
+        (self.home / '.local/bin').mkdir(parents=True)
+        script = self.home / '.local/bin/automation'
+        body = '#!/bin/bash\n# Сценарий fixture\nreport() { for x in one two; do echo "$x"; done; }\nif true; then report; fi\n'
+        script.write_text(body); script.chmod(0o755)
+        (self.home / '.zshrc').write_text("alias one='$HOME/.local/bin/automation'\nalias two='$HOME/.local/bin/automation'\n")
+        scan = self.prepare()
+        self.assertEqual(scan['shell_script_policies'], ['opaque-file-v4', 'opaque-file-v5'])
+        candidate, = scan['shell_script_candidates']
+        self.assertEqual(len(candidate['alias_ids']), 2)
+        policy = {'shell_script_policy': 'opaque-file-v4'}
+        result, events = self.invoke_capture('capture_script_inspect', extra=dict(policy, scripts={candidate['id']: candidate['observation_id']}))
+        self.assertEqual(result.returncode, 0, events)
+        self.assertEqual(events[-2]['data']['scripts'][0]['status'], 'qualified')
+        self.assertNotIn('report()', json.dumps(events))
+        chosen = dict(categories=['shell-zsh'], items={}, secure_identities=[])
+        selected = dict(policy, shell_script_selection=[candidate['id']])
+        result, events = self.invoke_capture(extra=selected)
+        self.assertEqual(result.returncode, 2, 'File authorization needs an explicit Capture selection')
+        result, events = self.invoke_capture(selection=chosen, extra=dict(policy, shell_script_selection=['0' * 64]))
+        self.assertEqual(result.returncode, 2, 'Unknown file identity must not create a standalone requirement')
+        result, events = self.invoke_capture(selection=chosen, extra=selected)
+        self.assertEqual(result.returncode, 0, events)
+        prepared = events[-2]['data']
+        self.assertEqual(prepared['shell_script_policy'], 'opaque-file-v4')
+        self.assertEqual(prepared['summary']['selected_items'], 3)
+        target = self.root / 'opaque.mbt'
+        execute = dict(selected, destination=str(target), expected_prepared_capture_id=prepared['prepared_capture_id'], shell_script_ids=[candidate['id']])
+        script.write_text(body + '# changed\n')
+        result, events = self.invoke_capture('capture_execute', chosen, execute)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(target.exists())
+        result, events = self.invoke_capture(selection=chosen, extra=selected)
+        self.assertEqual(result.returncode, 0, events)
+        execute['expected_prepared_capture_id'] = events[-2]['data']['prepared_capture_id']
+        result, events = self.invoke_capture('capture_execute', chosen, execute)
+        self.assertEqual(result.returncode, 0, events)
+        files = bundle.validate_archive(target)
+        value = bundle.shell_aliases(files['generated/shell/zshrc.snapshot'])
+        self.assertEqual(value['version'], 4)
+        self.assertEqual(bundle.validate_shell(files), {'shell-aliases': 4})
+        self.assertEqual(value['scripts'][0]['text'].encode(), script.read_bytes())
+        self.assertEqual(value['scripts'][0]['mode'], 0o755)
+        self.assertEqual(bundle.inspect_bundle(target, str(self.home))['selected_item_counts']['shell-zsh'], 2)
+        self.assertNotIn('report()', json.dumps(events))
+        # A retained file selection can be captured independently of every alias.
+        only_file = dict(categories=[], items={}, secure_identities=[])
+        result, events = self.invoke_capture(selection=only_file, extra=selected)
+        self.assertEqual(result.returncode, 0, events)
+        self.assertEqual(events[-2]['data']['summary'], dict(selected_domains=1, selected_items=1, secure_identity_count=0))
+        standalone_target = self.root / 'standalone.mbt'
+        execute.update(destination=str(standalone_target), expected_prepared_capture_id=events[-2]['data']['prepared_capture_id'])
+        result, events = self.invoke_capture('capture_execute', only_file, execute)
+        self.assertEqual(result.returncode, 0, events)
+        saved = bundle.shell_aliases(bundle.validate_archive(standalone_target)['generated/shell/zshrc.snapshot'])
+        self.assertEqual((saved['aliases'], saved['layout']), ([], []))
+        self.assertEqual(saved['scripts'][0]['text'].encode(), script.read_bytes())
+        inspected = bundle.inspect_bundle(standalone_target, str(self.home))
+        self.assertEqual(inspected['selected_item_counts']['shell-zsh'], 1)
+        self.assertTrue(inspected['shell_script_candidates'][0]['independent'])
+        self.assertEqual(inspected['shell_script_candidates'][0]['alias_ids'], [])
+        for invalid in [True, 'unknown', 4]:
+            result, events = self.invoke_capture(extra={'shell_script_policy': invalid})
+            self.assertEqual(result.returncode, 2)
+
+    def test_manual_scripts_capture_restore_check_without_aliases(self):
+        self.fixture(shell=True)
+        directory = self.home / 'Scripts'; directory.mkdir(mode=0o700)
+        contents = {'one.sh': b'#!/bin/sh\r\n# fixture\r\ntouch "$HOME/must-not-run"\r\n',
+                    'two.zsh': b'print fixture\n',
+                    'three.py': b'#!/usr/bin/env python3\nprint("fixture")\n',
+                    'no-extension': b'#!/bin/bash\necho fixture\n'}
+        for index, (name, raw) in enumerate(contents.items()):
+            path = directory / name; path.write_bytes(raw); path.chmod(0o600 if name == "two.zsh" else 0o755 if index % 2 else 0o700)
+        quarantine = b'0083;12345678;MacseedFixture;'
+        quarantined = directory / 'one.sh'
+        subprocess.run(['/usr/bin/xattr', '-w', 'com.apple.quarantine', quarantine.decode(), str(quarantined)], check=True)
+        before = {path.name: (path.read_bytes(), path.stat().st_mode, path.stat().st_mtime_ns) for path in directory.iterdir()}
+        paths = [str(directory / name) for name in contents]
+        policy = dict(shell_script_policy='opaque-file-v5', shell_script_paths=paths)
+        result, events = self.invoke_capture('capture_script_inspect', extra=dict(policy, scripts={}))
+        self.assertEqual(result.returncode, 0, events)
+        rows = events[-2]['data']['shell_script_candidates']
+        self.assertEqual(len(rows), 4)
+        self.assertTrue(all(row['independent'] and not row['alias_ids'] for row in rows))
+        self.assertTrue(all(row['status'] == 'qualified' for row in events[-2]['data']['scripts']))
+        ids = sorted(row['id'] for row in rows)
+        chosen = dict(categories=[], items={}, secure_identities=[])
+        selected = dict(policy, shell_script_selection=ids)
+        result, events = self.invoke_capture(selection=chosen, extra=selected)
+        self.assertEqual(result.returncode, 0, events)
+        prepared = events[-2]['data']
+        self.assertEqual(prepared['summary'], dict(selected_domains=1, selected_items=4, secure_identity_count=0))
+        target = self.root / 'manual.mbt'
+        execute = dict(selected, destination=str(target), expected_prepared_capture_id=prepared['prepared_capture_id'])
+        result, events = self.invoke_capture('capture_execute', chosen, execute)
+        self.assertEqual(result.returncode, 2, events)
+        self.assertEqual(events[-1]['data']['code'], 'invalid_script_consent')
+        self.assertFalse(target.exists())
+        # Changing one picked file invalidates the exact prepared publication.
+        (directory / 'one.sh').write_bytes(contents['one.sh'] + b'# changed\n')
+        result, events = self.invoke_capture('capture_execute', chosen, dict(execute, shell_script_ids=ids))
+        self.assertEqual(result.returncode, 2, events)
+        self.assertFalse(target.exists())
+        (directory / 'one.sh').write_bytes(contents['one.sh'])
+        result, events = self.invoke_capture(selection=chosen, extra=selected)
+        self.assertEqual(result.returncode, 0, events)
+        execute['expected_prepared_capture_id'] = events[-2]['data']['prepared_capture_id']
+        result, events = self.invoke_capture('capture_execute', chosen, dict(execute, shell_script_ids=ids))
+        self.assertEqual(result.returncode, 0, events)
+        files = bundle.validate_archive(target)
+        saved = bundle.shell_aliases(files['generated/shell/zshrc.snapshot'], files)
+        self.assertEqual(saved['version'], 5)
+        self.assertEqual(bundle.shell_contract().recovery_contract().quarantine_bytes(next(row for row in saved['scripts'] if row['path'] == 'Scripts/one.sh')['quarantine']), quarantine)
+        self.assertEqual(len([name for name in files if bundle.script_member(name)]), 4)
+        self.assertNotIn(b'touch', files['generated/shell/zshrc.snapshot'])
+        self.assertEqual((saved['aliases'], saved['layout']), ([], []))
+        for row in saved['scripts']:
+            name = Path(row['path']).name
+            self.assertEqual(row['text'].encode(), contents[name])
+            self.assertEqual(row['mode'], before[name][1] & 0o777)
+        self.assertFalse((self.home / 'must-not-run').exists())
+        self.assertFalse((self.home / '.zshrc').exists())
+        source = self.home
+        self.home = self.root / 'target-home'; self.home.mkdir(mode=0o700)
+        self.environment['HOME'] = str(self.home)
+        self.archive = target
+        # Only fixture tools/launcher are enabled; all mutations stay in its HOME/project.
+        (self.root / 'bin/sudo').write_text('#!/bin/bash\nexit 0\n')
+        (self.project / 'bin').mkdir()
+        shutil.copy2(ROOT / 'bin/bs', self.project / 'bin/bs')
+        shutil.copy2(ROOT / 'scripts/install-bs.sh', self.project / 'scripts/install-bs.sh')
+        (self.root / 'bin/bs').symlink_to(self.project / 'bin/bs')
+        self.environment['BS_INSTALL_DIR'] = str(self.root / 'bin')
+        result, events = fixtures.RestorePrepareTests.invoke(self, shell_script_selection=ids)
+        self.assertEqual(result.returncode, 0, events)
+        plan = next(e['data'] for e in events if e['type'] == 'result')
+        result, events = fixtures.RestorePrepareTests.execute(self, plan['prepared_plan_id'], shell_script_selection=ids)
+        self.assertEqual(result.returncode, 2, events)
+        self.assertFalse((self.home / 'Scripts').exists())
+        result, events = fixtures.RestorePrepareTests.execute(self, plan['prepared_plan_id'], shell_script_selection=ids, shell_script_ids=ids)
+        self.assertEqual(result.returncode, 0, events)
+        for name, raw in contents.items():
+            restored = self.home / 'Scripts' / name
+            self.assertEqual(restored.read_bytes(), raw)
+            self.assertEqual(restored.stat().st_mode & 0o777, before[name][1] & 0o777)
+            self.assertEqual((source / 'Scripts' / name).read_bytes(), raw)
+        for selected in [quarantined, self.home / 'Scripts/one.sh']:
+            attribute = subprocess.run(['/usr/bin/xattr', '-p', 'com.apple.quarantine', str(selected)], check=True, capture_output=True).stdout.rstrip(b'\n')
+            self.assertEqual(attribute, quarantine)
+        self.assertFalse((self.home / '.zshrc').exists())
+        self.assertFalse((self.home / 'must-not-run').exists())
+        request = dict(protocol_version=1, operation_id='manual-check', operation='environment_compare', parameters=dict(bundle_path=str(target)))
+        checked = subprocess.run(['bash', str(self.project / 'modules/core/application-interface/core.sh')], cwd=self.project,
+            env=self.environment, input=json.dumps(request).encode(), capture_output=True, timeout=30)
+        self.assertEqual(checked.returncode, 0, checked.stdout)
+        report = next(json.loads(line)['data'] for line in checked.stdout.splitlines() if json.loads(line)['type'] == 'result')
+        self.assertEqual(report['comparison']['counts']['matching'], 4)
+        self.assertEqual(len(report['comparison_records']), 4)
+        self.assertEqual({row['item_id'] for row in report['comparison_records']}, {'shell-script:' + key for key in ids})
+        self.assertTrue(all(row['comparison_kind'] == 'matching' for row in report['comparison_records']))
+        verified = report['records']['verification_records']
+        self.assertEqual(len(verified), 4)
+        self.assertTrue(all(row['predicate'] == 'script_file' and row['conformity'] == 'verified' for row in verified))
+        stamps = {name: (self.home / 'Scripts' / name).stat().st_mtime_ns for name in contents}
+        result, events = fixtures.RestorePrepareTests.invoke(self, shell_script_selection=ids)
+        plan = next(e['data'] for e in events if e['type'] == 'result')
+        self.assertFalse(plan['has_executable_changes'])
+        result, events = fixtures.RestorePrepareTests.execute(self, plan['prepared_plan_id'], shell_script_selection=ids)
+        self.assertEqual(result.returncode, 0, events)
+        self.assertEqual(stamps, {name: (self.home / 'Scripts' / name).stat().st_mtime_ns for name in contents})
+
+    def test_manual_scripts_rejections_and_alias_deduplication(self):
+        self.fixture(shell=True)
+        directory = self.home / 'Scripts'; directory.mkdir(mode=0o700)
+        path = directory / 'shared'; path.write_bytes(b'#!/bin/sh\necho fixture\n'); path.chmod(0o700)
+        (self.home / '.zshrc').write_text("alias shared='$HOME/Scripts/shared'\n")
+        discovered, = self.prepare()['shell_script_candidates']
+        policy = dict(shell_script_policy='opaque-file-v4')
+        result, events = self.invoke_capture('capture_script_inspect', extra=dict(policy, scripts={},
+            shell_script_paths=[str(path), str(directory) + '/./shared']))
+        self.assertEqual(result.returncode, 0, events)
+        candidate, = events[-2]['data']['shell_script_candidates']
+        self.assertEqual(candidate['id'], discovered['id'])
+        self.assertEqual(candidate['alias_ids'], discovered['alias_ids'])
+        selected = dict(policy, shell_script_paths=[str(path)], shell_script_selection=[candidate['id']])
+        chosen = dict(categories=['shell-zsh'], items={}, secure_identities=[])
+        result, events = self.invoke_capture(selection=chosen, extra=selected)
+        self.assertEqual(result.returncode, 0, events)
+        self.assertEqual(events[-2]['data']['summary']['selected_items'], 2)
+        prepared = events[-2]['data']['prepared_capture_id']
+        target = self.root / 'deduplicated.mbt'
+        result, events = self.invoke_capture('capture_execute', chosen, dict(selected,
+            destination=str(target), expected_prepared_capture_id=prepared, shell_script_ids=[candidate['id']]))
+        self.assertEqual(result.returncode, 0, events)
+        self.assertEqual(len(bundle.shell_aliases(bundle.validate_archive(target)['generated/shell/zshrc.snapshot'])['scripts']), 1)
+        link = directory / 'link'; link.symlink_to(path)
+        sourced = directory / 'sourced'; sourced.write_bytes(b'#!/bin/sh\necho fixture\n'); sourced.chmod(0o700)
+        (self.home / '.zshrc').write_text("alias shared='$HOME/Scripts/shared'\nsource ~/Scripts/sourced\n")
+        bad_files = [(link, 'script_observation_failed'), (self.home / '.zshrc', 'script_path_unsupported'),
+                     (sourced, 'script_path_unsupported'),
+                     (self.root / 'outside', 'script_path_unsupported')]
+        for name, raw, mode, reason in [('text.py', b'print(1)\n', 0o700, 'script_format_unsupported'),
+                ('large', b'#!/bin/sh\n' + b'#' * 8192, 0o700, 'script_limit'),
+                ('writable', b'#!/bin/sh\ntrue\n', 0o777, 'script_observation_failed'),
+                ('not-executable', b'#!/bin/sh\ntrue\n', 0o600, 'script_observation_failed'),
+                ('example.py', b'#!/usr/bin/env python3\nAPI_TOKEN="private-fixture"\n', 0o700, 'script_sensitive_indicator')]:
+            bad = directory / name; bad.write_bytes(raw); bad.chmod(mode); bad_files.append((bad, reason))
+        for bad, reason in bad_files:
+            with self.subTest(path=bad.name):
+                result, events = self.invoke_capture('capture_script_inspect', extra=dict(policy, scripts={}, shell_script_paths=[str(bad)]))
+                if result.returncode:
+                    self.assertEqual(events[-1]['data']['code'], reason, events)
+                else:
+                    self.assertEqual(events[-2]['data']['scripts'][0]['reason'], reason, events)
+                self.assertNotIn('private-fixture', json.dumps(events))
+        for paths in [True, [], ['relative'], [str(path)] * 17]:
+            result, events = self.invoke_capture('capture_script_inspect', extra=dict(policy, scripts={}, shell_script_paths=paths))
+            self.assertEqual(result.returncode, 2, events)
+
+    def test_shell_sources_capture_subset_provenance_and_privacy(self):
+        self.fixture(shell=True)
+        (self.home / '.config').mkdir()
+        (self.home / '.config/.git').mkdir()
+        (self.home / '.zshrc').write_text(f'source "{self.home}/.config/aliases"\n')
+        original = (b'alias c.="code ."\n'
+                    b"alias run_local='$HOME/.config/helper.sh'\n"
+                    b'alias reload_local="source ~/.zshrc"\nexport API_TOKEN=private_fixture\n')
+        target = self.home / '.config/aliases'
+        target.write_bytes(original)
+        script = self.home / '.config/helper.sh'
+        script.write_text('#!/bin/sh\ntouch "$HOME/must-not-run"\n'); script.chmod(0o700)
+        row = next(row for row in self.prepare()['inventory'] if row['domain'] == 'shell-zsh')
+        self.assertEqual([r['label'] for r in row['items']], ['c.', 'run_local', 'reload_local'])
+        chosen = dict(categories=[], items={'shell-zsh': [r['item_id'] for r in row['items'][:2]]}, secure_identities=[])
+        prepared = self.prepare(chosen)
+        result, events = self.execute(prepared['prepared_capture_id'], chosen)
+        self.assertEqual(result.returncode, 0, events)
+        files = bundle.validate_archive(self.root / 'captured.mbt')
+        value = bundle.shell_aliases(files['generated/shell/zshrc.snapshot'])
+        self.assertEqual(value['version'], 3)
+        self.assertEqual([r['name'] for r in value['aliases']], ['c.', 'run_local'])
+        self.assertEqual(value['aliases'][0]['chain'], ['.zshrc', '.config/aliases'])
+        self.assertNotIn(b'private_fixture', b''.join(files.values()))
+        self.assertEqual({key for key in files if key.startswith('generated/')}, {'generated/shell/zshrc.snapshot'})
+        published = next(e['data'] for e in events if e['type'] == 'result')
+        self.assertEqual(published['bundle']['selected_categories'], ['shell-zsh'])
+        self.assertEqual(published['bundle']['selected_item_counts']['shell-zsh'], 2)
+        self.assertEqual(prepared['summary']['selected_domains'], 1)
+        self.assertEqual(prepared['summary']['selected_items'], 2)
+        # Recovery capability cannot report a match when required dependencies are missing.
+        script.unlink()
+        request = dict(protocol_version=1, operation_id='source-check', operation='environment_compare',
+                       parameters=dict(bundle_path=str(self.root / 'captured.mbt')))
+        checked = subprocess.run(['bash', str(self.project / 'modules/core/application-interface/core.sh')],
+                                 cwd=self.project, env=self.environment, input=json.dumps(request).encode(),
+                                 capture_output=True, timeout=30)
+        self.assertEqual(checked.returncode, 0, checked.stdout)
+        data = next(json.loads(line)['data'] for line in checked.stdout.splitlines() if json.loads(line)['type'] == 'result')
+        self.assertEqual(data['comparison']['counts']['matching'], 0)
+        self.assertEqual(data['comparison']['counts']['unverified'], 2)
+        self.assertEqual(data['comparison']['counts']['unresolved'], 1)
+        self.assertIn('dependency_unavailable', [r['code'] for r in data['records']['diagnostics']])
+        self.assertNotIn('.config/helper.sh', json.dumps(data))
+        self.assertEqual(target.read_bytes(), original)
+        self.assertFalse(script.exists())
+        self.assertFalse((self.home / 'must-not-run').exists())
 
     def test_ssh_host_capture_subset_full_empty_and_readonly_check(self):
         target = self.ssh_fixture()
