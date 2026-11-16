@@ -35,6 +35,7 @@ WORKSPACE_EXTENSIONS = {
 _workspace_contract = None
 _ssh_contract = None
 _shell_contract = None
+_shell_state_contract = None
 CATEGORIES = {
     "ssh-configuration": "ssh/config.snapshot",
     "vscode-settings": "vscode/settings.json",
@@ -76,6 +77,15 @@ class Invalid(Exception):
 
 class Unsupported(Invalid):
     pass
+
+
+def unique_object(pairs):
+    value = {}
+    for key, item in pairs:
+        if key in value:
+            raise ValueError('duplicate Bundle field')
+        value[key] = item
+    return value
 
 
 class WorkspaceSelectionInvalid(Invalid):
@@ -150,6 +160,37 @@ def shell_aliases(raw, files=None):
         raise Invalid('invalid Shell alias snapshot') from exc
 
 
+def shell_state_contract():
+    global _shell_state_contract
+    if _shell_state_contract is None:
+        spec = importlib.util.spec_from_file_location('shell_state', ROOT / 'modules/shell/state.py')
+        _shell_state_contract = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(_shell_state_contract)
+    return _shell_state_contract
+
+
+def typed_shell(files):
+    contract = shell_state_contract()
+    raw = files.get(contract.SNAPSHOT, b'')
+    if not raw.startswith(contract.MAGIC):
+        if contract.DEFINITIONS in files:
+            raise Invalid('unexpected Shell definitions payload')
+        return None
+    try:
+        value = contract.decode(raw, {name: data for name, data in files.items()
+                                     if name == contract.DEFINITIONS or script_member(name)})
+        if not value._value['items'] or any(row['kind'] != 'function' for row in value._value['items']):
+            raise Unsupported('unsupported typed Shell kinds')
+        return value
+    except ValueError:
+        raise Invalid('invalid typed Shell snapshot') from None
+
+
+def require_runtime_shell(files):
+    if typed_shell(files) is not None:
+        raise Unsupported('typed Shell Restore and Check are not enabled')
+
+
 def script_member(name):
     return re.fullmatch(r'generated/shell/scripts/[0-9a-f]{64}\.data', name) is not None
 
@@ -162,6 +203,8 @@ def shell_load(path):
 
 
 def validate_shell(files):
+    if typed_shell(files) is not None:
+        return {'shell-state': 1}
     raw = files.get('generated/shell/zshrc.snapshot')
     if raw is None:
         return {}
@@ -232,6 +275,9 @@ def staged_payload(stage, blueprint):
     files = {path: checked_file(stage / path) for path in required_paths(blueprint) if path != 'blueprint.conf'}
     files['blueprint.conf'] = blueprint
     shell = files.get('generated/shell/zshrc.snapshot', b'')
+    if shell.startswith(shell_state_contract().MAGIC):
+        name = shell_state_contract().DEFINITIONS
+        files[name] = checked_file(stage / name, shell_state_contract().MAX_DEFINITION_TOTAL)
     if shell.startswith(shell_contract().FILE_MAGIC):
         files.update(shell_contract().recovery_contract().contents(shell_load(stage / 'generated/shell/zshrc.snapshot')))
     topology = 'generated/workspace/topology.json'
@@ -708,8 +754,10 @@ def validate_archive(path, with_provenance=False):
             ordinary_count += 1
             if ordinary_count > MAX_ENTRIES:
                 raise Invalid("too many Bundle entries")
-        if name == 'generated/shell/zshrc.snapshot' and size > shell_contract().recovery_contract().MAX_MANIFEST_BYTES:
+        if name == 'generated/shell/zshrc.snapshot' and size > shell_state_contract().MAX_MANIFEST:
             raise Invalid('oversized Scripts manifest')
+        if name == shell_state_contract().DEFINITIONS and size > shell_state_contract().MAX_DEFINITION_TOTAL:
+            raise Invalid('oversized Shell definitions')
         if name == 'manifest.json' and size > 65536:
             raise Invalid('oversized Bundle manifest')
         next_offset = offset + 512 + ((size + 511) // 512) * 512
@@ -730,7 +778,7 @@ def validate_archive(path, with_provenance=False):
                 member.pax_headers or member.size > MAX_MEMBER or
                 name in files or name.startswith("/") or
                 any(part in ("", ".", "..") for part in name.split("/")) or
-                (not script_member(name) and name not in {"manifest.json", "blueprint.conf", "secure.age", "generated/homebrew-casks.json", *WORKSPACE_EXTENSIONS,
+                (not script_member(name) and name not in {"manifest.json", "blueprint.conf", "secure.age", "generated/homebrew-casks.json", shell_state_contract().DEFINITIONS, *WORKSPACE_EXTENSIONS,
                              *("generated/" + item for item in (*ITEMS.values(), *CATEGORIES.values())),
                              *("generated/provenance/" + item + ".sha256"
                                for item in COMPLETE_INVENTORIES)})):
@@ -739,7 +787,7 @@ def validate_archive(path, with_provenance=False):
     if "manifest.json" not in files or "blueprint.conf" not in files:
         raise Invalid("incomplete Bundle")
     try:
-        manifest = json.loads(files.pop("manifest.json"))
+        manifest = json.loads(files.pop("manifest.json"), object_pairs_hook=unique_object)
     except (ValueError, UnicodeDecodeError) as exc:
         raise Invalid("invalid Bundle manifest") from exc
     if not isinstance(manifest, dict) or manifest.get("format") != "mac-bootstrap-bundle" or manifest.get("version") != 1:
@@ -752,11 +800,15 @@ def validate_archive(path, with_provenance=False):
     if (not isinstance(required_features, dict) or
             any(type(value) is not int or
                 (value != 2 if key == 'ssh-configuration' else value not in (1, 2, 3, 4, 5) if key == 'shell-aliases'
-                 else key not in WORKSPACE_EXTENSIONS.values() or value != 1)
+                 else key not in (*WORKSPACE_EXTENSIONS.values(), 'shell-state') or value != 1)
                 for key, value in required_features.items())):
         raise Unsupported('unsupported Bundle capabilities')
     if required_features.get('shell-aliases') == 5:
         expected.update(name for name in files if script_member(name))
+    if required_features.get('shell-state') == 1:
+        expected.add(shell_state_contract().DEFINITIONS)
+    elif len(files.get('generated/shell/zshrc.snapshot', b'')) > shell_contract().recovery_contract().MAX_MANIFEST_BYTES:
+        raise Invalid('oversized Scripts manifest')
     if 'generated/homebrew-casks.json' in files:
         capabilities = cask_capabilities(json.loads(files['generated/homebrew-casks.json']))
         selected, _ = parse_blueprint(files['blueprint.conf'])
@@ -789,6 +841,7 @@ def validate_archive(path, with_provenance=False):
 
 def unpack(bundle, stage, home, *, workspace_preview=False):
     files, provenance = validate_archive(bundle, with_provenance=True)
+    require_runtime_shell(files)
     if not workspace_preview:
         require_runtime_workspace(files)
     target_paths(files, home)
@@ -810,12 +863,15 @@ def inspect_bundle(bundle, home):
     if categories['ssh-configuration']:
         counts['ssh-configuration'] = len(ssh_snapshot(files['generated/ssh/config.snapshot'])[3])
     shell_candidates = []
+    typed = typed_shell(files)
     if categories['shell-zsh']:
         aliases = shell_aliases(files['generated/shell/zshrc.snapshot'], files)
         if aliases is not None:
             counts['shell-zsh'] = len(shell_contract().recovery_contract().requirement_ids(aliases)) if aliases['version'] in (3, 4, 5) else len(aliases['aliases'])
             if aliases['version'] in (3, 4, 5):
                 shell_candidates = shell_contract().recovery_contract().selection_candidates(aliases)
+        if typed is not None:
+            counts['shell-zsh'] = len(typed._value['items'])
     result = {
         "format_version": 1,
         "selected_categories": sorted(name for name, enabled in categories.items() if enabled),
@@ -825,6 +881,9 @@ def inspect_bundle(bundle, home):
     }
     if shell_candidates:
         result['shell_script_candidates'] = shell_candidates
+    if typed is not None:
+        result.update(required_features=validate_workspace(files, exact=True) | validate_ssh(files) | {'shell-state': 1}, restore_supported=False,
+                      restore_unavailable_reason='typed_shell_runtime_unavailable')
     return result
 
 
@@ -839,6 +898,9 @@ def capture_preview(stage, home, *, topology_folders=False):
     selected_payload(files, blueprint, home=home)
     portable_paths(files, home)
     validate_workspace(files, exact=True)
+    typed = typed_shell(files)
+    if typed is not None:
+        validate_shell(files)
     excluded = {'vscode-workspaces'}
     if 'generated/workspace/topology.json' in files:
         excluded.add('git-repositories')
@@ -851,7 +913,8 @@ def capture_preview(stage, home, *, topology_folders=False):
             if current != 'vscode-workspaces':
                 output.append(line)
         elif current not in excluded:
-            output.append(line)
+            output.append('shell-zsh="false"\n' if typed is not None and current == 'categories'
+                          and line.startswith('shell-zsh=') else line)
     return ''.join(output).encode()
 
 
@@ -1065,6 +1128,9 @@ def recover():
 
 
 def publish(stage, *, workspace_execute=False):
+    shell = stage / 'generated/shell/zshrc.snapshot'
+    if (shell.exists() or shell.is_symlink()) and checked_file(shell).startswith(shell_state_contract().MAGIC):
+        raise Unsupported('typed Shell Restore is not enabled')
     files = workspace_stage_files(stage)
     if workspace_execute:
         validate_workspace(staged_payload(stage, checked_file(stage / 'blueprint.conf')), home=os.environ['HOME'])

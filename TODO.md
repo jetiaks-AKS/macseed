@@ -24,10 +24,11 @@ bounded acceptance and the existing partial-coverage warning.
 - [ ] Qualify [protected Functions observation](docs/core/SHELL-PARSER.md#core-caller-b2a)
   on physical Intel, macOS 14.4, and the 14.0–14.3 unavailable path; bind the final
   signed parser manifest anchor to authenticated Core release metadata in Stage 17.
-- [ ] **B2B:** build on the isolated [B2A observer](docs/toolkit/CONFIGURATION.md#read-only-functions-observation-b2a):
-  qualify source/load/parse context and dependencies for explicit Capture/Bundle
-  capability/selection negotiation and publication. Close independent syntax,
-  native robustness and platform/packaging gates without activating it implicitly.
+- [ ] Build Functions Restore/Check on [B2B Capture/Bundle](docs/toolkit/CONFIGURATION.md#functions-capture--bundle-b2b):
+  qualify dependency/activation requirements, explicit consent, managed publication,
+  freshness and comparison predicates before enabling typed runtime consumers.
+  Close independent syntax, native robustness, Native and platform/packaging gates;
+  mixed typed/legacy Shell selection remains unsupported.
 - [ ] **Variables & PATH**: separate portable static values, HOME-relative references,
   ordered path entries, secrets and dynamic initialization; qualify Apple Silicon /
   Intel Homebrew prerequisites without rewriting arbitrary commands or paths.

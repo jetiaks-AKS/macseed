@@ -1,5 +1,6 @@
 """Structured orchestration of production Discovery, Blueprint and Bundle Capture."""
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -17,6 +18,10 @@ from reporting import item, opaque
 from secure import terminate, export_secure
 from age_runtime import DESKTOP_BUNDLE, executable as age_executable
 from external_sources import ExternalSourceError, operation_paths, read_pair as external_pair
+
+_spec = importlib.util.spec_from_file_location('shell_capture', bundle.ROOT / 'modules/shell/capture.py')
+functions = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(functions)
 
 MAX_ITEMS = 2048
 MAX_INVENTORY = 1024 * 1024
@@ -74,6 +79,10 @@ def selection_for(selection, rows, secure):
     chosen = {}
     for domain in sorted(set(whole) | set(selection['items'])):
         row = domains[domain]
+        if domain == 'shell-zsh' and domain in whole:
+            # Category selection retains its legacy meaning. Functions require
+            # explicit B1 IDs; an old client cannot opt into a new capability.
+            row = row.get('_legacy', row)
         if row['status'] != 'present':
             raise CaptureError('capture_source_unavailable')
         available = {entry['item_id']: entry['_source'] for entry in row['items']}
@@ -152,7 +161,8 @@ def scan(root, stage, event):
         lines = inventory.read_bytes().split(b'\n')[:-1]
         for line in lines[emitted:]:
             row = json.loads(line)
-            event('capture_category', {key: row[key] for key in ('domain', 'status', 'reason')})
+            if row['domain'] != 'shell-zsh':
+                event('capture_category', {key: row[key] for key in ('domain', 'status', 'reason')})
         emitted = len(lines)
     status = run(root, ['./bootstrap.sh', '--discover'], environment, progress=progress)
     if status > 1 or not inventory.is_file() or inventory.stat().st_size > MAX_INVENTORY:
@@ -161,7 +171,6 @@ def scan(root, stage, event):
     expected = set(bundle.SELECTABLE_ITEMS) | set(bundle.CATEGORIES)
     if len(rows) != len(expected) or {row['domain'] for row in rows} != expected:
         raise CaptureError('capture_inventory_invalid')
-    event('phase_completed', {'phase': 'discovery'})
     secure_file = stage / 'identities.json'
     with secure_file.open('xb') as output:
         os.fchmod(output.fileno(), 0o600)
@@ -221,17 +230,26 @@ def included_settings(stage, row):
 def functional_domain_count(chosen, scripts, rows):
     # Shell remains one physical Core module. File consent selects a separate
     # functional domain; alias definitions and saved files are distinct objects.
-    whole_shell = any(row['domain'] == 'shell-zsh' and row['selection_mode'] == 'category' for row in rows)
+    whole_shell = any(row['domain'] == 'shell-zsh' and row.get('_legacy', row)['selection_mode'] == 'category' for row in rows)
     return sum(domain != 'shell-zsh' or bool(items) or whole_shell for domain, items in chosen.items()) + bool(scripts)
 
 
-def prepared(stage, rows, secure, selection, private=None, shell_script_selection=None, shell_script_policy=None):
+def prepared(stage, rows, secure, selection, private=None, shell_script_selection=None, shell_script_policy=None,
+             function_observation=None):
+    item_selection = selection.get('items') if isinstance(selection, dict) else None
+    shell_selection = item_selection.get('shell-zsh') if isinstance(item_selection, dict) else None
+    requested_functions = [key for key in shell_selection if functions.function_id(key)] if isinstance(shell_selection, list) else []
+    if requested_functions and (function_observation is None or function_observation.snapshot is None):
+        raise CaptureError('capture_functions_unavailable')
     chosen, identities, canonical = selection_for(selection, rows, secure) if selection is not None else ({}, [], None)
+    if requested_functions and (len(requested_functions) != len(chosen.get('shell-zsh', [])) or shell_script_selection):
+        raise CaptureError('mixed_shell_selection_unsupported')
     chosen, effective, duplicates = application_scope(stage, chosen, rows, canonical)
     shell_scripts, shell_observation, shell_candidates = [], None, []
     selected_script_count = 0
+    shell = None
     shell_path = stage / 'generated/shell/zshrc.snapshot'
-    if any(row['domain'] == 'shell-zsh' and row['status'] == 'present' for row in rows):
+    if any(row['domain'] == 'shell-zsh' and row.get('_legacy', row)['status'] == 'present' for row in rows):
         shell = bundle.shell_load(shell_path)
         if shell is not None and shell['version'] in (3, 4, 5):
             shell_candidates = bundle.shell_contract().recovery_contract().selection_candidates(shell, os.environ['HOME'], policy=shell_script_policy or 'opaque-file-v5')
@@ -243,12 +261,21 @@ def prepared(stage, rows, secure, selection, private=None, shell_script_selectio
     if selection is not None:
         raw = blueprint_data(chosen)
         try:
-            files = bundle.staged_payload(stage, raw)
+            if requested_functions:
+                # The legacy stage remains intact for legacy selection and its
+                # consent policies. Only the explicit typed branch replaces it.
+                typed, payloads = function_observation.selected(requested_functions)
+                files = bundle.staged_payload(stage, blueprint_data({k: v for k, v in chosen.items() if k != 'shell-zsh'}))
+                files.update(payloads)
+                files.update({'blueprint.conf': raw, functions.state.SNAPSHOT: typed})
+                bundle.validate_shell(files)
+            else:
+                files = bundle.staged_payload(stage, raw)
             if chosen.get('ssh-configuration'):
                 bundle.ssh_contract().select_snapshot(files['generated/ssh/config.snapshot'], chosen['ssh-configuration'])
             # Legacy whole-file snapshots have no alias/script selection.
             # Their existing staged-payload and Bundle validators still apply.
-            if 'shell-zsh' in chosen and shell is not None:
+            if 'shell-zsh' in chosen and shell is not None and not requested_functions:
                 contract = bundle.shell_contract()
                 selected_shell = (shell if shell_script_selection and shell_script_policy in ('opaque-file-v4', 'opaque-file-v5') else
                     contract.snapshot(contract.select_snapshot(files['generated/shell/zshrc.snapshot'], chosen['shell-zsh'])))
@@ -271,6 +298,8 @@ def prepared(stage, rows, secure, selection, private=None, shell_script_selectio
         if path.is_file():
             fingerprints[str(path.relative_to(stage))] = bundle.digest(bundle.checked_file(path))
     binding = {'schema': 1, 'inputs': fingerprints, 'inventory': rows, 'secure': secure, 'selection': canonical}
+    if requested_functions:
+        binding['shell_functions'] = function_observation.binding
     if shell_observation is not None:
         binding['shell_dependencies'] = shell_observation
         if private is not None:
@@ -286,7 +315,8 @@ def prepared(stage, rows, secure, selection, private=None, shell_script_selectio
     prepared_id = bundle.digest(json.dumps(binding, sort_keys=True, separators=(',', ':')).encode())
     public_rows = []
     for row in rows:
-        public_row = {**row, 'items': [{k: v for k, v in entry.items() if not k.startswith('_')} for entry in row['items']]}
+        public_row = {**{k: v for k, v in row.items() if not k.startswith('_')},
+                      'items': [{k: v for k, v in entry.items() if not k.startswith('_')} for entry in row['items']]}
         if row['domain'].startswith('macos-'):
             public_row['included_settings'] = included_settings(stage, row)
         public_rows.append(public_row)
@@ -304,6 +334,8 @@ def prepared(stage, rows, secure, selection, private=None, shell_script_selectio
         result['shell_script_selection'] = sorted(shell_script_selection or [])
     if duplicates:
         result.update(effective_selection=effective, application_duplicates=duplicates)
+    if function_observation is not None:
+        result['shell_functions'] = function_observation.public
     return result, chosen, identities
 
 
@@ -346,6 +378,14 @@ def capture(root, operation, parameters, channel, event):
                 event('completed')
                 return 0
             rows, secure, environment = scan(root, stage, event)
+            observed_functions = functions.Observation(root)
+            shell_row = next(row for row in rows if row['domain'] == 'shell-zsh')
+            if observed_functions.entries():
+                shell_row['_legacy'] = dict(shell_row)
+                shell_row.update(status='present', selection_mode='items', reason='source_partial',
+                                 items=[*shell_row['items'], *observed_functions.entries()])
+            event('capture_category', {key: shell_row[key] for key in ('domain', 'status', 'reason')})
+            event('phase_completed', {'phase': 'discovery'})
             if paths:
                 secure = add_external(secure, external_inventory(root, stage, paths))
             private = {}
@@ -377,7 +417,11 @@ def capture(root, operation, parameters, channel, event):
                 row.update(status='present', selection_mode='items')
                 if not shell['aliases']:
                     row['reason'] = None
-            result, chosen, identities = prepared(stage, rows, secure, parameters['selection'], private, script_selection, script_policy)
+            result, chosen, identities = prepared(stage, rows, secure, parameters['selection'], private, script_selection, script_policy,
+                                                  observed_functions)
+            typed_selection = [key for key in chosen.get('shell-zsh', []) if functions.function_id(key)]
+            if typed_selection and parameters.get('shell_script_ids'):
+                raise CaptureError('mixed_shell_selection_unsupported')
             if identities and DESKTOP_BUNDLE in os.environ and not age_executable():
                 raise CaptureError('age_unavailable')
             if operation == 'capture_prepare':
@@ -402,7 +446,14 @@ def capture(root, operation, parameters, channel, event):
             blueprint(stage, chosen)
             if chosen.get('ssh-configuration'):
                 bundle.select_ssh_profiles(stage, chosen['ssh-configuration'])
-            if chosen.get('shell-zsh') and not (script_policy in ('opaque-file-v4', 'opaque-file-v5') and parameters.get('shell_script_ids')):
+            if typed_selection:
+                raw, payloads = observed_functions.selected(typed_selection)
+                typed_path = (stage / functions.state.SNAPSHOT).with_name('zshrc.typed')
+                bundle.write_file(typed_path, raw)
+                typed_path.replace(stage / functions.state.SNAPSHOT)
+                for name, data in payloads.items():
+                    bundle.write_file(stage / name, data)
+            elif chosen.get('shell-zsh') and not (script_policy in ('opaque-file-v4', 'opaque-file-v5') and parameters.get('shell_script_ids')):
                 bundle.select_shell_aliases(stage, chosen['shell-zsh'])
             approvals = parameters.get('shell_script_ids', [])
             if script_selection is not None and set(approvals) != set(script_selection):
@@ -439,6 +490,8 @@ def capture(root, operation, parameters, channel, event):
                 if identity.get('source') == 'manual' and external_pair(identity['_source_path'])[3] != identity['_stamp']:
                     raise CaptureError('stale_prepared_capture')
             event('phase_started', {'phase': 'bundle_creation'})
+            if typed_selection and functions.Observation(root).binding != observed_functions.binding:
+                raise CaptureError('stale_prepared_capture')
             previous = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGINT, signal.SIGTERM})
             try:
                 # Execute has freshly recomputed and checked the effective scope.

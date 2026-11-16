@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import platform
 import re
+import select
 import selectors
 import signal
 import stat
@@ -27,6 +28,11 @@ spec.loader.exec_module(processes)
 PROCESS_SECONDS = 3.0
 OUTPUT_LIMIT = 128 * 1024
 BINARY_LIMIT = 32 * 1024 * 1024  # Includes the existing universal developer package.
+# Public Darwin sys/event.h flags. A signal alone is not enforcement evidence.
+NOTE_EXITSTATUS = 0x04000000
+NOTE_EXIT_DETAIL = 0x02000000
+NOTE_EXIT_DETAIL_MASK = 0x00070000
+NOTE_EXIT_CSERROR = 0x00040000
 ERROR_CODES = frozenset(('invalid_request input_io input_limit invalid_encoding syntax_invalid '
     'boundary_uncertain nesting_limit node_limit definition_count_limit definition_size_limit '
     'name_count_limit allocation_limit output_limit timeout cancelled process_failed memory_limit internal_error').split())
@@ -99,13 +105,15 @@ class _Task:
     Foundation alone observes/reaps the direct child's exit; never waitpid it.
     The autorelease pool and task are released on the calling thread on all paths.
     """
-    def __init__(self, executable, requirement):
+    def __init__(self, executable, requirement, *, enforcement_probe=False):
         self.api = _foundation()
         self.api.require_available()
         self.pool = self.task = self.pid = None
         self.stdin = self.stdout = None
         self.returncode = None
         self.group = None
+        self.exit_queue = None
+        self.exit_events = []
         ends = []
         api = self.api
         try:
@@ -132,8 +140,15 @@ class _Task:
                 api.send(handle, 'release', None)
             api.send(self.task, 'setStandardError:', None, (C.c_void_p,),
                      (api.send(api.cls('NSFileHandle'), 'fileHandleWithNullDevice'),))
+            if enforcement_probe:
+                self.exit_queue = select.kqueue()
             self._launch()
             self.pid = api.send(self.task, 'processIdentifier', C.c_int)
+            if self.exit_queue is not None:
+                event = select.kevent(self.pid, filter=select.KQ_FILTER_PROC,
+                    flags=select.KQ_EV_ADD | select.KQ_EV_ONESHOT,
+                    fflags=select.KQ_NOTE_EXIT | NOTE_EXITSTATUS | NOTE_EXIT_DETAIL)
+                self.exit_events = self.exit_queue.control([event], 1, 0)
             try:
                 if os.getpgid(self.pid) != self.pid:
                     raise Invalid('process_failed')
@@ -176,12 +191,34 @@ class _Task:
             else:
                 os.kill(self.pid, signal.SIGKILL)
 
+    def constraint_rejected(self):
+        """Require the OS code-signing kill receipt for this exact child.
+
+        kqueue does not reap Foundation's child. A lost/late event fails closed;
+        neither ordinary SIGKILL nor timeout/cleanup kills prove enforcement.
+        """
+        if not self.exit_events:
+            self.exit_events = self.exit_queue.control([], 1, 0)
+        if len(self.exit_events) != 1:
+            return False
+        event = self.exit_events[0]
+        return (event.ident == self.pid and event.filter == select.KQ_FILTER_PROC
+                and not event.flags & select.KQ_EV_ERROR
+                and event.fflags == select.KQ_NOTE_EXIT | NOTE_EXITSTATUS | NOTE_EXIT_DETAIL
+                and event.data & NOTE_EXIT_DETAIL_MASK == NOTE_EXIT_CSERROR
+                and os.WIFSIGNALED(event.data & 0xffff)
+                and os.WTERMSIG(event.data & 0xffff) == signal.SIGKILL
+                and self.poll() == -signal.SIGKILL)
+
     def close(self):
         try:
             if self.task and self.pid:
                 self.kill()
                 self.wait(1)
         finally:
+            if self.exit_queue is not None:
+                self.exit_queue.close()
+                self.exit_queue = None
             for stream in (self.stdin, self.stdout):
                 if stream is not None and not stream.closed:
                     stream.close()
@@ -272,6 +309,7 @@ class Parser:
         if type(manifest_sha256) is not str or not re.fullmatch('[0-9a-f]{64}', manifest_sha256):
             raise Invalid('helper_untrusted')
         self._manifest_sha256 = manifest_sha256
+        self._enforced_requirement = None
         root = Path(location)
         self._binary = root / ('macseed-shell-parser' if package is not None else 'Contents/Helpers/macseed-shell-parser')
         self._manifest = root / ('build.json' if package is not None else 'Contents/Resources/ThirdPartyNotices/shell-parser-build.json')
@@ -283,15 +321,8 @@ class Parser:
     def require_available():
         _foundation().require_available()
 
-    def parse(self, source, *, cancelled=lambda: False):
-        if type(source) is not bytes or len(source) > state.MAX_SOURCE:
-            raise Invalid('source_limit')
-        try:
-            state.utf8(source)
-        except state.Invalid:
-            raise Invalid('source_encoding') from None
-        if cancelled():
-            raise Invalid('cancelled')
+    @contextmanager
+    def _verified(self):
         self.require_available()
         with _file(self._manifest, 65536) as (_, metadata, manifest_check), \
                 _file(self._binary, BINARY_LIMIT, True) as (executable, binary, binary_check):
@@ -330,8 +361,52 @@ class Parser:
                     raise Invalid('helper_untrusted')
             except (KeyError, TypeError, ValueError):
                 raise Invalid('helper_untrusted') from None
-            response, code = self._run(executable, requirement, source, cancelled)
+            yield executable, requirement
             manifest_check(); binary_check()
+
+    def preflight(self, *, cancelled=lambda: False):
+        """Fresh enforcement evidence before observing HOME, never a parser run."""
+        self._enforced_requirement = None
+        if cancelled():
+            raise Invalid('cancelled')
+        with self._verified() as (_, requirement):
+            self._require_enforcement(requirement, cancelled)
+
+    def _require_enforcement(self, requirement, cancelled):
+        if cancelled():
+            raise Invalid('cancelled')
+        if self._enforced_requirement == requirement:
+            return
+        # Only the fixed Apple system executable may run before enforcement is
+        # established. The anchored build supplies a valid parser-only CDHash
+        # requirement, deliberately excluding this OS executable. Controls on
+        # either side rule out an unusable executable or launch environment.
+        try:
+            for constraint, probe in ((b'', False), (requirement, True), (b'', False)):
+                output, code = self._run('/usr/bin/true', constraint, b'', cancelled,
+                                         enforcement_probe=probe)
+                if output or code != (-signal.SIGKILL if probe else 0):
+                    raise Invalid('functions_unavailable')
+        except Invalid as exc:
+            if exc.code in ('cancelled', 'process_cleanup_failed'):
+                raise
+            raise Invalid('functions_unavailable') from None
+        # Instance-local only: observe() explicitly refreshes this receipt for
+        # every observation. Never persist/cache an environment capability.
+        self._enforced_requirement = requirement
+
+    def parse(self, source, *, cancelled=lambda: False):
+        if type(source) is not bytes or len(source) > state.MAX_SOURCE:
+            raise Invalid('source_limit')
+        try:
+            state.utf8(source)
+        except state.Invalid:
+            raise Invalid('source_encoding') from None
+        if cancelled():
+            raise Invalid('cancelled')
+        with self._verified() as (executable, requirement):
+            self._require_enforcement(requirement, cancelled)
+            response, code = self._run(executable, requirement, source, cancelled)
         if code == 2:
             try:
                 error = state._json(response, OUTPUT_LIMIT - 1)
@@ -352,12 +427,12 @@ class Parser:
         return response
 
     @staticmethod
-    def _run(executable, requirement, source, cancelled):
+    def _run(executable, requirement, source, cancelled, *, enforcement_probe=False):
         child = tree = None
         deadline = time.monotonic() + PROCESS_SECONDS
         output, sent = bytearray(), 0
         try:
-            child = _Task(executable, requirement)
+            child = _Task(executable, requirement, enforcement_probe=enforcement_probe)
             # Input remains open/empty until process ownership is captured. The
             # native helper cannot fork its parsing worker before input EOF.
             tree = processes.ProcessTree(child.pid, process_group=True)
@@ -389,7 +464,10 @@ class Parser:
                                 raise Invalid('output_limit')
                             if not chunk:
                                 poller.unregister(child.stdout); child.stdout.close()
-            return bytes(output), child.wait(timeout=1)
+            code = child.wait(timeout=1)
+            if enforcement_probe and not child.constraint_rejected():
+                raise Invalid('functions_unavailable')
+            return bytes(output), code
         except (OSError, subprocess.SubprocessError, RuntimeError, ValueError) as exc:
             if isinstance(exc, Invalid):
                 raise

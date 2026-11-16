@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Disposable fixtures for the production structured Capture boundary."""
 import importlib.util
+import base64
 import hashlib
 import json
 import os
@@ -14,7 +15,10 @@ import struct
 import subprocess
 import sys
 import time
+import tarfile
 import unittest
+import tempfile
+from unittest.mock import patch
 
 sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parent.parent
@@ -24,9 +28,274 @@ spec.loader.exec_module(fixtures)
 bundle = fixtures.bundle
 sys.path.insert(0, str(ROOT / 'modules/migration'))
 from secret_input import receive
+spec = importlib.util.spec_from_file_location('parser_test_contract', ROOT / 'scripts/test-shell-parser.py')
+parser_tests = importlib.util.module_from_spec(spec); spec.loader.exec_module(parser_tests)
 
 
 class CaptureTests(unittest.TestCase):
+    def functions_fixture(self, *, non_enforcing=False):
+        self.fixture(shell=True)
+        spec = importlib.util.spec_from_file_location('parser_build', ROOT / 'scripts/build-shell-parser.py')
+        builder = importlib.util.module_from_spec(spec); spec.loader.exec_module(builder)
+        package = self.root / 'parser'
+        with patch.dict(os.environ, TMPDIR=str(self.private_temp)), patch.object(tempfile, 'tempdir', str(self.private_temp)):
+            metadata = builder.build(package, [os.uname().machine])
+        self.environment.pop('MACSEED_DESKTOP_BUNDLE', None)
+        resources = self.project / 'desktop/Macseed/build/Debug/Macseed.app/Contents/Resources'
+        resources.mkdir(parents=True)
+        builder.install_package(package, resources)
+        (resources / 'CoreRuntime.plist').write_bytes(plistlib.dumps(dict(Version=1, Mode='development',
+            CoreRoot=str(self.project), PythonExecutable=sys.executable, ShellParserManifestSHA256=metadata['manifest_sha256'])))
+        original = ('# é\nordinary() {\r\n print "é"\r\n}\n'
+            'function complex {\n  for x in a b; do\n    if [[ -n $x ]]; then\n'
+            '      cat <<\'EOF\'\nprivate literal $HOME\nEOF\n'
+            '    fi\n  done\n  inner() { :; }\n  touch "$HOME/executed"\n}\n').encode()
+        (self.home / '.zshenv').write_bytes(b"alias legacy='pwd'\n")
+        source = self.home / '.zshrc'
+        source.write_bytes(original); source.chmod(0o600)
+        state = bundle.shell_state_contract()
+        chosen = dict(categories=[], items={'shell-zsh': [state.identity('function', 'complex')]}, secure_identities=[])
+        if non_enforcing:
+            # Model ignored OS constraints only in this disposable Core copy.
+            # The production preflight/transport and child Core process still run.
+            caller = self.project / 'modules/shell/parser_client.py'
+            with caller.open('a') as stream:
+                stream.write('''
+_fixture_launch = _Task._launch
+def _fixture_ignored_constraint(task):
+    task.api.send(task.task, 'setLaunchRequirementData:', None, (C.c_void_p,),
+                  (task.api.send(task.api.cls('NSData'), 'data'),))
+    _fixture_launch(task)
+_Task._launch = _fixture_ignored_constraint
+''')
+        spec = importlib.util.spec_from_file_location('functions_capture_fixture', self.project / 'modules/shell/capture.py')
+        self.functions_adapter = importlib.util.module_from_spec(spec); spec.loader.exec_module(self.functions_adapter)
+        requirement = base64.b64decode(metadata['binaries']['macseed-shell-parser']['launch']['requirement_data'])
+        self.functions_enforced = parser_tests.launch_enforced(self, self.functions_adapter.client, requirement)
+        return source, original, resources, chosen
+
+    def assert_functions_unavailable(self, chosen, *, legacy_capture=False):
+        self.assertFalse(self.functions_enforced)
+        adapter = self.functions_adapter
+        with patch.dict(os.environ, self.environment, clear=True), \
+                patch.object(adapter.observe.base, 'home_directory') as home_read, \
+                patch.object(adapter.observe.sources, 'file_state') as source_read, \
+                patch.object(adapter.client.Parser, '_run', wraps=adapter.client.Parser._run) as transport:
+            observed = adapter.Observation(self.project)
+            self.assertIsNone(observed.snapshot); self.assertIsNone(observed.binding)
+            self.assertEqual(observed.entries(), [])
+            self.assertEqual(observed.public['codes'], ['functions_unavailable'])
+            home_read.assert_not_called(); source_read.assert_not_called()
+            self.assertEqual([(c.args[0], c.args[2]) for c in transport.call_args_list], [('/usr/bin/true', b'')] * 2)
+        original = (self.home / '.zshrc').read_bytes()
+        scan = self.prepare()
+        self.assertEqual(scan['shell_functions']['status'], 'unavailable')
+        self.assertEqual(scan['shell_functions']['codes'], ['functions_unavailable'])
+        row = next(r for r in scan['inventory'] if r['domain'] == 'shell-zsh')
+        self.assertFalse(any(r['item_id'].startswith('shell-function:') for r in row['items']))
+        for result, events in (self.invoke_capture(selection=chosen), self.execute('0' * 64, chosen)):
+            self.assertEqual(result.returncode, 2, events)
+            self.assertEqual(events[-1]['data']['code'], 'capture_functions_unavailable')
+            self.assertNotIn(b'private literal', result.stdout + result.stderr)
+            self.assertNotIn(b'.zshrc', result.stdout + result.stderr)
+        self.assertFalse((self.root / 'captured.mbt').exists())
+        self.assertFalse((self.root / 'mutations').exists())
+        self.assertFalse((self.home / 'executed').exists())
+        self.assertEqual((self.home / '.zshrc').read_bytes(), original)
+        if legacy_capture:
+            legacy = dict(categories=['shell-zsh'], items={}, secure_identities=[])
+            saved = self.prepare(legacy)
+            target = self.root / 'legacy.mbt'
+            result, events = self.execute(saved['prepared_capture_id'], legacy, target)
+            self.assertEqual(result.returncode, 0, events)
+            files = bundle.validate_archive(target)
+            self.assertNotIn(bundle.shell_state_contract().DEFINITIONS, files)
+            self.assertEqual([a['name'] for a in bundle.shell_aliases(files[bundle.shell_state_contract().SNAPSHOT])['aliases']], ['legacy'])
+
+    def test_functions_production_capture_bundle_exact_bytes_and_runtime_rejection(self):
+        source, original, package, chosen = self.functions_fixture()
+        if not self.functions_enforced:
+            self.assert_functions_unavailable(chosen, legacy_capture=True)
+            return  # Fail-closed coverage, not active Capture -> Bundle qualification.
+        (self.home / '.zshenv').unlink()  # Functions do not depend on a legacy alias being present.
+        original = original.replace(b'function complex {\n', 'function complex {\n  local greeting="é"\r\n'.encode())
+        source.write_bytes(original)
+        leaf = self.home / 'private-functions'
+        source.replace(leaf)
+        source.write_bytes(b'source "$HOME/private-functions"\n')
+        source = leaf
+        before = source.stat()
+        scan = self.prepare()
+        row = next(r for r in scan['inventory'] if r['domain'] == 'shell-zsh')
+        self.assertEqual({r['label'] for r in row['items']}, {'complex', 'ordinary'})
+        self.assertEqual(scan['shell_functions']['status'], 'observed')
+        prepared = self.prepare(chosen)
+        self.assertEqual(prepared['summary']['selected_items'], 1)
+        result, events = self.execute(prepared['prepared_capture_id'], chosen)
+        self.assertEqual(result.returncode, 0, events)
+        target = self.root / 'captured.mbt'
+        files = bundle.validate_archive(target)
+        state = bundle.shell_state_contract()
+        snapshot = bundle.typed_shell(files)
+        value = snapshot._value
+        self.assertEqual([r['key'] for r in value['items']], ['complex'])
+        definition = value['items'][0]
+        self.assertEqual(files[state.DEFINITIONS], original[slice(*definition['details']['span'])])
+        self.assertTrue(all(r['condition'] == 'unknown' for r in value['loads']))
+        self.assertEqual({r['path'] for r in value['sources']}, {'.zshrc', 'private-functions'})
+        self.assertEqual(sum(r['parent'] is not None for r in value['loads']), 2)
+        self.assertEqual(value['dependencies'], [])
+        self.assertEqual(state.encode(state.select(snapshot, chosen['items']['shell-zsh'])), state.encode(snapshot))
+        with tarfile.open(target) as archive:
+            self.assertEqual(json.load(archive.extractfile('manifest.json'))['required_features'], state.FEATURE)
+        reference = self.root / 'reference'
+        for name, raw in files.items():
+            bundle.write_file(reference / name, raw)
+        for operation, parameters in [
+            ('bundle_inspect', dict(path=str(target))),
+            ('restore_prepare', dict(path=str(target), disabled_groups=[], include_secure=False)),
+            ('restore_execute', dict(path=str(target), disabled_groups=[], include_secure=False,
+                                     expected_prepared_plan_id='0' * 64)),
+            ('environment_compare', dict(bundle_path=str(target))),
+            ('environment_compare', dict(generated_dir=str(reference / 'generated'), blueprint_path=str(reference / 'blueprint.conf')))]:
+            request = dict(protocol_version=1, operation_id='typed-runtime', operation=operation, parameters=parameters)
+            run = subprocess.run(['bash', str(self.project / 'modules/core/application-interface/core.sh')],
+                cwd=self.project, env=self.environment, input=json.dumps(request).encode(), capture_output=True, timeout=30)
+            records = [json.loads(line) for line in run.stdout.splitlines()]
+            if operation == 'bundle_inspect':
+                self.assertEqual(run.returncode, 0, records)
+                inspected = records[-2]['data']
+                self.assertFalse(inspected['restore_supported'])
+                self.assertNotIn('restore_selection', inspected)
+                self.assertEqual(inspected['required_features'], state.FEATURE)
+            else:
+                self.assertEqual(run.returncode, 2, records)
+                self.assertEqual(records[-1]['data']['code'], 'unsupported_bundle')
+            self.assertNotIn(b'private literal', run.stdout + run.stderr)
+            self.assertNotIn(b'.zshrc', run.stdout + run.stderr)
+            self.assertNotIn(b'private-functions', run.stdout + run.stderr)
+        self.assertFalse((self.root / 'mutations').exists())
+        self.assertFalse((self.home / 'executed').exists())
+        self.assertEqual(source.read_bytes(), original)
+        self.assertEqual(source.stat().st_mtime_ns, before.st_mtime_ns)
+        self.assertNotIn(b'private literal', result.stdout + result.stderr)
+        # Existing category selection explicitly retains aliases only, even with
+        # qualified Functions available. It cannot silently opt into shell-state.
+        (self.home / '.zshenv').write_bytes(b"alias legacy='pwd'\n")
+        legacy = dict(categories=['shell-zsh'], items={}, secure_identities=[])
+        saved = self.prepare(legacy)
+        legacy_target = self.root / 'legacy.mbt'
+        run, records = self.execute(saved['prepared_capture_id'], legacy, legacy_target)
+        self.assertEqual(run.returncode, 0, records)
+        old = bundle.validate_archive(legacy_target)
+        self.assertNotIn(state.DEFINITIONS, old)
+        self.assertEqual([a['name'] for a in bundle.shell_aliases(old[state.SNAPSHOT])['aliases']], ['legacy'])
+
+    def test_functions_freshness_mixed_selection_and_fail_closed_parser(self):
+        source, original, package, chosen = self.functions_fixture()
+        if not self.functions_enforced:
+            self.assert_functions_unavailable(chosen)
+            return
+        mixed = dict(chosen, items={'shell-zsh': [*chosen['items']['shell-zsh'], bundle.shell_contract().identity('legacy')]})
+        for selection, extra in [(mixed, {}), (chosen, dict(shell_script_selection=['0' * 64], shell_script_policy='opaque-file-v5'))]:
+            result, events = self.invoke_capture(selection=selection, extra=extra)
+            self.assertEqual(result.returncode, 2, events)
+            self.assertEqual(events[-1]['data']['code'], 'mixed_shell_selection_unsupported')
+        saved = self.prepare(chosen)
+        for raw in (original + b'# changed\n', original + b'if true; then source "$HOME/private"; fi\n',
+                    original + b'complex() { :; }\n'):
+            source.write_bytes(raw)
+            result, events = self.execute(saved['prepared_capture_id'], chosen)
+            self.assertEqual(result.returncode, 2, events)
+            self.assertIn(events[-1]['data']['code'], ('stale_prepared_capture', 'capture_functions_unavailable'))
+            self.assertFalse((self.root / 'captured.mbt').exists())
+        source.write_bytes(original)
+        saved = self.prepare(chosen)
+        (package / 'ThirdPartyNotices/shell-parser-build.json').write_bytes(b'{"private":"malformed"}')
+        result, events = self.execute(saved['prepared_capture_id'], chosen)
+        self.assertEqual(result.returncode, 2, events)
+        self.assertEqual(events[-1]['data']['code'], 'capture_functions_unavailable')
+        self.assertFalse((self.root / 'captured.mbt').exists())
+        self.assertNotIn(b'malformed', result.stdout + result.stderr)
+        # Helper failure never changes the independent aliases path.
+        self.prepare(dict(categories=['shell-zsh'], items={}, secure_identities=[]))
+
+    def test_functions_source_change_during_execute_prevents_publication(self):
+        source, original, package, chosen = self.functions_fixture()
+        if not self.functions_enforced:
+            self.assert_functions_unavailable(chosen)
+            return
+        saved = self.prepare(chosen)
+        entry = self.project / 'bootstrap.sh'
+        text = entry.read_text()
+        entry.write_text(text.replace('#!/bin/bash\n', '#!/bin/bash\n'
+            'if [[ "$1" == --dry-run ]]; then printf "# changed\\n" >> "$HOME/.zshrc"; fi\n', 1))
+        result, events = self.execute(saved['prepared_capture_id'], chosen)
+        self.assertEqual(result.returncode, 2, events)
+        self.assertEqual(events[-1]['data']['code'], 'stale_prepared_capture')
+        self.assertFalse((self.root / 'captured.mbt').exists())
+        self.assertEqual(source.read_bytes(), original + b'# changed\n')
+
+    def test_functions_runtime_descriptor_trust_and_private_failures(self):
+        source, original, resources, chosen = self.functions_fixture()
+        adapter = self.functions_adapter
+        descriptor = resources / 'CoreRuntime.plist'
+        raw = descriptor.read_bytes()
+        value = plistlib.loads(raw)
+        with patch.dict(os.environ, self.environment, clear=True):
+            valid = adapter.Observation(self.project)
+            if self.functions_enforced:
+                self.assertIsNotNone(valid.snapshot)
+            else:
+                self.assertIsNone(valid.snapshot)
+                self.assertEqual(valid.entries(), [])
+                self.assertEqual(valid.public['codes'], ['functions_unavailable'])
+            # Same existing Desktop launch context, never a parser-specific PATH
+            # or environment override; the descriptor must belong to this Core.
+            with patch.dict(os.environ, MACSEED_DESKTOP_BUNDLE=str(resources.parent.parent)):
+                self.assertEqual(adapter.Observation(self.project).binding, valid.binding)
+            run = adapter.client.Parser._run
+            def not_enforcing(executable, requirement, source, cancelled, **options):
+                self.assertEqual(executable, '/usr/bin/true')
+                self.assertEqual(source, b'')
+                return run(executable, b'', source, cancelled, **options)
+            with patch.object(adapter.client.Parser, '_run', staticmethod(not_enforcing)), \
+                    patch.object(adapter.observe.base, 'home_directory') as read:
+                unavailable = adapter.Observation(self.project)
+                self.assertIsNone(unavailable.snapshot)
+                self.assertIsNone(unavailable.binding)
+                self.assertEqual(unavailable.entries(), [])
+                self.assertEqual(unavailable.public['status'], 'unavailable')
+                self.assertEqual(unavailable.public['codes'], ['functions_unavailable'])
+                self.assertNotIn(str(self.home), json.dumps(unavailable.public))
+            read.assert_not_called()
+            for bad in (dict(value, ShellParserManifestSHA256='0' * 64), dict(value, CoreRoot='/private/unrelated'),
+                        {k: v for k, v in value.items() if k != 'ShellParserManifestSHA256'},
+                        b'<?xml version="1.0"?><plist><dict><key>private-secret</key></plist>'):
+                descriptor.write_bytes(bad if type(bad) is bytes else plistlib.dumps(bad))
+                rejected = adapter.Observation(self.project)
+                self.assertIsNone(rejected.snapshot)
+                self.assertEqual(rejected.entries(), [])
+                self.assertIn('helper_untrusted', rejected.public['codes'])
+                self.assertNotIn('private-secret', json.dumps(rejected.public))
+            descriptor.unlink()
+            self.assertIsNone(adapter.Observation(self.project).snapshot)
+            descriptor.write_bytes(raw)
+            self.assertEqual(adapter.Observation(self.project).binding, valid.binding)
+            (self.home / '.zprofile').write_bytes(b'# appeared after observation\n')
+            changed = adapter.Observation(self.project)
+            if self.functions_enforced:
+                self.assertNotEqual(changed.binding, valid.binding)
+            else:
+                self.assertIsNone(changed.binding)
+                self.assertEqual(changed.public['codes'], ['functions_unavailable'])
+        self.assertEqual(source.read_bytes(), original)
+        self.assertFalse((self.home / 'executed').exists())
+
+    def test_functions_non_enforcing_capture_refusal_preserves_legacy(self):
+        _, _, _, chosen = self.functions_fixture(non_enforcing=True)
+        self.assert_functions_unavailable(chosen, legacy_capture=True)
+
     def test_shell_capture_counts_distinguish_aliases_and_saved_files(self):
         self.fixture(shell=True)
         directory = self.home / 'Scripts'; directory.mkdir(mode=0o700)
@@ -1273,7 +1542,9 @@ if __name__ == '__main__':'''))
 
     def test_invalid_selection_and_unavailable_rejection(self):
         self.fixture()
-        for selection in ({'categories': ['unknown'], 'items': {}, 'secure_identities': []},
+        for selection in ([], {'categories': [], 'items': None, 'secure_identities': []},
+                          {'categories': [], 'items': {'homebrew-packages': None}, 'secure_identities': []},
+                          {'categories': ['unknown'], 'items': {}, 'secure_identities': []},
                           {'categories': [], 'items': {'homebrew-packages': ['unknown']}, 'secure_identities': []},
                           {'categories': ['homebrew-packages', 'homebrew-packages'], 'items': {}, 'secure_identities': []},
                           {'categories': [], 'items': {}, 'secure_identities': ['unknown']}):

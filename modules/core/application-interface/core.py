@@ -1361,6 +1361,9 @@ def environment_compare(operation_id, parameters):
                 blueprint = parameters["blueprint_path"]
             if not generated.is_dir() or not os.access(generated, os.R_OK | os.X_OK):
                 raise ExecuteFailed("reference_unavailable")
+            shell_reference = generated / 'shell/zshrc.snapshot'
+            if shell_reference.exists() and bundle.checked_file(shell_reference).startswith(bundle.shell_state_contract().MAGIC):
+                raise bundle.Unsupported('typed Shell Check is not enabled')
             if blueprint is not None and (not Path(blueprint).is_file() or not os.access(blueprint, os.R_OK)):
                 raise ExecuteFailed("reference_unavailable")
             host_detail = None
@@ -1773,6 +1776,8 @@ def dispatch(version, channel=None):
         }
         result['features']['shell_script_transfer'] = dict(version=5, policy='opaque-file-v5', legacy_policies=['opaque-file-v4'], inspection='capture_script_inspect', max_files=128, max_file_bytes=1048576, max_content_bytes=16777216, max_manifest_bytes=262144, request_manifest='shell-scripts-request.json')
         result['features']['secure_check'] = dict(version=1, inventory='secure_check_inventory', compare='secure_check_compare', selection_version=2, max_items=32, read_only=True)
+        result['features']['shell_functions_capture'] = dict(version=1, required_feature={'shell-state': 1},
+            minimum_macos='14.4', explicit_items=True, mixed_legacy_selection=False, restore_supported=False)
     else:
         try:
             if operation == "restore_prepare":
@@ -1786,7 +1791,8 @@ def dispatch(version, channel=None):
                     raise bundle.Invalid("unsafe Bundle input")
                 source_identity = bundle.fingerprint(input_path)
                 result = bundle.inspect_bundle(input_path, os.environ["HOME"])
-                result["restore_selection"], _ = restore_selection.inventory(bundle.validate_archive(input_path))
+                if result.get('restore_supported') is not False:
+                    result["restore_selection"], _ = restore_selection.inventory(bundle.validate_archive(input_path))
                 if bundle.fingerprint(input_path) != source_identity:
                     raise bundle.Invalid("Bundle changed during inspection")
         except SecureError as exc:

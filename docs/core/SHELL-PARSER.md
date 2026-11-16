@@ -1,11 +1,12 @@
 # Internal Shell structural parser
 
-This reference owns the native helper interface and its isolated Core caller. The
+This reference owns the native helper interface and its protected Core caller. The
 [Shell configuration contract](../toolkit/CONFIGURATION.md#shell--zsh-configuration)
 owns product behavior. The helper does not enable Functions migration, change
 Aliases & Scripts v5 or serialize `shell-state:1`; the separate
 [B1 codec foundation](../toolkit/CONFIGURATION.md#typed-shell-state-foundation-b1)
-consumes its structural evidence without production workflow activation.
+consumes its structural evidence; [B2B Capture](../toolkit/CONFIGURATION.md#functions-capture--bundle-b2b)
+publishes explicitly selected Functions without enabling Restore/Check.
 
 ## Ownership and pinned dependencies
 
@@ -80,8 +81,9 @@ Capture/Rebuild/Check caller and no PATH or legacy parser fallback.
 ## Core caller (B2A)
 
 Protected observation requires macOS 14.4 or later. Core checks the public
-`NSTask.setLaunchRequirementData:` API before reading startup files or launching
-anything. An unavailable API returns `shell_observation_functions_unavailable`,
+`NSTask.setLaunchRequirementData:` API before launching anything. Before reading
+startup files it also requires a fresh enforcement preflight described below.
+An unavailable API or unproven enforcement returns `shell_observation_functions_unavailable`,
 never an empty successful observation or an unprotected launch. The application
 and standalone native helper still target macOS 14.0; Aliases & Scripts v5 is unchanged.
 
@@ -90,7 +92,17 @@ package or Macseed.app root, plus a required `manifest_sha256` from trusted Core
 code. It resolves only `macseed-shell-parser` and `build.json` in a package, or
 `Contents/Helpers/macseed-shell-parser` and
 `Contents/Resources/ThirdPartyNotices/shell-parser-build.json` in an app. Source data,
-user configuration and environment variables must never select these values.
+user configuration and parser-specific environment overrides must never select these values.
+
+B2B's Core adapter resolves the existing `MACSEED_DESKTOP_BUNDLE` launch context
+or the fixed `<CoreRoot>/desktop/Macseed/build/Debug/Macseed.app` development location.
+There is no parser-specific environment override, PATH search or adjacent-manifest
+trust fallback. Development app preparation records the controlled build's digest
+as `ShellParserManifestSHA256` in the existing `CoreRuntime.plist`. The adapter reads
+that descriptor through the caller's no-follow guards and requires Version 1,
+development mode and the current CoreRoot. The descriptor belongs to the trusted
+Core deployment, not observed HOME data. Missing/stale anchors disable Functions
+only. Release-mode descriptor/anchor authentication remains Stage 17 work.
 
 **Trust anchor:** the expected manifest digest must be captured from a controlled
 build result (`build()` returns it; the build CLI prints it), or authenticated Core
@@ -113,12 +125,46 @@ CDHash identifies the code directory chosen by the OS for execution.
 
 Core loads only system Foundation/libobjc through Python's `ctypes`. It sets the
 build-generated launch requirement on `NSTask` before `launchAndReturnError:`.
-The kernel enforces the accepted CodeDirectoryHash set at execution, including
+API presence alone does not establish enforcement: macOS can report a constraint
+violation while allowing execution. Before observing HOME, Core runs only the fixed
+Apple `/usr/bin/true` through this same transport: a successful unconstrained control,
+the anchored parser-only CDHash requirement (which excludes this executable), and
+another successful unconstrained control. The constrained probe must have empty
+output, terminate with SIGKILL, and provide a matching public Darwin kqueue
+`NOTE_EXIT_DETAIL` / `NOTE_EXIT_CSERROR` receipt for that child. A plain signal,
+launch error, timeout, missing/late event or successful constrained execution never
+authorizes the parser. Cancellation and cleanup failures retain their fixed codes.
+Neither SIP status nor system logs are consulted. Each probe retains the existing
+three-second transport bound and cleanup; there are no retries. The receipt is
+instance-local, reused across source files, and refreshed for every observation.
+
+Only after this gate does Core rely on the kernel to enforce the accepted
+CodeDirectoryHash set at execution, including
 when the pathname changes after file validation. No separate Swift executable,
 custom dylib, runtime compiler, runtime `codesign`, PATH parser or ordinary `Popen`
 fallback is used. Post-launch file checks detect changes but are not the execution
 authorization boundary. Launch can yield a task subsequently killed by the OS;
 only a successful exit plus complete validated response can provide evidence.
+This relies on the trusted OS retaining its enforcement policy during the observation;
+it does not protect against a privileged actor changing that policy or Core itself.
+The gate can conservatively make Functions unavailable if its exit receipt is lost.
+[Hosted run #43918737369](https://github.com/jetiaks-AKS/macseed/actions/runs/43918737369)
+qualified the gate's fail-closed behavior on macOS 26.7.2 ARM64: the constrained
+Apple executable exited successfully, Functions were refused, and an actual
+replacement executable never created its marker. This is not active-Functions
+qualification on that runner or full B2B CI acceptance.
+
+Platform-dependent tests classify enforcement with independent benign controls
+and the unchanged trusted build requirement before corrupting any fixture. On
+enforcing systems the original execution, signature, re-signing, malformed-requirement
+and substitution assertions remain mandatory; `functions_unavailable` fails them.
+On non-enforcing systems the tests require explicit refusal before parser execution,
+HOME reads or response admission, including real swaps with forged valid responses.
+A PASS in that mode qualifies refusal only: active observation, resource/lifecycle
+and Capture-to-Bundle scenarios remain unexercised on that host. Deterministic
+ignored-constraint fixtures exercise the refusal branches locally; they do not
+establish OS enforcement. Native corpus, B1 codec and Bundle validation remain
+independent of Functions availability.
 
 Each task has a minimal fixed environment, `/` working directory and discarded
 stderr. Core verifies its private process group; NSTask is not assumed to create
@@ -261,7 +307,7 @@ production helper exposes no fault switches or environment overrides.
 
 ## Remaining qualification
 
-This is implemented infrastructure, not production Functions acceptance. Still open:
+Core Functions Capture/Bundle is implemented; complete Functions migration is not qualified. Still open:
 independent Zsh syntax oracle, wider option/grammar combinations and unusual span
 forms (including complete CRLF documents: the qualified corpus covers interior CRLF
 with LF after the closing unit), sustained fuzzing/native-code review, representative aggregate-operation qualification,
@@ -269,5 +315,5 @@ physical Intel, protected execution on macOS 14.4 and the unavailable branch on
 14.0–14.3, signed/notarized clean-Mac packaging and authenticated release-anchor
 provisioning, and future Core/Native integration. Local corpus,
 sanitizer or Rosetta results do not close those gates. The B1 codec and B2A observer
-remain isolated; Capture/Bundle integration requires B2B review. Bundle capabilities
-1–5 remain unchanged.
+are now used for bounded Functions Capture/Bundle inspection. Restore/Check and
+release qualification remain open. Bundle capabilities 1–5 remain unchanged.

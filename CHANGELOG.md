@@ -13,16 +13,20 @@ The format is based on the principles of **Keep a Changelog**.
 
 * A pinned native Zsh structural parser foundation with exact source spans,
   bounded resource use and isolated process supervision. The helper is bundled
-  for development but remains inactive in Capture, Rebuild and Check; Functions
-  migration and Typed Shell Core integration remain separate checkpoints.
+  for development; Functions Restore/Check and release qualification remain open.
 
 * A private typed Shell state codec with stable identities, exact definition bytes,
   source/load and dependency evidence, strict limits and explicit selection pruning.
-  Production Bundle and Shell workflows retain their existing formats and behavior.
+  Legacy Bundle and Shell formats remain supported.
 
 * An isolated read-only Zsh Functions observer with guarded startup/static-source
   reads, exact definition bytes, explicit load uncertainty and bounded native parser
-  transport. Functions remain inactive in production Capture, Rebuild and Check.
+  transport.
+
+* Explicit Functions Capture through production Core, preserving selected definition
+  bytes in Bundle V1 `shell-state:1` with fresh source/parser evidence and validated
+  read-only inspection. Mixed Functions/legacy Shell selection is rejected; typed
+  Restore and Check fail closed pending their implementation.
 
 * Git Rebuild can use an existing encrypted destination SSH key through a verified
   SSH agent, including Git-only Bundles. Fresh signature checks bind the expected

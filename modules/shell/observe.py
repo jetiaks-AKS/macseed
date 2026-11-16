@@ -112,7 +112,9 @@ def observe(home, parser, *, zdotdir=None, contexts=CONTEXTS, cancelled=lambda: 
             or len(set(contexts)) != len(contexts)):
         raise Invalid('invalid_request')
     try:
-        parser.require_available()
+        if cancelled():
+            raise Invalid('cancelled')
+        parser.preflight(cancelled=cancelled)
         with base.home_directory(home) as (_, stable):
             result = _observe(home, parser, zdotdir, contexts, cancelled)
             stable()

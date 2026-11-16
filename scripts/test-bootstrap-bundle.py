@@ -57,43 +57,76 @@ class BundleTests(unittest.TestCase):
     def pack(self):
         bundle.pack(self.stage, self.bundle, "/Users/source")
 
-    def test_typed_shell_state_remains_unsupported_in_production_bundle(self):
-        spec = importlib.util.spec_from_file_location('shell_state', MODULE.parents[1] / 'shell/state.py')
-        state = importlib.util.module_from_spec(spec); spec.loader.exec_module(state)
-        typed, _ = state.encode(state.assemble([], [], [], [], {}))
+    def test_typed_shell_capture_inspection_integrity_and_runtime_boundary(self):
+        state = bundle.shell_state_contract()
+        raw = b'fixture() { :; }'
+        source = state.source_record('.zshrc', raw)
+        load = dict(source=source['id'], parent=None, order=0, context='interactive', entry='zshrc', condition='unknown', site=None)
+        load['id'] = state.load_identity(load)
+        item = dict(id=state.identity('function', 'fixture'), kind='function', key='fixture', source=source['id'],
+            loads=[load['id']], details=dict(span=[0, len(raw)], name=[0, 7], body=[10, len(raw)], parser_profile='zsh-default-1'))
+        typed, payloads = state.encode(state.assemble([source], [load], [item], [], {item['id']: raw}))
         selection = self.stage / 'blueprint.conf'
         selection.write_bytes(selection.read_bytes().replace(b'shell-zsh="false"', b'shell-zsh="true"'))
-        snapshot = self.stage / 'generated/shell/zshrc.snapshot'
-        rows, _ = bundle.shell_contract().classify(b"alias ll='ls -la'\n")
-        bundle.write_file(snapshot, bundle.shell_contract().encode(rows))
+        bundle.write_file(self.stage / state.SNAPSHOT, typed)
+        for name, data in payloads.items():
+            bundle.write_file(self.stage / name, data)
         self.pack()
+        inspected = bundle.inspect_bundle(self.bundle, '/Users/unused')
+        self.assertEqual(inspected['required_features'], state.FEATURE)
+        self.assertFalse(inspected['restore_supported'])
+        self.assertEqual(inspected['selected_item_counts']['shell-zsh'], 1)
+        target = self.root / 'target'
+        with self.assertRaises(bundle.Unsupported):
+            bundle.unpack(self.bundle, target, '/Users/unused', workspace_preview=True)
+        self.assertFalse(target.exists())
+        with self.assertRaises(bundle.Unsupported):
+            bundle.publish(self.stage, workspace_execute=True)
         with tarfile.open(self.bundle) as archive:
             original = {m.name: archive.extractfile(m).read() for m in archive.getmembers()}
-        # An unknown required feature blocks even an otherwise readable legacy
-        # payload. New bytes without that feature cannot masquerade as legacy.
-        for feature, new_bytes in ((state.FEATURE, False), (state.FEATURE, True),
-                                   ({'shell-state': True}, True), ({}, True), ({'shell-aliases': 1}, True)):
+
+        def reject(feature=state.FEATURE, replace=None, remove=None, error=bundle.Invalid, integrity=True, feature_wire=None):
             files = dict(original); manifest = json.loads(files['manifest.json'])
             manifest['required_features'] = feature
-            if new_bytes:
-                files[state.SNAPSHOT] = typed
-                manifest['files'][state.SNAPSHOT] = dict(size=len(typed), sha256=hashlib.sha256(typed).hexdigest())
+            if replace:
+                files.update(replace)
+            if remove:
+                files.pop(remove)
+            if integrity:
+                manifest['files'] = {k: dict(size=len(v), sha256=hashlib.sha256(v).hexdigest())
+                                     for k, v in files.items() if k != 'manifest.json'}
             files['manifest.json'] = json.dumps(manifest).encode()
-            target = self.root / 'typed.mbt'
-            with tarfile.open(target, 'w', format=tarfile.USTAR_FORMAT) as archive:
+            if feature_wire:
+                files['manifest.json'] = files['manifest.json'].replace(b'{"shell-state": 1}', feature_wire)
+            corrupt = self.root / 'invalid.mbt'
+            with tarfile.open(corrupt, 'w', format=tarfile.USTAR_FORMAT) as archive:
                 for name, raw in files.items():
                     info = tarfile.TarInfo(name); info.size, info.mode = len(raw), 0o600
                     archive.addfile(info, io.BytesIO(raw))
-            error = bundle.Unsupported if 'shell-state' in feature else bundle.Invalid
-            with self.subTest(feature=feature, typed=new_bytes), self.assertRaises(error):
-                bundle.validate_archive(target)
+            with self.assertRaises(error):
+                bundle.validate_archive(corrupt)
             with self.assertRaises(bundle.Invalid):
-                bundle.inspect_bundle(target, str(self.root / 'unused-home'))
-        snapshot.write_bytes(typed)
-        output = self.root / 'must-not-publish.mbt'
-        with self.assertRaises(bundle.Invalid):
-            bundle.pack(self.stage, output, str(self.root / 'unused-home'))
-        self.assertFalse(output.exists())
+                bundle.inspect_bundle(corrupt, '/Users/unused')
+
+        for feature in ({'shell-state': 2}, {'shell-state': True}, {'future-feature': 1}):
+            reject(feature, error=bundle.Unsupported)
+        for feature in ({}, {'shell-aliases': 1}, {'shell-state': 1, 'shell-aliases': 5}):
+            reject(feature)
+        reject(feature_wire=b'{"shell-state": 2, "shell-state": 1}')
+        reject(remove=state.DEFINITIONS)
+        reject(replace={state.DEFINITIONS: raw.replace(b':', b'x')}, integrity=False)
+        reject(replace={state.DEFINITIONS: raw.replace(b':', b'x')})  # recomputed Bundle digest cannot bypass B1
+        reject(replace={state.DEFINITIONS: b'x' * (state.MAX_DEFINITION_TOTAL + 1)})
+        reject(replace={state.SNAPSHOT: b'not a snapshot'})
+        reject(replace={state.SNAPSHOT: state.MAGIC + b'{"schema":1,"schema":1}'})
+        value = json.loads(typed[len(state.MAGIC):])
+        value['items'][0]['details']['span'][1] += 1
+        reject(replace={state.SNAPSHOT: state.MAGIC + json.dumps(value).encode()})
+        value = json.loads(typed[len(state.MAGIC):])
+        value['items'][0]['loads'] = ['shell-load:' + '0' * 64]
+        reject(replace={state.SNAPSHOT: state.MAGIC + json.dumps(value).encode()})
+        empty, _ = state.encode(state.assemble([], [], [], [], {}))
+        reject(replace={state.SNAPSHOT: empty, state.DEFINITIONS: b''})
 
     def test_scripts_v5_members_integrity_selection_and_legacy_limits(self):
         c = bundle.shell_contract().recovery_contract()

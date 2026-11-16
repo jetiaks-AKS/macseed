@@ -8,7 +8,12 @@ python_runtime="$(xcrun --find python3)"
 resource_directory="$1"
 architecture="${2:-$(uname -m)}"
 "$python_runtime" -B ./prepare-age.py "$resource_directory" "$architecture"
-"$python_runtime" -B ../../scripts/build-shell-parser.py --resources "$resource_directory" --arch "$architecture"
+parser_build_result="$("$python_runtime" -B ../../scripts/build-shell-parser.py --resources "$resource_directory" --arch "$architecture")"
+if [[ ! "$parser_build_result" =~ ^Prepared\ dormant\ Shell\ parser\;\ manifest_sha256=([0-9a-f]{64})$ ]]; then
+    echo 'Invalid Shell parser build result' >&2; exit 2
+fi
+parser_manifest_sha256="${BASH_REMATCH[1]}"
+printf '%s\n' "$parser_build_result"
 mkdir -p "$resource_directory"
 descriptor="$resource_directory/CoreRuntime.plist"
 /usr/bin/plutil -create xml1 "$descriptor"
@@ -16,3 +21,4 @@ descriptor="$resource_directory/CoreRuntime.plist"
 /usr/bin/plutil -insert Mode -string development "$descriptor"
 /usr/bin/plutil -insert CoreRoot -string "$core_root" "$descriptor"
 /usr/bin/plutil -insert PythonExecutable -string "$python_runtime" "$descriptor"
+/usr/bin/plutil -insert ShellParserManifestSHA256 -string "$parser_manifest_sha256" "$descriptor"

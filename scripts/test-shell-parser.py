@@ -32,6 +32,21 @@ observer = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(observer)
 
 
+def launch_enforced(test, client, requirement):
+    """Independent benign control, using the unchanged trusted build requirement.
+
+    Never classify a failed security assertion or functions_unavailable as a
+    platform capability. Any unexpected exit/error fails qualification.
+    """
+    run = client.Parser._run
+    test.assertEqual(run('/usr/bin/true', b'', b'', lambda: False), (b'', 0))
+    output, code = run('/usr/bin/true', requirement, b'', lambda: False)
+    test.assertEqual(output, b'')
+    test.assertIn(code, (0, -signal.SIGKILL))
+    test.assertEqual(run('/usr/bin/true', b'', b'', lambda: False), (b'', 0))
+    return code == -signal.SIGKILL
+
+
 class ShellStateTests(unittest.TestCase):
     """Pure codec tests share the Shell harness; no helper build or HOME access."""
     def load(self, source, order=0, parent=None, context='interactive', site=None):
@@ -465,6 +480,33 @@ class ShellStateTests(unittest.TestCase):
 
 
 class ShellParser(unittest.TestCase):
+    def enforcing(self):
+        if not hasattr(self, '_platform_enforced'):
+            metadata = json.loads((self.package / 'build.json').read_bytes())
+            requirement = base64.b64decode(metadata['binaries']['macseed-shell-parser']['launch']['requirement_data'])
+            self._platform_enforced = launch_enforced(self, observer.client, requirement)
+        return self._platform_enforced
+
+    def assert_functions_unavailable(self, parser=None, source=b'f() { :; }', home=None, *, observe=True):
+        self.assertFalse(self.enforcing(), 'unavailability cannot replace enforcing-platform assertions')
+        parser = parser or observer.client.Parser(package=self.package, manifest_sha256=self.manifest_sha256)
+        home = home or self.observation_home()
+        # Fail-closed qualification always includes real parser and observer
+        # entry points, not a skip or synthetic successful empty observation.
+        actions = [lambda: parser.parse(source)]
+        if observe:
+            actions.append(lambda: observer.observe(str(home), parser))
+        for action in actions:
+            with patch.object(parser, '_run', wraps=parser._run) as transport, \
+                    patch.object(observer.base, 'home_directory') as home_read, \
+                    patch.object(observer.sources, 'file_state') as source_read, \
+                    patch.object(observer.state, 'parser_response', wraps=observer.state.parser_response) as admission:
+                with self.assertRaisesRegex(observer.client.Invalid, '^shell_observation_functions_unavailable$'):
+                    action()
+                self.assertEqual([(c.args[0], c.args[2]) for c in transport.call_args_list],
+                                 [('/usr/bin/true', b'')] * 2)
+                home_read.assert_not_called(); source_read.assert_not_called(); admission.assert_not_called()
+
     def observation_home(self):
         temporary = tempfile.TemporaryDirectory(prefix='functions-', dir=self.work)
         self.addCleanup(temporary.cleanup)
@@ -485,6 +527,9 @@ class ShellParser(unittest.TestCase):
 
     def test_observation_exact_complex_bytes_and_determinism(self):
         home = self.observation_home()
+        if not self.enforcing():
+            self.assert_functions_unavailable(home=home)
+            return  # Fail-closed coverage; active observation needs enforcement.
         # Match the qualified corpus CRLF policy: interior CRLF is preserved;
         # CRLF after the closing unit is rejected by the pinned grammar below.
         raw = ('# é\nordinary() {\r\n print "é"\r\n}\n'
@@ -509,6 +554,9 @@ class ShellParser(unittest.TestCase):
 
     def test_observation_static_chains_contexts_and_zdotdir(self):
         home = self.observation_home()
+        if not self.enforcing():
+            self.assert_functions_unavailable(home=home)
+            return
         self.source_file(home, '.zshenv', b'export ZDOTDIR="$HOME/.config/zsh"\nenv_fn() { :; }\n')
         for name, key in (('.zprofile', 'profile'), ('.zshrc', 'rc'), ('.zlogin', 'login')):
             self.source_file(home, '.config/zsh/' + name, (key + '() { :; }\n').encode())
@@ -540,6 +588,9 @@ class ShellParser(unittest.TestCase):
 
     def test_observation_bare_cr_comments_never_create_commands(self):
         home = self.observation_home()
+        if not self.enforcing():
+            self.assert_functions_unavailable(home=home)
+            return
         leaf = b'ghost() { :; }\n'
         self.source_file(home, 'leaf', leaf)
         self.source_file(home, 'redirect/.zshrc', leaf)
@@ -577,6 +628,9 @@ class ShellParser(unittest.TestCase):
 
     def test_observation_ambiguous_units_and_source_relationships(self):
         home = self.observation_home()
+        if not self.enforcing():
+            self.assert_functions_unavailable(home=home)
+            return
         cases = [
             (b'f() { :; }\nf() { print later; }\n', 'ambiguous_function'),
             (b'function f other { :; }\nf() { :; }\n', 'ambiguous_function'),
@@ -610,6 +664,9 @@ class ShellParser(unittest.TestCase):
 
     def test_observation_missing_unsafe_malformed_and_changed_sources(self):
         home = self.observation_home()
+        if not self.enforcing():
+            self.assert_functions_unavailable(home=home)
+            return
         result, value, _ = self.observed(home)
         self.assertEqual(value['items'], [])
         self.assertEqual({r['status'] for r in result._files.values()}, {'missing'})
@@ -660,6 +717,9 @@ class ShellParser(unittest.TestCase):
 
     def test_observation_conflicting_files_and_uncertain_loads(self):
         home = self.observation_home()
+        if not self.enforcing():
+            self.assert_functions_unavailable(home=home)
+            return
         self.source_file(home, '.zshrc', b'source "$HOME/one"\nsource "$HOME/two"\n')
         self.source_file(home, 'one', b'f() { :; }\n')
         self.source_file(home, 'two', b'f() { print other; }\n')
@@ -691,6 +751,9 @@ class ShellParser(unittest.TestCase):
 
     def test_observation_resource_limits_and_cancellation(self):
         home = self.observation_home()
+        if not self.enforcing():
+            self.assert_functions_unavailable(home=home)
+            return
         self.source_file(home, '.zshrc', b'#' + b' ' * observer.state.MAX_SOURCE)
         self.assertEqual(self.observed(home)[1]['items'], [])
         # Real depth boundary: sixteen entered files, then a seventeenth.
@@ -707,9 +770,17 @@ class ShellParser(unittest.TestCase):
         # the existing B1 tests of the actual 2 MiB/128/512 codec boundaries.
         self.source_file(home, '.zshrc', b'source "$HOME/part15"\n')
         for field, limit in (('MAX_SOURCE_TOTAL', 20), ('MAX_SOURCES', 1), ('MAX_LOADS', 1),
-                             ('MAX_DECLARATIONS', 0), ('MAX_MANIFEST', 1)):
+                             ('MAX_DECLARATIONS', 0)):
             with self.subTest(field=field), patch.object(observer.state, field, limit), self.assertRaisesRegex(observer.Invalid, 'resource_limit'):
                 self.observed(home)
+        # Limit the collected state, not the separately authenticated helper
+        # manifest that the enforcement preflight must now read first.
+        assemble = observer.state.assemble
+        def limited_manifest(*args, **options):
+            with patch.object(observer.state, 'MAX_MANIFEST', 1):
+                return assemble(*args, **options)
+        with patch.object(observer.state, 'assemble', limited_manifest), self.assertRaisesRegex(observer.Invalid, 'resource_limit'):
+            self.observed(home)
         with self.assertRaisesRegex(observer.Invalid, 'cancelled'):
             self.observed(home, cancelled=lambda: True)
         with patch.object(observer, 'OBSERVATION_SECONDS', 0), self.assertRaisesRegex(observer.Invalid, 'observation_timeout'):
@@ -719,20 +790,29 @@ class ShellParser(unittest.TestCase):
                 self.observed(home, **options)
 
     def test_observation_trusted_transport_and_packaged_location(self):
+        enforcing = self.enforcing()
         home = self.observation_home()
         parser = observer.client.Parser(package=self.package, manifest_sha256=self.manifest_sha256)
-        response = parser.parse(b'')
-        self.assertEqual(observer.state.parser_response(b'', response, 0)['definitions'], [])
+        if enforcing:
+            response = parser.parse(b'')
+            self.assertEqual(observer.state.parser_response(b'', response, 0)['definitions'], [])
+        else:
+            self.assert_functions_unavailable(parser, b'')
         app = home / 'Fixture.app'
         helper = app / 'Contents/Helpers/macseed-shell-parser'; helper.parent.mkdir(parents=True)
         shutil.copyfile(self.binary, helper); helper.chmod(0o755)
         manifest = app / 'Contents/Resources/ThirdPartyNotices/shell-parser-build.json'
         manifest.parent.mkdir(parents=True); shutil.copyfile(self.package / 'build.json', manifest)
-        self.assertEqual(json.loads(observer.client.Parser(bundle=app, manifest_sha256=self.manifest_sha256).parse(b'f() { :; }'))['status'], 'ok')
+        packaged = observer.client.Parser(bundle=app, manifest_sha256=self.manifest_sha256)
+        if enforcing:
+            self.assertEqual(json.loads(packaged.parse(b'f() { :; }'))['status'], 'ok')
+        else:
+            self.assert_functions_unavailable(packaged)
         with self.assertRaisesRegex(observer.client.Invalid, 'helper_unavailable'):
             observer.client.Parser(package=home / 'missing', manifest_sha256=self.manifest_sha256).parse(b'')
         with patch.object(observer.client, '_Task', side_effect=OSError('private-path')):
-            with self.assertRaisesRegex(observer.client.Invalid, '^shell_observation_launch_failed$'):
+            expected = 'launch_failed' if enforcing else 'functions_unavailable'
+            with self.assertRaisesRegex(observer.client.Invalid, '^shell_observation_' + expected + '$'):
                 parser.parse(b'')
         helper.write_bytes(b'untrusted')
         with self.assertRaisesRegex(observer.client.Invalid, 'helper_untrusted'):
@@ -742,6 +822,7 @@ class ShellParser(unittest.TestCase):
             observer.client.Parser(bundle=app, manifest_sha256=self.manifest_sha256).parse(b'')
 
     def test_observation_transport_faults_deadline_cleanup_and_privacy(self):
+        enforcing = self.enforcing()
         directory = self.observation_home()
         source = directory / 'fault.c'
         source.write_text('''#include <stdio.h>
@@ -777,6 +858,10 @@ int main(void) {
         (directory / 'build.json').write_text(json.dumps(manifest))
         parser = observer.client.Parser(package=directory,
             manifest_sha256=hashlib.sha256((directory / 'build.json').read_bytes()).hexdigest())
+        if not enforcing:
+            for raw in (b'crash', b'nonzero', b'overflow', b'malformed', b'short', b'broken', b'hang', b'orphan'):
+                self.assert_functions_unavailable(parser, raw)
+            return  # No worker may exist in this mode; no active lifecycle claim.
         original = observer.client.processes.ProcessTree.scan
         seen = set()
         broken_pipes = []
@@ -836,6 +921,7 @@ int main(void) {
         return hashlib.sha256(raw).hexdigest()
 
     def test_protected_launch_build_identities_and_packaging(self):
+        enforcing = self.enforcing()
         metadata = json.loads((self.package / 'build.json').read_bytes())
         self.assertEqual(metadata['schema'], 2)
         self.assertEqual(metadata['minimum_macos'], '14.0')
@@ -847,11 +933,17 @@ int main(void) {
             actual = builder.launch_metadata(binary, list(record['launch']['cdhashes']), self.work)
             self.assertEqual(actual, record['launch'])
         parser = observer.client.Parser(package=self.package, manifest_sha256=self.manifest_sha256)
-        self.assertEqual(json.loads(parser.parse(b'f() { :; }'))['status'], 'ok')
+        if enforcing:
+            self.assertEqual(json.loads(parser.parse(b'f() { :; }'))['status'], 'ok')
+        else:
+            self.assert_functions_unavailable(parser)
         resources = self.observation_home() / 'Proof.app/Contents/Resources'
         builder.install_package(self.package, resources)
         packaged = observer.client.Parser(bundle=resources.parent.parent, manifest_sha256=self.manifest_sha256)
-        self.assertEqual(json.loads(packaged.parse(b'f() { :; }'))['status'], 'ok')
+        if enforcing:
+            self.assertEqual(json.loads(packaged.parse(b'f() { :; }'))['status'], 'ok')
+        else:
+            self.assert_functions_unavailable(packaged)
 
     def test_protected_launch_x86_64_identity_when_packaged(self):
         metadata = json.loads((self.package / 'build.json').read_bytes())
@@ -867,6 +959,9 @@ int main(void) {
             base64.b64decode(union['requirement_data']), raw, lambda: False)
         self.assertEqual(observer.state.function_evidence(raw, response, code, 0)[0], 'f')
         if platform.machine() == 'arm64':
+            if not self.enforcing():
+                self.assert_functions_unavailable()
+                return  # Wrong-CPU launch must never be attempted without the gate.
             wrong = metadata['binaries']['macseed-shell-parser-arm64']['launch']
             response, code = observer.client.Parser._run(str(binary),
                 base64.b64decode(wrong['requirement_data']), raw, lambda: False)
@@ -875,11 +970,22 @@ int main(void) {
                 observer.state.parser_response(raw, response, code)
 
     def test_protected_launch_substitution_marker_and_forged_response(self):
+        enforcing = self.enforcing()
         directory = self.copied_package()
         binary = directory / 'macseed-shell-parser'
         parser = observer.client.Parser(package=directory, manifest_sha256=self.manifest_sha256)
         source = b'f() { :; }'
-        genuine = parser.parse(source)
+        if enforcing:
+            genuine = parser.parse(source)
+        else:
+            self.assert_functions_unavailable(parser, source)
+            # Valid forged evidence without launching a parser in the disabled
+            # mode. Its ability to pass B1 admission is explicitly checked below.
+            genuine = json.dumps(dict(schema=1, profile='zsh-default-1', status='ok', code='ok',
+                bytes=len(source), sha256=hashlib.sha256(source).hexdigest(), nodes=24,
+                syntax_depth=2, allocation_peak=18126,
+                definitions=[dict(span=[0, 10], body=[4, 10], names=[[0, 1]], parent=-1, depth=6)])).encode()
+        self.assertEqual(observer.state.function_evidence(source, genuine, 0, 0)[0], 'f')
         marker = directory / 'must-not-execute'
         fixture = directory / 'replacement.c'
         fixture.write_text('#include <stdio.h>\n#include <fcntl.h>\n#include <unistd.h>\n'
@@ -904,20 +1010,37 @@ int main(void) {
             with self.subTest(attempt=attempt):
                 staged = directory / 'swap'
                 shutil.copy2(replacement, staged)
+                swapped = []
                 def swap(task):
                     os.replace(staged, binary)
+                    swapped.append(True)
                     launch_task(task)
-                with patch.object(observer.client._Task, '_launch', swap), \
-                        patch.object(observer.client._Task, 'wait', record), self.assertRaises(observer.client.Invalid) as caught:
-                    parser.parse(source)
-                self.assertIn(caught.exception.code, ('helper_untrusted', 'launch_failed', 'process_failed'))
-                self.assertFalse(marker.exists())
-                self.assertNotIn(str(directory), str(caught.exception))
-                binary.unlink(); shutil.copy2(self.binary, binary)
+                enforce = parser._require_enforcement
+                def swap_before_gate(requirement, cancelled):
+                    os.replace(staged, binary); swapped.append(True)
+                    enforce(requirement, cancelled)
+                try:
+                    with patch.object(observer.client._Task, 'wait', record):
+                        if enforcing:
+                            with patch.object(observer.client._Task, '_launch', swap), \
+                                    self.assertRaises(observer.client.Invalid) as caught:
+                                parser.parse(source)
+                            self.assertIn(caught.exception.code, ('helper_untrusted', 'launch_failed', 'process_failed'))
+                            self.assertNotIn(str(directory), str(caught.exception))
+                        else:
+                            # Still replace the authenticated file before its
+                            # launch boundary; the gate must stop transport first.
+                            with patch.object(parser, '_require_enforcement', swap_before_gate):
+                                self.assert_functions_unavailable(parser, source, observe=False)
+                    self.assertEqual(swapped, [True])
+                    self.assertFalse(marker.exists())
+                finally:
+                    binary.unlink(); shutil.copy2(self.binary, binary)
         self.assertTrue(statuses)
-        self.assertTrue(all(code < 0 for code in statuses))
+        self.assertTrue(all(code < 0 if enforcing else code == 0 for code in statuses))
 
     def test_protected_launch_manifest_anchor_and_resigning(self):
+        enforcing = self.enforcing()
         directory = self.copied_package()
         binary = directory / 'macseed-shell-parser'
         metadata = json.loads((directory / 'build.json').read_bytes())
@@ -932,8 +1055,12 @@ int main(void) {
         with patch.object(observer.client, '_Task') as launch, self.assertRaisesRegex(observer.client.Invalid, 'helper_untrusted'):
             parser.parse(b'')
         launch.assert_not_called()  # Updating writable metadata cannot grant trust.
-        with self.assertRaisesRegex(observer.client.Invalid, '^shell_observation_process_failed$'):
-            observer.client.Parser(package=directory, manifest_sha256=stale_requirement_pin).parse(b'')
+        stale = observer.client.Parser(package=directory, manifest_sha256=stale_requirement_pin)
+        if enforcing:
+            with self.assertRaisesRegex(observer.client.Invalid, '^shell_observation_process_failed$'):
+                stale.parse(b'')
+        else:
+            self.assert_functions_unavailable(stale, b'')
         refreshed = builder.launch_metadata(binary, metadata['architectures'], directory)
         self.assertNotEqual(record['launch']['cdhashes'], refreshed['cdhashes'])
         record['launch'] = refreshed
@@ -941,7 +1068,11 @@ int main(void) {
         with patch.object(observer.client, '_Task') as launch, self.assertRaisesRegex(observer.client.Invalid, 'helper_untrusted'):
             parser.parse(b'')
         launch.assert_not_called()
-        self.assertEqual(json.loads(observer.client.Parser(package=directory, manifest_sha256=new_pin).parse(b''))['status'], 'ok')
+        refreshed_parser = observer.client.Parser(package=directory, manifest_sha256=new_pin)
+        if enforcing:
+            self.assertEqual(json.loads(refreshed_parser.parse(b''))['status'], 'ok')
+        else:
+            self.assert_functions_unavailable(refreshed_parser, b'')
 
     def test_protected_launch_malformed_required_metadata(self):
         directory = self.copied_package()
@@ -975,7 +1106,170 @@ int main(void) {
                     action()
         launch.assert_not_called(); read.assert_not_called()
 
+    def test_enforcement_preflight_controls_and_fresh_observation(self):
+        parser = observer.client.Parser(package=self.package, manifest_sha256=self.manifest_sha256)
+        if not self.enforcing():
+            self.assert_functions_unavailable(parser)
+            return
+        run = parser._run
+        calls = []
+        def record(executable, requirement, source, cancelled, **options):
+            calls.append((executable, bool(requirement), source, options.get('enforcement_probe', False)))
+            return run(executable, requirement, source, cancelled, **options)
+        with patch.object(parser, '_run', record):
+            parser.preflight()
+            self.assertEqual(calls, [('/usr/bin/true', False, b'', False),
+                ('/usr/bin/true', True, b'', True), ('/usr/bin/true', False, b'', False)])
+            source = b'f() { :; }'
+            self.assertEqual(json.loads(parser.parse(source))['status'], 'ok')
+            self.assertEqual(len(calls), 4)  # Same observation, no per-source probe.
+            self.assertEqual(calls[-1][2], source)
+            calls.clear()
+            home = self.observation_home()
+            self.source_file(home, '.zshrc', source)
+            result = observer.observe(str(home), parser)
+            self.assertIsNotNone(result.snapshot)
+            self.assertEqual([row[0] for row in calls[:3]], ['/usr/bin/true'] * 3)
+
+    def test_enforcement_preflight_non_enforcing_environment_reads_no_home_or_parser(self):
+        home = self.observation_home()
+        self.source_file(home, '.zshrc', b'private_function() { :; }')
+        run = observer.client.Parser._run
+        calls = []
+        def not_enforcing(executable, requirement, source, cancelled, **options):
+            calls.append((executable, source))
+            self.assertEqual(executable, '/usr/bin/true')
+            self.assertEqual(source, b'')
+            # Exercise real Foundation/transport/cleanup, with the constraint
+            # ignored as on the failing hosted environment. No parser may start.
+            return run(executable, b'', source, cancelled, **options)
+        parser = observer.client.Parser(package=self.package, manifest_sha256=self.manifest_sha256)
+        # Model a previous receipt so this negative case also runs on a genuinely
+        # non-enforcing OS. The controls case proves real receipt establishment.
+        metadata = json.loads((self.package / 'build.json').read_bytes())
+        parser._enforced_requirement = base64.b64decode(
+            metadata['binaries']['macseed-shell-parser']['launch']['requirement_data'])
+        with patch.object(parser, '_run', not_enforcing), patch.object(observer.base, 'home_directory') as home_read, \
+                patch.object(observer.sources, 'file_state') as source_read:
+            for action in (lambda: observer.observe(str(home), parser), lambda: parser.parse(b'private() { :; }')):
+                calls.clear()
+                with self.assertRaisesRegex(observer.client.Invalid, '^shell_observation_functions_unavailable$'):
+                    action()
+                self.assertEqual(calls, [('/usr/bin/true', b'')] * 2)
+                self.assertIsNone(parser._enforced_requirement)
+        home_read.assert_not_called(); source_read.assert_not_called()
+
+    def test_enforcement_preflight_unrelated_failures_and_cancellation_fail_closed(self):
+        home = self.observation_home()
+        for code in ('launch_failed', 'process_failed', 'timeout', 'output_limit',
+                     'functions_unavailable', 'cancelled', 'process_cleanup_failed'):
+            parser = observer.client.Parser(package=self.package, manifest_sha256=self.manifest_sha256)
+            expected = code if code in ('cancelled', 'process_cleanup_failed') else 'functions_unavailable'
+            calls = []
+            def failed(executable, requirement, source, cancelled, **options):
+                calls.append(executable)
+                self.assertEqual(executable, '/usr/bin/true')
+                if options.get('enforcement_probe'):
+                    raise observer.client.Invalid(code)
+                return b'', 0
+            with self.subTest(code=code), patch.object(parser, '_run', failed), \
+                    patch.object(observer.base, 'home_directory') as read, \
+                    self.assertRaisesRegex(observer.client.Invalid, '^shell_observation_' + expected + '$'):
+                observer.observe(str(home), parser)
+            read.assert_not_called()
+            self.assertEqual(calls, ['/usr/bin/true'] * 2)
+            self.assertIsNone(parser._enforced_requirement)
+        parser = observer.client.Parser(package=self.package, manifest_sha256=self.manifest_sha256)
+        with patch.object(observer.client, '_Task') as launch, \
+                self.assertRaisesRegex(observer.client.Invalid, '^shell_observation_cancelled$'):
+            parser.preflight(cancelled=lambda: True)
+        launch.assert_not_called()
+
+    def test_enforcement_preflight_requires_exact_kernel_signing_receipt(self):
+        client = observer.client
+        task = object.__new__(client._Task)
+        task.pid = 12345
+        task.poll = lambda: -signal.SIGKILL
+        flags = select.KQ_NOTE_EXIT | client.NOTE_EXITSTATUS | client.NOTE_EXIT_DETAIL
+        def receipt(**changes):
+            values = dict(ident=task.pid, filter=select.KQ_FILTER_PROC, flags=select.KQ_EV_EOF,
+                          fflags=flags, data=client.NOTE_EXIT_CSERROR | signal.SIGKILL)
+            values.update(changes)
+            return select.kevent(**values)
+        task.exit_events = [receipt()]
+        self.assertTrue(task.constraint_rejected())
+        for changes in (dict(ident=12346), dict(filter=select.KQ_FILTER_READ), dict(flags=select.KQ_EV_ERROR),
+                        dict(fflags=select.KQ_NOTE_EXIT), dict(data=signal.SIGKILL),
+                        dict(data=0x00020000 | signal.SIGKILL),
+                        dict(data=client.NOTE_EXIT_CSERROR | signal.SIGTERM), dict(data=0)):
+            with self.subTest(changes=changes):
+                task.exit_events = [receipt(**changes)]
+                self.assertFalse(task.constraint_rejected())
+        task.exit_events = [receipt(), receipt()]
+        self.assertFalse(task.constraint_rejected())
+        task.exit_events = [receipt()]
+        task.poll = lambda: 0
+        self.assertFalse(task.constraint_rejected())
+        with patch.object(client.select, 'kqueue') as queue:
+            task.exit_events = []; task.exit_queue = queue.return_value
+            task.exit_queue.control.return_value = []
+            self.assertFalse(task.constraint_rejected())
+
+    def test_enforcement_gate_first_launch_substitution_on_actual_platform(self):
+        """Always perform the swap, including on a non-enforcing hosted OS."""
+        directory = self.copied_package()
+        binary = directory / 'macseed-shell-parser'
+        metadata = json.loads((directory / 'build.json').read_bytes())
+        requirement = base64.b64decode(metadata['binaries']['macseed-shell-parser']['launch']['requirement_data'])
+        run = observer.client.Parser._run
+        # Independent benign classification: successful constrained execution
+        # must disable Functions; a killed probe still needs the full gate.
+        self.assertEqual(run('/usr/bin/true', b'', b'', lambda: False), (b'', 0))
+        output, status = run('/usr/bin/true', requirement, b'', lambda: False)
+        self.assertEqual(output, b''); self.assertIn(status, (0, -signal.SIGKILL))
+        parser = observer.client.Parser(package=directory, manifest_sha256=self.manifest_sha256)
+        source = b'f() { :; }'
+        if status == 0:
+            with self.assertRaisesRegex(observer.client.Invalid, '^shell_observation_functions_unavailable$'):
+                parser.parse(source)
+        else:
+            self.assertEqual(json.loads(parser.parse(source))['status'], 'ok')
+        marker = directory / 'must-not-execute'
+        fixture = directory / 'replacement.c'
+        fixture.write_text('#include <fcntl.h>\n#include <unistd.h>\nint main(void) { int fd=open('
+            + json.dumps(str(marker)) + ',O_WRONLY|O_CREAT|O_EXCL,0600); if(fd>=0) close(fd); return 0; }\n')
+        replacement = directory / 'replacement'
+        subprocess.run(['xcrun', 'clang', str(fixture), '-o', str(replacement)], check=True, capture_output=True)
+        builder.sign_binary(replacement)
+        authorized = builder.launch_metadata(replacement, [platform.machine()], directory)
+        self.assertEqual(run(str(replacement), base64.b64decode(authorized['requirement_data']), b'', lambda: False), (b'', 0))
+        self.assertTrue(marker.exists()); marker.unlink()
+        # A fresh Parser exercises the gate after file authentication and before
+        # its first parser launch. No branch omits the executable substitution.
+        parser = observer.client.Parser(package=directory, manifest_sha256=self.manifest_sha256)
+        enforce = parser._require_enforcement
+        swapped, launches = [], []
+        def swap(requirement, cancelled):
+            os.replace(replacement, binary); swapped.append(True)
+            enforce(requirement, cancelled)
+        def record(executable, requirement, source, cancelled, **options):
+            launches.append(executable)
+            return run(executable, requirement, source, cancelled, **options)
+        with patch.object(parser, '_require_enforcement', swap), patch.object(parser, '_run', record), \
+                self.assertRaises(observer.client.Invalid) as caught:
+            parser.parse(source)
+        self.assertEqual(swapped, [True])
+        self.assertFalse(marker.exists())
+        if status == 0:
+            self.assertEqual(caught.exception.code, 'functions_unavailable')
+            self.assertEqual(launches, ['/usr/bin/true'] * 2)
+        else:
+            self.assertIn(caught.exception.code, ('helper_untrusted', 'launch_failed', 'process_failed'))
+            self.assertEqual(launches, ['/usr/bin/true'] * 3 + [str(binary)])
+        self.assertNotIn(str(directory), str(caught.exception))
+
     def test_protected_launch_malformed_constraint_is_rejected_by_os(self):
+        enforcing = self.enforcing()  # Classify with valid data, before corrupting it.
         directory = self.copied_package()
         metadata = json.loads((directory / 'build.json').read_bytes())
         record = metadata['binaries']['macseed-shell-parser']['launch']
@@ -983,9 +1277,62 @@ int main(void) {
         for raw in (b'\0', valid[:-1]):
             record['requirement_data'] = base64.b64encode(raw).decode('ascii')
             pin = self.fixture_manifest(directory, metadata)
-            with self.assertRaises(observer.client.Invalid) as caught:
-                observer.client.Parser(package=directory, manifest_sha256=pin).parse(b'')
-            self.assertIn(caught.exception.code, ('launch_failed', 'process_failed'))
+            parser = observer.client.Parser(package=directory, manifest_sha256=pin)
+            if enforcing:
+                with self.assertRaises(observer.client.Invalid) as caught:
+                    parser.parse(b'')
+                self.assertIn(caught.exception.code, ('launch_failed', 'process_failed'))
+            else:
+                self.assert_functions_unavailable(parser, b'')
+
+    def test_platform_security_cases_without_enforcement(self):
+        # Deterministic disabled-constraint fixture, not a claim about this OS.
+        # Run the existing assertions, including all three real marker swaps.
+        launch = observer.client._Task._launch
+        def ignored(task):
+            task.api.send(task.task, 'setLaunchRequirementData:', None,
+                          (observer.client.C.c_void_p,), (task.api.send(task.api.cls('NSData'), 'data'),))
+            launch(task)
+        cases = ('test_protected_launch_substitution_marker_and_forged_response',
+                 'test_protected_launch_manifest_anchor_and_resigning',
+                 'test_protected_launch_malformed_constraint_is_rejected_by_os',
+                 'test_protected_launch_build_identities_and_packaging',
+                 'test_enforcement_preflight_controls_and_fresh_observation',
+                 'test_observation_trusted_transport_and_packaged_location',
+                 'test_observation_transport_faults_deadline_cleanup_and_privacy',
+                 'test_observation_exact_complex_bytes_and_determinism',
+                 'test_observation_static_chains_contexts_and_zdotdir',
+                 'test_observation_bare_cr_comments_never_create_commands',
+                 'test_observation_ambiguous_units_and_source_relationships',
+                 'test_observation_missing_unsafe_malformed_and_changed_sources',
+                 'test_observation_conflicting_files_and_uncertain_loads',
+                 'test_observation_resource_limits_and_cancellation')
+        with patch.object(observer.client._Task, '_launch', ignored):
+            for name in cases:
+                with self.subTest(case=name):
+                    result = unittest.TestResult()
+                    type(self)(name).run(result)
+                    self.assertEqual(result.testsRun, 1)
+                    self.assertEqual(result.skipped, [])
+                    self.assertEqual(result.errors, [])
+                    self.assertEqual(result.failures, [])
+
+    def test_enforcing_security_cases_never_accept_unavailability(self):
+        for name in ('test_protected_launch_substitution_marker_and_forged_response',
+                     'test_protected_launch_manifest_anchor_and_resigning',
+                     'test_protected_launch_malformed_constraint_is_rejected_by_os'):
+            with self.subTest(case=name):
+                case = type(self)(name)
+                case._platform_enforced = True
+                result = unittest.TestResult()
+                with patch.object(observer.client.Parser, '_require_enforcement',
+                                  side_effect=observer.client.Invalid('functions_unavailable')):
+                    case.run(result)
+                self.assertEqual(result.testsRun, 1)
+                self.assertEqual(result.skipped, [])
+                self.assertFalse(result.wasSuccessful())  # Never reclassify this as non-enforcing.
+                self.assertIn('functions_unavailable',
+                              ''.join(detail for _, detail in result.errors + result.failures))
 
     def test_process_group_ownership_preserves_unrelated_and_reused_roots(self):
         processes = observer.client.processes

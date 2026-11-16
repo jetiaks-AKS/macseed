@@ -23,7 +23,10 @@ with `manifest.json`, `blueprint.conf`, supported `generated/` files and optiona
 `secure.age`. Manifest format version is `1`; it records file names, sizes and
 SHA-256 checksums. Validation detects corruption/incompleteness, not authenticity.
 Archive validation rejects unsafe paths, links, unexpected members and malformed
-content. Current bounds are 48 MiB per archive, 33 MiB per member and 32 entries.
+content. Current bounds are 48 MiB per archive, 33 MiB per member and 32 ordinary
+entries, plus the separately bounded Scripts v5 members. Domain-specific limits
+are stricter; [Functions Capture](#functions-capture--bundle-b2b) adds one definitions
+member without changing the archive version or legacy Scripts budgets.
 
 Allowed generated content covers Homebrew, App Store, VS Code extension inventories
 and selected Git, Workspace folders/repositories, SSH configuration, Zsh,
@@ -136,17 +139,18 @@ Capture so users can add files when Discovery found none. **Plugins & Themes** i
 fourth category, reserved until useful Core support and selected/saved items exist.
 Startup files, ZDOTDIR, source paths and dependencies are provenance, not additional
 categories. Legacy whole-file requirements appear as **Settings → Saved Zsh file**
-with their existing Core identity and restoration policy. Functions, Variables & PATH,
-Shell Settings and Plugins & Themes are future capabilities, not empty placeholders.
+with their existing Core identity and restoration policy. Functions have bounded
+Core Capture/inspection support below; Restore/Check remains unavailable. Variables
+& PATH, Shell Settings and Plugins & Themes remain future capabilities, not empty placeholders.
 
-### Isolated structural parser foundation
+### Structural parser foundation
 
 Core has a bundled, read-only native Zsh parser foundation under
 `modules/shell/parser/`. It uses one pinned default grammar and returns bounded
-structural spans over unchanged input bytes. It is **not activated** in ordinary
-Capture, Rebuild or Check, does not qualify Restore eligibility and does not add
-`shell-state:1` to production workflows. Legacy whole-file and Aliases & Scripts capabilities 1–5 retain
-their existing behavior. Functions will remain inside Aliases & Functions.
+structural spans over unchanged input bytes. Production Core Capture uses it for
+explicitly selected Functions under the [B2B contract](#functions-capture--bundle-b2b).
+It does not qualify Restore eligibility. Legacy whole-file and Aliases & Scripts
+capabilities 1–5 retain their existing behavior. Functions remain inside Aliases & Functions.
 
 The [internal parser interface](../core/SHELL-PARSER.md) owns invocation, admission,
 resource limits, reproducible builds and remaining qualification gates. Source/load
@@ -155,10 +159,10 @@ foundation below; structural success alone cannot authorize publication.
 
 ### Typed Shell state foundation (B1)
 
-**Implemented, isolated; production activation is not implemented.**
+**Implemented; B2B uses the codec for Functions Capture and inspection only.**
 `modules/shell/state.py` owns the private typed model, codec, structural-evidence
 admission and explicit selection pruning. It has no filesystem observation,
-process launcher, publisher or Capture/Rebuild/Check caller. Existing whole-file
+process launcher or publisher. Existing whole-file
 and capabilities 1–5 readers, limits, predicates, Scripts consent/quarantine and
 mutation policies are unchanged. A valid typed snapshot is not restorable evidence
 until the complete Core workflow and capability negotiation are implemented.
@@ -166,12 +170,11 @@ until the complete Core workflow and capability negotiation are implemented.
 The evolution boundary remains `MBT-BUNDLE-1` with additive required feature
 `"shell-state": 1`, not Bundle V2 or `shell-aliases:6`. The private snapshot keeps
 the existing logical path `generated/shell/zshrc.snapshot`, distinguished by
-`MBT-SHELL-STATE-1\n`. B1 does **not** add this feature or its content member to
-production Bundle allowlists: pack, archive validation and inspection continue to
-reject it, including new bytes without the required feature. Legacy Bundles are
-never rewritten or silently promoted. Future activation must negotiate all kinds,
-selection and resource contracts before making any new Bundle restorable; older
-clients reject the entire unsupported required feature.
+`MBT-SHELL-STATE-1\n`. B2B admits this feature and its definitions member only for
+Functions Capture and read-only inspection. New bytes without the required feature
+are rejected. Legacy Bundles are never rewritten or silently promoted. Restore and
+Check reject typed requirements before target mutation; older clients reject the
+entire unsupported required feature.
 
 The magic is followed by one strict UTF-8 JSON object. Its exact fields are:
 
@@ -305,10 +308,11 @@ belongs in ordinary diagnostics. This codec emits no logs/events or public inven
 
 ### Read-only Functions observation (B2A)
 
-**Implemented, isolated; no production workflow activation.**
-Functions observation requires macOS **14.4+** and the
-[protected parser caller](../core/SHELL-PARSER.md#core-caller-b2a). On 14.0–14.3 it
-fails closed with `shell_observation_functions_unavailable` before source reads;
+**Implemented; reused by the bounded B2B Capture adapter below.**
+Functions observation requires macOS **14.4+**, positively established launch-constraint
+enforcement, and the [protected parser caller](../core/SHELL-PARSER.md#core-caller-b2a).
+On 14.0–14.3 or without enforcement evidence it fails closed with
+`shell_observation_functions_unavailable` before source reads;
 missing Functions are never presented as a successful complete observation.
 The overall application minimum remains 14.0 and Aliases & Scripts v5 remains
 available under its existing contract.
@@ -357,7 +361,8 @@ every load has `condition: unknown`. Function calls, parse-time alias expansion,
 script invocation/transfer consent and activation remain explicitly unresolved.
 No dependency edges are invented from body text, and an empty dependency array
 does not prove independence. Incomplete source relationships retain uncertainty;
-the snapshot must travel with this observation context until B2B qualification.
+the B2B Capture adapter retains this context in preparation and rejects an unresolved
+observed envelope. Bundled load conditions remain unknown.
 
 Observation uses B1's 128-KiB source, 2-MiB aggregate source, 128-source, 512-load,
 16-level load-depth and 512-definition limits (including non-selectable structural
@@ -370,11 +375,55 @@ owns bounded transport and process cleanup. Only fixed `shell_observation_*` err
 and `Observation.codes` belong in ordinary diagnostics; source paths, names, bytes,
 digests, detailed outcomes and raw helper output are private.
 
-**Next B2B:** qualify source/load/parse context and dependencies for Capture, then
-implement explicit capability/selection negotiation and Bundle publication with
-aggregate budgets. Production `shell-state:1` allowlists remain disabled. Restore
-planning/publication, consent, freshness, Check predicates and native/packaged
-qualification remain separate required gates.
+### Functions Capture & Bundle (B2B)
+
+**Implemented for production Core Capture and validated read-only Bundle inspection.**
+`modules/shell/capture.py` connects the existing observer/codec to Protocol V1
+Capture. It adds no filesystem discovery, Shell interpreter or process manager.
+Scan (`capture_prepare` with null selection) exposes individually qualified
+`shell-function:<sha256(name)>` items in `shell-zsh`. Labels contain validated names;
+source paths, bodies, per-source hashes and parser responses remain private.
+The additive `shell_functions` result reports observation status, fixed codes,
+unresolved dependency/activation qualifications and `restore_supported: false`.
+Observation failure or an unavailable helper is not proof of absence.
+
+Functions require explicit `selection.items.shell-zsh` IDs. Category selection
+keeps its legacy meaning and never opts into Functions. Mixed Function + alias or
+Script selection is rejected with `mixed_shell_selection_unsupported`; no selected
+legacy item is silently dropped. Other domains can accompany Functions. Legacy-only
+Capture preserves whole-file snapshots, capabilities 1–5 and existing independent
+Scripts consent, quarantine, mode and payload limits. No automatic migration occurs.
+
+Prepare and Execute each observe source files and invoke the protected parser.
+Only an observation without rejected/ambiguous/unsupported source outcomes is
+admitted; this does not prove live activation. The prepared ID binds private source
+bytes/identities, missing-file observations, full typed evidence and the trusted
+parser manifest anchor. Execute checks that ID before staging selected definitions,
+then repeats observation after validation/secure packaging and immediately before
+Bundle packing. Changed sources, newly appearing startup files or changed parser
+evidence prevent publication. This is a bounded observation, not a filesystem lock
+over the user's future edits. B1 selection prunes unselected definitions, content,
+sources and load ancestry without implicitly selecting dependencies.
+
+Bundle V1 uses required feature `{"shell-state":1}` plus
+`generated/shell/zshrc.snapshot` (`MBT-SHELL-STATE-1`) and
+`generated/shell/definitions.data`. B2B admits nonempty Functions-only typed state;
+other typed kinds remain unsupported even though the extensible B1 codec describes
+them. Exact manifest membership, per-member size/SHA-256, B1 content references,
+schema/ordering and resource profiles are validated. Definitions are capped at 2 MiB,
+the typed snapshot at 1 MiB; existing archive limits and legacy Scripts limits remain.
+Unknown/boolean feature versions, missing/extra content, malformed spans or integrity
+mismatches are rejected. Existing Protocol request bounds still limit each explicit
+selection; there is no unbounded bulk-selection channel.
+
+Inspection returns counts and the required feature with `restore_supported: false`
+and `restore_unavailable_reason: typed_shell_runtime_unavailable`; it omits the
+Restore selection inventory. Unpack, Core Restore/Check and local Bundle publication
+reject typed input before target writes, including when Shell would be deselected.
+Capture validates typed bytes directly and excludes only this already-validated
+domain from its legacy dry-run projection. It never reports Functions as restorable,
+matching or verified. Restore planning, managed publication, consent, freshness,
+Check predicates and Native/release qualification remain separate required work.
 
 ### Historical whole-file snapshots
 
@@ -950,10 +999,10 @@ operational claims. Qualify required local files/tools under their owning contra
 report opaque behavior and unresolved dependencies honestly without converting a
 network outage into a declaration mismatch or claiming command execution succeeded.
 These broader dependencies do not reopen the accepted four-object checkpoint.
-Standalone Zsh Functions is next under the Roadmap; this documentation update
-does not implement it or change the later Stage 3C order.
+Standalone Zsh Functions Restore/Check follows the implemented B2B Capture slice;
+the later Stage 3C order remains unchanged.
 
-Functions, variables/PATH, Shell Settings, broader alias forms, metadata-safe updates
+Functions Restore/Check, variables/PATH, Shell Settings, broader alias forms, metadata-safe updates
 and framework/plugin prerequisites remain the
 [next bounded slices](../../TODO.md#shell--zsh-functional-completion--current).
 Oh My Zsh and plugin-manager configuration is distinct from installed frameworks;
