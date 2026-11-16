@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Focused native parser admission, isolation and qualification corpus checks."""
 import hashlib
+import base64
 import copy
 import importlib.util
 import json
@@ -9,12 +10,14 @@ from pathlib import Path
 import platform
 import random
 import select
+import shutil
 import signal
 import subprocess
 import tarfile
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 CORPUS = ROOT / 'scripts/fixtures/shell-parser'
@@ -24,6 +27,9 @@ spec.loader.exec_module(builder)
 spec = importlib.util.spec_from_file_location('shell_state', ROOT / 'modules/shell/state.py')
 state = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(state)
+spec = importlib.util.spec_from_file_location('shell_observe', ROOT / 'modules/shell/observe.py')
+observer = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(observer)
 
 
 class ShellStateTests(unittest.TestCase):
@@ -426,6 +432,10 @@ class ShellStateTests(unittest.TestCase):
                      definitions=[dict(span=[0, 10], body=[4, 10], names=[[0, 1]], parent=-1, depth=6)])
         response = json.dumps(value).encode()
         self.assertEqual(state.function_evidence(source, response, 0, 0)[:2], ('f', source))
+        empty = dict(value, bytes=0, sha256=hashlib.sha256(b'').hexdigest(), definitions=[], nodes=1)
+        self.assertEqual(state.parser_response(b'', json.dumps(empty).encode(), 0), empty)
+        with self.assertRaises(state.Invalid):
+            state.parser_response(b'', json.dumps(dict(empty, nodes=0)).encode(), 0)
         for field, allowed in (('syntax_depth', (0, 32)), ('allocation_peak', (1, 128 * 1024 * 1024))):
             for boundary in allowed:
                 with self.subTest(field=field, boundary=boundary):
@@ -455,6 +465,550 @@ class ShellStateTests(unittest.TestCase):
 
 
 class ShellParser(unittest.TestCase):
+    def observation_home(self):
+        temporary = tempfile.TemporaryDirectory(prefix='functions-', dir=self.work)
+        self.addCleanup(temporary.cleanup)
+        return Path(temporary.name).resolve()
+
+    def source_file(self, home, path, raw):
+        target = home / path
+        target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        target.write_bytes(raw); target.chmod(0o600)
+        return target
+
+    def observed(self, home, **options):
+        result = observer.observe(str(home), observer.client.Parser(package=self.package, manifest_sha256=self.manifest_sha256), **options)
+        encoded, payloads = observer.state.encode(result.snapshot)
+        value = json.loads(encoded[len(observer.state.MAGIC):])
+        self.assertEqual(observer.state.encode(observer.state.decode(encoded, payloads)), (encoded, payloads))
+        return result, value, payloads
+
+    def test_observation_exact_complex_bytes_and_determinism(self):
+        home = self.observation_home()
+        # Match the qualified corpus CRLF policy: interior CRLF is preserved;
+        # CRLF after the closing unit is rejected by the pinned grammar below.
+        raw = ('# é\nordinary() {\r\n print "é"\r\n}\n'
+               'function complex {\n  for x in a b; do\n    if [[ -n $x ]]; then\n'
+               '      cat <<\'EOF\'\nprivate literal $HOME\nEOF\n'
+               '    fi\n  done\n  inner() { :; }\n  touch "$HOME/executed"\n}\n').encode()
+        self.source_file(home, '.zshrc', raw)
+        result, value, payloads = self.observed(home)
+        self.assertEqual({r['key'] for r in value['items']}, {'ordinary', 'complex'})
+        refs = {r['id']: r for r in value['content_refs']}
+        for item in value['items']:
+            first, last = item['details']['span']; ref = refs[item['content']]
+            self.assertEqual(payloads[ref['member']][ref['offset']:ref['offset'] + ref['length']], raw[first:last])
+            self.assertEqual(len(item['loads']), 2)
+        self.assertEqual(value['dependencies'], [])
+        self.assertTrue(all(r['condition'] == 'unknown' for r in value['loads']))
+        self.assertIn('function_calls_unresolved', result.uncertainties)
+        self.assertEqual(observer.state.encode(result.snapshot), observer.state.encode(self.observed(home)[0].snapshot))
+        self.assertFalse((home / 'executed').exists())
+        self.assertEqual((home / '.zshrc').read_bytes(), raw)
+        self.assertEqual(repr(result), '<ShellObservation private>')
+
+    def test_observation_static_chains_contexts_and_zdotdir(self):
+        home = self.observation_home()
+        self.source_file(home, '.zshenv', b'export ZDOTDIR="$HOME/.config/zsh"\nenv_fn() { :; }\n')
+        for name, key in (('.zprofile', 'profile'), ('.zshrc', 'rc'), ('.zlogin', 'login')):
+            self.source_file(home, '.config/zsh/' + name, (key + '() { :; }\n').encode())
+        with (home / '.config/zsh/.zshrc').open('ab') as stream:
+            stream.write(b'source "$HOME/parts/one"\n')
+        self.source_file(home, 'parts/one', b'. ${HOME}/parts/two\n')
+        self.source_file(home, 'parts/two', b'leaf() { :; }\n')
+        with patch.dict(os.environ, {'ZDOTDIR': '/untrusted/private/path'}):
+            result, value, _ = self.observed(home)
+        source_paths = {r['id']: r['path'] for r in value['sources']}
+        actual = [(r['context'], source_paths[r['source']]) for r in value['loads']]
+        self.assertEqual(actual, [('noninteractive', '.zshenv'), ('interactive', '.zshenv'),
+            ('interactive', '.config/zsh/.zshrc'), ('interactive', 'parts/one'), ('interactive', 'parts/two'),
+            ('login', '.zshenv'), ('login', '.config/zsh/.zprofile'), ('login', '.config/zsh/.zlogin'),
+            ('interactive-login', '.zshenv'), ('interactive-login', '.config/zsh/.zprofile'),
+            ('interactive-login', '.config/zsh/.zshrc'), ('interactive-login', 'parts/one'),
+            ('interactive-login', 'parts/two'), ('interactive-login', '.config/zsh/.zlogin')])
+        loads = {r['id']: r for r in value['loads']}
+        for row in value['loads']:
+            if row['parent']:
+                parent_path = source_paths[loads[row['parent']]['source']]
+                raw = (home / parent_path).read_bytes()
+                self.assertTrue(raw[slice(*row['site'])].startswith((b'source ', b'. ')))
+        redirected = self.observation_home()
+        self.source_file(redirected, 'zsh/.zshrc', b'explicit() { :; }\n')
+        self.assertEqual([r['key'] for r in self.observed(redirected, zdotdir=str(redirected / 'zsh'))[1]['items']], ['explicit'])
+        with self.assertRaisesRegex(observer.Invalid, 'invalid_request'):
+            self.observed(home, zdotdir='/outside/home')
+
+    def test_observation_bare_cr_comments_never_create_commands(self):
+        home = self.observation_home()
+        leaf = b'ghost() { :; }\n'
+        self.source_file(home, 'leaf', leaf)
+        self.source_file(home, 'redirect/.zshrc', leaf)
+        local = b'local_fn() {\r\n print "\xc3\xa9"\r\n}\n'
+        for ending in (b'\n', b'\r\n'):
+            with self.subTest(ending=ending):
+                rc = b'# comment\rsource "$HOME/leaf"' + ending + local
+                env = b'# comment\rZDOTDIR="$HOME/redirect"' + ending
+                self.source_file(home, '.zshrc', rc)
+                self.source_file(home, '.zshenv', env)
+                result, value, _ = self.observed(home, contexts=['interactive'])
+                self.assertEqual([row['key'] for row in value['items']], ['local_fn'])
+                self.assertEqual({row['path'] for row in value['sources']}, {'.zshrc'})
+                self.assertEqual(result._files['.zshrc']['status'], 'observed')
+                self.assertEqual(result._files['.zshenv']['status'], 'observed')
+                self.assertEqual(result._files['.zshrc']['commands'], [])
+                self.assertEqual(result._files['.zshenv']['commands'], [])
+                self.assertEqual(set(result._files), {'.zshenv', '.zshrc'})
+                self.assertTrue(all(row['parent'] is None for row in value['loads']))
+                self.assertEqual(result._files['.zshrc']['raw'], rc)
+                self.assertEqual(result._files['.zshenv']['raw'], env)
+                self.assertEqual((home / '.zshrc').read_bytes(), rc)
+                self.assertEqual((home / '.zshenv').read_bytes(), env)
+        # A real LF after the CR-containing comment admits the real command,
+        # while source sites retain their original byte offsets.
+        env = b'# comment\rignored\nZDOTDIR="$HOME/redirect"\n'
+        rc = b'# comment\rignored\nsource "$HOME/leaf"\n'
+        self.source_file(home, '.zshenv', env)
+        self.source_file(home, 'redirect/.zshrc', rc)
+        result, value, _ = self.observed(home, contexts=['interactive'])
+        self.assertEqual([row['key'] for row in value['items']], ['ghost'])
+        child = next(row for row in value['loads'] if row['parent'] is not None)
+        self.assertEqual(child['site'], [rc.index(b'source'), len(rc) - 1])
+        self.assertEqual(set(result._files), {'.zshenv', 'redirect/.zshrc', 'leaf'})
+
+    def test_observation_ambiguous_units_and_source_relationships(self):
+        home = self.observation_home()
+        cases = [
+            (b'f() { :; }\nf() { print later; }\n', 'ambiguous_function'),
+            (b'function f other { :; }\nf() { :; }\n', 'ambiguous_function'),
+            (b"alias f='echo existing'\nf() { :; }\n", 'ambiguous_function'),
+            (b'if true; then\nf() { :; }\nfi\n', 'unsupported_context'),
+            (b'source "$HOME/$dynamic"\nf() { :; }\n', 'unsupported_context'),
+            (b'source ../escape\nf() { :; }\n', 'unsupported_context'),
+            (b"function 'source' { :; }\nsource \"$HOME/leaf\"\n", 'unsupported_context'),
+            (b'source() { :; }\nsource "$HOME/leaf"\n', 'ambiguous_source_command'),
+            (b'source "$HOME/leaf"\nsource "$HOME/leaf"\n', 'ambiguous_function'),
+            (b'source "$HOME/.zshrc"\nf() { :; }\n', 'cyclic_source'),
+        ]
+        self.source_file(home, 'leaf', b'f() { :; }\n')
+        for raw, code in cases:
+            self.source_file(home, '.zshrc', raw)
+            with self.subTest(code=code, raw=raw):
+                result, value, _ = self.observed(home, contexts=['interactive'])
+                self.assertEqual(value['items'], [])
+                self.assertIn(code, result.codes)
+        self.source_file(home, '.zshrc', b'function a b { :; }\nouter() { inner() { :; } }\n')
+        self.assertEqual([r['key'] for r in self.observed(home)[1]['items']], ['outer'])
+        self.source_file(home, '.zshrc', b'() { :; }\nouter() { :; }\n')
+        self.assertEqual(self.observed(home)[1]['items'], [])
+        self.source_file(home, '.zshenv', b'if true; then ZDOTDIR="$HOME/zsh"; fi\n')
+        result, value, _ = self.observed(home)
+        self.assertEqual(value['items'], [])
+        self.assertIn('startup_unresolved', result.codes)
+        self.source_file(home, '.zshenv', b'function a b { :; }\nZDOTDIR="$HOME/zsh"\n')
+        result, value, _ = self.observed(home)
+        self.assertEqual(value['items'], []); self.assertIn('ambiguous_zdotdir', result.codes)
+
+    def test_observation_missing_unsafe_malformed_and_changed_sources(self):
+        home = self.observation_home()
+        result, value, _ = self.observed(home)
+        self.assertEqual(value['items'], [])
+        self.assertEqual({r['status'] for r in result._files.values()}, {'missing'})
+        target = self.source_file(home, 'leaf', b'private_name() { :; }\n')
+        startup = home / '.zshrc'; startup.symlink_to(target)
+        result, value, _ = self.observed(home)
+        self.assertEqual(result._files['.zshrc']['status'], 'unsafe'); self.assertEqual(value['items'], [])
+        startup.unlink(); os.link(target, startup)
+        self.assertEqual(self.observed(home)[0]._files['.zshrc']['status'], 'unsafe')
+        startup.unlink(); self.source_file(home, '.zshrc', target.read_bytes()); startup.chmod(0o666)
+        self.assertEqual(self.observed(home)[0]._files['.zshrc']['status'], 'unsafe')
+        startup.chmod(0o600)
+        subprocess.run(['/bin/chmod', '+a', 'everyone allow read', str(startup)], check=True)
+        try:
+            self.assertEqual(self.observed(home)[0]._files['.zshrc']['status'], 'unsafe')
+        finally:
+            subprocess.run(['/bin/chmod', '-N', str(startup)], check=True)
+        (home / 'linked-parent').symlink_to(home, target_is_directory=True)
+        self.source_file(home, '.zshrc', b'source "$HOME/linked-parent/leaf"\n')
+        self.assertEqual(self.observed(home)[0]._files['linked-parent/leaf']['status'], 'unsafe')
+        self.source_file(home, '.zshrc', target.read_bytes())
+        self.source_file(home, '.zshrc.zwc', b'compiled')
+        self.assertEqual(self.observed(home)[1]['items'], [])
+        (home / '.zshrc.zwc').unlink()
+        for raw, code in ((b'private_name() {', 'parser_syntax_invalid'),
+                          (b'f() { :; }\r\n', 'parser_syntax_invalid'), (b'\xff', 'source_encoding'),
+                          (b'x\x00', 'source_encoding')):
+            self.source_file(home, '.zshrc', raw)
+            result, value, _ = self.observed(home)
+            self.assertIn(code, result.codes); self.assertEqual(value['items'], [])
+            self.assertNotIn('private_name', repr(result.codes))
+            self.assertNotIn(str(home), repr(result))
+        self.source_file(home, '.zshrc', target.read_bytes())
+        original = observer.client.Parser.parse
+        def changing(parser, raw, **options):
+            response = original(parser, raw, **options)
+            startup.write_bytes(raw + b'# changed\n')
+            return response
+        with patch.object(observer.client.Parser, 'parse', changing), self.assertRaisesRegex(observer.Invalid, 'source_changed'):
+            self.observed(home)
+        self.source_file(home, '.zshrc', target.read_bytes())
+        def appeared(parser, raw, **options):
+            response = original(parser, raw, **options)
+            self.source_file(home, '.zshenv', b'# appeared after absence\n')
+            return response
+        with patch.object(observer.client.Parser, 'parse', appeared), self.assertRaisesRegex(observer.Invalid, 'source_changed'):
+            self.observed(home)
+
+    def test_observation_conflicting_files_and_uncertain_loads(self):
+        home = self.observation_home()
+        self.source_file(home, '.zshrc', b'source "$HOME/one"\nsource "$HOME/two"\n')
+        self.source_file(home, 'one', b'f() { :; }\n')
+        self.source_file(home, 'two', b'f() { print other; }\n')
+        result, value, _ = self.observed(home)
+        self.assertEqual(value['items'], []); self.assertIn('ambiguous_function', result.codes)
+        (home / 'two').unlink()
+        result, value, _ = self.observed(home)
+        self.assertEqual([r['key'] for r in value['items']], ['f'])
+        self.assertIn('source_unresolved', result.codes)
+        self.assertTrue(all(row['condition'] == 'unknown' for row in value['loads']))
+        self.source_file(home, '.zshenv', b'source() { :; }\n')
+        result, value, _ = self.observed(home)
+        self.assertEqual(value['items'], [])
+        self.assertIn('ambiguous_source_command', result.codes)
+        self.assertNotIn('one', result._files)  # No fabricated load through a shadowed command.
+        self.source_file(home, '.zshenv', b'# inert\n')
+        self.source_file(home, 'one', b'source() { :; }\n')
+        self.source_file(home, 'two', b'late() { :; }\n')
+        result, value, _ = self.observed(home)
+        self.assertEqual(value['items'], []); self.assertNotIn('two', result._files)
+        self.source_file(home, 'one', b'f() { :; }\n')
+        self.source_file(home, '.zshrc', b'source "$HOME/one"\nsource "$HOME/ONE"\n')
+        # Works on both case-sensitive and default case-insensitive test volumes.
+        if not (home / 'ONE').exists():
+            self.source_file(home, 'ONE', b'g() { :; }\n')
+        result, value, _ = self.observed(home)
+        self.assertEqual(value['items'], [])
+        self.assertIn('ambiguous_source', result.codes)
+
+    def test_observation_resource_limits_and_cancellation(self):
+        home = self.observation_home()
+        self.source_file(home, '.zshrc', b'#' + b' ' * observer.state.MAX_SOURCE)
+        self.assertEqual(self.observed(home)[1]['items'], [])
+        # Real depth boundary: sixteen entered files, then a seventeenth.
+        self.source_file(home, '.zshrc', b'source "$HOME/part0"\n')
+        for i in range(15):
+            self.source_file(home, 'part%d' % i, ('source "$HOME/part%d"\n' % (i + 1)).encode()
+                             if i < 14 else b'leaf() { :; }\n')
+        self.assertEqual([r['key'] for r in self.observed(home, contexts=['interactive'])[1]['items']], ['leaf'])
+        self.source_file(home, 'part14', b'source "$HOME/part15"\n')
+        self.source_file(home, 'part15', b'leaf() { :; }\n')
+        with self.assertRaisesRegex(observer.Invalid, 'resource_limit'):
+            self.observed(home, contexts=['interactive'])
+        # Reduced aggregate/count budgets exercise collection, independently of
+        # the existing B1 tests of the actual 2 MiB/128/512 codec boundaries.
+        self.source_file(home, '.zshrc', b'source "$HOME/part15"\n')
+        for field, limit in (('MAX_SOURCE_TOTAL', 20), ('MAX_SOURCES', 1), ('MAX_LOADS', 1),
+                             ('MAX_DECLARATIONS', 0), ('MAX_MANIFEST', 1)):
+            with self.subTest(field=field), patch.object(observer.state, field, limit), self.assertRaisesRegex(observer.Invalid, 'resource_limit'):
+                self.observed(home)
+        with self.assertRaisesRegex(observer.Invalid, 'cancelled'):
+            self.observed(home, cancelled=lambda: True)
+        with patch.object(observer, 'OBSERVATION_SECONDS', 0), self.assertRaisesRegex(observer.Invalid, 'observation_timeout'):
+            self.observed(home)
+        for options in (dict(contexts=['interactive'] * 5), dict(cancelled=None)):
+            with self.assertRaisesRegex(observer.Invalid, 'invalid_request'):
+                self.observed(home, **options)
+
+    def test_observation_trusted_transport_and_packaged_location(self):
+        home = self.observation_home()
+        parser = observer.client.Parser(package=self.package, manifest_sha256=self.manifest_sha256)
+        response = parser.parse(b'')
+        self.assertEqual(observer.state.parser_response(b'', response, 0)['definitions'], [])
+        app = home / 'Fixture.app'
+        helper = app / 'Contents/Helpers/macseed-shell-parser'; helper.parent.mkdir(parents=True)
+        shutil.copyfile(self.binary, helper); helper.chmod(0o755)
+        manifest = app / 'Contents/Resources/ThirdPartyNotices/shell-parser-build.json'
+        manifest.parent.mkdir(parents=True); shutil.copyfile(self.package / 'build.json', manifest)
+        self.assertEqual(json.loads(observer.client.Parser(bundle=app, manifest_sha256=self.manifest_sha256).parse(b'f() { :; }'))['status'], 'ok')
+        with self.assertRaisesRegex(observer.client.Invalid, 'helper_unavailable'):
+            observer.client.Parser(package=home / 'missing', manifest_sha256=self.manifest_sha256).parse(b'')
+        with patch.object(observer.client, '_Task', side_effect=OSError('private-path')):
+            with self.assertRaisesRegex(observer.client.Invalid, '^shell_observation_launch_failed$'):
+                parser.parse(b'')
+        helper.write_bytes(b'untrusted')
+        with self.assertRaisesRegex(observer.client.Invalid, 'helper_untrusted'):
+            observer.client.Parser(bundle=app, manifest_sha256=self.manifest_sha256).parse(b'')
+        helper.unlink(); helper.symlink_to(self.binary)
+        with self.assertRaisesRegex(observer.client.Invalid, 'helper_untrusted'):
+            observer.client.Parser(bundle=app, manifest_sha256=self.manifest_sha256).parse(b'')
+
+    def test_observation_transport_faults_deadline_cleanup_and_privacy(self):
+        directory = self.observation_home()
+        source = directory / 'fault.c'
+        source.write_text('''#include <stdio.h>
+#include <string.h>
+#include <signal.h>
+#include <unistd.h>
+#include <stdlib.h>
+int main(void) {
+  char input[64] = {0}; fread(input, 1, sizeof(input)-1, stdin);
+  if (!strcmp(input, "crash")) { raise(SIGKILL); }
+  if (!strcmp(input, "short")) { puts("{"); return 0; }
+  if (!strncmp(input, "broken", 6)) { close(0); return 0; }
+  if (!strcmp(input, "orphan")) {
+    if (!fork()) { signal(SIGTERM, SIG_IGN); for (;;) pause(); }
+    return 3;
+  }
+  if (!strcmp(input, "overflow")) { for (int i=0; i<140000; ++i) putchar('x'); return 0; }
+  if (!strcmp(input, "hang")) { signal(SIGTERM, SIG_IGN); fork(); for (;;) pause(); }
+  if (!strcmp(input, "nonzero")) { return 3; }
+  fputs("private-source /private/path secret-name", stderr);
+  puts("{private-malformed-output}"); return 0;
+}
+''')
+        binary = directory / 'macseed-shell-parser'
+        subprocess.run(['xcrun', 'clang', str(source), '-o', str(binary)], check=True, capture_output=True)
+        binary.chmod(0o755)
+        manifest = json.loads((self.package / 'build.json').read_bytes())
+        manifest['architectures'] = [platform.machine()]
+        builder.sign_binary(binary)
+        launch = builder.launch_metadata(binary, [platform.machine()], directory)
+        manifest['binaries']['macseed-shell-parser'] = dict(bytes=binary.stat().st_size,
+            sha256=hashlib.sha256(binary.read_bytes()).hexdigest(), launch=launch)
+        (directory / 'build.json').write_text(json.dumps(manifest))
+        parser = observer.client.Parser(package=directory,
+            manifest_sha256=hashlib.sha256((directory / 'build.json').read_bytes()).hexdigest())
+        original = observer.client.processes.ProcessTree.scan
+        seen = set()
+        broken_pipes = []
+        original_write = observer.client.os.write
+        def write(fd, data):
+            try:
+                return original_write(fd, data)
+            except BrokenPipeError:
+                broken_pipes.append(True)
+                raise
+        def remember(tree):
+            rows = original(tree); seen.update(rows); return rows
+        unrelated = subprocess.Popen(['/bin/sleep', '30'], start_new_session=True)
+        self.addCleanup(lambda: (unrelated.kill(), unrelated.wait()))
+        for raw, code in ((b'crash', 'process_failed'), (b'nonzero', 'process_failed'),
+                          (b'overflow', 'output_limit'), (b'malformed', 'parser_invalid'),
+                          (b'short', 'parser_invalid'), (b'broken' + b' ' * (state.MAX_SOURCE - 6), 'parser_invalid'),
+                          (b'hang', 'timeout'), (b'orphan', 'timeout')):
+            with self.subTest(mode=raw[:16]), patch.object(observer.client.os, 'write', write), \
+                    patch.object(observer.client, 'PROCESS_SECONDS', .4 if raw == b'hang' else 3), \
+                    patch.object(observer.client.processes.ProcessTree, 'scan', remember):
+                started = time.monotonic()
+                with self.assertRaises(observer.client.Invalid) as caught:
+                    parser.parse(raw)
+                self.assertEqual(str(caught.exception), 'shell_observation_' + code)
+                self.assertLess(time.monotonic() - started, 6)
+        self.assertTrue(broken_pipes)  # Exercise EPIPE, not merely an empty response.
+        started = time.monotonic()
+        with patch.object(observer.client.processes.ProcessTree, 'scan', remember), self.assertRaisesRegex(observer.client.Invalid, 'cancelled'):
+            parser.parse(b'hang', cancelled=lambda: time.monotonic() - started > .2)
+        self.assertFalse(seen & observer.client.processes.process_table().keys())
+        scans = 0
+        def failed_observation(tree):
+            nonlocal scans
+            scans += 1
+            if scans > 3:
+                raise OSError('private-process-detail')
+            return remember(tree)
+        with patch.object(observer.client.processes.ProcessTree, 'scan', failed_observation):
+            with self.assertRaisesRegex(observer.client.Invalid, '^shell_observation_process_cleanup_failed$'):
+                parser.parse(b'hang')
+        self.assertFalse(seen & observer.client.processes.process_table().keys())
+        self.assertIsNone(unrelated.poll())
+        self.assertEqual(repr(parser), '<ShellParser private>')
+
+    def copied_package(self):
+        directory = self.observation_home()
+        for name in ('macseed-shell-parser', 'build.json'):
+            shutil.copy2(self.package / name, directory / name)
+        return directory
+
+    def fixture_manifest(self, directory, metadata):
+        # Only test/build code establishes a new anchor. Runtime parsing never
+        # derives this value from the package it is about to execute.
+        raw = (json.dumps(metadata, indent=2) + '\n').encode()
+        (directory / 'build.json').write_bytes(raw)
+        return hashlib.sha256(raw).hexdigest()
+
+    def test_protected_launch_build_identities_and_packaging(self):
+        metadata = json.loads((self.package / 'build.json').read_bytes())
+        self.assertEqual(metadata['schema'], 2)
+        self.assertEqual(metadata['minimum_macos'], '14.0')
+        self.assertEqual(metadata['functions_minimum_macos'], '14.4')
+        for name, record in metadata['binaries'].items():
+            binary = self.package / name
+            self.assertEqual(hashlib.sha256(binary.read_bytes()).hexdigest(), record['sha256'])
+            self.assertEqual(binary.stat().st_size, record['bytes'])
+            actual = builder.launch_metadata(binary, list(record['launch']['cdhashes']), self.work)
+            self.assertEqual(actual, record['launch'])
+        parser = observer.client.Parser(package=self.package, manifest_sha256=self.manifest_sha256)
+        self.assertEqual(json.loads(parser.parse(b'f() { :; }'))['status'], 'ok')
+        resources = self.observation_home() / 'Proof.app/Contents/Resources'
+        builder.install_package(self.package, resources)
+        packaged = observer.client.Parser(bundle=resources.parent.parent, manifest_sha256=self.manifest_sha256)
+        self.assertEqual(json.loads(packaged.parse(b'f() { :; }'))['status'], 'ok')
+
+    def test_protected_launch_x86_64_identity_when_packaged(self):
+        metadata = json.loads((self.package / 'build.json').read_bytes())
+        binary = self.package / 'macseed-shell-parser-x86_64'
+        if not binary.exists():
+            self.skipTest('x86_64 slice not in this developer package')
+        launch = metadata['binaries'][binary.name]['launch']
+        # Use the union constraint for both CPUs, including the Rosetta choice.
+        union = metadata['binaries']['macseed-shell-parser']['launch']
+        self.assertEqual(launch['cdhashes']['x86_64'], union['cdhashes']['x86_64'])
+        raw = b'f() { :; }'
+        response, code = observer.client.Parser._run(str(binary),
+            base64.b64decode(union['requirement_data']), raw, lambda: False)
+        self.assertEqual(observer.state.function_evidence(raw, response, code, 0)[0], 'f')
+        if platform.machine() == 'arm64':
+            wrong = metadata['binaries']['macseed-shell-parser-arm64']['launch']
+            response, code = observer.client.Parser._run(str(binary),
+                base64.b64decode(wrong['requirement_data']), raw, lambda: False)
+            self.assertNotEqual(code, 0)
+            with self.assertRaises(observer.state.Invalid):
+                observer.state.parser_response(raw, response, code)
+
+    def test_protected_launch_substitution_marker_and_forged_response(self):
+        directory = self.copied_package()
+        binary = directory / 'macseed-shell-parser'
+        parser = observer.client.Parser(package=directory, manifest_sha256=self.manifest_sha256)
+        source = b'f() { :; }'
+        genuine = parser.parse(source)
+        marker = directory / 'must-not-execute'
+        fixture = directory / 'replacement.c'
+        fixture.write_text('#include <stdio.h>\n#include <fcntl.h>\n#include <unistd.h>\n'
+            'int main(void) { int fd=open(' + json.dumps(str(marker)) + ',O_WRONLY|O_CREAT|O_EXCL,0600); '
+            'if(fd>=0) close(fd); fputs(' + json.dumps(genuine.decode()) + ',stdout); return 0; }\n')
+        replacement = directory / 'replacement'
+        subprocess.run(['xcrun', 'clang', str(fixture), '-o', str(replacement)], check=True, capture_output=True)
+        builder.sign_binary(replacement)
+        launch = builder.launch_metadata(replacement, [platform.machine()], directory)
+        # This signed fixture really writes a marker and can forge usable B1 JSON
+        # when explicitly authorized. The swap test never authorizes its identity.
+        response, code = observer.client.Parser._run(str(replacement),
+            base64.b64decode(launch['requirement_data']), source, lambda: False)
+        self.assertEqual(observer.state.function_evidence(source, response, code, 0)[0], 'f')
+        self.assertTrue(marker.exists()); marker.unlink()
+        launch_task = observer.client._Task._launch
+        wait = observer.client._Task.wait
+        statuses = []
+        def record(task, timeout):
+            status = wait(task, timeout); statuses.append(status); return status
+        for attempt in range(3):
+            with self.subTest(attempt=attempt):
+                staged = directory / 'swap'
+                shutil.copy2(replacement, staged)
+                def swap(task):
+                    os.replace(staged, binary)
+                    launch_task(task)
+                with patch.object(observer.client._Task, '_launch', swap), \
+                        patch.object(observer.client._Task, 'wait', record), self.assertRaises(observer.client.Invalid) as caught:
+                    parser.parse(source)
+                self.assertIn(caught.exception.code, ('helper_untrusted', 'launch_failed', 'process_failed'))
+                self.assertFalse(marker.exists())
+                self.assertNotIn(str(directory), str(caught.exception))
+                binary.unlink(); shutil.copy2(self.binary, binary)
+        self.assertTrue(statuses)
+        self.assertTrue(all(code < 0 for code in statuses))
+
+    def test_protected_launch_manifest_anchor_and_resigning(self):
+        directory = self.copied_package()
+        binary = directory / 'macseed-shell-parser'
+        metadata = json.loads((directory / 'build.json').read_bytes())
+        parser = observer.client.Parser(package=directory, manifest_sha256=self.manifest_sha256)
+        with self.assertRaisesRegex(observer.client.Invalid, 'helper_untrusted'):
+            observer.client.Parser(package=directory)  # No adjacent-file auto-trust.
+        builder.sign_binary(binary, 'org.macseed.test.resigned')
+        record = metadata['binaries']['macseed-shell-parser']
+        record['bytes'] = binary.stat().st_size
+        record['sha256'] = hashlib.sha256(binary.read_bytes()).hexdigest()
+        stale_requirement_pin = self.fixture_manifest(directory, metadata)
+        with patch.object(observer.client, '_Task') as launch, self.assertRaisesRegex(observer.client.Invalid, 'helper_untrusted'):
+            parser.parse(b'')
+        launch.assert_not_called()  # Updating writable metadata cannot grant trust.
+        with self.assertRaisesRegex(observer.client.Invalid, '^shell_observation_process_failed$'):
+            observer.client.Parser(package=directory, manifest_sha256=stale_requirement_pin).parse(b'')
+        refreshed = builder.launch_metadata(binary, metadata['architectures'], directory)
+        self.assertNotEqual(record['launch']['cdhashes'], refreshed['cdhashes'])
+        record['launch'] = refreshed
+        new_pin = self.fixture_manifest(directory, metadata)
+        with patch.object(observer.client, '_Task') as launch, self.assertRaisesRegex(observer.client.Invalid, 'helper_untrusted'):
+            parser.parse(b'')
+        launch.assert_not_called()
+        self.assertEqual(json.loads(observer.client.Parser(package=directory, manifest_sha256=new_pin).parse(b''))['status'], 'ok')
+
+    def test_protected_launch_malformed_required_metadata(self):
+        directory = self.copied_package()
+        original = json.loads((directory / 'build.json').read_bytes())
+        cases = []
+        for field, value in (('schema', 999), ('cdhashes', {}), ('requirement_data', ''),
+                             ('requirement_data', 'not base64'), ('requirement_data', 'x' * 5465)):
+            metadata = copy.deepcopy(original)
+            metadata['binaries']['macseed-shell-parser']['launch'][field] = value
+            cases.append(metadata)
+        metadata = copy.deepcopy(original); del metadata['binaries']['macseed-shell-parser']['launch']; cases.append(metadata)
+        metadata = copy.deepcopy(original); metadata['schema'] = 1; cases.append(metadata)
+        for metadata in cases:
+            pin = self.fixture_manifest(directory, metadata)
+            with self.subTest(metadata=cases.index(metadata)), patch.object(observer.client, '_Task') as launch, \
+                    self.assertRaisesRegex(observer.client.Invalid, '^shell_observation_helper_untrusted$'):
+                observer.client.Parser(package=directory, manifest_sha256=pin).parse(b'')
+            launch.assert_not_called()
+
+    def test_functions_unavailable_without_launch_api_is_not_empty_success(self):
+        home = self.observation_home()
+        parser = observer.client.Parser(package=self.package, manifest_sha256=self.manifest_sha256)
+        api = observer.client._foundation()
+        send = api.send
+        def unavailable(obj, selector, *args, **kwargs):
+            return False if selector == 'instancesRespondToSelector:' else send(obj, selector, *args, **kwargs)
+        with patch.object(api, 'send', unavailable), patch.object(observer.client, '_Task') as launch, \
+                patch.object(observer.sources, 'file_state') as read:
+            for action in (lambda: parser.parse(b''), lambda: observer.observe(str(home), parser)):
+                with self.assertRaisesRegex(observer.client.Invalid, '^shell_observation_functions_unavailable$'):
+                    action()
+        launch.assert_not_called(); read.assert_not_called()
+
+    def test_protected_launch_malformed_constraint_is_rejected_by_os(self):
+        directory = self.copied_package()
+        metadata = json.loads((directory / 'build.json').read_bytes())
+        record = metadata['binaries']['macseed-shell-parser']['launch']
+        valid = base64.b64decode(record['requirement_data'])
+        for raw in (b'\0', valid[:-1]):
+            record['requirement_data'] = base64.b64encode(raw).decode('ascii')
+            pin = self.fixture_manifest(directory, metadata)
+            with self.assertRaises(observer.client.Invalid) as caught:
+                observer.client.Parser(package=directory, manifest_sha256=pin).parse(b'')
+            self.assertIn(caught.exception.code, ('launch_failed', 'process_failed'))
+
+    def test_process_group_ownership_preserves_unrelated_and_reused_roots(self):
+        processes = observer.client.processes
+        rows = {1001: (1, 'root-birth', '0:00', 'helper'),
+                1002: (1, 'worker-birth', '0:00', 'worker'),
+                1003: (1, 'other-birth', '0:00', 'unrelated')}
+        groups = {1001: 1001, 1002: 1001, 1003: 1003}
+        with patch.object(processes, 'process_table', side_effect=lambda: dict(rows)), \
+                patch.object(processes.os, 'getsid', return_value=999), \
+                patch.object(processes.os, 'getpgid', side_effect=groups.__getitem__), \
+                patch.object(processes.os, 'kill') as kill:
+            ordinary = processes.ProcessTree(1001)
+            self.assertEqual(set(ordinary.scan()), {1001})
+            owned = processes.ProcessTree(1001, process_group=True)
+            self.assertEqual(set(owned.scan()), {1001, 1002})
+            del rows[1001]
+            self.assertEqual(set(owned.scan()), {1002})
+            del rows[1002]
+            rows[1001] = (1, 'reused-pid', '0:00', 'unrelated-new-root')
+            self.assertEqual(owned.scan(), {})
+            self.assertTrue(owned.stop())
+        kill.assert_not_called()
+
     @classmethod
     def setUpClass(cls):
         cls.temporary = tempfile.TemporaryDirectory(prefix='macseed-shell-tests-')
@@ -464,6 +1018,8 @@ class ShellParser(unittest.TestCase):
         cls.package = Path(supplied) if supplied else cls.work / 'package'
         if not supplied:
             builder.build(cls.package, [platform.machine()])
+        # Explicit test-fixture trust boundary, captured once before any mutation.
+        cls.manifest_sha256 = hashlib.sha256((cls.package / 'build.json').read_bytes()).hexdigest()
         cls.binary = cls.package / 'macseed-shell-parser'
         cls.sanitized = json.loads((cls.package / 'build.json').read_text())['sanitized']
         cls.manifest = json.loads((CORPUS / 'manifest.json').read_text())

@@ -40,6 +40,10 @@ contracts, [TODO](TODO.md) owns concrete unfinished actions, and
   its initial in-progress state is not hosted qualification. Historical isolated SSH
   evidence, Git-over-SSH sandbox/readiness limits, native Workspace and other open
   gates remain recorded below and in TODO.
+- **Typed Shell foundation — Implemented, isolated:** B1 strict state/selection and
+  [B2A read-only Functions observation](docs/toolkit/CONFIGURATION.md#read-only-functions-observation-b2a)
+  reuse the bundled parser and existing source guards. Capture/Bundle activation,
+  Restore/Check and release qualification remain open; this does not extend v5 behavior.
 - **Before Macseed 1.0:** finish Shell, Stage 3C and remaining Stage 16 functionality;
   implement Stage 17 autonomous distribution; then complete comprehensive Native
   Desktop/packaged clean-Mac qualification and Early Access. No stage is closed by

@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """Offline, pinned native Shell helper build; no grammar generation or downloads."""
 import argparse
+import base64
 import hashlib
 import json
 import os
 from pathlib import Path
 import platform
+import re
 import shutil
 import signal
 import stat
@@ -16,6 +18,38 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / 'modules/shell/parser'
 VENDOR = SOURCE / 'vendor'
+
+
+def sign_binary(binary, identifier='org.macseed.shell-parser'):
+    """Development signing only; distribution must finalize its signer first."""
+    subprocess.run(['/usr/bin/codesign', '--force', '--sign', '-', '--timestamp=none',
+                    '--identifier', identifier, str(binary)], check=True, capture_output=True, timeout=30)
+
+
+def launch_metadata(binary, architectures, work):
+    """Build-time identities of the final signed bytes, never a runtime probe."""
+    subprocess.run(['/usr/bin/codesign', '--verify', '--strict', str(binary)],
+                   check=True, capture_output=True, timeout=30)
+    hashes = {}
+    for architecture in architectures:
+        result = subprocess.run(['/usr/bin/codesign', '-d', '--arch', architecture, '--verbose=4', str(binary)],
+                                check=True, capture_output=True, timeout=30)
+        values = re.findall(rb'^CandidateCDHash \S+=([0-9a-f]{40})$', result.stderr, re.M)
+        if not values or len(values) > 4:
+            raise ValueError('code_directory_identity_unavailable')
+        hashes[architecture] = sorted({v.decode('ascii') for v in values})
+    encoder = work / 'requirement-encoder'
+    if not encoder.exists():
+        subprocess.run(['xcrun', 'swiftc', '-target', platform.machine() + '-apple-macos14.4',
+                        '-module-cache-path', str(work / 'swift-cache'),
+                        str(ROOT / 'scripts/shell-parser-requirement.swift'), '-o', str(encoder)],
+                       check=True, capture_output=True, timeout=60)
+    result = subprocess.run([str(encoder), *sorted({v for values in hashes.values() for v in values})],
+                            check=True, capture_output=True, timeout=10)
+    encoded = result.stdout.strip().decode('ascii')
+    if not 0 < len(base64.b64decode(encoded, validate=True)) <= 4096:
+        raise ValueError('launch_requirement_invalid')
+    return dict(schema=1, cdhashes=hashes, requirement_data=encoded)
 
 
 def extract_sources(destination):
@@ -81,22 +115,32 @@ def build(output, architectures, sanitize=False):
             if not sanitize:
                 subprocess.run(['xcrun', 'strip', '-x', str(binary)], check=True)
             binary.chmod(0o755)
+            sign_binary(binary)
         if len(architectures) == 2:
             subprocess.run(['xcrun', 'lipo', '-create',
                             *[str(package / ('macseed-shell-parser-' + a)) for a in architectures],
                             '-output', str(package / 'macseed-shell-parser')], check=True)
         else:
             shutil.copy2(package / ('macseed-shell-parser-' + architectures[0]), package / 'macseed-shell-parser')
+        sign_binary(package / 'macseed-shell-parser')
         for name in ('zsh-LICENSE', 'runtime-LICENSE', 'pins.json'):
             shutil.copyfile(VENDOR / name, package / name)
         shutil.copyfile(work / 'runtime/lib/src/unicode/LICENSE', package / 'runtime-unicode-LICENSE')
-        metadata = dict(schema=1, minimum_macos='14.0', architectures=architectures,
+        binaries = {}
+        for binary in sorted(package.glob('macseed-shell-parser*')):
+            targets = architectures if binary.name == 'macseed-shell-parser' else [binary.name.removeprefix('macseed-shell-parser-')]
+            launch = launch_metadata(binary, targets, work)
+            binaries[binary.name] = dict(bytes=binary.stat().st_size,
+                sha256=hashlib.sha256(binary.read_bytes()).hexdigest(), launch=launch)
+        metadata = dict(schema=2, minimum_macos='14.0', functions_minimum_macos='14.4', architectures=architectures,
                         sanitized=sanitize, sources=pins,
                         compiler=subprocess.check_output([compiler, '--version'], text=True).splitlines()[0],
+                        swift_compiler=subprocess.check_output(['xcrun', 'swiftc', '--version'], text=True).splitlines()[0],
+                        build_macos=platform.mac_ver()[0],
                         sdk=subprocess.check_output(['xcrun', '--sdk', 'macosx', '--show-sdk-version'], text=True).strip(),
-                        binaries={p.name: dict(bytes=p.stat().st_size, sha256=hashlib.sha256(p.read_bytes()).hexdigest())
-                                  for p in package.glob('macseed-shell-parser*')})
-        (package / 'build.json').write_text(json.dumps(metadata, indent=2) + '\n')
+                        binaries=binaries)
+        manifest = (json.dumps(metadata, indent=2) + '\n').encode()
+        (package / 'build.json').write_bytes(manifest)
         output.parent.mkdir(parents=True, exist_ok=True)
         # Reserve only our new destination. Never replace an existing package.
         output.mkdir()
@@ -105,7 +149,9 @@ def build(output, architectures, sanitize=False):
         except BaseException:
             shutil.rmtree(output)
             raise
-    return metadata
+    # Out-of-band trust anchor for Core/build callers. Never a self-authenticating
+    # field in the runtime manifest or a checksum read beside that manifest.
+    return dict(metadata, manifest_sha256=hashlib.sha256(manifest).hexdigest())
 
 
 def install_package(package, resources):
@@ -163,9 +209,9 @@ if __name__ == '__main__':
                 raise ValueError('sanitizer_not_allowed_in_app_bundle')
             with tempfile.TemporaryDirectory(prefix='macseed-shell-package-') as temporary:
                 package = Path(temporary) / 'package'
-                build(package, architectures)
+                metadata = build(package, architectures)
                 install_package(package, args.resources.absolute())
-            print('Prepared dormant Shell parser in Contents/Helpers/macseed-shell-parser')
+            print('Prepared dormant Shell parser; manifest_sha256=' + metadata['manifest_sha256'])
         else:
             print(json.dumps(build(args.output.absolute(), architectures, args.sanitize), indent=2))
     except (ValueError, OSError, subprocess.CalledProcessError) as error:

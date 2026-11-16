@@ -566,12 +566,8 @@ def select(state, item_ids) -> ShellState:
                     [r for r in value['dependencies'] if r['owner'] in selected], contents)
 
 
-def function_evidence(source, response, returncode, index):
-    """Consume the helper's private result; caller owns bounded process transport.
-
-    Return (binding name, exact bytes, details) for one named outer unit. This
-    establishes structural evidence only; conditional/load context is still opaque.
-    """
+def parser_response(source, response, returncode):
+    """Validate a complete private helper result, including zero definitions."""
     require(type(returncode) is int and returncode == 0, 'parser_invalid')
     require(type(source) is bytes and len(source) <= MAX_SOURCE, 'resource_limit')
     utf8(source)
@@ -584,8 +580,7 @@ def function_evidence(source, response, returncode, index):
     integer(value['syntax_depth'], 0, 32)  # Counted nesting, distinct from AST depth below.
     integer(value['allocation_peak'], 1, 128 * 1024 * 1024)
     definitions = _rows(value, 'definitions', 512)
-    require(type(index) is int and 0 <= index < len(definitions) and
-            value['nodes'] >= len(definitions), 'parser_invalid')
+    require(value['nodes'] >= max(1, len(definitions)), 'parser_invalid')
     stack, previous = [], -1
     for position, row in enumerate(definitions):
         keys(row, 'span body names parent depth')
@@ -610,7 +605,14 @@ def function_evidence(source, response, returncode, index):
             require(end <= a < b <= body[0], 'parser_invalid')
             utf8(source[a:b]); end = b
         utf8(source[first:last]); utf8(source[body[0]:body[1]])
-    row = definitions[index]
+    return value
+
+
+def function_evidence(source, response, returncode, index):
+    """Return one exact named outer unit; no activation or Restore authority."""
+    value = parser_response(source, response, returncode)
+    require(type(index) is int and 0 <= index < len(value['definitions']), 'parser_invalid')
+    row = value['definitions'][index]
     require(row['parent'] == -1 and len(row['names']) == 1, 'ambiguous_record')
     name = row['names'][0]
     key = utf8(source[name[0]:name[1]])

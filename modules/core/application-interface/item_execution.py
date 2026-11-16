@@ -85,7 +85,7 @@ class ProcessTree:
     that detaches and loses its parent before the first scan may be unobservable;
     a true stop result is not a global guarantee about external services.
     """
-    def __init__(self, pid, initialize=True):
+    def __init__(self, pid, initialize=True, *, process_group=False):
         self.root = pid
         self.known = {}
         self.initialized = False
@@ -93,6 +93,16 @@ class ProcessTree:
             self.session = pid if os.getsid(pid) == pid else None
         except ProcessLookupError:
             self.session = None
+        # Opt-in for Foundation tasks: they have a private group, not a session.
+        # Capture ownership while the live child is still waiting for input.
+        self.group = None
+        if process_group:
+            try:
+                if os.getpgid(pid) != pid:
+                    raise ValueError('process group not owned')
+                self.group = pid
+            except ProcessLookupError:
+                pass
         if initialize:
             self.scan()
 
@@ -104,10 +114,11 @@ class ProcessTree:
         self.initialized = True
         # Homebrew creates process groups within the item's private session. This
         # also finds those children if a short-lived parent has already exited.
-        if self.session is not None and not (self.root in table and self.root in self.known and table[self.root][1] != self.known[self.root]):
+        if (self.session is not None or self.group is not None) and not (self.root in table and self.root in self.known and table[self.root][1] != self.known[self.root]):
             for pid in table:
                 try:
-                    if os.getsid(pid) == self.session:
+                    if ((self.session is not None and os.getsid(pid) == self.session) or
+                            (self.group is not None and os.getpgid(pid) == self.group)):
                         owned.add(pid)
                 except (ProcessLookupError, PermissionError):
                     pass

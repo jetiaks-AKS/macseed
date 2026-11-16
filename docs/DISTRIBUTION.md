@@ -96,7 +96,11 @@ the outer app, then qualify Developer ID, Hardened Runtime, entitlements,
 notarization, stapling, DMG/Gatekeeper and clean-Mac secure workflows. Re-signing
 changes executable bytes: Stage 17 must bind post-signing integrity to the verified
 upstream input and release signing identity, without disabling validation. Never
-modify a signed app to update age at runtime. Core/Python still use the development
+modify a signed app to update age at runtime. The parser similarly requires post-signing
+SHA-256/CDHash metadata and a manifest digest anchored in trusted Core release code;
+regenerate these before outer-app sealing, never from a runtime executable. Its
+[technical signing contract](core/SHELL-PARSER.md#build-and-focused-validation)
+owns the details. Core/Python still use the development
 checkout; autonomous packaging is not implemented by this checkpoint.
 
 ## Bundled dependency maintenance

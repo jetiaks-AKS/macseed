@@ -20,6 +20,10 @@ The format is based on the principles of **Keep a Changelog**.
   source/load and dependency evidence, strict limits and explicit selection pruning.
   Production Bundle and Shell workflows retain their existing formats and behavior.
 
+* An isolated read-only Zsh Functions observer with guarded startup/static-source
+  reads, exact definition bytes, explicit load uncertainty and bounded native parser
+  transport. Functions remain inactive in production Capture, Rebuild and Check.
+
 * Git Rebuild can use an existing encrypted destination SSH key through a verified
   SSH agent, including Git-only Bundles. Fresh signature checks bind the expected
   public key and agent endpoint to Prepare/Execute without reading private-key

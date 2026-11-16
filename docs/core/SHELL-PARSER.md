@@ -1,6 +1,6 @@
 # Internal Shell structural parser
 
-This reference owns the dormant native helper interface. The
+This reference owns the native helper interface and its isolated Core caller. The
 [Shell configuration contract](../toolkit/CONFIGURATION.md#shell--zsh-configuration)
 owns product behavior. The helper does not enable Functions migration, change
 Aliases & Scripts v5 or serialize `shell-state:1`; the separate
@@ -69,13 +69,80 @@ and `definitions: []`. Codes are:
 `definition_size_limit`, `name_count_limit`, `allocation_limit`, `output_limit`,
 `timeout`, `cancelled`, `process_failed`, `memory_limit`, `internal_error`.
 
-The future caller must require successful process exit, exactly one complete
+The Core caller requires successful process exit, exactly one complete
 record, supported schema/profile, exact input digest/length, bounded counts and
 valid ranges before using any definition. Launch failure, crash, unknown exit,
 missing/truncated/oversized output or malformed response means no usable evidence.
-The caller must bound transport, launch and cancellation itself, suppress raw
-stderr and map failures to existing typed Core diagnostics. There is no current
+The caller bounds transport and cancellation, suppresses raw stderr and exposes
+fixed failure codes. There is no current production
 Capture/Rebuild/Check caller and no PATH or legacy parser fallback.
+
+## Core caller (B2A)
+
+Protected observation requires macOS 14.4 or later. Core checks the public
+`NSTask.setLaunchRequirementData:` API before reading startup files or launching
+anything. An unavailable API returns `shell_observation_functions_unavailable`,
+never an empty successful observation or an unprotected launch. The application
+and standalone native helper still target macOS 14.0; Aliases & Scripts v5 is unchanged.
+
+`modules/shell/parser_client.py` accepts exactly one explicit trusted development
+package or Macseed.app root, plus a required `manifest_sha256` from trusted Core/build
+code. It resolves only `macseed-shell-parser` and `build.json` in a package, or
+`Contents/Helpers/macseed-shell-parser` and
+`Contents/Resources/ThirdPartyNotices/shell-parser-build.json` in an app. Source data,
+user configuration and environment variables must never select these values.
+
+**Trust anchor:** the expected manifest digest must be captured from a controlled
+build result (`build()` returns it; the build CLI prints it), or authenticated Core
+release metadata. Reading a runtime manifest or adjacent checksum and hashing it
+is not authorization. The parser never does that automatically. Missing anchors,
+manifest changes, stale requirements and binary changes fail closed. Replacing both
+executable and writable manifest cannot grant a new identity under the existing
+anchor. The development Core/checkout and the caller supplying this anchor remain
+trusted code; this does not protect a compromised Core process. Stage 17 must bind
+the anchor to authenticated release code, not add a mutable runtime trust file.
+
+The caller checks no-follow ownership/modes/ACLs, file stability, the anchored
+manifest's pinned sources, architecture and executable SHA-256/size. It rejects
+sanitized packages. The code-file bound is 32 MiB and manifest bound 64 KiB.
+Manifest schema 2 records the native and observation minimum versions, compiler,
+Swift compiler, build macOS, SDK, source pins and binary records. Each binary's
+`launch` schema 1 contains a per-architecture `cdhashes` map and base64
+`requirement_data` (at most 4 KiB decoded). SHA-256 checks whole-file integrity;
+CDHash identifies the code directory chosen by the OS for execution.
+
+Core loads only system Foundation/libobjc through Python's `ctypes`. It sets the
+build-generated launch requirement on `NSTask` before `launchAndReturnError:`.
+The kernel enforces the accepted CodeDirectoryHash set at execution, including
+when the pathname changes after file validation. No separate Swift executable,
+custom dylib, runtime compiler, runtime `codesign`, PATH parser or ordinary `Popen`
+fallback is used. Post-launch file checks detect changes but are not the execution
+authorization boundary. Launch can yield a task subsequently killed by the OS;
+only a successful exit plus complete validated response can provide evidence.
+
+Each task has a minimal fixed environment, `/` working directory and discarded
+stderr. Core verifies its private process group; NSTask is not assumed to create
+a session. Stdin stays open until existing `item_execution.ProcessTree` captures
+ownership. Its opt-in group tracking finds worker descendants after abnormal
+parent exit and excludes reused root identities. Existing callers retain their
+session behavior. A live owned root also permits group cleanup if process-table
+inspection fails; that failure remains explicit. This is not a guarantee about
+unobserved detached work or external services.
+
+Nonblocking pipes retain the three-second transport deadline, cancellation and
+stdout bound strictly below 128 KiB. Foundation owns direct-child termination and
+reaping; Core never competes with it through `waitpid`. TERM/KILL, pipe closure,
+Foundation object release and quiescence checks run on every exit. Kernel launch,
+filesystem and process-table latency are not a hard three-second total bound;
+process probes retain their two-second limit and cleanup remains separately bounded.
+
+Stdout must contain exactly one valid B1 `parser_response`; `function_evidence`
+additionally admits individual named units. Native error envelopes require exit 2
+and an allowlisted code. Other exits, malformed/incomplete/oversized output and
+cleanup failures provide no usable definitions. Public errors contain fixed codes,
+never NSError descriptions, raw stderr, source, names or paths. The
+[B2A observation contract](../toolkit/CONFIGURATION.md#read-only-functions-observation-b2a)
+owns source qualification and aggregate budgets.
 
 ## Admission and limits
 
@@ -128,7 +195,8 @@ conditional activation, aliases, hooks, dependencies or Restore eligibility.
 
 ## Build and focused validation
 
-From the repository root, with Apple Xcode/Command Line Tools and developer Python:
+From the repository root, on macOS 14.4+ with Apple Xcode/Command Line Tools
+(including Swift) and developer Python:
 
 ```bash
 python3 -B scripts/build-shell-parser.py --output /absolute/new/task-directory/package
@@ -136,12 +204,32 @@ python3 -B scripts/build-shell-parser.py --output /absolute/new/task-directory/p
 ```
 
 The default build produces ARM64, x86_64 and universal executables, licenses and
-`build.json` (compiler/SDK, source pins, binary sizes and hashes). `--arch arm64`
+`build.json` (toolchains/host, source pins, final signed binary sizes, SHA-256,
+CDHash sets and launch requirements). The build result additionally returns an
+out-of-band `manifest_sha256`; it is not a self-authenticating manifest field. `--arch arm64`
 or `--arch x86_64` selects one target. Builds are offline; no npm, Node, Go, Rust,
 Homebrew or grammar generator is needed. The delivered executable uses only
-macOS system libraries. The target minimum is macOS 14.0, matching Desktop.
+macOS system libraries. The native helper and Desktop minimum remain macOS 14.0;
+the protected observation caller requires 14.4. Swift is a build-time dependency,
+not an end-user toolchain requirement.
 Reproducibility means pinned source inputs and recorded toolchain; byte identity
 across different Apple compiler/SDK releases is not promised.
+
+Development builds ad-hoc sign each final thin/universal helper with a fixed
+identifier and no timestamp, then obtain the signed architecture CDHashes through
+Apple `codesign`. `scripts/shell-parser-requirement.swift` uses the public
+`LaunchCodeRequirement`/`CodeDirectoryHash` API to encode opaque requirement data.
+The encoder stays in temporary build scratch and is never packaged. Encoding is
+deterministic for the recorded build environment; no private DER format is generated
+or interpreted by Core. All identities and whole-file hashes describe the same
+post-signing bytes.
+
+Re-signing can change both SHA-256 and CDHash. After final Developer ID signing,
+Stage 17 must regenerate identities, requirement data, manifest and its trusted
+anchor **before** sealing the outer app. `launch_metadata()` inspects already signed
+artifacts without changing their signer. Runtime regeneration or trusting a newly
+inspected executable is forbidden. No installed signed app is modified to refresh
+these values. Developer ID/Hardened Runtime/notarization remain unqualified here.
 
 Standalone packages include `zsh-LICENSE`, `runtime-LICENSE` and
 `runtime-unicode-LICENSE`, unchanged from upstream. App preparation installs them
@@ -175,8 +263,11 @@ production helper exposes no fault switches or environment overrides.
 
 This is implemented infrastructure, not production Functions acceptance. Still open:
 independent Zsh syntax oracle, wider option/grammar combinations and unusual span
-forms, sustained fuzzing/native-code review, aggregate source-operation budgets,
-physical Intel, execution on macOS 14, signed/notarized clean-Mac packaging,
-runtime helper authentication and future Core/Native integration. Local corpus,
-sanitizer or Rosetta results do not close those gates. Typed Shell Core integration
-requires the next review; Bundle capabilities 1–5 remain unchanged.
+forms (including complete CRLF documents: the qualified corpus covers interior CRLF
+with LF after the closing unit), sustained fuzzing/native-code review, representative aggregate-operation qualification,
+physical Intel, protected execution on macOS 14.4 and the unavailable branch on
+14.0–14.3, signed/notarized clean-Mac packaging and authenticated release-anchor
+provisioning, and future Core/Native integration. Local corpus,
+sanitizer or Rosetta results do not close those gates. The B1 codec and B2A observer
+remain isolated; Capture/Bundle integration requires B2B review. Bundle capabilities
+1–5 remain unchanged.

@@ -303,11 +303,78 @@ Records, source paths, names, digests, manifests and payloads remain private.
 `parser_invalid` or `selection_invalid`; no raw source or nested exception text
 belongs in ordinary diagnostics. This codec emits no logs/events or public inventory.
 
-**Next B2 review:** safe observation and parser transport, source/load/parse-context
-and dependency qualification, then explicit Core/Native capability and selection
-negotiation with aggregate budgets. Restore planning/publication, consent, freshness,
-Check predicates and native/packaged qualification remain separate required gates.
-The codec alone activates none of these workflows.
+### Read-only Functions observation (B2A)
+
+**Implemented, isolated; no production workflow activation.**
+Functions observation requires macOS **14.4+** and the
+[protected parser caller](../core/SHELL-PARSER.md#core-caller-b2a). On 14.0–14.3 it
+fails closed with `shell_observation_functions_unavailable` before source reads;
+missing Functions are never presented as a successful complete observation.
+The overall application minimum remains 14.0 and Aliases & Scripts v5 remains
+available under its existing contract.
+`modules/shell/observe.py` exposes `observe(home, parser, zdotdir=None, contexts=...,
+cancelled=...)` to trusted Core callers. The result contains a private B1 snapshot,
+private source outcomes and fixed diagnostic/uncertainty codes. It creates no
+generated configuration, Bundle, logs or public inventory. Neither observation nor
+structural success authorizes restoration. Aliases & Scripts v5 remains unchanged.
+
+Source reads reuse `sources.file_state()` and the existing HOME, parent, ownership,
+symlink, hardlink, permissions, ACL, flags, pending-publication and compiled-source
+guards. All read and missing sources are checked again before return; changed bytes
+or identity invalidate the entire observation. Unsafe sources contribute no items.
+Source outcomes distinguish `missing`, `unsafe`, `unsupported`, `ambiguous` and
+`observed`; these are private observation results, not new serialized item kinds.
+
+The bounded outer profile accepts comments, ordinary named function units,
+existing validated alias declarations and standalone literal `source`/`.` paths
+qualified by the existing HOME-relative reference policy. Complex function bodies
+are opaque exact bytes, including nested constructs and heredocs; their contents
+are never evaluated. Admitted CRLF and UTF-8 byte offsets are preserved. Outer-line
+extraction uses LF boundaries only; a bare CR inside a comment cannot introduce a
+source command or ZDOTDIR assignment. The pinned grammar accepts the corpus's
+interior-CRLF form but rejects CRLF after a closing
+function unit; rejection never triggers normalization or a parser fallback. Dynamic/conditional
+outer statements, quoted/computed bindings, arbitrary commands, anonymous invocations and unsupported source
+forms make that source opaque, with no independently selectable Functions from it.
+Nested definitions and multiple-name units never become independent items. Repeated
+definitions, conflicting bindings, observed alias/name collisions, source cycles,
+case-colliding sources and repeated loading within one context remain ambiguous.
+
+The explicit `zdotdir` argument can select a qualified directory inside HOME;
+ambient process ZDOTDIR is ignored. A single literal HOME-relative ZDOTDIR assignment
+in the initial `.zshenv`, preceding function/source/alias statements, may redirect
+later startup files. Other redirects remain unsupported or ambiguous. Observation
+retains standard startup order for separately identified `noninteractive`,
+`interactive`, `login` and `interactive-login` contexts, and depth-first literal
+source relationships with exact call-site spans. One physical definition may have
+one occurrence in each context. Item IDs remain B1 name identities; load IDs and
+ordering use the B1 contract. Only contributing sources and load ancestors enter
+the snapshot; missing/rejected source outcomes remain private alongside it.
+
+These contexts are hypothetical, not observations of a live Zsh session. System
+startup files, inherited bindings, options and external configuration are unobserved;
+every load has `condition: unknown`. Function calls, parse-time alias expansion,
+script invocation/transfer consent and activation remain explicitly unresolved.
+No dependency edges are invented from body text, and an empty dependency array
+does not prove independence. Incomplete source relationships retain uncertainty;
+the snapshot must travel with this observation context until B2B qualification.
+
+Observation uses B1's 128-KiB source, 2-MiB aggregate source, 128-source, 512-load,
+16-level load-depth and 512-definition limits (including non-selectable structural
+units). Missing/rejected source attempts count toward the source limit. Aggregate
+admitted parser responses are limited to 1 MiB; candidate occurrences to 2,048 across four
+contexts. A 30-second operation deadline and cancellation are checked between
+bounded reads, parsing and assembly; ordinary filesystem calls are not a hard
+kernel-I/O deadline. The [private parser caller](../core/SHELL-PARSER.md#core-caller-b2a)
+owns bounded transport and process cleanup. Only fixed `shell_observation_*` errors
+and `Observation.codes` belong in ordinary diagnostics; source paths, names, bytes,
+digests, detailed outcomes and raw helper output are private.
+
+**Next B2B:** qualify source/load/parse context and dependencies for Capture, then
+implement explicit capability/selection negotiation and Bundle publication with
+aggregate budgets. Production `shell-state:1` allowlists remain disabled. Restore
+planning/publication, consent, freshness, Check predicates and native/packaged
+qualification remain separate required gates.
 
 ### Historical whole-file snapshots
 
