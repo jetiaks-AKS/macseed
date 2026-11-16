@@ -2,8 +2,10 @@
 
 This reference owns the dormant native helper interface. The
 [Shell configuration contract](../toolkit/CONFIGURATION.md#shell--zsh-configuration)
-owns product behavior. This checkpoint does not enable Functions migration,
-change Aliases & Scripts v5 or implement `shell-state:1`.
+owns product behavior. The helper does not enable Functions migration, change
+Aliases & Scripts v5 or serialize `shell-state:1`; the separate
+[B1 codec foundation](../toolkit/CONFIGURATION.md#typed-shell-state-foundation-b1)
+consumes its structural evidence without production workflow activation.
 
 ## Ownership and pinned dependencies
 

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Focused native parser admission, isolation and qualification corpus checks."""
 import hashlib
+import copy
 import importlib.util
 import json
 import os
@@ -20,6 +21,437 @@ CORPUS = ROOT / 'scripts/fixtures/shell-parser'
 spec = importlib.util.spec_from_file_location('shell_parser_build', ROOT / 'scripts/build-shell-parser.py')
 builder = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(builder)
+spec = importlib.util.spec_from_file_location('shell_state', ROOT / 'modules/shell/state.py')
+state = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(state)
+
+
+class ShellStateTests(unittest.TestCase):
+    """Pure codec tests share the Shell harness; no helper build or HOME access."""
+    def load(self, source, order=0, parent=None, context='interactive', site=None):
+        row = dict(source=source['id'], parent=parent, order=order, context=context,
+                   entry='source' if parent else 'manual', condition='unconditional', site=site)
+        return dict(row, id=state.load_identity(row))
+
+    def function(self, key, raw, source, loads, start=0):
+        end = start + len(raw)
+        return dict(id=state.identity('function', key), kind='function', key=key,
+                    source=source['id'], loads=[r['id'] for r in loads],
+                    details=dict(span=[start, end], body=[start + raw.index(b'{'), end],
+                                 name=[start, start + len(key)], parser_profile='zsh-default-1'))
+
+    def fixture(self, body=b'll; helper; print "private-fixture";', alias_key='ll', alias_value='run'):
+        alias = ("alias " + alias_key + "='" + alias_value + "'").encode()
+        main = b'run() { ' + body + b' }'
+        helper = b'helper() { print "unselected-body"; }'
+        raw = b'# \xc3\xa9\r\n' + alias + b'\r\n' + main + b'\r\n' + helper + b'\r\n'
+        source = state.source_record('.zshrc', raw)
+        loads = [self.load(source), self.load(source, 1, context='interactive-login')]
+        items = [dict(id=state.identity('alias', alias_key), kind='alias', key=alias_key, source=source['id'],
+                      loads=[r['id'] for r in loads], details=dict(mode='ordinary',
+                      span=[raw.index(alias), raw.index(alias) + len(alias)])),
+                 self.function('run', main, source, loads, raw.index(main)),
+                 self.function('helper', helper, source, loads, raw.index(helper))]
+        contents = dict(zip([r['id'] for r in items], [alias, main, helper]))
+        script = b'#!/bin/sh\nprintf "file-only"\n'
+        script_source = state.source_record('Scripts/task.sh', script, 'script')
+        items.append(dict(id=state.identity('script', script_source['path']), kind='script',
+                          key=script_source['path'], source=script_source['id'], loads=[],
+                          details=dict(mode=0o600, managed=False, consent='file-transfer',
+                                       quarantine=state.legacy().quarantine_record(b'0083;12345678;Fixture;'))))
+        contents[items[-1]['id']] = script
+        dependencies = []
+        for owner, target, relation, phase in ((items[0], items[1], 'calls', 'invocation'),
+                                             (items[1], items[2], 'calls', 'invocation'),
+                                             (items[1], items[3], 'executes', 'invocation'),
+                                             (items[2], items[1], 'calls', 'invocation')):
+            dependencies.append(dict(owner=owner['id'], target={k: target[k] for k in ('id', 'kind', 'key')},
+                                     relation=relation, phase=phase, evidence='unresolved', site=None))
+        if alias_key == 'll' and b'll;' in body:
+            site = raw.index(b'll;', raw.index(main))
+            dependencies.append(dict(owner=items[1]['id'], target={k: items[0][k] for k in ('id', 'kind', 'key')},
+                                     relation='expands', phase='parse', evidence='static-reference', site=[site, site + 2]))
+        return [source, script_source], loads, items, dependencies, contents
+
+    def value(self):
+        raw, payloads = state.encode(state.assemble(*self.fixture()))
+        return json.loads(raw[len(state.MAGIC):]), payloads
+
+    def wire(self, value):
+        return state.MAGIC + json.dumps(value, separators=(',', ':')).encode()
+
+    def reject(self, edit, code=None):
+        value, payloads = self.value()
+        edit(value, payloads)
+        with self.assertRaises(state.Invalid) as caught:
+            state.decode(self.wire(value), payloads)
+        if code:
+            self.assertEqual(str(caught.exception), 'shell_state_' + code)
+
+    def test_typed_identities_roundtrip_and_content_changes(self):
+        args = self.fixture()
+        snapshot = state.assemble(*args)
+        encoded = state.encode(snapshot)
+        self.assertEqual(state.encode(state.decode(*encoded)), encoded)
+        reordered = [list(reversed(rows)) for rows in args[:4]] + [args[4]]
+        self.assertEqual(state.encode(state.assemble(*reordered)), encoded)
+        before = json.loads(encoded[0][len(state.MAGIC):])
+        after = json.loads(state.encode(state.assemble(*self.fixture(b':;')))[0][len(state.MAGIC):])
+        self.assertEqual([r['id'] for r in before['items']], [r['id'] for r in after['items']])
+        self.assertEqual([r['id'] for r in before['sources']], [r['id'] for r in after['sources']])
+        self.assertNotEqual(before['content_refs'], after['content_refs'])
+        self.assertEqual(state.identity('alias', 'll'), state.legacy().base.identity('ll'))
+        self.assertEqual(state.identity('script', 'Scripts/task.sh'), state.legacy().file_identity('Scripts/task.sh'))
+        self.assertNotEqual(state.identity('alias', 'run'), state.identity('function', 'run'))
+        extended = self.fixture(alias_key='go.here', alias_value='cd $HOME/Projects')
+        self.assertEqual(state.identity('alias', 'go.here'), state.legacy().base.identity('go.here'))
+        state.assemble(*extended)
+
+    def test_selection_never_adds_dependency_items_or_payloads(self):
+        snapshot = state.assemble(*self.fixture())
+        chosen = [state.identity('function', 'run'), state.identity('alias', 'll')]
+        raw, files = state.encode(state.select(snapshot, chosen))
+        value = json.loads(raw[len(state.MAGIC):])
+        self.assertEqual([r['id'] for r in value['items']], sorted(chosen))
+        self.assertEqual(value['required_contracts'], {'alias': 1, 'function': 1, 'script': 1})
+        self.assertEqual(set(files), {state.DEFINITIONS})
+        self.assertNotIn(b'unselected-body', files[state.DEFINITIONS])
+        self.assertNotIn(b'file-only', files[state.DEFINITIONS])
+        self.assertEqual(len(value['sources']), 1)
+        self.assertEqual(len(value['loads']), 2)  # Repeated source, distinct contexts.
+        self.assertIn(state.identity('function', 'helper'), [r['target']['id'] for r in value['dependencies']])
+        self.assertEqual(state.encode(state.select(snapshot, list(reversed(chosen)))), (raw, files))
+        self.assertEqual(state.encode(state.select(state.select(snapshot, chosen), chosen)), (raw, files))
+        empty = state.encode(state.select(snapshot, []))
+        self.assertEqual(empty, state.encode(state.assemble([], [], [], [], {})))
+        for ids in ([chosen[0], chosen[0]], ['unknown'], [True], None):
+            with self.subTest(ids=ids), self.assertRaises(state.Invalid):
+                state.select(snapshot, ids)
+
+    def test_function_spans_bytes_and_integrity(self):
+        value, files = self.value()
+        item = next(r for r in value['items'] if r['key'] == 'run')
+        ref = next(r for r in value['content_refs'] if r['id'] == item['content'])
+        expected = self.fixture()[4][item['id']]
+        self.assertEqual(files[ref['member']][ref['offset']:ref['offset'] + ref['length']], expected)
+        self.assertEqual(ref['sha256'], hashlib.sha256(expected).hexdigest())
+        for field, bad in [('offset', -1), ('offset', True), ('length', 0), ('sha256', '0' * 64),
+                           ('member', '../private'), ('member', 'generated/shell/unknown.data')]:
+            with self.subTest(field=field, bad=bad):
+                self.reject(lambda v, p: v['content_refs'][0].update({field: bad}))
+        self.reject(lambda v, p: p.update({state.DEFINITIONS: p[state.DEFINITIONS] + b'private-tail'}))
+        self.reject(lambda v, p: p.update({'unexpected': b'private-unselected'}))
+        for field, bad in [('span', [0, 1]), ('span', [True, 4]), ('body', [0, 99999]),
+                           ('name', [0, 2]), ('parser_profile', 'unknown')]:
+            with self.subTest(field=field):
+                self.reject(lambda v, p: next(r for r in v['items'] if r['kind'] == 'function')['details'].update({field: bad}))
+
+    def test_schema_profiles_contracts_duplicates_and_order(self):
+        for field, bad in [('schema', True), ('schema', 2), ('semantic_profile', 'future'),
+                           ('resource_profile', 'future'), ('required_contracts', {'function': 2}),
+                           ('required_contracts', {'variable': 1}), ('qualified', True)]:
+            with self.subTest(field=field):
+                self.reject(lambda v, p: v.update({field: bad}))
+        for field in ('items', 'sources', 'content_refs', 'dependencies', 'loads'):
+            with self.subTest(field=field):
+                self.reject(lambda v, p: v[field].append(copy.deepcopy(v[field][0])))
+                self.reject(lambda v, p: v[field].reverse())
+        self.reject(lambda v, p: v['items'][0].update(kind='variable'), 'unsupported_contract')
+        self.reject(lambda v, p: v['items'][0].update(id='private-id'), 'identity_invalid')
+        self.reject(lambda v, p: v['items'][0]['loads'].reverse())
+        value, files = self.value(); raw = self.wire(value)
+        for invalid in (raw.replace(b'"schema":1', b'"schema":1,"schema":1'),
+                        raw.replace(b'"schema":1', b'"schema":NaN'),
+                        raw.replace(b'"schema":1', b'"schema":1.0'),
+                        raw.replace(b'"schema":1', b'"schema":' + b'9' * 100),
+                        raw.replace(b'"mode":384', b'"mode":384,"mode":384'),
+                        raw + b'{}', b'\xff', state.MAGIC + b'"\\ud800"'):
+            with self.subTest(raw=invalid[:20]), self.assertRaises(state.Invalid):
+                state.decode(invalid, files)
+
+    def test_source_load_dependency_references_and_phases(self):
+        self.reject(lambda v, p: v['items'][0].update(source='unknown'))
+        self.reject(lambda v, p: v['items'][0].update(loads=['unknown']))
+        self.reject(lambda v, p: v['loads'][0].update(parent=v['loads'][-1]['id']))
+        self.reject(lambda v, p: v['loads'][0].update(context='unknown'))
+        self.reject(lambda v, p: v['dependencies'][0].update(owner='unknown'))
+        self.reject(lambda v, p: v['dependencies'][0].update(evidence='qualified'))
+        self.reject(lambda v, p: v['dependencies'][0].update(phase='restore'))
+        self.reject(lambda v, p: v['dependencies'][0].update(phase='parse'))
+        self.reject(lambda v, p: v['dependencies'][0].update(evidence='static-reference', site=None))
+        self.reject(lambda v, p: v['dependencies'][0].update(site=[0, 99999]))
+        self.reject(lambda v, p: v['dependencies'][0]['target'].update(id='unknown'))
+        self.reject(lambda v, p: v['sources'].append(state.source_record('Unused', b':;')))
+
+    def test_load_ancestry_is_retained_without_unselected_content(self):
+        raw = b'run() { :; }'
+        source = state.source_record('.config/functions.zsh', raw)
+        root = state.source_record('.zshrc', b'source ~/.config/functions.zsh\n')
+        first = self.load(root)
+        child = self.load(source, 1, first['id'], site=[0, root['size'] - 1])
+        item = self.function('run', raw, source, [child])
+        result = state.select(state.assemble([root, source], [first, child], [item], [], {item['id']: raw}), [item['id']])
+        encoded, files = state.encode(result); value = json.loads(encoded[len(state.MAGIC):])
+        self.assertEqual(len(value['sources']), 2)
+        self.assertEqual(value['loads'], [first, child])
+        self.assertEqual(files, {state.DEFINITIONS: raw})
+        self.assertNotIn(b'source ~/', b''.join(files.values()))
+
+    def test_script_v5_bytes_mode_quarantine_and_consent_are_preserved(self):
+        snapshot = state.assemble(*self.fixture())
+        selected = state.identity('script', 'Scripts/task.sh')
+        raw, files = state.encode(state.select(snapshot, [selected]))
+        value = json.loads(raw[len(state.MAGIC):]); item = value['items'][0]
+        self.assertEqual(item['details']['mode'], 0o600)
+        self.assertEqual(state.legacy().quarantine_bytes(item['details']['quarantine']), b'0083;12345678;Fixture;')
+        self.assertEqual(files, state.legacy().contents(dict(version=5, scripts=[
+            dict(path='Scripts/task.sh', text=self.fixture()[4][selected].decode(),
+                 sha256=hashlib.sha256(self.fixture()[4][selected]).hexdigest(), mode=0o600, managed=False)])))
+        for field, bad in [('mode', True), ('mode', 0o777), ('consent', 'restore'),
+                           ('consent', None), ('managed', 1), ('quarantine', {'sha256': '0' * 64})]:
+            with self.subTest(field=field):
+                self.reject(lambda v, p: next(r for r in v['items'] if r['kind'] == 'script')['details'].update({field: bad}))
+
+    def test_script_v5_selected_source_aliases_are_rejected(self):
+        for command in ('source', '.'):
+            with self.subTest(command=command):
+                args = self.fixture(alias_value=command + ' $HOME/Scripts/task.sh')
+                with self.assertRaisesRegex(state.Invalid, '^shell_state_content_invalid$'):
+                    state.assemble(*args)
+                # Forge an otherwise valid persisted snapshot, including the
+                # content hash, so rejection must come from selected context.
+                valid = state.assemble(*self.fixture(alias_value=command + ' $HOME/Scripts/safe.sh'))
+                raw, files = state.encode(valid)
+                value = json.loads(raw[len(state.MAGIC):])
+                alias = next(row for row in value['items'] if row['kind'] == 'alias')
+                ref = next(row for row in value['content_refs'] if row['id'] == alias['content'])
+                files[state.DEFINITIONS] = files[state.DEFINITIONS].replace(b'Scripts/safe.sh', b'Scripts/task.sh')
+                ref['sha256'] = hashlib.sha256(args[4][alias['id']]).hexdigest()
+                next(row for row in value['sources'] if row['id'] == alias['source'])['sha256'] = args[0][0]['sha256']
+                with self.assertRaisesRegex(state.Invalid, '^shell_state_content_invalid$'):
+                    state.decode(self.wire(value), files)
+                malformed = state.ShellState(value, files)
+                with self.assertRaisesRegex(state.Invalid, '^shell_state_content_invalid$'):
+                    state.encode(malformed)
+                with self.assertRaisesRegex(state.Invalid, '^shell_state_content_invalid$'):
+                    state.select(malformed, [alias['id'], state.identity('script', 'Scripts/task.sh')])
+
+    def test_script_v5_execution_alias_and_independent_selection(self):
+        script_id = state.identity('script', 'Scripts/task.sh')
+        alias_id = state.identity('alias', 'll')
+        for command in ('$HOME/Scripts/task.sh', 'source $HOME/Scripts/safe.sh', '. $HOME/Scripts/safe.sh'):
+            with self.subTest(command=command):
+                snapshot = state.assemble(*self.fixture(alias_value=command))
+                combined = state.encode(state.select(snapshot, [alias_id, script_id]))
+                self.assertEqual(state.encode(state.decode(*combined)), combined)
+                raw, files = state.encode(state.select(snapshot, [script_id]))
+                value = json.loads(raw[len(state.MAGIC):])
+                self.assertEqual([row['id'] for row in value['items']], [script_id])
+                self.assertEqual(len(value['sources']), 1)
+                self.assertEqual(value['loads'], [])
+                self.assertEqual(list(files.values()), [self.fixture()[4][script_id]])
+                independent = (raw, files)
+        # An omitted alias may remain in private source provenance or as a
+        # dependency target. Neither makes it a selected declaration.
+        sources, loads, items, dependencies, contents = self.fixture(alias_value='source $HOME/Scripts/task.sh')
+        items = [row for row in items if row['id'] != alias_id]
+        dependencies = [row for row in dependencies if row['owner'] != alias_id]
+        del contents[alias_id]
+        snapshot = state.assemble(sources, loads, items, dependencies, contents)
+        self.assertEqual(state.encode(state.select(snapshot, [script_id])), independent)
+
+    def test_manifest_and_json_allocation_boundaries(self):
+        raw, files = state.encode(state.assemble([], [], [], [], {}))
+        padded = raw + b' ' * (state.MAX_MANIFEST - len(raw))
+        self.assertEqual(state.encode(state.decode(padded, files)), (raw, files))
+        for bad in (padded + b' ', state.MAGIC + b'[' * 17 + b'0' + b']' * 17):
+            with self.assertRaisesRegex(state.Invalid, 'resource_limit'):
+                state.decode(bad, {})
+        value, files = self.value()
+        for field, limit in [('sources', state.MAX_SOURCES + state.legacy().MAX_FILES), ('loads', state.MAX_LOADS),
+                             ('items', state.MAX_DECLARATIONS + state.legacy().MAX_FILES),
+                             ('content_refs', state.MAX_DECLARATIONS + state.legacy().MAX_FILES),
+                             ('dependencies', state.MAX_DEPENDENCIES)]:
+            candidate = copy.deepcopy(value); candidate[field] = [{}] * (limit + 1)
+            with self.subTest(field=field), self.assertRaisesRegex(state.Invalid, 'resource_limit'):
+                state.decode(self.wire(candidate), files)
+        cycle = []; cycle.append(cycle)
+        with self.assertRaisesRegex(state.Invalid, 'resource_limit'):
+            state.assemble(cycle, [], [], [], {})
+        # Python callers cannot amplify individually bounded strings into an
+        # oversized allocation before encode reaches its manifest-size check.
+        with self.assertRaisesRegex(state.Invalid, 'resource_limit'):
+            state.encode(state.ShellState({'unused': ['x' * 1024] * 2048}, {}))
+
+    def test_source_definition_and_aggregate_byte_limits(self):
+        for size in (state.MAX_DEFINITION, state.MAX_DEFINITION + 1):
+            raw = b'f() { #' + b'x' * (size - len(b'f() { #\n}')) + b'\n}'
+            source = state.source_record('.zshrc', raw); load = self.load(source)
+            item = self.function('f', raw, source, [load])
+            if size == state.MAX_DEFINITION:
+                state.assemble([source], [load], [item], [], {item['id']: raw})
+            else:
+                with self.assertRaisesRegex(state.Invalid, 'resource_limit'):
+                    state.assemble([source], [load], [item], [], {item['id']: raw})
+        state.source_record('.zshrc', b' ' * state.MAX_SOURCE)
+        with self.assertRaisesRegex(state.Invalid, 'resource_limit'):
+            state.source_record('.zshrc', b' ' * (state.MAX_SOURCE + 1))
+        sources, loads, items, contents = [], [], [], {}
+        for i in range(32):
+            key = 'f%d' % i; prefix = (key + '() { #').encode()
+            raw = prefix + b'x' * (state.MAX_DEFINITION - len(prefix) - 2) + b'\n}'
+            source = state.source_record('parts/%d.zsh' % i, raw); load = self.load(source, i)
+            item = self.function(key, raw, source, [load])
+            sources.append(source); loads.append(load); items.append(item); contents[item['id']] = raw
+        result = state.assemble(sources, loads, items, [], contents)
+        self.assertEqual(len(state.encode(result)[1][state.DEFINITIONS]), state.MAX_DEFINITION_TOTAL)
+        sources[0]['size'] += 1
+        with self.assertRaisesRegex(state.Invalid, 'resource_limit'):
+            state.assemble(sources, loads, items, [], contents)
+
+    def test_128_scripts_do_not_consume_the_zsh_source_budget(self):
+        raw = b'f() { :; }'; source = state.source_record('.zshrc', raw); load = self.load(source)
+        item = self.function('f', raw, source, [load])
+        sources, items, contents = [source], [item], {item['id']: raw}
+        for i in range(129):
+            key = 'Scripts/task-%d.sh' % i; data = b'#!/bin/sh\n# inert fixture\n'
+            record = state.source_record(key, data, 'script')
+            sources.append(record)
+            item = dict(id=state.identity('script', key), kind='script', key=key,
+                        source=record['id'], loads=[], details=dict(mode=0o600, managed=False,
+                                                                  consent='file-transfer', quarantine=None))
+            items.append(item); contents[item['id']] = data
+            if i == 127:
+                encoded, files = state.encode(state.assemble(sources, [load], items, [], contents))
+                self.assertEqual(len(files), 129)  # 128 script members plus definitions.
+                self.assertEqual(len(json.loads(encoded[len(state.MAGIC):])['items']), 129)
+        with self.assertRaisesRegex(state.Invalid, 'resource_limit'):
+            state.assemble(sources, [load], items, [], contents)
+
+    def test_declaration_source_load_counts_and_depth(self):
+        for count in (512, 513):
+            definitions = [('f%d' % i, ('f%d() { :; }' % i).encode()) for i in range(count)]
+            raw = b'\n'.join(content for _, content in definitions)
+            source = state.source_record('.zshrc', raw); load = self.load(source)
+            items = [self.function(key, content, source, [load], raw.index(content)) for key, content in definitions]
+            contents = {item['id']: content for item, (_, content) in zip(items, definitions)}
+            if count == 512:
+                state.assemble([source], [load], items, [], contents)
+            else:
+                with self.assertRaisesRegex(state.Invalid, 'resource_limit'):
+                    state.assemble([source], [load], items, [], contents)
+        sources, loads, items, contents = [], [], [], {}
+        for i in range(129):
+            key = 'f%d' % i; raw = (key + '() { :; }').encode()
+            source = state.source_record('parts/%d.zsh' % i, raw); load = self.load(source, i)
+            item = self.function(key, raw, source, [load])
+            sources.append(source); loads.append(load); items.append(item); contents[item['id']] = raw
+            if i == 127:
+                state.assemble(sources, loads, items, [], contents)
+        with self.assertRaisesRegex(state.Invalid, 'resource_limit'):
+            state.assemble(sources, loads, items, [], contents)
+        raw = b'f() { :; }'; source = state.source_record('.zshrc', raw)
+        loads = [self.load(source, i) for i in range(512)]
+        item = self.function('f', raw, source, loads)
+        state.assemble([source], loads, [item], [], {item['id']: raw})
+        loads.append(self.load(source, 512))
+        with self.assertRaisesRegex(state.Invalid, 'resource_limit'):
+            state.assemble([source], loads, [item], [], {item['id']: raw})
+        loads = [self.load(source)]
+        for i in range(1, 17):
+            loads.append(self.load(source, i, loads[-1]['id'], site=[0, 1]))
+            if len(loads) == 16:
+                item = self.function('f', raw, source, [loads[-1]])
+                state.assemble([source], loads, [item], [], {item['id']: raw})
+        item = self.function('f', raw, source, [loads[-1]])
+        with self.assertRaisesRegex(state.Invalid, 'resource_limit'):
+            state.assemble([source], loads, [item], [], {item['id']: raw})
+
+    def test_malformed_field_types_have_only_fixed_errors(self):
+        value, files = self.value()
+        locations = [(key,) for key in value]
+        for group in ('items', 'sources', 'loads', 'dependencies', 'content_refs'):
+            locations += [(group, 0, key) for key in value[group][0]]
+        for location in locations:
+            for bad in (None, [], {}, True, 1, 'private-fixture'):
+                candidate = copy.deepcopy(value); parent = candidate
+                for key in location[:-1]:
+                    parent = parent[key]
+                if parent[location[-1]] == bad and type(parent[location[-1]]) is type(bad):
+                    continue
+                parent[location[-1]] = bad
+                with self.subTest(location=location, kind=type(bad).__name__):
+                    try:
+                        state.decode(self.wire(candidate), files)
+                    except state.Invalid as error:
+                        self.assertIn(str(error), {'shell_state_' + code for code in state.Invalid.CODES})
+                    else:
+                        # No observed dependency is valid data, not proof of
+                        # independence. B1 never grants Restore eligibility.
+                        self.assertEqual((location, bad), (('dependencies',), []))
+
+    def test_nested_units_and_conflicting_source_roles_are_ambiguous(self):
+        raw = b'outer() { inner() { :; } }'
+        source = state.source_record('.zshrc', raw); load = self.load(source)
+        inner = b'inner() { :; }'
+        items = [self.function('outer', raw, source, [load]),
+                 self.function('inner', inner, source, [load], raw.index(inner))]
+        with self.assertRaisesRegex(state.Invalid, 'ambiguous_record'):
+            state.assemble([source], [load], items, [], dict(zip([r['id'] for r in items], [raw, inner])))
+        args = self.fixture()
+        args[0].append(state.source_record('.ZSHRC', b'f() { :; }'))
+        with self.assertRaisesRegex(state.Invalid, 'ambiguous_record'):
+            state.assemble(*args)
+
+    def test_private_state_and_errors_never_emit_source_or_paths(self):
+        with tempfile.TemporaryDirectory(prefix='shell-state-privacy-') as directory:
+            tripwire = Path(directory) / 'executed'
+            args = self.fixture(('touch ' + str(tripwire)).encode())
+            snapshot = state.assemble(*args)
+            self.assertEqual(repr(snapshot), '<ShellState private>')
+            self.assertFalse(tripwire.exists())
+            raw, files = state.encode(snapshot)
+            self.assertNotIn(b'touch ', raw)  # Code is in private content members only.
+            for malformed in (b'{private-fixture', raw.replace(b'"schema":1', b'"schema":"private-fixture"')):
+                with self.assertRaises(state.Invalid) as caught:
+                    state.decode(malformed, files)
+                self.assertNotIn('private-fixture', repr(caught.exception))
+                self.assertNotIn(directory, repr(caught.exception))
+            self.assertFalse(tripwire.exists())
+
+    def test_parser_response_binding_and_rejection_without_launch(self):
+        source = b'f() { :; }'
+        value = dict(schema=1, profile='zsh-default-1', status='ok', code='ok', bytes=len(source),
+                     sha256=hashlib.sha256(source).hexdigest(), nodes=24, syntax_depth=2, allocation_peak=18126,
+                     definitions=[dict(span=[0, 10], body=[4, 10], names=[[0, 1]], parent=-1, depth=6)])
+        response = json.dumps(value).encode()
+        self.assertEqual(state.function_evidence(source, response, 0, 0)[:2], ('f', source))
+        for field, allowed in (('syntax_depth', (0, 32)), ('allocation_peak', (1, 128 * 1024 * 1024))):
+            for boundary in allowed:
+                with self.subTest(field=field, boundary=boundary):
+                    changed = dict(value, **{field: boundary})
+                    self.assertEqual(state.function_evidence(source, json.dumps(changed).encode(), 0, 0)[:2], ('f', source))
+        for field, rejected in (('syntax_depth', (-1, 33, 256)), ('allocation_peak', (0, -1, 128 * 1024 * 1024 + 1))):
+            for bad in (*rejected, True, False, None, '32', [], {}, 1.5):
+                with self.subTest(field=field, bad=bad), self.assertRaises(state.Invalid):
+                    state.function_evidence(source, json.dumps(dict(value, **{field: bad})).encode(), 0, 0)
+        # AST depth is a separate counter with a 256 limit, not syntax nesting.
+        changed = copy.deepcopy(value); changed['definitions'][0]['depth'] = 256
+        self.assertEqual(state.function_evidence(source, json.dumps(changed).encode(), 0, 0)[:2], ('f', source))
+        for bad in (257, True):
+            changed['definitions'][0]['depth'] = bad
+            with self.assertRaises(state.Invalid):
+                state.function_evidence(source, json.dumps(changed).encode(), 0, 0)
+        for changed in (dict(value, sha256='0' * 64), dict(value, bytes=True), dict(value, nodes=0), dict(value, profile='bash'),
+                        dict(value, status='error'), dict(value, extra='private-fixture')):
+            with self.subTest(changed=list(changed)), self.assertRaises(state.Invalid):
+                state.function_evidence(source, json.dumps(changed).encode(), 0, 0)
+        for code in (2, -9, True):
+            with self.assertRaises(state.Invalid):
+                state.function_evidence(source, response, code, 0)
+        for response in (b'', b'{}', response + b'{}', b'x' * (128 * 1024)):
+            with self.assertRaises(state.Invalid):
+                state.function_evidence(source, response, 0, 0)
 
 
 class ShellParser(unittest.TestCase):
@@ -305,6 +737,24 @@ class ShellParser(unittest.TestCase):
         self.assertEqual(result['grammar'], '0.8.0')
         self.assertEqual(result['runtime'], '0.27.2')
         self.assertEqual(result['revision'], '17651db6e3a413b22e148c8a57726d4b392d10f7')
+
+    def test_typed_state_consumes_helper_evidence_without_restore_authority(self):
+        case = next(row for row in self.manifest if row['name'] == '62_archive_workflow')
+        raw = (CORPUS / case['file']).read_bytes()
+        result = self.parse(raw)
+        key, content, details = state.function_evidence(raw, json.dumps(result).encode(), 0, 0)
+        first, last = case['expected'][0]
+        self.assertEqual(content, raw[first:last])
+        source = state.source_record('.zshrc', raw)
+        load = dict(source=source['id'], parent=None, order=0, context='interactive',
+                    entry='zshrc', condition='unknown', site=None)
+        load['id'] = state.load_identity(load)
+        item = dict(id=state.identity('function', key), kind='function', key=key,
+                    source=source['id'], loads=[load['id']], details=details)
+        encoded, files = state.encode(state.assemble([source], [load], [item], [], {item['id']: content}))
+        self.assertEqual(files, {state.DEFINITIONS: content})
+        self.assertNotIn(b'qualified', encoded)
+        self.assertNotIn(b'eligible', encoded)
 
 
 if __name__ == '__main__':

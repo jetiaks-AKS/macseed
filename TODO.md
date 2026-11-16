@@ -21,8 +21,9 @@ bounded acceptance and the existing partial-coverage warning.
 
 - [ ] **Standalone Zsh Functions — next:** classify bounded definitions, call/alias dependencies, side effects,
   name conflicts and portable reconstruction; implement only qualified constructs.
-- [ ] Review Typed Shell Core integration after the isolated
-  [parser foundation](docs/core/SHELL-PARSER.md); close its independent syntax,
+- [ ] Review B2 after the isolated [typed Shell state foundation](docs/toolkit/CONFIGURATION.md#typed-shell-state-foundation-b1):
+  safe observation/parser transport and source/load/dependency qualification, then
+  explicit workflow capability/selection negotiation. Close independent syntax,
   native robustness and platform/packaging gates without activating it implicitly.
 - [ ] **Variables & PATH**: separate portable static values, HOME-relative references,
   ordered path entries, secrets and dynamic initialization; qualify Apple Silicon /

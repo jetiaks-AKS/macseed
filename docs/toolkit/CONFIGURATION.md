@@ -145,13 +145,169 @@ Core has a bundled, read-only native Zsh parser foundation under
 `modules/shell/parser/`. It uses one pinned default grammar and returns bounded
 structural spans over unchanged input bytes. It is **not activated** in ordinary
 Capture, Rebuild or Check, does not qualify Restore eligibility and does not add
-`shell-state:1`. Legacy whole-file and Aliases & Scripts capabilities 1–5 retain
+`shell-state:1` to production workflows. Legacy whole-file and Aliases & Scripts capabilities 1–5 retain
 their existing behavior. Functions will remain inside Aliases & Functions.
 
 The [internal parser interface](../core/SHELL-PARSER.md) owns invocation, admission,
 resource limits, reproducible builds and remaining qualification gates. Source/load
-context, dependency and activation qualification belong to the next reviewed
-Typed Shell Core checkpoint; structural success alone cannot authorize publication.
+context, dependency and activation qualification remain separate from the codec
+foundation below; structural success alone cannot authorize publication.
+
+### Typed Shell state foundation (B1)
+
+**Implemented, isolated; production activation is not implemented.**
+`modules/shell/state.py` owns the private typed model, codec, structural-evidence
+admission and explicit selection pruning. It has no filesystem observation,
+process launcher, publisher or Capture/Rebuild/Check caller. Existing whole-file
+and capabilities 1–5 readers, limits, predicates, Scripts consent/quarantine and
+mutation policies are unchanged. A valid typed snapshot is not restorable evidence
+until the complete Core workflow and capability negotiation are implemented.
+
+The evolution boundary remains `MBT-BUNDLE-1` with additive required feature
+`"shell-state": 1`, not Bundle V2 or `shell-aliases:6`. The private snapshot keeps
+the existing logical path `generated/shell/zshrc.snapshot`, distinguished by
+`MBT-SHELL-STATE-1\n`. B1 does **not** add this feature or its content member to
+production Bundle allowlists: pack, archive validation and inspection continue to
+reject it, including new bytes without the required feature. Legacy Bundles are
+never rewritten or silently promoted. Future activation must negotiate all kinds,
+selection and resource contracts before making any new Bundle restorable; older
+clients reject the entire unsupported required feature.
+
+The magic is followed by one strict UTF-8 JSON object. Its exact fields are:
+
+| Field | B1 contract |
+|---|---|
+| `schema` | Integer `1`; booleans are not integers |
+| `semantic_profile` | `shell-semantics-1` |
+| `resource_profile` | `shell-resources-1` |
+| `required_contracts` | Exact map of kinds used by items **or dependency targets** to integer `1` |
+| `sources` | Source-unit records, independent of selection items |
+| `loads` | Ordered load occurrences with explicit context and ancestry |
+| `items` | Selectable `alias`, `function` or `script` records |
+| `dependencies` | Outgoing typed reference evidence, including targets absent from selection |
+| `content_refs` | Exact bounded byte references; one per item |
+
+No optional extension bags, saved `qualified`/`eligible` flags or target write
+permissions exist. Unknown fields, kinds, versions/profiles, duplicate JSON keys,
+non-integer numbers and malformed required contracts fail closed. Future
+Variables/PATH and Settings add explicitly supported kind contracts within this
+envelope; B1 contains no placeholder engines or records for them. Changes to shared
+semantics or limits require an explicitly supported profile version.
+Kind contract `script: 1` versions the new descriptor, not the legacy transfer
+policy: its payload validation still uses Scripts v5.
+
+Exact record shapes and rules:
+
+- **Source:** `{id, path, role, size, sha256}`. `path` uses the existing bounded
+  portable HOME-relative Shell policy; `role` is `zsh` or `script`. Size/digest
+  describe the original source. Source identity is `shell-source:` plus SHA-256
+  of UTF-8 `home\0<path>`, independent of bytes. Duplicate/case-colliding source
+  paths, including competing content roles, are rejected. No source file bytes
+  are bundled merely to retain provenance.
+- **Load:** `{id, source, parent, order, context, entry, condition, site}`.
+  `context` is `noninteractive|interactive|login|interactive-login`;
+  `condition` is `unconditional|conditional|unknown`. A root has null `parent`
+  and `site`, and `entry` is `zshenv|zprofile|zshrc|zlogin|manual`; login and
+  interactive entries require the corresponding context. A child uses
+  `entry: source`, references an earlier parent in the same context, and has a
+  half-open byte `site` in that parent's source. Strictly increasing integer
+  `order` retains gaps after pruning. Load identity is `shell-load:` plus SHA-256
+  of compact JSON `[source,parent,order,context,entry]`. Repeated loads of a source
+  remain distinct; cycles/forward references and excessive depth are rejected.
+- **Item:** `{id, kind, key, source, loads, content, details}`. Alias and Function
+  keys are bounded ordinary ASCII names; Script keys are portable paths. Alias ID
+  remains `shell-alias:` plus SHA-256 of its UTF-8 name. Function ID is
+  `shell-function:` plus SHA-256 of its name. Script ID remains the v5
+  `shell-script:` plus SHA-256 of UTF-8 `shell-script:<path>`. Content changes never
+  change item IDs. Repeated definitions of one typed binding are ambiguous, not
+  separate selectable items. `loads` names that source's occurrences in load order;
+  scripts have no load occurrences. Sources, loads and dependencies are not items.
+- **Alias details:** `{mode, span}`, with `mode: ordinary`, exact original byte
+  `span` and the existing source-aware static declaration validator. Global/suffix
+  bindings require future explicit contracts. Bytes are never reformatted.
+- **Function details:** `{span, body, name, parser_profile}`. All spans are
+  half-open byte offsets in the original source; `parser_profile` is
+  `zsh-default-1`. The unit must be at most 64 KiB, its name bytes must match `key`,
+  and its name/body must fit the unit at UTF-8 boundaries. B1 represents one named
+  outer unit per item, including complex bodies. Overlapping units in one source
+  are rejected; nested, anonymous and multiple-binding units are not independent
+  items. Conditional activation is not inferred from structural evidence.
+- **Script details:** `{mode, managed, consent, quarantine}`. `consent` must be
+  `file-transfer`; it records Capture transfer scope and never grants Restore
+  consent. The codec reuses the v5 validator for bytes, language, paths, mode,
+  ownership observation and exact quarantine record. It never adds execute bits,
+  drops quarantine or rewrites the separate script payload.
+- **Dependency:** `{owner, target, relation, phase, evidence, site}`. `owner` must
+  be a saved item. `target` is `{id, kind, key}` with a validated typed identity;
+  its item need not be selected. Supported relation/target/phase tuples are
+  `calls/function/invocation`, `expands/alias/parse` and
+  `executes/script/invocation`. `evidence` is `static-reference|unresolved`.
+  A static reference requires a bounded original-source `site` within its owner;
+  unresolved evidence may have a null site. Duplicate/conflicting edges are
+  rejected. Reference evidence is neither proof of runtime execution nor an
+  unconditional prerequisite; an empty edge list does not prove independence.
+- **Content reference:** `{id, member, offset, length, sha256}`. ID is
+  `shell-content:` plus SHA-256 of the owning item ID. Aliases/functions occupy
+  contiguous, non-overlapping slices of one `generated/shell/definitions.data`,
+  in canonical item order. Scripts retain exact v5
+  `generated/shell/scripts/<legacy-script-hash>.data` members with offset zero.
+  Exact lengths, UTF-8/NUL admission, hashes, member ownership and the complete
+  member set are checked. Gaps, trailing/unreferenced bytes and extra members fail.
+
+Source hashes and load sites are private provenance claims: omitted full source
+bytes cannot be reconstructed or authenticated from them. `function_evidence`
+consumes a bounded result from the existing helper with successful process exit,
+exact source digest/length, supported schema/profile, bounded counters and validated
+definition/name/body/parent ranges. It returns the selected original bytes and
+structural details. It never launches a parser or Shell, infers eligibility, or
+certifies stored evidence as authentic. The future caller owns bounded process
+transport and fresh source observation under the [parser interface](../core/SHELL-PARSER.md).
+
+`assemble` constructs canonical records; `decode` and `encode` enforce the same
+validation. Serialization sorts object keys and emits compact ASCII-escaped JSON
+plus LF; source bytes stay outside JSON. Items, sources and content refs sort by ID;
+loads retain execution order; edges sort by `(owner, relation, target.id, phase)`.
+Decoding rejects incorrectly ordered arrays; JSON whitespace/key order may vary and
+are canonicalized on encoding. Definition-blob order is not activation order.
+
+`select` accepts explicit existing item IDs only, rejects duplicates/unknown IDs,
+and retains selected content plus the minimal source/load ancestry and outgoing
+dependency evidence. It never selects a dependency implicitly. It repacks definition
+slices without changing their bytes, removes unselected Script members and updates
+contracts/refs deterministically. An empty selection produces an empty private
+state, not permission to publish or restore anything.
+
+The initial bounded codec profile is independent of legacy limits:
+
+| Resource | B1 limit |
+|---|---|
+| Manifest including magic | 1 MiB |
+| JSON nesting / value-and-key nodes | 16 / 65,536 |
+| Zsh source / aggregate observed Zsh source bytes | 128 KiB / 2 MiB |
+| Zsh source units / Script source units | 128 / 128, independent budgets |
+| Load occurrences / load depth | 512 / 16 |
+| Alias + Function items / aliases | 512 / 256 |
+| Definition unit / aggregate definition payload | 64 KiB / 2 MiB |
+| Dependency edges | 4,096 |
+| Scripts | Existing v5: 128 files, 1 MiB/file, 16 MiB total; original metadata rules |
+
+All limits apply simultaneously; a manifest/aggregate budget may bind before a
+count limit. No silent truncation is allowed. No production Bundle entry/member,
+48-MiB aggregate, Protocol or Native selection budget is widened by B1. Aggregate
+codec performance on minimum macOS/physical Intel remains unqualified.
+
+Records, source paths, names, digests, manifests and payloads remain private.
+`ShellState` has a content-free representation. Failures expose only
+`shell_state_` plus `schema_invalid`, `unsupported_contract`, `resource_limit`,
+`identity_invalid`, `reference_invalid`, `content_invalid`, `ambiguous_record`,
+`parser_invalid` or `selection_invalid`; no raw source or nested exception text
+belongs in ordinary diagnostics. This codec emits no logs/events or public inventory.
+
+**Next B2 review:** safe observation and parser transport, source/load/parse-context
+and dependency qualification, then explicit Core/Native capability and selection
+negotiation with aggregate budgets. Restore planning/publication, consent, freshness,
+Check predicates and native/packaged qualification remain separate required gates.
+The codec alone activates none of these workflows.
 
 ### Historical whole-file snapshots
 

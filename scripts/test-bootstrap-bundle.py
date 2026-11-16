@@ -57,6 +57,44 @@ class BundleTests(unittest.TestCase):
     def pack(self):
         bundle.pack(self.stage, self.bundle, "/Users/source")
 
+    def test_typed_shell_state_remains_unsupported_in_production_bundle(self):
+        spec = importlib.util.spec_from_file_location('shell_state', MODULE.parents[1] / 'shell/state.py')
+        state = importlib.util.module_from_spec(spec); spec.loader.exec_module(state)
+        typed, _ = state.encode(state.assemble([], [], [], [], {}))
+        selection = self.stage / 'blueprint.conf'
+        selection.write_bytes(selection.read_bytes().replace(b'shell-zsh="false"', b'shell-zsh="true"'))
+        snapshot = self.stage / 'generated/shell/zshrc.snapshot'
+        rows, _ = bundle.shell_contract().classify(b"alias ll='ls -la'\n")
+        bundle.write_file(snapshot, bundle.shell_contract().encode(rows))
+        self.pack()
+        with tarfile.open(self.bundle) as archive:
+            original = {m.name: archive.extractfile(m).read() for m in archive.getmembers()}
+        # An unknown required feature blocks even an otherwise readable legacy
+        # payload. New bytes without that feature cannot masquerade as legacy.
+        for feature, new_bytes in ((state.FEATURE, False), (state.FEATURE, True),
+                                   ({'shell-state': True}, True), ({}, True), ({'shell-aliases': 1}, True)):
+            files = dict(original); manifest = json.loads(files['manifest.json'])
+            manifest['required_features'] = feature
+            if new_bytes:
+                files[state.SNAPSHOT] = typed
+                manifest['files'][state.SNAPSHOT] = dict(size=len(typed), sha256=hashlib.sha256(typed).hexdigest())
+            files['manifest.json'] = json.dumps(manifest).encode()
+            target = self.root / 'typed.mbt'
+            with tarfile.open(target, 'w', format=tarfile.USTAR_FORMAT) as archive:
+                for name, raw in files.items():
+                    info = tarfile.TarInfo(name); info.size, info.mode = len(raw), 0o600
+                    archive.addfile(info, io.BytesIO(raw))
+            error = bundle.Unsupported if 'shell-state' in feature else bundle.Invalid
+            with self.subTest(feature=feature, typed=new_bytes), self.assertRaises(error):
+                bundle.validate_archive(target)
+            with self.assertRaises(bundle.Invalid):
+                bundle.inspect_bundle(target, str(self.root / 'unused-home'))
+        snapshot.write_bytes(typed)
+        output = self.root / 'must-not-publish.mbt'
+        with self.assertRaises(bundle.Invalid):
+            bundle.pack(self.stage, output, str(self.root / 'unused-home'))
+        self.assertFalse(output.exists())
+
     def test_scripts_v5_members_integrity_selection_and_legacy_limits(self):
         c = bundle.shell_contract().recovery_contract()
         selection = self.stage / 'blueprint.conf'

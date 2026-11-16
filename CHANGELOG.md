@@ -16,6 +16,10 @@ The format is based on the principles of **Keep a Changelog**.
   for development but remains inactive in Capture, Rebuild and Check; Functions
   migration and Typed Shell Core integration remain separate checkpoints.
 
+* A private typed Shell state codec with stable identities, exact definition bytes,
+  source/load and dependency evidence, strict limits and explicit selection pruning.
+  Production Bundle and Shell workflows retain their existing formats and behavior.
+
 * Git Rebuild can use an existing encrypted destination SSH key through a verified
   SSH agent, including Git-only Bundles. Fresh signature checks bind the expected
   public key and agent endpoint to Prepare/Execute without reading private-key
