@@ -234,7 +234,9 @@ This is the single authoritative execution sequence toward Macseed 1.0, revised
 by the approved Shell-first decision. Complete one bounded checkpoint at a time.
 
 1. **Shell / Zsh Completion — current functional priority.** Aliases & Scripts v5
-   has real GUI A/B/C acceptance within its documented scope. Next complete
+   has real GUI A/B/C acceptance within its documented scope. The isolated
+   [parser foundation](docs/core/SHELL-PARSER.md) is implemented; workflow activation,
+   Typed Shell Core integration and remaining qualification require the next review. Next complete
    standalone Zsh Functions, then Variables & PATH and Shell Settings, plus useful
    Plugins & Themes only when independently qualified. Startup/source relationships
    remain provenance and dependencies within these categories.

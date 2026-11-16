@@ -1,0 +1,1 @@
+one() { print one; }; two() { print two; }

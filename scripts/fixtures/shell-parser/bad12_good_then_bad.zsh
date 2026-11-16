@@ -1,0 +1,2 @@
+good() { :; }
+bad() { print x

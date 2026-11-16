@@ -139,6 +139,20 @@ categories. Legacy whole-file requirements appear as **Settings → Saved Zsh fi
 with their existing Core identity and restoration policy. Functions, Variables & PATH,
 Shell Settings and Plugins & Themes are future capabilities, not empty placeholders.
 
+### Isolated structural parser foundation
+
+Core has a bundled, read-only native Zsh parser foundation under
+`modules/shell/parser/`. It uses one pinned default grammar and returns bounded
+structural spans over unchanged input bytes. It is **not activated** in ordinary
+Capture, Rebuild or Check, does not qualify Restore eligibility and does not add
+`shell-state:1`. Legacy whole-file and Aliases & Scripts capabilities 1–5 retain
+their existing behavior. Functions will remain inside Aliases & Functions.
+
+The [internal parser interface](../core/SHELL-PARSER.md) owns invocation, admission,
+resource limits, reproducible builds and remaining qualification gates. Source/load
+context, dependency and activation qualification belong to the next reviewed
+Typed Shell Core checkpoint; structural success alone cannot authorize publication.
+
 ### Historical whole-file snapshots
 
 `config/generated/shell/zshrc.snapshot` retains the `MBT-ZSHRC-1` reader: `status`,

@@ -202,6 +202,9 @@ boundaries; Capture / Restore owns the workflow; CLI owns terminal behavior;
 Core reference owns Protocol/execution; Configuration owns data/domain contracts;
 Desktop owns native client integration; Distribution owns planned packaging boundaries.
 
+For bundled age and parser changes, follow the authoritative
+[bundled dependency maintenance policy](docs/DISTRIBUTION.md#bundled-dependency-maintenance).
+
 Roadmap contains major outcomes/status, not an implementation log. Architecture
 is not a changelog or API dump. TODO contains unfinished actionable work only;
 remove completed entries. CHANGELOG records completed release-visible changes.

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Development Core/Python descriptor and pinned nested age executable.
+# Development Core/Python descriptor and pinned nested native helpers.
 set -euo pipefail
 if [[ $# -lt 1 || $# -gt 2 ]]; then echo 'Usage: prepare-runtime.sh RESOURCE_DIRECTORY [arm64|x86_64]' >&2; exit 2; fi
 cd "$(dirname "$0")"
@@ -8,6 +8,7 @@ python_runtime="$(xcrun --find python3)"
 resource_directory="$1"
 architecture="${2:-$(uname -m)}"
 "$python_runtime" -B ./prepare-age.py "$resource_directory" "$architecture"
+"$python_runtime" -B ../../scripts/build-shell-parser.py --resources "$resource_directory" --arch "$architecture"
 mkdir -p "$resource_directory"
 descriptor="$resource_directory/CoreRuntime.plist"
 /usr/bin/plutil -create xml1 "$descriptor"

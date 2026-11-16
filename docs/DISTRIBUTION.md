@@ -99,6 +99,33 @@ upstream input and release signing identity, without disabling validation. Never
 modify a signed app to update age at runtime. Core/Python still use the development
 checkout; autonomous packaging is not implemented by this checkpoint.
 
+## Bundled dependency maintenance
+
+This policy owns maintenance of bundled age and the Zsh parser:
+
+- **age v1.3.2:** preserve the verified provenance, integrity, packaging and full
+  licensing contracts [above](#bundled-age--required-for-desktop-10).
+- **Zsh parser:** `konomanoasa/tree-sitter-zsh` 0.8.0, grammar commit
+  `17651db6e3a413b22e148c8a57726d4b392d10f7`, with Tree-sitter runtime 0.27.2.
+  [pins.json](../modules/shell/parser/vendor/pins.json) is authoritative for complete
+  revisions and archive checksums; the [parser reference](core/SHELL-PARSER.md)
+  owns implementation details. The dormant helper and development packaging are
+  implemented. Typed Shell Core integration and release qualification remain open;
+  bundling does not activate production Shell workflows.
+
+Review upstream updates quarterly and before major Macseed releases; investigate
+relevant security or compatibility fixes promptly. Never update bundled dependencies
+automatically. Before changing a dependency, verify upstream provenance, licensing
+and pinned source or release-artifact integrity. Rebuild reproducibly from verified
+inputs and run focused compatibility, security and regression checks. Requalify
+changed parser grammar/runtime behavior against the established corpus. Validate
+architecture compatibility, signing and the packaged runtime as applicable.
+
+Ship dependency updates only with a new `Macseed.app` release. Never independently
+modify bundled executables inside an installed signed application. Record version
+changes, qualification evidence and remaining release gates. This policy introduces
+no updater or scheduled maintenance service.
+
 ## Future whole-application updates
 
 **Approved direction; not implemented.** A future Settings **Updates** tab will

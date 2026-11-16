@@ -15,6 +15,7 @@ English is authoritative. Read from product purpose toward technical contracts:
 | [CLI Quick Start](getting-started/QUICKSTART.md) | Current CLI setup and recommended workflows |
 | [CLI](toolkit/CLI.md) | Commands, terminal behavior, output and exit status |
 | [Core application interface](core/APPLICATION-INTERFACE.md) | Implemented Protocol V1, execution and structured results |
+| [Internal Shell parser](core/SHELL-PARSER.md) | Dormant native structural helper, private interface, limits and build pins |
 | [Configuration](toolkit/CONFIGURATION.md) | Generated, Blueprint, Bundle and domain data contracts |
 | [Secure SSH Identity Migration](toolkit/SSH-IDENTITY-MIGRATION.md) | Secure package and standalone identity commands |
 | [Desktop](DESKTOP.md) | Native client presentation, flows and runtime integration |

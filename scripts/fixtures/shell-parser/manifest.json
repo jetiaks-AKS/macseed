@@ -1,0 +1,1140 @@
+[
+  {
+    "name": "01_braces",
+    "group": "common",
+    "file": "01_braces.zsh",
+    "valid": true,
+    "context": "ordinary",
+    "bytes": 11,
+    "sha256": "fb5caeeae17285f13e90ac772474ddafde161dbd655dd9674081b27c847012f2",
+    "expected": [
+      [
+        0,
+        10
+      ]
+    ]
+  },
+  {
+    "name": "02_keyword",
+    "group": "common",
+    "file": "02_keyword.zsh",
+    "valid": true,
+    "context": "ordinary",
+    "bytes": 33,
+    "sha256": "f6a49b112399457c1ba3e4d6c86db81b28e63d95c055c09b6b314f3b16984217",
+    "expected": [
+      [
+        0,
+        32
+      ]
+    ]
+  },
+  {
+    "name": "03_keyword_parens",
+    "group": "common",
+    "file": "03_keyword_parens.zsh",
+    "valid": true,
+    "context": "ordinary",
+    "bytes": 20,
+    "sha256": "c71c431aaedb081cecd3d102e6a2fa5183f68df89911eb6ea8183c7b3b379781",
+    "expected": [
+      [
+        0,
+        19
+      ]
+    ]
+  },
+  {
+    "name": "04_adjacent",
+    "group": "common",
+    "file": "04_adjacent.zsh",
+    "valid": true,
+    "context": "ordinary",
+    "bytes": 43,
+    "sha256": "e7102c746076910879f1eecea28360d420ea5c934690cc1b78420bb167128878",
+    "expected": [
+      [
+        0,
+        20
+      ],
+      [
+        22,
+        42
+      ]
+    ]
+  },
+  {
+    "name": "05_utf8",
+    "group": "common",
+    "file": "05_utf8.zsh",
+    "valid": true,
+    "context": "ordinary",
+    "bytes": 80,
+    "sha256": "44dbf541a91240113ec4b9c4192d210298e0847869d637de664c2f05788cf271",
+    "expected": [
+      [
+        40,
+        79
+      ]
+    ]
+  },
+  {
+    "name": "06_comment_decoy",
+    "group": "common",
+    "file": "06_comment_decoy.zsh",
+    "valid": true,
+    "context": "ordinary",
+    "bytes": 39,
+    "sha256": "6c6135dfd3dd077565155448a6578d2d4522c13feae217eddb778e4b710e966c",
+    "expected": []
+  },
+  {
+    "name": "07_string_decoy",
+    "group": "common",
+    "file": "07_string_decoy.zsh",
+    "valid": true,
+    "context": "ordinary",
+    "bytes": 39,
+    "sha256": "8b8c84e6a6f514b7e296f4c83f0fdd6cc62b4d94468ca22091f28505deaf758f",
+    "expected": [
+      [
+        0,
+        38
+      ]
+    ]
+  },
+  {
+    "name": "08_nested_definition",
+    "group": "common",
+    "file": "08_nested_definition.zsh",
+    "valid": true,
+    "context": "nested",
+    "bytes": 55,
+    "sha256": "aae506f7539ead712374ef5ad77e5063ed7532c4511e1b1023ad885a887b3481",
+    "expected": [
+      [
+        0,
+        54
+      ],
+      [
+        10,
+        39
+      ]
+    ]
+  },
+  {
+    "name": "09_conditional",
+    "group": "context",
+    "file": "09_conditional.zsh",
+    "valid": true,
+    "context": "conditional",
+    "bytes": 44,
+    "sha256": "b5c8aae48e303d7907cc7c6890d099b9adb540ef4030b37fd9665ebe868a1c1f",
+    "expected": [
+      [
+        30,
+        40
+      ]
+    ]
+  },
+  {
+    "name": "10_split_name_anonymous",
+    "group": "context",
+    "file": "10_split_name_anonymous.zsh",
+    "valid": true,
+    "context": "separate_command_and_anonymous",
+    "bytes": 28,
+    "sha256": "e823316ba28e5bf1386f4b019cf4c73f94ee0795631337c871314e51eca35b15",
+    "expected": [
+      [
+        2,
+        27
+      ]
+    ]
+  },
+  {
+    "name": "11_subshell_body",
+    "group": "common",
+    "file": "11_subshell_body.zsh",
+    "valid": true,
+    "context": "ordinary",
+    "bytes": 25,
+    "sha256": "9521c1c573d1e291c76e40a92e38d0c104c4d1552548cfed98107ce417531506",
+    "expected": [
+      [
+        0,
+        24
+      ]
+    ]
+  },
+  {
+    "name": "12_multiple_names",
+    "group": "zsh",
+    "file": "12_multiple_names.zsh",
+    "valid": true,
+    "context": "multiple_names",
+    "bytes": 39,
+    "sha256": "33dda1edefc820d1b0bdd572dcd4bd816204ddd170fc86911a0fbfc453fa5d11",
+    "expected": [
+      [
+        0,
+        38
+      ]
+    ]
+  },
+  {
+    "name": "13_quoted_name",
+    "group": "zsh",
+    "file": "13_quoted_name.zsh",
+    "valid": true,
+    "context": "ordinary",
+    "bytes": 35,
+    "sha256": "ac378895294e2c25041a892e1cb2a00d0fab7f8f78e8f34615ed9f5cb4c7a599",
+    "expected": [
+      [
+        0,
+        34
+      ]
+    ]
+  },
+  {
+    "name": "14_definition_redirect",
+    "group": "common",
+    "file": "14_definition_redirect.zsh",
+    "valid": true,
+    "context": "ordinary",
+    "bytes": 35,
+    "sha256": "00560803686895d9438d970a860452d948e0ee78441dc03bdc57b3465f95a776",
+    "expected": [
+      [
+        0,
+        34
+      ]
+    ]
+  },
+  {
+    "name": "15_anonymous",
+    "group": "zsh",
+    "file": "15_anonymous.zsh",
+    "valid": true,
+    "context": "immediate_activation",
+    "bytes": 32,
+    "sha256": "82685c9f874640d1585697695b0da5a36a384fad92f05371897520554b59c73a",
+    "expected": [
+      [
+        0,
+        31
+      ]
+    ]
+  },
+  {
+    "name": "16_controls",
+    "group": "common",
+    "file": "16_controls.zsh",
+    "valid": true,
+    "context": "ordinary",
+    "bytes": 291,
+    "sha256": "3989a1865ce3aec9ad2bd50a5b1203634d85d4d0f2dd830a5713b888f154a111",
+    "expected": [
+      [
+        0,
+        290
+      ]
+    ]
+  },
+  {
+    "name": "17_case",
+    "group": "common",
+    "file": "17_case.zsh",
+    "valid": true,
+    "context": "ordinary",
+    "bytes": 70,
+    "sha256": "9a72db3079bbe444d1ca3ee75e756eae8ee3c940f3f48ed7525ac46d284beb5d",
+    "expected": [
+      [
+        0,
+        69
+      ]
+    ]
+  },
+  {
+    "name": "18_recursion",
+    "group": "common",
+    "file": "18_recursion.zsh",
+    "valid": true,
+    "context": "ordinary",
+    "bytes": 72,
+    "sha256": "e7c74914857056f80f55cdf497072e53f82970f58318e69696d06673ddaa32e4",
+    "expected": [
+      [
+        0,
+        71
+      ]
+    ]
+  },
+  {
+    "name": "19_pipeline",
+    "group": "common",
+    "file": "19_pipeline.zsh",
+    "valid": true,
+    "context": "ordinary",
+    "bytes": 41,
+    "sha256": "53306ff9a24bad4eb2e2533fca56b1487169ff5a347529716622fa06e13b0c1d",
+    "expected": [
+      [
+        0,
+        40
+      ]
+    ]
+  },
+  {
+    "name": "20_substitutions",
+    "group": "common",
+    "file": "20_substitutions.zsh",
+    "valid": true,
+    "context": "ordinary",
+    "bytes": 125,
+    "sha256": "dbbbba8dfdc127dadeb7d012501c135e93b476b4aa3a6c97c045ea30eefca6be",
+    "expected": [
+      [
+        0,
+        124
+      ]
+    ]
+  },
+  {
+    "name": "21_process_substitution",
+    "group": "zsh",
+    "file": "21_process_substitution.zsh",
+    "valid": true,
+    "context": "ordinary",
+    "bytes": 52,
+    "sha256": "2370835d9c2747dc58fab8ce79d6475b804ddc667bc303f2ab46ac4e5be98f6c",
+    "expected": [
+      [
+        0,
+        51
+      ]
+    ]
+  },
+  {
+    "name": "22_ansi_quoting",
+    "group": "common",
+    "file": "22_ansi_quoting.zsh",
+    "valid": true,
+    "context": "ordinary",
+    "bytes": 42,
+    "sha256": "976015144e0a72bdfcb24a3913a87cbf8e602301247888792ef099a8d7972ca2",
+    "expected": [
+      [
+        0,
+        41
+      ]
+    ]
+  },
+  {
+    "name": "23_heredoc_quoted",
+    "group": "common",
+    "file": "23_heredoc_quoted.zsh",
+    "valid": true,
+    "context": "ordinary",
+    "bytes": 67,
+    "sha256": "b6a5b961214af93274565ea1e43b992080cf1547475cd4f5182b3d82a031246f",
+    "expected": [
+      [
+        0,
+        66
+      ]
+    ]
+  },
+  {
+    "name": "24_heredoc_tabs",
+    "group": "common",
+    "file": "24_heredoc_tabs.zsh",
+    "valid": true,
+    "context": "ordinary",
+    "bytes": 40,
+    "sha256": "f7bc094003e30a65fef951e701aaad91a08db3de93c0f0c29ed2ecbe217ff25b",
+    "expected": [
+      [
+        0,
+        39
+      ]
+    ]
+  },
+  {
+    "name": "25_heredoc_queue",
+    "group": "common",
+    "file": "25_heredoc_queue.zsh",
+    "valid": true,
+    "context": "ordinary",
+    "bytes": 81,
+    "sha256": "0c110f62ff81370eb1736d4bc0718160b11ceb9e2f34b43cf2b854fa9d55030a",
+    "expected": [
+      [
+        0,
+        80
+      ]
+    ]
+  },
+  {
+    "name": "26_heredoc_substitution",
+    "group": "common",
+    "file": "26_heredoc_substitution.zsh",
+    "valid": true,
+    "context": "ordinary",
+    "bytes": 57,
+    "sha256": "337d49fc0489b9625301292821b1dc6d3ee3fd0b6529252dde4032fe6c97e872",
+    "expected": [
+      [
+        0,
+        56
+      ]
+    ]
+  },
+  {
+    "name": "27_escaped_newline",
+    "group": "common",
+    "file": "27_escaped_newline.zsh",
+    "valid": true,
+    "context": "ordinary",
+    "bytes": 29,
+    "sha256": "71a45eaf1b48999a90cbc8f6c8986052c14c9b7837c6cb43d55e2d05fc5dea1a",
+    "expected": [
+      [
+        0,
+        28
+      ]
+    ]
+  },
+  {
+    "name": "28_empty",
+    "group": "common",
+    "file": "28_empty.zsh",
+    "valid": true,
+    "context": "ordinary",
+    "bytes": 8,
+    "sha256": "6198d8a03a3869095bbddb585ad133600afbace214a2af9b82e692369a668b5b",
+    "expected": [
+      [
+        0,
+        7
+      ]
+    ]
+  },
+  {
+    "name": "29_param_flags",
+    "group": "zsh",
+    "file": "29_param_flags.zsh",
+    "valid": true,
+    "context": "ordinary",
+    "bytes": 67,
+    "sha256": "f5ce95753141940e657086d330a006f06851757b10f3dfaa6fd26db37ac250d0",
+    "expected": [
+      [
+        0,
+        66
+      ]
+    ]
+  },
+  {
+    "name": "30_glob_qualifier",
+    "group": "zsh",
+    "file": "30_glob_qualifier.zsh",
+    "valid": true,
+    "context": "ordinary",
+    "bytes": 35,
+    "sha256": "f1695faf06e645384fb16d8491e299c47dc9172fde28cfdbcf3c41268b756e55",
+    "expected": [
+      [
+        0,
+        34
+      ]
+    ]
+  },
+  {
+    "name": "31_extended_glob",
+    "group": "options",
+    "file": "31_extended_glob.zsh",
+    "valid": true,
+    "context": "extended_glob",
+    "bytes": 27,
+    "sha256": "f292c027ac12d40268fe1fb51924871ec7e4e5d7c7c7889ecdc78373e69618f7",
+    "expected": [
+      [
+        0,
+        26
+      ]
+    ]
+  },
+  {
+    "name": "32_always_block",
+    "group": "zsh",
+    "file": "32_always_block.zsh",
+    "valid": true,
+    "context": "ordinary",
+    "bytes": 49,
+    "sha256": "aabd4aad5edceb2fe5cc29697561ebb159efc68143178f86b913a737bc0e545e",
+    "expected": [
+      [
+        0,
+        48
+      ]
+    ]
+  },
+  {
+    "name": "33_short_if",
+    "group": "zsh",
+    "file": "33_short_if.zsh",
+    "valid": true,
+    "context": "ordinary",
+    "bytes": 38,
+    "sha256": "2e4205ceca76eb23c7b55cc998d025f3aa40748f9eab7512a5ef04fca5c04d95",
+    "expected": [
+      [
+        0,
+        37
+      ]
+    ]
+  },
+  {
+    "name": "34_repeat",
+    "group": "zsh",
+    "file": "34_repeat.zsh",
+    "valid": true,
+    "context": "ordinary",
+    "bytes": 35,
+    "sha256": "3b81c491fc4247472f443500a43ca430ac3ed9d08347efa8dec6fe945d16d659",
+    "expected": [
+      [
+        0,
+        34
+      ]
+    ]
+  },
+  {
+    "name": "35_foreach",
+    "group": "zsh",
+    "file": "35_foreach.zsh",
+    "valid": true,
+    "context": "ordinary",
+    "bytes": 53,
+    "sha256": "d90dd40e9195150505811591489fc443e0e25498d27e5010b9717eb103d3d71c",
+    "expected": [
+      [
+        0,
+        52
+      ]
+    ]
+  },
+  {
+    "name": "36_alias_body",
+    "group": "context",
+    "file": "36_alias_body.zsh",
+    "valid": true,
+    "context": "alias_binding",
+    "bytes": 34,
+    "sha256": "2ecb5fc28513bf9dba806eaf22adc06c9573527ed23910a52a7f47ff8a2b2db9",
+    "expected": [
+      [
+        17,
+        33
+      ]
+    ]
+  },
+  {
+    "name": "37_alias_name",
+    "group": "context",
+    "file": "37_alias_name.zsh",
+    "valid": true,
+    "context": "alias_name_collision",
+    "bytes": 27,
+    "sha256": "fa1e79f21a9c0b8484f5dbabc666f97c66ec9e4be02acb3c38799749fa9578ad",
+    "expected": [
+      [
+        16,
+        26
+      ]
+    ]
+  },
+  {
+    "name": "38_global_alias",
+    "group": "context",
+    "file": "38_global_alias.zsh",
+    "valid": true,
+    "context": "global_alias",
+    "bytes": 49,
+    "sha256": "23df96653d5708c9524008a13c5f4293993780d678619252d10cdcc4724fac59",
+    "expected": [
+      [
+        18,
+        48
+      ]
+    ]
+  },
+  {
+    "name": "39_alias_syntax",
+    "group": "context",
+    "file": "39_alias_syntax.zsh",
+    "valid": true,
+    "context": "alias_changes_grammar",
+    "bytes": 44,
+    "sha256": "11b3a8ec29344ffb6b2fcb306ccdc7a37428775de9827553fe3e17a95c0ebc6f",
+    "expected": [
+      [
+        16,
+        43
+      ]
+    ]
+  },
+  {
+    "name": "40_options",
+    "group": "context",
+    "file": "40_options.zsh",
+    "valid": true,
+    "context": "emulation_unknown",
+    "bytes": 58,
+    "sha256": "2b0b461cd2ceec6eca9ac466619852609a8b31e82535084c5f0037b780b202fd",
+    "expected": [
+      [
+        32,
+        57
+      ]
+    ]
+  },
+  {
+    "name": "41_source_order",
+    "group": "context",
+    "file": "41_source_order.zsh",
+    "valid": true,
+    "context": "source_dependency",
+    "bytes": 64,
+    "sha256": "2a22916f65ad22360a75d181c0ffe67613c8957e51ea7dea1bcd31bd3331b11a",
+    "expected": [
+      [
+        43,
+        63
+      ]
+    ]
+  },
+  {
+    "name": "42_dynamic_source",
+    "group": "context",
+    "file": "42_dynamic_source.zsh",
+    "valid": true,
+    "context": "unknown_source",
+    "bytes": 38,
+    "sha256": "71868f0bb6822621da7e9bfb948b550a831a45fee19e30b5fca2378438d0e8c0",
+    "expected": [
+      [
+        22,
+        37
+      ]
+    ]
+  },
+  {
+    "name": "43_cycle_source",
+    "group": "context",
+    "file": "43_cycle_source.zsh",
+    "valid": true,
+    "context": "load_cycle_reference",
+    "bytes": 52,
+    "sha256": "3911cde2f876a4f38a1c184748f13f905d3419d8155988db9a3480d5c6056a19",
+    "expected": [
+      [
+        41,
+        51
+      ]
+    ]
+  },
+  {
+    "name": "44_conditional_source",
+    "group": "context",
+    "file": "44_conditional_source.zsh",
+    "valid": true,
+    "context": "conditional_source",
+    "bytes": 60,
+    "sha256": "803d01ac48da993eeee22553b0a6757012e5b9f5e7b1cce933f323c7ec8bd771",
+    "expected": [
+      [
+        49,
+        59
+      ]
+    ]
+  },
+  {
+    "name": "45_autoload_wrapper",
+    "group": "autoload",
+    "file": "45_autoload_wrapper.zsh",
+    "valid": true,
+    "context": "autoload_definition",
+    "bytes": 38,
+    "sha256": "14089650fc7f9c645bfc21a63bf248b316b006f87c9a3c68a85da11595d024fb",
+    "expected": [
+      [
+        0,
+        37
+      ]
+    ]
+  },
+  {
+    "name": "46_autoload_body",
+    "group": "autoload",
+    "file": "46_autoload_body.zsh",
+    "valid": true,
+    "context": "autoload_body",
+    "bytes": 70,
+    "sha256": "4e7fb14146eab4a64f9d15be44771ee860c0c18db845efcc11aad9778f933faa",
+    "expected": []
+  },
+  {
+    "name": "47_autoload_registration",
+    "group": "autoload",
+    "file": "47_autoload_registration.zsh",
+    "valid": true,
+    "context": "autoload_registration",
+    "bytes": 69,
+    "sha256": "9f305b0dd2649b02f5b4174a19573fa5f3603a67ac5c983d2bd1cbe2c2ef2d4f",
+    "expected": []
+  },
+  {
+    "name": "48_hook",
+    "group": "context",
+    "file": "48_hook.zsh",
+    "valid": true,
+    "context": "hook_activation",
+    "bytes": 27,
+    "sha256": "35ae871cb4d9bb2a47b426b8c5b25a5e6c4dcc1357a4fecad240ff8558bb54c0",
+    "expected": [
+      [
+        0,
+        26
+      ]
+    ]
+  },
+  {
+    "name": "49_registered_hook",
+    "group": "context",
+    "file": "49_registered_hook.zsh",
+    "valid": true,
+    "context": "hook_activation",
+    "bytes": 58,
+    "sha256": "1f9acb42241bb6cd6e1e979905902521c4862f977df2a8e575aa2f9b87159f8d",
+    "expected": [
+      [
+        0,
+        28
+      ]
+    ]
+  },
+  {
+    "name": "50_dynamic_eval",
+    "group": "context",
+    "file": "50_dynamic_eval.zsh",
+    "valid": true,
+    "context": "runtime_unknown",
+    "bytes": 19,
+    "sha256": "20eb3ed13f87c6f50cef73860141ffaf1b156fb0e07cbed1a36f19d5358d7589",
+    "expected": [
+      [
+        0,
+        18
+      ]
+    ]
+  },
+  {
+    "name": "51_eval_definition",
+    "group": "context",
+    "file": "51_eval_definition.zsh",
+    "valid": true,
+    "context": "dynamic_definition",
+    "bytes": 18,
+    "sha256": "8d1ad3263b1f994160ebd11c3e081029af6304bdd10416dfde9a65e3d0de61f9",
+    "expected": []
+  },
+  {
+    "name": "52_scalar_array",
+    "group": "zsh",
+    "file": "52_scalar_array.zsh",
+    "valid": true,
+    "context": "ordinary",
+    "bytes": 66,
+    "sha256": "ccca89928356bbf3cb3795271690ff6f320001b021020474472dcafa98c7c72d",
+    "expected": [
+      [
+        0,
+        65
+      ]
+    ]
+  },
+  {
+    "name": "53_regex_test",
+    "group": "zsh",
+    "file": "53_regex_test.zsh",
+    "valid": true,
+    "context": "ordinary",
+    "bytes": 45,
+    "sha256": "411c120a9fe55afaea31e5f4bfea87de8fe6689af686b98ecf975bd7f7ae2883",
+    "expected": [
+      [
+        0,
+        44
+      ]
+    ]
+  },
+  {
+    "name": "54_comments",
+    "group": "common",
+    "file": "54_comments.zsh",
+    "valid": true,
+    "context": "ordinary",
+    "bytes": 57,
+    "sha256": "c4db951553192e406fb7855b031e6fc57c7ccbd4578d62cb47d8c5427b9ddd2e",
+    "expected": [
+      [
+        7,
+        49
+      ]
+    ]
+  },
+  {
+    "name": "55_trailing_semicolon",
+    "group": "common",
+    "file": "55_trailing_semicolon.zsh",
+    "valid": true,
+    "context": "ordinary",
+    "bytes": 12,
+    "sha256": "4c8cde696b5907f1804336ab05a55fb794a079dc12b5b8078b716107d5bffb1f",
+    "expected": [
+      [
+        0,
+        10
+      ]
+    ]
+  },
+  {
+    "name": "56_body_redirect",
+    "group": "common",
+    "file": "56_body_redirect.zsh",
+    "valid": true,
+    "context": "ordinary",
+    "bytes": 26,
+    "sha256": "e54a04ef9d614b19e5f456f172aed1641cc6758b0af79a2169cdb593b380b57c",
+    "expected": [
+      [
+        0,
+        25
+      ]
+    ]
+  },
+  {
+    "name": "57_continuation_header",
+    "group": "common",
+    "file": "57_continuation_header.zsh",
+    "valid": true,
+    "context": "ordinary",
+    "bytes": 13,
+    "sha256": "64b23b7b13617adf8a9af2b2ef5413c4f05eb150300935c41ed5c329f38953cb",
+    "expected": [
+      [
+        0,
+        12
+      ]
+    ]
+  },
+  {
+    "name": "58_function_keyword_newline",
+    "group": "common",
+    "file": "58_function_keyword_newline.zsh",
+    "valid": true,
+    "context": "ordinary",
+    "bytes": 18,
+    "sha256": "81084688428b88504345d1f9db71e20de2acb3b04284560c7244f0ea57ea251f",
+    "expected": [
+      [
+        0,
+        17
+      ]
+    ]
+  },
+  {
+    "name": "59_function_call_pipeline",
+    "group": "common",
+    "file": "59_function_call_pipeline.zsh",
+    "valid": true,
+    "context": "ordinary",
+    "bytes": 46,
+    "sha256": "32058be321b842c10e628566121fdddf362ebd34ae25fc9d3a715ef0484b5a5e",
+    "expected": [
+      [
+        0,
+        37
+      ]
+    ]
+  },
+  {
+    "name": "60_alias_types",
+    "group": "context",
+    "file": "60_alias_types.zsh",
+    "valid": true,
+    "context": "alias_bindings",
+    "bytes": 54,
+    "sha256": "af03f83b0f2d875b9ac69de0bc52a4ea08ac46549810445340f7b9740d22ca5a",
+    "expected": []
+  },
+  {
+    "name": "61_project_workflow",
+    "group": "realistic",
+    "file": "61_project_workflow.zsh",
+    "valid": true,
+    "context": "runtime_dependencies",
+    "bytes": 165,
+    "sha256": "952c84768fb5e21b6b9d06ab2d16966dcfdd9e67220ba321daef3e1bbec960db",
+    "expected": [
+      [
+        0,
+        164
+      ]
+    ]
+  },
+  {
+    "name": "62_archive_workflow",
+    "group": "realistic",
+    "file": "62_archive_workflow.zsh",
+    "valid": true,
+    "context": "conditional_runtime_dependencies",
+    "bytes": 414,
+    "sha256": "a2d333571669718f14ed57489ff3e05b72b53a46cc1b20d95cf18b9807c82e0a",
+    "expected": [
+      [
+        0,
+        413
+      ]
+    ]
+  },
+  {
+    "name": "63_git_helper",
+    "group": "realistic",
+    "file": "63_git_helper.zsh",
+    "valid": true,
+    "context": "helper_and_completion_activation",
+    "bytes": 236,
+    "sha256": "1ec5a77a6e36761b443d6ce09e0d6e9efd9c31e86aa8e58a2fbe8a1368b002e5",
+    "expected": [
+      [
+        0,
+        213
+      ]
+    ]
+  },
+  {
+    "name": "64_autoload_workflow",
+    "group": "realistic",
+    "file": "64_autoload_workflow.zsh",
+    "valid": true,
+    "context": "autoload_body",
+    "bytes": 154,
+    "sha256": "dea62fec8a82086724271acb436d187e8fae8a947e13dbae4b72a61bbbae8fbf",
+    "expected": []
+  },
+  {
+    "name": "65_cleanup_workflow",
+    "group": "realistic",
+    "file": "65_cleanup_workflow.zsh",
+    "valid": true,
+    "context": "runtime_dependencies",
+    "bytes": 179,
+    "sha256": "e80a0fc47850904386c4b147f340dbdeaf2f4a780cb0d16106552ecdf4618d53",
+    "expected": [
+      [
+        0,
+        178
+      ]
+    ]
+  },
+  {
+    "name": "bad00_missing_brace",
+    "group": "malformed",
+    "file": "bad00_missing_brace.zsh",
+    "valid": false,
+    "context": "reject_document",
+    "bytes": 15,
+    "sha256": "397ce9f79fe4451ccdd1e4d97105d720f0d3beb451d5d1e49f07d084b8deb736",
+    "expected": []
+  },
+  {
+    "name": "bad01_unclosed_quote",
+    "group": "malformed",
+    "file": "bad01_unclosed_quote.zsh",
+    "valid": false,
+    "context": "reject_document",
+    "bytes": 18,
+    "sha256": "71939eaf4f1eb202fa716c43f249a1a38e57862101faae1bbb947911a8344d77",
+    "expected": []
+  },
+  {
+    "name": "bad02_unclosed_substitution",
+    "group": "malformed",
+    "file": "bad02_unclosed_substitution.zsh",
+    "valid": false,
+    "context": "reject_document",
+    "bytes": 27,
+    "sha256": "c7eb3fcaa7491f5523ba655015671008e5056af607e095b49394845e41c903d0",
+    "expected": []
+  },
+  {
+    "name": "bad03_missing_then",
+    "group": "malformed",
+    "file": "bad03_missing_then.zsh",
+    "valid": false,
+    "context": "reject_document",
+    "bytes": 30,
+    "sha256": "b521d2ff91c6347ad3224271eb39806679cfcdc3ef318e9d38c0c79a7b5ac56e",
+    "expected": []
+  },
+  {
+    "name": "bad04_dangling_pipe",
+    "group": "malformed",
+    "file": "bad04_dangling_pipe.zsh",
+    "valid": false,
+    "context": "reject_document",
+    "bytes": 18,
+    "sha256": "6538f1ae5a91e968d62c0ad67144004dd414173965b47cd6cf4641517685b404",
+    "expected": []
+  },
+  {
+    "name": "bad05_missing_heredoc",
+    "group": "malformed",
+    "file": "bad05_missing_heredoc.zsh",
+    "valid": false,
+    "context": "reject_document",
+    "bytes": 23,
+    "sha256": "a5100e931c6db1e8f8f71865e97bd9a262f1d5d310ff609ebc5837e39689f0ae",
+    "expected": []
+  },
+  {
+    "name": "bad06_missing_done",
+    "group": "malformed",
+    "file": "bad06_missing_done.zsh",
+    "valid": false,
+    "context": "reject_document",
+    "bytes": 34,
+    "sha256": "1b4c54da8141ebc43360eac3aa6bf8fde6ae633df83065ec53d47a55402def0f",
+    "expected": []
+  },
+  {
+    "name": "bad07_extra_close",
+    "group": "malformed",
+    "file": "bad07_extra_close.zsh",
+    "valid": false,
+    "context": "reject_document",
+    "bytes": 13,
+    "sha256": "df8f212d44e30b36fe0735274472f78058dad1ac0d6423b1a5406f572eb9b6db",
+    "expected": []
+  },
+  {
+    "name": "bad08_bad_subshell",
+    "group": "malformed",
+    "file": "bad08_bad_subshell.zsh",
+    "valid": false,
+    "context": "reject_document",
+    "bytes": 18,
+    "sha256": "e53dbf1315fb2ff75ccf3abd49fdddaae8565adc7baec41b23f461ec03932981",
+    "expected": []
+  },
+  {
+    "name": "bad09_missing_esac",
+    "group": "malformed",
+    "file": "bad09_missing_esac.zsh",
+    "valid": false,
+    "context": "reject_document",
+    "bytes": 26,
+    "sha256": "32b95dd07cb1ac41770480a78718031765bd7d1214aeb94b2781c57177d6c8b7",
+    "expected": []
+  },
+  {
+    "name": "bad10_double_pipe",
+    "group": "malformed",
+    "file": "bad10_double_pipe.zsh",
+    "valid": false,
+    "context": "reject_document",
+    "bytes": 21,
+    "sha256": "4337be0193e64e0c1171cd7d830ce08401d474caaaab5def882ce996a1fc66b5",
+    "expected": []
+  },
+  {
+    "name": "bad11_unclosed_parameter",
+    "group": "malformed",
+    "file": "bad11_unclosed_parameter.zsh",
+    "valid": false,
+    "context": "reject_document",
+    "bytes": 21,
+    "sha256": "f4228b964ae71f8c6345465856152a932a422b66a33f86ee4534b31ca228f646",
+    "expected": []
+  },
+  {
+    "name": "bad12_good_then_bad",
+    "group": "malformed",
+    "file": "bad12_good_then_bad.zsh",
+    "valid": false,
+    "context": "reject_document",
+    "bytes": 30,
+    "sha256": "da4e604a141cb7a28bd1976647208dc19799904d5eb11aab4151921b08ba59a7",
+    "expected": []
+  },
+  {
+    "name": "bad13_bad_then_good",
+    "group": "malformed",
+    "file": "bad13_bad_then_good.zsh",
+    "valid": false,
+    "context": "reject_document",
+    "bytes": 31,
+    "sha256": "4172baeced910a714ffa3a3ccf9cef4514b7b85f06a855ad51c6e415d76bb344",
+    "expected": []
+  },
+  {
+    "name": "bad14_heredoc_decoy",
+    "group": "malformed",
+    "file": "bad14_heredoc_decoy.zsh",
+    "valid": false,
+    "context": "reject_document",
+    "bytes": 40,
+    "sha256": "3eb64d61089259a0cd99be4e3dc363705f9df67f87bd723e3517d2e3ed67bcce",
+    "expected": []
+  },
+  {
+    "name": "policy_nul",
+    "group": "policy",
+    "file": "policy_nul.zsh",
+    "valid": true,
+    "context": "reject_encoding",
+    "bytes": 12,
+    "sha256": "eda2aed6e354f34fff5cfa13496bd0a535c8b91ce6b3c7d2b82e74ff39d25429",
+    "expected": []
+  },
+  {
+    "name": "policy_utf8",
+    "group": "policy",
+    "file": "policy_utf8.zsh",
+    "valid": true,
+    "context": "reject_encoding",
+    "bytes": 19,
+    "sha256": "0e79fc4c48aa0d027d2510eb22f6e7869301984d2abcfa92e2f8714a13bb2b24",
+    "expected": []
+  },
+  {
+    "name": "policy_crlf",
+    "group": "policy",
+    "file": "policy_crlf.zsh",
+    "valid": true,
+    "context": "requires_explicit_line_ending_policy",
+    "bytes": 19,
+    "sha256": "1ba9f088fdeed32a751ccda87dcaf8449f69f1e7a9688a2d0e2b6c17e60b10ff",
+    "expected": [
+      [
+        0,
+        18
+      ]
+    ]
+  }
+]

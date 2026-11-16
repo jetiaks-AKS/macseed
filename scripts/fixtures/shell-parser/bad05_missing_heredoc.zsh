@@ -1,0 +1,3 @@
+f() { cat <<END
+body
+}

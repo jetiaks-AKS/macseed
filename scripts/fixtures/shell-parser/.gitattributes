@@ -1,0 +1,2 @@
+# Byte-exact parser inputs: preserve CRLF, invalid UTF-8/NUL and intentional trivia.
+*.zsh -text -whitespace

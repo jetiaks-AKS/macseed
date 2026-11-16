@@ -46,6 +46,7 @@ SUITES=(
     scripts/test-restore-selection.py
     scripts/test-secure-restore.py
     scripts/test-secure-check.py
+    scripts/test-shell-parser.py
     scripts/test-shell-zsh.sh
     scripts/test-ssh-generated-state.sh
     scripts/test-ssh-identity-evidence.py

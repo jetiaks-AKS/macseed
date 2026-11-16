@@ -11,6 +11,11 @@ The format is based on the principles of **Keep a Changelog**.
 
 ### Added
 
+* A pinned native Zsh structural parser foundation with exact source spans,
+  bounded resource use and isolated process supervision. The helper is bundled
+  for development but remains inactive in Capture, Rebuild and Check; Functions
+  migration and Typed Shell Core integration remain separate checkpoints.
+
 * Git Rebuild can use an existing encrypted destination SSH key through a verified
   SSH agent, including Git-only Bundles. Fresh signature checks bind the expected
   public key and agent endpoint to Prepare/Execute without reading private-key

@@ -1,0 +1,16 @@
+{
+  "zsh": {
+    "archive": "tree-sitter-zsh-0.8.0.tar.gz",
+    "version": "0.8.0",
+    "url": "https://codeload.github.com/konomanoasa/tree-sitter-zsh/tar.gz/17651db6e3a413b22e148c8a57726d4b392d10f7",
+    "sha256": "ae90a8c8911b699deaa2099b813a8c7fe444294816effa1973cb80a142925b4b",
+    "revision": "17651db6e3a413b22e148c8a57726d4b392d10f7"
+  },
+  "runtime": {
+    "archive": "tree-sitter-0.27.2.tar.gz",
+    "version": "0.27.2",
+    "revision": "3fb7be49145acfb07e33b61ed5689e2b6771b2e9",
+    "url": "https://codeload.github.com/tree-sitter/tree-sitter/tar.gz/refs/tags/v0.27.2",
+    "sha256": "356528363bf7fbad12a2cfeb5a2678c0118ef886a4d69ad9a379db5fdef0735f"
+  }
+}

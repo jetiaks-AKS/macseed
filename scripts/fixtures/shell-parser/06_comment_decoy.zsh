@@ -1,0 +1,2 @@
+# fake() { :; }
+print "other() { :; }"
