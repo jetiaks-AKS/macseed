@@ -180,7 +180,7 @@ def typed_shell(files):
     try:
         value = contract.decode(raw, {name: data for name, data in files.items()
                                      if name == contract.DEFINITIONS or script_member(name)})
-        if not value._value['items'] or any(row['kind'] != 'function' for row in value._value['items']):
+        if not value._value['items']:
             raise Unsupported('unsupported typed Shell kinds')
         return value
     except ValueError:
@@ -188,7 +188,7 @@ def typed_shell(files):
 
 
 def require_runtime_shell(files):
-    typed_shell(files)  # B3 supports the validated Functions-only contract.
+    typed_shell(files)
 
 
 def shell_functions_contract():
@@ -242,6 +242,8 @@ def select_shell_aliases(stage, names):
         if typed is not None:
             contract = shell_functions_contract().state
             data, payloads = contract.encode(contract.select(typed, sorted(names)))
+            for name in set(typed._payloads) - set(payloads):
+                (stage / name).unlink()
             for name, content in {contract.SNAPSHOT: data, **payloads}.items():
                 target = stage / name
                 temporary = target.with_suffix('.selection')
@@ -303,8 +305,7 @@ def staged_payload(stage, blueprint):
     files['blueprint.conf'] = blueprint
     shell = files.get('generated/shell/zshrc.snapshot', b'')
     if shell.startswith(shell_state_contract().MAGIC):
-        name = shell_state_contract().DEFINITIONS
-        files[name] = checked_file(stage / name, shell_state_contract().MAX_DEFINITION_TOTAL)
+        files.update(typed_shell_load(stage / 'generated/shell/zshrc.snapshot')._payloads)
     if shell.startswith(shell_contract().FILE_MAGIC):
         files.update(shell_contract().recovery_contract().contents(shell_load(stage / 'generated/shell/zshrc.snapshot')))
     topology = 'generated/workspace/topology.json'
@@ -833,7 +834,10 @@ def validate_archive(path, with_provenance=False):
     if required_features.get('shell-aliases') == 5:
         expected.update(name for name in files if script_member(name))
     if required_features.get('shell-state') == 1:
-        expected.add(shell_state_contract().DEFINITIONS)
+        typed = typed_shell(files)
+        if typed is None:
+            raise Invalid('missing typed Shell snapshot')
+        expected.update(typed._payloads)
     elif len(files.get('generated/shell/zshrc.snapshot', b'')) > shell_contract().recovery_contract().MAX_MANIFEST_BYTES:
         raise Invalid('oversized Scripts manifest')
     if 'generated/homebrew-casks.json' in files:
@@ -899,6 +903,9 @@ def inspect_bundle(bundle, home):
                 shell_candidates = shell_contract().recovery_contract().selection_candidates(aliases)
         if typed is not None:
             counts['shell-zsh'] = len(typed._value['items'])
+            scripts = shell_state_contract().script_value(typed)
+            if scripts is not None:
+                shell_candidates = shell_contract().recovery_contract().selection_candidates(scripts)
     result = {
         "format_version": 1,
         "selected_categories": sorted(name for name, enabled in categories.items() if enabled),

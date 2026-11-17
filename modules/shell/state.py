@@ -1,7 +1,6 @@
 """Private typed Shell snapshot codec. No observation, publication or execution.
 
-This module deliberately has no production Bundle/Capture/Restore caller. A
-validated record is saved evidence, never target qualification or write consent.
+A validated record is saved evidence, never target qualification or write consent.
 """
 import hashlib
 import importlib.util
@@ -364,6 +363,8 @@ def _validate(value, payloads):
         keys(row, 'id kind key source loads content details')
         require(row['id'] == identity(row['kind'], row['key']), 'identity_invalid')
     item_map = _indexed(items)
+    names = [row['key'] for row in items if row['kind'] != 'script']
+    require(len(names) == len(set(names)), 'ambiguous_record')
     used_sources, used_loads, used_refs, used_members = set(), set(), set(), set()
     offset, script_bytes, declarations, aliases, scripts = 0, 0, 0, 0, []
     alias_definitions = []
@@ -493,6 +494,36 @@ def encode(state):
     return raw, dict(sorted(state._payloads.items()))
 
 
+def content(value, item):
+    ref = next(row for row in value._value['content_refs'] if row['id'] == item['content'])
+    return value._payloads[ref['member']][ref['offset']:ref['offset'] + ref['length']]
+
+
+def script_value(value):
+    """Project validated typed files into the existing independent v5 policy."""
+    scripts = [dict(path=row['key'], text=utf8(content(value, row)),
+                    sha256=digest(content(value, row)), mode=row['details']['mode'],
+                    managed=row['details']['managed'], quarantine=row['details']['quarantine'])
+               for row in value._value['items'] if row['kind'] == 'script']
+    return legacy().validated(dict(legacy().empty_capture(), version=5, scripts=scripts)) if scripts else None
+
+
+def with_scripts(value, scripts):
+    """Attach only explicitly authorized v5 files; never infer dependencies."""
+    encode(value)
+    sources = list(value._value['sources'])
+    items = [{k: v for k, v in row.items() if k != 'content'} for row in value._value['items']]
+    contents = {row['id']: content(value, row) for row in value._value['items']}
+    for script in scripts:
+        raw = script['text'].encode('utf-8')
+        source = source_record(script['path'], raw, 'script')
+        row = dict(id=identity('script', script['path']), kind='script', key=script['path'],
+                   source=source['id'], loads=[], details=dict(mode=script['mode'], managed=script['managed'],
+                   consent='file-transfer', quarantine=script.get('quarantine')))
+        sources.append(source); items.append(row); contents[row['id']] = raw
+    return assemble(sources, value._value['loads'], items, value._value['dependencies'], contents)
+
+
 def assemble(sources, loads, items, dependencies, contents) -> ShellState:
     """Build canonical private records from explicit items; never infer selection."""
     value = dict(schema=1, semantic_profile=SEMANTICS, resource_profile=RESOURCES,
@@ -619,3 +650,48 @@ def function_evidence(source, response, returncode, index):
     identity('function', key)
     first, last = row['span']
     return key, source[first:last], dict(span=row['span'], body=row['body'], name=name, parser_profile=value['profile'])
+
+
+def load_position(loads, key, offset):
+    """Private position in a validated depth-first B1 load traversal."""
+    row = loads[key]
+    order = [offset]
+    while row['parent'] is not None:
+        order.insert(0, row['site'][0])
+        row = loads[row['parent']]
+    return (row['order'], *order)
+
+
+def declaration_order(snapshot):
+    """One portable order satisfying every saved relative declaration order.
+
+    Load sites interleave parent declarations and sourced declarations. This is
+    an ordering projection of validated B1 evidence, never Shell evaluation.
+    Contradictory context orders cannot be flattened into a managed file.
+    """
+    loads = {r['id']: r for r in snapshot._value['loads']}
+    items = {r['id']: r for r in snapshot._value['items'] if r['kind'] != 'script'}
+    edges = {key: set() for key in items}
+    rank = {}
+    contexts = {}
+    for item in items.values():
+        for key in item['loads']:
+            row = loads[key]
+            order = load_position(loads, key, item['details']['span'][0])
+            contexts.setdefault(row['context'], []).append((order, item['id']))
+    for rows in contexts.values():
+        ids = [key for _, key in sorted(rows)]
+        require(len(ids) == len(set(ids)), 'ambiguous_record')
+        for key in ids:
+            rank.setdefault(key, len(rank))
+        for before, after in zip(ids, ids[1:]):
+            edges[after].add(before)
+    result = []
+    while edges:
+        ready = [key for key, parents in edges.items() if not parents]
+        require(ready, 'ambiguous_record')
+        key = min(ready, key=lambda key: (rank.get(key, MAX_DECLARATIONS), key))
+        result.append(items[key]); del edges[key]
+        for parents in edges.values():
+            parents.discard(key)
+    return result

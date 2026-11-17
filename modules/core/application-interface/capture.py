@@ -234,22 +234,34 @@ def functional_domain_count(chosen, scripts, rows):
     return sum(domain != 'shell-zsh' or bool(items) or whole_shell for domain, items in chosen.items()) + bool(scripts)
 
 
+def typed_selection(selection, rows):
+    wanted = (selection or {}).get('items', {}).get('shell-zsh', [])
+    legacy = next(row for row in rows if row['domain'] == 'shell-zsh')
+    legacy_ids = {row['item_id'] for row in legacy.get('_legacy', legacy)['items']}
+    return wanted if any(functions.function_id(key) or key not in legacy_ids for key in wanted) else []
+
+
 def prepared(stage, rows, secure, selection, private=None, shell_script_selection=None, shell_script_policy=None,
              function_observation=None):
     item_selection = selection.get('items') if isinstance(selection, dict) else None
     shell_selection = item_selection.get('shell-zsh') if isinstance(item_selection, dict) else None
     requested_functions = [key for key in shell_selection if functions.function_id(key)] if isinstance(shell_selection, list) else []
-    if requested_functions and (function_observation is None or function_observation.snapshot is None):
+    if requested_functions and (function_observation is None or function_observation.snapshot is None or
+            not set(requested_functions) <= {row['id'] for row in function_observation.snapshot._value['items']}):
         raise CaptureError('capture_functions_unavailable')
     chosen, identities, canonical = selection_for(selection, rows, secure) if selection is not None else ({}, [], None)
-    if requested_functions and (len(requested_functions) != len(chosen.get('shell-zsh', [])) or shell_script_selection):
-        raise CaptureError('mixed_shell_selection_unsupported')
+    typed_ids = typed_selection(canonical, rows)
+    if typed_ids:
+        if (function_observation is None or function_observation.snapshot is None or
+                not set(typed_ids) <= {row['id'] for row in function_observation.snapshot._value['items']}):
+            raise CaptureError('capture_source_unavailable')
+        chosen['shell-zsh'] = sorted(typed_ids)
     chosen, effective, duplicates = application_scope(stage, chosen, rows, canonical)
     shell_scripts, shell_observation, shell_candidates = [], None, []
     selected_script_count = 0
     shell = None
     shell_path = stage / 'generated/shell/zshrc.snapshot'
-    if any(row['domain'] == 'shell-zsh' and row.get('_legacy', row)['status'] == 'present' for row in rows):
+    if (shell_script_selection and shell_path.is_file()) or any(row['domain'] == 'shell-zsh' and row.get('_legacy', row)['status'] == 'present' for row in rows):
         shell = bundle.shell_load(shell_path)
         if shell is not None and shell['version'] in (3, 4, 5):
             shell_candidates = bundle.shell_contract().recovery_contract().selection_candidates(shell, os.environ['HOME'], policy=shell_script_policy or 'opaque-file-v5')
@@ -261,10 +273,21 @@ def prepared(stage, rows, secure, selection, private=None, shell_script_selectio
     if selection is not None:
         raw = blueprint_data(chosen)
         try:
-            if requested_functions:
+            if typed_ids:
                 # The legacy stage remains intact for legacy selection and its
                 # consent policies. Only the explicit typed branch replaces it.
-                typed, payloads = function_observation.selected(requested_functions)
+                scripts = []
+                if shell_script_selection:
+                    if shell is None or shell_script_policy != 'opaque-file-v5':
+                        raise CaptureError('invalid_script_consent')
+                    recovery = bundle.shell_contract().recovery_contract()
+                    shell_scripts = recovery.script_candidates(shell, os.environ['HOME'], policy=shell_script_policy)
+                    shell_observation = recovery.sources.dependency_states(shell, os.environ['HOME'], transfer=True)
+                    scripts = recovery.authorize_capture(shell, os.environ['HOME'], shell_script_selection,
+                        shell_observation, shell_script_policy)['scripts']
+                typed, payloads = function_observation.selected(typed_ids, scripts)
+                if private is not None:
+                    private['typed_shell'] = (typed, payloads)
                 files = bundle.staged_payload(stage, blueprint_data({k: v for k, v in chosen.items() if k != 'shell-zsh'}))
                 files.update(payloads)
                 files.update({'blueprint.conf': raw, functions.state.SNAPSHOT: typed})
@@ -275,7 +298,7 @@ def prepared(stage, rows, secure, selection, private=None, shell_script_selectio
                 bundle.ssh_contract().select_snapshot(files['generated/ssh/config.snapshot'], chosen['ssh-configuration'])
             # Legacy whole-file snapshots have no alias/script selection.
             # Their existing staged-payload and Bundle validators still apply.
-            if 'shell-zsh' in chosen and shell is not None and not requested_functions:
+            if 'shell-zsh' in chosen and shell is not None and not typed_ids:
                 contract = bundle.shell_contract()
                 selected_shell = (shell if shell_script_selection and shell_script_policy in ('opaque-file-v4', 'opaque-file-v5') else
                     contract.snapshot(contract.select_snapshot(files['generated/shell/zshrc.snapshot'], chosen['shell-zsh'])))
@@ -298,7 +321,7 @@ def prepared(stage, rows, secure, selection, private=None, shell_script_selectio
         if path.is_file():
             fingerprints[str(path.relative_to(stage))] = bundle.digest(bundle.checked_file(path))
     binding = {'schema': 1, 'inputs': fingerprints, 'inventory': rows, 'secure': secure, 'selection': canonical}
-    if requested_functions:
+    if typed_ids:
         binding['shell_functions'] = function_observation.binding
     if shell_observation is not None:
         binding['shell_dependencies'] = shell_observation
@@ -382,8 +405,9 @@ def capture(root, operation, parameters, channel, event):
             shell_row = next(row for row in rows if row['domain'] == 'shell-zsh')
             if observed_functions.entries():
                 shell_row['_legacy'] = dict(shell_row)
+                legacy_ids = {row['item_id'] for row in shell_row['items']}
                 shell_row.update(status='present', selection_mode='items', reason='source_partial',
-                                 items=[*shell_row['items'], *observed_functions.entries()])
+                                 items=[*shell_row['items'], *(row for row in observed_functions.entries() if row['item_id'] not in legacy_ids)])
             event('capture_category', {key: shell_row[key] for key in ('domain', 'status', 'reason')})
             event('phase_completed', {'phase': 'discovery'})
             if paths:
@@ -402,10 +426,18 @@ def capture(root, operation, parameters, channel, event):
                 shell = bundle.shell_load(shell_path) if shell_path.exists() else contract.empty_capture()
                 if shell is None and not (parameters['selection'] or {}).get('items', {}).get('shell-zsh') and 'shell-zsh' not in (parameters['selection'] or {}).get('categories', []):
                     shell = contract.empty_capture()
+                typed_ids = typed_selection(parameters['selection'], rows)
+                if shell is None and typed_ids and observed_functions.snapshot is not None:
+                    # A qualified complex Function may exceed the legacy source
+                    # observer. Reuse the same file-inspection context as the
+                    # picker, then enforce actual typed alias/source exclusions.
+                    shell = contract.capture(os.environ['HOME'], allow_empty=True)
                 if shell is None or shell['version'] not in (3, 4, 5) or not script_selection or parameters['selection'] is None:
                     raise CaptureError('invalid_script_consent')
                 try:
                     manual = contract.manual_paths(shell, os.environ['HOME'], parameters['shell_script_paths'])
+                    if typed_ids and observed_functions.snapshot is not None:
+                        observed_functions.validate_script_paths(typed_ids, manual)
                     if not {contract.script_id(path) for path in manual} <= set(script_selection):
                         raise CaptureError('invalid_script_consent')
                     shell = contract.authorize_capture(shell, os.environ['HOME'], script_selection,
@@ -419,9 +451,7 @@ def capture(root, operation, parameters, channel, event):
                     row['reason'] = None
             result, chosen, identities = prepared(stage, rows, secure, parameters['selection'], private, script_selection, script_policy,
                                                   observed_functions)
-            typed_selection = [key for key in chosen.get('shell-zsh', []) if functions.function_id(key)]
-            if typed_selection and parameters.get('shell_script_ids'):
-                raise CaptureError('mixed_shell_selection_unsupported')
+            typed = private.get('typed_shell')
             if identities and DESKTOP_BUNDLE in os.environ and not age_executable():
                 raise CaptureError('age_unavailable')
             if operation == 'capture_prepare':
@@ -446,19 +476,26 @@ def capture(root, operation, parameters, channel, event):
             blueprint(stage, chosen)
             if chosen.get('ssh-configuration'):
                 bundle.select_ssh_profiles(stage, chosen['ssh-configuration'])
-            if typed_selection:
-                raw, payloads = observed_functions.selected(typed_selection)
+            if typed is not None:
+                raw, payloads = typed
+                previous_shell = bundle.shell_load(stage / functions.state.SNAPSHOT)
+                previous_payloads = (bundle.shell_contract().recovery_contract().contents(previous_shell)
+                                     if previous_shell is not None and previous_shell['version'] == 5 else {})
+                for name in set(previous_payloads) - set(payloads):
+                    (stage / name).unlink()
                 typed_path = (stage / functions.state.SNAPSHOT).with_name('zshrc.typed')
                 bundle.write_file(typed_path, raw)
                 typed_path.replace(stage / functions.state.SNAPSHOT)
                 for name, data in payloads.items():
-                    bundle.write_file(stage / name, data)
+                    temporary = (stage / name).with_suffix('.typed')
+                    bundle.write_file(temporary, data)
+                    temporary.replace(stage / name)
             elif chosen.get('shell-zsh') and not (script_policy in ('opaque-file-v4', 'opaque-file-v5') and parameters.get('shell_script_ids')):
                 bundle.select_shell_aliases(stage, chosen['shell-zsh'])
             approvals = parameters.get('shell_script_ids', [])
             if script_selection is not None and set(approvals) != set(script_selection):
                 raise CaptureError('invalid_script_consent')
-            if approvals:
+            if approvals and typed is None:
                 shell_path = stage / 'generated/shell/zshrc.snapshot'
                 if 'shell-zsh' not in chosen:
                     raise CaptureError('invalid_script_consent')
@@ -490,7 +527,7 @@ def capture(root, operation, parameters, channel, event):
                 if identity.get('source') == 'manual' and external_pair(identity['_source_path'])[3] != identity['_stamp']:
                     raise CaptureError('stale_prepared_capture')
             event('phase_started', {'phase': 'bundle_creation'})
-            if typed_selection and functions.Observation(root).binding != observed_functions.binding:
+            if typed is not None and functions.Observation(root).binding != observed_functions.binding:
                 raise CaptureError('stale_prepared_capture')
             previous = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGINT, signal.SIGTERM})
             try:

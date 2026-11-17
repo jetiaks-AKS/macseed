@@ -497,6 +497,10 @@ not Selection controls. Secure Transfer remains the technical operation name.
 Native category help is optional: repositories/worktrees, SSH Configuration, SSH Keys,
 Workspace Folders, VS Code Workspace, Shell and App Store have specific text.
 Other categories, including macOS preferences and unknown IDs, have no info button.
+Shell help and Rebuild confirmation explain qualified definition writes and the
+possible managed definitions file/startup connection before approval. Qualified
+declarations beside excluded initialization retain one coverage warning; they are
+not labeled Functions unavailable. Runtime dependencies and execution remain unverified.
 Required warnings, approvals, destinations and security actions remain outside popovers.
 Unified Developer UI is visually accepted within this presentation scope. It does
 not close joint SSH E2E, hosted CI or Stage 16/17 qualification.
@@ -1480,7 +1484,25 @@ Core capabilities must supply their own validated identity/evidence before using
 this existing hierarchy. No additional SSH sources or grammar are implemented here.
 
 Capture/Rebuild Selection uses **Shell → Custom Commands → Aliases & Functions /
-Scripts**. Individual aliases retain their existing native rows and checkboxes.
+Scripts**. Individual aliases and functions share the existing native rows and checkboxes.
+Every named definition uses **Alias: name** or **Function: name**, including Capture
+review/confirmation/results, Rebuild selection/Preview/progress/results/attention,
+and Check outcomes/details. Native presentation lists Aliases before Functions and
+sorts names within each kind by locale-independent UTF-8 byte order. Prefixes are
+idempotent; source/load order, Core plan order, selected IDs and Bundle bytes are
+unchanged. Scripts and historical whole-file rows keep their existing presentation.
+Their parent selects/clears every eligible definition with None/Partial/All states.
+All-selected item inventories retain explicit `shell-alias:`/`shell-function:` IDs;
+other domains still use compact category selection and actual legacy Shell remains Settings.
+Capture Confirmation reports Alias/Function counts. Core's unavailable/unsupported
+Function observation is shown in the existing Shell row and selected-scope confirmation.
+**Functions unavailable** denotes missing observation capability; **Functions excluded**
+denotes an unsupported or unsafe source context. One combined coverage explanation
+uses fixed messages mapped from bounded Core reason codes, states the eligible Alias
+count (selected count in confirmation, saved count in Result), and retains partial
+Shell coverage. Unknown codes use neutral text, never raw diagnostics. A successful
+fresh observation clears unavailable/excluded messages. No private source bytes or
+paths are displayed; parser success alone does not qualify a dynamic startup context.
 Custom Commands reuses the nested group header used by VS Code; Scripts reuses
 native category disclosure and item selection. Scripts lists each detected
 file candidate once, including shared dependencies. Capture initially exposes
@@ -1501,12 +1523,16 @@ Historical whole-file snapshots retain **Shell → Settings → Saved Zsh file**
 do not become disclosure levels. There is no extra Zsh Configuration wrapper.
 
 Names are display metadata; Swift never decodes command bodies or resolves source
-paths. Check/Preview count each alias once, with independent **Shell coverage**
+paths. Check/Preview count each Alias/Function once, with independent **Shell coverage**
 attention. Matching rows remain suppressed in Preview. Coverage text
 explicitly distinguishes matching aliases from other unsupported/unincluded Shell
 state. Core alone qualifies missing source structure/dependencies and additions to
 original files; conflicts and unqualified prerequisites remain blocked. No source-file aggregate inflates
-item counts. Invalid optional Check labels fall back to “Shell alias”. See the
+item counts. Invalid optional Check labels fall back to “Alias: Name unavailable” or “Function: Name unavailable”.
+Function labels require validated names matching their SHA-256 identities and a
+`function_definition` evidence owner. Mixed Bundle Restore uses existing individual
+selection, read-only Preview, confirmation/cancellation and fresh approved Execute.
+Match confirms saved-definition conformity, never runtime activation. See the
 [Shell contract](toolkit/CONFIGURATION.md#shell--zsh-configuration).
 
 Capability-3/4 executable transfer and v5 script-file inclusion are default off. Scripts has the same native

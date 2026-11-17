@@ -526,6 +526,8 @@ zsh_alias_verify() {
         verification_coverage shell-zsh "$identity" resolved observed_present
         if [[ "$identity" == shell-script:* ]]; then
             verification_result shell-zsh "$identity" script_file "$result" "$code" "$kind"
+        elif [[ "$identity" == shell-alias:* && "$ZSH_SNAPSHOT_FORMAT" == functions ]]; then
+            verification_result shell-zsh "$identity" alias_definition "$result" "$code" "$kind"
         else
             verification_result shell-zsh "$identity" "$predicate" "$result" "$code" "$kind"
         fi

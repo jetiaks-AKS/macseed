@@ -101,8 +101,11 @@ records two aliases and two scripts captured, deliberately removed and restored,
 four final Match results, a no-op Preview and independent source-integrity checks.
 The existing partial Shell coverage warning remains outside that accepted scope.
 Legacy whole-file requirements use **Settings → Saved Zsh file** and retain absent-
-target-only restoration. **Variables & PATH**, broader **Settings**, functions and
-conditional **Plugins & Themes** remain future Shell slices. Apart from the Scripts
+target-only restoration. [Unified Aliases & Functions](toolkit/CONFIGURATION.md#unified-aliases--functions-b4)
+supports mixed typed Capture/Restore/Verify/Check with explicit Native selection and
+independent Scripts consent; matching definitions do not prove runtime activation.
+**Variables & PATH**, broader **Settings** and conditional **Plugins & Themes** remain
+future Shell slices. Apart from the Scripts
 entry needed to add files, no empty future categories,
 source browser or background monitoring is introduced. The
 [Shell contract](toolkit/CONFIGURATION.md#shell--zsh-configuration) owns exact safety

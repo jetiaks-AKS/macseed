@@ -109,7 +109,50 @@ struct CoreCaptureSecureInventory: Decodable {
 }
 
 // Existing V1 payloads only; Discovery, validation and publication remain Core-owned.
+struct CoreCaptureShellObservation: Decodable {
+    enum Status: String, Decodable { case observed, unavailable, unsupported }
+    let status: Status
+    private let codes: Set<String>
+    enum CodingKeys: String, CodingKey { case status, codes }
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        status = try values.decode(Status.self, forKey: .status)
+        let supplied = try values.decodeIfPresent([String].self, forKey: .codes) ?? []
+        guard supplied.count <= 32, supplied.allSatisfy({ $0.utf8.count <= 80 }) else { throw CoreRuntimeError.malformedEvent }
+        codes = Set(supplied)
+    }
+    var title: String { status == .unavailable ? "Functions unavailable" : "Functions excluded" }
+    var notice: String? {
+        guard status != .observed else { return nil }
+        // Fixed messages only. Unknown codes never become user-visible text.
+        if status == .unavailable {
+            if codes.contains("functions_unavailable") { return "Functions are excluded because protected parser launch is unavailable on this Mac." }
+            if !codes.isDisjoint(with: ["helper_unavailable", "helper_untrusted"]) { return "Functions are excluded because the bundled parser could not be authenticated or started." }
+            return "Functions observation is unavailable on this Mac; Functions are excluded."
+        }
+        if codes.contains("unsupported_context") { return "Functions are excluded because startup configuration contains unsupported commands or source relationships." }
+        if codes.contains("unsafe_source") { return "Functions are excluded because a Shell source did not pass safety checks." }
+        if codes.contains("source_changed") { return "Functions are excluded because a Shell source changed during observation. Scan again." }
+        if !codes.isDisjoint(with: ["ambiguous_definition", "ambiguous_load"]) { return "Functions are excluded because definitions or load relationships are ambiguous." }
+        return "Functions are excluded because this Shell configuration could not be safely qualified."
+    }
+    func coverageMessage(aliasCount: Int, saved: Bool = false) -> String? {
+        if status == .observed && !codes.isEmpty {
+            let scope = codes.isDisjoint(with: ["ambiguous_function", "ambiguous_alias", "ambiguous_source_command"])
+                ? "Startup initialization and unsupported source relationships are outside the saved scope."
+                : "Ambiguous definitions and unsupported source relationships are excluded."
+            return (saved ? "Selected definitions were saved. " : "Listed definitions are eligible to save. ") + scope
+                + " Tools, environment and runtime behavior are not verified."
+        }
+        guard let notice else { return nil }
+        let aliases = "\(aliasCount) \(aliasCount == 1 ? "Alias" : "Aliases")"
+        return (saved ? aliases + " saved. " : aliases + " eligible to save. ") + notice
+            + " Other Shell settings and dependencies may remain outside the saved scope."
+    }
+}
+
 struct CoreCapturePreparation: Decodable {
+    var shellFunctions: CoreCaptureShellObservation? = nil
     var shellScriptPolicies: [String]? = nil
     var shellScriptPolicy: String? = nil
     var shellScriptSelection: [String]? = nil
@@ -138,6 +181,7 @@ struct CoreCapturePreparation: Decodable {
         }
     }
     enum CodingKeys: String, CodingKey {
+        case shellFunctions = "shell_functions"
         case shellScriptSelection = "shell_script_selection"
         case shellScriptPolicies = "shell_script_policies", shellScriptPolicy = "shell_script_policy"
         case shellScriptCandidates = "shell_script_candidates"

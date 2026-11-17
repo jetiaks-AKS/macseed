@@ -25,12 +25,22 @@ The format is based on the principles of **Keep a Changelog**.
 
 * Explicit Functions Capture through production Core, preserving selected definition
   bytes in Bundle V1 `shell-state:1` with fresh source/parser evidence and validated
-  read-only inspection. Mixed Functions/legacy Shell selection remains rejected.
+  read-only inspection.
 
 * Bounded Zsh Functions Restore, Verify and Bundle Check with individual selection,
   exact definition bytes, qualified existing source chains, fresh approval, conflict
   refusal and repeat/no-op. Protected parser enforcement remains required; Match
   verifies reconstructed definition/source state, not runtime activation or execution.
+
+* Unified Aliases & Functions Capture, Bundle, Restore, Verify and Check, including
+  mixed subsets and one coherent publication per shared source. Native Select All
+  preserves explicit definition IDs; Scripts retain separate v5 transfer and Restore
+  consent, mode and quarantine. Check uses validated Function labels without exposing
+  source contents; unavailable Functions remain explicit.
+  Independently qualified declarations can be saved beside unrelated initialization;
+  portable Restore can use a controlled definitions file with a verified startup
+  connection. Qualified equivalent Function occurrences share one transferable item;
+  conflicting bindings and targets remain excluded.
 
 * Git Rebuild can use an existing encrypted destination SSH key through a verified
   SSH agent, including Git-only Bundles. Fresh signature checks bind the expected
@@ -64,7 +74,7 @@ The format is based on the principles of **Keep a Changelog**.
   coverage and broader hosted/release qualification remain separate.
   Historical files remain under Settings; partial
   coverage explanations distinguish matching aliases from unhandled Shell state.
-  Functions, Variables & PATH, broader Settings and Plugins & Themes remain planned.
+  Variables & PATH, broader Settings and Plugins & Themes remain planned.
 
 * SSH Configuration in Check and Rebuild Preview shows qualified saved Host details
   directly inside the existing category. Check and Preview badges and summary cards

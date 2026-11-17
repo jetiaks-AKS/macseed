@@ -483,6 +483,83 @@ class ShellStateTests(unittest.TestCase):
 
 
 class ShellParser(unittest.TestCase):
+    def test_mixed_definitions_shared_source_order_scripts_and_noop(self):
+        initial, helper, source = self.function_restore_fixture()
+        if not self.function_mode(initial, helper, source):
+            return
+        self.source_file(source, '.zshrc', b'source "$HOME/parts/commands"\n')
+        raw = (b"alias listing='ls -la'\n" + b'complex() {\n for x in a b; do\n cat <<\'EOF\'\nUTF-8 \xc3\xa9\nEOF\n done\n}\n'
+               + b"alias location='pwd'\nother() { :; }\n")
+        self.source_file(source, 'parts/commands', raw)
+        observed = functions.observe.observe(str(source), helper, aliases=True)
+        self.assertEqual(observed.codes, ())
+        self.assertEqual({r['kind'] for r in observed.snapshot._value['items']}, {'alias', 'function'})
+        ids = [functions.state.identity('alias', 'listing'), functions.state.identity('function', 'complex')]
+        value = functions.state.select(observed.snapshot, ids)
+        with patch.object(functions.capture, 'parser', return_value=helper), patch.dict(os.environ, HOME=str(source)):
+            selected_context = functions.capture.Observation(ROOT)
+            selected_context.validate_script_paths(ids, ['Scripts/independent'])
+            for path in ('.zshrc', 'parts/commands'):
+                with self.assertRaises(functions.state.Invalid): selected_context.validate_script_paths(ids, [path])
+            for command in (b'source', b'.'):
+                self.source_file(source, 'parts/commands', raw.replace(b'ls -la', command + b' $HOME/Scripts/independent'))
+                selected_context = functions.capture.Observation(ROOT)
+                with self.assertRaises(functions.state.Invalid):
+                    selected_context.validate_script_paths(ids, ['Scripts/independent'])
+            self.source_file(source, 'parts/commands', raw)
+        home = self.observation_home()
+        self.source_file(home, '.zshrc', b'source "$HOME/parts/commands"\n')
+        target = self.source_file(home, 'parts/commands', b"# preserved\nalias retained='pwd'\n")
+        original = target.read_bytes()
+        planned = functions.plan(value, str(home), helper=helper)
+        self.assertEqual([(s, p) for _, s, p in planned.rows], [('missing', 'add')] * 2)
+        self.assertEqual(target.read_bytes(), original)
+        with patch.object(functions.sources, 'publish_content', wraps=functions.sources.publish_content) as publish:
+            self.assertTrue(functions.publish(value, str(home), helper=helper, expected=planned.evidence))
+            self.assertEqual(publish.call_count, 1)  # Both kinds share one source writer.
+        ordered = sorted(value._value['items'], key=lambda r: r['details']['span'])
+        self.assertEqual(target.read_bytes(), original + b''.join(functions.content(value, r) + b'\n' for r in ordered))
+        stamp = (target.stat().st_ino, target.stat().st_mtime_ns)
+        self.assertFalse(functions.publish(value, str(home), helper=helper))
+        self.assertEqual((target.stat().st_ino, target.stat().st_mtime_ns), stamp)
+        self.assertTrue(all(status == 'matching' for _, status, _ in functions.plan(value, str(home), helper=helper).rows))
+        script = dict(path='Scripts/independent', text='#!/bin/sh\nprintf fixture\n', mode=0o700, managed=False)
+        script['sha256'] = functions.state.digest(script['text'].encode())
+        combined = functions.state.with_scripts(value, [script])
+        combined_plan = functions.plan(combined, str(home), helper=helper)
+        self.assertTrue(all(s in ('matching', 'missing') for _, s, _ in combined_plan.rows),
+                        [(r['kind'], s, p) for r, s, p in combined_plan.rows])
+        with self.assertRaisesRegex(functions.base.Invalid, 'script_consent_required'):
+            functions.publish(combined, str(home), helper=helper)
+        self.assertFalse((home / 'Scripts').exists())
+        self.assertTrue(functions.publish(combined, str(home), helper=helper,
+            approvals=[functions.state.legacy().script_id(script['path'])]))
+        self.assertEqual((home / script['path']).read_bytes(), script['text'].encode())
+        self.assertEqual((home / script['path']).stat().st_mode & 0o777, 0o700)
+        self.assertEqual(target.read_bytes(), original + b''.join(functions.content(value, r) + b'\n' for r in ordered))
+        target.write_bytes(original + b"alias listing='ls -l'\n")
+        conflicting = target.read_bytes()
+        with self.assertRaises(functions.base.Invalid): functions.publish(value, str(home), helper=helper)
+        self.assertEqual(target.read_bytes(), conflicting)
+        # Appending a missing alias after an already present selected Function
+        # would reverse the saved declaration order and must remain blocked.
+        target.write_bytes(original + functions.content(value, next(r for r in ordered if r['kind'] == 'function')) + b'\n')
+        self.assertTrue(any(s == 'unverified' for _, s, _ in functions.plan(value, str(home), helper=helper).rows))
+        target.write_bytes(original + b''.join(functions.content(value, r) + b'\n' for r in reversed(ordered)))
+        self.assertTrue(all(s == 'unverified' for _, s, _ in functions.plan(value, str(home), helper=helper).rows))
+        self.source_file(source, '.zshrc', b'source "$HOME/first"\nsource "$HOME/second"\n')
+        self.source_file(source, 'first', b"alias listing='ls -la'\n")
+        self.source_file(source, 'second', b'complex() { :; }\n')
+        chained = functions.observe.observe(str(source), helper, aliases=True).snapshot
+        self.source_file(home, '.zshrc', b'source "$HOME/second"\nsource "$HOME/first"\n')
+        self.source_file(home, 'first', b"alias listing='ls -la'\n")
+        self.source_file(home, 'second', b'complex() { :; }\n')
+        self.assertTrue(all(s == 'unverified' for _, s, _ in functions.plan(chained, str(home), helper=helper).rows))
+        self.source_file(source, '.zshrc', b"alias collision='pwd'\ncollision() { :; }\n")
+        ambiguous = functions.observe.observe(str(source), helper, aliases=True)
+        self.assertTrue(ambiguous.codes)
+        self.assertEqual(ambiguous.snapshot._value['items'], [])
+
     def function_restore_fixture(self, definitions=None, path='.zshrc'):
         definitions = definitions or {'complex': b'complex() {\r\n for x in a b; do\n cat <<\'EOF\'\nprivate literal\nEOF\n done\n inner() { :; }\n}'}
         c = functions.state
@@ -557,8 +634,13 @@ class ShellParser(unittest.TestCase):
         self.source_file(source_home, 'parts/leaf', b'leaf() { :; }\n')
         snapshot = functions.observe.observe(str(source_home), helper).snapshot
         destination = self.observation_home()
-        self.assertEqual(functions.plan(snapshot, str(destination), helper=helper).rows[0][1:], ('unverified', 'source_prerequisite'))
+        self.assertEqual(functions.plan(snapshot, str(destination), helper=helper).rows[0][1:], ('missing', 'create'))
         self.assertFalse(list(destination.iterdir()))
+        self.assertTrue(functions.publish(snapshot, str(destination), helper=helper))
+        self.assertEqual((destination / '.zshrc').read_bytes(), functions.MANAGED_SOURCE)
+        self.assertEqual((destination / functions.MANAGED_PATH).read_bytes(), functions.MANAGED_HEADER + b'leaf() { :; }\n')
+        self.assertEqual(functions.plan(snapshot, str(destination), helper=helper).rows[0][1], 'matching')
+        destination = self.observation_home()
         self.source_file(destination, '.zshrc', b'source "$HOME/parts/leaf"\n')
         self.source_file(destination, 'parts/leaf', b'# preserved\n')
         self.assertTrue(functions.publish(snapshot, str(destination), helper=helper))
@@ -569,7 +651,7 @@ class ShellParser(unittest.TestCase):
         value, helper, home = self.function_restore_fixture()
         if not self.function_mode(value, helper, home): return
         target = self.source_file(home, '.zshrc', b'# safe\n')
-        for raw in (b'# managed by fixture\n', b'source "$HOME/$dynamic"\n', b"alias cat='private'\n",
+        for raw in (b'# managed by fixture\n', b'source "$HOME/$dynamic"\n',
                     b'complex() { :; }\ncomplex() { :; }\n', b'broken() {', b'\xff'):
             with self.subTest(raw=raw):
                 target.write_bytes(raw)
@@ -727,6 +809,212 @@ class ShellParser(unittest.TestCase):
         value = json.loads(encoded[len(observer.state.MAGIC):])
         self.assertEqual(observer.state.encode(observer.state.decode(encoded, payloads)), (encoded, payloads))
         return result, value, payloads
+
+    def test_independent_declarations_with_realistic_initialization(self):
+        home = self.observation_home()
+        if not self.enforcing():
+            self.assert_functions_unavailable(home=home)
+            return
+        definitions = [b"alias listing='ls -la'", b'del() {\n for x in a b; do\n cat <<\'EOF\'\nexact UTF-8 \xc3\xa9\nEOF\n done\n}',
+                       b"alias external='unavailable-fixture-tool --flag'", b'vpncheck() { print "$UNAVAILABLE_VARIABLE"; }']
+        raw = (b'eval "$(fixture-init)"\n' + b'\n'.join(definitions[:2]) + b'\nexport PATH="$HOME/bin:$PATH"\n'
+               + b'\n'.join(definitions[2:]) + b'\nsetopt AUTO_CD\n[[ -e "$HOME/integration" ]] && source "$HOME/integration"\n')
+        self.source_file(home, '.zshrc', raw)
+        self.source_file(home, '.zprofile', b'eval "$(other-init)"\n')
+        result, value, _ = self.observed(home, aliases=True, independent=True)
+        self.assertEqual({r['key'] for r in value['items']}, {'listing', 'external', 'del', 'vpncheck'})
+        self.assertEqual(result.codes, ('unsupported_context',))
+        self.assertEqual(result._files['.zshrc']['status'], 'partial')
+        self.assertEqual({s['path'] for s in value['sources']}, {'.zshrc'})
+        self.assertNotIn('integration', result._files)  # Conditional source is not an invented edge.
+        self.assertTrue(all(load['condition'] == 'unknown' for load in value['loads']))
+        ordered = observer.state.declaration_order(result.snapshot)
+        self.assertEqual([observer.state.content(result.snapshot, r) for r in ordered], definitions)
+        # The normal target observer remains strict; only Capture opts into a
+        # self-contained declaration recipe from a partially observed source.
+        self.assertEqual(self.observed(home, aliases=True)[1]['items'], [])
+        helper = functions.client.Parser(package=self.package, manifest_sha256=self.manifest_sha256)
+        snapshot = functions.state.decode(*observer.state.encode(result.snapshot))
+        target = self.observation_home()
+        self.assertTrue(functions.publish(snapshot, str(target), helper=helper))
+        self.assertEqual((target / '.zshrc').read_bytes(), b'\n'.join(definitions) + b'\n')
+        self.assertTrue(all(status == 'matching' for _, status, _ in functions.plan(snapshot, str(target), helper=helper).rows))
+        self.assertFalse(functions.publish(snapshot, str(target), helper=helper))
+        self.assertEqual((home / '.zshrc').read_bytes(), raw)
+        self.assertFalse((target / 'integration').exists())
+        # CRLF in outer initialization is only a lexical projection detail;
+        # native function spans and definition bytes remain untouched.
+        raw_crlf = b'eval "$(fixture-init)"\r\n' + b'\n'.join(definitions) + b'\n'
+        self.source_file(home, '.zshrc', raw_crlf)
+        result, _, _ = self.observed(home, aliases=True, independent=True)
+        self.assertEqual([observer.state.content(result.snapshot, r) for r in observer.state.declaration_order(result.snapshot)], definitions)
+
+    def test_independent_declarations_reject_ambiguous_positions_and_bindings(self):
+        home = self.observation_home()
+        if not self.enforcing():
+            self.assert_functions_unavailable(home=home)
+            return
+        for raw in (b'if true; then\nblocked() { :; }\nfi\n',
+                    b'false &&\nblocked() { :; }\n', b'blocked() { :; } | cat\n',
+                    b'echo "$(blocked() { :; })"\n', b'( blocked() { :; } )\n',
+                    b"alias blocked='pwd'\nblocked() { :; }\n", b'blocked() { :; }\nblocked() { print changed; }\n',
+                    b'blocked() { :; }\nunfunction blocked\n', b'autoload blocked\nblocked() { :; }\n'):
+            self.source_file(home, '.zshrc', b'eval "$(fixture-init)"\n' + raw)
+            with self.subTest(case=raw.split(b' ', 1)[0]):
+                self.assertEqual(self.observed(home, aliases=True, independent=True)[1]['items'], [])
+        self.source_file(home, '.zshrc', b'source "$HOME/$unknown"\nselected() { :; }\n')
+        result, value, _ = self.observed(home, independent=True)
+        self.assertEqual([r['key'] for r in value['items']], ['selected'])
+        self.assertEqual(result.codes, ('unsupported_context',))
+        self.assertTrue(all(r['parent'] is None for r in value['loads']))
+        self.source_file(home, '.zshrc', b'eval "$(fixture-init)"\nalias() { :; }\nalias blocked=\'pwd\'\n')
+        _, value, _ = self.observed(home, aliases=True, independent=True)
+        self.assertFalse(any(r['kind'] == 'alias' for r in value['items']))
+        self.source_file(home, 'duplicate-leaf', b'duplicate() { print changed; }\n')
+        self.source_file(home, '.zshrc', b'eval "$(fixture-init)"\nduplicate() { :; }\n'
+                         b'source "$HOME/duplicate-leaf"\nselected() { :; }\n')
+        result, value, _ = self.observed(home, independent=True)
+        self.assertEqual([r['key'] for r in value['items']], ['selected'])
+        self.assertIn('ambiguous_function', result.codes)
+        (home / '.zshrc').chmod(0o666)
+        self.assertEqual(self.observed(home, independent=True)[1]['items'], [])
+
+    def test_equivalent_functions_physical_occurrences_and_repeated_loads(self):
+        home = self.observation_home()
+        if not self.enforcing():
+            self.assert_functions_unavailable(home=home); return
+        definition = b'portable() {\n cat <<\'EOF\'\nexact UTF-8 \xc3\xa9\nEOF\n}\n'
+        leaf = self.source_file(home, 'parts/leaf', b'# different source offset\n' + definition)
+        for raw in (definition + b'source "$HOME/parts/leaf"\n',
+                    b'source "$HOME/parts/leaf"\nsource "$HOME/parts/leaf"\n', definition * 2):
+            self.source_file(home, '.zshrc', b'eval "$(fixture-init)"\n' + raw)
+            result, value, _ = self.observed(home, independent=True)
+            self.assertEqual([r['key'] for r in value['items']], ['portable'])
+            item, = value['items']
+            self.assertEqual(item['id'], state.identity('function', 'portable'))
+            self.assertEqual(observer.state.content(result.snapshot, item), definition.rstrip(b'\n'))
+            self.assertEqual(len(item['loads']), 2)
+            self.assertNotIn('ambiguous_function', result.codes)
+            self.assertEqual(observer.state.encode(result.snapshot), observer.state.encode(self.observed(home, independent=True)[0].snapshot))
+            # The private record retains every read source and complete load evidence.
+            self.assertEqual(sum(len(f['units']) for f in result._files.values()), 2 if raw != b'source "$HOME/parts/leaf"\nsource "$HOME/parts/leaf"\n' else 1)
+            if b'parts/leaf' in raw:
+                self.assertEqual(result._files['parts/leaf']['raw'], leaf.read_bytes())
+                self.assertEqual(len(result._loads), 4 if raw.startswith(definition) else 6)
+            selected = functions.state.decode(*observer.state.encode(result.snapshot))
+            helper = functions.client.Parser(package=self.package, manifest_sha256=self.manifest_sha256)
+            target = self.observation_home()
+            self.assertTrue(functions.publish(selected, str(target), helper=helper))
+            actual = functions.observe.observe(str(target), helper)
+            self.assertEqual(sum(f['names'].count('portable') for f in actual._files.values()), 1)
+            self.assertTrue(all(s == 'matching' for _, s, _ in functions.plan(selected, str(target), helper=helper).rows))
+            self.assertFalse(functions.publish(selected, str(target), helper=helper))
+
+    def test_equivalent_functions_refuse_conflicts_and_uncertain_context(self):
+        home = self.observation_home()
+        if not self.enforcing():
+            self.assert_functions_unavailable(home=home); return
+        definition = b'portable() { :; }\n'
+        leaf = self.source_file(home, 'leaf', definition)
+        prefix, edge = b'eval "$(fixture-init)"\n' + definition, b'source "$HOME/leaf"\n'
+        cases = [
+            (definition.replace(b':;', b'print changed;'), prefix + edge),
+            (definition, prefix + b"alias portable='pwd'\n" + edge),
+            (definition, b'alias -g portable=other\n' + prefix + edge),
+            (definition, b"function 'portable' { :; }\n" + prefix + edge),
+            (definition, prefix + b"alias other='pwd'\n" + edge),
+            (definition, prefix + b'setopt SH_WORD_SPLIT\n' + edge),
+            (definition, prefix + edge + b'source "$HOME/$dynamic"\n'),
+            (definition, prefix + edge + b'. "$HOME/$dynamic"\n'),
+            (definition, prefix + edge + b'if true; then source "$HOME/maybe"; fi\n'),
+            (definition, prefix + edge + b'eval "$override"\n'),
+            (definition, prefix + edge + b'eval \'portable() { print other; }\'\n'),
+            (definition, prefix + edge + b'unfunction portable\n'),
+            (definition + b'source "$HOME/.zshrc"\n', prefix + edge),
+            (definition, prefix + b'if true; then\nportable() { :; }\nfi\n' + edge),
+        ]
+        for second, raw in cases:
+            leaf.write_bytes(second); self.source_file(home, '.zshrc', raw)
+            with self.subTest(index=cases.index((second, raw))):
+                result, value, _ = self.observed(home, aliases=True, independent=True)
+                self.assertFalse(any(r['key'] == 'portable' for r in value['items']))
+        leaf.write_bytes(definition); self.source_file(home, '.zshrc', prefix + edge)
+        leaf.chmod(0o666)
+        self.assertFalse(any(r['key'] == 'portable' for r in self.observed(home, independent=True)[1]['items']))
+        leaf.chmod(0o600)
+        original = observer.client.Parser.parse
+        def changing(parser, raw, **options):
+            response = original(parser, raw, **options)
+            if raw == definition: leaf.write_bytes(definition + b'# changed\n')
+            return response
+        with patch.object(observer.client.Parser, 'parse', changing), self.assertRaisesRegex(observer.Invalid, 'source_changed'):
+            self.observed(home, independent=True)
+
+    def test_managed_restore_order_integration_conflict_stale_and_noop(self):
+        value, helper, source = self.function_restore_fixture()
+        if not self.function_mode(value, helper, source): return
+        self.source_file(source, '.zshrc', b"alias first='pwd'\nsource \"$HOME/parts/leaf\"\nlast() { :; }\n")
+        self.source_file(source, 'parts/leaf', b'leaf() { :; }\n')
+        value = functions.observe.observe(str(source), helper, aliases=True).snapshot
+        ordered = functions.state.declaration_order(value)
+        self.assertEqual([r['key'] for r in ordered], ['first', 'leaf', 'last'])
+        target = self.observation_home()
+        rc = self.source_file(target, '.zshrc', b'# unrelated preserved\nretained() { :; }\n')
+        original = rc.read_bytes()
+        approved = functions.plan(value, str(target), helper=helper)
+        self.assertEqual(set(approved.writes), {'.zshrc', functions.MANAGED_PATH})
+        rc.write_bytes(original + b'# changed\n')
+        with self.assertRaisesRegex(functions.base.Invalid, 'target_changed'):
+            functions.publish(value, str(target), helper=helper, expected=approved.evidence)
+        self.assertFalse((target / functions.MANAGED_PATH).exists())
+        rc.write_bytes(original)
+        self.assertTrue(functions.publish(value, str(target), helper=helper))
+        saved = target / functions.MANAGED_PATH
+        expected = functions.MANAGED_HEADER + b''.join(functions.content(value, r) + b'\n' for r in ordered)
+        self.assertEqual(saved.read_bytes(), expected)
+        self.assertEqual(rc.read_bytes(), original + functions.MANAGED_SOURCE)
+        self.assertFalse((target / 'parts').exists())
+        self.assertTrue(all(s == 'matching' for _, s, _ in functions.plan(value, str(target), helper=helper).rows))
+        stamps = [(p.stat().st_ino, p.stat().st_mtime_ns) for p in (rc, saved)]
+        self.assertFalse(functions.publish(value, str(target), helper=helper))
+        self.assertEqual([(p.stat().st_ino, p.stat().st_mtime_ns) for p in (rc, saved)], stamps)
+        rc.write_bytes(original)
+        self.assertTrue(all(s != 'matching' for _, s, _ in functions.plan(value, str(target), helper=helper).rows))
+        self.assertTrue(functions.publish(value, str(target), helper=helper))
+        self.assertEqual(saved.read_bytes(), expected)
+        rc.write_bytes(original + b'leaf() { print conflict; }\n')
+        with self.assertRaises(functions.base.Invalid): functions.publish(value, str(target), helper=helper)
+        self.assertEqual(saved.read_bytes(), expected)
+        saved.write_bytes(b'# unrelated owner\n')
+        rc.write_bytes(original)
+        with self.assertRaises(functions.base.Invalid): functions.publish(value, str(target), helper=helper)
+        self.assertEqual(saved.read_bytes(), b'# unrelated owner\n')
+        saved.write_bytes(expected + b'dormant() { :; }\n')
+        with self.assertRaises(functions.base.Invalid): functions.publish(value, str(target), helper=helper)
+        self.assertEqual(rc.read_bytes(), original)  # Never connect an unselected dormant definition.
+
+    def test_managed_restore_interruption_and_unsafe_destination(self):
+        value, helper, source = self.function_restore_fixture()
+        if not self.function_mode(value, helper, source): return
+        self.source_file(source, '.zshrc', b'source "$HOME/parts/leaf"\n')
+        self.source_file(source, 'parts/leaf', b'leaf() { :; }\n')
+        value = functions.observe.observe(str(source), helper).snapshot
+        target = self.observation_home()
+        stopped = [False]
+        original_publish = functions.sources.publish_content
+        def interrupted(*args, **kwargs):
+            result = original_publish(*args, **kwargs)
+            stopped[0] = True
+            return result
+        with patch.object(functions.sources, 'publish_content', side_effect=interrupted):
+            with self.assertRaises(functions.base.PublicationUncertain):
+                functions.publish(value, str(target), helper=helper, cancelled=lambda: stopped[0])
+        self.assertTrue((target / functions.MANAGED_PATH).exists())
+        self.assertFalse((target / '.zshrc').exists())
+        self.assertTrue(all(s != 'matching' for _, s, _ in functions.plan(value, str(target), helper=helper).rows))
+        self.assertTrue(functions.publish(value, str(target), helper=helper))
+        (target / functions.MANAGED_PATH).chmod(0o666)
+        with self.assertRaises(functions.base.Invalid): functions.publish(value, str(target), helper=helper)
 
     def test_observation_exact_complex_bytes_and_determinism(self):
         home = self.observation_home()

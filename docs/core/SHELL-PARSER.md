@@ -315,8 +315,14 @@ forms (including complete CRLF documents: the qualified corpus covers interior C
 with LF after the closing unit), sustained fuzzing/native-code review, representative aggregate-operation qualification,
 physical Intel, protected execution on macOS 14.4 and the unavailable branch on
 14.0–14.3, signed/notarized clean-Mac packaging and authenticated release-anchor
-provisioning, and Native integration/real-Mac qualification. Local corpus,
+provisioning, and representative Native visual/real-Mac qualification. B4 adds the
+unified Native adapter and disposable mixed-transfer integration test. Local corpus,
 sanitizer or Rosetta results do not close those gates. The B1 codec and B2A observer
 are used by Functions Capture/Bundle and bounded exact-definition Restore/Check.
 Broader target/dependency support and release qualification remain open.
 Bundle capabilities 1–5 remain unchanged.
+
+B4 Capture's independent-declaration projection and portable Restore destination
+are owned by [Configuration](../toolkit/CONFIGURATION.md#unified-aliases--functions-b4).
+They reuse this unchanged parser/launch contract; parsing whole-source syntax does
+not establish runtime activation or authorize unrelated startup initialization.

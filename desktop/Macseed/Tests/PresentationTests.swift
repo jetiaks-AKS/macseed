@@ -5569,7 +5569,7 @@ private struct CaptureRefinementHost: View {
                     window.isReleasedWhenClosed = false; window.contentView = host; window.makeKeyAndOrderFront(nil)
                     defer { window.close() }
                     for selectAliases in [true, false] {
-                    let keepTitle = selectAliases ? "Aliases only" : "Keep current selection"
+                    let keepTitle = selectAliases ? "Aliases & Functions only" : "Keep current selection"
                     for (title, choice) in [("Cancel", ShellParentConsent.Choice.cancel), (keepTitle, .aliasesOnly), ("Include 2 scripts", .includeScripts)] {
                         state.request = ShellParentConsent(aliases: ["fixture-alias"], candidates: scripts, newScripts: scripts, selectAliases: selectAliases)
                         try await Task.sleep(for: .milliseconds(180))
@@ -5791,7 +5791,7 @@ private struct CaptureRefinementHost: View {
     @MainActor static func shellAliasPresentationChecks() throws {
         typealias Object = [String: Any]
         func data(_ object: Object) throws -> Data { try JSONSerialization.data(withJSONObject: object) }
-        let names = ["ll", "c."]
+        let names = ["c.", "ll"]
         let ids = names.map { "shell-alias:" + SHA256.hash(data: Data($0.utf8)).map { String(format: "%02x", $0) }.joined() }
         let labels = Dictionary(uniqueKeysWithValues: zip(ids, names))
         let digest = String(repeating: "a", count: 64)
@@ -5824,8 +5824,8 @@ private struct CaptureRefinementHost: View {
             ["record_id": "c:scope", "code": "dependency_unavailable", "severity": "warning", "phase": "scope"]]
         check["records"] = realScopeRecords
         let checked = try presentation(check), category = checked.categories[0]
-        precondition(category.items.map(\.title) == names + ["Shell coverage"])
-        precondition(category.title == "Aliases & Functions")
+        precondition(category.items.map(\.title) == names.map { "Alias: " + $0 } + ["Shell coverage"])
+        precondition(category.title == "Custom Commands")
         precondition(category.items.last!.action == "Some Shell settings or dependencies are outside the saved scope.")
         precondition(checked.coverageHelp["shell-zsh:scope"]!.contains("does not mean matching aliases failed verification"))
         var additionalIssue = check
@@ -5866,7 +5866,7 @@ private struct CaptureRefinementHost: View {
         detailedCheck["records"] = checkRecords
         detailedCheck["reference_presentation"] = ["groups": [], "app_store_names": [:], "shell_alias_labels": Dictionary(uniqueKeysWithValues: zip(checkIDs, checkNames))]
         let detailed = try presentation(detailedCheck), detailedCategory = detailed.categories[0]
-        precondition(detailedCategory.items.map(\.title) == checkNames + ["Shell coverage"])
+        precondition(detailedCategory.items.map(\.title) == checkNames.map { "Alias: " + $0 } + ["Shell coverage"])
         precondition(detailedCategory.items.prefix(3).map(\.status) == [.matching, .missing, .different])
         precondition(detailed.counts["matching"] == 1 && detailed.counts["missing"] == 1 && detailed.counts["differing"] == 1 && detailed.attentionCount == 2)
         for (outcome, count) in [(ComparisonOutcome.match, 1), (.missing, 1), (.different, 1), (.needsAttention, 2)] {
@@ -5875,6 +5875,28 @@ private struct CaptureRefinementHost: View {
         let checkDisclosure = EnvironmentComparisonView.disclosureIDs(detailed)
         precondition(checkDisclosure == [DeveloperSelectionGroup.shell.id, "shell-zsh", ShellCommandPresentation.aliasesID],
                      "Alias-only Check exposes Custom Commands and Aliases; no unselected Scripts category is invented")
+        var functionCheck = detailedCheck
+        let functionIDs = checkNames.map { "shell-function:" + SHA256.hash(data: Data($0.utf8)).map { String(format: "%02x", $0) }.joined() }
+        functionCheck["comparison_records"] = functionIDs.enumerated().map { ["record_id": "v:\($0.offset)", "domain": "shell-zsh", "item_id": $0.element,
+            "comparison_kind": kinds[$0.offset], "support": "supported"] }
+        var functionRecords = checkRecords
+        functionRecords["verification_records"] = functionIDs.enumerated().map { ["record_id": "v:\($0.offset)", "domain": "shell-zsh", "item_id": $0.element, "predicate": "function_definition"] }
+        functionCheck["records"] = functionRecords
+        functionCheck["reference_presentation"] = ["groups": [], "app_store_names": [:], "shell_function_labels": Dictionary(uniqueKeysWithValues: zip(functionIDs, checkNames))]
+        let functionView = try presentation(functionCheck)
+        precondition(functionView.categories[0].items.map(\.title) == checkNames.map { "Function: " + $0 } + ["Shell coverage"])
+        precondition(functionView.categories[0].items.prefix(3).map(\.status) == [.matching, .missing, .different])
+        precondition(EnvironmentComparisonDomain.shellChildren(functionView.categories[0]).first?.title == "Aliases & Functions")
+        for invalid: Any in [[functionIDs[0]: "foreign"], [functionIDs[0]: "private\nbody"], [functionIDs[0]: 42], "private"] {
+            functionCheck["reference_presentation"] = ["groups": [], "app_store_names": [:], "shell_function_labels": invalid]
+            let fallback = try presentation(functionCheck)
+            precondition(fallback.categories[0].items.first?.title == "Function: Name unavailable")
+        }
+        for status in ["observed", "unavailable", "unsupported"] {
+            let observation = try JSONDecoder().decode(CoreCaptureShellObservation.self, from: data(["status": status]))
+            precondition((observation.notice == nil) == (status == "observed"))
+        }
+        precondition((try? JSONDecoder().decode(CoreCaptureShellObservation.self, from: data(["status": "private"]))) == nil)
         _ = NSApplication.shared
         for dark in (CommandLine.arguments.contains("--no-renders") ? [] : [false, true]) {
             NSApp.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
@@ -5900,7 +5922,7 @@ private struct CaptureRefinementHost: View {
         }
         check["reference_presentation"] = ["groups": [], "app_store_names": [:], "shell_alias_labels": [ids[0]: "foreign"]]
         let fallback = try presentation(check)
-        precondition(fallback.categories[0].items[0].title == "Shell alias")
+        precondition(fallback.categories[0].items[0].title == "Alias: Name unavailable")
         let selected = CoreRestoreSelection(categories: [], items: ["shell-zsh": ids])
         let catalog = CoreRestoreInspection.Inventory(groups: [.init(id: "Shell", domains: ["shell-zsh"])],
             inventory: [.init(domain: "shell-zsh", label: "Zsh Configuration", selectionMode: "items", availability: "available", reason: nil,
@@ -5963,9 +5985,9 @@ private struct CaptureRefinementHost: View {
             precondition(!checkedReason.categories[0].items[1].action.contains("Install it"))
         }
         // Sanitized representative real-world reasons through production native validators.
-        let realNames = ["c.", "bootstrap"]
+        let realNames = ["bootstrap", "c."]
         let realIDs = realNames.map { "shell-alias:" + SHA256.hash(data: Data($0.utf8)).map { String(format: "%02x", $0) }.joined() }
-        let realReasons = ["shell_tool_observation_prerequisite", "shell_directory_missing_prerequisite"]
+        let realReasons = ["shell_directory_missing_prerequisite", "shell_tool_observation_prerequisite"]
         var realCheck = check, realSummary = check["comparison"] as! Object
         realSummary["counts"] = ["matching": 0, "missing": 0, "differing": 0, "unverified": 2, "unsupported": 0, "unresolved": 1, "extra": 0, "unknown_difference": 0]
         realCheck["comparison"] = realSummary
@@ -6023,6 +6045,7 @@ private struct CaptureRefinementHost: View {
         }
         precondition(SelectionCategoryHelp.text(ShellCommandPresentation.scriptsID, flow: .capture) == ShellCommandPresentation.captureHelp)
         precondition(SelectionCategoryHelp.text(ShellCommandPresentation.scriptsID, flow: .rebuild) == ShellCommandPresentation.restoreHelp)
+        precondition(SelectionCategoryHelp.text("shell-zsh", flow: .rebuild)?.contains(ShellCommandPresentation.definitionRestoreNotice) == true)
         precondition(ShellCommandPresentation.captureConsent == "Script files are saved unencrypted.")
         precondition(ShellCommandPresentation.restoreConsent == "Restore trusted scripts only. They may run later.")
         let parent = RestorePreviewHierarchy.summary(DeveloperSelectionGroup.shell, rows: blocked.domains)
@@ -6036,6 +6059,125 @@ private struct CaptureRefinementHost: View {
         precondition(RestoreExecutionCategories.orderedRows(planned.domains).map(\.id) == ["shell-zsh"])
         precondition(RestoreExecutionCategories.disclosureIDs(planned.domains) == ["shell-zsh"], "Progress/Result retain the flat execution categories")
         precondition(planned.domains[0].items.count == 3, "Presentation groups do not create execution or Verification requirements")
+        // Deliberately interleaved source order: display order must never alter identities or plans.
+        let mixedNames = ["zeta", "Zulu", "alpha", "alpha"]
+        let mixedKinds = ["function", "alias", "function", "alias"]
+        let mixedIDs = zip(mixedKinds, mixedNames).map { kind, name in
+            "shell-" + kind + ":" + SHA256.hash(data: Data(name.utf8)).map { String(format: "%02x", $0) }.joined()
+        }
+        let expectedNames = ["Alias: Zulu", "Alias: alpha", "Function: alpha", "Function: zeta"]
+        let expectedIDs = [mixedIDs[1], mixedIDs[3], mixedIDs[2], mixedIDs[0]]
+        let mixedCapture = CaptureCategory(row: try JSONDecoder().decode(CoreCaptureInventoryRow.self, from: data([
+            "domain": "shell-zsh", "status": "present", "selection_mode": "items",
+            "items": zip(mixedIDs, mixedNames).map { ["item_id": $0, "label": $1] }])))
+        let mixedSelection = CoreCaptureSelection(categories: [], items: ["shell-zsh": mixedIDs], secureIdentities: [])
+        let selectionBytes = try JSONEncoder().encode(mixedSelection)
+        let publication = CoreCapturePublication(publicationOccurred: true, destination: "/fixture.mbt", preparedCaptureID: digest,
+            bundle: .init(formatVersion: 1, selectedCategories: [], selectedItemCounts: ["shell-zsh": 4], secureComponent: false))
+        precondition(mixedCapture.display.items.map(\.title) == expectedNames)
+        precondition(mixedCapture.display.items.map(\.id) == expectedIDs && mixedCapture.row.items.map(\.itemID) == mixedIDs)
+        for phase: CaptureTaskPresentation.Phase in [.confirmation, .progress, .result] {
+            let tasks = CaptureTaskPresentation(categories: [mixedCapture], selection: mixedSelection, phase: phase, publication: publication)
+            precondition(tasks.domains[0].items.map { $0.item.title } == expectedNames)
+            precondition(tasks.domains[0].items.map(\.id) == expectedIDs.map { "shell-zsh:" + $0 })
+        }
+        let unchangedSelectionBytes = try JSONEncoder().encode(mixedSelection)
+        precondition(unchangedSelectionBytes == selectionBytes)
+        let mixedCatalog = CoreRestoreInspection.Inventory(groups: [.init(id: "Shell", domains: ["shell-zsh"])], inventory: [
+            .init(domain: "shell-zsh", label: "Aliases & Functions", selectionMode: "items", availability: "available", reason: nil,
+                  items: zip(mixedIDs, mixedNames).map { .init(itemID: $0, label: $1) })])
+        precondition(mixedCatalog.inventory[0].displayItems.map(\.label) == expectedNames)
+        precondition(mixedCatalog.inventory[0].items.map(\.id) == mixedIDs)
+        var mixedPlan = plan
+        mixedPlan["selection"] = ["categories": [], "items": ["shell-zsh": mixedIDs]]
+        mixedPlan["selected_item_counts"] = ["shell-zsh": 4]
+        mixedPlan["plan"] = zip(mixedIDs, mixedNames).map { ["domain": "shell-zsh", "item_id": $0, "display_name": $1,
+            "action": "create", "disposition": "planned"] }
+        let mixedPrepared = try JSONDecoder().decode(CoreRestorePreparation.self, from: data(mixedPlan))
+        try mixedPrepared.validate(expected: .init(categories: [], items: ["shell-zsh": mixedIDs]), catalog: mixedCatalog)
+        let mixedPreview = RestorePreviewPresentation(mixedPrepared, catalog: mixedCatalog)
+        precondition(mixedPreview.categories[0].items.map(\.title) == expectedNames)
+        precondition(mixedPreview.categories[0].items.map(\.id) == ["restore-1", "restore-3", "restore-2", "restore-0"])
+        precondition(mixedPrepared.plan.map(\.itemID) == mixedIDs)
+        for executing in [false, true] {
+            let tasks = RestoreTaskPresentation(preview: mixedPreview, plan: mixedPrepared, executing: executing)
+            precondition(tasks.domains[0].items.map { $0.item.title } == expectedNames)
+        }
+        let mixedResult = RestoreExecutionPresentation(runtime: CoreRuntime(operationLogs: nil), payload: nil,
+            expectedID: digest, catalog: mixedCatalog)
+        let resultTasks = RestoreTaskPresentation(preview: mixedPreview, plan: mixedPrepared, result: mixedResult)
+        precondition(resultTasks.domains[0].items.map { $0.item.title } == expectedNames)
+        var blockedMixed = mixedPlan
+        blockedMixed["plan"] = zip(mixedIDs, mixedNames).map { ["domain": "shell-zsh", "item_id": $0, "display_name": $1,
+            "action": "none", "disposition": "blocked", "reason": "target_conflict"] }
+        let blockedMixedPlan = try JSONDecoder().decode(CoreRestorePreparation.self, from: data(blockedMixed))
+        let blockedMixedView = RestorePreviewPresentation(blockedMixedPlan, catalog: mixedCatalog)
+        precondition(blockedMixedView.categories[0].items.map(\.title) == expectedNames)
+        precondition(blockedMixedView.categories[0].items[2].action == "Function cannot be added safely. Review its source and dependencies.")
+        let frozen = RestoreProgressRow.freeze(preview: mixedPreview, plan: mixedPrepared)
+        let itemNames = frozen[0].itemNames
+        precondition(itemNames["shell-zsh"]?[mixedIDs[0]] == "Function: zeta")
+        let resultEvidence: Object = ["verification": ["details": ["verification_records": mixedIDs.map {
+            ["domain": "shell-zsh", "item_id": $0, "conformity": "mismatch"] }]]]
+        let resultPayload = try JSONDecoder().decode([String: CoreJSON].self, from: data(resultEvidence))
+        for names in [itemNames, [:]] {
+            let findings = RestoreResultFindings(payload: resultPayload, events: [], catalog: mixedCatalog, verified: false, itemNames: names)
+            precondition(findings.findings.map(\.title) == expectedNames, "Attention uses validated catalog/frozen names, without double prefixes")
+        }
+        var mixedCheck = detailedCheck
+        mixedCheck["comparison_records"] = mixedIDs.enumerated().map { ["record_id": "v:\($0.offset)", "domain": "shell-zsh", "item_id": $0.element,
+            "comparison_kind": kinds[$0.offset], "support": "supported"] }
+        var mixedRecords = checkRecords
+        mixedRecords["verification_records"] = mixedIDs.enumerated().map { ["record_id": "v:\($0.offset)", "domain": "shell-zsh", "item_id": $0.element,
+            "predicate": mixedKinds[$0.offset] == "alias" ? "alias_definition" : "function_definition"] }
+        mixedCheck["records"] = mixedRecords
+        mixedCheck["reference_presentation"] = ["groups": [], "app_store_names": [:],
+            "shell_alias_labels": [mixedIDs[1]: mixedNames[1], mixedIDs[3]: mixedNames[3]],
+            "shell_function_labels": [mixedIDs[0]: mixedNames[0], mixedIDs[2]: mixedNames[2]]]
+        let mixedChecked = try presentation(mixedCheck)
+        precondition(mixedChecked.categories[0].items.map(\.title) == expectedNames + ["Shell coverage"])
+        precondition(mixedChecked.counts == detailed.counts && mixedChecked.attentionCount == detailed.attentionCount)
+        for outcome in [ComparisonOutcome.match, .missing, .different, .needsAttention] {
+            precondition(mixedChecked.categoryCount(outcome, category: mixedChecked.categories[0]) == detailed.categoryCount(outcome, category: detailedCategory))
+        }
+        precondition(ShellDefinitionPresentation.title(domain: "shell-zsh", id: mixedIDs[0], name: "Function: zeta") == "Function: zeta")
+        precondition(ShellDefinitionPresentation.title(domain: "shell-zsh", id: "shell-script:" + digest, name: "~/bin/tool") == "~/bin/tool")
+        for (status, code, title, message) in [
+            ("unsupported", "unsupported_context", "Functions excluded", "unsupported commands or source relationships"),
+            ("unsupported", "unsafe_source", "Functions excluded", "safety checks"),
+            ("unavailable", "functions_unavailable", "Functions unavailable", "protected parser launch"),
+            ("unavailable", "helper_untrusted", "Functions unavailable", "authenticated or started")
+        ] {
+            let observation = try JSONDecoder().decode(CoreCaptureShellObservation.self, from: data(["status": status, "codes": [code]]))
+            precondition(observation.title == title && observation.notice!.contains(message))
+            let category = CaptureCategory(row: captured.row, shellObservation: observation)
+            precondition(category.notices.count == 1 && category.notices[0].action.contains("2 Aliases eligible to save."))
+            let one = CoreCaptureSelection(categories: [], items: ["shell-zsh": [ids[0]]], secureIdentities: [])
+            let confirmation = CaptureTaskPresentation(categories: [category], selection: one, phase: .confirmation)
+            let warnings = confirmation.domains[0].items.filter { $0.state == .attention }
+            precondition(warnings.count == 1 && warnings[0].item.action.contains("1 Alias eligible to save."))
+            let result = CaptureResultPresentation(publication: publication,
+                notices: [.init(id: "shell-zsh", title: category.title, symbol: category.symbol, items: category.notices)],
+                shellObservation: observation, savedAliasCount: 1)
+            precondition(result.resultHierarchy.explanations.count == 1)
+            precondition(result.resultHierarchy.explanations.values.first!.contains("1 Alias saved.") && result.resultHierarchy.explanations.values.first!.contains(message))
+        }
+        let unknown = try JSONDecoder().decode(CoreCaptureShellObservation.self, from: data(["status": "unsupported", "codes": ["/private/fixture-secret"]]))
+        precondition(!unknown.notice!.contains("fixture-secret"))
+        let observed = try JSONDecoder().decode(CoreCaptureShellObservation.self, from: data(["status": "observed", "codes": []]))
+        precondition(observed.notice == nil && observed.coverageMessage(aliasCount: 2) == nil)
+        let partialDefinitions = try JSONDecoder().decode(CoreCaptureShellObservation.self, from: data(["status": "observed", "codes": ["unsupported_context"]]))
+        precondition(partialDefinitions.notice == nil)
+        let partialCategory = CaptureCategory(row: captured.row, shellObservation: partialDefinitions)
+        precondition(partialCategory.notices.count == 1)
+        precondition(partialCategory.notices[0].action.contains("Listed definitions are eligible"))
+        precondition(partialCategory.notices[0].action.contains("Startup initialization"))
+        precondition(!partialCategory.notices[0].action.contains("Functions are excluded"))
+        precondition(partialDefinitions.coverageMessage(aliasCount: 2, saved: true)!.contains("Selected definitions were saved."))
+        for malformed: Any in [true, [false], [String(repeating: "x", count: 81)], Array(repeating: "unsupported_context", count: 33)] {
+            precondition((try? JSONDecoder().decode(CoreCaptureShellObservation.self, from: data(["status": "unsupported", "codes": malformed]))) == nil)
+        }
+        print("PASS: unified Alias/Function names and ordering across Capture, Restore, attention and Check; IDs, plan order, counts, Scripts and sanitized coverage preserved")
         let legacyCatalog = CoreRestoreInspection.Inventory(groups: [.init(id: "Shell", domains: ["shell-zsh"])],
             inventory: [.init(domain: "shell-zsh", label: "Settings", selectionMode: "category", availability: "available", reason: nil, items: [])])
         var legacyPlan = plan

@@ -63,7 +63,7 @@ struct RestoreAreaSelectionView: View {
                         .padding(.leading, hierarchyIndent + 40).padding(.vertical, 6)
                 }
                 if area.selectable && area.selectionMode == "items" {
-                    ForEach(area.items) { item in
+                    ForEach(area.displayItems) { item in
                         CaptureItemSelectionRow(title: item.label, included: Binding(
                             get: { model.selectedItems[area.id]?.contains(item.id) == true },
                             set: { model.selectItem(area.id, item: item.id, included: $0) }))
@@ -76,7 +76,7 @@ struct RestoreAreaSelectionView: View {
                         }
                     }
                 } else {
-                    VStack(alignment: .leading, spacing: 7) { ForEach(area.items) { item in Text(item.label) } }
+                    VStack(alignment: .leading, spacing: 7) { ForEach(area.displayItems) { item in Text(item.label) } }
                         .padding(.leading, hierarchyIndent + CaptureReviewPresentation.hierarchyStep).padding(.vertical, 4)
                 }
             }
@@ -411,7 +411,7 @@ struct RestoreMacOSAreaDetails: View {
         VStack(alignment: .leading, spacing: 0) {
             if !area.items.isEmpty {
                 DisclosureGroup(isExpanded: expansion ?? $expanded) {
-                    VStack(alignment: .leading, spacing: 7) { ForEach(area.items) { item in Text(item.label) } }
+                    VStack(alignment: .leading, spacing: 7) { ForEach(area.displayItems) { item in Text(item.label) } }
                         .padding(.leading, 36).padding(.vertical, 4)
                 } label: { title }
                     .disclosureGroupStyle(TaskDisclosureStyle())

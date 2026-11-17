@@ -34,6 +34,7 @@ struct RestorePreviewPresentation {
     }
     init(_ prepared: CoreRestorePreparation, catalog: CoreRestoreInspection.Inventory) {
         var rows: [String: [DisplayItem]] = [:]
+        var identities: [String: String] = [:]
         var order: [String] = []
         for (index, row) in prepared.plan.enumerated() {
             // Core retains the dependency record, but an advisory is not another
@@ -102,8 +103,8 @@ struct RestorePreviewPresentation {
             case "shell_source_prerequisite", "shell_startup_prerequisite": reasonMessage = "Source or path dependency unverified. Resolve it, then refresh."
             case "observation_failed": reasonMessage = "Current state could not be inspected reliably."
             case "target_conflict": reasonMessage = row.domain == "shell-zsh" && row.disposition == "blocked"
-                ? "Alias cannot be added safely. Review its source and dependencies."
-                : row.domain == "shell-zsh" ? "Saved alias or dependency conflicts. Review existing files."
+                ? (ShellDefinitionPresentation.kind(row.itemID) ?? "Alias") + " cannot be added safely. Review its source and dependencies."
+                : row.domain == "shell-zsh" ? "Saved definition or dependency conflicts. Review existing files."
                 : "Conflict: existing state differs from the saved environment and will be preserved."
             case "privileged_lifecycle_unknown": reasonMessage = "External work may still be running. Inspect it before another Rebuild."
             default: reasonMessage = row.reason.flatMap { CoreRestorePreparation.workspacePreviewReasons[$0] }
@@ -114,13 +115,15 @@ struct RestorePreviewPresentation {
             let isShellCoverage = row.domain == "shell-zsh" && row.itemID == "scope"
                 && row.disposition == "warning" && row.reason == "partial_source_coverage"
             let legacyShell = row.domain == "shell-zsh" && catalog.inventory.first(where: { $0.id == row.domain })?.selectionMode == "category"
-            let title = isShellCoverage ? ShellCommandPresentation.coverageTitle : legacyShell ? "Saved Zsh file" : isSSHCoverage ? "SSH configuration coverage" : row.isSSHDependency ? "SSH key references" : row.isSecureImport ? "Encrypted SSH identity package" : inventoryLabel ?? row.displayName ?? (row.itemID.hasPrefix("opaque:") ? "Private item" : (row.itemID == "scope" ? "Selected area" : row.itemID))
+            let rawTitle = isShellCoverage ? ShellCommandPresentation.coverageTitle : legacyShell ? "Saved Zsh file" : isSSHCoverage ? "SSH configuration coverage" : row.isSSHDependency ? "SSH key references" : row.isSecureImport ? "Encrypted SSH identity package" : inventoryLabel ?? row.displayName ?? (row.itemID.hasPrefix("opaque:") ? "Private item" : (row.itemID == "scope" ? "Selected area" : row.itemID))
+            let title = ShellDefinitionPresentation.title(domain: row.domain, id: row.itemID, name: rawTitle)
+            identities["restore-\(index)"] = row.itemID
             let action = row.assistedAppStoreItem?.message ?? row.unsupportedRepairExplanation ?? row.diagnostic?.explanation ?? reasonMessage ?? (row.authorizationRequired == true ? message + " · Administrator authorization required" : message)
             let conditional = ["workspace_dependency_pending", "workspace_commit_after_clone", "git_ssh_restore_pending"].contains(row.reason ?? "")
             rows[row.domain, default: []].append(DisplayItem(id: "restore-\(index)", title: title, status: status, action: action, reason: row.reason, restoreReadyText: status == .ready ? (row.isSSHDependency ? "After Secure Transfer" : conditional ? "Conditional" : Self.readyText(action: row.action)) : nil))
         }
         categories = order.map { domain in
-            DisplayCategory(id: domain, title: DeveloperSelectionGroup.label(domain, fallback: catalog.inventory.first { $0.id == domain }?.label ?? "Other supported state"), symbol: domain == CoreRestorePreparation.secureDomain ? "lock.shield" : "slider.horizontal.3", items: rows[domain] ?? [])
+            DisplayCategory(id: domain, title: DeveloperSelectionGroup.label(domain, fallback: catalog.inventory.first { $0.id == domain }?.label ?? "Other supported state"), symbol: domain == CoreRestorePreparation.secureDomain ? "lock.shield" : "slider.horizontal.3", items: ShellDefinitionPresentation.ordered(rows[domain] ?? [], domain: domain, id: { identities[$0.id] ?? $0.id }, name: { $0.title }))
         }
         let items = categories.flatMap(\.items)
         let planned = items.filter { $0.status == .ready }.count
@@ -766,7 +769,11 @@ struct RestoreProgressRow {
     }
     var confirmationMessages: [String] {
         guard let preview, let preparation else { return [] }
-        return RestoreTaskPresentation(preview: preview, plan: preparation).confirmationMessages(preparation)
+        var messages = RestoreTaskPresentation(preview: preview, plan: preparation).confirmationMessages(preparation)
+        if preparation.plan.contains(where: { $0.domain == "shell-zsh" && $0.disposition == "planned" && ShellDefinitionPresentation.kind($0.itemID) != nil }) {
+            messages.append(ShellCommandPresentation.definitionRestoreNotice)
+        }
+        return messages
     }
     var mutationPossible: Bool {
         runtime.mutationMayHaveStarted == true || runtime.events.contains { $0.phase == "bootstrap" || $0.type == "execution_event" }
@@ -1561,15 +1568,19 @@ struct RestoreResultFindings {
         successfulAreas = verifiedAreaOrder.filter { areaStates[$0] == nil }.map { area($0)?.1 ?? $0 }
         // User issues are keyed by Protocol identity and cause, never by their rendered text.
         var issues: [DisplayItem] = []
+        var shellIssueIDs: [String: String] = [:]
         var issueKeys = Set<String>()
         var affectedItems = Set<String>()
         var problemDomains = Set<String>()
         func issue(_ domain: String, _ item: String, _ cause: String, _ message: String, status: DisplayStatus = .attention, action: String = "") {
             let identity = domain + ":" + item
             guard issueKeys.insert(identity + ":" + action + ":" + cause).inserted else { return }
-            let name = itemNames[domain]?[item]
+            let name = itemNames[domain]?[item] ?? (domain == "shell-zsh" ? catalog?.inventory.first { $0.id == domain }?.items.first { $0.id == item }?.label : nil)
+            if domain == "shell-zsh", ShellDefinitionPresentation.kind(item) != nil {
+                shellIssueIDs[identity + ":" + action + ":" + cause] = item
+            }
             issues.append(DisplayItem(id: identity + ":" + action + ":" + cause,
-                title: name ?? area(domain)?.1 ?? "Selected work", status: status, action: message, reason: cause))
+                title: ShellDefinitionPresentation.title(domain: domain, id: item, name: name ?? (ShellDefinitionPresentation.kind(item) == nil ? area(domain)?.1 ?? "Selected work" : "Private item")), status: status, action: message, reason: cause))
             affectedItems.insert(identity)
             problemDomains.insert(domain)
         }
@@ -1627,7 +1638,10 @@ struct RestoreResultFindings {
             issues.append(DisplayItem(id: "result-incomplete", title: "Rebuild result", status: .unverified,
                 action: "Complete final conformity could not be confirmed. Refresh Preview to inspect current state."))
         }
-        findings = issues
+        // Sort only named Shell findings in their existing slots; other domains keep their order.
+        var shellIssues = ShellDefinitionPresentation.ordered(issues.filter { shellIssueIDs[$0.id] != nil },
+            domain: "shell-zsh", id: { shellIssueIDs[$0.id]! }, name: { $0.title }).makeIterator()
+        findings = issues.map { shellIssueIDs[$0.id] == nil ? $0 : shellIssues.next()! }
         details = detailRows
     }
 }

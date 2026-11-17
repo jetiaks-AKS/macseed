@@ -24,11 +24,10 @@ bounded acceptance and the existing partial-coverage warning.
 - [ ] Qualify [protected Functions observation](docs/core/SHELL-PARSER.md#core-caller-b2a)
   on physical Intel, macOS 14.4, and the 14.0–14.3 unavailable path; bind the final
   signed parser manifest anchor to authenticated Core release metadata in Stage 17.
-- [ ] Qualify [B3 Restore/Verify/Check](docs/toolkit/CONFIGURATION.md#functions-restore-verify--check-b3)
-  through Native presentation and representative real-Mac workflows; close independent
+- [ ] Qualify [unified B4 workflows](docs/toolkit/CONFIGURATION.md#unified-aliases--functions-b4)
+  through visual acceptance and representative real-Mac workflows; close independent
   syntax, native robustness and platform/packaging gates. Extend managed/redirected
-  source and dependency support only with explicit contracts and focused qualification;
-  mixed typed/legacy Shell selection remains unsupported.
+  source and dependency support only with explicit contracts and focused qualification.
 - [ ] **Variables & PATH**: separate portable static values, HOME-relative references,
   ordered path entries, secrets and dynamic initialization; qualify Apple Silicon /
   Intel Homebrew prerequisites without rewriting arbitrary commands or paths.

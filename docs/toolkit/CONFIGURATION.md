@@ -139,8 +139,8 @@ Capture so users can add files when Discovery found none. **Plugins & Themes** i
 fourth category, reserved until useful Core support and selected/saved items exist.
 Startup files, ZDOTDIR, source paths and dependencies are provenance, not additional
 categories. Legacy whole-file requirements appear as **Settings → Saved Zsh file**
-with their existing Core identity and restoration policy. Functions have bounded
-Core Capture and bounded Restore/Verify/Check support below. Variables
+with their existing Core identity and restoration policy. Aliases and Functions have
+unified typed Capture/Restore/Verify/Check and Native selection support below. Variables
 & PATH, Shell Settings and Plugins & Themes remain future capabilities, not empty placeholders.
 
 ### Structural parser foundation
@@ -171,8 +171,8 @@ restoration; B3 independently qualifies the destination and prepared selection.
 The evolution boundary remains `MBT-BUNDLE-1` with additive required feature
 `"shell-state": 1`, not Bundle V2 or `shell-aliases:6`. The private snapshot keeps
 the existing logical path `generated/shell/zshrc.snapshot`, distinguished by
-`MBT-SHELL-STATE-1\n`. B2B/B3 admit this feature and its definitions member for
-Functions-only state. New bytes without the required feature are rejected. Legacy
+`MBT-SHELL-STATE-1\n`. B4 admits mixed Alias/Function definitions and independently
+approved v5 Script files in this existing schema. New bytes without the required feature are rejected. Legacy
 Bundles are never rewritten or silently promoted. Older clients reject the entire
 unsupported required feature; B2B-only clients reject typed Restore/Check.
 
@@ -326,7 +326,7 @@ Source reads reuse `sources.file_state()` and the existing HOME, parent, ownersh
 symlink, hardlink, permissions, ACL, flags, pending-publication and compiled-source
 guards. All read and missing sources are checked again before return; changed bytes
 or identity invalidate the entire observation. Unsafe sources contribute no items.
-Source outcomes distinguish `missing`, `unsafe`, `unsupported`, `ambiguous` and
+Source outcomes distinguish `missing`, `unsafe`, `unsupported`, `ambiguous`, `partial` and
 `observed`; these are private observation results, not new serialized item kinds.
 
 The bounded outer profile accepts comments, ordinary named function units,
@@ -339,10 +339,13 @@ source command or ZDOTDIR assignment. The pinned grammar accepts the corpus's
 interior-CRLF form but rejects CRLF after a closing
 function unit; rejection never triggers normalization or a parser fallback. Dynamic/conditional
 outer statements, quoted/computed bindings, arbitrary commands, anonymous invocations and unsupported source
-forms make that source opaque, with no independently selectable Functions from it.
+forms make that source opaque in the default strict target-observation profile.
+Capture opts into the independent-declaration profile described under
+[B4](#unified-aliases--functions-b4); source safety and native parser admission are unchanged.
 Nested definitions and multiple-name units never become independent items. Repeated
 definitions, conflicting bindings, observed alias/name collisions, source cycles,
-case-colliding sources and repeated loading within one context remain ambiguous.
+case-colliding sources and repeated loading within one context remain ambiguous in
+the strict profile; Capture's narrow equivalent-Function exception is specified in B4.
 
 The explicit `zdotdir` argument can select a qualified directory inside HOME;
 ambient process ZDOTDIR is ignored. A single literal HOME-relative ZDOTDIR assignment
@@ -361,8 +364,8 @@ every load has `condition: unknown`. Function calls, parse-time alias expansion,
 script invocation/transfer consent and activation remain explicitly unresolved.
 No dependency edges are invented from body text, and an empty dependency array
 does not prove independence. Incomplete source relationships retain uncertainty;
-the B2B Capture adapter retains this context in preparation and rejects an unresolved
-observed envelope. Bundled load conditions remain unknown.
+the Capture adapter retains this context in preparation, even when independently
+qualified declarations can be saved. Bundled load conditions remain unknown.
 
 Observation uses B1's 128-KiB source, 2-MiB aggregate source, 128-source, 512-load,
 16-level load-depth and 512-definition limits (including non-selectable structural
@@ -389,15 +392,18 @@ This advertises the B3 workflow, not eligibility of a particular target or defin
 Observation failure or an unavailable helper is not proof of absence.
 
 Functions require explicit `selection.items.shell-zsh` IDs. Category selection
-keeps its legacy meaning and never opts into Functions. Mixed Function + alias or
-Script selection is rejected with `mixed_shell_selection_unsupported`; no selected
-legacy item is silently dropped. Other domains can accompany Functions. Legacy-only
+keeps its legacy meaning and never opts into Functions. B4 accepts arbitrary explicit
+Alias/Function subsets with stable distinct IDs, including all eligible items. Selected
+Scripts join the typed snapshot only through existing independent v5 consent. Other
+domains can accompany these definitions. Legacy-only
 Capture preserves whole-file snapshots, capabilities 1–5 and existing independent
 Scripts consent, quarantine, mode and payload limits. No automatic migration occurs.
 
 Prepare and Execute each observe source files and invoke the protected parser.
-Only an observation without rejected/ambiguous/unsupported source outcomes is
-admitted; this does not prove live activation. The prepared ID binds private source
+Only individually qualified declarations with a supported portable Restore order
+are admitted. Unrelated rejected startup statements remain outside the saved scope;
+ambiguous bindings and unsafe sources contribute no eligible items. This does not
+prove live activation. The prepared ID binds private source
 bytes/identities, missing-file observations, full typed evidence and the trusted
 parser manifest anchor. Execute checks that ID before staging selected definitions,
 then repeats observation after validation/secure packaging and immediately before
@@ -408,9 +414,10 @@ sources and load ancestry without implicitly selecting dependencies.
 
 Bundle V1 uses required feature `{"shell-state":1}` plus
 `generated/shell/zshrc.snapshot` (`MBT-SHELL-STATE-1`) and
-`generated/shell/definitions.data`. B2B admits nonempty Functions-only typed state;
-other typed kinds remain unsupported even though the extensible B1 codec describes
-them. Exact manifest membership, per-member size/SHA-256, B1 content references,
+`generated/shell/definitions.data` when definitions are present. Independently selected
+Scripts retain v5 members under `generated/shell/scripts/`, mode, quarantine and limits.
+Pruning removes unselected payloads; a Script-only typed subset needs no definitions member.
+Exact manifest membership, per-member size/SHA-256, B1 content references,
 schema/ordering and resource profiles are validated. Definitions are capped at 2 MiB,
 the typed snapshot at 1 MiB; existing archive limits and legacy Scripts limits remain.
 Unknown/boolean feature versions, missing/extra content, malformed spans or integrity
@@ -418,7 +425,7 @@ mismatches are rejected. Existing Protocol request bounds still limit each expli
 selection; there is no unbounded bulk-selection channel.
 
 Inspection returns counts, the required feature, `restore_supported: true` and
-individual Functions in the existing Restore selection inventory. This means the
+individual typed requirements in the existing Restore selection inventory. This means the
 B3 workflow is available; fresh target qualification still decides each item.
 Capture validates typed bytes directly and excludes this domain from its legacy
 dry-run projection; Capture itself never reports a Function matching or verified.
@@ -431,13 +438,14 @@ B1 decoding/selection, the B2A observer and protected parser, and the establishe
 or process supervisor. Bundle selection retains each `shell-function:` identity;
 pruning includes only chosen definitions and necessary private provenance.
 
-The supported target is a standard HOME `.zshrc`, or an already existing literal
-source chain rooted there. Saved and observed chains must agree in both interactive
-and interactive-login contexts. An absent direct `.zshrc` may be created; descendants,
-parents and source statements are never invented. Redirected ZDOTDIR, other startup
-roots, repeated/conditional/dynamic loading, managed sources and incomplete observation
-are explicit prerequisites. Known alias expansion or encoded dependency requirements
-also block this slice. Opaque function bodies are preserved, not analyzed into an
+Restore prefers a standard HOME `.zshrc`, or an already qualified literal source chain
+rooted there. Saved and observed chains must agree in both interactive contexts; an
+absent direct `.zshrc` may be created. If that original structure is unavailable,
+the [B4 portable destination](#unified-aliases--functions-b4) reconstructs only selected
+declarations, without recreating original directories or initialization. Unsafe,
+externally managed, redirected or incompletely observed target startup remains blocked.
+Encoded dependency requirements also block this slice.
+An unrelated ordinary alias is not evidence that a Function expands it. Opaque function bodies are preserved, not analyzed into an
 independence or successful-execution claim. Unknown external options, system startup,
 function calls and activation remain unknown even for a matching definition.
 
@@ -454,7 +462,8 @@ and missing-file observations. All selected Functions must qualify before config
 publication. The publisher rechecks that evidence before staging and immediately before
 atomic publication, preserves unrelated bytes and supported metadata, and reuses its
 existing pending fence/displaced-file preservation on uncertainty. It never overwrites
-a conflicting definition, creates a source relationship or rolls back a competing edit.
+a conflicting definition or rolls back a competing edit. The only new source relationship
+permitted is the qualified B4 managed-file startup connection, covered by approval.
 Post-publication observation must match; repeat Restore is a no-op. Cancellation uses
 existing Core process ownership and publisher recovery semantics.
 
@@ -472,9 +481,95 @@ Match means exact saved definition/source-state reconstruction; missing, differi
 unverified remain distinct. Partial Shell coverage is retained. The structured
 `shell_functions` qualification reports `activation: unknown`, `dependencies: unknown`
 and `execution_tested: false`; no function is invoked and no successful execution is
-claimed. Only fixed reasons and opaque IDs enter ordinary diagnostics. Native presentation,
-independent syntax/native robustness and platform/signed-release qualification remain
+claimed. Only fixed reasons and opaque IDs enter ordinary diagnostics. Representative Native
+visual/real-Mac, independent syntax/native robustness and platform/signed-release qualification remain
 separate gates. Aliases & Scripts v5 and historical whole-file workflows are unchanged.
+
+### Unified Aliases & Functions (B4)
+
+**Implemented for mixed Core and Native workflows.** The observer optionally admits
+ordinary aliases through the established declaration validator and exact parser-backed
+source envelope. Capture also admits independently qualified declarations beside
+unrelated `eval`/command substitutions, assignments/exports and option initialization.
+The native parser must accept the complete source. A private lexical projection
+replaces complete outer function spans with unique inert declaration markers; the
+existing bounded alias classifier proves unconditional statement positions. Neither
+projection nor original source is executed. Definition bytes/spans never change.
+Conditional/pipeline/substitution positions, explicit binding mutations, conflicting
+names, overlapping units and unsafe sources remain excluded. Dynamic/conditional source relationships are not
+invented; their exclusion remains explicit alongside eligible declarations. Legacy-only inventory/selection retains its
+existing path; no stored legacy snapshot is silently migrated.
+
+Capture can coalesce equivalent physical Function definitions (including repeated
+loads of one file) into one logical `shell-function:` item. Every physical mention
+must be an admitted single named outer Function, with identical exact bytes, parser
+profile and relative definition/name/body spans; Alias collisions and unadmitted
+same-name bindings reject the group. All relevant sources/loads must be safely
+observed, without unresolved, conditional, cyclic or shadowed source relationships.
+Unreadable or unresolved known sources cannot be discarded to make a readable peer
+appear unique. Unadmitted alias/function binding syntax also blocks equivalence.
+In each context, no other outer statement may intervene between equivalent copies
+except a qualified literal source edge: alias/option/environment changes cannot be
+assumed harmless to definition-time semantics. Explicit evaluation or binding
+mutations after the first copy also reject equivalence. Earlier unrelated initialization
+remains excluded; this qualifies a transferable declaration, not live runtime equivalence.
+The bounded barrier check reuses B1 source/load ordering and fails closed at its
+2,048-event limit. Legacy aliases and the strict target observer retain their
+duplicate-binding policies.
+
+The first physical occurrence in deterministic startup/source traversal is canonical
+only if that source/span occurs in every relevant context. One load per context and
+one exact payload enter the existing B1 item, without changing IDs or schema. All
+physical source bytes/metadata and the complete load traversal remain private and
+freshness-bound through Prepare/Execute, including copies omitted from the Bundle
+recipe. A changed second copy invalidates preparation even if canonical bytes are
+unchanged. Restore publishes one declaration through the existing qualified-source
+or managed-file strategy, never redundant files/hooks solely to reproduce duplicates.
+
+The typed adapter constructs one candidate and one protected publication per source
+for all selected aliases and functions. Original definition bytes and relative selected
+order are preserved; an append that would reverse retained definitions or cross a saved
+selected load site is blocked. The complete candidate is parsed before publication.
+Unselected bytes and competing definitions are preserved. Typed Alias and Function
+Match proves declarations, not availability of invoked tools, operands, services or
+environment. Explicit dependency records still block unresolved restoration; absence
+of such records is not proof of independence. Legacy capabilities 1–5 retain their
+existing tool/path/dependency predicates. Alias presence does not prove runtime expansion.
+
+When original source relationships cannot be reused, the portable destination is
+`~/.macseed-shell-definitions.zsh`, with the exact `# Macseed portable definitions 1`
+header and one literal `source "$HOME/.macseed-shell-definitions.zsh"` appended to a
+qualified standard `.zshrc`. The existing publisher writes definitions before startup
+integration. B1 load-site/source-span order is projected into a deterministic order
+consistent across saved contexts; contradictory ordering is rejected before Capture.
+No original initialization or arbitrary source directory is recreated. An existing
+destination must have the exact header and a qualified declaration-only envelope;
+the header alone does not authorize connecting dormant unselected declarations.
+Same-name definitions outside that destination are conflicts. Existing safe bytes
+are preserved, and an append cannot reorder retained selected declarations.
+
+The ordinary prepared-plan approval and Native Rebuild confirmation authorize these
+file/startup changes. Check requires exact declarations, relative order and the single
+qualified interactive/interactive-login connection. A detached definitions file is
+not Match. Interrupted publication retains safe evidence without rollback; fresh
+inspection can complete a selected-only interrupted connection. Repeat Restore is
+a no-op. All source, parser, aggregate, cancellation and publisher guards still apply.
+
+Explicitly approved Scripts use the existing v5 validator/publisher, not the source
+writer. The native observer's qualified file map supplies source safety for file-only
+v5 plans alongside complex Functions; legacy observation defaults remain unchanged.
+Observed source files cannot be transferred as Scripts. Restore requires separate exact
+Script approvals. Selecting definitions never selects or installs referenced dependencies.
+Verify/Check retain `alias_definition`, `function_definition` and `script_file` identities.
+
+Native uses one Aliases & Functions parent with None/Partial/All states. All-selected
+item mode keeps explicit IDs; compact selection remains enabled for other domains and
+actual legacy whole-file Shell state. Confirmation counts both kinds. Unavailable or
+unsupported Functions are explained without source details. When declarations qualify
+alongside excluded initialization, one coverage message describes the excluded scope;
+it does not label qualified Functions unavailable. Scripts remain a separate
+consent scope. Optional Check names are bound to their kind-specific SHA-256 identities;
+invalid/missing names use neutral labels. See [Desktop](../DESKTOP.md#check-environment-status).
 
 ### Historical whole-file snapshots
 

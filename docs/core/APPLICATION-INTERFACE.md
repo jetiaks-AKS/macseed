@@ -193,8 +193,9 @@ identity lookup. This adds no archive fields and does not rewrite existing Bundl
 uses `capture_prepare` with null selection. Functions keep B1
 `shell-function:<sha256(name)>` identities in the existing `shell-zsh` domain and
 require explicit item selection. Category selection retains legacy Shell meaning.
-Mixed Function + alias/Script selection fails with `mixed_shell_selection_unsupported`;
-unavailable or unresolved Functions evidence fails with `capture_functions_unavailable`.
+`mixed_legacy_selection: true` advertises explicit mixed Alias/Function selection;
+separately approved v5 Scripts can accompany it. All-selected Native item scope retains
+explicit IDs. Unavailable or unresolved Functions evidence fails with `capture_functions_unavailable`.
 The additive `shell_functions` result contains fixed observation codes, explicit
 uncertainties and `restore_supported: true`, never private paths or definition bytes.
 Fresh preparation binds the source/file and trusted parser evidence; Execute repeats
@@ -216,6 +217,25 @@ does not prove runtime activation or behavior. Fixed `shell_function_*` diagnost
 codes expose unavailable enforcement, unsafe context or unmet prerequisites without
 source paths/bodies. [Configuration](../toolkit/CONFIGURATION.md#functions-restore-verify--check-b3)
 owns exact target support, append publication, limits and recovery semantics.
+
+B4 can report `shell_functions.status: "observed"` together with exclusion codes:
+eligible declarations have a portable restoration recipe while unrelated startup
+initialization remains outside the saved scope. Qualified equivalent Function occurrences
+share one item; conflicting or uncertain bindings remain excluded. All physical
+observations stay bound to preparation even when only one canonical payload is saved.
+The existing prepared-plan approval covers either qualified original source writes
+or the bounded managed definitions/startup connection described by Configuration;
+Check must qualify that connection as well as declaration bytes. No protocol or
+required feature version changes.
+
+B4 uses the same typed feature for mixed aliases, functions and independently approved
+Scripts. No required feature version changes. Inspection/pruning retain each kind's
+stable ID; Restore plans one coherent source candidate for aliases/functions and uses
+v5 consent/publication for Scripts. `reference_presentation.shell_function_labels` is
+optional display metadata: at most 512 validated names bound to `shell-function:` SHA-256
+IDs. Clients use neutral fallback labels for missing/malformed metadata and only use
+names with a corresponding `function_definition` record. Existing alias and Script
+predicates and privacy boundaries remain unchanged.
 
 `destination` must be an absolute `.mbt` path whose existing parent is canonical
 and user-owned. Existing files are refused by default. Replacement requires explicit

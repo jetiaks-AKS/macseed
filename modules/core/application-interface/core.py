@@ -313,9 +313,17 @@ def prepared_restore(path, disabled_groups, include_secure, selection=None, inst
         bundle.narrow(stage, disabled_groups, workspace_preview=workspace_preview)
         if shell_script_selection is not None:
             shell_path = stage / 'generated/shell/zshrc.snapshot'
+            typed = (bundle.typed_shell_load(shell_path)
+                     if 'shell-zsh' in restore_selection.canonical(stage)['items'] else None)
+            if typed is not None and set(shell_script_selection) != {
+                    row['id'].removeprefix('shell-script:') for row in typed._value['items'] if row['kind'] == 'script'}:
+                raise InvalidSelection()
             shell = (bundle.shell_load(shell_path)
                      if 'shell-zsh' in restore_selection.canonical(stage)['items'] else None)
-            candidates = (bundle.shell_contract().recovery_contract().selection_candidates(shell)
+            candidates = (bundle.shell_contract().recovery_contract().selection_candidates(
+                          bundle.shell_functions_contract().state.script_value(typed))
+                          if typed is not None and any(row['kind'] == 'script' for row in typed._value['items']) else
+                          bundle.shell_contract().recovery_contract().selection_candidates(shell)
                           if shell is not None and shell['version'] in (3, 4, 5) else [])
             if not set(shell_script_selection) <= {row['id'] for row in candidates}:
                 raise InvalidSelection()
@@ -645,6 +653,15 @@ def prepared_restore(path, disabled_groups, include_secure, selection=None, inst
         if shell_script_selection is not None:
             summary['shell_script_selection'] = sorted(shell_script_selection)
         if function_value is not None:
+            contract = bundle.shell_functions_contract()
+            scripts = contract.state.script_value(function_value)
+            if scripts is not None:
+                summary['shell_script_candidates'] = contract.state.legacy().selection_candidates(scripts)
+                typed_plan = contract.plan(function_value, os.environ['HOME'])
+                required_scripts = [dict(id=r['id'].removeprefix('shell-script:'), path=r['key'])
+                    for r, status, policy in typed_plan.rows if r['kind'] == 'script' and status == 'missing' and policy == 'create']
+                if required_scripts:
+                    summary['shell_scripts'] = required_scripts
             summary['shell_functions'] = dict(version=1, predicate='function_definition',
                 activation='unknown', dependencies='unknown', execution_tested=False)
         if 'ssh-configuration' in requested_selection['items']:
@@ -1049,6 +1066,7 @@ def restore_execute(operation_id, path, disabled_groups, include_secure, expecte
                         if any(status not in ('matching', 'missing') for _, status, _ in current_functions.rows):
                             raise ExecuteFailed('preview_observation_failed')
                         shell_environment['MACSEED_SHELL_EXPECTED_EVIDENCE'] = current_functions.evidence
+                        shell_environment['MACSEED_SHELL_SCRIPT_APPROVALS'] = json.dumps(shell_script_ids)
                     shell_value = bundle.shell_load(stage / 'generated/shell/zshrc.snapshot')
                     if shell_value is not None and shell_value['version'] in (2, 3, 4, 5):
                         current_shell = bundle.shell_contract().evidence(shell_value, os.environ['HOME'])
@@ -1481,6 +1499,12 @@ def environment_compare(operation_id, parameters):
             if status == 0:
                 shell_path = generated / 'shell/zshrc.snapshot'
                 if source is not None and shell_path.is_file():
+                    if typed_functions is not None:
+                        owners = {(row['item_id'], row['predicate']) for row in owned.details['verification_records']
+                                  if row['domain'] == 'shell-zsh'}
+                        for kind, predicate in (('alias', 'alias_definition'), ('function', 'function_definition'), ('script', 'script_file')):
+                            presentation['shell_' + kind + '_labels'] = {row['id']: row['key'] for row in typed_functions._value['items']
+                                if row['kind'] == kind and (row['id'], predicate) in owners}
                     aliases = bundle.shell_load(shell_path)
                     if aliases is not None:
                         owners = {row['item_id'] for row in owned.details['verification_records']
@@ -1803,7 +1827,7 @@ def dispatch(version, channel=None):
         result['features']['shell_script_transfer'] = dict(version=5, policy='opaque-file-v5', legacy_policies=['opaque-file-v4'], inspection='capture_script_inspect', max_files=128, max_file_bytes=1048576, max_content_bytes=16777216, max_manifest_bytes=262144, request_manifest='shell-scripts-request.json')
         result['features']['secure_check'] = dict(version=1, inventory='secure_check_inventory', compare='secure_check_compare', selection_version=2, max_items=32, read_only=True)
         result['features']['shell_functions_capture'] = dict(version=1, required_feature={'shell-state': 1},
-            minimum_macos='14.4', explicit_items=True, mixed_legacy_selection=False, restore_supported=True)
+            minimum_macos='14.4', explicit_items=True, mixed_legacy_selection=True, restore_supported=True)
         result['features']['shell_functions_restore'] = dict(version=1, predicate='function_definition',
             required_feature={'shell-state': 1}, minimum_macos='14.4', explicit_items=True,
             execution_tested=False, activation='unknown')

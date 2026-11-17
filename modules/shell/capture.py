@@ -38,15 +38,19 @@ class Observation:
     def __init__(self, root):
         self.snapshot = None
         self.binding = None
+        self._source_paths = ()
         self.public = dict(status='unavailable', codes=[], restore_supported=True)
         try:
             helper = parser(root)
-            result = observe.observe(os.environ['HOME'], helper)
-            self.public.update(status='observed' if not result.codes else 'unsupported',
+            result = observe.observe(os.environ['HOME'], helper, aliases=True, independent=True)
+            self.public.update(status='observed' if result.snapshot._value['items'] or not result.codes else 'unsupported',
                                codes=list(result.codes), uncertainties=list(result.uncertainties))
-            # B2B requires a closed observed envelope. Rejected/missing literal
-            # includes and conflicting definitions cannot silently disappear.
-            if result.codes:
+            # A bounded declaration recipe is distinct from a startup snapshot.
+            # Rejected source relationships stay explicit outside its scope.
+            try:
+                state.declaration_order(result.snapshot)  # Must have a portable Restore order.
+            except state.Invalid:
+                self.public.update(status='unsupported', codes=sorted(set(result.codes) | {'ambiguous_function'}))
                 return
             raw, payloads = state.encode(result.snapshot)
             evidence = dict(parser=helper._manifest_sha256, snapshot=state.digest(raw),
@@ -54,9 +58,10 @@ class Observation:
                             files={p: dict(status=f['status'], stamp=f['stamp'],
                                            sha256=state.digest(f['raw']) if f['raw'] is not None else None)
                                    for p, f in result._files.items()},
-                            uncertainties=result.uncertainties)
+                            loads=result._loads, uncertainties=result.uncertainties)
             self.binding = state.digest(json.dumps(evidence, sort_keys=True, separators=(',', ':')).encode())
             self.snapshot = result.snapshot
+            self._source_paths = tuple(result._files)
         except (client.Invalid, observe.Invalid) as exc:
             if exc.code in ('cancelled', 'process_cleanup_failed'):
                 raise
@@ -71,8 +76,18 @@ class Observation:
         return [dict(item_id=row['id'], label=row['key'], _source=row['id'])
                 for row in self.snapshot._value['items']]
 
-    def selected(self, ids):
-        return state.encode(state.select(self.snapshot, ids))
+    def selected(self, ids, scripts=()):
+        return state.encode(state.with_scripts(state.select(self.snapshot, ids), scripts))
+
+    def validate_script_paths(self, ids, paths):
+        """Apply v5 source-file exclusions using actual selected typed aliases."""
+        selected = state.select(self.snapshot, ids)
+        context = dict(roots=list(self._source_paths),
+                       aliases=[observe.base.declaration(state.content(selected, row).decode('utf-8'), extended=True)[0]
+                                for row in selected._value['items'] if row['kind'] == 'alias'],
+                       layout=[dict(path=p) for p in self._source_paths])
+        if any(not state.legacy().script_path(context, path) for path in paths):
+            raise state.Invalid('content_invalid')
 
 
 def function_id(value):

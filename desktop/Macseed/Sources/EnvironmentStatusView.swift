@@ -287,7 +287,7 @@ struct EnvironmentComparisonDomain: View {
     @ReferenceViewState<Bool> private var expanded = false
     static func shellChildren(_ category: DisplayCategory) -> [DisplayCategory] {
         guard category.id == "shell-zsh", category.items.contains(where: {
-            $0.id.hasPrefix("shell-zsh:shell-alias:") || $0.id.hasPrefix("shell-zsh:shell-script:")
+            $0.id.hasPrefix("shell-zsh:shell-alias:") || $0.id.hasPrefix("shell-zsh:shell-function:") || $0.id.hasPrefix("shell-zsh:shell-script:")
         }) else { return [] }
         let scripts = category.items.filter { $0.id.hasPrefix("shell-zsh:shell-script:") }
         let aliases = category.items.filter { !$0.id.hasPrefix("shell-zsh:shell-script:") }

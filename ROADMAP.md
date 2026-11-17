@@ -46,8 +46,15 @@ contracts, [TODO](TODO.md) owns concrete unfinished actions, and
   adds explicit Functions Capture and typed Bundle inspection.
   [B3](docs/toolkit/CONFIGURATION.md#functions-restore-verify--check-b3) adds bounded
   exact-definition Restore/Verify/Check with target freshness, conflict refusal and
-  no-op repeat. Broader prerequisites, Native and release qualification remain open;
-  this does not extend v5 behavior or prove runtime activation.
+  no-op repeat. [B4](docs/toolkit/CONFIGURATION.md#unified-aliases--functions-b4) unifies
+  mixed Alias/Function transfer and Native selection, with independent v5 Scripts consent.
+  Independent declaration admission and a bounded portable Restore destination are
+  implemented; qualified equivalent Function occurrences share one item. Real-source
+  14-item Capture → disposable-target Restore/Verify/Check and no-op are locally qualified.
+  [Local integration evidence](docs/qualification/SHELL-UNIFIED-B4-2026-11-17.md) covers
+  disposable Core and real Native → Core mixed transfer.
+  Broader prerequisites, representative Native visual/real-Mac and release qualification
+  remain open; definition Match does not prove runtime activation.
 - **Before Macseed 1.0:** finish Shell, Stage 3C and remaining Stage 16 functionality;
   implement Stage 17 autonomous distribution; then complete comprehensive Native
   Desktop/packaged clean-Mac qualification and Early Access. No stage is closed by

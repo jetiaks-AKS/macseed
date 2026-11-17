@@ -21,6 +21,10 @@ The subsequent optimization checkpoint remains **HOSTED NOT YET VERIFIED**.
 
 ## Reports
 
+- [Unified Shell B4 — 2026-11-17](SHELL-UNIFIED-B4-2026-11-17.md) — disposable mixed
+  Core and real Native → Core Capture/Restore/Verify/Check; visual, real-Mac and
+  hosted/release qualification remain separate.
+
 - [Shell alias recoverability — 2026-11-12](SHELL-RECOVERABILITY-2026-11-12.md) —
   historical read-only 12-alias gap assessment and the **2026-11-15 accepted real
   GUI A/B/C workflow**, independent integrity postflight and final fixture cleanup;

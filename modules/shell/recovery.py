@@ -1025,7 +1025,7 @@ def row_dependencies_ready(value, row, home, observed_scripts=None):
     return operands_ready(subset, home)
 
 
-def plan(value, home, observed_scripts=None):
+def plan(value, home, observed_scripts=None, *, source_files=None):
     """Keep v5 file publication independent of alias-source qualification.
 
     Reuse the same bounded planner for each file and the alias/source group.
@@ -1033,12 +1033,16 @@ def plan(value, home, observed_scripts=None):
     planning and physical Bundle identities retain their existing contracts.
     """
     if value['version'] != 5:
+        if source_files is not None:
+            raise base.Invalid('unsupported_contract')
         return _group_plan(value, home, observed_scripts)
+    if source_files is not None and value['aliases']:
+        raise base.Invalid('unsupported_contract')
     groups = []
     if value['aliases']:
         groups.append(_group_plan(select(value, {row['name'] for row in value['aliases']}), home, observed_scripts))
     for script in value['scripts']:
-        groups.append(_group_plan(select(value, {file_identity(script['path'])}), home, observed_scripts))
+        groups.append(_group_plan(select(value, {file_identity(script['path'])}), home, observed_scripts, source_files=source_files))
     rows, writes, directories, reason = [], {}, set(), None
     for group in groups:
         for row, state, policy in group['rows']:
@@ -1055,7 +1059,7 @@ def plan(value, home, observed_scripts=None):
     return dict(rows=rows, writes=writes, directories=sorted(directories, key=lambda p: (p.count('/'), p)), reason=reason)
 
 
-def _group_plan(value, home, observed_scripts=None):
+def _group_plan(value, home, observed_scripts=None, *, source_files=None):
     """All-or-none qualification before any mutation; match includes dependencies."""
     file_rows = [dict(name=file_identity(script['path']), path=script['path'], file=True) for script in standalone(value)]
     rows, writes, dirs, reason = [], {}, set(), None
@@ -1078,13 +1082,20 @@ def _group_plan(value, home, observed_scripts=None):
             except (OSError, ValueError):
                 state = 'unverified'
             rows.append((row, state, 'preserve'))
-        graph = sources.observe(home)
+        # Typed definitions already have a protected native source observation.
+        # Reuse its loaded files solely for independent v5 file admission; this
+        # branch never qualifies alias/source publication or creates load edges.
+        graph = (sources.observe(home) if source_files is None else
+                 dict(files={p: (f['raw'], f['stamp']) for p, f in source_files.items()},
+                      roots=value['roots'], failed=False, repeated=False, writable=False, aliases=[]))
+        if source_files is not None and any(row['path'] in source_files for row in value['scripts']):
+            raise base.Invalid('script_source_activation')
         if value['aliases'] and graph['roots'] != value['roots']:
             raise base.Invalid('startup_prerequisite')
         layout_paths = {item['path'] for item in value['layout']}
         repairable_failures = graph['failed'] and all(path in layout_paths and not (Path(home) / path).exists()
             and safe_destination(home, path) for path in graph['failed'])
-        known_commands = all(not sources.top_level(raw)[1] and all(alias is not None or
+        known_commands = source_files is not None or all(not sources.top_level(raw)[1] and all(alias is not None or
             (sources.re.fullmatch(r'(?:source|\.)\s+(.+)', command) and
              sources.reference(sources.re.fullmatch(r'(?:source|\.)\s+(.+)', command)[1], home))
             for command, alias in sources.top_level(raw)[0]) for raw, _ in graph['files'].values() if raw is not None)
@@ -1203,8 +1214,8 @@ def assess(value, home):
     return plan(value, home)['rows']
 
 
-def restore_scripts(value, home):
-    writes = plan(value, home)['writes']
+def restore_scripts(value, home, *, source_files=None):
+    writes = plan(value, home, source_files=source_files)['writes']
     return [dict(id=script_id(row['path']), path=row['path']) for row in value['scripts'] if row['path'] in writes]
 
 
@@ -1230,14 +1241,18 @@ def apply_quarantine(fd, record):
     verify_quarantine(fd, record)
 
 
-def publish(value, home, expected=None, approvals=()):
+def publish(value, home, expected=None, approvals=(), *, source_files=None, validate_sources=None):
+    if source_files is not None and validate_sources is None:
+        raise base.Invalid('source_prerequisite')
+    if validate_sources is not None:
+        validate_sources()
     initial = evidence(value, home)
     if expected is not None and expected != initial:
         raise base.Invalid('target_changed')
-    prepared = plan(value, home)
+    prepared = plan(value, home, source_files=source_files)
     if prepared['reason'] and not (value['version'] == 5 and prepared['writes']):
         raise base.Invalid(prepared['reason'])
-    required = {row['id'] for row in restore_scripts(value, home)}
+    required = {row['id'] for row in restore_scripts(value, home, source_files=source_files)}
     if set(approvals) != required:
         raise base.Invalid('script_consent_required')
     if not prepared['writes']:
@@ -1245,6 +1260,8 @@ def publish(value, home, expected=None, approvals=()):
     wanted, changed = initial, False
     try:
         def validate(ignore_pending=()):
+            if validate_sources is not None:
+                validate_sources(ignore_pending)
             if evidence(value, home, ignore_pending) != wanted:
                 raise base.Invalid('target_changed')
         for path in prepared['directories']:
@@ -1293,7 +1310,7 @@ def publish(value, home, expected=None, approvals=()):
         # requirements remain visible to ordinary Verification and Check.
         required_rows = {row['name'] for row, state, policy in prepared['rows']
                          if state == 'matching' or policy in ('create', 'add')}
-        verified = {row['name'] for row, state, _ in assess(value, home) if state == 'matching'}
+        verified = {row['name'] for row, state, _ in plan(value, home, source_files=source_files)['rows'] if state == 'matching'}
         if not required_rows <= verified:
             raise base.Invalid('verification_failed')
     except BaseException as exc:

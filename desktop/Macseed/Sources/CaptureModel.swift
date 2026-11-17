@@ -69,6 +69,7 @@ enum CaptureFailure: Error, Equatable {
 
 struct CaptureCategory: Identifiable {
     let row: CoreCaptureInventoryRow
+    var shellObservation: CoreCaptureShellObservation? = nil
     var id: String { row.domain }
     var selectable: Bool { row.status == "present" && (["items", "category"].contains(row.selectionMode)) && (row.selectionMode == "category" || !row.items.isEmpty) }
     var itemSelectable: Bool { selectable && row.selectionMode == "items" }
@@ -100,8 +101,8 @@ struct CaptureCategory: Identifiable {
     var display: DisplayCategory {
         let items: [DisplayItem]
         if itemSelectable {
-            items = row.items.map { item in
-                DisplayItem(id: item.itemID, title: item.label.hasPrefix("opaque:") ? "Private item" : item.label,
+            items = ShellDefinitionPresentation.ordered(row.items, domain: id, id: { $0.itemID }, name: { $0.label }).map { item in
+                DisplayItem(id: item.itemID, title: ShellDefinitionPresentation.title(domain: id, id: item.itemID, name: item.label.hasPrefix("opaque:") ? "Private item" : item.label),
                             status: .ready, action: "Supported state available to save.")
             }
         } else {
@@ -116,7 +117,12 @@ struct CaptureCategory: Identifiable {
     var notices: [DisplayItem] {
         guard selectable, let reason = row.reason else { return [] }
         return [DisplayItem(id: "category-warning:" + id, title: "Needs Attention", status: .attention,
-                            action: id == "shell-zsh" ? "Some Shell settings or dependencies are outside this capture." : "Some supported state may be unavailable in this category.", reason: reason)]
+                            action: id == "shell-zsh" && reason == "source_partial" ? shellCoverageMessage : "Some supported state may be unavailable in this category.", reason: reason)]
+    }
+    var shellCoverageMessage: String {
+        let aliases = row.items.filter { $0.itemID.hasPrefix("shell-alias:") }.count
+        return (itemSelectable ? shellObservation?.coverageMessage(aliasCount: aliases) : nil)
+            ?? "Some Shell settings or dependencies are outside this capture."
     }
 }
 
@@ -347,6 +353,7 @@ enum CaptureSelectionScope: CaseIterable {
     }
     @Published private(set) var state: CaptureFlowState = .idle
     @Published private(set) var inventory: [CoreCaptureInventoryRow] = []
+    @Published private(set) var shellObservation: CoreCaptureShellObservation?
     @Published private(set) var selectedCategories: Set<String> = []
     @Published private(set) var selectedItems: [String: Set<String>] = [:]
     @Published private(set) var secureInventory: CoreCaptureSecureInventory = .unavailable
@@ -372,7 +379,7 @@ enum CaptureSelectionScope: CaseIterable {
     var busy: Bool { addingIdentity || inspectingShellScripts || [.scanning, .preparing, .saving].contains(state) }
     var categories: [CaptureCategory] {
         inventory.filter { $0.domain != "shell-zsh" || supportsManualScripts || ["present", "observation_error"].contains($0.status) }
-            .map { CaptureCategory(row: $0) }
+            .map { CaptureCategory(row: $0, shellObservation: shellObservation) }
     }
     var macOSSettings: CaptureMacOSSettingsGroup { CaptureMacOSSettingsGroup(categories: categories, selected: selectedCategories) }
     func selectMacOSSettings(included: Bool) {
@@ -381,7 +388,7 @@ enum CaptureSelectionScope: CaseIterable {
     var selection: CoreCaptureSelection {
         // V1 permits whole item domains. Keep Select All requests compact even
         // for large inventories; partial domains retain their exact item IDs.
-        let wholeItems = Set(categories.filter { $0.itemSelectable && selectionState($0) == .all }.map(\.id))
+        let wholeItems = Set(categories.filter { $0.itemSelectable && $0.id != "shell-zsh" && selectionState($0) == .all }.map(\.id))
         return CoreCaptureSelection(categories: selectedCategories.union(wholeItems).sorted(),
                                     items: selectedItems.filter { !$0.value.isEmpty && !wholeItems.contains($0.key) }.mapValues { $0.sorted() },
                                     secureIdentities: selectedSecureIdentities.sorted())
@@ -472,7 +479,7 @@ enum CaptureSelectionScope: CaseIterable {
     var confirmationAreas: [CaptureConfirmationArea] {
         guard let prepared = preparation, let selection = prepared.publicationSelection else { return [] }
         let selected = Set(selection.categories).union(selection.items.keys)
-        let categories = prepared.inventory.map { CaptureCategory(row: $0) }
+        let categories = prepared.inventory.map { CaptureCategory(row: $0, shellObservation: prepared.shellFunctions) }
         let macOS = categories.filter { CaptureMacOSSettingsGroup.domainIDs.contains($0.id) }
         let chosenMacOS = macOS.filter { selected.contains($0.id) }
         var rows: [CaptureConfirmationArea] = []
@@ -485,8 +492,12 @@ enum CaptureSelectionScope: CaseIterable {
                 }
             } else {
                 let count = selection.items[category.id]?.count ?? category.row.items.count
+                let ids = selection.items[category.id] ?? category.row.items.map(\.itemID)
+                let aliases = ids.filter { $0.hasPrefix("shell-alias:") }.count
+                let functions = ids.filter { $0.hasPrefix("shell-function:") }.count
+                let definitionCounts = "\(aliases) \(aliases == 1 ? "Alias" : "Aliases") · \(functions) \(functions == 1 ? "Function" : "Functions")"
                 rows.append(CaptureConfirmationArea(id: category.id, title: category.title,
-                    content: category.itemSelectable ? "\(count)" : "Included",
+                    content: category.id == "shell-zsh" && functions > 0 ? definitionCounts : category.itemSelectable ? "\(count)" : "Included",
                     requiresAttention: category.row.reason != nil))
             }
         }
@@ -495,7 +506,7 @@ enum CaptureSelectionScope: CaseIterable {
     var confirmationWarnings: [CaptureCategory] {
         guard let prepared = preparation, let selection = prepared.publicationSelection else { return [] }
         let selected = Set(selection.categories).union(selection.items.keys)
-        return prepared.inventory.filter { selected.contains($0.domain) && $0.reason != nil }.map { CaptureCategory(row: $0) }
+        return prepared.inventory.filter { selected.contains($0.domain) && $0.reason != nil }.map { CaptureCategory(row: $0, shellObservation: prepared.shellFunctions) }
     }
     var confirmationSummary: String {
         guard let summary = preparation?.summary else { return "" }
@@ -552,7 +563,7 @@ enum CaptureSelectionScope: CaseIterable {
         shellScriptCandidates = []; authorizedShellScripts = []; shellParentConsent = nil
         manualShellScriptPaths = [:]
         shellScriptInspections = [:]; shellInspectionError = nil; pendingShellScripts = []; shellScriptPolicy = nil
-        inventory = []; selectedCategories = []; selectedItems = [:]; preparation = nil; destination = nil
+        inventory = []; shellObservation = nil; selectedCategories = []; selectedItems = [:]; preparation = nil; destination = nil
         secureInventory = .unavailable; selectedSecureIdentities = []
         externalSources = [:]; externalCandidates = [:]; identityError = nil
         replacementSHA256 = nil; publication = nil; resultNotices = []; publicationEvidence = .notOccurred; publicationMayHaveStarted = false; failure = nil
@@ -624,6 +635,7 @@ enum CaptureSelectionScope: CaseIterable {
                         let prepared = try result.decodeData(CoreCapturePreparation.self)
                         try prepared.validate(expected: expected, expectedScripts: next == .scanning ? nil : shellScriptSelection)
                         inventory = prepared.inventory
+                        shellObservation = prepared.shellFunctions
                         let remaining = externalCandidates.values.filter { candidate in !prepared.secureIdentities.items.contains { $0.id == candidate.id } }
                         secureInventory = remaining.isEmpty ? prepared.secureIdentities : .init(status: "present", reason: nil,
                             items: prepared.secureIdentities.items + remaining.sorted { $0.label < $1.label })
@@ -663,7 +675,9 @@ enum CaptureSelectionScope: CaseIterable {
     var resultPresentation: CaptureResultPresentation? {
         guard state == .result, publicationEvidence == .occurred, let publication, publication.publicationOccurred else { return nil }
         return CaptureResultPresentation(publication: publication, notices: resultNotices,
-                                         secureIdentityCount: preparation?.summary.secureIdentityCount ?? 0)
+                                         secureIdentityCount: preparation?.summary.secureIdentityCount ?? 0,
+                                         shellObservation: preparation?.shellFunctions,
+                                         savedAliasCount: preparation?.publicationSelection?.items["shell-zsh"]?.filter { $0.hasPrefix("shell-alias:") }.count ?? 0)
     }
     private func captureNotices() -> [DisplayCategory] {
         // Only Core's selected-category event facts contribute result warnings.

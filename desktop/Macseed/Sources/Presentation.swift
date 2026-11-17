@@ -101,6 +101,47 @@ struct DisplayCategory: Identifiable, Equatable {
     let items: [DisplayItem]
 }
 
+// Native display only. Never reorder Core records, selections or source bytes.
+enum ShellDefinitionPresentation {
+    static func kind(_ identity: String) -> String? {
+        let id = identity.hasPrefix("shell-zsh:") ? String(identity.dropFirst("shell-zsh:".count)) : identity
+        if id.range(of: "^shell-alias:[0-9a-f]{64}\\z", options: .regularExpression) != nil { return "Alias" }
+        if id.range(of: "^shell-function:[0-9a-f]{64}\\z", options: .regularExpression) != nil { return "Function" }
+        return nil
+    }
+    static func title(domain: String, id: String, name: String) -> String {
+        guard domain == "shell-zsh", let kind = kind(id) else { return name }
+        let prefix = kind + ": "
+        if name.hasPrefix(prefix) { return name }
+        let missing = ["Shell alias", "Shell function", "Private item", id].contains(name)
+        return prefix + (missing ? "Name unavailable" : name)
+    }
+    static func ordered<T>(_ values: [T], domain: String, id: (T) -> String, name: (T) -> String) -> [T] {
+        guard domain == "shell-zsh" else { return values }
+        func key(_ value: T) -> (Int, String) {
+            guard let kind = kind(id(value)) else { return (2, "") }
+            let label = name(value), prefix = kind + ": "
+            return (kind == "Alias" ? 0 : 1, label.hasPrefix(prefix) ? String(label.dropFirst(prefix.count)) : label)
+        }
+        return values.enumerated().sorted { left, right in
+            let a = key(left.element), b = key(right.element)
+            if a.0 != b.0 { return a.0 < b.0 }
+            if a.0 == 2 { return left.offset < right.offset }
+            if a.1 != b.1 { return a.1.utf8.lexicographicallyPrecedes(b.1.utf8) }
+            if id(left.element) != id(right.element) { return id(left.element) < id(right.element) }
+            return left.offset < right.offset
+        }.map(\.element)
+    }
+}
+
+extension CoreRestoreInspection.Area {
+    var displayItems: [CoreRestoreInspection.Item] {
+        ShellDefinitionPresentation.ordered(items, domain: id, id: { $0.id }, name: { $0.label }).map {
+            .init(itemID: $0.id, label: ShellDefinitionPresentation.title(domain: id, id: $0.id, name: $0.label))
+        }
+    }
+}
+
 struct DisplayPrerequisite: Equatable {
     let title: String
     let instructions: String

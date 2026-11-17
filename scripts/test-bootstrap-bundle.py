@@ -134,6 +134,55 @@ class BundleTests(unittest.TestCase):
         empty, _ = state.encode(state.assemble([], [], [], [], {}))
         reject(replace={state.SNAPSHOT: empty, state.DEFINITIONS: b''})
 
+    def test_mixed_typed_members_integrity_collisions_and_selection(self):
+        c = bundle.shell_state_contract()
+        alias, function = b"alias listing='ls -la'", b'fixture() { :; }'
+        raw = alias + b'\n' + function
+        source = c.source_record('.zshrc', raw)
+        load = dict(source=source['id'], parent=None, order=0, context='interactive', entry='zshrc', condition='unknown', site=None)
+        load['id'] = c.load_identity(load)
+        start = len(alias) + 1
+        items = [dict(id=c.identity('alias', 'listing'), kind='alias', key='listing', source=source['id'], loads=[load['id']],
+                      details=dict(mode='ordinary', span=[0, len(alias)])),
+                 dict(id=c.identity('function', 'fixture'), kind='function', key='fixture', source=source['id'], loads=[load['id']],
+                      details=dict(span=[start, len(raw)], name=[start, start + 7], body=[start + 10, len(raw)], parser_profile='zsh-default-1'))]
+        value = c.assemble([source], [load], items, [], {items[0]['id']: alias, items[1]['id']: function})
+        script = dict(path='Scripts/independent', text='#!/bin/sh\n:;\n', mode=0o600, managed=False)
+        script['sha256'] = c.digest(script['text'].encode())
+        value = c.with_scripts(value, [script])
+        encoded, payloads = c.encode(value)
+        selection = self.stage / 'blueprint.conf'
+        selection.write_bytes(selection.read_bytes().replace(b'shell-zsh="false"', b'shell-zsh="true"'))
+        for name, data in {c.SNAPSHOT: encoded, **payloads}.items():
+            bundle.write_file(self.stage / name, data)
+        self.pack()
+        files = bundle.validate_archive(self.bundle)
+        self.assertEqual(bundle.inspect_bundle(self.bundle, '/Users/unused')['selected_item_counts']['shell-zsh'], 3)
+        self.assertEqual(bundle.validate_shell(files), c.FEATURE)
+        script_member = next(name for name in payloads if bundle.script_member(name))
+        # Recomputed outer checksums never authorize missing, extra or changed inner content.
+        for member in (c.DEFINITIONS, script_member):
+            for change in ('remove', 'corrupt'):
+                corrupt = dict(files)
+                if change == 'remove': corrupt.pop(member)
+                else: corrupt[member] = b'forged'
+                with self.assertRaises(bundle.Invalid): bundle.validate_shell(corrupt)
+        with self.assertRaises(bundle.Invalid):
+            bundle.validate_shell(dict(files, **{'generated/shell/scripts/' + '0' * 64 + '.data': b'forged'}))
+        manifest = json.loads(encoded[len(c.MAGIC):])
+        duplicate = next(r for r in manifest['items'] if r['kind'] == 'function')
+        duplicate.update(key='listing', id=c.identity('function', 'listing'))
+        with self.assertRaises(c.Invalid): c.decode(c.MAGIC + json.dumps(manifest).encode(), payloads)
+        for chosen in ([items[0]['id'], items[1]['id']], [c.identity('script', script['path'])]):
+            target = self.root / ('definitions' if len(chosen) == 2 else 'script-only'); target.mkdir(mode=0o700)
+            bundle.unpack(self.bundle, target, '/Users/unused', workspace_preview=True)
+            bundle.select_shell_aliases(target, chosen)
+            selected = bundle.typed_shell_load(target / c.SNAPSHOT)
+            self.assertEqual({r['id'] for r in selected._value['items']}, set(chosen))
+            self.assertEqual((target / c.DEFINITIONS).exists(), len(chosen) == 2)
+            self.assertEqual((target / script_member).exists(), len(chosen) == 1)
+            self.assertEqual(set(selected._payloads), {c.DEFINITIONS} if len(chosen) == 2 else {script_member})
+
     def test_scripts_v5_members_integrity_selection_and_legacy_limits(self):
         c = bundle.shell_contract().recovery_contract()
         selection = self.stage / 'blueprint.conf'

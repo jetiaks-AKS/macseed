@@ -14,6 +14,7 @@ enum ShellCommandPresentation {
     static let restoreHelp = "Restoring executable code requires explicit authorization for each file. Capture consent does not grant Restore consent. File conformity does not prove safe or successful execution; script dependencies may remain unknown. Existing files are protected against unsafe replacement. Macseed does not execute scripts during Restore or Verification. Restored Shell configuration may execute them in a later interactive session."
     static let coverageTitle = "Shell coverage"
     static let coverageSummary = "Some Shell settings or dependencies are outside the saved scope."
+    static let definitionRestoreNotice = "Selected Shell definitions will be added to qualified source files. Where needed, Macseed will create its own definitions file and connect it to Zsh startup. Conflicting definitions are preserved. This does not verify tools, environment or runtime behavior."
     static func dependencyExplanation(_ reason: String?) -> String? {
         switch reason {
         case "shell_publication_uncertain": "Shell recovery evidence needs review before retrying. See View Log."
@@ -25,6 +26,10 @@ enum ShellCommandPresentation {
         case "shell_dependency_observation_prerequisite": "Couldn’t inspect the required file safely. Check access and ownership, then refresh."
         case "shell_operand_unsupported_prerequisite", "shell_operand_prerequisite": "Path dependency is not qualified. Review it separately, then refresh."
         case "shell_selection_prerequisite": "Selected Shell recovery has unresolved prerequisites. Review the other blockers, then refresh."
+        case "shell_function_functions_unavailable": "Functions observation is unavailable. A trusted parser with enforced launch protection is required."
+        case "shell_function_source_prerequisite", "shell_function_managed_source_prerequisite": "The saved source relationship cannot be safely reconstructed here. Review the existing Shell configuration."
+        case "shell_function_dependency_prerequisite": "Selected definitions have unresolved prerequisites. Recover them separately, then refresh."
+        case "shell_function_unsafe_destination", "shell_function_definition_invalid", "shell_function_observation_failed": "Shell definition or target safety could not be established. Existing configuration is preserved."
         default: nil
         }
     }
@@ -39,9 +44,9 @@ struct ShellParentConsent: Identifiable {
     let candidates: [CoreShellScript]
     let newScripts: [CoreShellScript]
     var selectAliases = true
-    var keepSelectionTitle: String { selectAliases ? "Aliases only" : "Keep current selection" }
+    var keepSelectionTitle: String { selectAliases ? "Aliases & Functions only" : "Keep current selection" }
     var keepSelectionExplanation: String {
-        selectAliases ? "Aliases only keeps your existing script choices." : "Keep current selection leaves all choices unchanged."
+        selectAliases ? "Aliases & Functions only keeps your existing script choices." : "Keep current selection leaves all choices unchanged."
     }
     var fileSummary: String {
         newScripts.map { script in
@@ -202,7 +207,7 @@ enum SelectionCategoryHelp {
             : "Explicitly selected SSH identities are imported only after authentication and confirmation. Existing keys won't be overwritten. Customize supports individual keys and safe destination folders.") + " Key availability does not confirm remote authentication."
         case "workspace-folders": return (capture ? "Saves folder structure only." : "Recreates folder structure only.") + " Files and folder contents are not transferred."
         case "vscode-workspaces": return (capture ? "Saves supported VS Code workspace references." : "Recreates supported VS Code workspace references when their selected folders and repositories are available.") + " Project files are not transferred."
-        case "shell-zsh": return (capture ? "Saves supported alias declarations from qualified Shell sources." : "Restores selected aliases to qualified source files without replacing conflicting definitions.") + " Other Shell configuration and startup behavior may remain outside the saved scope. Historical whole-file snapshots retain their original restoration limits."
+        case "shell-zsh": return (capture ? "Saves selected Alias and Function definitions from qualified Shell sources." : ShellCommandPresentation.definitionRestoreNotice) + " Definition Match does not prove runtime activation or execution. Other Shell configuration may remain outside the saved scope. Historical whole-file snapshots retain their original restoration limits."
         case "app-store": return (capture ? "Saves selected App Store application requirements." : "Guides you through installing selected apps in the App Store, then checking them.") + " Apps, account credentials and application data are not copied."
         default: return nil
         }
@@ -867,8 +872,14 @@ struct CaptureTaskPresentation {
             let fileOnlyShell = category.id == "shell-zsh" && chosen.isEmpty && !standaloneScripts.isEmpty
             let warnings = phase == .result ? notices.filter { $0.id == category.id }.flatMap(\.items)
                 : phase == .confirmation ? category.notices.filter { !fileOnlyShell || $0.reason != "source_partial" } : []
-            items += warnings.map { item in TaskItemPresentation(id: category.id + ":" + item.id + ":notice", item: item, state: .attention,
-                captureRole: phase != .progress ? .categoryWarning : nil) }
+            items += warnings.map { item in
+                let action = category.id == "shell-zsh" && item.reason == "source_partial"
+                    ? category.shellObservation?.coverageMessage(aliasCount: chosen.filter { $0.hasPrefix("shell-alias:") }.count, saved: phase == .result) ?? item.action
+                    : item.action
+                return TaskItemPresentation(id: category.id + ":" + item.id + ":notice",
+                    item: DisplayItem(id: item.id, title: item.title, status: item.status, action: action, reason: item.reason), state: .attention,
+                    captureRole: phase != .progress ? .categoryWarning : nil)
+            }
             if let index = output.firstIndex(where: { $0.id == domainID }) {
                 let old = output[index]
                 output[index] = TaskDomainPresentation(id: old.id, title: old.title, symbol: old.symbol, items: old.items + items, activityState: phase == .result ? (!warnings.isEmpty || old.state == .attention ? .attention : old.state == .unverified ? .unverified : state) : nil)
@@ -967,7 +978,9 @@ struct CaptureCategorySelectionView: View {
     }
     private var status: some View {
         VStack(alignment: .leading, spacing: 3) {
-            if !category.selectable {
+            if category.id == "shell-zsh", category.itemSelectable, model.shellObservation?.notice != nil {
+                CaptureStatusText(title: model.shellObservation?.title ?? "Functions excluded", state: .attention)
+            } else if !category.selectable {
                 CaptureStatusText(title: category.headerSummary, state: category.row.status == "observation_error" ? .attention : .skipped)
             } else if model.selectionState(category) != .none && !category.notices.isEmpty { CaptureStatusText(title: "Needs Attention", state: .attention) }
             else if category.itemSelectable && model.selectionState(category) != .none {
@@ -1272,6 +1285,8 @@ struct CaptureResultPresentation {
     let destination: URL
     let scope: String
     let attention: [DisplayCategory]
+    private let shellObservation: CoreCaptureShellObservation?
+    private let savedAliasCount: Int
     var affectedCount: Int { attention.count }
     var attentionSummary: String { "\(affectedCount) affected \(affectedCount == 1 ? "category" : "categories")" }
     var resultHierarchy: (roots: [TaskDomainPresentation], children: [String: [TaskDomainPresentation]], explanations: [String: String]) {
@@ -1280,7 +1295,9 @@ struct CaptureResultPresentation {
         func domain(_ category: DisplayCategory) -> TaskDomainPresentation {
             let items = category.items.map { item in
                 let id = category.id + ":" + item.id + ":" + item.status.rawValue + ":" + (item.reason ?? "")
-                explanations[id] = Self.explanation(item, domain: category.id)
+                explanations[id] = category.id == "shell-zsh" && item.reason == "source_partial" && item.status != .unverified
+                    ? shellObservation?.coverageMessage(aliasCount: savedAliasCount, saved: true) ?? Self.explanation(item, domain: category.id)
+                    : Self.explanation(item, domain: category.id)
                 let title: String
                 if item.reason == "source_partial" {
                     title = category.id == "shell-zsh" ? ShellCommandPresentation.coverageTitle : "Category coverage"
@@ -1310,7 +1327,10 @@ struct CaptureResultPresentation {
         }
         return (roots, children, explanations)
     }
-    init(publication: CoreCapturePublication, notices: [DisplayCategory], secureIdentityCount: Int = 0) {
+    init(publication: CoreCapturePublication, notices: [DisplayCategory], secureIdentityCount: Int = 0,
+         shellObservation: CoreCaptureShellObservation? = nil, savedAliasCount: Int = 0) {
+        self.shellObservation = shellObservation
+        self.savedAliasCount = savedAliasCount
         destination = URL(fileURLWithPath: publication.destination)
         let domains = publication.bundle.functionalDomainCount
         let items = publication.bundle.capturedItemCount

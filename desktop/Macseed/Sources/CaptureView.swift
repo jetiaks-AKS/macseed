@@ -217,7 +217,11 @@ struct CaptureView: View {
                     }
                     Text(CaptureModel.confirmationPrivacyMessage(includesSSHIdentities: !selection.secureIdentities.isEmpty))
                         .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                    let tasks = CaptureTaskPresentation(categories: prepared.inventory.map { CaptureCategory(row: $0) }, selection: selection,
+                    if selection.items["shell-zsh"]?.contains(where: { $0.hasPrefix("shell-function:") }) == true,
+                       let shell = model.confirmationAreas.first(where: { $0.id == "shell-zsh" }) {
+                        Text(shell.content).font(.callout).foregroundStyle(.secondary)
+                    }
+                    let tasks = CaptureTaskPresentation(categories: prepared.inventory.map { CaptureCategory(row: $0, shellObservation: prepared.shellFunctions) }, selection: selection,
                         phase: .confirmation, secureIdentities: prepared.secureIdentities.items, standaloneScripts: model.standaloneShellScripts)
                     TaskDomainList(domains: tasks.domains, stateTitles: [.planned: "Ready to Save"], compactReadyItems: true, title: "Included in this capture",
                         captureHierarchy: true, settingsCategories: CaptureSettingsPresentation.children(tasks.domains),

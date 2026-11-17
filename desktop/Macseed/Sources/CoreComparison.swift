@@ -14,7 +14,8 @@ struct CoreComparisonResult: Decodable {
         let sshHosts: CoreSSHHosts?
         let shellScriptLabels: [String: String]?
         let shellAliasLabels: [String: String]?
-        enum CodingKeys: String, CodingKey { case groups, shellScriptLabels = "shell_script_labels", shellAliasLabels = "shell_alias_labels", sshHosts = "ssh_hosts", appStoreNames = "app_store_names", settingLabels = "setting_labels", repositoryLabels = "repository_labels", workspaceLabels = "workspace_labels" }
+        let shellFunctionLabels: [String: String]?
+        enum CodingKeys: String, CodingKey { case groups, shellScriptLabels = "shell_script_labels", shellAliasLabels = "shell_alias_labels", shellFunctionLabels = "shell_function_labels", sshHosts = "ssh_hosts", appStoreNames = "app_store_names", settingLabels = "setting_labels", repositoryLabels = "repository_labels", workspaceLabels = "workspace_labels" }
         init(from decoder: Decoder) throws {
             let values = try decoder.container(keyedBy: CodingKeys.self)
             groups = try values.decode([CoreRestoreInspection.Group].self, forKey: .groups)
@@ -34,6 +35,13 @@ struct CoreComparisonResult: Decodable {
                 labels.count <= 256 && labels.allSatisfy { id, name in
                     name.range(of: "^[A-Za-z_][A-Za-z0-9_.-]{0,63}\\z", options: .regularExpression) != nil
                         && id == "shell-alias:" + SHA256.hash(data: Data(name.utf8)).map { String(format: "%02x", $0) }.joined()
+                } ? labels : nil
+            }
+            let functions = try? values.decodeIfPresent([String: String].self, forKey: .shellFunctionLabels)
+            shellFunctionLabels = functions.flatMap { labels in
+                labels.count <= 512 && labels.allSatisfy { id, name in
+                    name.range(of: "^[A-Za-z_][A-Za-z0-9_.-]{0,63}\\z", options: .regularExpression) != nil
+                        && id == "shell-function:" + SHA256.hash(data: Data(name.utf8)).map { String(format: "%02x", $0) }.joined()
                 } ? labels : nil
             }
         }

@@ -43,7 +43,7 @@ class CoreInterfaceTests(unittest.TestCase):
                 "shell_script_transfer": {"version": 5, "policy": "opaque-file-v5", "legacy_policies": ["opaque-file-v4"], "inspection": "capture_script_inspect", "max_files": 128, "max_file_bytes": 1048576, "max_content_bytes": 16777216, "max_manifest_bytes": 262144, "request_manifest": "shell-scripts-request.json"},
                 "secure_check": {"version": 1, "inventory": "secure_check_inventory", "compare": "secure_check_compare", "selection_version": 2, "max_items": 32, "read_only": True},
                 "shell_functions_capture": {"version": 1, "required_feature": {"shell-state": 1}, "minimum_macos": "14.4",
-                    "explicit_items": True, "mixed_legacy_selection": False, "restore_supported": True},
+                    "explicit_items": True, "mixed_legacy_selection": True, "restore_supported": True},
                 "shell_functions_restore": {"version": 1, "predicate": "function_definition", "required_feature": {"shell-state": 1},
                     "minimum_macos": "14.4", "explicit_items": True, "execution_tested": False, "activation": "unknown"}},
             "operations": ["ssh_restore_review", "capabilities", "bundle_inspect", "restore_prepare", "restore_execute", "secure_restore_compare", "secure_restore_inventory", "capture_prepare", "capture_execute", "capture_identity_inspect", "capture_script_inspect", "environment_compare", "secure_check_inventory", "secure_check_compare"],

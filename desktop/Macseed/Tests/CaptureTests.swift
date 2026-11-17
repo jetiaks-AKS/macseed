@@ -111,7 +111,7 @@ import Vision
         precondition(model.state == .review && model.selectedSecureIdentities.isEmpty)
         for category in model.categories { model.selectCategory(category.id, included: true) }
         for id in ids { model.selectSecureIdentity(id, included: true) }
-        precondition(model.selection.categories.contains("shell-zsh") && model.selection.items["shell-zsh"] == nil)
+        precondition(!model.selection.categories.contains("shell-zsh") && model.selection.items["shell-zsh"] == aliases.sorted())
         model.prepare(destination: root.appendingPathComponent("shell-confirmation.mbt")); await model.waitForCompletion()
         precondition(runtime.state == .completed && runtime.termination?.exitCode == 0)
         precondition(model.state == .confirmation, "Valid whole-domain Shell consent must reach Confirmation")
@@ -709,6 +709,10 @@ import Vision
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
         defer { try? FileManager.default.removeItem(at: root) }
         let python = URL(fileURLWithPath: CommandLine.arguments[2])
+        if CommandLine.arguments.contains("--mixed-shell-only") {
+            try await realCore(root: root, repository: URL(fileURLWithPath: CommandLine.arguments[1]), python: python, mixedOnly: true)
+            return
+        }
         if CommandLine.arguments.contains("--workspace-core-only") || CommandLine.arguments.contains("--overlap-core-only") {
             try await realCore(root: root, repository: URL(fileURLWithPath: CommandLine.arguments[1]), python: python)
             return
@@ -1282,6 +1286,7 @@ import Vision
         try await secureSelectionChecks(model: model, core: core)
         try await realCore(root: root, repository: URL(fileURLWithPath: CommandLine.arguments[1]), python: python)
         try await realCore(root: root.appendingPathComponent("shell-focused"), repository: URL(fileURLWithPath: CommandLine.arguments[1]), python: python, shellOnly: true)
+        try await realCore(root: root.appendingPathComponent("mixed-shell-focused"), repository: URL(fileURLWithPath: CommandLine.arguments[1]), python: python, mixedOnly: true)
         try await secureCaptureChecks(root: root, repository: URL(fileURLWithPath: CommandLine.arguments[1]), python: python)
     }
     @MainActor static func secureSelectionChecks(model: CaptureModel, core: URL) async throws {
@@ -1563,7 +1568,109 @@ import Vision
         print("PASS: native manual picker contract, duplicate/add-many/default-off/cancel consent, zero-alias Prepare → Confirmation → Execute → Result, rejection and unchanged source bytes")
     }
 
-    @MainActor static func realCore(root: URL, repository: URL, python: URL, shellOnly: Bool = false) async throws {
+    @MainActor static func mixedShellCore(root: URL, repository: URL, core: URL, home: URL, bin: URL, python: URL) async throws {
+        let fm = FileManager.default
+        // Reuse the prepared, authenticated parser; no user-installed executable.
+        let preparedApp = repository.appendingPathComponent("desktop/Macseed/build/Debug/Macseed.app")
+        let app = root.appendingPathComponent("Fixture.app")
+        let resources = app.appendingPathComponent("Contents/Resources")
+        try fm.createDirectory(at: resources, withIntermediateDirectories: true)
+        try fm.copyItem(at: preparedApp.appendingPathComponent("Contents/Helpers"), to: app.appendingPathComponent("Contents/Helpers"))
+        try fm.copyItem(at: preparedApp.appendingPathComponent("Contents/Resources/ThirdPartyNotices"), to: resources.appendingPathComponent("ThirdPartyNotices"))
+        var descriptor = try PropertyListSerialization.propertyList(from: Data(contentsOf: preparedApp.appendingPathComponent("Contents/Resources/CoreRuntime.plist")), format: nil) as! [String: Any]
+        descriptor["CoreRoot"] = core.path; descriptor["PythonExecutable"] = python.path
+        try PropertyListSerialization.data(fromPropertyList: descriptor, format: .xml, options: 0).write(to: resources.appendingPathComponent("CoreRuntime.plist"))
+        try fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: home.path)
+        let definitions = ["alias listing='ls -la'", "complex() {\n for x in a b; do\n cat <<'EOF'\nprivate literal é\nEOF\n done\n}",
+                           "alias location='pwd'", "ordinary() { :; }", "alias platform='uname -s'", "alias who='whoami'", "third() { :; }"]
+        let original = "# source preserved\neval \"$(fixture-init)\"\n" + definitions.joined(separator: "\n") + "\nexport PATH=\"$HOME/bin:$PATH\"\nsetopt AUTO_CD\n"
+        try write("eval \"$(other-init)\"\n", home.appendingPathComponent(".zprofile"))
+        try fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: home.appendingPathComponent(".zprofile").path)
+        try write(original, home.appendingPathComponent(".zshrc"))
+        try fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: home.appendingPathComponent(".zshrc").path)
+        let runtime = CoreRuntime(operationLogs: nil)
+        let location = CoreLocation(root: core, python: python, home: home, temporaryBase: root, toolDirectories: [bin], applicationBundle: app)
+        let model = CaptureModel(runtime: runtime, location: location)
+        model.scan(); await model.waitForCompletion()
+        precondition(model.state == .review, "Mixed Native scan failed: \(String(describing: model.failure))")
+        let category = model.categories.first { $0.id == "shell-zsh" }!
+        let functions = category.row.items.filter { $0.itemID.hasPrefix("shell-function:") }
+        if functions.isEmpty {
+            precondition(runtime.latestResult?.data?["shell_functions"]?.object?["codes"] == .array([.string("functions_unavailable")]),
+                         "A security failure cannot masquerade as a non-enforcing platform")
+            precondition(model.shellObservation?.notice != nil)
+            precondition(model.authorizedShellScripts.isEmpty)
+            print("PASS: Native mixed workflow unavailable on non-enforcing platform; active transfer NOT RUN")
+            return
+        }
+        precondition(category.row.items.count == 7 && functions.count == 3, "Expected 4 Aliases and 3 Functions")
+        precondition(model.shellObservation?.status == .observed && model.shellObservation?.notice == nil)
+        precondition(category.notices.count == 1 && category.notices[0].action.contains("Startup initialization"))
+        precondition(category.display.items.prefix(4).allSatisfy { $0.title.hasPrefix("Alias: ") })
+        precondition(category.display.items.suffix(3).allSatisfy { $0.title.hasPrefix("Function: ") })
+        for row in model.categories where row.selectable { model.selectCategory(row.id, included: false) }
+        model.selectCategory("shell-zsh", included: true)
+        precondition(model.selectionState(category) == .all && model.selectedItemCount == 7)
+        precondition(model.selection.categories.isEmpty && model.selection.items["shell-zsh"]?.count == 7)
+        model.selectCategory("shell-zsh", included: false)
+        precondition(model.selectionState(category) == .none && model.selectedItemCount == 0)
+        model.selectItem("shell-zsh", item: functions[0].itemID, included: true)
+        precondition(model.selectionState(category) == .mixed && model.selection.items["shell-zsh"] == [functions[0].itemID])
+        model.selectCategory("shell-zsh", included: true)
+        precondition(model.authorizedShellScripts.isEmpty && model.selection.items["shell-zsh"]?.count == 7)
+        let archive = root.appendingPathComponent("native-mixed.mbt")
+        model.prepare(destination: archive); await model.waitForCompletion()
+        precondition(model.state == .confirmation, "Mixed Native Prepare failed: \(String(describing: model.failure))")
+        precondition(model.preparation?.summary.selectedItems == 7)
+        precondition(model.confirmationAreas.first { $0.id == "shell-zsh" }?.content == "4 Aliases · 3 Functions")
+        model.create(); await model.waitForCompletion()
+        precondition(model.state == .result, "Mixed Native Capture failed: \(String(describing: model.failure))")
+        precondition(model.publication?.bundle.selectedItemCounts["shell-zsh"] == 7)
+        let targetHome = root.appendingPathComponent("mixed-target")
+        try fm.createDirectory(at: targetHome, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+        let target = targetHome.appendingPathComponent(".zshrc"), before = "# target preserved\nretained() { :; }\n"
+        try write(before, target); try fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: target.path)
+        try fm.createDirectory(at: core.appendingPathComponent("bin"), withIntermediateDirectories: true)
+        try fm.copyItem(at: repository.appendingPathComponent("bin/bs"), to: core.appendingPathComponent("bin/bs"))
+        try fm.copyItem(at: repository.appendingPathComponent("scripts/install-bs.sh"), to: core.appendingPathComponent("scripts/install-bs.sh"))
+        try fm.createSymbolicLink(at: bin.appendingPathComponent("bs"), withDestinationURL: core.appendingPathComponent("bin/bs"))
+        try write("#!/bin/bash\nexit 0\n", bin.appendingPathComponent("sudo"), executable: true)
+        let targetRuntime = CoreRuntime(operationLogs: nil)
+        let targetLocation = CoreLocation(root: core, python: python, home: targetHome, temporaryBase: root, toolDirectories: [bin], applicationBundle: app)
+        let restore = RestoreModel(runtime: targetRuntime, location: targetLocation)
+        restore.choose(archive); await restore.waitForCompletion()
+        precondition(restore.state == .review, "Mixed Native inspection failed")
+        let area = restore.selectionAreas.first { $0.id == "shell-zsh" }!
+        precondition(area.items.count == 7 && area.items.contains { $0.id.hasPrefix("shell-function:") })
+        restore.selectArea("shell-zsh", included: true)
+        precondition(restore.selection.items["shell-zsh"]?.count == 7 && restore.authorizedShellScripts.isEmpty)
+        restore.refreshPreview(); await restore.waitForCompletion()
+        precondition(restore.state == .preview && restore.canRebuild, "Mixed Native Preview failed: \(String(describing: restore.failure))")
+        let previewBytes = try String(contentsOf: target, encoding: .utf8)
+        precondition(previewBytes == before)
+        restore.requestRebuild(); precondition(restore.state == .confirming)
+        precondition(restore.confirmationMessages.contains(ShellCommandPresentation.definitionRestoreNotice))
+        restore.cancelRebuildConfirmation(); precondition(restore.state == .preview)
+        restore.requestRebuild(); restore.confirmRebuild(); await restore.waitForCompletion()
+        precondition(restore.state == .result, "Mixed Native Restore failed: \(String(describing: restore.failure))")
+        let restoredBytes = try String(contentsOf: target, encoding: .utf8)
+        precondition(restoredBytes == before + definitions.joined(separator: "\n") + "\n")
+        let check = EnvironmentStatusModel(runtime: targetRuntime, location: targetLocation)
+        check.selectBundle(archive); check.compare(); await check.waitForCompletion()
+        precondition(check.state == .result, "Mixed Native Check failed: \(String(describing: check.failure))")
+        let checked = check.presentation!.categories.first { $0.id == "shell-zsh" }!
+        let children = EnvironmentComparisonDomain.shellChildren(checked)
+        precondition(checked.title == "Custom Commands")
+        precondition(children.first?.title == "Aliases & Functions")
+        precondition(checked.items.filter { $0.status == .matching }.count == 7)
+        precondition(checked.items.contains { $0.title == "Function: complex" })
+        let preservedSource = try String(contentsOf: home.appendingPathComponent(".zshrc"), encoding: .utf8)
+        precondition(preservedSource == original)
+        precondition(!fm.fileExists(atPath: home.appendingPathComponent("executed").path))
+        print("PASS: active Native → production Core mixed 4 Alias + 3 Function Capture/Bundle/Restore/Verify/Check, parent None/Partial/All, explicit all IDs and separate Scripts consent")
+    }
+
+    @MainActor static func realCore(root: URL, repository: URL, python: URL, shellOnly: Bool = false, mixedOnly: Bool = false) async throws {
         let started = ProcessInfo.processInfo.systemUptime
         defer { print(String(format: "TIMING: CaptureTests.realCore (including Workspace/overlap) %.3f s", ProcessInfo.processInfo.systemUptime - started)) }
         // Automated disposable HOME/tools only; never the real-Mac manual gate.
@@ -1602,6 +1709,10 @@ import Vision
         try write("private ordinary state", generated.appendingPathComponent("sentinel"))
         try write("private ordinary selection", core.appendingPathComponent("config/blueprint.conf"))
         let beforeHome = try snapshot(home), beforeConfig = try snapshot(core.appendingPathComponent("config"))
+        if mixedOnly {
+            try await mixedShellCore(root: root, repository: repository, core: core, home: home, bin: bin, python: python)
+            return
+        }
         if shellOnly {
             try await shellPrepareCore(root: root, core: core, home: home, bin: bin, python: python)
             return

@@ -178,13 +178,16 @@ struct EnvironmentStatusPresentation {
                     return ShellCommandPresentation.coverageTitle
                 }
                 if let label = result.referencePresentation?.shellAliasLabels?[identity],
-                   result.records.verificationRecords.contains(where: { $0.domain == domain && $0.itemID == identity && ["alias_definition", "alias_recovery"].contains($0.predicate ?? "") }) { return label }
+                   result.records.verificationRecords.contains(where: { $0.domain == domain && $0.itemID == identity && ["alias_definition", "alias_recovery"].contains($0.predicate ?? "") }) { return ShellDefinitionPresentation.title(domain: domain, id: identity, name: label) }
+                if let label = result.referencePresentation?.shellFunctionLabels?[identity],
+                   result.records.verificationRecords.contains(where: { $0.domain == domain && $0.itemID == identity && $0.predicate == "function_definition" }) { return ShellDefinitionPresentation.title(domain: domain, id: identity, name: label) }
                 if identity.hasPrefix("shell-script:") {
                     if let path = result.referencePresentation?.shellScriptLabels?[identity],
                        result.records.verificationRecords.contains(where: { $0.domain == domain && $0.itemID == identity && $0.predicate == "script_file" }) { return "~/" + path }
                     return "Shell script"
                 }
-                if identity.hasPrefix("shell-alias:") { return "Shell alias" }
+                if identity.hasPrefix("shell-alias:") { return ShellDefinitionPresentation.title(domain: domain, id: identity, name: "Shell alias") }
+                if identity.hasPrefix("shell-function:") { return ShellDefinitionPresentation.title(domain: domain, id: identity, name: "Shell function") }
             }
             if domain == "ssh-configuration", partialSSHCoverage.contains(identity) { return "SSH configuration coverage" }
             if domain == "ssh-configuration", identity == "identity-references" { return "SSH key references" }
@@ -466,9 +469,9 @@ struct EnvironmentStatusPresentation {
         self.coverageHelp = coverageHelp
         categories = order.map { domain in
             let legacyShell = domain == "shell-zsh" && result.records.verificationRecords.contains { $0.domain == domain && $0.predicate == "file_content" }
-            let scriptShell = domain == "shell-zsh" && result.records.verificationRecords.contains { $0.domain == domain && $0.predicate == "script_file" }
+            let scriptShell = domain == "shell-zsh" && result.records.verificationRecords.contains { $0.domain == domain && ["script_file", "alias_definition", "alias_recovery", "function_definition"].contains($0.predicate ?? "") }
             // Keep Check's existing single category, with a title that also covers files.
-            return DisplayCategory(id: domain, title: DeveloperSelectionGroup.label(domain, fallback: legacyShell ? "Settings" : scriptShell ? "Custom Commands" : names[domain]?.0 ?? domain), symbol: names[domain]?.1 ?? "folder", items: grouped[domain]!)
+            return DisplayCategory(id: domain, title: DeveloperSelectionGroup.label(domain, fallback: legacyShell ? "Settings" : scriptShell ? "Custom Commands" : names[domain]?.0 ?? domain), symbol: names[domain]?.1 ?? "folder", items: ShellDefinitionPresentation.ordered(grouped[domain]!, domain: domain, id: { $0.id }, name: { $0.title }))
         }
         sections = EnvironmentStatusSection.project(categories)
         let independentUnverified = result.comparisonRecords.contains { $0.comparisonKind == "unverified" && !dependentRepositoryRecords.contains($0.recordID) }

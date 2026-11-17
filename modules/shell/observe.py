@@ -1,4 +1,4 @@
-"""Read-only, private Functions evidence. No production workflow registration."""
+"""Read-only, private Shell definition evidence; never evaluates user source."""
 import importlib.util
 from pathlib import Path
 import re
@@ -101,7 +101,129 @@ def _outer(raw, response, home):
     return units, names, commands, unsupported, len(value['definitions'])
 
 
-def observe(home, parser, *, zdotdir=None, contexts=CONTEXTS, cancelled=lambda: False, _ignore_pending=()):
+def _independent(raw, response, home, units, commands):
+    """Qualify declaration positions with the existing bounded Shell lexer.
+
+    Replace each parser-bounded outer function with a unique inert alias in a
+    private lexical projection. The existing alias classifier then proves that
+    its position is a complete, unconditional statement (not a conditional,
+    substitution, pipeline, heredoc or command operand). Original bytes/spans
+    never change. This proves declaration ownership, not effective runtime state.
+    """
+    value = state.parser_response(raw, response, 0)
+    markers, pieces, end = {}, [], 0
+    for index, row in enumerate(value['definitions']):
+        if row['parent'] != -1:
+            continue
+        first, last = row['span']
+        marker = '_macseed_' + state.digest(raw)[:24] + '_' + str(index)
+        markers[tuple(row['span'])] = marker
+        pieces += [raw[end:first], ("alias " + marker + "='/bin/true'").encode()]
+        end = last
+    # The legacy lexer accepts LF text. Only its private projection drops the
+    # CR in CRLF; bare CR remains rejected, never a new command boundary.
+    projection = b''.join([*pieces, raw[end:]]).replace(b'\r\n', b'\n')
+    try:
+        eligible, _ = base.classify(projection, extended=True)
+        outer, _ = sources.top_level(projection)
+    except ValueError:
+        return [], []  # Unsupported lexical context is not independence evidence.
+    eligible = {row['name'] for row in eligible}
+    outer = {statement for statement, _ in outer}
+    # Explicit binding mutation is evidence against the saved declarations.
+    # Dynamic initialization remains outside scope, never resolved or executed.
+    binding_mutation = re.search(rb'\b(?:unfunction|autoload|disable|enable|functions|unset)\b', projection)
+    units = [unit for unit in units if markers.get(tuple(unit[2]['span'])) in eligible and not binding_mutation]
+    commands = [command for command in commands
+                if state.utf8(raw[slice(*command[2])]) in outer and
+                (command[0] != 'alias' or command[1] in eligible)]
+    return units, commands
+
+
+def _equivalence_context(files, loads, issues, check):
+    """Bounded private barriers around already admitted declarations, not evaluation.
+
+    A literal source edge is transparent only after the existing observer qualified
+    it. Other outer statements can change definition-time options/alias expansion.
+    Explicit evaluation/binding changes after a definition are possible overrides.
+    """
+    if any(code != 'unsupported_context' for _, code in issues):
+        return None
+    by_source, context = {}, {}
+    for load in loads.values():
+        by_source.setdefault(load['source'], []).append(load)
+    count = 0
+    for record in files.values():
+        check()
+        if record['status'] == 'missing':
+            continue
+        if record['status'] not in ('observed', 'partial'):
+            return None
+        masked = bytearray(record['raw'])
+        for _, _, details in record['units']:
+            if 'mode' not in details:
+                for i in range(*details['span']):
+                    if masked[i] not in (10, 13):
+                        masked[i] = 32
+        commands = {tuple(bounds): kind for kind, _, bounds in record['commands']}
+        offset = 0
+        for line in bytes(masked).split(b'\n'):
+            text = line.strip(b' \t\r;')
+            start = offset + line.find(text) if text else offset
+            offset += len(line) + 1
+            if not text or text.startswith(b'#'):
+                continue
+            kind = commands.get((start, start + len(text)))
+            if kind in ('source', 'zdotdir'):
+                continue
+            if kind != 'alias' and re.search(rb'\b(?:alias|function)\b|\(\s*\)', text):
+                return None  # Unadmitted binding syntax cannot prove equivalence.
+            if kind != 'alias' and re.search(rb'(?<![\w/])(?:source|\.)\s', text):
+                return None  # Dynamic/conditional/unqualified source could override a binding.
+            override = kind != 'alias' and bool(re.search(
+                rb'\b(?:eval|unfunction|autoload|functions|unset|unalias|disable|enable)\b', text))
+            for load in by_source.get(record['source']['id'], []):
+                count += 1
+                if count > state.MAX_DECLARATIONS * len(CONTEXTS):
+                    return None  # Refuse equivalence beyond the existing occurrence budget.
+                context.setdefault(load['context'], []).append((state.load_position(loads, load['id'], start), override))
+    return context
+
+
+def _equivalent(candidates, files, loads, context):
+    """Project proven duplicate Function observations into one B1 declaration."""
+    if context is None or any('mode' in unit[2] for _, unit, _, _ in candidates):
+        return None
+    name, raw, details = candidates[0][1]
+    physical = {(path, tuple(unit[2]['span'])) for path, unit, _, _ in candidates}
+    if (sum(f['names'].count(name) for f in files.values()) != len(physical) or
+            any(name in f['alias_names'] for f in files.values())):
+        return None  # Includes non-admitted/conditional/multiple-name bindings.
+    def structure(value):
+        return (value['parser_profile'], *(tuple(n - value['span'][0] for n in value[key])
+                                          for key in ('span', 'name', 'body')))
+    if any(unit[1] != raw or structure(unit[2]) != structure(details) for _, unit, _, _ in candidates):
+        return None
+    positions = {}
+    for _, unit, load, _ in candidates:
+        positions.setdefault(load['context'], []).append(state.load_position(loads, load['id'], unit[2]['span'][0]))
+    for key, points in positions.items():
+        first, last = min(points), max(points)
+        if any(first < position < last or override and position > first for position, override in context.get(key, [])):
+            return None
+    # Preserve a real canonical source/span and one occurrence in every observed
+    # context. All physical units/loads remain private in Observation._files/_loads.
+    canonical = candidates[0][0], tuple(details['span'])
+    chosen = {}
+    for candidate in candidates:
+        path, unit, load, _ = candidate
+        if (path, tuple(unit[2]['span'])) == canonical:
+            chosen.setdefault(load['context'], candidate)
+    return list(chosen.values()) if set(chosen) == set(positions) else None
+
+
+def observe(home, parser, *, zdotdir=None, contexts=CONTEXTS, cancelled=lambda: False, _ignore_pending=(), aliases=False,
+            independent=False, _additional_sources=()):
     """Observe only an explicit HOME and trusted Parser; never ambient ZDOTDIR.
 
     Contexts are hypothetical standard startup sequences. System startup files,
@@ -110,14 +232,17 @@ def observe(home, parser, *, zdotdir=None, contexts=CONTEXTS, cancelled=lambda: 
     if (type(home) is not str or type(parser) is not client.Parser or type(contexts) not in (tuple, list)
             or not contexts or len(contexts) > len(CONTEXTS) or not callable(cancelled)
             or any(type(c) is not str or c not in CONTEXTS for c in contexts)
-            or len(set(contexts)) != len(contexts)):
+            or len(set(contexts)) != len(contexts) or type(independent) is not bool
+            or type(_additional_sources) is not tuple or len(_additional_sources) > 1
+            or any(not sources.portable(p) for p in _additional_sources)):
         raise Invalid('invalid_request')
     try:
         if cancelled():
             raise Invalid('cancelled')
         parser.preflight(cancelled=cancelled)
         with base.home_directory(home) as (_, stable):
-            result = _observe(home, parser, zdotdir, contexts, cancelled, _ignore_pending)
+            result = _observe(home, parser, zdotdir, contexts, cancelled, _ignore_pending, aliases,
+                              independent, _additional_sources)
             stable()
             return result
     except (Invalid, client.Invalid):
@@ -126,7 +251,7 @@ def observe(home, parser, *, zdotdir=None, contexts=CONTEXTS, cancelled=lambda: 
         raise Invalid('source_changed' if str(exc) == 'target_changed' else 'observation_failed') from None
 
 
-def _observe(home, parser, zdotdir, contexts, cancelled, ignore_pending):
+def _observe(home, parser, zdotdir, contexts, cancelled, ignore_pending, aliases, independent, additional_sources):
     contexts = [c for c in CONTEXTS if c in contexts]
     deadline = time.monotonic() + OBSERVATION_SECONDS
     files, issues, loads, occurrences = {}, [], [], []
@@ -146,7 +271,7 @@ def _observe(home, parser, zdotdir, contexts, cancelled, ignore_pending):
             return files[path]
         if len(files) >= state.MAX_SOURCES:
             raise Invalid('resource_limit')
-        record = dict(status='missing', raw=None, stamp=None, source=None, units=[], names=[], commands=[],
+        record = dict(status='missing', raw=None, stamp=None, source=None, units=[], names=[], commands=[], alias_names=[],
                       definition_count=0, response_bytes=0)
         files[path] = record
         try:
@@ -168,10 +293,17 @@ def _observe(home, parser, zdotdir, contexts, cancelled, ignore_pending):
             if response_bytes > state.MAX_MANIFEST:
                 raise Invalid('resource_limit')
             units, names, commands, opaque, count = _outer(raw, response, home)
+            alias_names = [name for kind, name, _ in commands if kind == 'alias']
+            if independent and opaque:
+                units, commands = _independent(raw, response, home, units, commands)
+            if aliases:
+                units += [(name, raw[slice(*bounds)], dict(mode='ordinary', span=bounds))
+                          for kind, name, bounds in commands if kind == 'alias']
+                count += len(alias_names)
             definition_count += count
             if definition_count > state.MAX_DECLARATIONS:
                 raise Invalid('resource_limit')
-            record.update(status='unsupported' if opaque else 'observed', units=units, names=names, commands=commands,
+            record.update(status=('partial' if independent else 'unsupported') if opaque else 'observed', units=units, names=names, commands=commands, alias_names=alias_names,
                           definition_count=count, response_bytes=len(response))
             if opaque:
                 issue(path, 'unsupported_context')
@@ -222,13 +354,13 @@ def _observe(home, parser, zdotdir, contexts, cancelled, ignore_pending):
         if len(chain) >= state.MAX_LOAD_DEPTH or len(loads) >= state.MAX_LOADS:
             raise Invalid('resource_limit')
         record = read(path)
-        if _shadows_source(record['names'], record['commands']):
+        if _shadows_source(record['names'] + record['alias_names'], record['commands']):
             shadowed_source.add(context)
             record['status'] = 'ambiguous'; issue(path, 'ambiguous_source_command')
         if path in chain:
             record['status'] = 'ambiguous'; issue(path, 'cyclic_source')
             return
-        if record['status'] != 'observed':
+        if record['status'] not in (('observed', 'partial') if independent else ('observed',)):
             if parent is not None:
                 issue(path, 'source_unresolved')
             return
@@ -260,6 +392,9 @@ def _observe(home, parser, zdotdir, contexts, cancelled, ignore_pending):
                 continue
             visit(path, context, entry=entry)
 
+    for path in additional_sources:
+        read(path)  # Destination evidence only; never invent a load occurrence.
+
     # Recheck all observed and missing files, even those contributing no item.
     # A race invalidates the entire observation rather than salvaging stale data.
     for path, record in files.items():
@@ -288,22 +423,43 @@ def _observe(home, parser, zdotdir, contexts, cancelled, ignore_pending):
         bindings.setdefault(unit[0], []).append((path, unit, load, chain))
     items, contents, used_loads, used_sources = [], {}, set(), set()
     load_map = {row['id']: row for row in loads}
+    source_issues = tuple(issues)
+    equivalence_context = None
+    context_checked = False
     for name, candidates in sorted(bindings.items()):
         check()
+        if (independent and 'mode' not in candidates[0][1][2] and
+                any(code != 'unsupported_context' for _, code in source_issues)):
+            # An unreadable/missing/malformed known source may contain a second
+            # binding. Never salvage its readable peer as apparently unique.
+            issue(candidates[0][0], 'ambiguous_function')
+            continue
         definitions = {(path, tuple(unit[2]['span'])) for path, unit, _, _ in candidates}
         contexts_seen = [load['context'] for _, _, load, _ in candidates]
         # Names also mentioned by non-selectable multiple-binding outer units
         # cannot be silently treated as a single ordinary definition.
-        mentions = sum(f['names'].count(name) for f in files.values())
-        if (len(definitions) != 1 or len(contexts_seen) != len(set(contexts_seen)) or mentions != 1 or
-                any(files[p]['status'] != 'observed' for _, _, _, chain in candidates for p in chain)):
-            issue(candidates[0][0], 'ambiguous_function')
+        mentions = sum(f['names'].count(name) + (f['alias_names'].count(name)
+                       if aliases else 0) for f in files.values())
+        repeated = len(definitions) != 1 or len(contexts_seen) != len(set(contexts_seen)) or mentions != 1
+        if repeated and independent and 'mode' not in candidates[0][1][2]:
+            if not context_checked:
+                equivalence_context = _equivalence_context(files, load_map, source_issues, check)
+                context_checked = True
+            equivalent = _equivalent(candidates, files, load_map, equivalence_context)
+            if equivalent:
+                candidates, repeated = equivalent, False
+        if (repeated or any(files[p]['status'] not in (('observed', 'partial') if independent else ('observed',))
+                            for _, _, _, chain in candidates for p in chain)):
+            issue(candidates[0][0], 'ambiguous_function' if 'mode' not in candidates[0][1][2] else 'ambiguous_alias')
             continue
         path, (key, content, details), _, _ = candidates[0]
         # A function/alias name collision is parse-time ambiguity, not precedence.
-        if any(c[0] == 'alias' and c[1] == name for f in files.values() for c in f['commands']):
+        if not aliases and any(name in f['alias_names'] for f in files.values()):
             issue(path, 'ambiguous_function'); continue
-        item = dict(id=state.identity('function', key), kind='function', key=key, source=files[path]['source']['id'],
+        kind = 'alias' if 'mode' in details else 'function'
+        if kind == 'alias' and any('alias' in f['names'] + f['alias_names'] for f in files.values()):
+            issue(path, 'ambiguous_alias'); continue
+        item = dict(id=state.identity(kind, key), kind=kind, key=key, source=files[path]['source']['id'],
                     loads=[load['id'] for _, _, load, _ in candidates], details=details)
         items.append(item); contents[item['id']] = content
         for load in item['loads']:
