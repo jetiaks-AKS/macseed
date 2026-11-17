@@ -29,10 +29,11 @@ class Observation:
     snapshot is B1 evidence, not an eligibility decision. Source outcomes include
     missing/rejected units that cannot belong to a selected B1 snapshot.
     """
-    __slots__ = ('snapshot', '_files', '_issues', 'uncertainties')
+    __slots__ = ('snapshot', '_files', '_issues', '_loads', 'uncertainties')
 
-    def __init__(self, snapshot, files, issues):
+    def __init__(self, snapshot, files, issues, loads=()):
         self.snapshot, self._files, self._issues = snapshot, files, tuple(issues)
+        self._loads = tuple(loads)
         self.uncertainties = ('activation_unproven', 'function_calls_unresolved', 'alias_expansion_unresolved',
                               'script_invocation_and_consent_unresolved', 'external_configuration_unobserved')
 
@@ -100,7 +101,7 @@ def _outer(raw, response, home):
     return units, names, commands, unsupported, len(value['definitions'])
 
 
-def observe(home, parser, *, zdotdir=None, contexts=CONTEXTS, cancelled=lambda: False):
+def observe(home, parser, *, zdotdir=None, contexts=CONTEXTS, cancelled=lambda: False, _ignore_pending=()):
     """Observe only an explicit HOME and trusted Parser; never ambient ZDOTDIR.
 
     Contexts are hypothetical standard startup sequences. System startup files,
@@ -116,7 +117,7 @@ def observe(home, parser, *, zdotdir=None, contexts=CONTEXTS, cancelled=lambda: 
             raise Invalid('cancelled')
         parser.preflight(cancelled=cancelled)
         with base.home_directory(home) as (_, stable):
-            result = _observe(home, parser, zdotdir, contexts, cancelled)
+            result = _observe(home, parser, zdotdir, contexts, cancelled, _ignore_pending)
             stable()
             return result
     except (Invalid, client.Invalid):
@@ -125,7 +126,7 @@ def observe(home, parser, *, zdotdir=None, contexts=CONTEXTS, cancelled=lambda: 
         raise Invalid('source_changed' if str(exc) == 'target_changed' else 'observation_failed') from None
 
 
-def _observe(home, parser, zdotdir, contexts, cancelled):
+def _observe(home, parser, zdotdir, contexts, cancelled, ignore_pending):
     contexts = [c for c in CONTEXTS if c in contexts]
     deadline = time.monotonic() + OBSERVATION_SECONDS
     files, issues, loads, occurrences = {}, [], [], []
@@ -145,11 +146,12 @@ def _observe(home, parser, zdotdir, contexts, cancelled):
             return files[path]
         if len(files) >= state.MAX_SOURCES:
             raise Invalid('resource_limit')
-        record = dict(status='missing', raw=None, stamp=None, source=None, units=[], names=[], commands=[])
+        record = dict(status='missing', raw=None, stamp=None, source=None, units=[], names=[], commands=[],
+                      definition_count=0, response_bytes=0)
         files[path] = record
         try:
             try:
-                raw, stamp = sources.file_state(home, path, limit=state.MAX_SOURCE)
+                raw, stamp = sources.file_state(home, path, ignore_pending, limit=state.MAX_SOURCE)
             except FileNotFoundError:
                 # A missing parent is absence too; verify it again at completion.
                 raw, stamp = None, None
@@ -169,7 +171,8 @@ def _observe(home, parser, zdotdir, contexts, cancelled):
             definition_count += count
             if definition_count > state.MAX_DECLARATIONS:
                 raise Invalid('resource_limit')
-            record.update(status='unsupported' if opaque else 'observed', units=units, names=names, commands=commands)
+            record.update(status='unsupported' if opaque else 'observed', units=units, names=names, commands=commands,
+                          definition_count=count, response_bytes=len(response))
             if opaque:
                 issue(path, 'unsupported_context')
         except client.Invalid as exc:
@@ -219,8 +222,7 @@ def _observe(home, parser, zdotdir, contexts, cancelled):
         if len(chain) >= state.MAX_LOAD_DEPTH or len(loads) >= state.MAX_LOADS:
             raise Invalid('resource_limit')
         record = read(path)
-        if (any(name in ('source', '.') for name in record['names']) or
-                any(c[0] == 'alias' and c[1] in ('source', '.') for c in record['commands'])):
+        if _shadows_source(record['names'], record['commands']):
             shadowed_source.add(context)
             record['status'] = 'ambiguous'; issue(path, 'ambiguous_source_command')
         if path in chain:
@@ -266,7 +268,7 @@ def _observe(home, parser, zdotdir, contexts, cancelled):
             continue
         try:
             try:
-                current = sources.file_state(home, path, limit=state.MAX_SOURCE)
+                current = sources.file_state(home, path, ignore_pending, limit=state.MAX_SOURCE)
             except FileNotFoundError:
                 current = (None, None)
             if current != (record['raw'], record['stamp']):
@@ -315,4 +317,9 @@ def _observe(home, parser, zdotdir, contexts, cancelled):
     except state.Invalid as exc:
         raise Invalid('resource_limit' if str(exc) == 'shell_state_resource_limit' else 'observation_failed') from None
     check()
-    return Observation(snapshot, files, issues)
+    return Observation(snapshot, files, issues, loads)
+
+
+def _shadows_source(names, commands):
+    return (any(name in ('source', '.') for name in names) or
+            any(c[0] == 'alias' and c[1] in ('source', '.') for c in commands))

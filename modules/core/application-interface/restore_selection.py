@@ -22,7 +22,7 @@ class InvalidSelection(Exception):
 
 def identity(domain, source):
     if domain == 'shell-zsh':
-        return source if re.fullmatch(r'shell-script:[0-9a-f]{64}', source) else bundle.shell_contract().identity(source)
+        return source if re.fullmatch(r'shell-(?:script|function):[0-9a-f]{64}', source) else bundle.shell_contract().identity(source)
     if domain == 'vscode-workspaces':
         return source
     return 'restore:' + hashlib.sha256((domain + '\0' + source).encode()).hexdigest()
@@ -62,6 +62,10 @@ def inventory(files):
         if domain == 'ssh-configuration' and categories[domain]:
             items = list(bundle.ssh_snapshot(files['generated/ssh/config.snapshot'])[3])
         if domain == 'shell-zsh' and categories[domain]:
+            typed = bundle.typed_shell(files)
+            if typed is not None:
+                items = [r['id'] for r in typed._value['items']]
+                shell_names = {r['id']: r['key'] for r in typed._value['items']}
             aliases = bundle.shell_aliases(files['generated/shell/zshrc.snapshot'], files)
             if aliases is not None:
                 items = [row['name'] for row in aliases['aliases']]
@@ -102,6 +106,9 @@ def canonical(stage):
         if hosts:
             items['ssh-configuration'] = sorted(identity('ssh-configuration', host) for host in hosts)
     if categories['shell-zsh']:
+        typed = bundle.typed_shell_load(stage / 'generated/shell/zshrc.snapshot')
+        if typed is not None:
+            items['shell-zsh'] = sorted(r['id'] for r in typed._value['items'])
         aliases = bundle.shell_load(stage / 'generated/shell/zshrc.snapshot')
         if aliases is not None:
             items['shell-zsh'] = sorted(bundle.shell_contract().recovery_contract().requirement_ids(aliases) if aliases['version'] in (3, 4, 5) else

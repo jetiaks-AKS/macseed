@@ -189,25 +189,33 @@ identity lookup. This adds no archive fields and does not rewrite existing Bundl
 `stale_prepared_capture` requires fresh preparation and confirmation.
 
 `shell_functions_capture` version 1 advertises explicit Functions Capture on macOS
-14.4+ with a trusted prepared parser; it does not advertise Restore support. Scan
+14.4+ with a trusted prepared parser and positively established launch enforcement. Scan
 uses `capture_prepare` with null selection. Functions keep B1
 `shell-function:<sha256(name)>` identities in the existing `shell-zsh` domain and
 require explicit item selection. Category selection retains legacy Shell meaning.
 Mixed Function + alias/Script selection fails with `mixed_shell_selection_unsupported`;
 unavailable or unresolved Functions evidence fails with `capture_functions_unavailable`.
 The additive `shell_functions` result contains fixed observation codes, explicit
-uncertainties and `restore_supported: false`, never private paths or definition bytes.
+uncertainties and `restore_supported: true`, never private paths or definition bytes.
 Fresh preparation binds the source/file and trusted parser evidence; Execute repeats
 it and rechecks before publication. Existing v5 consent and legacy-only Capture are
 unchanged. [Configuration](../toolkit/CONFIGURATION.md#functions-capture--bundle-b2b)
 owns exact selection, snapshot, limits and qualification semantics.
 
 For typed Functions, Bundle V1 inspection returns `required_features: {"shell-state":1}`,
-`restore_supported: false` and `restore_unavailable_reason: typed_shell_runtime_unavailable`.
-It deliberately omits `restore_selection`; clients must not infer restorable items
-from counts. Existing Native validation refuses an inspection without that catalog.
-Restore and Check reject typed Bundles with `unsupported_bundle` before target
-mutation, even if Shell would be deselected. No Function Check predicate is enabled.
+`restore_supported: true` and an item-based `restore_selection` catalog. This advertises
+the implemented workflow, not target readiness. `shell_functions_restore` version 1
+advertises the same minimum/gate and `function_definition` predicate. Ordinary
+`restore_prepare`/`restore_execute` use existing selection and prepared-plan approval;
+each Function must qualify against fresh target, parser and Bundle evidence before
+publication. Check (`environment_compare`) remains read-only. Verification/comparison
+retain `shell-function:` IDs and distinguish matching, missing, differing and unverified.
+Prepare and Check expose `shell_functions: {version:1, predicate:"function_definition",
+activation:"unknown", dependencies:"unknown", execution_tested:false}`. Definition Match
+does not prove runtime activation or behavior. Fixed `shell_function_*` diagnostic
+codes expose unavailable enforcement, unsafe context or unmet prerequisites without
+source paths/bodies. [Configuration](../toolkit/CONFIGURATION.md#functions-restore-verify--check-b3)
+owns exact target support, append publication, limits and recovery semantics.
 
 `destination` must be an absolute `.mbt` path whose existing parent is canonical
 and user-owned. Existing files are refused by default. Replacement requires explicit

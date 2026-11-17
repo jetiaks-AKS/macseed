@@ -11,6 +11,13 @@ ZSH_SNAPSHOT_FORMAT=legacy
 ZSH_ALIASES_HELPER="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/aliases.py"
 
 zsh_aliases() { python3 -B "$ZSH_ALIASES_HELPER" "$@"; }
+zsh_selected_state() {
+    if [[ "$ZSH_SNAPSHOT_FORMAT" == functions ]]; then
+        python3 -B "${ZSH_ALIASES_HELPER%/*}/functions.py" "$@"
+    else
+        zsh_aliases "$@"
+    fi
+}
 
 zsh_home_valid() {
     [[ "$HOME" == /* && "$HOME" != *[[:cntrl:]]* &&
@@ -43,7 +50,15 @@ zsh_snapshot_validate() {
     [[ "$(stat -f '%Lp' "$file" 2>/dev/null)" == 600 ]] || return 2
     total="$(wc -c < "$file" 2>/dev/null)" || return 2
     total="${total//[[:space:]]/}"
-    [[ "$total" =~ ^[0-9]+$ && $total -le 262144 ]] || return 2
+    [[ "$total" =~ ^[0-9]+$ && $total -le 1048576 ]] || return 2
+
+    if [[ "$(head -n 1 "$file")" == MBT-SHELL-STATE-1 ]]; then
+        ZSH_SNAPSHOT_FORMAT=functions
+        zsh_selected_state validate "$file" || return 2
+        ZSH_SNAPSHOT_STATUS=eligible
+        return 0
+    fi
+    [[ $total -le 262144 ]] || return 2
 
     if [[ "$(head -n 1 "$file")" == MBT-ZSH-ALIASES-[12345] ]]; then
         zsh_aliases validate "$file" || return 2
@@ -310,7 +325,7 @@ preview_zsh() {
         absent) preview_record shell-zsh .zshrc none warning source_absent; warning "Zsh configuration absent from source"; return 1 ;;
         excluded) preview_record shell-zsh .zshrc none warning source_excluded; warning "Zsh configuration excluded: $ZSH_SNAPSHOT_REASON"; return 1 ;;
     esac
-    if [[ "$ZSH_SNAPSHOT_FORMAT" == aliases ]]; then
+    if [[ "$ZSH_SNAPSHOT_FORMAT" == aliases || "$ZSH_SNAPSHOT_FORMAT" == functions ]]; then
         zsh_alias_preview
         return $?
     fi
@@ -340,26 +355,31 @@ bootstrap_zsh() {
         absent) warning "Zsh configuration absent from source"; return 1 ;;
         excluded) warning "Zsh configuration excluded: $ZSH_SNAPSHOT_REASON"; return 1 ;;
     esac
-    if [[ "$ZSH_SNAPSHOT_FORMAT" == aliases ]]; then
-        local alias_result alias_status alias_diagnostic
-        alias_result="$(zsh_aliases apply "$ZSH_SNAPSHOT_FILE")"
+    if [[ "$ZSH_SNAPSHOT_FORMAT" == aliases || "$ZSH_SNAPSHOT_FORMAT" == functions ]]; then
+        local alias_result alias_status alias_diagnostic state_label="Zsh alias"
+        [[ "$ZSH_SNAPSHOT_FORMAT" != functions ]] || state_label="Zsh Function"
+        alias_result="$(zsh_selected_state apply "$ZSH_SNAPSHOT_FILE")"
         alias_status=$?
         alias_diagnostic="${alias_result##*$'\n'}"
         if [[ "$alias_diagnostic" =~ ^diagnostic$'\t'(shell_[a-z_]+)$ ]]; then
             alias_diagnostic="${BASH_REMATCH[1]}"
-            detail "Zsh alias restoration: $alias_diagnostic"
+            detail "$state_label restoration: $alias_diagnostic"
             declare -F verification_application_operation_hook >/dev/null &&
                 verification_application_operation_hook shell-zsh scope restore failure "$alias_diagnostic"
             alias_result="${alias_result%%$'\n'*}"
         fi
         if [[ "$alias_result" == changed ]]; then MODULE_CHANGED=true; fi
         if [[ $alias_status -ne 0 ]]; then
-            warning "Zsh alias restoration did not complete; inspect current state before retrying"
+            warning "$state_label restoration did not complete; inspect current state before retrying"
             [[ $alias_status -eq 1 ]] || return 2
             return 1
         fi
         [[ "$alias_result" == changed || "$alias_result" == matching ]] || return 2
-        success "Selected Zsh alias declarations match"
+        if [[ "$ZSH_SNAPSHOT_FORMAT" == functions ]]; then
+            success "Selected Zsh Function definition bytes match; runtime activation remains unknown"
+        else
+            success "Selected Zsh alias declarations match"
+        fi
         return 0
     fi
     zsh_snapshot_inspect_target
@@ -433,7 +453,7 @@ verify_zsh() {
             fi
             return 0 ;;
     esac
-    if [[ "$ZSH_SNAPSHOT_FORMAT" == aliases ]]; then
+    if [[ "$ZSH_SNAPSHOT_FORMAT" == aliases || "$ZSH_SNAPSHOT_FORMAT" == functions ]]; then
         zsh_alias_verify
         return $?
     fi
@@ -448,14 +468,22 @@ verify_zsh() {
 
 zsh_alias_preview() {
     local rows identity state policy result=0
-    rows="$(zsh_aliases inspect "$ZSH_SNAPSHOT_FILE")" || return 2
+    rows="$(zsh_selected_state inspect "$ZSH_SNAPSHOT_FILE")" || return 2
     while IFS=$'\t' read -r identity state policy; do
         case "$state:$policy" in
             matching:*) preview_record shell-zsh "$identity" none satisfied ;;
             missing:create) preview_record shell-zsh "$identity" create planned; preview_action "Would restore selected Shell state" ;;
-            missing:add) preview_record shell-zsh "$identity" set_setting planned; preview_action "Would add a selected Zsh alias to its qualified source" ;;
+            missing:add)
+                preview_record shell-zsh "$identity" set_setting planned
+                if [[ "$ZSH_SNAPSHOT_FORMAT" == functions ]]; then
+                    preview_action "Would add an exact Zsh Function definition to its qualified source"
+                else
+                    preview_action "Would add a selected Zsh alias to its qualified source"
+                fi ;;
             missing:preserve) preview_record shell-zsh "$identity" none blocked target_conflict; result=1 ;;
             differing:*) preview_record shell-zsh "$identity" none conflict target_conflict; result=1 ;;
+            unverified:functions_unavailable|unverified:unsafe_destination|unverified:definition_invalid)
+                preview_record shell-zsh "$identity" none blocked "shell_function_$policy"; result=1 ;;
             unverified:*_prerequisite) preview_record shell-zsh "$identity" none blocked "shell_$policy"; result=1 ;;
             unverified:publication_uncertain) preview_record shell-zsh "$identity" none blocked shell_publication_uncertain; result=1 ;;
             unverified:*) preview_record shell-zsh "$identity" none blocked observation_failed; result=1 ;;
@@ -468,8 +496,8 @@ zsh_alias_preview() {
 
 zsh_alias_verify() {
     local rows identity state policy result kind predicate code
-    predicate="$(zsh_aliases predicate "$ZSH_SNAPSHOT_FILE")" || { verification_input_error shell-zsh; return 0; }
-    rows="$(zsh_aliases compare "$ZSH_SNAPSHOT_FILE")" || { verification_input_error shell-zsh; return 0; }
+    predicate="$(zsh_selected_state predicate "$ZSH_SNAPSHOT_FILE")" || { verification_input_error shell-zsh; return 0; }
+    rows="$(zsh_selected_state compare "$ZSH_SNAPSHOT_FILE")" || { verification_input_error shell-zsh; return 0; }
     while IFS=$'\t' read -r identity state policy; do
         if [[ "$state" == partial ]]; then
             verification_coverage shell-zsh scope unresolved partial
@@ -485,6 +513,11 @@ zsh_alias_verify() {
             missing) result=1; kind=absent ;;
             differing) result=1; kind=different ;;
             unverified)
+                if [[ "$ZSH_SNAPSHOT_FORMAT" == functions ]]; then
+                    case "$policy" in
+                        functions_unavailable|unsafe_destination|source_prerequisite|managed_source_prerequisite|dependency_prerequisite|definition_invalid|observation_failed) code="shell_function_$policy" ;;
+                    esac
+                fi
                 case "$policy" in
                     dependency_missing_prerequisite|dependency_observation_prerequisite|tool_missing_prerequisite|tool_observation_prerequisite|directory_missing_prerequisite|directory_observation_prerequisite|operand_unsupported_prerequisite|selection_prerequisite) code="shell_$policy" ;;
                 esac ;;

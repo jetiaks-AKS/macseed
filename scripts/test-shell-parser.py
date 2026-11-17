@@ -30,6 +30,9 @@ spec.loader.exec_module(state)
 spec = importlib.util.spec_from_file_location('shell_observe', ROOT / 'modules/shell/observe.py')
 observer = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(observer)
+spec = importlib.util.spec_from_file_location('shell_functions', ROOT / 'modules/shell/functions.py')
+functions = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(functions)
 
 
 def launch_enforced(test, client, requirement):
@@ -480,6 +483,206 @@ class ShellStateTests(unittest.TestCase):
 
 
 class ShellParser(unittest.TestCase):
+    def function_restore_fixture(self, definitions=None, path='.zshrc'):
+        definitions = definitions or {'complex': b'complex() {\r\n for x in a b; do\n cat <<\'EOF\'\nprivate literal\nEOF\n done\n inner() { :; }\n}'}
+        c = functions.state
+        raw = b'\n'.join(definitions.values()) + b'\n'
+        source = c.source_record(path, raw)
+        loads = []
+        for context in ('interactive', 'interactive-login'):
+            row = dict(source=source['id'], parent=None, order=len(loads), context=context,
+                       entry='zshrc', condition='unknown', site=None)
+            row['id'] = c.load_identity(row); loads.append(row)
+        items = []
+        contents = {}
+        for name, data in definitions.items():
+            start = raw.index(data)
+            item = dict(id=c.identity('function', name), kind='function', key=name, source=source['id'],
+                loads=[r['id'] for r in loads], details=dict(span=[start, start + len(data)],
+                body=[start + data.index(b'{'), start + len(data)], name=[start, start + len(name)], parser_profile='zsh-default-1'))
+            items.append(item); contents[item['id']] = data
+        value = c.assemble([source], loads, items, [], contents)
+        helper = functions.client.Parser(package=self.package, manifest_sha256=self.manifest_sha256)
+        return value, helper, self.observation_home()
+
+    def function_mode(self, value, helper, home):
+        if self.enforcing():
+            return True
+        with patch.object(functions.observe.base, 'home_directory') as read:
+            result = functions.plan(value, str(home), helper=helper)
+            self.assertTrue(all((s, p) == ('unverified', 'functions_unavailable') for _, s, p in result.rows))
+            self.assertEqual(result.writes, {})
+            with self.assertRaises(functions.base.Invalid):
+                functions.publish(value, str(home), helper=helper)
+        read.assert_not_called()
+        return False
+
+    def test_functions_restore_exact_append_match_conflict_and_noop(self):
+        value, helper, home = self.function_restore_fixture()
+        if not self.function_mode(value, helper, home): return
+        original = b'# unrelated UTF-8 \xc3\xa9\nother() { :; }\n'
+        target = self.source_file(home, '.zshrc', original)
+        before = (target.stat().st_ino, target.stat().st_mtime_ns)
+        result = functions.plan(value, str(home), helper=helper)
+        self.assertEqual([(s, p) for _, s, p in result.rows], [('missing', 'add')])
+        self.assertEqual((target.stat().st_ino, target.stat().st_mtime_ns), before)
+        self.assertTrue(functions.publish(value, str(home), helper=helper, expected=result.evidence))
+        saved = functions.content(value, value._value['items'][0])
+        self.assertEqual(target.read_bytes(), original + saved + b'\n')
+        self.assertEqual(functions.plan(value, str(home), helper=helper).rows[0][1], 'matching')
+        before = (target.stat().st_ino, target.stat().st_mtime_ns, list(home.iterdir()))
+        self.assertFalse(functions.publish(value, str(home), helper=helper))
+        self.assertEqual((target.stat().st_ino, target.stat().st_mtime_ns, list(home.iterdir())), before)
+        target.write_bytes(b'complex() { print different; }\n')
+        result = functions.plan(value, str(home), helper=helper)
+        self.assertEqual(result.rows[0][1], 'differing')
+        with self.assertRaises(functions.base.Invalid): functions.publish(value, str(home), helper=helper)
+        self.assertEqual(target.read_bytes(), b'complex() { print different; }\n')
+
+    def test_functions_restore_subset_and_existing_static_chain(self):
+        value, helper, home = self.function_restore_fixture({'one': b'one() { :; }', 'two': b'two() { :; }'})
+        if not self.function_mode(value, helper, home): return
+        one = functions.state.select(value, [functions.state.identity('function', 'one')])
+        self.assertTrue(functions.publish(one, str(home), helper=helper))
+        self.assertEqual((home / '.zshrc').read_bytes(), b'one() { :; }\n')
+        conflict = b'one() { print conflict; }\n'
+        (home / '.zshrc').write_bytes(conflict)
+        with self.assertRaises(functions.base.Invalid): functions.publish(value, str(home), helper=helper)
+        self.assertEqual((home / '.zshrc').read_bytes(), conflict)
+        two = functions.state.select(value, [functions.state.identity('function', 'two')])
+        self.assertTrue(functions.publish(two, str(home), helper=helper))
+        self.assertEqual((home / '.zshrc').read_bytes(), conflict + b'two() { :; }\n')
+        source_home = self.observation_home()
+        self.source_file(source_home, '.zshrc', b'source "$HOME/parts/leaf"\n')
+        self.source_file(source_home, 'parts/leaf', b'leaf() { :; }\n')
+        snapshot = functions.observe.observe(str(source_home), helper).snapshot
+        destination = self.observation_home()
+        self.assertEqual(functions.plan(snapshot, str(destination), helper=helper).rows[0][1:], ('unverified', 'source_prerequisite'))
+        self.assertFalse(list(destination.iterdir()))
+        self.source_file(destination, '.zshrc', b'source "$HOME/parts/leaf"\n')
+        self.source_file(destination, 'parts/leaf', b'# preserved\n')
+        self.assertTrue(functions.publish(snapshot, str(destination), helper=helper))
+        self.assertEqual((destination / 'parts/leaf').read_bytes(), b'# preserved\nleaf() { :; }\n')
+        self.assertEqual(functions.plan(snapshot, str(destination), helper=helper).rows[0][1], 'matching')
+
+    def test_functions_restore_unsafe_ambiguous_managed_and_unavailable(self):
+        value, helper, home = self.function_restore_fixture()
+        if not self.function_mode(value, helper, home): return
+        target = self.source_file(home, '.zshrc', b'# safe\n')
+        for raw in (b'# managed by fixture\n', b'source "$HOME/$dynamic"\n', b"alias cat='private'\n",
+                    b'complex() { :; }\ncomplex() { :; }\n', b'broken() {', b'\xff'):
+            with self.subTest(raw=raw):
+                target.write_bytes(raw)
+                result = functions.plan(value, str(home), helper=helper)
+                self.assertIn(result.rows[0][1], ('unverified', 'differing'))
+                with self.assertRaises(functions.base.Invalid): functions.publish(value, str(home), helper=helper)
+                self.assertEqual(target.read_bytes(), raw)
+                self.assertEqual(result.writes, {})
+        target.write_bytes(b'# safe\n'); target.chmod(0o666)
+        self.assertEqual(functions.plan(value, str(home), helper=helper).rows[0][1], 'unverified')
+        target.chmod(0o600)
+        leaf = self.source_file(home, 'leaf', b'# safe\n'); target.unlink(); target.symlink_to(leaf)
+        self.assertEqual(functions.plan(value, str(home), helper=helper).rows[0][1], 'unverified')
+        target.unlink(); os.link(leaf, target)
+        self.assertEqual(functions.plan(value, str(home), helper=helper).rows[0][1], 'unverified')
+        target.unlink()
+        launch = functions.client._Task._launch
+        def ignored(task):
+            task.api.send(task.task, 'setLaunchRequirementData:', None,
+                (functions.client.C.c_void_p,), (task.api.send(task.api.cls('NSData'), 'data'),))
+            launch(task)
+        with patch.object(functions.client._Task, '_launch', ignored), patch.object(functions.base, 'home_directory') as read:
+            result = functions.plan(value, str(home), helper=helper)
+            self.assertEqual(result.rows[0][1:], ('unverified', 'functions_unavailable'))
+            self.assertEqual(result.writes, {})
+        read.assert_not_called(); self.assertFalse(target.exists())
+
+    def test_functions_restore_stale_cancelled_and_publication_races(self):
+        value, helper, home = self.function_restore_fixture()
+        if not self.function_mode(value, helper, home): return
+        target = self.source_file(home, '.zshrc', b'# first\n')
+        result = functions.plan(value, str(home), helper=helper)
+        target.write_bytes(b'# changed\n')
+        with self.assertRaisesRegex(functions.base.Invalid, 'target_changed'):
+            functions.publish(value, str(home), helper=helper, expected=result.evidence)
+        with self.assertRaisesRegex(functions.client.Invalid, 'cancelled'):
+            functions.publish(value, str(home), helper=helper, cancelled=lambda: True)
+        self.assertFalse(list(home.glob('.macseed-shell-*')))
+        publish = functions.sources.publish_content
+        def raced(*args, **options):
+            target.write_bytes(b'# concurrent\n')
+            return publish(*args, **options)
+        with patch.object(functions.sources, 'publish_content', raced), self.assertRaises(functions.base.Invalid):
+            functions.publish(value, str(home), helper=helper)
+        self.assertEqual(target.read_bytes(), b'# concurrent\n')
+        rename = functions.sources.rename
+        def last_gap(a, source, b, destination, flag):
+            if destination == '.zshrc': target.write_bytes(b'# last-gap competing writer\n')
+            return rename(a, source, b, destination, flag)
+        with patch.object(functions.sources, 'rename', last_gap), self.assertRaises(functions.base.PublicationUncertain):
+            functions.publish(value, str(home), helper=helper)
+        pending = list(home.glob('.macseed-shell-pending-*'))
+        self.assertEqual(len(pending), 1)
+        self.assertEqual((pending[0] / 'swap').read_bytes(), b'# last-gap competing writer\n')
+        self.assertEqual(functions.plan(value, str(home), helper=helper).rows[0][1], 'unverified')
+
+    def test_functions_restore_limits_forged_spans_and_dependencies(self):
+        value, helper, home = self.function_restore_fixture({'simple': b'simple() { :; }'})
+        if not self.function_mode(value, helper, home): return
+        c = functions.state
+        with patch.object(functions, 'PLAN_SECONDS', 0), patch.object(functions.base, 'home_directory') as read:
+            result = functions.plan(value, str(home), helper=helper)
+            self.assertEqual(result.rows[0][1:], ('unverified', 'observation_failed'))
+            self.assertEqual(result.writes, {})
+        read.assert_not_called()
+        raw, payloads = c.encode(value)
+        forged = c.decode(raw, payloads)
+        forged._value['items'][0]['details']['body'][0] += 1
+        c.encode(forged)  # Valid B1 bounds are not a structural parser receipt.
+        result = functions.plan(forged, str(home), helper=helper)
+        self.assertEqual(result.rows[0][1:], ('unverified', 'definition_invalid'))
+        with self.assertRaises(functions.base.Invalid): functions.publish(forged, str(home), helper=helper)
+        dependency = dict(owner=value._value['items'][0]['id'],
+            target=dict(id=c.identity('function', 'helper'), kind='function', key='helper'),
+            relation='calls', phase='invocation', evidence='unresolved', site=None)
+        constrained = c.decode(raw, payloads); constrained._value['dependencies'] = [dependency]
+        result = functions.plan(constrained, str(home), helper=helper)
+        self.assertEqual(result.rows[0][1:], ('unverified', 'dependency_prerequisite'))
+        self.assertEqual(result.writes, {})
+        saved = functions.content(value, value._value['items'][0])
+        prefix = b'#' + b'x' * (c.MAX_SOURCE - len(saved) - 3) + b'\n'
+        target = self.source_file(home, '.zshrc', prefix)
+        result = functions.plan(value, str(home), helper=helper)
+        self.assertEqual(len(result.writes['.zshrc']), c.MAX_SOURCE)
+        target.write_bytes(prefix + b'\n')
+        result = functions.plan(value, str(home), helper=helper)
+        self.assertEqual(result.rows[0][1], 'unverified'); self.assertEqual(result.writes, {})
+        self.assertEqual(target.read_bytes(), prefix + b'\n')
+        for limit, bound, raw in (('MAX_SOURCE_TOTAL', 20, b'# safe\n'),
+                                  ('MAX_DECLARATIONS', 1, b'other() { :; }\n')):
+            target.write_bytes(raw)
+            with self.subTest(limit=limit), patch.object(c, limit, bound):
+                result = functions.plan(value, str(home), helper=helper)
+                self.assertEqual(result.rows[0][1:], ('unverified', 'observation_failed'))
+                self.assertEqual(result.writes, {})
+                with self.assertRaises(functions.base.Invalid): functions.publish(value, str(home), helper=helper)
+            self.assertEqual(target.read_bytes(), raw)
+
+    def test_functions_restore_rejects_candidate_load_shadowing_and_management(self):
+        for name, raw, reason in (
+                ('source', b'source() { :; }', 'source_prerequisite'),
+                ('generated', b'generated() {\n# managed by fixture\n:;\n}', 'managed_source_prerequisite')):
+            with self.subTest(name=name):
+                value, helper, home = self.function_restore_fixture({name: raw})
+                if not self.function_mode(value, helper, home): continue
+                target = self.source_file(home, '.zshrc', b'# preserved\n')
+                result = functions.plan(value, str(home), helper=helper)
+                self.assertEqual(result.rows[0][1:], ('unverified', reason))
+                self.assertEqual(result.writes, {})
+                with self.assertRaises(functions.base.Invalid): functions.publish(value, str(home), helper=helper)
+                self.assertEqual(target.read_bytes(), b'# preserved\n')
+                self.assertFalse(list(home.glob('.macseed-shell-*')))
+
     def enforcing(self):
         if not hasattr(self, '_platform_enforced'):
             metadata = json.loads((self.package / 'build.json').read_bytes())
@@ -1361,6 +1564,12 @@ int main(void) {
         cls.temporary = tempfile.TemporaryDirectory(prefix='macseed-shell-tests-')
         cls.addClassCleanup(cls.temporary.cleanup)
         cls.work = Path(cls.temporary.name)
+        # Compiler children (including swiftc --version) may retain scratch
+        # directories. Keep them under this fixture's registered cleanup owner.
+        for context in (patch.dict(os.environ, TMPDIR=str(cls.work)),
+                        patch.object(tempfile, 'tempdir', str(cls.work))):
+            context.start()
+            cls.addClassCleanup(context.stop)
         supplied = os.environ.get('MACSEED_TEST_PARSER_PACKAGE')
         cls.package = Path(supplied) if supplied else cls.work / 'package'
         if not supplied:

@@ -6,7 +6,8 @@ owns product behavior. The helper does not enable Functions migration, change
 Aliases & Scripts v5 or serialize `shell-state:1`; the separate
 [B1 codec foundation](../toolkit/CONFIGURATION.md#typed-shell-state-foundation-b1)
 consumes its structural evidence; [B2B Capture](../toolkit/CONFIGURATION.md#functions-capture--bundle-b2b)
-publishes explicitly selected Functions without enabling Restore/Check.
+publishes explicitly selected Functions. [B3 Restore/Check](../toolkit/CONFIGURATION.md#functions-restore-verify--check-b3)
+reuses the same parser for independent saved-definition and target admission.
 
 ## Ownership and pinned dependencies
 
@@ -307,13 +308,15 @@ production helper exposes no fault switches or environment overrides.
 
 ## Remaining qualification
 
-Core Functions Capture/Bundle is implemented; complete Functions migration is not qualified. Still open:
+Core Functions Capture/Bundle and bounded Restore/Verify/Check are implemented;
+complete Functions migration is not qualified. Still open:
 independent Zsh syntax oracle, wider option/grammar combinations and unusual span
 forms (including complete CRLF documents: the qualified corpus covers interior CRLF
 with LF after the closing unit), sustained fuzzing/native-code review, representative aggregate-operation qualification,
 physical Intel, protected execution on macOS 14.4 and the unavailable branch on
 14.0–14.3, signed/notarized clean-Mac packaging and authenticated release-anchor
-provisioning, and future Core/Native integration. Local corpus,
+provisioning, and Native integration/real-Mac qualification. Local corpus,
 sanitizer or Rosetta results do not close those gates. The B1 codec and B2A observer
-are now used for bounded Functions Capture/Bundle inspection. Restore/Check and
-release qualification remain open. Bundle capabilities 1–5 remain unchanged.
+are used by Functions Capture/Bundle and bounded exact-definition Restore/Check.
+Broader target/dependency support and release qualification remain open.
+Bundle capabilities 1–5 remain unchanged.

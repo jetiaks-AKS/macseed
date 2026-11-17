@@ -337,7 +337,11 @@ def prepared_restore(path, disabled_groups, include_secure, selection=None, inst
         requested_selection = restore_selection.canonical(stage)
         shell_value = None
         shell_evidence = None
+        function_value = None
         if 'shell-zsh' in requested_selection['items']:
+            function_value = bundle.typed_shell_load(stage / 'generated/shell/zshrc.snapshot')
+            if function_value is not None:
+                shell_evidence = bundle.shell_functions_contract().plan(function_value, os.environ['HOME']).evidence
             shell_value = bundle.shell_load(stage / 'generated/shell/zshrc.snapshot')
             if shell_value is not None and shell_value['version'] in (2, 3, 4, 5):
                 shell_evidence = bundle.shell_contract().evidence(shell_value, os.environ['HOME'])
@@ -395,7 +399,7 @@ def prepared_restore(path, disabled_groups, include_secure, selection=None, inst
                 raise ExecuteFailed('stale_plan')
         if topology_files is not None:
             topology_files = restore_selection.staged_files(stage)
-            bundle.write_file(preview_blueprint, bundle.capture_preview(stage, os.environ['HOME'], topology_folders=True))
+            bundle.write_file(preview_blueprint, bundle.capture_preview(stage, os.environ['HOME'], topology_folders=True, typed_runtime=True))
         summary_file = private / "preview.summary"
         descriptor = os.open(summary_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         os.close(descriptor)
@@ -517,6 +521,11 @@ def prepared_restore(path, disabled_groups, include_secure, selection=None, inst
         shell_path = stage / 'generated/shell/zshrc.snapshot'
         if categories['shell-zsh'] and shell_path.is_file():
             aliases = bundle.shell_load(shell_path)
+            if function_value is not None:
+                labels = {row['id']: row['key'] for row in function_value._value['items']}
+                for row in records:
+                    if row['domain'] == 'shell-zsh' and row['item_id'] in labels:
+                        row['display_name'] = labels[row['item_id']]
             if aliases is not None:
                 labels = {bundle.shell_contract().identity(row['name']): row['name'] for row in aliases['aliases']}
                 if aliases['version'] in (4, 5):
@@ -635,13 +644,16 @@ def prepared_restore(path, disabled_groups, include_secure, selection=None, inst
                     and row['disposition'] in ('blocked', 'conflict', 'unknown'))
         if shell_script_selection is not None:
             summary['shell_script_selection'] = sorted(shell_script_selection)
+        if function_value is not None:
+            summary['shell_functions'] = dict(version=1, predicate='function_definition',
+                activation='unknown', dependencies='unknown', execution_tested=False)
         if 'ssh-configuration' in requested_selection['items']:
             summary['selected_item_counts']['ssh-configuration'] = len(requested_selection['items']['ssh-configuration'])
         if 'shell-zsh' in requested_selection['items']:
             summary['selected_item_counts']['shell-zsh'] = len(requested_selection['items']['shell-zsh'])
         if not requirements['ready'] or summary['error_count']:
             for row in records:
-                if row['domain'] == 'shell-zsh' and row['item_id'].startswith(('shell-alias:', 'shell-script:')) and row['disposition'] == 'planned':
+                if row['domain'] == 'shell-zsh' and row['item_id'].startswith(('shell-alias:', 'shell-script:', 'shell-function:')) and row['disposition'] == 'planned':
                     row.update(action='none', disposition='blocked', reason='prerequisite_unmet')
             summary['has_executable_changes'] = any(row['disposition'] == 'planned' for row in records) or include_secure
         dependencies = ((ssh_resolution.dependencies.projection(resolved['dependencies']), resolved['dependency_digest'])
@@ -670,7 +682,9 @@ def prepared_restore(path, disabled_groups, include_secure, selection=None, inst
                 raise PreviewFailed()
             identity['ssh_observation'] = ssh_evidence
         if shell_evidence is not None:
-            if bundle.shell_contract().evidence(shell_value, os.environ['HOME']) != shell_evidence:
+            current_shell_evidence = (bundle.shell_functions_contract().plan(function_value, os.environ['HOME']).evidence
+                if function_value is not None else bundle.shell_contract().evidence(shell_value, os.environ['HOME']))
+            if current_shell_evidence != shell_evidence:
                 raise PreviewFailed()
             identity['shell_observation'] = shell_evidence
         if topology_preview is not None:
@@ -1027,6 +1041,14 @@ def restore_execute(operation_id, path, disabled_groups, include_secure, expecte
                 ssh_environment = {}
                 shell_environment = {}
                 if categories.get('shell-zsh'):
+                    function_value = bundle.typed_shell_load(stage / 'generated/shell/zshrc.snapshot')
+                    if function_value is not None:
+                        current_functions = bundle.shell_functions_contract().plan(function_value, os.environ['HOME'])
+                        if bundle.checked_file(stage.parent / 'shell-observation').decode() != current_functions.evidence:
+                            raise ExecuteFailed('stale_plan')
+                        if any(status not in ('matching', 'missing') for _, status, _ in current_functions.rows):
+                            raise ExecuteFailed('preview_observation_failed')
+                        shell_environment['MACSEED_SHELL_EXPECTED_EVIDENCE'] = current_functions.evidence
                     shell_value = bundle.shell_load(stage / 'generated/shell/zshrc.snapshot')
                     if shell_value is not None and shell_value['version'] in (2, 3, 4, 5):
                         current_shell = bundle.shell_contract().evidence(shell_value, os.environ['HOME'])
@@ -1362,8 +1384,7 @@ def environment_compare(operation_id, parameters):
             if not generated.is_dir() or not os.access(generated, os.R_OK | os.X_OK):
                 raise ExecuteFailed("reference_unavailable")
             shell_reference = generated / 'shell/zshrc.snapshot'
-            if shell_reference.exists() and bundle.checked_file(shell_reference).startswith(bundle.shell_state_contract().MAGIC):
-                raise bundle.Unsupported('typed Shell Check is not enabled')
+            typed_functions = bundle.typed_shell_load(shell_reference) if shell_reference.exists() else None
             if blueprint is not None and (not Path(blueprint).is_file() or not os.access(blueprint, os.R_OK)):
                 raise ExecuteFailed("reference_unavailable")
             host_detail = None
@@ -1374,6 +1395,8 @@ def environment_compare(operation_id, parameters):
             environment = os.environ.copy()
             # Reference is explicit. No ambient Restore/evidence or snapshot override.
             for name in tuple(environment):
+                if name == 'MACSEED_DESKTOP_BUNDLE':
+                    continue  # Trusted deployment context, revalidated by the parser adapter.
                 if name.startswith(("BUNDLE_RESTORE_", "MACSEED_", "BLUEPRINT_")) or name in {
                         "ZSH_SNAPSHOT_FILE", "SSH_SNAPSHOT_FILE", "PREVIEW_PLAN_FILE"}:
                     environment.pop(name, None)
@@ -1448,6 +1471,9 @@ def environment_compare(operation_id, parameters):
             state.update(comparison=owned.comparison, comparison_records=owned.comparison_records,
                          extra={"domains": owned.extra_status, "items": owned.extra_records},
                          verification=owned.verification, records=owned.details)
+            if typed_functions is not None:
+                state['shell_functions'] = dict(version=1, predicate='function_definition',
+                    activation='unknown', dependencies='unknown', execution_tested=False)
             if owned.details["status"] != "complete" or owned.comparison is None or owned.verification is None:
                 raise ExecuteFailed("comparison_reporting_incomplete")
             # Labels belong only to successful display metadata, never diagnostic/failure records.
@@ -1777,7 +1803,10 @@ def dispatch(version, channel=None):
         result['features']['shell_script_transfer'] = dict(version=5, policy='opaque-file-v5', legacy_policies=['opaque-file-v4'], inspection='capture_script_inspect', max_files=128, max_file_bytes=1048576, max_content_bytes=16777216, max_manifest_bytes=262144, request_manifest='shell-scripts-request.json')
         result['features']['secure_check'] = dict(version=1, inventory='secure_check_inventory', compare='secure_check_compare', selection_version=2, max_items=32, read_only=True)
         result['features']['shell_functions_capture'] = dict(version=1, required_feature={'shell-state': 1},
-            minimum_macos='14.4', explicit_items=True, mixed_legacy_selection=False, restore_supported=False)
+            minimum_macos='14.4', explicit_items=True, mixed_legacy_selection=False, restore_supported=True)
+        result['features']['shell_functions_restore'] = dict(version=1, predicate='function_definition',
+            required_feature={'shell-state': 1}, minimum_macos='14.4', explicit_items=True,
+            execution_tested=False, activation='unknown')
     else:
         try:
             if operation == "restore_prepare":

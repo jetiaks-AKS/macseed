@@ -112,7 +112,7 @@ _Task._launch = _fixture_ignored_constraint
             self.assertNotIn(bundle.shell_state_contract().DEFINITIONS, files)
             self.assertEqual([a['name'] for a in bundle.shell_aliases(files[bundle.shell_state_contract().SNAPSHOT])['aliases']], ['legacy'])
 
-    def test_functions_production_capture_bundle_exact_bytes_and_runtime_rejection(self):
+    def test_functions_production_capture_bundle_exact_bytes_and_inspection(self):
         source, original, package, chosen = self.functions_fixture()
         if not self.functions_enforced:
             self.assert_functions_unavailable(chosen, legacy_capture=True)
@@ -165,12 +165,14 @@ _Task._launch = _fixture_ignored_constraint
             if operation == 'bundle_inspect':
                 self.assertEqual(run.returncode, 0, records)
                 inspected = records[-2]['data']
-                self.assertFalse(inspected['restore_supported'])
-                self.assertNotIn('restore_selection', inspected)
+                self.assertTrue(inspected['restore_supported'])
+                self.assertIn('restore_selection', inspected)
                 self.assertEqual(inspected['required_features'], state.FEATURE)
-            else:
+            elif operation == 'restore_execute':
                 self.assertEqual(run.returncode, 2, records)
-                self.assertEqual(records[-1]['data']['code'], 'unsupported_bundle')
+                self.assertEqual(records[-1]['data']['code'], 'stale_plan')
+            else:
+                self.assertEqual(run.returncode, 0, records)
             self.assertNotIn(b'private literal', run.stdout + run.stderr)
             self.assertNotIn(b'.zshrc', run.stdout + run.stderr)
             self.assertNotIn(b'private-functions', run.stdout + run.stderr)
@@ -295,6 +297,192 @@ _Task._launch = _fixture_ignored_constraint
     def test_functions_non_enforcing_capture_refusal_preserves_legacy(self):
         _, _, _, chosen = self.functions_fixture(non_enforcing=True)
         self.assert_functions_unavailable(chosen, legacy_capture=True)
+
+    def function_core(self, operation, path, *, selection=None, prepared=None):
+        parameters = (dict(bundle_path=str(path)) if operation == 'environment_compare' else
+                      dict(path=str(path)) if operation == 'bundle_inspect' else
+                      dict(path=str(path), disabled_groups=[], include_secure=False, selection=selection))
+        if prepared is not None: parameters['expected_prepared_plan_id'] = prepared
+        request = dict(protocol_version=1, operation_id='function-e2e', operation=operation, parameters=parameters)
+        result = subprocess.run(['bash', str(self.project / 'modules/core/application-interface/core.sh')],
+            cwd=self.project, env=self.environment, input=json.dumps(request).encode(), capture_output=True, timeout=60)
+        events = [json.loads(line) for line in result.stdout.splitlines()]
+        self.assertNotIn(b'private literal', result.stdout + result.stderr)
+        self.assertNotIn(b'.zshrc', result.stdout + result.stderr)
+        self.assertNotIn(str(self.home).encode(), result.stdout + result.stderr)
+        return result, events
+
+    def test_functions_capture_restore_verify_check_subset_repeat_and_conflict(self):
+        source, original, resources, chosen = self.functions_fixture()
+        if not self.functions_enforced:
+            self.assert_functions_unavailable(chosen)
+            return
+        source_home = self.home
+        all_functions = dict(chosen, items={'shell-zsh': [*chosen['items']['shell-zsh'], bundle.shell_state_contract().identity('function', 'ordinary')]})
+        prepared = self.prepare(all_functions)
+        result, events = self.execute(prepared['prepared_capture_id'], all_functions)
+        self.assertEqual(result.returncode, 0, events)
+        archive = self.root / 'captured.mbt'
+        # Check must preserve the same authenticated Desktop launch context.
+        app = self.root / 'Prepared.app'
+        resources.parent.parent.rename(app)
+        self.environment['MACSEED_DESKTOP_BUNDLE'] = str(app)
+        self.home = self.root / 'destination'; self.home.mkdir(mode=0o700)
+        self.environment['HOME'] = str(self.home)
+        (self.root / 'bin/sudo').write_text('#!/bin/bash\nexit 0\n')
+        (self.project / 'bin').mkdir()
+        shutil.copy2(ROOT / 'bin/bs', self.project / 'bin/bs')
+        shutil.copy2(ROOT / 'scripts/install-bs.sh', self.project / 'scripts/install-bs.sh')
+        (self.root / 'bin/bs').symlink_to(self.project / 'bin/bs')
+        self.environment['BS_INSTALL_DIR'] = str(self.root / 'bin')
+        selection = {k: chosen[k] for k in ('categories', 'items')}
+        result, events = self.function_core('bundle_inspect', archive)
+        self.assertEqual(result.returncode, 0, events)
+        self.assertTrue(events[-2]['data']['restore_supported'])
+        rows = next(r for r in events[-2]['data']['restore_selection']['inventory'] if r['domain'] == 'shell-zsh')
+        self.assertEqual({r['item_id'] for r in rows['items']}, set(all_functions['items']['shell-zsh']))
+        target = self.home / '.zshrc'
+        target.write_bytes(b'# target preserved\nother() { :; }\n'); target.chmod(0o600)
+        before = target.read_bytes()
+        result, events = self.function_core('environment_compare', archive)
+        self.assertEqual(result.returncode, 0, events)
+        self.assertTrue(all(r['comparison_kind'] == 'missing' for r in events[-2]['data']['comparison_records']
+                            if r['item_id'].startswith('shell-function:')), events)
+        self.assertEqual(target.read_bytes(), before)
+        result, events = self.function_core('restore_prepare', archive, selection=selection)
+        self.assertEqual(result.returncode, 0, events)
+        plan = events[-2]['data']
+        self.assertEqual([(r['item_id'], r['disposition']) for r in plan['plan'] if r['item_id'] != 'scope'],
+                         [(chosen['items']['shell-zsh'][0], 'planned')])
+        self.assertEqual(target.read_bytes(), before)
+        result, events = self.function_core('restore_execute', archive, selection=selection, prepared=plan['prepared_plan_id'])
+        self.assertEqual(result.returncode, 0, events)
+        saved = bundle.typed_shell(bundle.validate_archive(archive))
+        item = next(r for r in saved._value['items'] if r['key'] == 'complex')
+        data = original[slice(*item['details']['span'])]
+        self.assertEqual(target.read_bytes(), before + data + b'\n')
+        self.assertNotIn(b'ordinary()', target.read_bytes())
+        verified = events[-2]['data']['verification']['details']['verification_records']
+        self.assertTrue(any(r['item_id'] == item['id'] and r['predicate'] == 'function_definition' and r['conformity'] == 'verified' for r in verified), verified)
+        # Check the selected Bundle and the complete captured Bundle independently.
+        files = bundle.validate_archive(archive)
+        selected_stage = self.root / 'selected'
+        for name, raw in files.items(): bundle.write_file(selected_stage / name, raw)
+        bundle.select_shell_aliases(selected_stage, [item['id']])
+        selected = self.root / 'selected.mbt'; bundle.pack(selected_stage, selected, str(source_home))
+        result, events = self.function_core('environment_compare', selected)
+        self.assertEqual(result.returncode, 0, events)
+        compared = events[-2]['data']
+        self.assertTrue(any(r['item_id'] == item['id'] and r['comparison_kind'] == 'matching' for r in compared['comparison_records']), compared)
+        self.assertEqual(compared['shell_functions']['activation'], 'unknown')
+        result, events = self.function_core('restore_prepare', archive, selection=selection)
+        self.assertEqual(result.returncode, 0, events)
+        plan = events[-2]['data']; stamp = (target.stat().st_ino, target.stat().st_mtime_ns)
+        self.assertFalse(plan['has_executable_changes'])
+        result, events = self.function_core('restore_execute', archive, selection=selection, prepared=plan['prepared_plan_id'])
+        self.assertEqual(result.returncode, 0, events)
+        self.assertEqual((target.stat().st_ino, target.stat().st_mtime_ns), stamp)
+        # Fresh approval is required after any target change, even an inert comment.
+        target.write_bytes(target.read_bytes() + b'# changed\n')
+        result, events = self.function_core('restore_execute', archive, selection=selection, prepared=plan['prepared_plan_id'])
+        self.assertEqual(result.returncode, 2, events); self.assertEqual(events[-1]['data']['code'], 'stale_plan')
+        target.write_bytes(b'complex() { print conflict; }\n'); conflict = target.read_bytes()
+        result, events = self.function_core('restore_prepare', archive, selection=selection)
+        self.assertEqual(result.returncode, 0, events); plan = events[-2]['data']
+        self.assertTrue(any(r['disposition'] == 'conflict' for r in plan['plan']))
+        result, events = self.function_core('restore_execute', archive, selection=selection, prepared=plan['prepared_plan_id'])
+        self.assertEqual(result.returncode, 2, events)
+        self.assertFalse(events[-1]['data']['publication_started'])
+        self.assertEqual(target.read_bytes(), conflict)
+        result, events = self.function_core('environment_compare', selected)
+        self.assertEqual(result.returncode, 0, events)
+        self.assertTrue(any(r['item_id'] == item['id'] and r['comparison_kind'] == 'differing'
+                            for r in events[-2]['data']['comparison_records']), events)
+        self.assertEqual(target.read_bytes(), conflict)
+        self.assertEqual(source.read_bytes(), original)
+        self.assertFalse((source_home / 'executed').exists()); self.assertFalse((self.home / 'executed').exists())
+
+    def test_functions_restore_check_fail_closed_and_cancellation(self):
+        source, _, _, _ = self.functions_fixture()
+        (self.home / '.zshenv').unlink()
+        c = bundle.shell_state_contract()
+        data = b'demo() { touch "$HOME/executed"; }'
+        record = c.source_record('.zshrc', data)
+        loads = []
+        for context in ('interactive', 'interactive-login'):
+            row = dict(source=record['id'], parent=None, order=len(loads), context=context,
+                       entry='zshrc', condition='unknown', site=None)
+            row['id'] = c.load_identity(row); loads.append(row)
+        item = dict(id=c.identity('function', 'demo'), kind='function', key='demo', source=record['id'],
+            loads=[r['id'] for r in loads], details=dict(span=[0, len(data)], name=[0, 4],
+                body=[data.index(b'{'), len(data)], parser_profile='zsh-default-1'))
+        raw, payloads = c.encode(c.assemble([record], loads, [item], [], {item['id']: data}))
+        blueprint = (self.stage / 'blueprint.conf').read_bytes().replace(b'shell-zsh="false"', b'shell-zsh="true"')
+        (self.stage / 'blueprint.conf').write_bytes(blueprint.replace(b'Projects\n', b''))
+        bundle.write_file(self.stage / c.SNAPSHOT, raw)
+        for name, content in payloads.items(): bundle.write_file(self.stage / name, content)
+        archive = self.root / 'restore.mbt'; bundle.pack(self.stage, archive, str(self.home))
+        selection = dict(categories=[], items={'shell-zsh': [item['id']]})
+        for content, mode in ((b'# safe\n', 0o666), (b'source "$HOME/$dynamic"\n', 0o600)):
+            source.write_bytes(content); source.chmod(mode)
+            result, events = self.function_core('restore_prepare', archive, selection=selection)
+            self.assertEqual(result.returncode, 0, events); plan = events[-2]['data']
+            self.assertTrue(any(r['item_id'] == item['id'] and r['disposition'] == 'blocked' for r in plan['plan']), events)
+            result, events = self.function_core('restore_execute', archive, selection=selection, prepared=plan['prepared_plan_id'])
+            self.assertEqual(result.returncode, 2, events)
+            self.assertFalse(events[-1]['data']['publication_started'])
+            result, events = self.function_core('environment_compare', archive)
+            self.assertEqual(result.returncode, 0, events)
+            self.assertTrue(any(r['item_id'] == item['id'] and r['comparison_kind'] == 'unverified'
+                                for r in events[-2]['data']['comparison_records']), events)
+            self.assertEqual(source.read_bytes(), content)
+        source.chmod(0o600); source.write_bytes(b'# safe\n')
+        # Ignore Foundation constraints only in the disposable Core copy. The
+        # production gate must refuse before reading HOME or launching the parser.
+        caller = self.project / 'modules/shell/parser_client.py'
+        with caller.open('a') as stream:
+            stream.write('''
+_fixture_launch = _Task._launch
+def _fixture_ignored_constraint(task):
+    task.api.send(task.task, 'setLaunchRequirementData:', None, (C.c_void_p,),
+                  (task.api.send(task.api.cls('NSData'), 'data'),))
+    _fixture_launch(task)
+_Task._launch = _fixture_ignored_constraint
+''')
+        result, events = self.function_core('restore_prepare', archive, selection=selection)
+        self.assertEqual(result.returncode, 0, events); plan = events[-2]['data']
+        self.assertTrue(any(r['reason'] == 'shell_function_functions_unavailable' for r in plan['plan']), events)
+        result, events = self.function_core('restore_execute', archive, selection=selection, prepared=plan['prepared_plan_id'])
+        self.assertEqual(result.returncode, 2, events); self.assertFalse(events[-1]['data']['publication_started'])
+        result, events = self.function_core('environment_compare', archive)
+        self.assertEqual(result.returncode, 0, events)
+        self.assertTrue(any(r['code'] == 'shell_function_functions_unavailable' for r in events[-2]['data']['records']['diagnostics']), events)
+        # Exercise Core's existing cancellation owner while parser preflight is
+        # pending, before any target or generated configuration publication.
+        marker = self.private_temp / 'entered'
+        with caller.open('a') as stream:
+            stream.write("\ndef _fixture_pending(self, **kwargs):\n    Path(" + repr(str(marker)) + ").touch()\n    time.sleep(30)\nParser.preflight = _fixture_pending\n")
+        request = dict(protocol_version=1, operation_id='cancel-functions', operation='restore_prepare',
+            parameters=dict(path=str(archive), disabled_groups=[], include_secure=False, selection=selection))
+        process = subprocess.Popen(['bash', str(self.project / 'modules/core/application-interface/core.sh')],
+            cwd=self.project, env=self.environment, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        try:
+            process.stdin.write(json.dumps(request).encode()); process.stdin.close(); process.stdin = None
+            deadline = time.monotonic() + 15
+            while not marker.exists() and process.poll() is None and time.monotonic() < deadline: time.sleep(.02)
+            self.assertTrue(marker.exists())
+            process.send_signal(signal.SIGTERM)
+            stdout, stderr = process.communicate(timeout=10)
+            self.assertEqual(process.returncode, 130, stdout + stderr)
+            self.assertEqual(json.loads(stdout.splitlines()[-1])['data']['code'], 'cancelled')
+            self.assertNotIn(str(self.home).encode(), stdout + stderr)
+        finally:
+            if process.poll() is None: process.kill(); process.communicate()
+            marker.unlink(missing_ok=True)
+        self.assertEqual(source.read_bytes(), b'# safe\n')
+        self.assertFalse((self.home / 'executed').exists())
+        self.assertFalse(list(self.home.glob('.macseed-shell-*')))
+        self.assertFalse((self.project / 'config/generated').exists())
 
     def test_shell_capture_counts_distinguish_aliases_and_saved_files(self):
         self.fixture(shell=True)

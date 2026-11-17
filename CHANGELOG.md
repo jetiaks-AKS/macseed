@@ -13,7 +13,7 @@ The format is based on the principles of **Keep a Changelog**.
 
 * A pinned native Zsh structural parser foundation with exact source spans,
   bounded resource use and isolated process supervision. The helper is bundled
-  for development; Functions Restore/Check and release qualification remain open.
+  for development; platform and release qualification remain open.
 
 * A private typed Shell state codec with stable identities, exact definition bytes,
   source/load and dependency evidence, strict limits and explicit selection pruning.
@@ -25,8 +25,12 @@ The format is based on the principles of **Keep a Changelog**.
 
 * Explicit Functions Capture through production Core, preserving selected definition
   bytes in Bundle V1 `shell-state:1` with fresh source/parser evidence and validated
-  read-only inspection. Mixed Functions/legacy Shell selection is rejected; typed
-  Restore and Check fail closed pending their implementation.
+  read-only inspection. Mixed Functions/legacy Shell selection remains rejected.
+
+* Bounded Zsh Functions Restore, Verify and Bundle Check with individual selection,
+  exact definition bytes, qualified existing source chains, fresh approval, conflict
+  refusal and repeat/no-op. Protected parser enforcement remains required; Match
+  verifies reconstructed definition/source state, not runtime activation or execution.
 
 * Git Rebuild can use an existing encrypted destination SSH key through a verified
   SSH agent, including Git-only Bundles. Fresh signature checks bind the expected

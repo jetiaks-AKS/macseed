@@ -40,11 +40,14 @@ contracts, [TODO](TODO.md) owns concrete unfinished actions, and
   its initial in-progress state is not hosted qualification. Historical isolated SSH
   evidence, Git-over-SSH sandbox/readiness limits, native Workspace and other open
   gates remain recorded below and in TODO.
-- **Typed Shell Capture — Implemented, release qualification open:** B1 strict state/selection and
+- **Typed Shell Functions — Implemented, release qualification open:** B1 strict state/selection and
   [B2A read-only Functions observation](docs/toolkit/CONFIGURATION.md#read-only-functions-observation-b2a)
   reuse the bundled parser and existing source guards. [B2B](docs/toolkit/CONFIGURATION.md#functions-capture--bundle-b2b)
-  adds explicit Functions Capture and read-only typed Bundle inspection. Restore/Check
-  and release qualification remain open; this does not extend v5 behavior.
+  adds explicit Functions Capture and typed Bundle inspection.
+  [B3](docs/toolkit/CONFIGURATION.md#functions-restore-verify--check-b3) adds bounded
+  exact-definition Restore/Verify/Check with target freshness, conflict refusal and
+  no-op repeat. Broader prerequisites, Native and release qualification remain open;
+  this does not extend v5 behavior or prove runtime activation.
 - **Before Macseed 1.0:** finish Shell, Stage 3C and remaining Stage 16 functionality;
   implement Stage 17 autonomous distribution; then complete comprehensive Native
   Desktop/packaged clean-Mac qualification and Early Access. No stage is closed by
@@ -242,8 +245,9 @@ by the approved Shell-first decision. Complete one bounded checkpoint at a time.
    has real GUI A/B/C acceptance within its documented scope. The
    [parser foundation](docs/core/SHELL-PARSER.md) and private
    [typed state codec](docs/toolkit/CONFIGURATION.md#typed-shell-state-foundation-b1) are implemented;
-   explicit Functions Capture/Bundle inspection is implemented. Next complete Restore/Check and qualification for
-   standalone Zsh Functions, then Variables & PATH and Shell Settings, plus useful
+   explicit Functions Capture/Bundle and bounded Restore/Verify/Check are implemented.
+   Complete standalone Functions qualification and remaining prerequisites, then
+   Variables & PATH and Shell Settings, plus useful
    Plugins & Themes only when independently qualified. Startup/source relationships
    remain provenance and dependencies within these categories.
    Preserve legacy snapshots and existing approved capabilities. The

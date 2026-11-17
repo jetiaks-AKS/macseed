@@ -19,15 +19,15 @@ The accepted [Aliases & Scripts v5 A/B/C checkpoint](docs/qualification/SHELL-RE
 does not qualify every dynamic or managed Shell configuration. Preserve that
 bounded acceptance and the existing partial-coverage warning.
 
-- [ ] **Standalone Zsh Functions — next:** classify bounded definitions, call/alias dependencies, side effects,
-  name conflicts and portable reconstruction; implement only qualified constructs.
+- [ ] **Standalone Zsh Functions:** qualify remaining call/alias dependencies, side effects
+  and target configurations beyond the implemented exact-definition B3 slice.
 - [ ] Qualify [protected Functions observation](docs/core/SHELL-PARSER.md#core-caller-b2a)
   on physical Intel, macOS 14.4, and the 14.0–14.3 unavailable path; bind the final
   signed parser manifest anchor to authenticated Core release metadata in Stage 17.
-- [ ] Build Functions Restore/Check on [B2B Capture/Bundle](docs/toolkit/CONFIGURATION.md#functions-capture--bundle-b2b):
-  qualify dependency/activation requirements, explicit consent, managed publication,
-  freshness and comparison predicates before enabling typed runtime consumers.
-  Close independent syntax, native robustness, Native and platform/packaging gates;
+- [ ] Qualify [B3 Restore/Verify/Check](docs/toolkit/CONFIGURATION.md#functions-restore-verify--check-b3)
+  through Native presentation and representative real-Mac workflows; close independent
+  syntax, native robustness and platform/packaging gates. Extend managed/redirected
+  source and dependency support only with explicit contracts and focused qualification;
   mixed typed/legacy Shell selection remains unsupported.
 - [ ] **Variables & PATH**: separate portable static values, HOME-relative references,
   ordered path entries, secrets and dynamic initialization; qualify Apple Silicon /

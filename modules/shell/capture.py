@@ -38,7 +38,7 @@ class Observation:
     def __init__(self, root):
         self.snapshot = None
         self.binding = None
-        self.public = dict(status='unavailable', codes=[], restore_supported=False)
+        self.public = dict(status='unavailable', codes=[], restore_supported=True)
         try:
             helper = parser(root)
             result = observe.observe(os.environ['HOME'], helper)

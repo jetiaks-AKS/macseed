@@ -36,6 +36,7 @@ _workspace_contract = None
 _ssh_contract = None
 _shell_contract = None
 _shell_state_contract = None
+_shell_functions_contract = None
 CATEGORIES = {
     "ssh-configuration": "ssh/config.snapshot",
     "vscode-settings": "vscode/settings.json",
@@ -187,8 +188,22 @@ def typed_shell(files):
 
 
 def require_runtime_shell(files):
-    if typed_shell(files) is not None:
-        raise Unsupported('typed Shell Restore and Check are not enabled')
+    typed_shell(files)  # B3 supports the validated Functions-only contract.
+
+
+def shell_functions_contract():
+    global _shell_functions_contract
+    if _shell_functions_contract is None:
+        spec = importlib.util.spec_from_file_location('shell_functions', ROOT / 'modules/shell/functions.py')
+        _shell_functions_contract = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(_shell_functions_contract)
+    return _shell_functions_contract
+
+
+def typed_shell_load(path):
+    if checked_file(path, shell_state_contract().MAX_MANIFEST).startswith(shell_state_contract().MAGIC):
+        return shell_functions_contract().load(path)
+    return None
 
 
 def script_member(name):
@@ -196,6 +211,8 @@ def script_member(name):
 
 
 def shell_load(path):
+    if typed_shell_load(path) is not None:
+        return None
     raw = checked_file(path, shell_contract().recovery_contract().MAX_MANIFEST_BYTES)
     if raw.startswith(shell_contract().FILE_MAGIC):
         return shell_contract().recovery_contract().load(path)
@@ -221,6 +238,16 @@ def validate_shell(files):
 def select_shell_aliases(stage, names):
     path = stage / 'generated/shell/zshrc.snapshot'
     try:
+        typed = typed_shell_load(path)
+        if typed is not None:
+            contract = shell_functions_contract().state
+            data, payloads = contract.encode(contract.select(typed, sorted(names)))
+            for name, content in {contract.SNAPSHOT: data, **payloads}.items():
+                target = stage / name
+                temporary = target.with_suffix('.selection')
+                write_file(temporary, content)
+                temporary.replace(target)
+            return
         value = shell_load(path)
         if value is not None and value['version'] == 5:
             recovery = shell_contract().recovery_contract()
@@ -882,12 +909,11 @@ def inspect_bundle(bundle, home):
     if shell_candidates:
         result['shell_script_candidates'] = shell_candidates
     if typed is not None:
-        result.update(required_features=validate_workspace(files, exact=True) | validate_ssh(files) | {'shell-state': 1}, restore_supported=False,
-                      restore_unavailable_reason='typed_shell_runtime_unavailable')
+        result.update(required_features=validate_workspace(files, exact=True) | validate_ssh(files) | {'shell-state': 1}, restore_supported=True)
     return result
 
 
-def capture_preview(stage, home, *, topology_folders=False):
+def capture_preview(stage, home, *, topology_folders=False, typed_runtime=False):
     """Validate selected metadata, then project domains for legacy Preview.
 
     This private Preview-only Blueprint is never the saved Bundle selection.
@@ -913,7 +939,7 @@ def capture_preview(stage, home, *, topology_folders=False):
             if current != 'vscode-workspaces':
                 output.append(line)
         elif current not in excluded:
-            output.append('shell-zsh="false"\n' if typed is not None and current == 'categories'
+            output.append('shell-zsh="false"\n' if typed is not None and not typed_runtime and current == 'categories'
                           and line.startswith('shell-zsh=') else line)
     return ''.join(output).encode()
 
@@ -1129,8 +1155,8 @@ def recover():
 
 def publish(stage, *, workspace_execute=False):
     shell = stage / 'generated/shell/zshrc.snapshot'
-    if (shell.exists() or shell.is_symlink()) and checked_file(shell).startswith(shell_state_contract().MAGIC):
-        raise Unsupported('typed Shell Restore is not enabled')
+    if shell.exists() or shell.is_symlink():
+        typed_shell_load(shell)
     files = workspace_stage_files(stage)
     if workspace_execute:
         validate_workspace(staged_payload(stage, checked_file(stage / 'blueprint.conf')), home=os.environ['HOME'])

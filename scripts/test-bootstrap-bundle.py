@@ -74,14 +74,20 @@ class BundleTests(unittest.TestCase):
         self.pack()
         inspected = bundle.inspect_bundle(self.bundle, '/Users/unused')
         self.assertEqual(inspected['required_features'], state.FEATURE)
-        self.assertFalse(inspected['restore_supported'])
+        self.assertTrue(inspected['restore_supported'])
         self.assertEqual(inspected['selected_item_counts']['shell-zsh'], 1)
         target = self.root / 'target'
-        with self.assertRaises(bundle.Unsupported):
-            bundle.unpack(self.bundle, target, '/Users/unused', workspace_preview=True)
-        self.assertFalse(target.exists())
-        with self.assertRaises(bundle.Unsupported):
-            bundle.publish(self.stage, workspace_execute=True)
+        target.mkdir(mode=0o700)
+        home = self.root / 'home'; home.mkdir(mode=0o700)
+        bundle.unpack(self.bundle, target, str(home), workspace_preview=True)
+        self.assertEqual((target / state.DEFINITIONS).read_bytes(), raw)
+        self.assertIn(b'shell-zsh="false"', bundle.capture_preview(target, str(home)))
+        self.assertIn(b'shell-zsh="true"', bundle.capture_preview(target, str(home), typed_runtime=True))
+        config = self.root / 'config-publish'; config.mkdir()
+        with patch.dict(os.environ, HOME=str(home)), patch.object(bundle, 'CONFIG', config), \
+                patch.object(bundle, 'RECOVERY', config / '.bundle-publication'):
+            bundle.publish(target, workspace_execute=True)
+        self.assertEqual((config / state.DEFINITIONS).read_bytes(), raw)
         with tarfile.open(self.bundle) as archive:
             original = {m.name: archive.extractfile(m).read() for m in archive.getmembers()}
 
@@ -826,6 +832,9 @@ class BundleTests(unittest.TestCase):
         (fixture / "scripts").mkdir()
         shutil.copy2(MODULE, fixture / "modules/bundle/bundle.py")
         shutil.copy2(MODULE.with_name("commands.sh"), fixture / "modules/bundle/commands.sh")
+        (fixture / "modules/shell").mkdir()
+        for name in ("aliases.py", "sources.py", "recovery.py", "state.py"):
+            shutil.copy2(MODULE.parents[1] / "shell" / name, fixture / "modules/shell" / name)
         (fixture / "modules/apps").mkdir()
         shutil.copy2(MODULE.parents[1] / "apps/application_identity.py",
                      fixture / "modules/apps/application_identity.py")
@@ -913,11 +922,15 @@ class BundleTests(unittest.TestCase):
         self.pack()
 
         fixture = self.root / "runtime"
-        for folder in ("modules/bundle", "modules/apps", "modules/migration", "modules/verification", "scripts", "config/generated"):
+        for folder in ("modules/bundle", "modules/apps", "modules/migration", "modules/verification", "modules/shell", "scripts", "config/generated"):
             (fixture / folder).mkdir(parents=True, exist_ok=True)
         for original, target in (
             (MODULE, fixture / "modules/bundle/bundle.py"),
             (MODULE.with_name("commands.sh"), fixture / "modules/bundle/commands.sh"),
+            (MODULE.parents[1] / "shell/aliases.py", fixture / "modules/shell/aliases.py"),
+            (MODULE.parents[1] / "shell/sources.py", fixture / "modules/shell/sources.py"),
+            (MODULE.parents[1] / "shell/recovery.py", fixture / "modules/shell/recovery.py"),
+            (MODULE.parents[1] / "shell/state.py", fixture / "modules/shell/state.py"),
             (MODULE.parents[1] / "apps/application_identity.py", fixture / "modules/apps/application_identity.py"),
             (migration, fixture / "scripts/ssh-identity-migrate.sh"),
             (migration.parents[1] / "modules/migration/ssh-identities.sh",
@@ -1067,6 +1080,7 @@ class BundleTests(unittest.TestCase):
             (MODULE.parents[1] / "shell/aliases.py", fixture / "modules/shell/aliases.py"),
             (MODULE.parents[1] / "shell/sources.py", fixture / "modules/shell/sources.py"),
             (MODULE.parents[1] / "shell/recovery.py", fixture / "modules/shell/recovery.py"),
+            (MODULE.parents[1] / "shell/state.py", fixture / "modules/shell/state.py"),
             (MODULE.parents[1] / "apps/application_identity.py", fixture / "modules/apps/application_identity.py"),
             (migration, fixture / "scripts/ssh-identity-migrate.sh"),
             (migration.parents[1] / "modules/migration/ssh-identities.sh",
