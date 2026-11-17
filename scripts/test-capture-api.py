@@ -2023,6 +2023,37 @@ if __name__ == '__main__':'''))
         result, events = self.execute(prepared['prepared_capture_id'])
         self.assertEqual(events[-1]['data']['code'], 'invalid_destination')
 
+    def test_invalid_published_bundle_does_not_emit_success(self):
+        self.fixture()
+        prepared = self.prepare(self.selection)
+        # Corrupt only the disposable fixture's published archive after the real
+        # pack returns. Production inspection and terminal handling must reject it.
+        fixture_bundle = self.project / 'modules/bundle/bundle.py'
+        self.assertIn(self.root, fixture_bundle.resolve().parents)
+        self.assertNotIn(ROOT, fixture_bundle.resolve().parents)
+        self.assertFalse(fixture_bundle.samefile(ROOT / 'modules/bundle/bundle.py'))
+        original = fixture_bundle.read_bytes()
+        self.addCleanup(fixture_bundle.write_bytes, original)
+        with fixture_bundle.open('a') as stream:
+            stream.write('''
+_fixture_pack = pack
+def pack(*args, **kwargs):
+    result = _fixture_pack(*args, **kwargs)
+    with args[1].open('ab') as archive:
+        archive.write(b'invalid trailer')
+    return result
+''')
+        result, events = self.execute(prepared['prepared_capture_id'])
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(events[-1]['type'], 'failed')
+        self.assertEqual(events[-1]['data'], {'code': 'capture_failed', 'publication_occurred': True})
+        self.assertTrue(any(e['type'] == 'phase_started' and e['data'].get('phase') == 'bundle_creation' for e in events))
+        self.assertFalse(any(e['type'] in ('result', 'completed') or
+                             (e['type'] == 'phase_completed' and e['data'].get('phase') == 'bundle_creation') for e in events))
+        destination = self.root / 'captured.mbt'
+        self.assertTrue(destination.exists())
+        with self.assertRaises(bundle.Invalid): bundle.validate_archive(destination)
+
     def test_stale_and_failure_leave_no_bundle(self):
         self.fixture()
         prepared = self.prepare(self.selection)

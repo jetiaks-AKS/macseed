@@ -472,6 +472,9 @@ An invalid receipt after reported publication preserves the destination and
 publication evidence, reports a post-publication validation failure and offers
 Reveal Saved Bundle. It never describes that failure as an incomplete Scan or
 automatically retries, overwrites or deletes the published file.
+Core terminal failures display **Capture Failed** with error styling; cancellation
+displays **Capture Cancelled**. Reported publication does not turn a failed Core
+operation into a warning: any remaining Bundle must be validated separately.
 
 `CaptureModel.resultPresentation` gates the result on validated publication;
 `CaptureResultPresentation`, `CaptureResultOutcomes` and `CaptureResultContent`
@@ -1501,6 +1504,10 @@ display the filename, or the shortest unique parent-path suffix for duplicate
 filenames; hover and accessibility help retain the validated HOME-relative path.
 This display projection applies to Capture, Rebuild and Check without changing
 identities, destination paths, consent or payloads.
+Scripts Selection counts use the same primary callout style as definition counts,
+remaining hidden at zero. Compact Script chips show local path help after a 200 ms
+hover delay, retain accessibility hints and cancel pending help on exit/disappearance;
+they do not change the system tooltip preference.
 Their parent selects/clears every eligible definition with None/Partial/All states.
 Qualified typed observation and mixed inventories retain explicit
 `shell-alias:`/`shell-function:` IDs even when all are selected. Legacy-only Alias

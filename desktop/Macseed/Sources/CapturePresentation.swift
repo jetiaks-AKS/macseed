@@ -775,7 +775,7 @@ struct ShellScriptSelectionView: View {
                     SelectionCategoryDisclosureStyle.header(expanded: expanded, toggle: { expanded.toggle() }) {
                         CaptureRowColumns(title: SelectionCategoryTitle(id: ShellCommandPresentation.scriptsID,
                             title: "Scripts", symbol: "applescript", flow: flow, toggle: { expanded.toggle() }),
-                            status: CaptureStatusText(title: inspecting ? "Checking…" : scripts.isEmpty ? "" : available.isEmpty ? "Unavailable" : CaptureStatusText.selectionCount(selected.intersection(available).count, total: available.count), secondary: true))
+                            status: CaptureStatusText(title: inspecting ? "Checking…" : scripts.isEmpty ? "" : available.isEmpty ? "Unavailable" : CaptureStatusText.selectionCount(selected.intersection(available).count, total: available.count), secondary: inspecting || available.isEmpty))
                     }
                 }
                 if expanded {
@@ -1243,14 +1243,53 @@ struct CaptureCompactLabel: View {
     }
 }
 
+@MainActor final class ScriptPathHover: ObservableObject {
+    @Published private(set) var visible = false
+    private var pending: Task<Void, Never>?
+    func setHovered(_ hovering: Bool) {
+        pending?.cancel(); pending = nil; visible = false
+        guard hovering else { return }
+        pending = Task { [weak self] in
+            do { try await Task.sleep(for: .milliseconds(200)) } catch { return }
+            guard !Task.isCancelled else { return }
+            self?.visible = true
+        }
+    }
+    deinit { pending?.cancel() }
+}
+
+// Local help for compact Script chips only; no system tooltip preference changes.
+private struct ScriptPathHelp: ViewModifier {
+    let path: String?
+    let label: String
+    @StateObject private var hover = ScriptPathHover()
+    func body(content: Content) -> some View {
+        if let path {
+            content.accessibilityHint(path)
+                .onHover(perform: hover.setHovered)
+                .onDisappear { hover.setHovered(false) }
+                .overlay(alignment: .topLeading) {
+                    if hover.visible {
+                        Text(path).font(.caption).foregroundStyle(.primary)
+                            .padding(6).frame(maxWidth: 420, alignment: .leading)
+                            .fixedSize(horizontal: true, vertical: false)
+                            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 5))
+                            .shadow(radius: 3, y: 1)
+                            .alignmentGuide(.top) { $0[.bottom] + 6 }
+                            .allowsHitTesting(false).accessibilityHidden(true)
+                    }
+                }.zIndex(hover.visible ? 1 : 0)
+        } else { content.help(label).accessibilityHint(label) }
+    }
+}
+
 struct CaptureIncludedSettingsList: View {
     let labels: [String]
     var helpLabels: [String: String] = [:]
     var body: some View {
         SettingsFlowLayout {
             ForEach(Array(labels.enumerated()), id: \.offset) { _, label in
-                CaptureCompactLabel(title: label).help(helpLabels[label] ?? label)
-                    .accessibilityHint(helpLabels[label] ?? label)
+                CaptureCompactLabel(title: label).modifier(ScriptPathHelp(path: helpLabels[label], label: label))
             }
         }.padding(.leading, 36).padding(.vertical, 8)
     }
@@ -1263,8 +1302,7 @@ struct CaptureConfirmationItems: View {
         VStack(alignment: .leading, spacing: 10) {
             SettingsFlowLayout {
                 ForEach(contents.ordinary) { item in
-                    CaptureCompactLabel(title: item.item.title).help(item.item.pathHelp ?? item.item.title)
-                        .accessibilityHint(item.item.pathHelp ?? item.item.title)
+                    CaptureCompactLabel(title: item.item.title).modifier(ScriptPathHelp(path: item.item.pathHelp, label: item.item.title))
                 }
             }
             ForEach(contents.explanations) { item in

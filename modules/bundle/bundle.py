@@ -888,7 +888,9 @@ def unpack(bundle, stage, home, *, workspace_preview=False):
 def inspect_bundle(bundle, home):
     """Validate as Restore does, then return only UI-safe selection metadata."""
     files, provenance = validate_archive(bundle, with_provenance=True)
-    target_paths(files, home)
+    # Target-path checks must not rewrite the portable archive evidence used by
+    # capability validation below. Inspection does not consume projected paths.
+    target_paths(dict(files), home)
     sections, categories = parse_blueprint(files["blueprint.conf"])
     counts = {name: len(sections[name]) for name in SELECTABLE_ITEMS if name in sections}
     if categories['ssh-configuration']:

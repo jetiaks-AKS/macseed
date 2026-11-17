@@ -859,6 +859,9 @@ import Vision
         if mode in ('slow_save', 'published_cancel'):
             while True: time.sleep(.05)
         if mode == 'execute_failure': emit('failed', dict(code='capture_failed', publication_occurred=False)); sys.exit(2)
+        if mode == 'published_failure':
+            pathlib.Path(params['destination']).write_bytes(b'preserved publication evidence')
+            emit('failed', dict(code='capture_failed', publication_occurred=True)); sys.exit(2)
         counts = {row['domain']:len(row['items']) for row in rows if row['domain'] in selection['categories'] and row['selection_mode']=='items'}
         counts.update({key:len(value) for key,value in selection['items'].items()})
         if params.get('shell_script_policy') in ('opaque-file-v4', 'opaque-file-v5') and pathlib.Path('shell-scripts.json').exists():
@@ -887,6 +890,10 @@ import Vision
         let model = CaptureModel(runtime: runtime, location: CoreLocation(root: core, python: python, home: root, temporaryBase: root, toolDirectories: []))
         if CommandLine.arguments.contains("--consistency-only") {
             try await captureConsistencyChecks(model: model, runtime: runtime, core: core, root: root)
+            return
+        }
+        if CommandLine.arguments.contains("--terminal-only") {
+            try await captureTerminalChecks(model: model, runtime: runtime, core: core, root: root)
             return
         }
         if CommandLine.arguments.contains("--shell-ui-only") {
@@ -1135,6 +1142,7 @@ import Vision
 
         try await captureConsistencyChecks(model: model, runtime: runtime, core: core, root: root)
         try await captureResultChecks(model: model, runtime: runtime, core: core, root: root)
+        try await captureTerminalChecks(model: model, runtime: runtime, core: core, root: root)
         try await capturePolicyChecks(model: model, runtime: runtime, core: core, root: root)
         try await captureVisualChecks(model: model, runtime: runtime, core: core)
         for code in ["invalid_workspace_selection", "workspace_dependency_missing", "workspace_path_conflict", "capture_source_unavailable"] {
@@ -1627,10 +1635,17 @@ import Vision
         var definitions = ["alias listing='ls -la'", "complex() {\n for x in a b; do\n cat <<'EOF'\nprivate literal é\nEOF\n done\n}",
                            "alias location='pwd'", "ordinary() { :; }", "alias platform='uname -s'", "alias who='whoami'", "third() { :; }"]
         if guiOnly {
-            definitions = (1...11).map { "alias fixture\($0)='pwd'" }
-                + ["alias linked='\"$HOME/bin/Tools/fixture.sh\"'", "complex() {\n for x in a b; do\n : \"$x\"\n done\n}", "ordinary() { :; }"]
+            definitions = (1...10).map { "alias fixture\($0)='pwd'" }
+                + ["alias linked='\"$HOME/bin/Tools/fixture.sh\"'", "alias second='\"$HOME/bin/Tools/second.sh\"'",
+                   "complex() {\n for x in a b; do\n : \"$x\"\n done\n}", "ordinary() { :; }"]
             try fm.createDirectory(at: home.appendingPathComponent("bin/Tools"), withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
             try write("#!/bin/sh\nprintf 'fixture\\n'\n", home.appendingPathComponent("bin/Tools/fixture.sh"), executable: true)
+            try write("#!/bin/sh\nprintf 'second\\n'\n", home.appendingPathComponent("bin/Tools/second.sh"), executable: true)
+            let setup = Process(); setup.executableURL = python
+            setup.arguments = ["-B", "-c", "import sys; sys.path.insert(0,sys.argv[1]); from workspace_fixture import repository; repository(sys.argv[2])",
+                               repository.appendingPathComponent("scripts").path, home.path]
+            setup.environment = ["HOME": home.path, "PATH": "/usr/bin:/bin", "TMPDIR": root.path]
+            try setup.run(); setup.waitUntilExit(); precondition(setup.terminationStatus == 0)
         }
         let original = "# source preserved\neval \"$(fixture-init)\"\n" + definitions.joined(separator: "\n") + "\nexport PATH=\"$HOME/bin:$PATH\"\nsetopt AUTO_CD\n"
         try write("eval \"$(other-init)\"\n", home.appendingPathComponent(".zprofile"))
@@ -1667,16 +1682,19 @@ import Vision
             precondition(CaptureReviewPresentation.selectionLabel(category, model: model) == "1 of 14 selected")
             model.selectCategory("shell-zsh", included: true)
             model.selectShellScript(script.id, included: true); await model.waitForCompletion()
-            precondition(model.developerGroupState(.shell) == .all && model.authorizedShellScripts == [script.id])
-            for domain in ["homebrew-packages", "git-configuration"] {
+            precondition(model.developerGroupState(.shell) == .mixed && model.authorizedShellScripts == [script.id])
+            let secondScript = model.shellScriptCandidates.first { $0.path == "bin/Tools/second.sh" }!
+            model.selectShellScript(secondScript.id, included: true); await model.waitForCompletion()
+            precondition(model.developerGroupState(.shell) == .all && model.authorizedShellScripts == [script.id, secondScript.id])
+            for domain in ["homebrew-packages", "git-configuration", "git-repositories"] {
                 precondition(model.categories.contains { $0.id == domain && $0.selectable })
                 model.selectCategory(domain, included: true)
             }
             precondition(model.selectedItems["homebrew-packages"]?.count == 2 && model.selectedItems["git-configuration"]?.count == 1)
-            precondition(model.selectedItemCount == 18)
+            precondition(model.selectedItems["git-repositories"]?.count == 1 && model.selectedItemCount == 20)
             let archive = root.appendingPathComponent("gui-mixed.mbt")
             model.prepare(destination: archive); await model.waitForCompletion()
-            precondition(model.state == .confirmation && model.preparation?.summary.selectedItems == 18,
+            precondition(model.state == .confirmation && model.preparation?.summary.selectedItems == 20,
                 "GUI Prepare: \(model.state), items=\(model.preparation?.summary.selectedItems ?? -1), failure=\(String(describing: model.failure))")
             precondition(!model.confirmationWarnings.contains { $0.id == "shell-zsh" })
             let tasks = CaptureTaskPresentation(categories: model.categories, selection: model.preparation!.publicationSelection!,
@@ -1685,17 +1703,21 @@ import Vision
             precondition(shell.state == .planned && shell.items.count == 14 && shell.scopeInformation != nil)
             model.create(); await model.waitForCompletion()
             precondition(model.state == .result, "Real mixed receipt must reach Save Complete: \(String(describing: model.failure))")
-            precondition(model.publication?.bundle.typedShell == true && model.publication?.bundle.selectedItemCounts["shell-zsh"] == 15)
-            precondition(model.resultPresentation?.savedDomains.first { $0.id == "shell-zsh" }?.items.count == 15)
+            precondition(model.publication?.bundle.typedShell == true && model.publication?.bundle.requiredFeatures?["workspace-topology"] == 1)
+            precondition(model.publication?.bundle.selectedItemCounts["shell-zsh"] == 16)
+            precondition(model.resultPresentation?.savedDomains.first { $0.id == "shell-zsh" }?.items.count == 16)
+            let terminal = runtime.events.filter { $0.type == "result" || $0.type == "completed" || $0.type == "failed"
+                || ($0.type == "phase_completed" && $0.data?["phase"]?.string == "bundle_creation") }
+            precondition(terminal.map(\.type) == ["phase_completed", "result", "completed"])
             precondition(!model.resultNotices.contains { $0.id == "shell-zsh" })
             let inspection = CoreRuntime(operationLogs: nil)
             inspection.start(CoreRequest(.bundleInspect(path: archive.path)), location: location)
             await inspection.waitForCompletion()
             precondition(inspection.state == .completed)
             let info = try inspection.latestResult!.decodeData(CoreRestoreInspection.self); try info.validate()
-            precondition(info.selectedItemCounts["shell-zsh"] == 15 && info.shellScriptCandidates?.count == 1)
+            precondition(info.selectedItemCounts["shell-zsh"] == 16 && info.shellScriptCandidates?.count == 2)
             let sourceAfter = try snapshot(home); precondition(sourceAfter == sourceBefore)
-            print("PASS: real Native → Core multi-domain 12 Aliases + 2 Functions + linked v5 Script → Save Complete; authoritative Bundle inspection, 18 saved items, source unchanged")
+            print("PASS: real Native → Core Workspace + 12 Aliases + 2 Functions + 2 v5 Scripts → phase_completed/result/completed → Save Complete; authoritative Bundle inspection, 20 saved items, source unchanged")
             return
         }
         precondition(category.row.items.count == 7 && functions.count == 3, "Expected 4 Aliases and 3 Functions")
@@ -1940,6 +1962,57 @@ import Vision
         print("PASS: Swift → production Capture → private .mbt → authoritative inspection, real stale rejection and category-only save without Homebrew; HOME/config unchanged")
         try await workspacePrepare(root: root, repository: repository, core: core, home: home, bin: bin, python: python)
         try await overlapCore(root: root, core: core, home: home, bin: bin, python: python)
+    }
+
+    @MainActor static func captureTerminalChecks(model: CaptureModel, runtime: CoreRuntime, core: URL, root: URL) async throws {
+        let inventory = core.appendingPathComponent("inventory.json"), mode = core.appendingPathComponent("mode")
+        let oldInventory = try Data(contentsOf: inventory), oldMode = try Data(contentsOf: mode)
+        defer { try? oldInventory.write(to: inventory); try? oldMode.write(to: mode); model.done() }
+        _ = NSApplication.shared
+        let enhanced = NSAccessibility.Attribute(rawValue: "AXEnhancedUserInterface")
+        let previous = NSApp.accessibilityAttributeValue(enhanced)
+        NSApp.accessibilitySetValue(true, forAttribute: enhanced)
+        defer { NSApp.accessibilitySetValue(previous, forAttribute: enhanced) }
+        func text(_ value: AnyObject, depth: Int = 0) -> String {
+            guard depth < 40 else { return "" }
+            var values = [value.accessibilityLabel?() ?? ""]
+            let selector = NSSelectorFromString("accessibilityValue")
+            if let object = value as? NSObject, object.responds(to: selector),
+               let content = object.perform(selector)?.takeUnretainedValue() as? String { values.append(content) }
+            return (values + (value.accessibilityChildren?() ?? []).map { text($0 as AnyObject, depth: depth + 1) }).joined(separator: " ")
+        }
+        for scenario in ["success", "warning", "execute_failure", "published_failure", "slow_save"] {
+            try JSONSerialization.data(withJSONObject: [row("homebrew-packages", mode: "items", items: ["fixture"], reason: scenario == "warning" ? "source_partial" : nil)]).write(to: inventory)
+            try write("success", mode); model.scan(); await model.waitForCompletion()
+            let destination = root.appendingPathComponent("terminal-" + scenario + ".mbt")
+            model.prepare(destination: destination); await model.waitForCompletion()
+            precondition(model.state == .confirmation)
+            try write(scenario == "warning" ? "success" : scenario, mode); model.create()
+            if scenario == "slow_save" {
+                await waitUntil(runtime) { $0.events.contains { $0.type == "phase_started" && $0.data?["phase"]?.string == "bundle_creation" } }
+                model.cancel()
+            }
+            await model.waitForCompletion()
+            let host = NSHostingView(rootView: CaptureView(model: model, runtime: runtime).frame(width: 985))
+            let window = NSWindow(contentRect: .init(x: 100, y: 100, width: 985, height: 900), styleMask: [.titled], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false; window.contentView = host; window.makeKeyAndOrderFront(nil)
+            defer { window.contentView = nil; window.close() }
+            try await Task.sleep(for: .milliseconds(120)); host.layoutSubtreeIfNeeded()
+            let shown = text(host)
+            let successful = ["success", "warning"].contains(scenario)
+            precondition(shown.contains("Save Complete") == successful)
+            precondition(shown.contains("Capture Failed") == ["execute_failure", "published_failure"].contains(scenario))
+            precondition(shown.contains("Capture Cancelled") == (scenario == "slow_save"))
+            precondition(shown.contains("Needs Attention") == (scenario == "warning"))
+            if scenario == "published_failure" {
+                precondition(model.state == .failed && model.failure == .runtime(.coreFailure("capture_failed")) && model.publicationEvidence == .occurred)
+                precondition(shown.contains("must be validated") && shown.contains("Reveal Saved Bundle"))
+                let preserved = try Data(contentsOf: destination)
+                precondition(preserved == Data("preserved publication evidence".utf8))
+            }
+            model.done()
+        }
+        print("PASS: Native Save Complete, nonfatal warning, Capture Failed, published Core failure and Capture Cancelled retain exact terminal semantics, evidence and recovery controls")
     }
 
     @MainActor static func captureConsistencyChecks(model: CaptureModel, runtime: CoreRuntime, core: URL, root: URL) async throws {

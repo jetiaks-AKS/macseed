@@ -5633,6 +5633,15 @@ private struct CaptureRefinementHost: View {
 
     @MainActor static func shellUIStatusChecks() async throws {
         _ = NSApplication.shared
+        let hover = ScriptPathHover()
+        hover.setHovered(true)
+        precondition(!hover.visible)
+        try await Task.sleep(for: .milliseconds(260))
+        precondition(hover.visible, "Script paths appear locally after the 200 ms delay")
+        hover.setHovered(false); precondition(!hover.visible)
+        hover.setHovered(true); hover.setHovered(false)
+        try await Task.sleep(for: .milliseconds(260))
+        precondition(!hover.visible, "Leaving or dismantling the chip cancels pending help")
         let enhanced = NSAccessibility.Attribute(rawValue: "AXEnhancedUserInterface")
         let previous = NSApp.accessibilityAttributeValue(enhanced)
         NSApp.accessibilitySetValue(true, forAttribute: enhanced)

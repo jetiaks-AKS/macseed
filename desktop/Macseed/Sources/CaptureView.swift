@@ -232,15 +232,13 @@ struct CaptureView: View {
             case .result:
                 if let result = model.resultPresentation { CaptureResultContent(result: result, expansion: treeExpansion) }
             case .failed, .cancelled:
-                if model.state == .failed, let failure = model.failure, failure.isOutdatedPreparation {
-                    Text(failure.presentationTitle).font(.title2.weight(.bold)).accessibilityAddTraits(.isHeader)
-                } else {
-                    Label(model.state == .cancelled ? "Capture Cancelled" : "Needs Attention",
-                          systemImage: model.state == .cancelled ? "stop.circle" : "exclamationmark.triangle")
-                        .font(.title2).foregroundStyle(model.state == .cancelled ? Color.secondary : Color.orange)
-                }
+                Label(model.state == .cancelled ? "Capture Cancelled" : "Capture Failed",
+                      systemImage: model.state == .cancelled ? "stop.circle" : TaskRowState.failed.symbol)
+                    .font(.title2).foregroundStyle(model.state == .cancelled ? Color.secondary : Color.red)
+                    .accessibilityAddTraits(.isHeader)
                 if let failure = model.failure {
                     if failure.isOutdatedPreparation {
+                        Text(failure.presentationTitle).font(.headline)
                         Text(failure.presentationMessage).font(.callout).foregroundStyle(.secondary)
                     } else {
                         Text(failure.message)
@@ -249,7 +247,7 @@ struct CaptureView: View {
                 if let destination = model.destination {
                     if model.savingAttempted {
                         switch model.publicationEvidence {
-                        case .occurred: Text("Publication was reported, but Capture did not complete successfully. Check the destination before another attempt.")
+                        case .occurred: Text("Publication was reported, but Capture did not complete successfully. A saved Bundle may exist and must be validated before use or another attempt.")
                         case .unknown: Text("Publication could not be confirmed. A file or temporary state may remain. Check the destination before another attempt.")
                         case .notOccurred: Text("No completed publication was reported.")
                         }

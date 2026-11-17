@@ -283,6 +283,11 @@ The format is based on the principles of **Keep a Changelog**.
 
 ### Fixed
 
+* Bundle inspection preserves portable Workspace evidence when typed Shell state
+  is also selected, preventing a Core failure after publishing a valid mixed
+  Bundle. Capture failures retain error semantics even after reported publication;
+  Script counts and local path help use consistent contrast and prompt hover feedback.
+
 * Native Capture now validates typed Shell files separately from legacy
   alias-associated Script requirements, avoiding false failure after a valid
   publication. Invalid published receipts preserve the Bundle and report the

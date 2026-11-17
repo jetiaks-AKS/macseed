@@ -194,3 +194,26 @@ additional hosted CI, visual acceptance, minimum-macOS/physical-Intel and Stage 
 qualification were NOT RUN and remain separate gates. Four task-owned regression
 report directories and all private temporary fixtures were removed; the existing
 67-MiB Debug app/runtime was preserved. No staging, commit or push occurred.
+
+## Core post-publication inspection correction
+
+The reported real archive with 12 Aliases, 2 Functions and 2 Scripts passed
+`validate_archive()` but failed `inspect_bundle()`: target-path projection had
+replaced portable Workspace repository paths before exact capability validation.
+Inspection now checks projected paths on a copy and retains the original archive
+evidence. The original archive was preserved and passes both independent checks.
+
+Read-only production observation of the real HOME, using an isolated Core copy
+and the authenticated bundled parser, captured those 16 Shell items plus 4
+Workspace repositories into a private temporary Bundle. Native reached Save Complete
+after `phase_completed`, `result`, `completed`; independent inspection passed.
+All 16 Shell payloads matched the original archive byte for byte. Observed source
+bytes, modes, inodes and modification times remained unchanged. No user Shell code
+was executed and no real-HOME Restore was performed.
+
+Focused canonical tests cover typed Shell with two Scripts and portable Workspace
+topology, retained target/invalid-archive rejection, and a corrupted post-pack
+publication returning `failed/capture_failed` with publication evidence and no
+success events. The disposable Native mixed case also covers this combination.
+This is local Core/Native qualification; hosted CI, manual visual approval,
+minimum-macOS/physical-Intel and Stage 17 gates remain separate.

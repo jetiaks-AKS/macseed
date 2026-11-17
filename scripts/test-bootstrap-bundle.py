@@ -1307,6 +1307,51 @@ class TopologyTests(unittest.TestCase):
                 member.size, member.mode = len(data), 0o600
                 target.addfile(member, io.BytesIO(data))
 
+    def test_typed_shell_two_scripts_inspection_preserves_portable_topology(self):
+        c = bundle.shell_state_contract()
+        raw = b'fixture() { :; }'
+        source = c.source_record('.zshrc', raw)
+        load = dict(source=source['id'], parent=None, order=0, context='interactive', entry='zshrc', condition='unknown', site=None)
+        load['id'] = c.load_identity(load)
+        item = dict(id=c.identity('function', 'fixture'), kind='function', key='fixture', source=source['id'],
+                    loads=[load['id']], details=dict(span=[0, len(raw)], name=[0, 7], body=[10, len(raw)], parser_profile='zsh-default-1'))
+        value = c.assemble([source], [load], [item], [], {item['id']: raw})
+        scripts = [dict(path=path, text='#!/bin/sh\n:;\n', mode=0o600, managed=False,
+                        sha256=c.digest(b'#!/bin/sh\n:;\n')) for path in ('Scripts/A/tool.sh', 'Scripts/B/tool.sh')]
+        raw, payloads = c.encode(c.with_scripts(value, scripts))
+        self.files.update({c.SNAPSHOT: raw, **payloads})
+        self.files['blueprint.conf'] = self.blueprint.replace(b'shell-zsh="false"', b'shell-zsh="true"')
+        self.stage_files()
+        for name in (c.SNAPSHOT, *payloads):
+            (self.stage / name).chmod(0o600)
+        self.pack()
+        original = self.archive.read_bytes()
+        files = bundle.validate_archive(self.archive)
+        portable = files[self.contract.REPOSITORIES]
+        self.assertEqual(set(self.contract.repository_records(portable)), set(self.ids))
+        self.assertEqual(bundle.validate_workspace(files, exact=True), {'workspace-topology': 1})
+        # Real target projection changes repository paths. It must not contaminate
+        # portable capability validation, for either the source or another HOME.
+        projected = dict(files); bundle.target_paths(projected, '/Users/target')
+        self.assertNotEqual(projected[self.contract.REPOSITORIES], portable)
+        with self.assertRaises(bundle.Invalid): bundle.validate_workspace(projected, exact=True)
+        for home in ('/Users/source', '/Users/target'):
+            inspected = bundle.inspect_bundle(self.archive, home)
+            self.assertEqual(inspected['required_features'], {'workspace-topology': 1, 'shell-state': 1})
+            self.assertEqual(inspected['selected_item_counts']['shell-zsh'], 3)
+            self.assertEqual(inspected['selected_item_counts']['git-repositories'], 3)
+            self.assertEqual({row['path'] for row in inspected['shell_script_candidates']}, {row['path'] for row in scripts})
+            self.assertTrue(all(row['alias_ids'] == [] for row in inspected['shell_script_candidates']))
+        self.assertEqual(self.archive.read_bytes(), original)
+        self.assertEqual(bundle.validate_archive(self.archive)[self.contract.REPOSITORIES], portable)
+        # Preserve target validation and exact topology checks; neither may be skipped.
+        with patch.object(bundle, 'target_paths', side_effect=bundle.Invalid('invalid target')), self.assertRaises(bundle.Invalid):
+            bundle.inspect_bundle(self.archive, '/Users/target')
+        self.rewrite_archive(lambda members: members.__setitem__(self.contract.REPOSITORIES,
+            members[self.contract.REPOSITORIES].replace(b'PATH="~/', b'PATH="/Users/source/')))
+        for inspect in (lambda: bundle.validate_archive(self.archive), lambda: bundle.inspect_bundle(self.archive, '/Users/target')):
+            with self.assertRaises(bundle.Invalid): inspect()
+
     def test_schema_multiple_worktrees_duplicate_basenames_and_stable_ids(self):
         self.assertEqual(bundle.validate_workspace(self.files, exact=True), {'workspace-topology': 1})
         records = self.contract.repository_records(self.records)
