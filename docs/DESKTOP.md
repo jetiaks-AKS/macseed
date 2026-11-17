@@ -485,6 +485,12 @@ for the publication and re-entry contract. The previous minimal outcome layout i
 **Visually Accepted**; the affected-category disclosure extension requires final
 user visual acceptance.
 
+A clean Capture Result omits the redundant saved Shell inventory. The existing
+Shell result hierarchy is shown only for actionable selected Shell attention;
+other affected categories keep their own details. Informational excluded startup
+initialization does not create attention. Selection and Confirmation retain their
+full definition/Script details.
+
 ### Canonical developer presentation
 
 `DeveloperSelectionGroup` owns display names, parent membership and the existing warm-orange
@@ -1543,7 +1549,12 @@ do not become disclosure levels. There is no extra Zsh Configuration wrapper.
 
 Names are display metadata; Swift never decodes command bodies or resolves source
 paths. Check/Preview count each Alias/Function once, with independent **Shell coverage**
-attention. Matching rows remain suppressed in Preview. Coverage text
+evidence. Core's `shell_activation_unknown` informational record does not add an
+attention badge or requirement when all selected typed Shell items match. Check
+retains its explanation; Preview uses existing category scope help and keeps normal
+Already Matches counts. Runtime activation and dynamic startup remain unverified.
+Other scope warnings and unresolved selected requirements retain Needs Attention.
+Matching rows remain suppressed in Preview. Coverage text
 explicitly distinguishes matching aliases from other unsupported/unincluded Shell
 state. Core alone qualifies missing source structure/dependencies and additions to
 original files; conflicts and unqualified prerequisites remain blocked. No source-file aggregate inflates

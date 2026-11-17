@@ -554,7 +554,7 @@ struct TaskDomainList: View {
                             let aliasRows = rows.map { domain in
                                 domain.id == "shell-zsh" && !fileItems.isEmpty
                                     ? TaskDomainPresentation(id: domain.id, title: domain.title, symbol: domain.symbol,
-                                        items: domain.items.filter { $0.sourceItemID?.hasPrefix("shell-script:") != true }, previewOnly: true) : domain
+                                        items: domain.items.filter { $0.sourceItemID?.hasPrefix("shell-script:") != true }, scopeInformation: domain.scopeInformation, previewOnly: true) : domain
                             }.filter { !$0.items.isEmpty }
                             previewMembers(aliasRows, parentState: summary.state)
                             if group == .shell && (!RestorePreviewVisibility.items(fileItems).isEmpty || !dependencyFiles.isEmpty) {

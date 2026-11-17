@@ -487,6 +487,7 @@ zsh_alias_preview() {
             unverified:*_prerequisite) preview_record shell-zsh "$identity" none blocked "shell_$policy"; result=1 ;;
             unverified:publication_uncertain) preview_record shell-zsh "$identity" none blocked shell_publication_uncertain; result=1 ;;
             unverified:*) preview_record shell-zsh "$identity" none blocked observation_failed; result=1 ;;
+            information:activation_unknown) preview_record shell-zsh scope none information shell_activation_unknown ;;
             partial:*) preview_record shell-zsh scope none warning partial_source_coverage; result=1 ;;
             *) return 2 ;;
         esac
@@ -499,6 +500,11 @@ zsh_alias_verify() {
     predicate="$(zsh_selected_state predicate "$ZSH_SNAPSHOT_FILE")" || { verification_input_error shell-zsh; return 0; }
     rows="$(zsh_selected_state compare "$ZSH_SNAPSHOT_FILE")" || { verification_input_error shell-zsh; return 0; }
     while IFS=$'\t' read -r identity state policy; do
+        if [[ "$identity:$state:$policy" == scope:information:activation_unknown ]]; then
+            verification_coverage shell-zsh scope resolved partial
+            verification_diagnostic "$GV_LAST_REF" shell_activation_unknown info scope
+            continue
+        fi
         if [[ "$state" == partial ]]; then
             verification_coverage shell-zsh scope unresolved partial
             verification_diagnostic "$GV_LAST_REF" partial_source_coverage warning scope

@@ -283,6 +283,17 @@ The format is based on the principles of **Keep a Changelog**.
 
 ### Fixed
 
+* Typed Shell Check and Rebuild Preview recognize qualified unchanged declarations
+  on the source Mac, including equivalent Function occurrences, independently of
+  destination write eligibility. Runtime activation uncertainty is informational
+  when every selected Shell requirement matches, preserving genuine warnings.
+  Clean Capture results omit redundant saved Shell
+  details while retaining actionable warnings.
+
+* Explicitly selected Scripts can be restored from a managed source to a safe
+  missing destination. Actual target ownership, independent consent, exact metadata,
+  freshness and no-clobber protections remain enforced.
+
 * Bundle inspection preserves portable Workspace evidence when typed Shell state
   is also selected, preventing a Core failure after publishing a valid mixed
   Bundle. Capture failures retain error semantics even after reported publication;

@@ -52,6 +52,18 @@ def launch_enforced(test, client, requirement):
 
 class ShellStateTests(unittest.TestCase):
     """Pure codec tests share the Shell harness; no helper build or HOME access."""
+    def test_activation_scope_is_informational_only_for_all_matching_selected_rows(self):
+        for statuses in [[], ['matching'], ['matching', 'matching'],
+                         ['matching', 'differing'], ['matching', 'unverified'], ['missing']]:
+            for command in ('inspect', 'compare'):
+                with self.subTest(statuses=statuses, command=command), patch.object(functions, 'load'), \
+                        patch.object(functions, 'plan') as plan, patch.object(functions.sys, 'argv', ['functions', command, 'fixture']), \
+                        patch('builtins.print') as output:
+                    plan.return_value.rows = [({'id': str(i)}, status, 'fixture') for i, status in enumerate(statuses)]
+                    self.assertEqual(functions.main(), 0)
+                    expected = 'information' if statuses and all(s == 'matching' for s in statuses) else 'partial'
+                    output.assert_called_with('scope', expected, 'activation_unknown', sep='\t')
+
     def load(self, source, order=0, parent=None, context='interactive', site=None):
         row = dict(source=source['id'], parent=parent, order=order, context=context,
                    entry='source' if parent else 'manual', condition='unconditional', site=site)
@@ -647,6 +659,83 @@ class ShellParser(unittest.TestCase):
         self.assertEqual((destination / 'parts/leaf').read_bytes(), b'# preserved\nleaf() { :; }\n')
         self.assertEqual(functions.plan(snapshot, str(destination), helper=helper).rows[0][1], 'matching')
 
+    def test_original_definition_conformity_is_independent_of_publication_layout(self):
+        _, helper, home = self.function_restore_fixture()
+        if not self.enforcing():
+            self.assert_functions_unavailable(home=home); return
+        first = b"alias first='unavailable-tool --flag'"
+        definition = b'portable() {\r\n print "exact UTF-8 \xc3\xa9"\r\n}'
+        last = b"alias last='pwd'"
+        self.source_file(home, '.zprofile', b'eval "$(unrelated-init)"\n')
+        rc = self.source_file(home, '.zshrc', b'eval "$(unrelated-init)"\n' + first + b'\n' + definition +
+                              b'\nsource "$HOME/leaf"\n' + last + b'\nsetopt AUTO_CD\n')
+        leaf = self.source_file(home, 'leaf', definition + b'\n')
+        value = functions.observe.observe(str(home), helper, aliases=True, independent=True).snapshot
+        self.assertEqual(len(value._value['items']), 3)
+        original = {p: (p.read_bytes(), p.stat().st_ino, p.stat().st_mtime_ns) for p in (rc, leaf)}
+        plan = functions.plan(value, str(home), helper=helper)
+        self.assertTrue(all((s, p) == ('matching', 'preserve') for _, s, p in plan.rows))
+        self.assertEqual(plan.writes, {})
+        self.assertEqual(plan.evidence, functions.plan(value, str(home), helper=helper).evidence)
+        with patch.object(functions.sources, 'publish_content') as publish:
+            self.assertFalse(functions.publish(value, str(home), helper=helper, expected=plan.evidence))
+        publish.assert_not_called()
+        self.assertEqual({p: (p.read_bytes(), p.stat().st_ino, p.stat().st_mtime_ns) for p in original}, original)
+        # Freshness includes the equivalent occurrence omitted from the recipe.
+        leaf.write_bytes(definition + b'\n# provenance changed\n')
+        with self.assertRaisesRegex(functions.base.Invalid, 'target_changed'):
+            functions.publish(value, str(home), helper=helper, expected=plan.evidence)
+        leaf.write_bytes(b'portable() { print changed; }\n')
+        conflicting = functions.plan(value, str(home), helper=helper)
+        self.assertEqual(next(s for r, s, _ in conflicting.rows if r['kind'] == 'function'), 'differing')
+        with self.assertRaises(functions.base.Invalid): functions.publish(value, str(home), helper=helper)
+
+    def test_original_definition_conformity_rejects_overrides_order_and_unsafe_sources(self):
+        _, helper, home = self.function_restore_fixture()
+        if not self.enforcing():
+            self.assert_functions_unavailable(home=home); return
+        alias, definition = b"alias first='pwd'", b'portable() { :; }'
+        raw = b'eval "$(unrelated-init)"\n' + alias + b'\n' + definition + b'\n'
+        rc = self.source_file(home, '.zshrc', raw)
+        value = functions.observe.observe(str(home), helper, aliases=True, independent=True).snapshot
+        for changed in (raw.replace(b'portable() { :; }', b'portable() { print changed; }'),
+                        raw.replace(alias + b'\n' + definition, definition + b'\n' + alias),
+                        raw + b'source "$HOME/$dynamic"\n', raw + b'[[ -e leaf ]] && source leaf\n',
+                        raw + b'eval "$DYNAMIC_OVERRIDE"\n', raw + b'unfunction portable\n',
+                        raw + b"alias portable='pwd'\n", raw + b'source "$HOME/missing"\n',
+                        raw + b'source "$HOME/.zshrc"\n'):
+            rc.write_bytes(changed)
+            with self.subTest(case=state.digest(changed)):
+                plan = functions.plan(value, str(home), helper=helper)
+                self.assertTrue(any(s in ('differing', 'unverified') for _, s, _ in plan.rows))
+                self.assertEqual(plan.writes, {})
+                with self.assertRaises(functions.base.Invalid): functions.publish(value, str(home), helper=helper)
+                self.assertEqual(rc.read_bytes(), changed)
+        rc.write_bytes(raw); rc.chmod(0o666)
+        self.assertTrue(all(s == 'unverified' for _, s, _ in functions.plan(value, str(home), helper=helper).rows))
+        rc.chmod(0o600)
+        leaf = self.source_file(home, 'leaf', raw); rc.unlink(); rc.symlink_to(leaf)
+        self.assertTrue(all(s == 'unverified' for _, s, _ in functions.plan(value, str(home), helper=helper).rows))
+        # Moving a source command across a selected declaration changes global
+        # order even though each file and each load chain retain their local order.
+        rc.unlink(); leaf.write_bytes(definition + b'\n')
+        edge = b'source "$HOME/leaf"\n'
+        self.source_file(home, '.zshrc', alias + b'\n' + edge)
+        value = functions.observe.observe(str(home), helper, aliases=True, independent=True).snapshot
+        rc.write_bytes(edge + alias + b'\n')
+        reordered = functions.plan(value, str(home), helper=helper)
+        self.assertTrue(all(s == 'unverified' for _, s, _ in reordered.rows))
+        self.assertEqual(reordered.writes, {})
+        with self.assertRaises(functions.base.Invalid): functions.publish(value, str(home), helper=helper)
+        rc.write_bytes(alias + b'\n' + edge)
+        for load in value._value['loads']:
+            load['condition'] = 'conditional'
+        functions.state.encode(value)  # Valid future evidence, unsupported for B4 Restore.
+        for destination in (home, self.observation_home()):
+            conditional = functions.plan(value, str(destination), helper=helper)
+            self.assertTrue(all(s == 'unverified' for _, s, _ in conditional.rows))
+            self.assertEqual(conditional.writes, {})
+
     def test_functions_restore_unsafe_ambiguous_managed_and_unavailable(self):
         value, helper, home = self.function_restore_fixture()
         if not self.function_mode(value, helper, home): return
@@ -903,6 +992,10 @@ class ShellParser(unittest.TestCase):
                 self.assertEqual(len(result._loads), 4 if raw.startswith(definition) else 6)
             selected = functions.state.decode(*observer.state.encode(result.snapshot))
             helper = functions.client.Parser(package=self.package, manifest_sha256=self.manifest_sha256)
+            original = functions.plan(selected, str(home), helper=helper)
+            self.assertTrue(all(s == 'matching' for _, s, _ in original.rows))
+            self.assertEqual(original.writes, {})
+            self.assertFalse(functions.publish(selected, str(home), helper=helper, expected=original.evidence))
             target = self.observation_home()
             self.assertTrue(functions.publish(selected, str(target), helper=helper))
             actual = functions.observe.observe(str(target), helper)

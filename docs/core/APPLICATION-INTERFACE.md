@@ -349,7 +349,13 @@ production Preview. It returns:
 
 Plan rows contain `domain`, `item_id`, `action`, `disposition`, nullable `reason`;
 repository rows may have a safe `display_name`. Dispositions are `satisfied`,
-`planned`, `blocked`, `conflict`, `warning`, `unknown`, `pending_unlock`.
+`planned`, `blocked`, `conflict`, `warning`, `unknown`, `pending_unlock`, and the
+bounded informational case: `shell-zsh / scope / none / information /
+shell_activation_unknown`. It retains runtime-activation uncertainty when all
+selected typed Shell requirements are satisfied, without an additional requirement,
+planned change, warning or readiness condition. Check retains this limitation as
+`resolved / partial` scope coverage with `shell_activation_unknown`, severity `info`,
+phase `scope`; unresolved requirements and other diagnostics keep their usual counts.
 An unknown observation must not become an Apply decision. For supported selected
 scalar Git settings, ordinary value drift yields `set_setting` / `planned`, not
 `target_conflict`. Execute re-observes the unique direct origin, restores and

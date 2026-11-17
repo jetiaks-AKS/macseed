@@ -88,7 +88,7 @@ class Plan:
             self._check()
             if any(r['kind'] != 'script' for r in value._value['items']):
                 self.helper = helper or capture.parser(ROOT)
-                self.observed = observe.observe(home, self.helper, cancelled=self._check, _ignore_pending=ignore_pending, aliases=True,
+                self.observed = observe.observe(home, self.helper, cancelled=self._check, _ignore_pending=ignore_pending, aliases=True, independent=True,
                                                 _additional_sources=(MANAGED_PATH,))
                 inputs.update(parser=self.helper._manifest_sha256,
                     files={p: dict(status=f['status'], stamp=f['stamp'], digest=state.digest(f['raw']) if f['raw'] is not None else None)
@@ -123,6 +123,67 @@ class Plan:
         return False
 
     def _inspect(self):
+        # Definition conformity precedes destination planning. A qualified
+        # existing declaration needs no permission to append to its source.
+        definitions = [r for r in self._value._value['items'] if r['kind'] != 'script']
+        if any(r['condition'] == 'conditional' for r in self._value._value['loads']):
+            self.rows = [(r, 'unverified', 'source_prerequisite') for r in definitions]
+            return
+        existing = self._existing_definitions()
+        if len(existing) == len(definitions):
+            self.rows = [(r, *existing[r['id']]) for r in definitions]
+            return
+        self._inspect_destination()
+        self.rows = [(r, *existing[r['id']]) if r['id'] in existing else (r, s, p) for r, s, p in self.rows]
+        if existing and not self.writes:
+            # A matching original declaration does not authorize moving its
+            # missing siblings into a fallback that rejected the mixed layout.
+            self.rows = [(r, 'unverified', 'source_prerequisite') if s == 'missing' else (r, s, p)
+                         for r, s, p in self.rows]
+
+    def _existing_definitions(self):
+        observed, value = self.observed, self._value
+        if any(code != 'unsupported_context' for code in observed.codes):
+            return {}
+        loads = {r['id']: r for r in observed._loads}
+        barriers = observe._equivalence_context(observed._files, loads, observed._issues, self._check)
+        if barriers is None:
+            return {}
+        paths = {r['id']: r['path'] for r in value._value['sources']}
+        actual_paths = {r['id']: r['path'] for r in observed.snapshot._value['sources']}
+        actual = {r['id']: r for r in observed.snapshot._value['items']}
+        present = [r for r in value._value['items'] if r['kind'] != 'script' and r['id'] in actual]
+        try:
+            expected_order = [r['id'] for r in state.declaration_order(state.select(value, [r['id'] for r in present]))]
+            actual_order = [r['id'] for r in state.declaration_order(state.select(observed.snapshot, expected_order))]
+        except state.Invalid:
+            return {r['id']: ('unverified', 'source_prerequisite') for r in present}
+        if expected_order != actual_order:
+            return {r['id']: ('unverified', 'source_prerequisite') for r in present}
+        result = {}
+        for item in present:
+            self._check()
+            found = actual[item['id']]
+            path = paths[item['source']]
+            # Managed-file integration retains its own strict qualification.
+            if (path == MANAGED_PATH or actual_paths[found['source']] != path or
+                    chains(value._value['loads'], paths, item['loads']) !=
+                    chains(observed._loads, actual_paths, found['loads']) or
+                    any(d['owner'] == item['id'] for d in value._value['dependencies'])):
+                continue
+            # Reuse the observer's bounded barriers: unrelated earlier startup
+            # initialization is outside scope; a later dynamic override is not.
+            if any(override and position > state.load_position(loads, key, found['details']['span'][0])
+                   for key in found['loads'] for position, override in barriers.get(loads[key]['context'], [])):
+                continue
+            saved = content(value, item)
+            if not self._definition_valid(item, saved):
+                continue
+            same = found['kind'] == item['kind'] and content(observed.snapshot, found) == saved
+            result[item['id']] = ('matching', 'preserve') if same else ('differing', 'target_conflict')
+        return result
+
+    def _inspect_destination(self):
         value, observed, home = self._value, self.observed, self._home
         paths = {row['id']: row['path'] for row in value._value['sources']}
         actual_paths = {f['source']['id']: p for p, f in observed._files.items() if f['source']}
@@ -417,7 +478,7 @@ def publish(value, home, *, expected=None, helper=None, cancelled=lambda: False,
         if current.scripts is not None:
             def validate_sources(ignore_pending=()):
                 fresh_sources = observe.observe(home, current.helper, cancelled=cancelled,
-                    _ignore_pending=ignore_pending, aliases=True, _additional_sources=(MANAGED_PATH,))
+                    _ignore_pending=ignore_pending, aliases=True, independent=True, _additional_sources=(MANAGED_PATH,))
                 if fresh_sources._files != current.observed._files:
                     raise base.Invalid('target_changed')
             changed = state.legacy().publish(current.scripts, home,
@@ -465,7 +526,10 @@ def main():
         result = plan(value, os.environ['HOME'])
         for item, status, reason in result.rows:
             print(item['id'], status, reason, sep='\t')
-        print('scope\tpartial\tactivation_unknown')
+        # Runtime activation is outside this structural contract. It is not an
+        # unresolved selected requirement when every selected predicate matches.
+        coverage = 'information' if result.rows and all(status == 'matching' for _, status, _ in result.rows) else 'partial'
+        print('scope', coverage, 'activation_unknown', sep='\t')
         return 0
     if command == 'apply':
         try:

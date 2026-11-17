@@ -361,6 +361,10 @@ struct RestoreTaskPresentation {
             if items.isEmpty { continue }
             var domain = TaskDomainPresentation(id: domainID, title: category.title,
                 symbol: Self.symbol(category.id), items: items, activityState: operationProgress ? Self.executionState(items, activity: result == nil ? activityState : nil) : activityState, previewOnly: !executing && result == nil)
+            if domainScope.contains("shell-zsh"), plan.plan.contains(where: {
+                $0.domain == "shell-zsh" && $0.itemID == "scope" && $0.action == "none"
+                    && $0.disposition == "information" && $0.reason == "shell_activation_unknown"
+            }) { domain.scopeInformation = ShellCommandPresentation.activationSummary }
             if domainID == "ssh-configuration" {
                 if !executing && result == nil && !operationProgress, let detail = plan.effectiveSSHHosts,
                    let requirement = items.first(where: { $0.sourceDomain == domainID && $0.sourceItemID == detail.planItemID }),

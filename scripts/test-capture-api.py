@@ -449,19 +449,53 @@ _Task._launch = _fixture_ignored_constraint
         result, events = self.function_core('restore_execute', archive, selection=selected, prepared=prepared['prepared_plan_id'])
         self.assertEqual(result.returncode, 0, events)
         self.assertEqual((target.stat().st_ino, target.stat().st_mtime_ns), stamp)
-        conflict = before + b"alias listing='ls -l'\n"
+        conflict = target.read_bytes().replace(definitions[0], b"alias listing='ls -l'")
         target.write_bytes(conflict)
         result, events = self.function_core('restore_execute', archive, selection=selected, prepared=prepared['prepared_plan_id'])
         self.assertEqual(result.returncode, 2, events); self.assertEqual(events[-1]['data']['code'], 'stale_plan')
         result, events = self.function_core('restore_prepare', archive, selection=selected)
         self.assertEqual(result.returncode, 0, events)
-        self.assertTrue(any(r['disposition'] == 'conflict' for r in events[-2]['data']['plan']))
+        rows = events[-2]['data']['plan']
+        self.assertEqual(sum(r['disposition'] == 'conflict' for r in rows), 1)
+        self.assertEqual(sum(r['disposition'] == 'satisfied' for r in rows), 3)
+        self.assertEqual(next(r for r in rows if r['item_id'] == 'scope')['disposition'], 'warning')
+        result, events = self.function_core('environment_compare', archive)
+        self.assertEqual(result.returncode, 0, events)
+        counts = events[-2]['data']['comparison']['counts']
+        self.assertEqual((counts['matching'], counts['differing'], counts['unverified'], counts['unresolved']), (3, 1, 0, 1))
+        self.assertEqual(target.read_bytes(), conflict)
+        target.chmod(0o666)
+        result, events = self.function_core('environment_compare', archive)
+        self.assertEqual(result.returncode, 0, events)
+        self.assertEqual(events[-2]['data']['comparison']['counts']['unverified'], 4)
+        self.assertEqual(events[-2]['data']['comparison']['counts']['unresolved'], 1)
+        self.assertFalse(any(r['severity'] == 'info' for r in events[-2]['data']['records']['diagnostics']))
+        result, events = self.function_core('restore_prepare', archive, selection=selected)
+        self.assertEqual(result.returncode, 0, events)
+        self.assertEqual(sum(r['disposition'] == 'blocked' for r in events[-2]['data']['plan']), 4)
+        self.assertFalse(events[-2]['data']['has_executable_changes'])
         self.assertEqual(target.read_bytes(), conflict)
         self.assertEqual(leaf.read_bytes(), original)
         self.assertFalse((target_home / 'executed').exists())
         print('QUALIFICATION: active mixed Capture/Bundle/Restore/Verify/Check; 7-item all-selection and exact 4-item subset')
 
     def test_independent_fourteen_definitions_portable_restore_and_check(self):
+        def assert_information(data, *, preview=False):
+            if preview:
+                self.assertEqual([r for r in data['plan'] if r['item_id'] == 'scope'], [dict(
+                    domain='shell-zsh', item_id='scope', action='none', disposition='information', reason='shell_activation_unknown')])
+                self.assertEqual((data['warning_count'], data['error_count'], data['scope_warnings']), (0, 0, []))
+                self.assertTrue(data['readiness']['ready'])
+                self.assertFalse(data['has_planned_changes'] or data['has_executable_changes'])
+            else:
+                self.assertEqual(data['comparison']['verdict'], 'no_differences_detected')
+                self.assertFalse(data['comparison']['also_incomplete'])
+                self.assertEqual(data['comparison']['counts']['unresolved'], 0)
+                coverage = next(r for r in data['records']['coverage_records']
+                                if r['domain'] == 'shell-zsh' and r['item_id'] == 'scope')
+                self.assertEqual((coverage['disposition'], coverage['source_status']), ('resolved', 'partial'))
+                self.assertEqual(data['records']['diagnostics'], [dict(record_id=coverage['record_id'],
+                    code='shell_activation_unknown', severity='info', phase='scope')])
         source, _, resources, chosen = self.functions_fixture()
         if not self.functions_enforced:
             self.assert_functions_unavailable(chosen)
@@ -495,16 +529,48 @@ _Task._launch = _fixture_ignored_constraint
             self.assertEqual(events[-1]['data']['code'], code)
             self.assertFalse((self.root / 'captured.mbt').exists())
         equivalent.write_bytes(definitions[-2] + b'\n')
-        prepared = self.prepare(selection)
-        result, events = self.execute(prepared['prepared_capture_id'], selection)
+        scripts = self.home / 'Scripts'; scripts.mkdir(mode=0o700)
+        (scripts / '.git').mkdir(mode=0o700)  # Source ownership must not prohibit a safe target copy.
+        for name in ('first', 'second'):
+            script = scripts / name
+            script.write_bytes(b'#!/bin/sh\ntouch "$HOME/must-not-run"\n'); script.chmod(0o600)
+        policy = dict(shell_script_policy='opaque-file-v5', shell_script_paths=[str(scripts / n) for n in ('first', 'second')])
+        result, events = self.invoke_capture('capture_script_inspect', extra=dict(policy, scripts={}))
+        self.assertEqual(result.returncode, 0, events)
+        script_ids = sorted(r['id'] for r in events[-2]['data']['shell_script_candidates'])
+        self.assertEqual(len(script_ids), 2)
+        policy['shell_script_selection'] = script_ids
+        result, events = self.invoke_capture(selection=selection, extra=policy)
+        self.assertEqual(result.returncode, 0, events); prepared = events[-2]['data']
+        result, events = self.invoke_capture('capture_execute', selection, dict(policy, destination=str(self.root / 'captured.mbt'),
+            expected_prepared_capture_id=prepared['prepared_capture_id'], shell_script_ids=script_ids))
         self.assertEqual(result.returncode, 0, events)
         archive = self.root / 'captured.mbt'
         value = bundle.typed_shell(bundle.validate_archive(archive)); contract = bundle.shell_state_contract()
+        saved_scripts = contract.script_value(value)['scripts']
+        self.assertEqual(len(saved_scripts), 2)
+        self.assertTrue(all(s['managed'] for s in saved_scripts))
         self.assertEqual([contract.content(value, r) for r in contract.declaration_order(value)], definitions)
         self.assertEqual(sum(r['key'] == 'del' for r in value._value['items']), 1)
         self.assertNotIn('config/equivalent', [r['path'] for r in value._value['sources']])
         self.assertNotIn(b'private exact', result.stdout + result.stderr)
         self.assertEqual(leaf.read_bytes(), raw)
+        selected = dict(categories=[], items={'shell-zsh': sorted(selection['items']['shell-zsh'] + ['shell-script:' + key for key in script_ids])})
+        source_before = {p: (p.read_bytes(), p.stat().st_ino, p.stat().st_mtime_ns)
+                         for p in (source, leaf, equivalent, scripts / 'first', scripts / 'second')}
+        result, events = self.function_core('environment_compare', archive)
+        self.assertEqual(result.returncode, 0, events)
+        self.assertEqual(events[-2]['data']['comparison']['counts']['matching'], 16)
+        assert_information(events[-2]['data'])
+        for _ in range(2):
+            result, events = self.function_core('restore_prepare', archive, selection=selected, scripts=script_ids)
+            self.assertEqual(result.returncode, 0, events)
+            rows = [r for r in events[-2]['data']['plan'] if r['item_id'] in selected['items']['shell-zsh']]
+            self.assertEqual(len(rows), 16)
+            self.assertTrue(all(r['disposition'] == 'satisfied' and r['action'] == 'none' for r in rows))
+            self.assertFalse(events[-2]['data']['has_executable_changes'])
+            assert_information(events[-2]['data'], preview=True)
+        self.assertEqual({p: (p.read_bytes(), p.stat().st_ino, p.stat().st_mtime_ns) for p in source_before}, source_before)
         source_home = self.home
         self.home = self.root / 'clean-target'; self.home.mkdir(mode=0o700)
         self.environment['HOME'] = str(self.home)
@@ -514,16 +580,20 @@ _Task._launch = _fixture_ignored_constraint
         shutil.copy2(ROOT / 'scripts/install-bs.sh', self.project / 'scripts/install-bs.sh')
         (self.root / 'bin/bs').symlink_to(self.project / 'bin/bs')
         self.environment['BS_INSTALL_DIR'] = str(self.root / 'bin')
-        selected = {k: selection[k] for k in ('categories', 'items')}
         result, events = self.function_core('bundle_inspect', archive)
         self.assertEqual(result.returncode, 0, events)
         rows = next(r for r in events[-2]['data']['restore_selection']['inventory'] if r['domain'] == 'shell-zsh')
-        self.assertEqual({r['item_id'] for r in rows['items']}, set(selection['items']['shell-zsh']))
-        result, events = self.function_core('restore_prepare', archive, selection=selected)
+        self.assertEqual({r['item_id'] for r in rows['items']}, set(selected['items']['shell-zsh']))
+        one = dict(categories=[], items={'shell-zsh': [selection['items']['shell-zsh'][0]]})
+        result, events = self.function_core('restore_prepare', archive, selection=one)
+        self.assertEqual(result.returncode, 0, events)
+        self.assertEqual(sum(r['disposition'] == 'planned' for r in events[-2]['data']['plan']), 1)
+        result, events = self.function_core('restore_prepare', archive, selection=selected, scripts=script_ids)
         self.assertEqual(result.returncode, 0, events); prepared = events[-2]['data']
-        self.assertEqual(sum(r['disposition'] == 'planned' for r in prepared['plan']), 14)
+        self.assertEqual(sum(r['disposition'] == 'planned' for r in prepared['plan']), 16)
         self.assertFalse(list(self.home.iterdir()))
-        result, events = self.function_core('restore_execute', archive, selection=selected, prepared=prepared['prepared_plan_id'])
+        result, events = self.function_core('restore_execute', archive, selection=selected, scripts=script_ids,
+                                            approvals=script_ids, prepared=prepared['prepared_plan_id'])
         self.assertEqual(result.returncode, 0, events)
         saved = self.home / '.macseed-shell-definitions.zsh'; startup = self.home / '.zshrc'
         self.assertEqual(saved.read_bytes(), b'# Macseed portable definitions 1\n' + b'\n'.join(definitions) + b'\n')
@@ -531,32 +601,37 @@ _Task._launch = _fixture_ignored_constraint
         self.assertFalse((self.home / 'config').exists())
         self.assertEqual(saved.read_bytes().count(b'del()'), 1)
         verified = events[-2]['data']['verification']['details']['verification_records']
-        self.assertEqual(len(verified), 14); self.assertTrue(all(r['conformity'] == 'verified' for r in verified))
+        self.assertEqual(len(verified), 16); self.assertTrue(all(r['conformity'] == 'verified' for r in verified))
+        for name in ('first', 'second'):
+            self.assertEqual((self.home / 'Scripts' / name).read_bytes(), (scripts / name).read_bytes())
         result, events = self.function_core('environment_compare', archive)
         self.assertEqual(result.returncode, 0, events)
-        self.assertEqual(events[-2]['data']['comparison']['counts']['matching'], 14)
-        result, events = self.function_core('restore_prepare', archive, selection=selected)
+        self.assertEqual(events[-2]['data']['comparison']['counts']['matching'], 16)
+        assert_information(events[-2]['data'])
+        result, events = self.function_core('restore_prepare', archive, selection=selected, scripts=script_ids)
         self.assertEqual(result.returncode, 0, events); prepared = events[-2]['data']
         self.assertFalse(prepared['has_executable_changes'])
+        assert_information(prepared, preview=True)
         stamps = [(p.stat().st_ino, p.stat().st_mtime_ns) for p in (saved, startup)]
-        result, events = self.function_core('restore_execute', archive, selection=selected, prepared=prepared['prepared_plan_id'])
+        result, events = self.function_core('restore_execute', archive, selection=selected, scripts=script_ids, prepared=prepared['prepared_plan_id'])
         self.assertEqual(result.returncode, 0, events)
         self.assertEqual([(p.stat().st_ino, p.stat().st_mtime_ns) for p in (saved, startup)], stamps)
         startup.write_bytes(b'# unrelated preserved\n')
         result, events = self.function_core('environment_compare', archive)
         self.assertEqual(result.returncode, 0, events)
-        self.assertEqual(events[-2]['data']['comparison']['counts']['matching'], 0)
-        result, events = self.function_core('restore_execute', archive, selection=selected, prepared=prepared['prepared_plan_id'])
+        self.assertEqual(events[-2]['data']['comparison']['counts']['matching'], 2)
+        result, events = self.function_core('restore_execute', archive, selection=selected, scripts=script_ids, prepared=prepared['prepared_plan_id'])
         self.assertEqual(result.returncode, 2, events)
         self.assertEqual(events[-1]['data']['code'], 'stale_plan')
         self.assertEqual(startup.read_bytes(), b'# unrelated preserved\n')
         startup.write_bytes(b'# unrelated preserved\ndel() { print conflict; }\n')
-        result, events = self.function_core('restore_prepare', archive, selection=selected)
+        result, events = self.function_core('restore_prepare', archive, selection=selected, scripts=script_ids)
         self.assertEqual(result.returncode, 0, events)
         self.assertTrue(any(r['disposition'] == 'conflict' for r in events[-2]['data']['plan']))
         self.assertEqual(leaf.read_bytes(), raw)
         self.assertFalse((source_home / 'executed').exists())
-        print('QUALIFICATION: active 14-item declaration Capture/Bundle/managed Restore/Verify/Check/no-op; startup binding, conflict, stale plan and privacy')
+        self.assertFalse((self.home / 'must-not-run').exists())
+        print('QUALIFICATION: active 14 definitions + 2 consented Scripts; source Check/Preview, portable Restore/Verify/Check/no-op; conflicts and freshness')
 
     def test_functions_capture_restore_verify_check_subset_repeat_and_conflict(self):
         source, original, resources, chosen = self.functions_fixture()

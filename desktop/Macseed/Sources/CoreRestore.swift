@@ -448,7 +448,9 @@ struct CoreRestorePreparation: Decodable {
               (scopeWarnings ?? []).allSatisfy({ $0.range(of: "^[A-Za-z][A-Za-z -]{0,63}$", options: .regularExpression) != nil }),
               readiness.readyScope == "environment", readiness.reentry == "restore_prepare",
               readiness.conditions.allSatisfy({ ["satisfied", "safely_satisfiable", "external_action_required", "unsupported"].contains($0.status) }),
-              plan.allSatisfy({ ["satisfied", "planned", "blocked", "conflict", "warning", "unknown", "pending_unlock"].contains($0.disposition) }) else {
+              plan.allSatisfy({ ["satisfied", "planned", "blocked", "conflict", "warning", "unknown", "pending_unlock"].contains($0.disposition)
+                  || ($0.domain == "shell-zsh" && $0.itemID == "scope" && $0.action == "none"
+                      && $0.disposition == "information" && $0.reason == "shell_activation_unknown") }) else {
             throw CoreRuntimeError.malformedEvent
         }
         let installers = plan.compactMap(\.installerPreparationID)

@@ -623,6 +623,17 @@ verification_report > "$TEST_ROOT/verdict"
 assert test "$GV_VERDICT" = 'Selected requirements verified'
 assert grep -q 'Verdict: Selected requirements verified' "$TEST_ROOT/verdict"
 assert test "$(grep -c 'demo / item / installed' "$TEST_ROOT/verdict")" -eq 0
+verification_coverage shell-zsh scope resolved partial
+assert verification_diagnostic "$GV_LAST_REF" shell_activation_unknown info scope
+verification_aggregate
+assert test "$GV_UNRESOLVED:$GV_WARNINGS:$GV_ERRORS" = 0:0:0
+assert has_code shell_activation_unknown
+verification_diagnostic "$GV_LAST_REF" observation_failed info scope
+assert test "$?" -eq 2
+verification_diagnostic "$GV_LAST_REF" shell_activation_unknown warning scope
+assert test "$?" -eq 2
+verification_diagnostic run shell_activation_unknown info scope
+assert test "$?" -eq 2
 verification_diagnostic run partial_source_coverage warning scope
 verification_operation demo item install failure
 verification_report > "$TEST_ROOT/verdict"

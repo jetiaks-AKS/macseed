@@ -121,7 +121,7 @@ struct OperationLogSanitizer {
         "verdict": ["selected_requirements_verified", "incomplete", "requirements_not_verified", "selected_requirements_not_verified", "differences_detected", "no_differences_detected", "no_comparable_requirements", "no_managed_requirements"],
         "conformity": ["verified", "mismatch", "unverified", "unsupported", "unresolved", "not_applicable"],
         "support": ["supported", "unsupported", "unresolved", "not_applicable"],
-        "disposition": ["conflict", "warning", "unknown", "pending_unlock", "satisfied", "planned", "blocked", "unresolved", "selected", "excluded", "supported", "unsupported", "resolved", "no_requirement"],
+        "disposition": ["information", "conflict", "warning", "unknown", "pending_unlock", "satisfied", "planned", "blocked", "unresolved", "selected", "excluded", "supported", "unsupported", "resolved", "no_requirement"],
         "source_status": ["present", "absent", "unavailable", "observation_error", "unsupported", "valid", "invalid", "observed_present", "observed_absent", "partial", "unobserved", "unknown"],
         "severity": ["info", "warning", "error"],
         "comparison_kind": ["matching", "missing", "differing", "unverified", "unsupported", "unresolved", "extra", "unknown_difference"],
@@ -156,7 +156,7 @@ struct OperationLogSanitizer {
         "shell_tool_prerequisite", "shell_tool_missing_prerequisite", "shell_tool_observation_prerequisite",
         "shell_directory_missing_prerequisite", "shell_directory_observation_prerequisite", "shell_dependency_missing_prerequisite",
         "shell_dependency_observation_prerequisite", "shell_operand_unsupported_prerequisite", "shell_operand_prerequisite", "shell_selection_prerequisite",
-        "source_absent", "source_excluded", "shell_publication_uncertain",
+        "source_absent", "source_excluded", "shell_publication_uncertain", "shell_activation_unknown",
         "shell_managed_source_prerequisite", "shell_dependency_prerequisite", "shell_source_prerequisite", "shell_startup_prerequisite",
         // Finite codes emitted by aliases.failure_diagnostic; no prefix admission.
         "shell_preflight_observation_failed", "shell_preflight_target_changed", "shell_preflight_target_conflict",

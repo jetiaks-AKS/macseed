@@ -492,7 +492,10 @@ def prepared_restore(path, disabled_groups, include_secure, selection=None, inst
                 item = str(sections[domain].index(item) + 1)
             if action not in {"none", "inspect", "install", "reinstall", "create_directory", "replace_with_backup",
                               "set_preference", "restart_process", "set_setting", "create", "clone", "switch_branch"} or disposition not in {
-                              "satisfied", "planned", "blocked", "conflict", "warning", "unknown"}:
+                              "satisfied", "planned", "blocked", "conflict", "warning", "unknown", "information"}:
+                raise PreviewFailed()
+            if disposition == 'information' and (domain, item, action, reason) != (
+                    'shell-zsh', 'scope', 'none', 'shell_activation_unknown'):
                 raise PreviewFailed()
             records.append({"domain": domain, "item_id": item, "action": action,
                             "disposition": disposition, "reason": None if reason == "none" else reason,

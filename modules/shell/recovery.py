@@ -903,7 +903,7 @@ def bounded_source_append(value, item, graph, raw, missing, candidate, home):
         return False
 
 
-def safe_destination(home, path):
+def safe_destination(home, path, *, managed_prerequisite=False):
     """Validate the longest existing prefix; missing directories are creatable."""
     parts = path.split('/')
     for index in range(len(parts)):
@@ -918,7 +918,9 @@ def safe_destination(home, path):
                     if not stat.S_ISDIR(info.st_mode):
                         return False
                 check()
-        except (OSError, ValueError):
+        except (OSError, ValueError) as exc:
+            if managed_prerequisite and isinstance(exc, base.Invalid) and str(exc) == 'external_owner':
+                raise base.Invalid('managed_source_prerequisite') from None
             return False
     return True
 
@@ -1174,9 +1176,9 @@ def _group_plan(value, home, observed_scripts=None, *, source_files=None):
                         raise base.Invalid('unsafe_dependency')
                     if raw != script['text'].encode() or stat.S_IMODE(info[0][2]) != script['mode'] or (value['version'] == 5 and quarantine != script.get('quarantine')):
                         raise base.Invalid('script_conflict')
-                elif state == 'missing' and safe_destination(home, path):
-                    if script.get('managed'):
-                        raise base.Invalid('managed_source_prerequisite')
+                elif state == 'missing' and safe_destination(home, path, managed_prerequisite=value['version'] in (4, 5)):
+                    # `managed` records source provenance. Only actual target
+                    # ownership blocks an explicitly consented missing-file copy.
                     writes[path] = (script['text'].encode(), script['mode'])
                 else:
                     raise base.Invalid('unsafe_dependency')

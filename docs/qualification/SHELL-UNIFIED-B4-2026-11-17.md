@@ -217,3 +217,84 @@ publication returning `failed/capture_failed` with publication evidence and no
 success events. The disposable Native mixed case also covers this combination.
 This is local Core/Native qualification; hosted CI, manual visual approval,
 minimum-macOS/physical-Intel and Stage 17 gates remain separate.
+
+## Source-Mac conformity and clean Capture Result
+
+Baseline `69626512fc21647a0579c71a3d899b7331e13782`. The real saved Bundle
+reproduced 10 differing definitions and 4 unverified definitions, with 2 matching
+Scripts. Strict target observation stopped at excluded startup initialization;
+managed-destination planning classified the 8 directly seen Aliases and 2 Functions
+as competing bindings and never observed 4 sourced Aliases. Independent observation
+found all 14 definitions with exact saved bytes, including equivalent Function copies.
+
+Typed conformity now precedes write planning and reuses independent observation,
+qualified source/load chains, selected declaration order and bounded override
+barriers. It does not authorize writing to partially observed sources. Changed
+inter-file order, conditional load evidence, unsafe sources, actual competing
+bindings, unavailable enforcement and stale observations remain fail-closed.
+
+On macOS 27.2.1 ARM64, production Core Check of the real Bundle returned 14
+Alias/Function Match plus 2 Script Match. Two source-Mac Previews returned 16
+Satisfied requirements, identical prepared IDs and no executable Shell changes.
+Native decoded and validated those real responses with the same 16 matching rows;
+partial Shell coverage remained separate. Other selected Bundle domains are outside
+this Shell qualification.
+
+The canonical disposable-HOME case captured 14 definitions and 2 separately
+consented Scripts, then passed source Check/Preview, individual/full target Preview,
+Restore, exact-byte Verify, Check and repeat/no-op. The separate v5 consent and
+quarantine case also passed. The real Bundle's two Scripts carry `managed: true`:
+their creation on an empty target correctly remains blocked by existing v5 policy.
+Selecting its 14 definitions alone passed portable managed-file Restore, Verify,
+Check and repeat/no-op with unchanged definition/startup bytes, modes, inodes and
+modification times. This is not qualification to transfer the two managed Scripts.
+
+Focused Native tests confirm that clean Capture Result omits the saved Shell tree,
+retains exact counts and Bundle controls, and preserves genuine affected-category
+details. Selection, Confirmation and all Scripts presentation remain unchanged.
+
+Observed Shell/Script source bytes and metadata and the original Bundle were
+unchanged. However, full real-Bundle Check invoked the existing VS Code inventory
+CLI, which created two CLI log directories in the real HOME. These were retained;
+the run does not establish zero writes anywhere in HOME. Subsequent mutation/no-op
+qualification used only a disposable target, with ordinary lifecycle/cache writes
+distinguished from selected Shell publication. No Shell source was executed.
+Hosted CI, manual visual acceptance, minimum-macOS/physical-Intel and Stage 17
+qualification were not repeated.
+
+## Managed Scripts recovery and informational activation coverage
+
+The subsequent approved correction separates source provenance from target ownership.
+The saved `managed` Boolean remains intact. An explicitly consented v4/v5 Script
+can be created at a safe missing destination; existing target Git/manager markers
+still require owner/Workspace recovery. Matching targets are preserved without
+extra consent. Conflicts, unsafe metadata/paths and stale observations remain blocked.
+The existing descriptor checks and no-clobber publisher are unchanged.
+
+The original user Bundle was validated and passed production Restore on a disposable
+HOME with all 12 Aliases, 2 Functions and 2 managed-source Scripts selected. A missing
+Script approval failed before publication. With both approvals, both real payloads
+were created byte-exact (2,807 and 1,774 bytes, mode `0755`, quarantine absent), alongside
+the exact portable definitions and qualified startup hook. Verify returned 16 verified.
+Production Check of the Core-published selected reference returned 16 Match; its
+typed state and payloads were identical to the original Bundle's selected Shell state.
+No synthetic or repacked Bundle substituted for that input. Repeat Preview returned
+16 Satisfied, zero warnings and zero changes. Repeat Restore retained all selected
+file bytes, modes, inodes and modification times, with 16 matching Check results.
+Unrelated target sentinel files and the original Bundle were unchanged. This run
+only read the original Bundle; all Core runtime/configuration and target operations
+used disposable directories, with unrelated application inventory forbidden.
+
+When every selected typed Shell predicate matches, `activation_unknown` is retained
+as informational scope evidence, without warning/attention counts or readiness gates.
+Runtime activation and dynamic startup remain explicitly unverified. Core and Native
+focused cases preserve genuine unresolved requirements and mixed conflicts; Native
+keeps the technical explanation through existing category help and diagnostic records.
+
+On macOS 27.2.1 ARM64, focused canonical checks passed: activation-scope admission;
+mixed matching/conflicting/unsafe requirements; the 14+2 production Capture/Restore
+case with two managed-source Scripts; six v4/v5 recovery, consent, metadata,
+ownership and freshness cases; the existing Bundle/stage input-recheck race; and
+the shared Verification collector. Native Shell presentation/consistency checks
+and the Debug build passed. No full regression, hosted CI or renewed manual visual
+acceptance was run. Minimum-macOS, physical Intel and Stage 17 gates remain separate.

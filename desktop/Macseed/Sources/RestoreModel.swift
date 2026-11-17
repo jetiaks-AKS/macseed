@@ -37,6 +37,9 @@ struct RestorePreviewPresentation {
         var identities: [String: String] = [:]
         var order: [String] = []
         for (index, row) in prepared.plan.enumerated() {
+            // Retained in Core evidence and category scope help, not an item or warning.
+            if row.domain == "shell-zsh" && row.itemID == "scope" && row.action == "none"
+                && row.disposition == "information" && row.reason == "shell_activation_unknown" { continue }
             // Core retains the dependency record, but an advisory is not another
             // configuration requirement, planned mutation or attention counter.
             if row.isSSHDependency && prepared.sshResolution?.ready == true { continue }

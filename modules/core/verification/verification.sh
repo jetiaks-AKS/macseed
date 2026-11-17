@@ -22,12 +22,17 @@ verification_reset() {
 verification_diagnostic() {
     local owner="$1" code="$2" severity="$3" phase="$4" i
     case "$code" in
+        shell_activation_unknown) [[ "$severity:$phase:$owner" == info:scope:c:* ]] || return 2 ;;
         confirmed_mismatch|observation_failed|selected_input_unresolved|unsupported_predicate|operation_failed|partial_source_coverage|external_management|dependency_unavailable|prerequisite_unmet|input_changed|input_invalid) ;;
         shell_dependency_missing_prerequisite|shell_dependency_observation_prerequisite|shell_tool_missing_prerequisite|shell_tool_observation_prerequisite|shell_directory_missing_prerequisite|shell_directory_observation_prerequisite|shell_operand_unsupported_prerequisite|shell_selection_prerequisite) ;;
         shell_function_functions_unavailable|shell_function_unsafe_destination|shell_function_source_prerequisite|shell_function_managed_source_prerequisite|shell_function_dependency_prerequisite|shell_function_definition_invalid|shell_function_observation_failed) ;;
         *) return 2 ;;
     esac
-    case "$severity" in warning|error) ;; *) return 2 ;; esac
+    case "$severity" in
+        warning|error) ;;
+        info) [[ "$code" == shell_activation_unknown ]] || return 2 ;;
+        *) return 2 ;;
+    esac
     case "$phase" in scope|observation|apply|post_apply|orchestration) ;; *) return 2 ;; esac
     for ((i=0; i<${#GV_D[@]}; i+=4)); do
         [[ "${GV_D[i]}" != "$owner" || "${GV_D[i+1]}" != "$code" ||

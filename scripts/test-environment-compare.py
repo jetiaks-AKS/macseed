@@ -832,6 +832,79 @@ class ShellRecoveryTests(unittest.TestCase):
         self.assertEqual(result['status'], 'unverified')
         self.assertFalse(list(self.home.iterdir()))
 
+    def test_managed_script_provenance_allows_safe_consented_v4_v5_recovery(self):
+        c = self.contract
+        value = self.fixture(script=True)
+        path = '.local/bin/adns'; key = c.script_id(path)
+        source = self.source / path
+        (source.parent / '.git').mkdir(mode=0o700)
+        for version, policy in [(4, c.OPAQUE_POLICY), (5, c.FILE_POLICY)]:
+            with self.subTest(version=version):
+                if version == 5:
+                    self.set_xattr(source, 'com.apple.quarantine', b'0083;12345678;Fixture;')
+                captured = c.authorize_capture(value, str(self.source), [key], policy=policy)
+                selected = c.select(captured, {'shell-script:' + key})
+                self.assertTrue(selected['scripts'][0]['managed'])
+                home = self.root / ('safe-' + str(version)); home.mkdir(mode=0o700)
+                prepared = c.plan(selected, str(home))
+                self.assertIsNone(prepared['reason'])
+                self.assertEqual([(s, p) for _, s, p in prepared['rows']], [('missing', 'create')])
+                expected = c.evidence(selected, str(home))
+                with self.assertRaisesRegex(ValueError, 'script_consent_required'):
+                    c.publish(selected, str(home), expected=expected)
+                self.assertFalse(list(home.iterdir()))
+                self.assertTrue(c.publish(selected, str(home), expected=expected, approvals=[key]))
+                target = home / path
+                self.assertEqual(target.read_bytes(), source.read_bytes())
+                self.assertEqual(stat.S_IMODE(target.stat().st_mode), stat.S_IMODE(source.stat().st_mode))
+                self.assertEqual(c.script_state(selected['scripts'][0], str(home), version=version), 'matching')
+                stamp = c.base.stamp(target.stat())
+                # Target management preserves a match without authorizing a write.
+                (target.parent / '.git').mkdir(mode=0o700)
+                self.assertFalse(c.publish(selected, str(home)))
+                self.assertEqual(c.base.stamp(target.stat()), stamp)
+                target.write_bytes(source.read_bytes() + b'# different target\n')
+                different = target.read_bytes()
+                self.assertEqual(c.plan(selected, str(home))['rows'][0][1], 'differing')
+                with self.assertRaises(ValueError): c.publish(selected, str(home), approvals=[key])
+                self.assertEqual(target.read_bytes(), different)
+                self.assertFalse((home / '.zshrc').exists())
+
+    def test_managed_script_target_guards_and_freshness(self):
+        c = self.contract
+        value = self.fixture(script=True)
+        path = '.local/bin/adns'; key = c.script_id(path)
+        (self.source / '.local/.git').mkdir(mode=0o700)
+        captured = c.authorize_capture(value, str(self.source), [key], policy=c.FILE_POLICY)
+        selected = c.select(captured, {'shell-script:' + key})
+        for fault in ['.git', '.chezmoiroot', 'symlink-parent', 'symlink-file', 'permissions', 'metadata', 'late-manager', 'late-file']:
+            with self.subTest(fault=fault):
+                home = self.root / fault; home.mkdir(mode=0o700)
+                target = home / path; target.parent.mkdir(parents=True, mode=0o700)
+                expected = c.evidence(selected, str(home))
+                if fault in ('.git', '.chezmoiroot', 'late-manager'):
+                    (home / '.local' / ('.git' if fault == 'late-manager' else fault)).mkdir(mode=0o700)
+                elif fault == 'symlink-parent':
+                    target.parent.rmdir(); target.parent.symlink_to((self.source / path).parent)
+                elif fault == 'symlink-file': target.symlink_to(self.source / path)
+                elif fault == 'permissions': target.parent.chmod(0o777)
+                else:
+                    target.write_bytes((self.source / path).read_bytes()); target.chmod(0o700)
+                    if fault == 'metadata': self.set_xattr(target, 'com.macseed.fixture', b'unsupported')
+                before = (target.lstat().st_ino, target.read_bytes()) if target.exists() else None
+                if fault.startswith('late-'):
+                    with self.assertRaisesRegex(ValueError, 'target_changed'):
+                        c.publish(selected, str(home), expected=expected, approvals=[key])
+                else:
+                    plan = c.plan(selected, str(home))
+                    self.assertFalse(plan['writes'])
+                    self.assertEqual(plan['rows'][0][1], 'unverified')
+                    if fault in ('.git', '.chezmoiroot'):
+                        self.assertEqual(plan['reason'], 'managed_source_prerequisite')
+                    with self.assertRaises(ValueError): c.publish(selected, str(home), approvals=[key])
+                self.assertEqual((target.lstat().st_ino, target.read_bytes()) if target.exists() else None, before)
+                self.assertFalse((home / '.zshrc').exists())
+
     def test_opaque_file_filesystem_and_aggregate_limits(self):
         value = self.fixture(script=True)
         source = self.source / '.local/bin/adns'
@@ -860,7 +933,8 @@ class ShellRecoveryTests(unittest.TestCase):
         (source.parent / '.git').mkdir()
         managed = self.contract.authorize_capture(value, str(self.source), [key], policy=policy)
         self.assertTrue(managed['scripts'][0]['managed'])
-        self.assertEqual(self.contract.plan(managed, str(self.home))['reason'], 'managed_source_prerequisite')
+        self.assertIsNone(self.contract.plan(managed, str(self.home))['reason'])
+        self.assertIn('.local/bin/adns', self.contract.plan(managed, str(self.home))['writes'])
         (source.parent / '.git').rmdir()
         # Target management and metadata remain blockers, even with matching bytes.
         (self.home / '.local/bin').mkdir(parents=True)

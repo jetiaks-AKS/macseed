@@ -174,7 +174,7 @@ struct EnvironmentStatusPresentation {
         func title(_ identity: String, domain: String) -> String {
             if domain == "shell-zsh" {
                 if result.records.verificationRecords.contains(where: { $0.domain == domain && $0.itemID == identity && $0.predicate == "file_content" }) { return "Saved Zsh file" }
-                if identity == "scope", coverageRecords.contains(where: { $0.domain == domain && $0.itemID == identity && $0.disposition == "unresolved" && $0.sourceStatus == "partial" }) {
+                if identity == "scope", coverageRecords.contains(where: { $0.domain == domain && $0.itemID == identity && $0.sourceStatus == "partial" }) {
                     return ShellCommandPresentation.coverageTitle
                 }
                 if let label = result.referencePresentation?.shellAliasLabels?[identity],
@@ -291,7 +291,9 @@ struct EnvironmentStatusPresentation {
             } ?? false
             // Expected predicate diagnostics explain the typed result; independent warnings retain attention.
             add(domain, DisplayItem(id: owner != nil || coverage != nil ? logicalID(domain, identity) : "diagnostic:\(index)", title: title(identity, domain: domain), status: attention && !expectedDiagnostic ? .attention : .information,
-                                    action: expectedDiagnostic || (domain == "ssh-configuration" && identity == "identity-references" && diagnostic.code == "prerequisite_unmet") ? "" : (attention ? diagnosticMessage(diagnostic.code) : "Additional diagnostic information is available."),
+                                    action: domain == "shell-zsh" && identity == "scope" && diagnostic.code == "shell_activation_unknown" && diagnostic.severity == "info"
+                                        ? ShellCommandPresentation.activationSummary
+                                        : expectedDiagnostic || (domain == "ssh-configuration" && identity == "identity-references" && diagnostic.code == "prerequisite_unmet") ? "" : (attention ? diagnosticMessage(diagnostic.code) : "Additional diagnostic information is available."),
                                     reason: diagnostic.severity + ": " + diagnostic.code + "\nPhase: " + diagnostic.phase + "\nRecord: " + diagnostic.recordID
                                     + (coverage.map { "\nSource status: " + $0.sourceStatus } ?? "")))
         }

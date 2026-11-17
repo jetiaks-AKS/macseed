@@ -78,7 +78,7 @@ import Vision
             try write("success", core.appendingPathComponent("mode"))
             model.scan(); await model.waitForCompletion()
             model.selectCategory("homebrew-packages", included: true)
-            let destination = root.appendingPathComponent(mode + ".mbt")
+            let destination = root.appendingPathComponent("receipt-" + mode + ".mbt")
             model.prepare(destination: destination); await model.waitForCompletion()
             precondition(model.state == .confirmation)
             // Simulate the file published by Core; Native may neither replace

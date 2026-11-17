@@ -451,7 +451,15 @@ function calls and activation remain unknown even for a matching definition.
 
 Preview is read-only. Each item is matching, missing/planned, conflicting or unverified.
 Matching requires the exact definition bytes, named structural spans and qualified
-source/load context. Same-name differences, duplicate bindings and alias collisions
+source/load context. Read-only conformity is evaluated before publication suitability:
+an already satisfied definition does not require a writable original or managed
+destination. Restore/Check use the same independent declaration observation as Capture,
+including qualified equivalent Function occurrences. Original-source matches retain
+the saved canonical path/load chains and relative selected declaration order; unrelated
+earlier initialization remains outside scope. Unresolved source relationships and
+later dynamic overrides cannot establish a match. All physical observations still
+bind preparation freshness, and publication retains its stricter destination guards.
+Same-name differences, non-equivalent duplicate bindings and alias collisions
 never become overwrite plans. Unsupported/unsafe context remains blocked, not missing.
 The protected launch gate runs before target source reads; unproven enforcement yields
 `functions_unavailable`. API presence alone never enables this workflow.
@@ -478,7 +486,14 @@ parser-output bytes and loads are checked before the first publication.
 
 Verify and read-only Bundle Check use `function_definition` with stable Function IDs.
 Match means exact saved definition/source-state reconstruction; missing, differing and
-unverified remain distinct. Partial Shell coverage is retained. The structured
+unverified remain distinct. Partial Shell coverage is retained. When every selected
+typed Shell requirement matches and the only scope limitation is `activation_unknown`,
+the scope is informational: Preview emits `information / shell_activation_unknown`;
+Check retains `resolved / partial` coverage with an `info` diagnostic of that code.
+This resolves selected conformity, not runtime activation. It adds no requirement,
+warning, readiness blocker or attention count. Any unresolved selected predicate,
+conflict or genuine source/dependency limitation retains its actionable evidence.
+The structured
 `shell_functions` qualification reports `activation: unknown`, `dependencies: unknown`
 and `execution_tested: false`; no function is invoked and no successful execution is
 claimed. Only fixed reasons and opaque IDs enter ordinary diagnostics. Representative Native
@@ -514,8 +529,8 @@ assumed harmless to definition-time semantics. Explicit evaluation or binding
 mutations after the first copy also reject equivalence. Earlier unrelated initialization
 remains excluded; this qualifies a transferable declaration, not live runtime equivalence.
 The bounded barrier check reuses B1 source/load ordering and fails closed at its
-2,048-event limit. Legacy aliases and the strict target observer retain their
-duplicate-binding policies.
+2,048-event limit. Typed Restore/Check reuse this qualification for existing
+definitions; legacy alias duplicate-binding policies remain unchanged.
 
 The first physical occurrence in deterministic startup/source traversal is canonical
 only if that source/span occurs in every relevant context. One load per context and
@@ -545,7 +560,9 @@ consistent across saved contexts; contradictory ordering is rejected before Capt
 No original initialization or arbitrary source directory is recreated. An existing
 destination must have the exact header and a qualified declaration-only envelope;
 the header alone does not authorize connecting dormant unselected declarations.
-Same-name definitions outside that destination are conflicts. Existing safe bytes
+Qualified exact definitions already satisfied at their original source require no
+managed-file publication. Competing definitions outside a proposed managed
+destination remain conflicts. Existing safe bytes
 are preserved, and an append cannot reorder retained selected declarations.
 
 The ordinary prepared-plan approval and Native Rebuild confirmation authorize these
@@ -969,9 +986,13 @@ choices; a fresh Scan/Bundle resets consent.
 
 Each saved script has an exact HOME-relative destination, byte content, SHA-256 and
 validated original mode. V4 embeds text; v5 uses the separate members above. Both
-retain a Boolean source-management observation;
-a missing managed file requires recovery through its owner/Git/Workspace, while an
-existing matching file can be verified without mutation. Readers independently
+retain a Boolean source-management observation. This provenance does not prohibit
+an explicitly consented copy to a safe missing destination on another Mac. Actual
+target Git/manager markers still block writes with `managed_source_prerequisite`;
+recover that target through its owner or the existing selected Workspace route,
+then re-observe it. An existing matching file needs no write or extra consent,
+including inside a managed target. Different or unsafe files remain preserved.
+Readers independently
 validate content, integrity and either its selected direct-execution alias
 association or explicit standalone-file scope. Startup files, selected source files and files
 also referenced by a source/reload alias cannot become executable payloads. On the

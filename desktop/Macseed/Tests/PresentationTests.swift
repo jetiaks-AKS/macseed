@@ -1559,7 +1559,7 @@ private struct CaptureRefinementHost: View {
         precondition(outcomes.components(separatedBy: "CaptureOutcomeCard(title: \"Save Complete\"").count == 2)
         precondition(outcomes.contains("if !result.attention.isEmpty") && outcomes.contains("detail: result.attentionSummary"))
         precondition(!content.contains("Needs Attention") && !content.contains("result.scope") && !content.contains("result.message"))
-        for obsolete in ["Environment Saved", "Captured Environment", "Domains Saved", "Items Saved", "TaskDomainList", "DisclosureGroup", "Completed"] {
+        for obsolete in ["Environment Saved", "Captured Environment", "Domains Saved", "Items Saved", "DisclosureGroup", "Completed"] {
             precondition(!result.contains(obsolete) && !content.contains(obsolete), "Compact Result must not recreate the saved inventory or competing outcomes")
         }
         let location = source.components(separatedBy: "struct CaptureBundleLocationView: View {")[1]
@@ -1583,6 +1583,47 @@ private struct CaptureRefinementHost: View {
         precondition(WorkspaceSettingLabels.title(domain: "macos-screenshots", identity: "com.apple.screencapture/disable-shadow") == "Window shadow")
         precondition(WorkspaceSettingLabels.title(domain: "macos-screenshots", identity: "com.apple.screencapture/show-thumbnail") == "Floating thumbnail")
         print("PASS: Capture Result file-local Reveal; footer View Log, Capture Again, Done; Screenshots labels")
+    }
+
+    @MainActor static func cleanShellCaptureResultChecks() async throws {
+        _ = NSApplication.shared
+        let enhanced = NSAccessibility.Attribute(rawValue: "AXEnhancedUserInterface")
+        let previous = NSApp.accessibilityAttributeValue(enhanced)
+        NSApp.accessibilitySetValue(true, forAttribute: enhanced)
+        defer { NSApp.accessibilitySetValue(previous, forAttribute: enhanced) }
+        func text(_ value: AnyObject, depth: Int = 0) -> String {
+            guard depth < 40 else { return "" }
+            var result = [value.accessibilityLabel?() ?? ""]
+            if let object = value as? NSObject, object.responds(to: NSSelectorFromString("accessibilityValue")),
+               let content = object.perform(NSSelectorFromString("accessibilityValue"))?.takeUnretainedValue() as? String { result.append(content) }
+            return (result + (value.accessibilityChildren?() ?? []).map { text($0 as AnyObject, depth: depth + 1) }).joined(separator: " ")
+        }
+        let publication = try JSONDecoder().decode(CoreCapturePublication.self, from: Data(
+            #"{"prepared_capture_id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","publication_occurred":true,"destination":"/tmp/fixture.mbt","bundle":{"format_version":1,"selected_categories":[],"selected_item_counts":{"shell-zsh":16,"homebrew-packages":1},"secure_component":false}}"#.utf8))
+        for domain in ["", "shell-zsh", "homebrew-packages"] {
+            let warning = DisplayItem(id: "evidence", title: "Capture evidence", status: .unverified,
+                action: "The selected category's capture details could not be confirmed.", reason: "observation_failed")
+            let notices = domain.isEmpty ? [] : [DisplayCategory(id: domain, title: CaptureCategory.title(for: domain), symbol: "terminal", items: [warning])]
+            var result = CaptureResultPresentation(publication: publication, notices: notices)
+            let item = TaskItemPresentation(id: "saved", item: DisplayItem(id: "saved", title: "Alias: fixture", status: .ready, action: ""), state: .completed)
+            let issues = domain == "shell-zsh" ? [TaskItemPresentation(id: "evidence", item: warning, state: .attention,
+                captureRole: .categoryWarning, resultLabels: ["Needs Attention"], sourceDomain: domain, sourceItemID: warning.id)] : []
+            result.savedDomains = [TaskDomainPresentation(id: "shell-zsh", title: "Aliases & Functions", symbol: "terminal", items: [item] + issues)]
+            let host = NSHostingView(rootView: CaptureResultContent(result: result,
+                expansion: .constant([DeveloperSelectionGroup.shell.id, ShellCommandPresentation.commandsID, "shell-zsh"])) .frame(width: 985))
+            let window = NSWindow(contentRect: .init(x: 100, y: 100, width: 985, height: 900), styleMask: [.titled], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false; window.contentView = host; window.makeKeyAndOrderFront(nil)
+            defer { window.contentView = nil; window.close() }
+            try await Task.sleep(for: .milliseconds(120)); host.layoutSubtreeIfNeeded()
+            let shown = text(host)
+            precondition(shown.contains("Save Complete") && shown.contains("17 items saved"))
+            precondition(shown.contains("fixture.mbt") && shown.contains("Reveal in Finder"))
+            precondition(shown.contains("Saved Shell contents") == (domain == "shell-zsh"))
+            precondition(shown.contains("Needs Attention") == !domain.isEmpty)
+            if domain == "shell-zsh" { precondition(shown.contains(warning.action)) }
+            precondition(result.attention.count == (domain.isEmpty ? 0 : 1))
+        }
+        print("PASS: clean Capture hides saved Shell inventory; genuine selected attention and saved counts/Bundle controls remain")
     }
 
     @MainActor static func restoreSummaryChecks() {
@@ -6184,6 +6225,66 @@ private struct CaptureRefinementHost: View {
         for outcome in [ComparisonOutcome.match, .missing, .different, .needsAttention] {
             precondition(mixedChecked.categoryCount(outcome, category: mixedChecked.categories[0]) == detailed.categoryCount(outcome, category: detailedCategory))
         }
+        var matchingPlan = mixedPlan
+        matchingPlan["warning_count"] = 0
+        matchingPlan["has_planned_changes"] = false
+        matchingPlan["has_executable_changes"] = false
+        matchingPlan["plan"] = zip(mixedIDs, mixedNames).map { ["domain": "shell-zsh", "item_id": $0, "display_name": $1,
+            "action": "none", "disposition": "satisfied"] } + [
+                ["domain": "shell-zsh", "item_id": "scope", "action": "none", "disposition": "information", "reason": "shell_activation_unknown"]]
+        let matchingPrepared = try JSONDecoder().decode(CoreRestorePreparation.self, from: data(matchingPlan))
+        try matchingPrepared.validate(expected: .init(categories: [], items: ["shell-zsh": mixedIDs]), catalog: mixedCatalog)
+        let matchingPreview = RestorePreviewPresentation(matchingPrepared, catalog: mixedCatalog)
+        precondition(matchingPreview.categories[0].items.allSatisfy { $0.status == .matching })
+        precondition(!matchingPreview.needsAttention(matchingPrepared))
+        precondition(matchingPreview.summary == "0 changes · 4 already match · 0 need attention")
+        let matchingTasks = RestoreTaskPresentation(preview: matchingPreview, plan: matchingPrepared)
+        let matchingCounts = RestorePreviewMetrics.counts(matchingTasks.domains)
+        precondition(matchingCounts.matching == 4 && matchingCounts.attention == 0 && matchingCounts.changes == 0)
+        precondition(matchingTasks.domains[0].scopeInformation == ShellCommandPresentation.activationSummary)
+        precondition(matchingTasks.domains[0].state == .matching && matchingTasks.automaticAttentionCount == 0)
+        precondition(matchingTasks.confirmationMessages(matchingPrepared).isEmpty)
+        for (key, value) in [("domain", "git-configuration"), ("item_id", mixedIDs[0]), ("action", "create"), ("reason", "observation_failed")] {
+            var invalid = matchingPlan, rows = matchingPlan["plan"] as! [Object]
+            rows[rows.count - 1][key] = value; invalid["plan"] = rows
+            do {
+                let malformed = try JSONDecoder().decode(CoreRestorePreparation.self, from: data(invalid))
+                try malformed.validate(expected: .init(categories: [], items: ["shell-zsh": mixedIDs]), catalog: mixedCatalog)
+                preconditionFailure("An unrelated warning must not be admitted as informational scope")
+            } catch {}
+        }
+        var matchingCheck = mixedCheck
+        matchingCheck["comparison"] = ["status": "complete", "verdict": "no_differences_detected", "also_incomplete": false,
+            "counts": ["matching": 4, "missing": 0, "differing": 0, "unverified": 0, "unsupported": 0, "unresolved": 0, "extra": 0, "unknown_difference": 0]]
+        var matchingRecords = mixedRecords
+        matchingRecords["coverage_records"] = [["record_id": "c:scope", "domain": "shell-zsh", "item_id": "scope", "disposition": "resolved", "source_status": "partial"]]
+        matchingRecords["diagnostics"] = [["record_id": "c:scope", "code": "shell_activation_unknown", "severity": "info", "phase": "scope"]]
+        matchingCheck["records"] = matchingRecords
+        matchingCheck["comparison_records"] = mixedIDs.enumerated().map { ["record_id": "v:\($0.offset)", "domain": "shell-zsh", "item_id": $0.element,
+            "comparison_kind": "matching", "support": "supported"] }
+        let matchingChecked = try presentation(matchingCheck)
+        precondition(matchingChecked.categories[0].items.filter { $0.title != "Shell coverage" }.allSatisfy { $0.status == .matching })
+        precondition(!matchingChecked.needsAttention && matchingChecked.attentionCount == 0)
+        precondition(matchingChecked.headline == "No differences detected" && matchingChecked.categories[0].comparisonStatus == .matching)
+        let activation = matchingChecked.categories[0].items.first { $0.title == "Shell coverage" }!
+        precondition(activation.status == .information && activation.action == ShellCommandPresentation.activationSummary)
+        precondition(activation.reason!.contains("info: shell_activation_unknown"))
+        precondition(matchingChecked.categoryCount(.match, category: matchingChecked.categories[0]) == 4)
+        precondition(matchingChecked.categoryCount(.needsAttention, category: matchingChecked.categories[0]) == 0)
+        // Informational scope never suppresses a genuine selected-item failure.
+        for (kind, expectedAttention) in [("unverified", true), ("differing", false)] {
+            var bad = matchingCheck, summary = matchingCheck["comparison"] as! Object
+            var counts = summary["counts"] as! [String: Int], rows = matchingCheck["comparison_records"] as! [Object]
+            counts["matching"] = 3; counts[kind] = 1; summary["counts"] = counts
+            summary["verdict"] = kind == "unverified" ? "incomplete" : "differences_detected"
+            rows[0]["comparison_kind"] = kind; bad["comparison_records"] = rows; bad["comparison"] = summary
+            let status = try presentation(bad)
+            precondition(status.counts["matching"] == 3 && status.counts[kind] == 1 && status.needsAttention == expectedAttention)
+            precondition(status.categories[0].comparisonStatus == (expectedAttention ? .attention : .different))
+        }
+        precondition(OperationLogSanitizer.reasons.contains("shell_activation_unknown"))
+        precondition(DiagnosticReportPrivacy.code("shell_activation_unknown", key: "code") == "shell_activation_unknown")
+        precondition(DiagnosticReportPrivacy.code("information", key: "disposition") == "information")
         precondition(ShellDefinitionPresentation.title(domain: "shell-zsh", id: mixedIDs[0], name: "Function: zeta") == "Function: zeta")
         precondition(ShellDefinitionPresentation.title(domain: "shell-zsh", id: "shell-script:" + digest, name: "~/bin/tool") == "~/bin/tool")
         for (status, code, title, message) in [
@@ -7322,6 +7423,7 @@ private struct CaptureRefinementHost: View {
         setbuf(stdout, nil)
         print("CHECK: PresentationTests entry")
         developerIconChecks()
+        if CommandLine.arguments.contains("--capture-result-actions-only") { captureResultActionsChecks(); try! await cleanShellCaptureResultChecks(); return }
         if CommandLine.arguments.contains("--result-stabilization-only") { try! await rebuildResultStabilizationChecks(); return }
         if CommandLine.arguments.contains("--preview-status-only") { try! await previewCategoryStatusChecks(); return }
         if CommandLine.arguments.contains("--shared-result-only") {
@@ -7398,6 +7500,7 @@ private struct CaptureRefinementHost: View {
         if CommandLine.arguments.contains("--restore-macos-only") { await restoreMacOSChecks(); return }
         if CommandLine.arguments.contains("--workflow-scroll-only") { try! await workflowStatusScrollChecks(); return }
         if CommandLine.arguments.count == 1 {
+            try! await cleanShellCaptureResultChecks()
             try! await rebuildResultStabilizationChecks()
             try! await hierarchicalWarningChecks()
             try! await previewCategoryStatusChecks()
@@ -7440,7 +7543,6 @@ private struct CaptureRefinementHost: View {
         if CommandLine.arguments.contains("--capture-checkpoint-only") { captureCompactSettingsChecks(); captureResultActionsChecks(); screenshotsIncludedSettingsChecks(); windowsIncludedSettingsChecks(); captureResultAlignmentChecks(); return }
         if CommandLine.arguments.contains("--windows-included-only") { windowsIncludedSettingsChecks(); return }
         if CommandLine.arguments.contains("--screenshots-included-only") { screenshotsIncludedSettingsChecks(); return }
-        if CommandLine.arguments.contains("--capture-result-actions-only") { captureResultActionsChecks(); return }
         if CommandLine.arguments.contains("--rosetta-only") { restoreSummaryChecks(); return }
         if CommandLine.arguments.contains("--unsupported-repair-explanation-only") { unsupportedRepairExplanationChecks(); return }
         if CommandLine.arguments.contains("--text-status-layout-only") { textStatusLayoutChecks(); return }

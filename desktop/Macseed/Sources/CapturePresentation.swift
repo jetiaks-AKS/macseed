@@ -14,6 +14,7 @@ enum ShellCommandPresentation {
     static let restoreHelp = "Restoring executable code requires explicit authorization for each file. Capture consent does not grant Restore consent. File conformity does not prove safe or successful execution; script dependencies may remain unknown. Existing files are protected against unsafe replacement. Macseed does not execute scripts during Restore or Verification. Restored Shell configuration may execute them in a later interactive session."
     static let coverageTitle = "Shell coverage"
     static let coverageSummary = "Some Shell settings or dependencies are outside the saved scope."
+    static let activationSummary = "Selected Shell definitions and files match. Runtime activation and dynamic Shell startup were not verified."
     static let definitionRestoreNotice = "Selected Shell definitions will be added to qualified source files. Where needed, Macseed will create its own definitions file and connect it to Zsh startup. Conflicting definitions are preserved. This does not verify tools, environment or runtime behavior."
     static func dependencyExplanation(_ reason: String?) -> String? {
         switch reason {
@@ -1459,7 +1460,7 @@ struct CaptureResultContent: View {
             CaptureBundleLocationView(destination: result.destination, showsReveal: true)
                 .padding(14).frame(maxWidth: .infinity, alignment: .leading)
                 .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 8))
-            if !result.savedDomains.isEmpty {
+            if !result.savedDomains.isEmpty && result.attention.contains(where: { $0.id == "shell-zsh" }) {
                 TaskDomainList(domains: result.savedDomains, stateTitles: [.completed: "Saved"], compactReadyItems: true,
                     title: "Saved Shell contents", captureResultLayout: true, captureHierarchy: true,
                     settingsCategories: CaptureSettingsPresentation.children(result.savedDomains), expansion: treeExpansion,
