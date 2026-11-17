@@ -25,7 +25,7 @@ enum DiagnosticReportPrivacy {
         "source_status": ["present", "absent", "unavailable", "observation_error", "unsupported", "valid", "invalid", "observed_present", "observed_absent", "partial", "unobserved", "unknown"],
         "severity": ["info", "warning", "error"],
         "comparison_kind": ["matching", "missing", "differing", "unverified", "unsupported", "unresolved", "extra", "unknown_difference"],
-        "predicate": ["exists", "installed", "configured", "matching", "repository", "branch", "remote", "identity", "settings", "folder_exists", "package_installed", "configuration_matches", "identity_pair_matches_package", "identity_set_matches_package", "directory", "file_content", "alias_definition", "alias_recovery", "script_file", "stored_preference", "direct_global_value", "supported_config_match", "worktree", "origin", "revision", "topology", "folder_relationships"],
+        "predicate": ["exists", "installed", "configured", "matching", "repository", "branch", "remote", "identity", "settings", "folder_exists", "package_installed", "configuration_matches", "identity_pair_matches_package", "identity_set_matches_package", "directory", "file_content", "alias_definition", "alias_recovery", "function_definition", "script_file", "stored_preference", "direct_global_value", "supported_config_match", "worktree", "origin", "revision", "topology", "folder_relationships"],
         "scope": ["operation", "item", "execution_launch"],
         "tool": ["homebrew", "other"],
         "probe": ["version", "prefix", "inventory", "metadata", "capability", "read"],
@@ -38,7 +38,7 @@ enum DiagnosticReportPrivacy {
         "publication_failed", "bootstrap_failed", "process_observation_unavailable", "privileged_lifecycle_unknown", "item_stalled_timeout", "item_install_failed",
         "progress_observation_failed", "observation_failed", "observation_error", "prerequisite_unmet", "unsupported_predicate", "confirmed_mismatch", "unknown_difference",
         "reference_invalid", "comparison_failed", "comparison_reporting_incomplete", "reference_changed", "reference_unavailable", "comparison_unavailable", "capture_failed", "capture_discovery_failed", "capture_inventory_invalid", "capture_validation_failed",
-        "capture_source_unavailable", "invalid_workspace_selection", "workspace_dependency_missing", "workspace_path_conflict",
+        "capture_source_unavailable", "source_partial", "no_supported_items", "invalid_workspace_selection", "workspace_dependency_missing", "workspace_path_conflict",
         "external_identity_unsafe", "external_identity_name_invalid", "external_identity_pair_missing", "external_identity_pair_invalid", "external_identity_changed", "external_identity_duplicate", "external_identity_invalid_request",
         "invalid_destination", "destination_exists", "destination_changed", "secure_bridge_required", "age_unavailable", "secure_bridge_unavailable", "secure_timeout",
         "secure_comparison_failed", "secure_comparison_unavailable", "secure_target_changed", "secure_import_failed", "secure_export_failed", "secure_input_invalid", "invalid_secure_selection", "readiness_failed", "cask_authorization_required",
@@ -272,6 +272,9 @@ struct DiagnosticReportBuilder {
         for key in diagnosticFlags.keys.sorted() { lines.append("\(key): \(diagnosticFlags[key]! ? "true" : "false")") }
         lines += ["", "Verification status: " + (finish?.verificationStatus ?? verification.codes["status"] ?? "Unknown"),
                   "Verification details completeness: " + (finish?.detailStatus ?? "Unknown")]
+        if (header?.operation == .capturePrepare || header?.operation == .captureExecute), finish?.verificationStatus == "not_run" {
+            lines.append("Capture does not run Restore/Check verification; not_run is expected.")
+        }
         if let value = verification.codes["verdict"] { lines.append("Verification verdict: " + value) }
         for key in verification.counts.keys.sorted() { lines.append("Verification \(key): \(verification.counts[key]!)") }
         for key in execution.counts.keys.sorted() { lines.append("Execution \(key): \(execution.counts[key]!)") }

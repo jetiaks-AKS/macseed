@@ -97,7 +97,7 @@ import CryptoKit
         await prepare()
         precondition(!model.canRebuild && model.preparation?.hasComparedExecutableChanges == false)
         precondition(model.preparation!.plan.contains { $0.itemID == alias && $0.disposition == "blocked" && $0.reason == "shell_dependency_missing_prerequisite" })
-        let blocker = model.preview!.categories.flatMap(\.items).first { $0.title == "platform" }!
+        let blocker = model.preview!.categories.flatMap(\.items).first { $0.title == "Alias: platform" }!
         precondition(blocker.action.contains("missing") && blocker.action.contains("Scripts") && !blocker.action.contains("Install"),
                      "A missing saved dependency must explain the existing selection route")
         let missingHome = try fm.contentsOfDirectory(atPath: home.path)
@@ -141,8 +141,8 @@ import CryptoKit
             events: model.categoryPresentationEvents, result: model.executionResult, operationProgress: true)
         precondition(tasks.automaticDomains.count == 1 && tasks.automaticDomains[0].items.count == 3,
                      "Alias, independently restored file and retained Shell coverage")
-        precondition(tasks.automaticDomains[0].items.filter { $0.item.title == "platform" }.count == 1)
-        precondition(tasks.automaticDomains[0].items.first { $0.item.title == "platform" }!.resultLabels.contains("Verified"))
+        precondition(tasks.automaticDomains[0].items.filter { $0.item.title == "Alias: platform" }.count == 1)
+        precondition(tasks.automaticDomains[0].items.first { $0.item.title == "Alias: platform" }!.resultLabels.contains("Verified"))
         precondition(RestoreExecutionCategories.disclosureIDs(tasks.automaticDomains) == ["shell-zsh"], "Progress/Result keep their flat execution category")
         let status = EnvironmentStatusModel(runtime: runtime, location: location)
         func check(_ matching: Int, _ differing: Int) async {
@@ -150,7 +150,7 @@ import CryptoKit
             precondition(status.state == .result && status.presentation?.counts["matching"] == matching && status.presentation?.counts["differing"] == differing)
             precondition(status.presentation?.categories.count == 1 && status.presentation?.categories[0].items.count == 3,
                          "Independent alias and script evidence plus one coverage diagnostic")
-            precondition(status.presentation?.categories[0].items.filter { $0.title == "platform" }.count == 1
+            precondition(status.presentation?.categories[0].items.filter { $0.title == "Alias: platform" }.count == 1
                          && status.presentation?.categories[0].items.filter { $0.title == "Shell coverage" && $0.status == .attention }.count == 1)
             precondition(EnvironmentComparisonView.disclosureIDs(status.presentation!) == [DeveloperSelectionGroup.shell.id, "shell-zsh", ShellCommandPresentation.aliasesID, ShellCommandPresentation.scriptsID])
         }
@@ -163,7 +163,7 @@ import CryptoKit
         precondition(!model.canRebuild && model.preparation?.shellScripts == nil)
         precondition(model.preparation!.plan.filter { $0.itemID == alias }.allSatisfy { $0.disposition == "satisfied" })
         let matchingTasks = RestoreTaskPresentation(preview: model.preview!, plan: model.preparation!)
-        let matchingAlias = matchingTasks.domains.flatMap(\.items).first { $0.item.title == "platform" }!
+        let matchingAlias = matchingTasks.domains.flatMap(\.items).first { $0.item.title == "Alias: platform" }!
         precondition(RestorePreviewVisibility.isMatching(matchingAlias))
         precondition(matchingTasks.domains.flatMap(\.previewItems).filter { !RestorePreviewVisibility.isMatching($0) }.count == 1,
                      "Matching aliases are hidden; genuine partial coverage remains visible")
@@ -211,9 +211,10 @@ import CryptoKit
         let fileStatus = EnvironmentStatusModel(runtime: runtime, location: fileLocation)
         fileStatus.selectBundle(fileArchive); fileStatus.compare(); await fileStatus.waitForCompletion()
         precondition(fileStatus.state == .result && fileStatus.presentation?.counts["matching"] == 1)
-        let expectedScriptTitle = "~/" + script.path
+        let expectedScriptTitle = ShellScriptPresentation.title(script.path, paths: [script.path])
         let checkedScriptItems = fileStatus.presentation?.categories.flatMap(\.items) ?? []
-        precondition(checkedScriptItems.contains { $0.title == expectedScriptTitle && $0.status == .matching })
+        precondition(checkedScriptItems.contains { $0.id == "shell-zsh:shell-script:" + script.id
+            && $0.title == expectedScriptTitle && $0.pathHelp == "~/" + script.path && $0.status == .matching })
         fileModel.choose(fileArchive); await fileModel.waitForCompletion(); fileModel.selectShellScript(script.id, included: true)
         fileModel.refreshPreview(); await fileModel.waitForCompletion()
         precondition(fileModel.state == .preview && !fileModel.canRebuild && fileModel.preparation?.shellScripts == nil)
@@ -234,9 +235,14 @@ import CryptoKit
         precondition(blocked.state == .preview && blocked.canRebuild && blocked.shellScriptConsentReady)
         let blockedPlan = blocked.preparation!
         precondition(blockedPlan.shellSkippedItems?.count == 2 && blockedPlan.plan.filter { $0.disposition == "planned" }.count == 2)
+        let blockedTasks = RestoreTaskPresentation(preview: blocked.preview!, plan: blockedPlan)
         for candidate in blocked.selectedShellScripts {
             precondition(blockedPlan.plan.contains { $0.itemID == "shell-script:" + candidate.id && $0.disposition == "planned" })
-            precondition(blocked.preview!.categories.flatMap(\.items).contains { $0.id == "shell-zsh:shell-script:" + candidate.id || $0.title.contains(candidate.path) },
+            precondition(blockedTasks.domains.flatMap(\.items).contains {
+                $0.sourceDomain == "shell-zsh" && $0.sourceItemID == "shell-script:" + candidate.id
+                    && $0.item.title == ShellScriptPresentation.title(candidate.path, paths: blocked.selectedShellScripts.map(\.path))
+                    && $0.item.pathHelp == "~/" + candidate.path
+            },
                          "Every independently selected file, including alias-linked B, appears in native Preview")
         }
         var withoutSkip = blockedPlan; withoutSkip.shellSkippedItems = nil
@@ -375,7 +381,7 @@ import CryptoKit
         let checked = status.presentation!
         precondition(checked.counts["matching"] == 1 && checked.counts["unresolved"] == 0 && !checked.needsAttention)
         precondition(checked.categories.count == 1 && checked.categories[0].id == "shell-zsh" && checked.categories[0].title == "Custom Commands")
-        precondition(checked.categories[0].items.count == 1 && checked.categories[0].items[0].title == "~/" + script.path && checked.categories[0].items[0].status == .matching)
+        precondition(checked.categories[0].items.count == 1 && checked.categories[0].items[0].title == ShellScriptPresentation.title(script.path, paths: [script.path]) && checked.categories[0].items[0].pathHelp == "~/" + script.path && checked.categories[0].items[0].status == .matching)
         precondition(EnvironmentComparisonView.disclosureIDs(checked) == [DeveloperSelectionGroup.shell.id, "shell-zsh", ShellCommandPresentation.scriptsID], "Check keeps its existing hierarchy")
         if !CommandLine.arguments.contains("--no-renders") {
             for dark in [false, true] {
@@ -2250,9 +2256,9 @@ import CryptoKit
                 }
                 let controls = boxes(host)
                 if model.state == .review {
-                    precondition(controls.first { $0.accessibilityLabel() == "platform" }?.state == .on)
+                    precondition(controls.first { $0.accessibilityLabel() == "Alias: platform" }?.state == .on)
                     let script = model.shellScriptCandidates[0]
-                    precondition(controls.first { $0.accessibilityLabel() == "~/" + script.path }?.state
+                    precondition(controls.first { $0.accessibilityLabel() == ShellScriptPresentation.title(script.path, paths: model.shellScriptCandidates.map(\.path)) }?.state
                                  == (model.authorizedShellScripts.contains(script.id) ? .on : .off))
                     precondition(controls.first { $0.accessibilityLabel() == "Select Scripts" }?.state
                                  == (model.authorizedShellScripts.contains(script.id) ? .on : .off))

@@ -5724,6 +5724,28 @@ private struct CaptureRefinementHost: View {
             }
         }
         print("PASS: strict Capture warning propagation, clean siblings Ready, separate Save Complete/result attention, counts retained, zero status hidden, main labels unchanged; expanded/collapsed 580/985 pt Light/Dark")
+        let observation = try JSONDecoder().decode(CoreCaptureShellObservation.self, from: Data(#"{"status":"observed","codes":["unsupported_context"]}"#.utf8))
+        let qualified = CaptureCategory(row: shell.row, shellObservation: observation)
+        let ready = CaptureTaskPresentation(categories: [qualified], selection: selection, phase: .confirmation)
+        precondition(ready.domains[0].state == .planned && ready.domains[0].items.count == 12)
+        for expanded in [false, true] {
+            let tree: Set<String> = expanded ? [DeveloperSelectionGroup.shell.id, ShellCommandPresentation.commandsID, "shell-zsh", ShellCommandPresentation.scriptsID] : []
+            let view = TaskDomainList(domains: ready.domains, stateTitles: [.planned: "Ready to Save"], compactReadyItems: true,
+                captureHierarchy: true, expansion: .constant(tree), captureShellScripts: [script], captureShellScriptInspections: [script.id: inspection])
+                .frame(width: 985)
+            let host = NSHostingView(rootView: view)
+            let window = NSWindow(contentRect: .init(x: 100, y: 100, width: 985, height: 900), styleMask: [.titled], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false; window.contentView = host; window.makeKeyAndOrderFront(nil)
+            defer { window.contentView = nil; window.close() }
+            try await Task.sleep(for: .milliseconds(120)); host.layoutSubtreeIfNeeded()
+            for title in expanded ? ["Shell", "Custom Commands", "Aliases & Functions", "Scripts"] : ["Shell"] {
+                let header = elements(host).first { [.button, .disclosureTriangle].contains($0.accessibilityRole?()) && ($0.accessibilityLabel?()?.hasPrefix(title + ",") == true) }
+                precondition(header != nil && text(header!).contains("Ready to Save"), "Ready parent/child header: " + title)
+            }
+            precondition(!text(host).contains("Needs Attention"))
+            if expanded { precondition(text(host).contains("12 items included") && text(host).contains("1 item included")) }
+        }
+        print("PASS: qualified Shell Confirmation parents remain Ready to Save collapsed/expanded; informational scope does not add attention; exact child counts")
         try await captureScriptConfirmationChecks()
     }
 
@@ -5782,7 +5804,19 @@ private struct CaptureRefinementHost: View {
                 precondition(!label.contains(issue == "none" ? "Needs Attention" : "Ready to Save"))
                 precondition(labels.contains { $0.hasPrefix("Aliases & Functions,") && $0.contains("Needs Attention") })
                 precondition(content.contains("Selected script files will be saved unencrypted.") == expanded)
-                if expanded { for script in scripts { precondition(content.contains("~/" + script.path)) } }
+                if expanded {
+                    let help = nodes.flatMap { node -> [String] in
+                        ["accessibilityHelp", "accessibilityHint"].compactMap { name in
+                            let selector = NSSelectorFromString(name)
+                            guard let object = node as? NSObject, object.responds(to: selector) else { return nil }
+                            return object.perform(selector)?.takeUnretainedValue() as? String
+                        }
+                    }
+                    for script in scripts {
+                        precondition(content.contains(ShellScriptPresentation.title(script.path, paths: scripts.map(\.path))))
+                        precondition(help.contains("~/" + script.path), "Full validated Script path remains accessible")
+                    }
+                }
             }
         }
         print("PASS: prepared Scripts Ready to Save / 6 items included; selected-file problems Needs Attention; alias/unselected warnings isolated; disclosure and unencrypted-content notice retained")
@@ -6071,7 +6105,8 @@ private struct CaptureRefinementHost: View {
             "domain": "shell-zsh", "status": "present", "selection_mode": "items",
             "items": zip(mixedIDs, mixedNames).map { ["item_id": $0, "label": $1] }])))
         let mixedSelection = CoreCaptureSelection(categories: [], items: ["shell-zsh": mixedIDs], secureIdentities: [])
-        let selectionBytes = try JSONEncoder().encode(mixedSelection)
+        let selectionEncoder = JSONEncoder(); selectionEncoder.outputFormatting = [.sortedKeys]
+        let selectionBytes = try selectionEncoder.encode(mixedSelection)
         let publication = CoreCapturePublication(publicationOccurred: true, destination: "/fixture.mbt", preparedCaptureID: digest,
             bundle: .init(formatVersion: 1, selectedCategories: [], selectedItemCounts: ["shell-zsh": 4], secureComponent: false))
         precondition(mixedCapture.display.items.map(\.title) == expectedNames)
@@ -6081,7 +6116,7 @@ private struct CaptureRefinementHost: View {
             precondition(tasks.domains[0].items.map { $0.item.title } == expectedNames)
             precondition(tasks.domains[0].items.map(\.id) == expectedIDs.map { "shell-zsh:" + $0 })
         }
-        let unchangedSelectionBytes = try JSONEncoder().encode(mixedSelection)
+        let unchangedSelectionBytes = try selectionEncoder.encode(mixedSelection)
         precondition(unchangedSelectionBytes == selectionBytes)
         let mixedCatalog = CoreRestoreInspection.Inventory(groups: [.init(id: "Shell", domains: ["shell-zsh"])], inventory: [
             .init(domain: "shell-zsh", label: "Aliases & Functions", selectionMode: "items", availability: "available", reason: nil,
@@ -6169,10 +6204,22 @@ private struct CaptureRefinementHost: View {
         let partialDefinitions = try JSONDecoder().decode(CoreCaptureShellObservation.self, from: data(["status": "observed", "codes": ["unsupported_context"]]))
         precondition(partialDefinitions.notice == nil)
         let partialCategory = CaptureCategory(row: captured.row, shellObservation: partialDefinitions)
-        precondition(partialCategory.notices.count == 1)
-        precondition(partialCategory.notices[0].action.contains("Listed definitions are eligible"))
-        precondition(partialCategory.notices[0].action.contains("Startup initialization"))
-        precondition(!partialCategory.notices[0].action.contains("Functions are excluded"))
+        precondition(partialCategory.notices.isEmpty && partialCategory.informationalShellCoverage)
+        precondition(partialCategory.shellCoverageMessage.contains("Listed definitions are eligible"))
+        precondition(partialCategory.shellCoverageMessage.contains("Startup initialization"))
+        precondition(!partialCategory.shellCoverageMessage.contains("Functions are excluded"))
+        let capturedSelection = CoreCaptureSelection(categories: [], items: ["shell-zsh": [ids[0]]], secureIdentities: [])
+        let ready = CaptureTaskPresentation(categories: [partialCategory], selection: capturedSelection, phase: .confirmation).domains[0]
+        precondition(ready.state == .planned && ready.items.count == 1 && ready.scopeInformation == partialCategory.shellCoverageMessage)
+        precondition(CaptureSummaryPresentation.review(categories: [partialCategory], domainCount: 1, itemCount: 1).attentionCount == 0)
+        for code in ["unsafe_source", "source_changed", "ambiguous_function", "unknown_code"] {
+            let uncertain = try JSONDecoder().decode(CoreCaptureShellObservation.self, from: data(["status": "observed", "codes": [code]]))
+            let category = CaptureCategory(row: captured.row, shellObservation: uncertain)
+            precondition(category.notices.count == 1 && !category.informationalShellCoverage)
+        }
+        let paths = ["Infrastructure/DNS/tool.sh", "Infrastructure/Tools/tool.sh", "bin/unique.py"]
+        precondition(paths.map { ShellScriptPresentation.title($0, paths: paths) } == ["DNS/tool.sh", "Tools/tool.sh", "unique.py"])
+        precondition(paths.map { ShellScriptPresentation.title($0, paths: paths.reversed()) } == ["DNS/tool.sh", "Tools/tool.sh", "unique.py"])
         precondition(partialDefinitions.coverageMessage(aliasCount: 2, saved: true)!.contains("Selected definitions were saved."))
         for malformed: Any in [true, [false], [String(repeating: "x", count: 81)], Array(repeating: "unsupported_context", count: 33)] {
             precondition((try? JSONDecoder().decode(CoreCaptureShellObservation.self, from: data(["status": "unsupported", "codes": malformed]))) == nil)
@@ -6915,9 +6962,11 @@ private struct CaptureRefinementHost: View {
         let children = EnvironmentComparisonDomain.shellChildren(checked.categories[0])
         precondition(children.map(\.title) == ["Aliases & Functions", "Scripts"])
         precondition(children.map { $0.items.count } == [4, 1] && Set(children.flatMap(\.items).map(\.id)).count == 5)
-        precondition(checked.categories[0].items.first { $0.title == "c." }!.action.contains("ownership"))
-        precondition(!checked.categories[0].items.first { $0.title == "c." }!.action.contains("not found"))
-        precondition(checked.categories[0].items.first { $0.title == "bootstrap" }!.action.contains("folder or repository"))
+        let directoryAlias = checked.categories[0].items.first { $0.id == "shell-zsh:" + ids[1] }!
+        let bootstrapAlias = checked.categories[0].items.first { $0.id == "shell-zsh:" + ids[2] }!
+        precondition(directoryAlias.title == "Alias: c." && directoryAlias.action.contains("ownership"))
+        precondition(!directoryAlias.action.contains("not found"))
+        precondition(bootstrapAlias.title == "Alias: bootstrap" && bootstrapAlias.action.contains("folder or repository"))
         for (kind, status) in [("matching", DisplayStatus.matching), ("missing", .missing), ("differing", .different), ("unverified", .unverified)] {
             var variant = payload
             var rows = variant["comparison_records"] as! [Object]

@@ -32,6 +32,13 @@ import Darwin
 
     static func sanitizerTests() throws {
         var sanitizer = OperationLogSanitizer()
+        for (domain, status, reason) in [("shell-zsh", "present", "source_partial"), ("vscode-workspaces", "unavailable", "no_supported_items")] {
+            let record = sanitizer.event(try event(1, "capture_category", ["domain": .string(domain), "status": .string(status), "reason": .string(reason),
+                "source": .string("PRIVATE_SHELL_CONTENT"), "path": .string("/Users/private/file")]), at: Date())
+            check(record.omitted == false && record.facts?.codes["reason"] == reason)
+            let text = String(decoding: try raw(record), as: UTF8.self)
+            check(!text.contains("PRIVATE_SHELL_CONTENT") && !text.contains("/Users/private"))
+        }
         for code in ["invalid_workspace_selection", "workspace_dependency_missing", "workspace_path_conflict", "capture_source_unavailable"] {
             check(OperationLogSanitizer.runtimeCode(.coreFailure(code)) == code)
             let record = sanitizer.event(try event(1, "failed", ["code": .string(code),

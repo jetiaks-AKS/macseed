@@ -445,7 +445,7 @@ struct EnvironmentComparisonItem: View {
                             ContextualHelpButton(id: "check.help." + item.id, title: item.title, description: coverageHelp,
                                 hint: "Shows coverage details without changing this Mac.")
                         }
-                    } else { Text(item.title) }
+                    } else { Text(item.title).help(item.pathHelp ?? item.title).accessibilityHint(item.pathHelp ?? item.title) }
                     if !suppressExplanation, let explanation = item.comparisonExplanation {
                         Text(explanation).font(.caption).foregroundStyle(.secondary)
                     }

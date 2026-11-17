@@ -47,6 +47,22 @@ private actor ReportReadGate {
         check(failed.contains("unknown_consequences: true") && failed.contains("publication_occurred: true"))
         let success = makeReport([header(id, operation: .captureExecute), finish()], id: id).text
         check(success.contains("Process Result: Completed") && success.contains("Log completeness: Complete"))
+        var sanitizer = OperationLogSanitizer()
+        let captureEvents: [OperationLogRecord] = [("started", [:]),
+            ("capture_category", ["domain": CoreJSON.string("shell-zsh"), "status": .string("present"), "reason": .string("source_partial")]),
+            ("capture_category", ["domain": .string("vscode-workspaces"), "status": .string("unavailable"), "reason": .string("no_supported_items")]),
+            ("result", ["publication_occurred": .bool(true), "destination": .string("/Users/private/PRIVATE_BUNDLE"), "verification": .object(["status": .string("not_run")])]),
+            ("completed", [:])].enumerated().map { index, value in
+                let event = try! CoreEvent(line: JSONEncoder().encode(CoreJSON.object(["protocol_version": .integer(1), "operation_id": .string("fixture"),
+                    "sequence": .integer(index + 1), "type": .string(value.0), "data": .object(value.1)])))
+                return sanitizer.event(event, at: time)
+            }
+        check(captureEvents.allSatisfy { $0.omitted != true })
+        let captured = makeReport([header(id, operation: .captureExecute)] + captureEvents + [finish(verification: "not_run", details: "not_run")], id: id).text
+        check(captured.contains("Log completeness: Complete") && captured.contains("not_run is expected") && captured.contains("publication_occurred: true"))
+        check(captured.contains("source_partial") && captured.contains("no_supported_items") && !captured.contains("PRIVATE_BUNDLE"))
+        var lost = captureEvents[1]; lost.omitted = true
+        check(makeReport([header(id, operation: .captureExecute), lost, finish(verification: "not_run")], id: id).text.contains("Log completeness: Incomplete"))
         let notRun = makeReport([header(id, operation: .bundleInspect), finish(verification: "not_run", details: nil)], id: id).text
         check(notRun.contains("Verification status: not_run") && notRun.contains("Verification details completeness: Unknown"))
         check(!notRun.contains("verified_count:") && !notRun.contains("Execution error_count:"))

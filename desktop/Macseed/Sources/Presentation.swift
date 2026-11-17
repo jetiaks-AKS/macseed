@@ -92,6 +92,21 @@ struct DisplayItem: Identifiable, Equatable {
     var reason: String? = nil
     var restoreReadyText: String? = nil
     var restoreActivity: String? = nil
+    var pathHelp: String? = nil
+}
+
+// Only validated HOME-relative Script paths reach this display projection.
+// Reuse the consent dialog's shortest unique suffix rule on every screen.
+enum ShellScriptPresentation {
+    static func title(_ path: String, paths: [String]) -> String {
+        let parts = path.split(separator: "/")
+        let unique = Set(paths)
+        for count in 1...parts.count {
+            let suffix = parts.suffix(count).joined(separator: "/")
+            if unique.filter({ $0 == suffix || $0.hasSuffix("/" + suffix) }).count == 1 { return suffix }
+        }
+        return path
+    }
 }
 
 struct DisplayCategory: Identifiable, Equatable {

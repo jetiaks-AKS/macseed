@@ -1406,7 +1406,7 @@ struct RestoreResultItemRow: View {
         VStack(alignment: .leading, spacing: 4) {
             RestoreResultColumns {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(item.item.title)
+                    Text(item.item.title).help(item.item.pathHelp ?? item.item.title).accessibilityHint(item.item.pathHelp ?? item.item.title)
                     if explanation == nil, !suppressExplanation, RestoreFinalDomain.showsItemDetails(item), let detail {
                         Text(detail).font(.caption).foregroundStyle(.secondary)
                     }

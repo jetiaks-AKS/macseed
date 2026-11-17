@@ -236,7 +236,12 @@ def functional_domain_count(chosen, scripts, rows):
 
 def typed_selection(selection, rows):
     wanted = (selection or {}).get('items', {}).get('shell-zsh', [])
-    legacy = next(row for row in rows if row['domain'] == 'shell-zsh')
+    legacy = next((row for row in rows if row['domain'] == 'shell-zsh'), None)
+    if legacy is None:
+        if ('shell-zsh' in (selection or {}).get('categories', [])
+                or 'shell-zsh' in (selection or {}).get('items', {})):
+            raise CaptureError('invalid_selection')
+        return []
     legacy_ids = {row['item_id'] for row in legacy.get('_legacy', legacy)['items']}
     return wanted if any(functions.function_id(key) or key not in legacy_ids for key in wanted) else []
 

@@ -116,11 +116,13 @@ struct RestorePreviewPresentation {
                 && row.disposition == "warning" && row.reason == "partial_source_coverage"
             let legacyShell = row.domain == "shell-zsh" && catalog.inventory.first(where: { $0.id == row.domain })?.selectionMode == "category"
             let rawTitle = isShellCoverage ? ShellCommandPresentation.coverageTitle : legacyShell ? "Saved Zsh file" : isSSHCoverage ? "SSH configuration coverage" : row.isSSHDependency ? "SSH key references" : row.isSecureImport ? "Encrypted SSH identity package" : inventoryLabel ?? row.displayName ?? (row.itemID.hasPrefix("opaque:") ? "Private item" : (row.itemID == "scope" ? "Selected area" : row.itemID))
-            let title = ShellDefinitionPresentation.title(domain: row.domain, id: row.itemID, name: rawTitle)
+            let script = row.domain == "shell-zsh" ? prepared.shellScriptCandidates?.first { "shell-script:" + $0.id == row.itemID } : nil
+            let title = script.map { ShellScriptPresentation.title($0.path, paths: (prepared.shellScriptCandidates ?? []).map(\.path)) }
+                ?? ShellDefinitionPresentation.title(domain: row.domain, id: row.itemID, name: rawTitle)
             identities["restore-\(index)"] = row.itemID
             let action = row.assistedAppStoreItem?.message ?? row.unsupportedRepairExplanation ?? row.diagnostic?.explanation ?? reasonMessage ?? (row.authorizationRequired == true ? message + " · Administrator authorization required" : message)
             let conditional = ["workspace_dependency_pending", "workspace_commit_after_clone", "git_ssh_restore_pending"].contains(row.reason ?? "")
-            rows[row.domain, default: []].append(DisplayItem(id: "restore-\(index)", title: title, status: status, action: action, reason: row.reason, restoreReadyText: status == .ready ? (row.isSSHDependency ? "After Secure Transfer" : conditional ? "Conditional" : Self.readyText(action: row.action)) : nil))
+            rows[row.domain, default: []].append(DisplayItem(id: "restore-\(index)", title: title, status: status, action: action, reason: row.reason, restoreReadyText: status == .ready ? (row.isSSHDependency ? "After Secure Transfer" : conditional ? "Conditional" : Self.readyText(action: row.action)) : nil, pathHelp: script.map { "~/" + $0.path }))
         }
         categories = order.map { domain in
             DisplayCategory(id: domain, title: DeveloperSelectionGroup.label(domain, fallback: catalog.inventory.first { $0.id == domain }?.label ?? "Other supported state"), symbol: domain == CoreRestorePreparation.secureDomain ? "lock.shield" : "slider.horizontal.3", items: ShellDefinitionPresentation.ordered(rows[domain] ?? [], domain: domain, id: { identities[$0.id] ?? $0.id }, name: { $0.title }))

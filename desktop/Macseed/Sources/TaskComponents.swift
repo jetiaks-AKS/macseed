@@ -468,7 +468,7 @@ struct TaskDomainList: View {
                             advancedControls: AnyView(CaptureExpandButton(ids: captureDisclosureIDs(in: .advanced),
                                 title: "For Experienced Users", expanded: treeExpansion)),
                             secureTransferGroup: captureSecureTransferGroup,
-                            shellCustomCommands: domains.contains { $0.id == "shell-zsh" && $0.items.contains { $0.id.hasPrefix("shell-zsh:shell-alias:") || $0.id.hasPrefix("shell-zsh:shell-script:") } },
+                            shellCustomCommands: domains.contains { $0.id == "shell-zsh" && $0.items.contains { ($0.id.hasPrefix("shell-zsh:shell-alias:") || $0.id.hasPrefix("shell-zsh:shell-function:")) || $0.id.hasPrefix("shell-zsh:shell-script:") } },
                             shellScripts: captureShellScripts.map { AnyView(captureScripts($0)) },
                             summary: { rows in
                                 if rows.contains(where: { [TaskRowState.attention, .unverified, .failed, .partial].contains($0.state) }) { return "Needs Attention" }
@@ -477,10 +477,10 @@ struct TaskDomainList: View {
                             attention: { $0.contains { [TaskRowState.attention, .unverified, .failed, .partial].contains($0.state) } ? "Needs Attention" : nil }) { domain in
                             if domain.id == "macos-settings", !settingsCategories.isEmpty {
                                 captureSettings(domain)
-                            } else if domain.id != "shell-zsh" || domain.items.contains(where: { $0.id.hasPrefix("shell-zsh:shell-alias:") }) || captureShellScripts == nil {
+                            } else if domain.id != "shell-zsh" || domain.items.contains(where: { ($0.id.hasPrefix("shell-zsh:shell-alias:") || $0.id.hasPrefix("shell-zsh:shell-function:")) }) || captureShellScripts == nil {
                                 domainRow(TaskDomainPresentation(id: domain.id, title: domain.title, symbol: domain.symbol,
-                                    items: domain.items.filter { !$0.id.hasPrefix("shell-zsh:shell-script:") }, activityState: domain.activityState))
-                                    .padding(.leading, CaptureChildRowGrid.leadingInset + (domain.id == "shell-zsh" && domain.items.contains { $0.id.hasPrefix("shell-zsh:shell-alias:") } ? CaptureReviewPresentation.hierarchyStep : 0))
+                                    items: domain.items.filter { !$0.id.hasPrefix("shell-zsh:shell-script:") }, activityState: domain.activityState, scopeInformation: domain.scopeInformation))
+                                    .padding(.leading, CaptureChildRowGrid.leadingInset + (domain.id == "shell-zsh" && domain.items.contains { ($0.id.hasPrefix("shell-zsh:shell-alias:") || $0.id.hasPrefix("shell-zsh:shell-function:")) } ? CaptureReviewPresentation.hierarchyStep : 0))
                             }
                         }
                     } else {
@@ -562,7 +562,8 @@ struct TaskDomainList: View {
                                 DisclosureGroup(isExpanded: WorkflowExpansion.binding(ShellCommandPresentation.scriptsID, in: treeExpansion)) {
                                     TaskDomainItems(domain: fileDomain, stateTitles: stateTitles, restorePreview: true,
                                         previewTitleInset: 36 + RestorePreviewHierarchy.titleInset("shell-zsh"), hideMatchingPreviewItems: true)
-                                    CaptureIncludedSettingsList(labels: dependencyFiles.map { "~/" + $0.path })
+                                    CaptureIncludedSettingsList(labels: dependencyFiles.map { ShellScriptPresentation.title($0.path, paths: plannedShellScripts.map(\.path)) },
+                                        helpLabels: Dictionary(uniqueKeysWithValues: dependencyFiles.map { (ShellScriptPresentation.title($0.path, paths: plannedShellScripts.map(\.path)), "~/" + $0.path) }))
                                         .padding(.leading, 36 + RestorePreviewHierarchy.titleInset("shell-zsh"))
                                         .padding(.vertical, 8)
                                 } label: {
@@ -692,15 +693,16 @@ struct TaskDomainList: View {
     private func captureScripts(_ scripts: [CoreShellScript]) -> some View {
         // Confirmation already binds these selected files to preparation. Keep
         // their exact-file qualification independent of alias coverage warnings.
-        let ready = scripts.allSatisfy { script in
+        let ready = captureResultLayout || scripts.allSatisfy { script in
             guard let inspection = captureShellScriptInspections[script.id] else { return false }
             return inspection.status == "qualified" && inspection.observationID == script.observationID
         }
         return DisclosureGroup(isExpanded: WorkflowExpansion.binding(ShellCommandPresentation.scriptsID, in: treeExpansion)) {
             VStack(alignment: .leading, spacing: 6) {
                 if !scripts.isEmpty {
-                    CaptureIncludedSettingsList(labels: scripts.map { "~/" + $0.path })
-                    Text("Selected script files will be saved unencrypted.")
+                    CaptureIncludedSettingsList(labels: scripts.map { ShellScriptPresentation.title($0.path, paths: scripts.map(\.path)) },
+                        helpLabels: Dictionary(uniqueKeysWithValues: scripts.map { (ShellScriptPresentation.title($0.path, paths: scripts.map(\.path)), "~/" + $0.path) }))
+                    Text(captureResultLayout ? "Selected script files were saved unencrypted." : "Selected script files will be saved unencrypted.")
                         .font(.callout).foregroundStyle(.secondary)
                 } else { Text("No script files selected for transfer.").font(.callout).foregroundStyle(.secondary) }
             }.padding(.vertical, 6)
@@ -709,9 +711,10 @@ struct TaskDomainList: View {
                 title: "Scripts", fallbackSymbol: "applescript", developerGroup: .shell),
                 status: VStack(alignment: .leading, spacing: 3) {
                     if scripts.isEmpty {
-                        CaptureStatusText(title: "0 files selected", secondary: true)
+                        CaptureStatusText(title: "", secondary: true)
                     } else {
-                        TaskStatusLabel(state: ready ? .planned : .attention, title: ready ? "Ready to Save" : nil)
+                        TaskStatusLabel(state: ready ? (captureResultLayout ? .completed : .planned) : .attention,
+                            title: ready ? (captureResultLayout ? "Saved" : "Ready to Save") : nil)
                         Text("\(scripts.count) \(scripts.count == 1 ? "item" : "items") included")
                             .font(.caption).foregroundStyle(.secondary).padding(.leading, CaptureStatusText.textInset)
                     }
@@ -791,10 +794,15 @@ struct TaskDomainList: View {
         }.joined(separator: " · ")
     }
     private func domainTitle(_ domain: TaskDomainPresentation) -> some View {
-        WorkspaceCategoryTitle(id: domain.id, title: captureHierarchy || restorePreviewHierarchy ? CaptureHierarchy.title(domain.id, fallback: domain.title) : domain.title,
+        HStack(spacing: 8) {
+            WorkspaceCategoryTitle(id: domain.id, title: captureHierarchy || restorePreviewHierarchy ? CaptureHierarchy.title(domain.id, fallback: domain.title) : domain.title,
             fallbackSymbol: domain.symbol, developerGroup: !domain.previewItemDetails.isEmpty ? nil
                 : captureHierarchy || restorePreviewHierarchy ? DeveloperSelectionGroup.group(for: domain.id) : nil)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            if let information = domain.scopeInformation {
+                ContextualHelpButton(id: "capture.scope." + domain.id, title: domain.title,
+                    description: information, hint: "Shows the saved scope without changing selection.")
+            }
+        }.frame(maxWidth: .infinity, alignment: .leading)
     }
     private func domainStatus(_ domain: TaskDomainPresentation) -> some View {
         VStack(alignment: .leading, spacing: 3) {
@@ -904,6 +912,7 @@ struct TaskDomainItems: View {
     private func details(_ item: TaskItemPresentation, suppressExplanation: Bool) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(itemTitles[item.id] ?? item.item.title)
+                .help(item.item.pathHelp ?? item.item.title).accessibilityHint(item.item.pathHelp ?? item.item.title)
             if !suppressExplanation, !item.item.action.isEmpty, item.state != .matching || (restorePreview && item.sourceDomain == CoreRestorePreparation.secureDomain) {
                 Text(item.assistedAppStore?.message ?? item.item.action).font(.caption).foregroundStyle(.secondary)
             }

@@ -470,6 +470,10 @@ struct CaptureActionsView: View {
                 Button("Capture Again") { model.scan() }.disabled(runtime.isActive)
                 Button("Done") { model.done() }.disabled(runtime.isActive)
             case .failed, .cancelled:
+                if model.publicationEvidence == .occurred, let destination = model.destination {
+                    Button("Reveal Saved Bundle") { NSWorkspace.shared.activateFileViewerSelecting([destination]) }
+                        .help("The saved file is preserved. Inspect it before another Capture.")
+                }
                 if model.canReviewSelection {
                     Button("Review Selection") { model.editSelection() }.disabled(runtime.isActive)
                 }

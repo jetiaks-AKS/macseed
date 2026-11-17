@@ -183,7 +183,9 @@ struct EnvironmentStatusPresentation {
                    result.records.verificationRecords.contains(where: { $0.domain == domain && $0.itemID == identity && $0.predicate == "function_definition" }) { return ShellDefinitionPresentation.title(domain: domain, id: identity, name: label) }
                 if identity.hasPrefix("shell-script:") {
                     if let path = result.referencePresentation?.shellScriptLabels?[identity],
-                       result.records.verificationRecords.contains(where: { $0.domain == domain && $0.itemID == identity && $0.predicate == "script_file" }) { return "~/" + path }
+                       result.records.verificationRecords.contains(where: { $0.domain == domain && $0.itemID == identity && $0.predicate == "script_file" }) {
+                        return ShellScriptPresentation.title(path, paths: Array((result.referencePresentation?.shellScriptLabels ?? [:]).values))
+                    }
                     return "Shell script"
                 }
                 if identity.hasPrefix("shell-alias:") { return ShellDefinitionPresentation.title(domain: domain, id: identity, name: "Shell alias") }
@@ -467,6 +469,11 @@ struct EnvironmentStatusPresentation {
                 action: ShellCommandPresentation.coverageSummary, reason: item.reason)
         }
         self.coverageHelp = coverageHelp
+        for (identity, path) in result.referencePresentation?.shellScriptLabels ?? [:] {
+            guard result.records.verificationRecords.contains(where: { $0.domain == "shell-zsh" && $0.itemID == identity && $0.predicate == "script_file" }),
+                  let index = grouped["shell-zsh"]?.firstIndex(where: { $0.id == logicalID("shell-zsh", identity) }) else { continue }
+            grouped["shell-zsh"]![index].pathHelp = "~/" + path
+        }
         categories = order.map { domain in
             let legacyShell = domain == "shell-zsh" && result.records.verificationRecords.contains { $0.domain == domain && $0.predicate == "file_content" }
             let scriptShell = domain == "shell-zsh" && result.records.verificationRecords.contains { $0.domain == domain && ["script_file", "alias_definition", "alias_recovery", "function_definition"].contains($0.predicate ?? "") }

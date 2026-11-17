@@ -49,14 +49,7 @@ struct ShellParentConsent: Identifiable {
         selectAliases ? "Aliases & Functions only keeps your existing script choices." : "Keep current selection leaves all choices unchanged."
     }
     var fileSummary: String {
-        newScripts.map { script in
-            let parts = script.path.split(separator: "/")
-            for count in 1...parts.count {
-                let suffix = parts.suffix(count).joined(separator: "/")
-                if newScripts.filter({ $0.path == suffix || $0.path.hasSuffix("/" + suffix) }).count == 1 { return suffix }
-            }
-            return script.path
-        }.joined(separator: "\n")
+        newScripts.map { ShellScriptPresentation.title($0.path, paths: newScripts.map(\.path)) }.joined(separator: "\n")
     }
     func matches(aliases: Set<String>, candidates: [CoreShellScript]) -> Bool {
         self.aliases == aliases && self.candidates == candidates
@@ -799,13 +792,14 @@ struct ShellScriptSelectionView: View {
                             .fixedSize(horizontal: false, vertical: true).padding(.leading, 64).padding(.vertical, 6)
                     }
                     ForEach(scripts) { script in
-                        CaptureItemSelectionRow(title: "~/" + script.path, included: Binding(
+                        CaptureItemSelectionRow(title: ShellScriptPresentation.title(script.path, paths: scripts.map(\.path)), included: Binding(
                             get: { selected.contains(script.id) }, set: { select(script.id, $0) }))
                             .disabled(!editable || !available.contains(script.id))
-                            .help(available.contains(script.id) ? "Explicit authorization for this file only."
+                            .accessibilityHint("~/" + script.path)
+                            .help("~/" + script.path + "\n" + (available.contains(script.id) ? "Explicit authorization for this file only."
                                 : inspections != nil && inspections?[script.id]?.status != "qualified"
                                     ? inspections?[script.id]?.explanation ?? "Selecting authorizes this file’s automatic checks."
-                                    : "Select a related alias first.")
+                                    : "Select a related alias first."))
                             .padding(.leading, 36)
                         if let inspections, pending.contains(script.id) || (inspections[script.id] != nil && inspections[script.id]?.status != "qualified") {
                             Text(pending.contains(script.id) ? "Checking…" : inspections[script.id]?.explanation ?? "")
@@ -835,7 +829,9 @@ struct CaptureTaskPresentation {
             let domainID = isMacOS ? "macos-settings" : category.id
             let chosen = Set(selection.items[category.id] ?? (selection.categories.contains(category.id) ? category.row.items.map(\.itemID) : []))
             let resultBound = publication?.publicationOccurred == true && publication?.bundle.capturedDomains.contains(category.id) == true
-            let exactItems = resultBound && publication?.bundle.selectedItemCounts[category.id] == chosen.count + (category.id == "shell-zsh" ? standaloneScripts.count : 0)
+            let fileRequirements = publication?.bundle.typedShell == true ? standaloneScripts.count
+                : standaloneScripts.filter { Set($0.aliasIDs ?? []).isDisjoint(with: chosen) }.count
+            let exactItems = resultBound && publication?.bundle.selectedItemCounts[category.id] == chosen.count + (category.id == "shell-zsh" ? fileRequirements : 0)
             let realCategoryItems = phase != .progress && category.row.selectionMode == "category" && !category.row.items.isEmpty
             let facts = realCategoryItems ? category.row.items.map {
                 DisplayItem(id: $0.itemID, title: $0.label.hasPrefix("opaque:") ? "Private item" : $0.label,
@@ -858,8 +854,9 @@ struct CaptureTaskPresentation {
             if category.id == "shell-zsh" {
                 items += standaloneScripts.map { script in
                     let id = "shell-zsh:shell-script:" + script.id
-                    return TaskItemPresentation(id: id, item: DisplayItem(id: id, title: "~/" + script.path,
-                        status: .ready, action: "Selected file bytes will be saved."), state: state)
+                    return TaskItemPresentation(id: id, item: DisplayItem(id: id,
+                        title: ShellScriptPresentation.title(script.path, paths: standaloneScripts.map(\.path)),
+                        status: .ready, action: "Selected file bytes will be saved.", pathHelp: "~/" + script.path), state: state)
                 }
             }
             if phase == .result && !resultKnown {
@@ -886,6 +883,10 @@ struct CaptureTaskPresentation {
             } else {
                 output.append(TaskDomainPresentation(id: domainID, title: isMacOS ? "macOS Settings" : category.title,
                     symbol: isMacOS ? "slider.horizontal.3" : category.symbol, items: items, activityState: phase == .result ? (!warnings.isEmpty ? .attention : state) : nil))
+            }
+            if category.informationalShellCoverage && !chosen.isEmpty, let index = output.firstIndex(where: { $0.id == domainID }) {
+                output[index].scopeInformation = category.shellObservation?.coverageMessage(
+                    aliasCount: chosen.filter { $0.hasPrefix("shell-alias:") }.count, saved: phase == .result)
             }
         }
         if phase == .confirmation, !selection.secureIdentities.isEmpty {
@@ -974,7 +975,8 @@ struct CaptureCategorySelectionView: View {
     }
     private var title: some View {
         SelectionCategoryTitle(id: category.id, title: displayTitle ?? category.title, symbol: category.symbol, flow: .capture,
-            toggle: Self.hasDisclosure(category) ? { (expansion ?? $expanded).wrappedValue.toggle() } : nil)
+            toggle: Self.hasDisclosure(category) ? { (expansion ?? $expanded).wrappedValue.toggle() } : nil,
+            information: category.informationalShellCoverage ? category.shellCoverageMessage : nil)
     }
     private var status: some View {
         VStack(alignment: .leading, spacing: 3) {
@@ -1243,9 +1245,13 @@ struct CaptureCompactLabel: View {
 
 struct CaptureIncludedSettingsList: View {
     let labels: [String]
+    var helpLabels: [String: String] = [:]
     var body: some View {
         SettingsFlowLayout {
-            ForEach(Array(labels.enumerated()), id: \.offset) { _, label in CaptureCompactLabel(title: label) }
+            ForEach(Array(labels.enumerated()), id: \.offset) { _, label in
+                CaptureCompactLabel(title: label).help(helpLabels[label] ?? label)
+                    .accessibilityHint(helpLabels[label] ?? label)
+            }
         }.padding(.leading, 36).padding(.vertical, 8)
     }
 }
@@ -1257,7 +1263,8 @@ struct CaptureConfirmationItems: View {
         VStack(alignment: .leading, spacing: 10) {
             SettingsFlowLayout {
                 ForEach(contents.ordinary) { item in
-                    CaptureCompactLabel(title: item.item.title)
+                    CaptureCompactLabel(title: item.item.title).help(item.item.pathHelp ?? item.item.title)
+                        .accessibilityHint(item.item.pathHelp ?? item.item.title)
                 }
             }
             ForEach(contents.explanations) { item in
@@ -1285,6 +1292,8 @@ struct CaptureResultPresentation {
     let destination: URL
     let scope: String
     let attention: [DisplayCategory]
+    var savedDomains: [TaskDomainPresentation] = []
+    var savedScripts: [CoreShellScript] = []
     private let shellObservation: CoreCaptureShellObservation?
     private let savedAliasCount: Int
     var affectedCount: Int { attention.count }
@@ -1316,7 +1325,7 @@ struct CaptureResultPresentation {
             children[id] = rows
             return TaskDomainPresentation(id: id, title: title, symbol: symbol, items: rows.flatMap(\.items))
         }
-        let roots = EnvironmentStatusSection.project(attention).flatMap(\.entries).map { entry in
+        let roots = EnvironmentStatusSection.project(attention.filter { category in !savedDomains.contains { $0.id == category.id } }).flatMap(\.entries).map { entry in
             guard !entry.children.isEmpty else { return domain(entry.category) }
             let rows = entry.children.map { category -> TaskDomainPresentation in
                 let leaf = domain(category)
@@ -1412,7 +1421,13 @@ struct CaptureResultContent: View {
             CaptureBundleLocationView(destination: result.destination, showsReveal: true)
                 .padding(14).frame(maxWidth: .infinity, alignment: .leading)
                 .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 8))
-            if !result.attention.isEmpty {
+            if !result.savedDomains.isEmpty {
+                TaskDomainList(domains: result.savedDomains, stateTitles: [.completed: "Saved"], compactReadyItems: true,
+                    title: "Saved Shell contents", captureResultLayout: true, captureHierarchy: true,
+                    settingsCategories: CaptureSettingsPresentation.children(result.savedDomains), expansion: treeExpansion,
+                    captureShellScripts: result.savedScripts.isEmpty ? nil : result.savedScripts)
+            }
+            if !hierarchy.roots.isEmpty {
                 VStack(spacing: 0) {
                     ForEach(hierarchy.roots) { domain in
                         RestoreFinalDomain(domain: domain, expansion: WorkflowExpansion.binding(domain.id, in: treeExpansion),

@@ -138,7 +138,7 @@ struct OperationLogSanitizer {
         "publication_failed", "bootstrap_failed", "process_observation_unavailable", "privileged_lifecycle_unknown", "item_stalled_timeout", "item_install_failed",
         "progress_observation_failed", "observation_failed", "observation_error", "prerequisite_unmet", "unsupported_predicate", "confirmed_mismatch", "unknown_difference",
         "reference_invalid", "comparison_failed", "comparison_reporting_incomplete", "reference_changed", "reference_unavailable", "comparison_unavailable", "capture_failed", "capture_discovery_failed", "capture_inventory_invalid", "capture_validation_failed",
-        "capture_source_unavailable", "invalid_workspace_selection", "workspace_dependency_missing", "workspace_path_conflict",
+        "capture_source_unavailable", "source_partial", "no_supported_items", "invalid_workspace_selection", "workspace_dependency_missing", "workspace_path_conflict",
         "external_identity_unsafe", "external_identity_name_invalid", "external_identity_pair_missing", "external_identity_pair_invalid", "external_identity_changed", "external_identity_duplicate", "external_identity_invalid_request",
         "invalid_destination", "destination_exists", "destination_changed", "secure_bridge_required", "age_unavailable", "secure_bridge_unavailable", "secure_timeout",
         "secure_comparison_failed", "secure_comparison_unavailable", "secure_target_changed", "secure_import_failed", "secure_export_failed", "secure_input_invalid", "invalid_secure_selection", "readiness_failed", "cask_authorization_required",

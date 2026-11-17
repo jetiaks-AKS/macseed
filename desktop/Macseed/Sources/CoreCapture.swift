@@ -122,6 +122,9 @@ struct CoreCaptureShellObservation: Decodable {
         codes = Set(supplied)
     }
     var title: String { status == .unavailable ? "Functions unavailable" : "Functions excluded" }
+    var qualifiedScopeLimitation: Bool {
+        status == .observed && codes.isSubset(of: ["unsupported_context"])
+    }
     var notice: String? {
         guard status != .observed else { return nil }
         // Fixed messages only. Unknown codes never become user-visible text.
@@ -268,11 +271,14 @@ struct CoreCapturePublication: Decodable {
         let selectedCategories: [String]
         let selectedItemCounts: [String: Int]
         let secureComponent: Bool
+        var requiredFeatures: [String: Int]? = nil
         var shellScriptCandidates: [CoreShellScript]? = nil
+        var typedShell: Bool { requiredFeatures?["shell-state"] == 1 }
         enum CodingKeys: String, CodingKey {
             case formatVersion = "format_version", selectedCategories = "selected_categories"
             case selectedItemCounts = "selected_item_counts", secureComponent = "secure_component"
             case shellScriptCandidates = "shell_script_candidates"
+            case requiredFeatures = "required_features"
         }
         var capturedDomains: Set<String> { Set(selectedCategories).union(selectedItemCounts.filter { $0.value > 0 }.map(\.key)) }
         var itemCount: Int { selectedItemCounts.values.reduce(0, +) }
@@ -296,6 +302,10 @@ struct CoreCapturePublication: Decodable {
     }
     func validate(preparation: CoreCapturePreparation, destination: URL) throws {
         try preparation.validate(expected: preparation.selection, expectedScripts: preparation.shellScriptSelection)
+        guard bundle.requiredFeatures?["shell-state"] == nil || bundle.typedShell,
+              preparation.publicationSelection?.items["shell-zsh"]?.contains(where: { $0.hasPrefix("shell-function:") }) != true || bundle.typedShell else {
+            throw CoreRuntimeError.malformedEvent
+        }
         guard let selection = preparation.publicationSelection, publicationOccurred, self.destination == destination.path,
               preparedCaptureID == preparation.preparedCaptureID, bundle.formatVersion == 1,
               bundle.secureComponent == !selection.secureIdentities.isEmpty,
@@ -312,12 +322,16 @@ struct CoreCapturePublication: Decodable {
                   guard let candidate = preparation.shellScriptCandidates?.first(where: { $0.id == saved.id }),
                         let aliases = saved.aliasIDs else { return false }
                   return saved.path == candidate.path && Set(aliases).count == aliases.count
+                      && (!bundle.typedShell || aliases.isEmpty)
                       && Set(aliases).isSubset(of: Set(candidate.aliasIDs ?? []).intersection(selectedAliases))
               }) else { throw CoreRuntimeError.malformedEvent }
         for (domain, count) in bundle.selectedItemCounts {
             let wholeCount = selection.categories.contains(domain)
                 ? preparation.inventory.first(where: { $0.domain == domain && $0.selectionMode == "items" })?.items.count ?? 0 : 0
-            guard count == (selection.items[domain]?.count ?? wholeCount) + (domain == "shell-zsh" ? preparation.standaloneScriptCount : 0) else { throw CoreRuntimeError.malformedEvent }
+            // Typed state represents every explicitly selected file as its own
+            // requirement. Legacy snapshots fold linked files into their aliases.
+            let files = bundle.typedShell ? (preparation.shellScriptSelection ?? []).count : preparation.standaloneScriptCount
+            guard count == (selection.items[domain]?.count ?? wholeCount) + (domain == "shell-zsh" ? files : 0) else { throw CoreRuntimeError.malformedEvent }
         }
     }
 }

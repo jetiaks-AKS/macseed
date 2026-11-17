@@ -79,6 +79,7 @@ struct TaskDomainPresentation: Identifiable {
     }
     var activityState: TaskRowState? = nil
     var activityTitle: String? = nil
+    var scopeInformation: String? = nil
     var previewOnly = false
     var resultCategoryIssue = false
     var resultProblemDomains: Set<String> = []
@@ -339,7 +340,7 @@ struct RestoreTaskPresentation {
                     return AssistedAppStoreItem(appID: app.appID, status: status)
                 }
                 return TaskItemPresentation(id: item.id,
-                    item: DisplayItem(id: item.id, title: operationProgress ? (entry.flatMap { WorkspaceSettingLabels.title(domain: $0.domain, identity: $0.itemID) } ?? Self.operationTitle(item.title, entry: entry)) : item.title, status: item.status, action: message, reason: reason), state: state, diagnostic: entry?.diagnostic,
+                    item: DisplayItem(id: item.id, title: operationProgress ? (entry.flatMap { WorkspaceSettingLabels.title(domain: $0.domain, identity: $0.itemID) } ?? Self.operationTitle(item.title, entry: entry)) : item.title, status: item.status, action: message, reason: reason, pathHelp: item.pathHelp), state: state, diagnostic: entry?.diagnostic,
                     technicalName: operationProgress ? entry.flatMap { $0.itemID.hasPrefix("opaque:") ? nil : "\($0.domain) / \($0.itemID)" } : nil,
                     executionAction: operationProgress ? entry?.action.replacingOccurrences(of: "_", with: " ").capitalized : nil,
                     resultLabels: labels, resultTechnicalDetails: technical.isEmpty ? nil : technical,

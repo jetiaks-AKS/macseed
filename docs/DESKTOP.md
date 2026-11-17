@@ -454,8 +454,10 @@ to source and focused tests.
 
 The visually accepted minimal design is specific to Capture. Clean validated publication shows
 one green **Save Complete** card with authoritative saved domains/items counts,
-then the Bundle filename, actual destination and **Reveal in Finder**. There is no
-repeated category tree, hidden full inventory or per-category success list.
+then the Bundle filename, actual destination and **Reveal in Finder**. Confirmed
+Shell definitions and separately authorized files use the existing Shell task
+hierarchy with **Saved** labels. Other categories retain the minimal outcome;
+there is no repeated full inventory or per-category success list.
 
 Publication with selected-scope limitations retains Save Complete and adds a
 separate amber **Needs Attention** card counting distinct affected Core domains,
@@ -466,6 +468,10 @@ issues remain separate; duplicate evidence does not create extra issues.
 Unselected SSH observations and unsupported/unavailable inventory are not failed
 saved requirements. Missing selected evidence remains unverified, not an all-clear
 claim. Failed, interrupted or uncertain publication must not render success.
+An invalid receipt after reported publication preserves the destination and
+publication evidence, reports a post-publication validation failure and offers
+Reveal Saved Bundle. It never describes that failure as an incomplete Scan or
+automatically retries, overwrites or deletes the published file.
 
 `CaptureModel.resultPresentation` gates the result on validated publication;
 `CaptureResultPresentation`, `CaptureResultOutcomes` and `CaptureResultContent`
@@ -1490,10 +1496,16 @@ review/confirmation/results, Rebuild selection/Preview/progress/results/attentio
 and Check outcomes/details. Native presentation lists Aliases before Functions and
 sorts names within each kind by locale-independent UTF-8 byte order. Prefixes are
 idempotent; source/load order, Core plan order, selected IDs and Bundle bytes are
-unchanged. Scripts and historical whole-file rows keep their existing presentation.
+unchanged. Historical whole-file rows keep their existing presentation. Scripts
+display the filename, or the shortest unique parent-path suffix for duplicate
+filenames; hover and accessibility help retain the validated HOME-relative path.
+This display projection applies to Capture, Rebuild and Check without changing
+identities, destination paths, consent or payloads.
 Their parent selects/clears every eligible definition with None/Partial/All states.
-All-selected item inventories retain explicit `shell-alias:`/`shell-function:` IDs;
-other domains still use compact category selection and actual legacy Shell remains Settings.
+Qualified typed observation and mixed inventories retain explicit
+`shell-alias:`/`shell-function:` IDs even when all are selected. Legacy-only Alias
+inventories retain supported whole-category selection; subsets retain exact IDs.
+Other domains still use compact category selection and legacy whole-file Shell remains Settings.
 Capture Confirmation reports Alias/Function counts. Core's unavailable/unsupported
 Function observation is shown in the existing Shell row and selected-scope confirmation.
 **Functions unavailable** denotes missing observation capability; **Functions excluded**
@@ -1594,6 +1606,9 @@ Manual/automatic discoveries of the same file count once. Result derives functio
 counts from validated saved-file identities, while physical Bundle and Rebuild/Check
 counts retain their own semantics. A selected file remains one item after its aliases
 are deselected.
+Publication receipt validation uses `shell-state:1` to distinguish typed individual
+Script requirements from legacy alias-associated files; counts, prepared identity,
+destination and exact consented file identities must still agree.
 The primary UI shows concise safety text, actionable rejection reasons and statuses.
 It does not repeat generic inspection explanations for every unexamined candidate.
 Existing details/logs retain sanitized diagnostics; no code contents enter logs.
@@ -1619,8 +1634,13 @@ aliases and executable files with the ordinary unencrypted-Bundle disclosure. Th
 old global script checkbox list is removed. Capture Result retains Save Complete,
 publication metrics, destination and attention. Affected categories reuse Rebuild
 Result's expandable category headers, counts and item rows. Shell warnings appear
-under Shell → Custom Commands → Aliases & Functions; category-level `source_partial`
-evidence appears once as **Shell coverage**, without invented failed aliases/files.
+under Shell → Custom Commands → Aliases & Functions. For an observed, qualified
+item inventory with only excluded initialization (`unsupported_context`),
+`source_partial` is information in the category's existing scope help, not another
+Needs Attention metric, parent warning or confirmation banner. It does not claim
+runtime activation or complete startup transfer. Unsafe, changed, ambiguous or
+unknown qualification evidence retains actionable attention. Other category
+warnings and the existing collapsed/expanded propagation are unchanged.
 Other supported categories retain their own requirement or coverage explanations.
 Selected child warnings propagate as **Needs Attention** through Custom Commands
 and Shell in Confirmation, including collapsed headers. Affected parents never use
@@ -2335,8 +2355,12 @@ through the existing Runtime controls.
 Summary separates **Process Result**, **Verification** and **Log completeness**.
 Only available counters are shown. Successful execution can coexist with incomplete
 Verification or an incomplete log; Log Incomplete is a neutral diagnostic limitation,
-not an execution error. Truncated, unavailable, interrupted/unknown and partial
-evidence remain explicit.
+not an execution error. Capture's `Verification: not_run` is expected and does not
+make its log incomplete. Known Capture observation codes, including `source_partial`
+and `no_supported_items`, survive both closed diagnostic allowlists. Omitted private
+payload fields are distinct from lost technical evidence; unknown/malformed codes,
+bounded evidence loss, dropped events, truncation and damage remain incomplete.
+Existing records with lost evidence are not retroactively declared complete.
 
 ### Diagnostic Report snapshot and privacy
 

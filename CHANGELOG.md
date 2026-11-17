@@ -283,6 +283,17 @@ The format is based on the principles of **Keep a Changelog**.
 
 ### Fixed
 
+* Native Capture now validates typed Shell files separately from legacy
+  alias-associated Script requirements, avoiding false failure after a valid
+  publication. Invalid published receipts preserve the Bundle and report the
+  correct failure phase. Qualified Shell scope limitations remain informational;
+  Script labels use concise filenames with full-path help.
+
+* Non-Shell Capture inventories no longer require a Shell row. Legacy-only Alias
+  selection retains whole-category compatibility, while typed selections keep
+  exact IDs. Capture diagnostic logs retain known observation reasons and treat
+  absent Restore/Check verification as expected.
+
 * Operation Logs and Diagnostic Reports retain safe Shell/Check failure reasons,
   predicates and mutation-status evidence, prioritize failures over ordinary
   bounded records, and preserve qualified diagnostic domains without exporting

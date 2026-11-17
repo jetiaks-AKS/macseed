@@ -1895,6 +1895,13 @@ if __name__ == '__main__':'''))
             capture.prepared(self.stage, rows, dict(status='unavailable', items=[]),
                              dict(categories=['homebrew-packages'], items={}, secure_identities=[]))
         self.assertEqual(failure.exception.code, 'capture_inventory_invalid')
+        self.assertEqual(capture.typed_selection(None, rows), [])
+        for selected in ({'categories': ['shell-zsh'], 'items': {}},
+                         {'categories': [], 'items': {'shell-zsh': []}},
+                         {'categories': [], 'items': {'shell-zsh': ['shell-function:' + 'a' * 64]}}):
+            with self.subTest(selected=selected), self.assertRaises(capture.CaptureError) as missing:
+                capture.typed_selection(selected, rows)
+            self.assertEqual(missing.exception.code, 'invalid_selection')
 
     def test_workspace_observation_failure_remains_non_selectable(self):
         # Malformed Git configuration is an observation error, not absence.

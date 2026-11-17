@@ -25,7 +25,13 @@ import Vision
         for (label, other, includeAliases, scriptCount, domains, items) in [
             ("aliases-only", false, true, 0, 1, 12), ("scripts-only", false, false, 3, 1, 3),
             ("baseline", true, true, 0, 12, 90), ("linked", true, true, 1, 13, 91),
-            ("three", true, true, 3, 13, 93)] {
+            ("three", true, true, 3, 13, 93), ("typed-linked", true, true, 1, 13, 93)] {
+            let typed = label == "typed-linked"
+            var inventoryRows = rows
+            if typed {
+                inventoryRows[0] = row("shell-zsh", mode: "items", items: aliases + (1...2).map { "shell-function:" + String(format: "%064x", $0) })
+            }
+            try JSONSerialization.data(withJSONObject: inventoryRows).write(to: inventory)
             model.scan(); await model.waitForCompletion()
             precondition(model.state == .review && model.shellScriptCandidates.count == 3)
             for category in model.categories { model.selectCategory(category.id, included: category.id == "shell-zsh" ? includeAliases : other) }
@@ -40,17 +46,25 @@ import Vision
             precondition(model.state == .result, "Result: \(label) \(String(describing: model.failure))")
             let publication = model.publication!
             precondition(publication.bundle.functionalDomainCount == domains && publication.bundle.capturedItemCount == items)
-            precondition(publication.bundle.itemCount == items - (includeAliases && scriptCount > 0 ? 1 : 0),
+            precondition(publication.bundle.itemCount == items - (includeAliases && scriptCount > 0 && !typed ? 1 : 0),
                          "Physical Restore requirement counts stay unchanged")
             precondition(model.resultPresentation?.scope == "\(domains) \(domains == 1 ? "domain" : "domains") · \(items) items saved")
             if scriptCount > 0 {
                 let value = try JSONSerialization.jsonObject(with: JSONEncoder().encode(runtime.latestResult!.fields["data"]!)) as! Object
-                for corruption in ["missing", "duplicate", "association"] {
+                for corruption in ["missing", "duplicate", "association", "count", "typed-contract"] {
                     var invalid = value, bundle = value["bundle"] as! Object
                     var candidates = bundle["shell_script_candidates"] as! [Object]
                     if corruption == "missing" { candidates = [] }
                     if corruption == "duplicate" { candidates.append(candidates[0]) }
                     if corruption == "association" { candidates[0]["alias_ids"] = ["unselected-alias"] }
+                    if corruption == "count" {
+                        var counts = bundle["selected_item_counts"] as! [String: Int]
+                        counts["shell-zsh", default: 0] += 1; bundle["selected_item_counts"] = counts
+                    }
+                    if corruption == "typed-contract" {
+                        if !typed { continue }
+                        bundle.removeValue(forKey: "required_features")
+                    }
                     bundle["shell_script_candidates"] = candidates; invalid["bundle"] = bundle
                     let decoded = try JSONDecoder().decode(CoreCapturePublication.self, from: JSONSerialization.data(withJSONObject: invalid))
                     var rejected = false
@@ -60,7 +74,29 @@ import Vision
             }
             model.done()
         }
-        print("PASS: Capture Selection → Confirmation → Result counts; baseline 90/91/93 items and 12/13/13 functional domains; distinct aliases/files and unchanged physical Bundle counts")
+        for mode in ["wrong_binding", "missing_item_counts", "wrong_item_counts"] {
+            try write("success", core.appendingPathComponent("mode"))
+            model.scan(); await model.waitForCompletion()
+            model.selectCategory("homebrew-packages", included: true)
+            let destination = root.appendingPathComponent(mode + ".mbt")
+            model.prepare(destination: destination); await model.waitForCompletion()
+            precondition(model.state == .confirmation)
+            // Simulate the file published by Core; Native may neither replace
+            // it nor retry after rejecting the receipt.
+            let published = Data("fixture published bundle".utf8)
+            try published.write(to: destination)
+            try write(mode, core.appendingPathComponent("mode"))
+            model.create(); await model.waitForCompletion()
+            precondition(model.state == .failed && model.failure == .invalidPublication && model.publicationEvidence == .occurred)
+            precondition(!model.failure!.message.contains("scan results"))
+            let requests = try Data(contentsOf: core.appendingPathComponent("requests.jsonl"))
+            model.create(); await model.waitForCompletion()
+            let afterRequests = try Data(contentsOf: core.appendingPathComponent("requests.jsonl"))
+            let after = try Data(contentsOf: destination)
+            precondition(requests == afterRequests && published == after)
+        }
+        try write("success", core.appendingPathComponent("mode"))
+        print("PASS: legacy and typed multi-domain Capture receipts; 12 Aliases + 2 Functions + linked Script; exact counts, identities, feature binding and malformed receipt rejection")
     }
 
     typealias Object = [String: Any]
@@ -111,7 +147,8 @@ import Vision
         precondition(model.state == .review && model.selectedSecureIdentities.isEmpty)
         for category in model.categories { model.selectCategory(category.id, included: true) }
         for id in ids { model.selectSecureIdentity(id, included: true) }
-        precondition(!model.selection.categories.contains("shell-zsh") && model.selection.items["shell-zsh"] == aliases.sorted())
+        precondition(model.selection.categories.contains("shell-zsh") && model.selection.items["shell-zsh"] == nil,
+                     "Legacy-only all-alias selection retains its whole-category contract")
         model.prepare(destination: root.appendingPathComponent("shell-confirmation.mbt")); await model.waitForCompletion()
         precondition(runtime.state == .completed && runtime.termination?.exitCode == 0)
         precondition(model.state == .confirmation, "Valid whole-domain Shell consent must reach Confirmation")
@@ -251,7 +288,7 @@ import Vision
         window.isReleasedWhenClosed = false; window.contentView = host
         host.frame = NSRect(x: 0, y: 0, width: 985, height: 1100); host.layoutSubtreeIfNeeded()
         func checkbox(_ view: NSView) -> NSButton? {
-            if let button = view as? NSButton, button.accessibilityLabel() == "~/.local/bin/platform-info" { return button }
+            if let button = view as? NSButton, button.accessibilityLabel() == "platform-info" { return button }
             return view.subviews.lazy.compactMap(checkbox).first
         }
         let control = checkbox(host)!
@@ -709,8 +746,8 @@ import Vision
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
         defer { try? FileManager.default.removeItem(at: root) }
         let python = URL(fileURLWithPath: CommandLine.arguments[2])
-        if CommandLine.arguments.contains("--mixed-shell-only") {
-            try await realCore(root: root, repository: URL(fileURLWithPath: CommandLine.arguments[1]), python: python, mixedOnly: true)
+        if CommandLine.arguments.contains("--mixed-shell-only") || CommandLine.arguments.contains("--capture-gui-only") {
+            try await realCore(root: root, repository: URL(fileURLWithPath: CommandLine.arguments[1]), python: python, mixedOnly: true, guiOnly: CommandLine.arguments.contains("--capture-gui-only"))
             return
         }
         if CommandLine.arguments.contains("--workspace-core-only") || CommandLine.arguments.contains("--overlap-core-only") {
@@ -835,11 +872,15 @@ import Vision
                 key = hashlib.sha256(('shell-script:'+entry['path']).encode()).hexdigest()
                 if key in params['shell_script_selection']:
                     saved_scripts.append(dict(id=key, path=entry['path'], alias_ids=sorted(selected.intersection(entry['alias_ids'])), independent=True))
+        typed = any(key.startswith('shell-function:') for key in selection['items'].get('shell-zsh', []))
+        if typed:
+            counts['shell-zsh'] = len(selection['items']['shell-zsh']) + len(saved_scripts)
+            saved_scripts = [dict(row, alias_ids=[]) for row in saved_scripts]
         if mode == 'missing_item_counts': counts = {}
         if mode == 'wrong_item_counts': counts = {key:value+1 for key,value in counts.items()}
         emit('result', dict(publication_occurred=mode!='unpublished', destination=params['destination'],
              prepared_capture_id='b'*64 if mode=='wrong_binding' else 'a'*64,
-             bundle=dict(format_version=1, selected_categories=[row['domain'] for row in rows if row['domain'] in selection['categories'] and row['selection_mode']=='category'], selected_item_counts=counts, secure_component=False, shell_script_candidates=saved_scripts)))
+             bundle=dict(format_version=1, selected_categories=[row['domain'] for row in rows if row['domain'] in selection['categories'] and row['selection_mode']=='category'], selected_item_counts=counts, secure_component=False, shell_script_candidates=saved_scripts, **({'required_features': {'shell-state': 1}} if typed else {}))))
         emit('completed'); sys.exit(0)
         """, core.appendingPathComponent("fixture.py"))
         let runtime = CoreRuntime(operationLogs: nil)
@@ -1287,6 +1328,7 @@ import Vision
         try await realCore(root: root, repository: URL(fileURLWithPath: CommandLine.arguments[1]), python: python)
         try await realCore(root: root.appendingPathComponent("shell-focused"), repository: URL(fileURLWithPath: CommandLine.arguments[1]), python: python, shellOnly: true)
         try await realCore(root: root.appendingPathComponent("mixed-shell-focused"), repository: URL(fileURLWithPath: CommandLine.arguments[1]), python: python, mixedOnly: true)
+        try await realCore(root: root.appendingPathComponent("gui-mixed-focused"), repository: URL(fileURLWithPath: CommandLine.arguments[1]), python: python, mixedOnly: true, guiOnly: true)
         try await secureCaptureChecks(root: root, repository: URL(fileURLWithPath: CommandLine.arguments[1]), python: python)
     }
     @MainActor static func secureSelectionChecks(model: CaptureModel, core: URL) async throws {
@@ -1541,7 +1583,8 @@ import Vision
         let tasks = CaptureTaskPresentation(categories: model.categories, selection: model.selection,
             phase: .confirmation, standaloneScripts: model.standaloneShellScripts)
         precondition(tasks.domains.count == 1 && tasks.domains[0].items.count == 4)
-        precondition(Set(tasks.domains[0].items.map { $0.item.title }) == Set(urls.map { "~/.local/bin/" + $0.lastPathComponent }))
+        precondition(Set(tasks.domains[0].items.map { $0.item.title }) == Set(urls.map(\.lastPathComponent)))
+        precondition(Set(tasks.domains[0].items.compactMap { $0.item.pathHelp }) == Set(urls.map { "~/.local/bin/" + $0.lastPathComponent }))
         model.editSelection()
         precondition(model.authorizedShellScripts.count == 4)
         model.prepare(destination: destination); await model.waitForCompletion()
@@ -1568,7 +1611,7 @@ import Vision
         print("PASS: native manual picker contract, duplicate/add-many/default-off/cancel consent, zero-alias Prepare → Confirmation → Execute → Result, rejection and unchanged source bytes")
     }
 
-    @MainActor static func mixedShellCore(root: URL, repository: URL, core: URL, home: URL, bin: URL, python: URL) async throws {
+    @MainActor static func mixedShellCore(root: URL, repository: URL, core: URL, home: URL, bin: URL, python: URL, guiOnly: Bool = false) async throws {
         let fm = FileManager.default
         // Reuse the prepared, authenticated parser; no user-installed executable.
         let preparedApp = repository.appendingPathComponent("desktop/Macseed/build/Debug/Macseed.app")
@@ -1581,8 +1624,14 @@ import Vision
         descriptor["CoreRoot"] = core.path; descriptor["PythonExecutable"] = python.path
         try PropertyListSerialization.data(fromPropertyList: descriptor, format: .xml, options: 0).write(to: resources.appendingPathComponent("CoreRuntime.plist"))
         try fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: home.path)
-        let definitions = ["alias listing='ls -la'", "complex() {\n for x in a b; do\n cat <<'EOF'\nprivate literal é\nEOF\n done\n}",
+        var definitions = ["alias listing='ls -la'", "complex() {\n for x in a b; do\n cat <<'EOF'\nprivate literal é\nEOF\n done\n}",
                            "alias location='pwd'", "ordinary() { :; }", "alias platform='uname -s'", "alias who='whoami'", "third() { :; }"]
+        if guiOnly {
+            definitions = (1...11).map { "alias fixture\($0)='pwd'" }
+                + ["alias linked='\"$HOME/bin/Tools/fixture.sh\"'", "complex() {\n for x in a b; do\n : \"$x\"\n done\n}", "ordinary() { :; }"]
+            try fm.createDirectory(at: home.appendingPathComponent("bin/Tools"), withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+            try write("#!/bin/sh\nprintf 'fixture\\n'\n", home.appendingPathComponent("bin/Tools/fixture.sh"), executable: true)
+        }
         let original = "# source preserved\neval \"$(fixture-init)\"\n" + definitions.joined(separator: "\n") + "\nexport PATH=\"$HOME/bin:$PATH\"\nsetopt AUTO_CD\n"
         try write("eval \"$(other-init)\"\n", home.appendingPathComponent(".zprofile"))
         try fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: home.appendingPathComponent(".zprofile").path)
@@ -1603,9 +1652,55 @@ import Vision
             print("PASS: Native mixed workflow unavailable on non-enforcing platform; active transfer NOT RUN")
             return
         }
+        if guiOnly {
+            precondition(category.row.items.count == 14 && functions.count == 2 && category.notices.isEmpty)
+            let sourceBefore = try snapshot(home)
+            for row in model.categories where row.selectable { model.selectCategory(row.id, included: false) }
+            let script = model.shellScriptCandidates.first { $0.path == "bin/Tools/fixture.sh" }!
+            precondition(script.aliasIDs?.count == 1)
+            model.selectCategory("shell-zsh", included: true)
+            precondition(model.developerGroupState(.shell) == .mixed && model.authorizedShellScripts.isEmpty)
+            precondition(CaptureReviewPresentation.selectionLabel(category, model: model) == "14 of 14 selected")
+            model.selectCategory("shell-zsh", included: false)
+            precondition(model.developerGroupState(.shell) == .none && CaptureReviewPresentation.selectionLabel(category, model: model).isEmpty)
+            model.selectItem("shell-zsh", item: functions[0].itemID, included: true)
+            precondition(CaptureReviewPresentation.selectionLabel(category, model: model) == "1 of 14 selected")
+            model.selectCategory("shell-zsh", included: true)
+            model.selectShellScript(script.id, included: true); await model.waitForCompletion()
+            precondition(model.developerGroupState(.shell) == .all && model.authorizedShellScripts == [script.id])
+            for domain in ["homebrew-packages", "git-configuration"] {
+                precondition(model.categories.contains { $0.id == domain && $0.selectable })
+                model.selectCategory(domain, included: true)
+            }
+            precondition(model.selectedItems["homebrew-packages"]?.count == 2 && model.selectedItems["git-configuration"]?.count == 1)
+            precondition(model.selectedItemCount == 18)
+            let archive = root.appendingPathComponent("gui-mixed.mbt")
+            model.prepare(destination: archive); await model.waitForCompletion()
+            precondition(model.state == .confirmation && model.preparation?.summary.selectedItems == 18,
+                "GUI Prepare: \(model.state), items=\(model.preparation?.summary.selectedItems ?? -1), failure=\(String(describing: model.failure))")
+            precondition(!model.confirmationWarnings.contains { $0.id == "shell-zsh" })
+            let tasks = CaptureTaskPresentation(categories: model.categories, selection: model.preparation!.publicationSelection!,
+                phase: .confirmation, standaloneScripts: model.standaloneShellScripts)
+            let shell = tasks.domains.first { $0.id == "shell-zsh" }!
+            precondition(shell.state == .planned && shell.items.count == 14 && shell.scopeInformation != nil)
+            model.create(); await model.waitForCompletion()
+            precondition(model.state == .result, "Real mixed receipt must reach Save Complete: \(String(describing: model.failure))")
+            precondition(model.publication?.bundle.typedShell == true && model.publication?.bundle.selectedItemCounts["shell-zsh"] == 15)
+            precondition(model.resultPresentation?.savedDomains.first { $0.id == "shell-zsh" }?.items.count == 15)
+            precondition(!model.resultNotices.contains { $0.id == "shell-zsh" })
+            let inspection = CoreRuntime(operationLogs: nil)
+            inspection.start(CoreRequest(.bundleInspect(path: archive.path)), location: location)
+            await inspection.waitForCompletion()
+            precondition(inspection.state == .completed)
+            let info = try inspection.latestResult!.decodeData(CoreRestoreInspection.self); try info.validate()
+            precondition(info.selectedItemCounts["shell-zsh"] == 15 && info.shellScriptCandidates?.count == 1)
+            let sourceAfter = try snapshot(home); precondition(sourceAfter == sourceBefore)
+            print("PASS: real Native → Core multi-domain 12 Aliases + 2 Functions + linked v5 Script → Save Complete; authoritative Bundle inspection, 18 saved items, source unchanged")
+            return
+        }
         precondition(category.row.items.count == 7 && functions.count == 3, "Expected 4 Aliases and 3 Functions")
         precondition(model.shellObservation?.status == .observed && model.shellObservation?.notice == nil)
-        precondition(category.notices.count == 1 && category.notices[0].action.contains("Startup initialization"))
+        precondition(category.notices.isEmpty && category.informationalShellCoverage && category.shellCoverageMessage.contains("Startup initialization"))
         precondition(category.display.items.prefix(4).allSatisfy { $0.title.hasPrefix("Alias: ") })
         precondition(category.display.items.suffix(3).allSatisfy { $0.title.hasPrefix("Function: ") })
         for row in model.categories where row.selectable { model.selectCategory(row.id, included: false) }
@@ -1670,7 +1765,7 @@ import Vision
         print("PASS: active Native → production Core mixed 4 Alias + 3 Function Capture/Bundle/Restore/Verify/Check, parent None/Partial/All, explicit all IDs and separate Scripts consent")
     }
 
-    @MainActor static func realCore(root: URL, repository: URL, python: URL, shellOnly: Bool = false, mixedOnly: Bool = false) async throws {
+    @MainActor static func realCore(root: URL, repository: URL, python: URL, shellOnly: Bool = false, mixedOnly: Bool = false, guiOnly: Bool = false) async throws {
         let started = ProcessInfo.processInfo.systemUptime
         defer { print(String(format: "TIMING: CaptureTests.realCore (including Workspace/overlap) %.3f s", ProcessInfo.processInfo.systemUptime - started)) }
         // Automated disposable HOME/tools only; never the real-Mac manual gate.
@@ -1710,7 +1805,7 @@ import Vision
         try write("private ordinary selection", core.appendingPathComponent("config/blueprint.conf"))
         let beforeHome = try snapshot(home), beforeConfig = try snapshot(core.appendingPathComponent("config"))
         if mixedOnly {
-            try await mixedShellCore(root: root, repository: repository, core: core, home: home, bin: bin, python: python)
+            try await mixedShellCore(root: root, repository: repository, core: core, home: home, bin: bin, python: python, guiOnly: guiOnly)
             return
         }
         if shellOnly {
@@ -1896,7 +1991,7 @@ import Vision
         func status(_ title: String, attention: Bool) {
             let label = header(title).accessibilityLabel?() ?? ""
             let warningLabels = label.components(separatedBy: "Needs Attention").count - 1
-            let countBadge = model.state == .result ? 1 : 0
+            let countBadge = model.state == .result && title == "Homebrew Packages" ? 1 : 0
             precondition(warningLabels == countBadge + (attention ? 1 : 0), "Unexpected warning placement: " + label)
             // Result count badges keep their accessible label; only the repeated status is hidden.
             precondition(!label.contains("Selected · Needs Attention") && !label.contains("Ready to Save · Needs Attention"))
@@ -1935,10 +2030,16 @@ import Vision
         model.create(); await model.waitForCompletion()
         precondition(model.state == .result && model.publicationEvidence == .occurred)
         let result = model.resultPresentation!, hierarchy = result.resultHierarchy
+        let savedShell = result.savedDomains.first { $0.id == "shell-zsh" }!
         func resultCounters(_ categories: [(String, Bool)]) {
             for (title, showsWarning) in categories {
-                let domain = (hierarchy.roots + hierarchy.children.values.flatMap { $0 }).first { $0.title == title }!
-                precondition(RestoreFinalDomain.counts(domain).map(\.1) == [1])
+                if title == "Homebrew Packages" {
+                    let domain = hierarchy.roots.first { $0.title == title }!
+                    precondition(RestoreFinalDomain.counts(domain).map(\.1) == [1])
+                } else {
+                    precondition(savedShell.items.filter { $0.state == .completed }.count == 1
+                                 && savedShell.items.filter { $0.state == .attention }.count == 1)
+                }
                 // The native header combines the badge's label separately from
                 // the disclosure-aware status; both must remain independently correct.
                 status(title, attention: showsWarning)
@@ -1947,10 +2048,9 @@ import Vision
                 "Hierarchical counters never duplicate underlying issues or summary totals")
         }
         precondition(result.affectedCount == 2 && result.attention.flatMap(\.items).count == 2)
-        precondition(hierarchy.roots.map(\.id) == ["homebrew-packages", DeveloperSelectionGroup.shell.id])
-        precondition(hierarchy.children[DeveloperSelectionGroup.shell.id]?.map(\.title) == ["Custom Commands"])
-        precondition(hierarchy.children[ShellCommandPresentation.commandsID]?.map(\.title) == ["Aliases & Functions"])
-        precondition(hierarchy.explanations.count == 2 && hierarchy.explanations.values.contains { $0.contains("Shell coverage is incomplete") })
+        precondition(hierarchy.roots.map(\.id) == ["homebrew-packages"])
+        precondition(result.savedDomains.map(\.id) == ["shell-zsh"] && savedShell.state == .attention)
+        precondition(hierarchy.explanations.count == 1, "Saved Shell details carry their own single coverage diagnostic")
         try await Task.sleep(for: .milliseconds(100)); host.layoutSubtreeIfNeeded()
         status("Shell", attention: true)
         resultCounters([("Homebrew Packages", true), ("Shell", true)])
@@ -1960,7 +2060,8 @@ import Vision
         try await click("Aliases & Functions"); status("Aliases & Functions", attention: true)
         status("Shell", attention: false)
         resultCounters([("Homebrew Packages", true), ("Shell", false), ("Custom Commands", false), ("Aliases & Functions", true)])
-        let explanation = hierarchy.explanations.values.first { $0.contains("Shell coverage is incomplete") }!
+        let explanation = savedShell.items.first { $0.captureRole == .categoryWarning }!.item.action
+        precondition(!explanation.isEmpty)
         let visibleLabels = visibleText()
         precondition(visibleLabels.filter { $0.contains(explanation) }.count == 1, "Capture Result explanation must appear once: \(visibleLabels)")
         try await click("Custom Commands"); status("Custom Commands", attention: true)
@@ -1972,6 +2073,7 @@ import Vision
         try await click("Homebrew Packages"); status("Homebrew Packages", attention: true)
         precondition(visibleText().contains { $0.contains("Saved supported state may be incomplete in this category.") })
         let tree = Set(hierarchy.roots.map(\.id) + hierarchy.children.values.flatMap { $0.map(\.id) })
+            .union([DeveloperSelectionGroup.shell.id, ShellCommandPresentation.commandsID, "shell-zsh"])
         for dark in (CommandLine.arguments.contains("--result-layout-renders") ? [false] : [false, true]) { try render(model, runtime, state: "consistency-result", tree: tree, dark: dark) }
         print("PASS: production Capture Selection/Result: warning movement, persistent functional categories and parent counters collapsed/expanded/re-collapsed, Homebrew coverage, clean sibling, unchanged selection/counts, unique diagnostics and successful publication")
     }
