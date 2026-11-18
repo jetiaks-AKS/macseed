@@ -275,11 +275,24 @@ struct EnvironmentStatusPresentation {
                                         ? "Source status: " + row.sourceStatus : nil))
         }
         let owners = result.records.verificationRecords + result.records.operationRecords
+        var coverageHelp: [String: String] = [:]
         for (index, diagnostic) in diagnostics.enumerated() {
             let owner = owners.first { $0.recordID == diagnostic.recordID }
             let coverage = coverageRecords.first { $0.recordID == diagnostic.recordID }
             let domain = owner?.domain ?? coverage?.domain ?? "comparison"
             let identity = owner?.itemID ?? coverage?.itemID ?? "scope"
+            if coverage?.domain == "shell-zsh", coverage?.itemID == "scope", coverage?.disposition == "resolved",
+               diagnostic.code == "shell_activation_unknown", diagnostic.severity == "info", diagnostic.phase == "scope" {
+                let facts = result.comparisonRecords.filter { $0.domain == "shell-zsh" }
+                let definitions = facts.contains { $0.itemID.hasPrefix("shell-alias:") || $0.itemID.hasPrefix("shell-function:") }
+                let scripts = facts.contains { $0.itemID.hasPrefix("shell-script:") }
+                if (definitions || scripts) && facts.allSatisfy({ $0.comparisonKind == "matching" }) {
+                    let category = definitions ? ShellCommandPresentation.aliasesID : ShellCommandPresentation.scriptsID
+                    coverageHelp[category] = (definitions ? "The exact saved definitions match." : "The saved script files match.")
+                        + " Runtime activation and dynamic Shell startup were not verified."
+                    continue
+                }
+            }
             // Correlate by the owner identity; retain matching facts and every diagnostic in the same row.
             let attention = ["warning", "error"].contains(diagnostic.severity)
             let fact = result.comparisonRecords.first { $0.recordID == diagnostic.recordID }
@@ -292,7 +305,7 @@ struct EnvironmentStatusPresentation {
             // Expected predicate diagnostics explain the typed result; independent warnings retain attention.
             add(domain, DisplayItem(id: owner != nil || coverage != nil ? logicalID(domain, identity) : "diagnostic:\(index)", title: title(identity, domain: domain), status: attention && !expectedDiagnostic ? .attention : .information,
                                     action: domain == "shell-zsh" && identity == "scope" && diagnostic.code == "shell_activation_unknown" && diagnostic.severity == "info"
-                                        ? ShellCommandPresentation.activationSummary
+                                        ? "Runtime activation and dynamic Shell startup were not verified."
                                         : expectedDiagnostic || (domain == "ssh-configuration" && identity == "identity-references" && diagnostic.code == "prerequisite_unmet") ? "" : (attention ? diagnosticMessage(diagnostic.code) : "Additional diagnostic information is available."),
                                     reason: diagnostic.severity + ": " + diagnostic.code + "\nPhase: " + diagnostic.phase + "\nRecord: " + diagnostic.recordID
                                     + (coverage.map { "\nSource status: " + $0.sourceStatus } ?? "")))
@@ -454,7 +467,6 @@ struct EnvironmentStatusPresentation {
             }
             if aggregate.comparisonKind == "unverified" { sshHostAttentionDelta = items.count - 1 }
         }
-        var coverageHelp: [String: String] = [:]
         // Condense only the known partial-coverage explanation. Independent errors
         // on this same row remain visible rather than being moved into help.
         for coverage in coverageRecords where coverage.domain == "shell-zsh" && coverage.itemID == "scope"

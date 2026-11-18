@@ -418,7 +418,7 @@ def _validate(value, payloads):
                 aliases += 1
                 require(details['mode'] == 'ordinary', 'unsupported_contract')
                 try:
-                    parsed = legacy().base.declaration(text, extended=True)
+                    parsed = legacy().base.typed_declaration(text)
                 except ValueError:
                     raise Invalid('content_invalid') from None
                 require(parsed is not None and parsed[0]['name'] == row['key'], 'content_invalid')
@@ -446,7 +446,7 @@ def _validate(value, payloads):
             context = dict(aliases=alias_definitions,
                            roots=[source_map[row['source']]['path'] for row in loads if row['parent'] is None],
                            layout=[dict(path=row['path']) for row in sources if row['role'] == 'zsh'])
-            require(all(legacy().script_path(context, row['path']) for row in scripts), 'content_invalid')
+            require(all(legacy().script_path(context, row['path'], typed=True) for row in scripts), 'content_invalid')
             # The legacy envelope checks payloads only; its source model cannot
             # represent typed repeated loads. Check actual selected context above.
             legacy().validated(dict(legacy().empty_capture(), version=5, scripts=scripts))

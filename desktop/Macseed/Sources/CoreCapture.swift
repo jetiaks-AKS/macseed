@@ -113,13 +113,48 @@ struct CoreCaptureShellObservation: Decodable {
     enum Status: String, Decodable { case observed, unavailable, unsupported }
     let status: Status
     private let codes: Set<String>
-    enum CodingKeys: String, CodingKey { case status, codes }
+    enum AliasExclusion: String, Decodable {
+        case literal = "literal_required", restricted = "restricted_content", unsupported = "unsupported_declaration"
+        case mode = "unsupported_mode", position = "unsupported_position"
+        var explanation: String {
+            switch self {
+            case .literal: return "Excluded because the declaration needs a single, statically quoted command value."
+            case .restricted: return "Excluded because the declaration contains a sensitive-content indicator."
+            case .unsupported: return "Excluded because the declaration falls outside the supported name, content or portability limits."
+            case .mode: return "Capture supports ordinary Aliases. This declaration uses a global or suffix Alias."
+            case .position: return "Excluded because its exact declaration could not be isolated on a source line."
+            }
+        }
+    }
+    let excludedAliases: [String: AliasExclusion]
+    enum CodingKeys: String, CodingKey { case status, codes, excludedAliases = "excluded_aliases" }
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         status = try values.decode(Status.self, forKey: .status)
         let supplied = try values.decodeIfPresent([String].self, forKey: .codes) ?? []
         guard supplied.count <= 32, supplied.allSatisfy({ $0.utf8.count <= 80 }) else { throw CoreRuntimeError.malformedEvent }
         codes = Set(supplied)
+        excludedAliases = try values.decodeIfPresent([String: AliasExclusion].self, forKey: .excludedAliases) ?? [:]
+        guard excludedAliases.count <= 256, excludedAliases.keys.allSatisfy({
+            $0.range(of: #"^[A-Za-z_][A-Za-z0-9_.-]{0,63}\z"#, options: .regularExpression) != nil
+        }) else { throw CoreRuntimeError.malformedEvent }
+    }
+    var hasIncompleteScan: Bool {
+        !codes.isDisjoint(with: ["alias_scope_unresolved", "ambiguous_alias", "ambiguous_function",
+            "ambiguous_source_command", "unsafe_source", "source_changed", "source_unresolved"])
+    }
+    var selectionIssue: String? {
+        if codes.contains("unsafe_source") { return "A Shell source failed safety checks. Review its ownership and permissions, then scan again." }
+        if codes.contains("source_changed") { return "A Shell source changed during inspection. Scan again to refresh the list." }
+        if codes.contains("source_unresolved") { return "A referenced Shell source could not be inspected. Check the source reference and scan again." }
+        if codes.contains("alias_scope_unresolved") {
+            return "Some Alias declarations could not be identified safely. Review the startup configuration if an expected Alias is missing."
+        }
+        if !codes.isDisjoint(with: ["ambiguous_alias", "ambiguous_function", "ambiguous_source_command"]) {
+            return "Some definitions have conflicting names or ambiguous load relationships. Review duplicate declarations and source commands, then scan again."
+        }
+        if codes.isSubset(of: ["unsupported_context"]) && !excludedAliases.isEmpty { return nil }
+        return notice ?? (qualifiedScopeLimitation ? nil : "Some Shell definitions could not be qualified. Review the startup configuration if an expected command is missing.")
     }
     var title: String { status == .unavailable ? "Functions unavailable" : "Functions excluded" }
     var qualifiedScopeLimitation: Bool {

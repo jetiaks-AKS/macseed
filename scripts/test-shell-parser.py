@@ -52,6 +52,33 @@ def launch_enforced(test, client, requirement):
 
 class ShellStateTests(unittest.TestCase):
     """Pure codec tests share the Shell harness; no helper build or HOME access."""
+    def test_typed_alias_literal_boundary_and_legacy_compatibility(self):
+        base = state.legacy().base
+        for body in (r'printf "one\ntwo\n" | grep -F two', 'a && b || c; d > out 2>&1',
+                     'print "$value" "${fallback:-ok}"', 'print "$(tool)"'):
+            statement = "alias ll='" + body + "'"
+            self.assertEqual(base.typed_declaration(statement)[0]['statement'], statement)
+            self.assertIsNone(base.declaration(statement, extended=True))
+            snapshot = state.assemble(*self.fixture(alias_value=body))
+            self.assertEqual(state.content(state.decode(*state.encode(snapshot)), snapshot._value['items'][0]),
+                             statement.encode())
+        for statement in ('alias ll="$(tool)"', 'alias ll="`tool`"', 'alias ll="$HOME/bin/task"',
+                          "alias ll='ok'; print outside", "alias ll='ok' > target",
+                          "alias ll='one'\nprint two", "alias ll='echo --password=value'", "alias -g ll='ok'"):
+            self.assertIsNone(base.typed_declaration(statement))
+        # Recompute the manifest's content digest after changing the literal
+        # envelope. A matching hash cannot qualify a load-time expansion.
+        snapshot = state.assemble(*self.fixture(alias_value='print $VAR'))
+        raw, files = state.encode(snapshot)
+        manifest = json.loads(raw[len(state.MAGIC):])
+        content = b'alias ll="print $VAR"'
+        files[state.DEFINITIONS] = files[state.DEFINITIONS].replace(b"alias ll='print $VAR'", content)
+        next(ref for ref in manifest['content_refs'] if ref['member'] == state.DEFINITIONS and ref['offset'] == 0)['sha256'] = state.digest(content)
+        with self.assertRaisesRegex(state.Invalid, 'content_invalid'):
+            state.decode(self.wire(manifest), files)
+        with self.assertRaises(state.Invalid):
+            state.assemble(*self.fixture(alias_value='true && source "$HOME/Scripts/task.sh"'))
+
     def test_activation_scope_is_informational_only_for_all_matching_selected_rows(self):
         for statuses in [[], ['matching'], ['matching', 'matching'],
                          ['matching', 'differing'], ['matching', 'unverified'], ['missing']]:
@@ -495,6 +522,48 @@ class ShellStateTests(unittest.TestCase):
 
 
 class ShellParser(unittest.TestCase):
+    def test_complex_alias_qualification_and_sanitized_exclusions(self):
+        home = self.observation_home()
+        if not self.enforcing():
+            self.skipTest('Requires enforced parser launch')
+        helper = functions.client.Parser(package=self.package, manifest_sha256=self.manifest_sha256)
+        line = br"""alias pipe='printf "one\ntwo\n" | grep -F two'"""
+        raw = (b'export OUTSIDE=scope\n' + line + b' # trailing comment\n'
+               b'alias dynamic="$(touch should-never-run)"\nalias privatecmd=\'print --password=REDACT_ME\'\n'
+               b'alias -g global_suffix="tail"\nalias same_line="pwd"; alias neighbor="ls"\n'
+               b'if true; then\nalias conditional="pwd"\nfi\n')
+        source = self.source_file(home, '.zshrc', raw)
+        with patch.object(functions.capture, 'parser', return_value=helper), patch.dict(os.environ, HOME=str(home)):
+            scan = functions.capture.Observation(ROOT)
+        self.assertEqual([row['label'] for row in scan.entries()], ['pipe'])
+        self.assertEqual(scan.public['excluded_aliases'], {'dynamic': 'literal_required', 'privatecmd': 'restricted_content',
+                                                          'global_suffix': 'unsupported_mode', 'same_line': 'unsupported_position',
+                                                          'neighbor': 'unsupported_position'})
+        self.assertIn('alias_scope_unresolved', scan.public['codes'])
+        self.assertNotIn('REDACT_ME', json.dumps(scan.public))
+        self.source_file(home, '.zshrc', raw + b'source "$HOME/missing-bindings"\n')
+        unresolved, missing, _ = self.observed(home, aliases=True, independent=True)
+        self.assertIn('source_unresolved', unresolved.codes)
+        self.assertFalse(missing['items'])
+        source.write_bytes(raw)
+        target = self.observation_home()
+        path = self.source_file(target, '.zshrc', line.replace(b'grep -F two', b'grep -F one') + b'\n')
+        for conflict in (path.read_bytes(), line + b'\n' + line + b'\n'):
+            path.write_bytes(conflict)
+            plan = functions.plan(scan.snapshot, str(target), helper=helper)
+            self.assertFalse(plan.writes)
+            self.assertFalse(any(status == 'matching' for _, status, _ in plan.rows))
+            with self.assertRaises(ValueError):
+                functions.publish(scan.snapshot, str(target), helper=helper)
+            self.assertEqual(path.read_bytes(), conflict)
+        path.unlink()
+        path.symlink_to(source)
+        self.assertFalse(functions.plan(scan.snapshot, str(target), helper=helper).writes)
+        with self.assertRaises(ValueError):
+            functions.publish(scan.snapshot, str(target), helper=helper)
+        self.assertTrue(path.is_symlink())
+        self.assertEqual(source.read_bytes(), raw)
+
     def test_mixed_definitions_shared_source_order_scripts_and_noop(self):
         initial, helper, source = self.function_restore_fixture()
         if not self.function_mode(initial, helper, source):
@@ -767,6 +836,46 @@ class ShellParser(unittest.TestCase):
             self.assertEqual(result.rows[0][1:], ('unverified', 'functions_unavailable'))
             self.assertEqual(result.writes, {})
         read.assert_not_called(); self.assertFalse(target.exists())
+
+    def test_partial_startup_append_ownership_late_override_and_freshness(self):
+        value, helper, home = self.function_restore_fixture({'portable': b'portable() { :; }'})
+        if not self.function_mode(value, helper, home): return
+        raw = b'eval "$(unrelated-init)"\nsource "$HOME/parts/leaf"\n'
+        rc = self.source_file(home, '.zshrc', raw)
+        leaf = self.source_file(home, 'parts/leaf', b'# managed by fixture\n')
+        (leaf.parent / '.git').mkdir()
+        def inspect():
+            return functions.plan(value, str(home), helper=helper)
+        original = inspect()
+        self.assertEqual(set(original.writes), {'.zshrc'})
+        leaf.write_bytes(b'# managed by changed fixture\n')
+        with self.assertRaisesRegex(functions.base.Invalid, 'target_changed'):
+            functions.publish(value, str(home), helper=helper, expected=original.evidence)
+        login = self.source_file(home, '.zlogin', b'eval "$LATER_OVERRIDE"\n')
+        self.assertEqual(inspect().writes, {})
+        login.unlink()
+        for changed in (raw + b'# managed by fixture\n', raw + b'source "$HOME/$unknown"\n',
+                        raw + b"alias portable='pwd'\n"):
+            rc.write_bytes(changed)
+            self.assertEqual(inspect().writes, {})
+        rc.write_bytes(raw)
+        (home / '.chezmoiroot').touch()
+        self.assertEqual(inspect().rows[0][1:], ('unverified', 'managed_source_prerequisite'))
+        self.assertEqual(inspect().writes, {})
+        self.assertEqual(rc.read_bytes(), raw)
+
+        # Fallback may use its own file and direct integration while an unrelated
+        # Git-managed source stays loaded. A managed integration file still blocks it.
+        (home / '.chezmoiroot').unlink()
+        source = self.observation_home()
+        self.source_file(source, '.zshrc', b'source "$HOME/original/defs"\n')
+        self.source_file(source, 'original/defs', b'portable() { :; }\n')
+        value = functions.observe.observe(str(source), helper).snapshot
+        rc.write_bytes(b'source "$HOME/parts/leaf"\n')
+        self.assertEqual(set(inspect().writes), {'.zshrc', functions.MANAGED_PATH})
+        rc.write_bytes(b'# managed by fixture\n' + rc.read_bytes())
+        self.assertEqual(inspect().rows[0][1:], ('unverified', 'managed_source_prerequisite'))
+        self.assertEqual(inspect().writes, {})
 
     def test_functions_restore_stale_cancelled_and_publication_races(self):
         value, helper, home = self.function_restore_fixture()

@@ -4,7 +4,32 @@ import SwiftUI
 import Vision
 
 @main struct CaptureTests {
+    @MainActor static func shellConfirmationUICheck(model: CaptureModel, runtime: CoreRuntime, core: URL, root: URL) async throws {
+        let inventory = core.appendingPathComponent("inventory.json"), scripts = core.appendingPathComponent("shell-scripts.json")
+        let saved = try Data(contentsOf: inventory), savedScripts = try? Data(contentsOf: scripts)
+        defer {
+            try! saved.write(to: inventory)
+            if let savedScripts { try! savedScripts.write(to: scripts) } else { try? FileManager.default.removeItem(at: scripts) }
+        }
+        let ids = ["alias", "function"].flatMap { kind in (1...3).map { "shell-" + kind + ":" + String(format: "%064x", $0) } }
+        let items = zip(ids, ["first", "second", "third", "one", "two", "three"]).map { ["item_id": $0, "label": $1] }
+        let rows: [Object] = [["domain": "shell-zsh", "selection_mode": "items", "status": "present", "reason": NSNull(), "items": items]]
+        try JSONSerialization.data(withJSONObject: rows).write(to: inventory)
+        try JSONSerialization.data(withJSONObject: [["path": "Scripts/linked", "alias_ids": [ids[0]]],
+            ["path": "Scripts/manual", "alias_ids": []]]).write(to: scripts)
+        model.scan(); await model.waitForCompletion()
+        model.selectCategory("shell-zsh", included: true)
+        model.selectAllShellScripts(included: true); await model.waitForCompletion()
+        model.prepare(destination: root.appendingPathComponent("eight-items.mbt")); await model.waitForCompletion()
+        precondition(model.state == .confirmation && model.preparation?.summary.selectedItems == 8, "Prepared eight items: \(model.state), \(String(describing: model.failure)), \(model.selectedItemCount)")
+        let tree = DeveloperSelectionGroup.disclosureIDs(["shell-zsh", ShellCommandPresentation.commandsID, ShellCommandPresentation.scriptsID])
+            .subtracting(["shell-zsh"])
+        try render(model, runtime, state: "b4-confirmation", tree: tree)
+        model.editSelection()
+    }
+
     @MainActor static func shellCounterChecks(model: CaptureModel, runtime: CoreRuntime, core: URL, root: URL) async throws {
+        try await shellConfirmationUICheck(model: model, runtime: runtime, core: core, root: root)
         let inventory = core.appendingPathComponent("inventory.json"), scripts = core.appendingPathComponent("shell-scripts.json")
         let original = try Data(contentsOf: inventory)
         defer { try? original.write(to: inventory); try? FileManager.default.removeItem(at: scripts) }
@@ -186,6 +211,21 @@ import Vision
         precondition(!FileManager.default.fileExists(atPath: root.appendingPathComponent("shell-confirmation.mbt").path))
         print("PASS: native Shell Prepare → Confirmation: 16 domains/109 items/2 identities, whole/subset selection, default-off consent and strict negative validation")
     }
+    @MainActor static func clickShellCheckbox(_ label: String, state: NSControl.StateValue, model: CaptureModel, runtime: CoreRuntime, tree: Set<String>) {
+        let host = NSHostingView(rootView: CaptureView(model: model, runtime: runtime, showsActions: false,
+            categoryTreeExpansion: .constant(tree), experiencedVisibility: .constant(true)))
+        let window = NSWindow(contentRect: .init(x: 0, y: 0, width: 985, height: 1100), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = host
+        defer { window.contentView = nil; window.close() }
+        host.layoutSubtreeIfNeeded()
+        func find(_ view: NSView) -> NSButton? {
+            if let button = view as? NSButton, button.accessibilityLabel() == label { return button }
+            return view.subviews.lazy.compactMap(find).first
+        }
+        let button = find(host)!
+        precondition(button.isEnabled && button.state == state)
+        button.performClick(nil)
+    }
     @MainActor static func shellParentUIChecks(model: CaptureModel, runtime: CoreRuntime, core: URL) async throws {
         let inventory = core.appendingPathComponent("inventory.json"), scripts = core.appendingPathComponent("shell-scripts.json")
         let original = try Data(contentsOf: inventory), originalScripts = try? Data(contentsOf: scripts)
@@ -200,51 +240,36 @@ import Vision
         model.scan(); await model.waitForCompletion()
         let script = model.shellScriptCandidates[0]
         let tree = DeveloperSelectionGroup.disclosureIDs(["shell-zsh", ShellCommandPresentation.commandsID])
-        func click(_ label: String, state: NSControl.StateValue) {
-            let host = NSHostingView(rootView: CaptureView(model: model, runtime: runtime, showsActions: false,
-                categoryTreeExpansion: .constant(tree), experiencedVisibility: .constant(true)))
-            let window = NSWindow(contentRect: .init(x: 0, y: 0, width: 985, height: 1100), styleMask: [.borderless], backing: .buffered, defer: false)
-            window.isReleasedWhenClosed = false; window.contentView = host
-            defer { window.contentView = nil; window.close() }
-            host.layoutSubtreeIfNeeded()
-            func find(_ view: NSView) -> NSButton? {
-                if let button = view as? NSButton, button.accessibilityLabel() == label { return button }
-                return view.subviews.lazy.compactMap(find).first
-            }
-            let button = find(host)!
-            precondition(button.isEnabled && button.state == state)
-            button.performClick(nil)
-        }
         for label in ["Select Shell", "Select Custom Commands"] {
             model.selectCategory("shell-zsh", included: true)
             precondition(model.selectedItems["shell-zsh"]?.count == 12 && model.authorizedShellScripts.isEmpty)
-            click(label, state: .mixed)
+            clickShellCheckbox(label, state: .mixed, model: model, runtime: runtime, tree: tree)
             precondition(model.developerGroupState(.shell) == .none && model.shellParentConsent == nil && !model.inspectingShellScripts)
             let before = model.selection
-            click(label, state: .off)
+            clickShellCheckbox(label, state: .off, model: model, runtime: runtime, tree: tree)
             precondition(model.shellParentConsent?.newScripts.map(\.id) == [script.id] && model.selection == before)
             model.resolveShellParent(model.shellParentConsent!, choice: .cancel)
             precondition(model.selection == before && model.authorizedShellScripts.isEmpty)
-            click(label, state: .off)
+            clickShellCheckbox(label, state: .off, model: model, runtime: runtime, tree: tree)
             model.resolveShellParent(model.shellParentConsent!, choice: .includeScripts)
             await model.waitForCompletion()
             precondition(model.developerGroupState(.shell) == .all && model.authorizedShellScripts == [script.id])
             model.selectItem("shell-zsh", item: aliases[0], included: false)
             precondition(model.authorizedShellScripts == [script.id])
             model.selectItem("shell-zsh", item: aliases[0], included: true)
-            click(label, state: .on)
+            clickShellCheckbox(label, state: .on, model: model, runtime: runtime, tree: tree)
             precondition(model.developerGroupState(.shell) == .none && model.authorizedShellScripts.isEmpty && model.shellParentConsent == nil)
         }
         let before = model.selection
         for choice in [ShellParentConsent.Choice.aliasesOnly, .cancel, .includeScripts] {
-            click("Select Scripts", state: .off)
+            clickShellCheckbox("Select Scripts", state: .off, model: model, runtime: runtime, tree: tree)
             precondition(model.shellParentConsent?.selectAliases == false && model.shellParentConsent?.keepSelectionTitle == "Keep current selection")
             model.resolveShellParent(model.shellParentConsent!, choice: choice)
             await model.waitForCompletion()
             precondition(model.selection == before, "Scripts-only action must not add aliases")
             precondition(model.authorizedShellScripts == (choice == .includeScripts ? [script.id] : []))
         }
-        click("Select Scripts", state: .on)
+        clickShellCheckbox("Select Scripts", state: .on, model: model, runtime: runtime, tree: tree)
         precondition(model.authorizedShellScripts.isEmpty && model.shellParentConsent == nil)
         for category in model.categories {
             model.selectCategory(category.id, included: false)
@@ -335,6 +360,19 @@ import Vision
         precondition(model.selection == collapsedScope && model.authorizedShellScripts == [shared, other])
         model.selectShellScript(other, included: false)
         model.selectItem("shell-zsh", item: aliases[2], included: true)
+        let scope = model.selection, consent = model.authorizedShellScripts
+        for label in ["Select Shell", "Select Custom Commands"] {
+            clickShellCheckbox(label, state: .mixed, model: model, runtime: runtime, tree: ids)
+            precondition(model.developerGroupState(.shell) == .none && model.authorizedShellScripts.isEmpty && model.shellParentConsent == nil)
+            let cleared = model.selection
+            clickShellCheckbox(label, state: .off, model: model, runtime: runtime, tree: ids)
+            precondition(model.selection == cleared && Set(model.shellParentConsent!.newScripts.map(\.id)) == [shared, other])
+            model.resolveShellParent(model.shellParentConsent!, choice: .cancel)
+            precondition(model.selection == cleared && model.authorizedShellScripts.isEmpty)
+            model.selectCategory("shell-zsh", included: true)
+            model.selectShellScript(shared, included: true); await model.waitForCompletion()
+            precondition(model.selection == scope && model.authorizedShellScripts == consent)
+        }
         for dark in [false, true] { try render(model, runtime, state: "shell-custom-selection", scrollToBottom: true, tree: ids, dark: dark) }
         print("CHECK: automatic qualification and native selection complete; preparing Confirmation")
         model.prepare(destination: root.appendingPathComponent("custom-commands.mbt")); await model.waitForCompletion()
@@ -539,23 +577,9 @@ import Vision
                 precondition(checkboxes(host).isEmpty, "Prepared and published scope is read-only")
             }
             if state == "shell-custom-selection", width == 580, !dark {
-                let scope = model.selection, consent = model.authorizedShellScripts
-                func click(_ label: String) {
-                    checkboxes(host).first { $0.accessibilityLabel() == label }!.performClick(nil)
-                    // Resolve the tested consent before draining AppKit: this
-                    // offscreen window must not retain a real alert sheet.
-                    host.layoutSubtreeIfNeeded()
-                }
-                for label in ["Select Shell", "Select Custom Commands"] {
+                for label in ["Select Shell", "Select Custom Commands", "Select Scripts"] {
                     precondition(checkboxes(host).first { $0.accessibilityLabel() == label }?.state == .mixed)
-                    click(label)
-                    precondition(model.selection == scope && model.authorizedShellScripts == consent && model.shellParentConsent != nil,
-                                 "A parent click must wait for informed consent without changing selection")
-                    model.resolveShellParent(model.shellParentConsent!, choice: .cancel)
-                    host.layoutSubtreeIfNeeded()
                 }
-                precondition(checkboxes(host).first { $0.accessibilityLabel() == "Select Scripts" }?.state == .mixed)
-                precondition(model.selection == scope && model.authorizedShellScripts == consent)
                 precondition(checkboxes(host).filter { ($0.accessibilityLabel() ?? "").hasPrefix("~/") }.allSatisfy { $0.isEnabled && $0.target != nil && $0.action != nil })
             }
             if state == "ssh-host-selection" {
@@ -621,6 +645,16 @@ import Vision
             host.displayIfNeeded()
             guard let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { preconditionFailure("Native Capture render unavailable") }
             host.cacheDisplay(in: host.bounds, to: bitmap)
+            if state == "b4-confirmation", width == 985 {
+                let recognition = VNRecognizeTextRequest(); recognition.recognitionLevel = .accurate
+                try VNImageRequestHandler(cgImage: bitmap.cgImage!, options: [:]).perform([recognition])
+                let text = (recognition.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ").lowercased()
+                for label in ["save this environment?", "eight-items.mbt", "included in this capture", "aliases & functions",
+                              "ready to save", "scripts", "6 items included", "2 items included", "selected script files will be saved unencrypted"] {
+                    precondition(text.contains(label), "Missing " + label + " in Confirmation: " + text)
+                }
+                precondition(!text.contains("settings are not encrypted") && !text.contains("3 aliases"))
+            }
             if state.hasPrefix("shell-custom"), width == 985, !dark {
                 let recognition = VNRecognizeTextRequest(); recognition.recognitionLevel = .accurate
                 try VNImageRequestHandler(cgImage: bitmap.cgImage!, options: [:]).perform([recognition])
@@ -628,7 +662,7 @@ import Vision
                 precondition(text.contains("scripts"))
                 if state == "shell-custom-checking" { precondition(text.contains("checking")) }
                 precondition(!text.contains("inspect") && !text.contains("optional executable-code transfer") && !text.contains("as authorized in selection"))
-                let warning = model.state == .confirmation ? "selected executable files will be saved unencrypted" : "executable files are saved unencrypted"
+                let warning = model.state == .confirmation ? "selected script files will be saved unencrypted" : "script files are saved unencrypted"
                 if state == "shell-custom-collapsed" {
                     precondition(!text.contains(warning) && !text.contains("platform-info"), "Collapsed Scripts shows only its category row")
                 } else {
@@ -741,7 +775,7 @@ import Vision
         setbuf(stdout, nil)
         // Foundation resolves /private/var to /var, while Core requires Python's
         // canonical parent spelling. Use an explicit canonical fixture root.
-        let root = (CommandLine.arguments.contains("--shell-ui-only") ? FileManager.default.temporaryDirectory : URL(fileURLWithPath: "/private/tmp"))
+        let root = (!Set(["--shell-ui-only", "--confirmation-ui-only", "--ssh-confirmation-only"]).isDisjoint(with: CommandLine.arguments) ? FileManager.default.temporaryDirectory : URL(fileURLWithPath: "/private/tmp"))
             .appendingPathComponent("macseed-desktop-capture-tests-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
         defer { try? FileManager.default.removeItem(at: root) }
@@ -900,6 +934,9 @@ import Vision
             try await shellParentUIChecks(model: model, runtime: runtime, core: core)
             return
         }
+        if CommandLine.arguments.contains("--confirmation-ui-only") {
+            try await shellConfirmationUICheck(model: model, runtime: runtime, core: core, root: root); return
+        }
         if CommandLine.arguments.contains("--shell-counts-only") {
             try await shellCounterChecks(model: model, runtime: runtime, core: core, root: root)
             return
@@ -932,9 +969,13 @@ import Vision
                 let included = !model.preparation!.publicationSelection!.secureIdentities.isEmpty
                 precondition(included == secure)
                 let message = CaptureModel.confirmationPrivacyMessage(includesSSHIdentities: included)
-                precondition(message.contains("not encrypted") && !message.contains("~/.ssh") && !message.contains("manually"))
-                precondition(message.contains("passphrase") == secure && message.contains("SSH identities") == secure)
-                if secure { precondition(message.contains("encrypted separately") && message.contains("safe")) }
+                if secure {
+                    let guidance = message!
+                    precondition(guidance.contains("SSH identities are encrypted separately") && guidance.contains("not encrypted"))
+                    precondition(guidance.contains("passphrase safe") && !guidance.contains("~/.ssh") && !guidance.contains("manually"))
+                } else {
+                    precondition(message == nil)
+                }
             }
             precondition(!FileManager.default.fileExists(atPath: root.appendingPathComponent("secure.mbt").path), "Confirmation does not save or import")
             print("PASS: Capture Confirmation concise encryption boundary and passphrase disclosure only for selected SSH identities; no destination restriction")
@@ -1766,7 +1807,7 @@ import Vision
         let previewBytes = try String(contentsOf: target, encoding: .utf8)
         precondition(previewBytes == before)
         restore.requestRebuild(); precondition(restore.state == .confirming)
-        precondition(restore.confirmationMessages.contains(ShellCommandPresentation.definitionRestoreNotice))
+        precondition(restore.preparation?.hasBlockedSelectedWork == false && restore.shellScriptConsentReady)
         restore.cancelRebuildConfirmation(); precondition(restore.state == .preview)
         restore.requestRebuild(); restore.confirmRebuild(); await restore.waitForCompletion()
         precondition(restore.state == .result, "Mixed Native Restore failed: \(String(describing: restore.failure))")

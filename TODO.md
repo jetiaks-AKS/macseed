@@ -12,25 +12,21 @@ authorized gate; an interrupted run is not a full PASS and does not justify broa
 Follow the approved order: **Shell → Stage 3C → remaining Stage 16 functionality →
 Stage 17 distribution → final comprehensive qualification → Alpha → 1.0**.
 The [Shell contract](docs/toolkit/CONFIGURATION.md#shell--zsh-configuration) owns the
-bounded source-aware alias slice. Legacy whole-file behavior remains supported; this does not
-complete Shell or prove effective interactive-shell state.
+source and definition contracts, including legacy whole-file behavior.
 
-The accepted [Aliases & Scripts v5 A/B/C checkpoint](docs/qualification/SHELL-RECOVERABILITY-2026-11-12.md#real-gui-abc-acceptance--2026-11-15)
-does not qualify every dynamic or managed Shell configuration. Preserve that
-bounded acceptance and the existing partial-coverage warning.
+The [B4 real-Mac GUI acceptance](docs/qualification/SHELL-UNIFIED-B4-2026-11-17.md#real-mac-gui-acceptance-2026-11-18)
+closed the mixed Custom Commands workflow. Remaining Shell work follows.
 
-- [ ] **Standalone Zsh Functions:** qualify remaining call/alias dependencies, side effects
-  and target configurations beyond the implemented exact-definition B3 slice.
+- [ ] **Next — Variables & PATH:** separate portable static values, HOME-relative references,
+  ordered path entries, secrets and dynamic initialization. Qualify Apple Silicon and
+  Intel Homebrew prerequisites without rewriting arbitrary commands or paths.
+- [ ] Qualify Function call/alias dependencies, side effects and target configurations
+  beyond exact-definition recovery.
 - [ ] Qualify [protected Functions observation](docs/core/SHELL-PARSER.md#core-caller-b2a)
   on physical Intel, macOS 14.4, and the 14.0–14.3 unavailable path; bind the final
   signed parser manifest anchor to authenticated Core release metadata in Stage 17.
-- [ ] Qualify [unified B4 workflows](docs/toolkit/CONFIGURATION.md#unified-aliases--functions-b4)
-  through visual acceptance and representative real-Mac workflows; close independent
-  syntax, native robustness and platform/packaging gates. Extend managed/redirected
-  source and dependency support only with explicit contracts and focused qualification.
-- [ ] **Variables & PATH**: separate portable static values, HOME-relative references,
-  ordered path entries, secrets and dynamic initialization; qualify Apple Silicon /
-  Intel Homebrew prerequisites without rewriting arbitrary commands or paths.
+- [ ] Qualify additional Shell syntax and Native robustness beyond the accepted B4 cases.
+  Extend managed/redirected source and dependency support only under explicit contracts.
 - [ ] **Settings**: qualify options, history settings (not history contents), completion,
   key bindings, prompt configuration and supported hooks.
 - [ ] Extend startup/source dependencies beyond the implemented bounded static chains
@@ -44,15 +40,14 @@ bounded acceptance and the existing partial-coverage warning.
   compatibility, conflict, approval and repeat/no-op cases. Final full application
   Native Desktop/packaged clean-Mac qualification remains a later distinct gate.
 - [ ] Evaluate and qualify the [remaining Core dependency integration](docs/toolkit/CONFIGURATION.md#remaining-shell-recovery-integration-planned)
-  beyond the accepted A/B/C scope: managed-dotfile/source relationships, existing
+  beyond the accepted Custom Commands scope: managed-dotfile/source relationships, existing
   SSH requirements, Git/Workspace-owned sources, VS Code CLI and unresolved script
   dependencies. Retain the [historical gap matrix](docs/qualification/SHELL-RECOVERABILITY-2026-11-12.md),
   reuse existing owners and preserve explicit prerequisites. Declaration recovery
-  does not prove runtime behavior or remote authentication. These gaps do not
-  reopen the accepted checkpoint or reorder the Functions-first sequence.
+  does not prove runtime behavior or remote authentication.
 
 Scan Folder and Automation remain deferred in Roadmap, outside the accepted
-checkpoint. Hosted qualification still requires separately approved publication.
+checkpoint.
 
 **Next functional checkpoint after Shell completion:** Stage 3C reconciliation in
 [Cancellation, recovery and runtime reliability](#cancellation-recovery-and-runtime-reliability).

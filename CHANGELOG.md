@@ -40,7 +40,9 @@ The format is based on the principles of **Keep a Changelog**.
   Independently qualified declarations can be saved beside unrelated initialization;
   portable Restore can use a controlled definitions file with a verified startup
   connection. Qualified equivalent Function occurrences share one transferable item;
-  conflicting bindings and targets remain excluded.
+  conflicting bindings and targets remain excluded. Real-Mac GUI acceptance on
+  2026-11-18 restored three complex Aliases, three Functions and two Scripts after
+  removal. All eight verified and matched, and repeat Rebuild made no changes.
 
 * Git Rebuild can use an existing encrypted destination SSH key through a verified
   SSH agent, including Git-only Bundles. Fresh signature checks bind the expected
@@ -282,6 +284,21 @@ The format is based on the principles of **Keep a Changelog**.
   Native assertions remain mandatory and private Desktop artifacts are not uploaded.
 
 ### Fixed
+
+* Rebuild can restore missing Aliases and Functions to a qualified startup file
+  that also loads unrelated Git-managed sources. Preview checks the proposed
+  declarations and their load order before offering the append.
+
+* Typed Shell Capture and Rebuild preserve quoted Zsh Aliases containing
+  pipelines, escapes, multiple commands and deferred variables. Capture Selection
+  places exclusion reasons beside the affected Alias or above the affected list.
+
+* Capture Confirmation keeps counts in the included-item hierarchy. Check explains
+  informational Shell coverage in category help. Rebuild Selection gives definition
+  and Script counts the same primary contrast. The compact Rebuild confirmation
+  refers to Preview and preserves per-file consent and separate secure import approval.
+  Rebuild Result clears a superseded coverage warning when final Shell evidence
+  resolves it, while keeping genuine failures visible.
 
 * Typed Shell Check and Rebuild Preview recognize qualified unchanged declarations
   on the source Mac, including equivalent Function occurrences, independently of

@@ -298,50 +298,71 @@ struct EnvironmentComparisonDomain: View {
     }
     private var childCategories: [DisplayCategory] { children.isEmpty ? Self.shellChildren(category) : children }
     var body: some View {
-        let sharedIDs = sharedObservationItemIDs
-        DisclosureGroup(isExpanded: expansion ?? $expanded) {
-            VStack(alignment: .leading, spacing: 0) {
-                if !childCategories.isEmpty {
-                    ForEach(childCategories) { child in
-                        EnvironmentComparisonDomain(category: child, technicalFacts: technicalFacts, coverageHelp: coverageHelp,
-                            counts: categoryCounts[child.id] ?? Dictionary(uniqueKeysWithValues: ComparisonOutcome.allCases.map { outcome in
-                                (outcome, child.items.filter { item in
-                                    switch outcome {
-                                    case .match: item.status == .matching
-                                    case .missing: item.status == .missing
-                                    case .different: item.status == .different
-                                    case .needsAttention: [.attention, .unresolved, .unverified, .unsupported].contains(item.status)
-                                    case .notApplicable: item.status == .noRequirement
-                                    }
-                                }.count)
-                            }),
-                            expansion: childExpansion ?? treeExpansion.map { WorkflowExpansion.binding(child.id, in: $0) },
-                            treeExpansion: treeExpansion, categoryCounts: categoryCounts,
-                            technicalExpansion: technicalExpansion, depth: depth + 1, secureActions: secureActions)
+        let disclosure = expansion ?? $expanded
+        Group {
+            if let help = coverageHelp[category.id] {
+                VStack(alignment: .leading, spacing: 0) {
+                    SelectionCategoryDisclosureStyle.header(expanded: disclosure.wrappedValue, toggle: { disclosure.wrappedValue.toggle() }) {
+                        header {
+                            HStack(spacing: 8) {
+                                Button { disclosure.wrappedValue.toggle() } label: { title }.buttonStyle(.plain)
+                                    .accessibilityValue(disclosure.wrappedValue ? "Expanded" : "Collapsed")
+                                ContextualHelpButton(id: "check.help." + category.id, title: category.title,
+                                    description: help, hint: "Explains what Check verified.")
+                            }
+                        }
                     }
-                } else {
-                    if category.id == "secure-ssh-identities", let secureActions {
-                        secureActions.padding(.leading, CGFloat(depth + 1) * 24 + 34).padding(.vertical, 8)
-                    }
-                    if !sharedIDs.isEmpty {
-                        Text(category.id.hasPrefix("homebrew-") ? "Couldn’t read Homebrew state." : "Couldn’t read the current state of this category.")
-                            .font(.caption).foregroundStyle(.secondary).padding(.vertical, 4)
-                    }
-                    ForEach(EnvironmentComparisonView.visibleCategory(category).items) { item in
-                        EnvironmentComparisonItem(item: item, facts: technicalFacts[item.id] ?? [],
-                            depth: depth + 1, technicalExpansion: technicalExpansion, suppressExplanation: sharedIDs.contains(item.id),
-                            coverageHelp: coverageHelp[item.id])
-                    }
+                    if disclosure.wrappedValue { content }
                 }
-            }.padding(.vertical, 4)
-        } label: {
-            EnvironmentComparisonRowLayout(depth: depth) {
-                title
-                domainStatus
-                countRail
-            }.padding(.vertical, 6)
-        }.disclosureGroupStyle(TaskDisclosureStyle(contentTrailingInset: 0))
-            .padding(.horizontal, depth == 0 ? 16 : 0)
+            } else {
+                DisclosureGroup(isExpanded: disclosure) { content } label: { header { title } }
+                    .disclosureGroupStyle(TaskDisclosureStyle(contentTrailingInset: 0))
+            }
+        }.padding(.horizontal, depth == 0 ? 16 : 0)
+    }
+    private func header<Label: View>(@ViewBuilder label: () -> Label) -> some View {
+        EnvironmentComparisonRowLayout(depth: depth) {
+            label()
+            domainStatus
+            countRail
+        }.padding(.vertical, 6)
+    }
+    private var content: some View {
+        let sharedIDs = sharedObservationItemIDs
+        return VStack(alignment: .leading, spacing: 0) {
+            if !childCategories.isEmpty {
+                ForEach(childCategories) { child in
+                    EnvironmentComparisonDomain(category: child, technicalFacts: technicalFacts, coverageHelp: coverageHelp,
+                        counts: categoryCounts[child.id] ?? Dictionary(uniqueKeysWithValues: ComparisonOutcome.allCases.map { outcome in
+                            (outcome, child.items.filter { item in
+                                switch outcome {
+                                case .match: item.status == .matching
+                                case .missing: item.status == .missing
+                                case .different: item.status == .different
+                                case .needsAttention: [.attention, .unresolved, .unverified, .unsupported].contains(item.status)
+                                case .notApplicable: item.status == .noRequirement
+                                }
+                            }.count)
+                        }),
+                        expansion: childExpansion ?? treeExpansion.map { WorkflowExpansion.binding(child.id, in: $0) },
+                        treeExpansion: treeExpansion, categoryCounts: categoryCounts,
+                        technicalExpansion: technicalExpansion, depth: depth + 1, secureActions: secureActions)
+                }
+            } else {
+                if category.id == "secure-ssh-identities", let secureActions {
+                    secureActions.padding(.leading, CGFloat(depth + 1) * 24 + 34).padding(.vertical, 8)
+                }
+                if !sharedIDs.isEmpty {
+                    Text(category.id.hasPrefix("homebrew-") ? "Couldn’t read Homebrew state." : "Couldn’t read the current state of this category.")
+                        .font(.caption).foregroundStyle(.secondary).padding(.vertical, 4)
+                }
+                ForEach(EnvironmentComparisonView.visibleCategory(category).items) { item in
+                    EnvironmentComparisonItem(item: item, facts: technicalFacts[item.id] ?? [],
+                        depth: depth + 1, technicalExpansion: technicalExpansion, suppressExplanation: sharedIDs.contains(item.id),
+                        coverageHelp: coverageHelp[item.id])
+                }
+            }
+        }.padding(.vertical, 4)
     }
     private var showsStatus: Bool {
         Self.showsAggregateStatus(category, children: childCategories, expanded: expansion?.wrappedValue ?? expanded)

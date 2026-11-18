@@ -200,7 +200,6 @@ struct CaptureView: View {
             case .confirmation:
                 if let prepared = model.preparation, let selection = prepared.publicationSelection {
                     Text("Save this environment?").font(.title2.weight(.semibold)).accessibilityAddTraits(.isHeader)
-                    Text("Review the final capture before creating the saved environment.").font(.callout).foregroundStyle(.secondary)
                     if let duplicates = prepared.applicationDuplicates, !duplicates.isEmpty {
                         Text("Confirmed duplicate applications will be saved as Homebrew requirements. Your original selection is retained.")
                             .font(.callout).foregroundStyle(.secondary)
@@ -215,11 +214,8 @@ struct CaptureView: View {
                               systemImage: "exclamationmark.triangle")
                             .font(.callout).foregroundStyle(.orange)
                     }
-                    Text(CaptureModel.confirmationPrivacyMessage(includesSSHIdentities: !selection.secureIdentities.isEmpty))
-                        .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                    if selection.items["shell-zsh"]?.contains(where: { $0.hasPrefix("shell-function:") }) == true,
-                       let shell = model.confirmationAreas.first(where: { $0.id == "shell-zsh" }) {
-                        Text(shell.content).font(.callout).foregroundStyle(.secondary)
+                    if let message = CaptureModel.confirmationPrivacyMessage(includesSSHIdentities: !selection.secureIdentities.isEmpty) {
+                        Text(message).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                     }
                     let tasks = CaptureTaskPresentation(categories: prepared.inventory.map { CaptureCategory(row: $0, shellObservation: prepared.shellFunctions) }, selection: selection,
                         phase: .confirmation, secureIdentities: prepared.secureIdentities.items, standaloneScripts: model.standaloneShellScripts)
@@ -271,7 +267,8 @@ struct CaptureView: View {
     }
     private var selectionSummary: CaptureSummaryPresentation {
         CaptureSummaryPresentation.review(categories: model.state == .review ? model.categories : model.categories.filter { model.selectionState($0) != .none }, domainCount: model.selectedDomainCount, itemCount: model.selectedItemCount,
-            selectedDomains: Set(model.selection.categories).union(model.selection.items.keys), secureIdentityCount: model.selectedSecureIdentities.count)
+            selectedDomains: Set(model.selection.categories).union(model.selection.items.keys), secureIdentityCount: model.selectedSecureIdentities.count,
+            scriptsNeedAttention: model.state == .review && model.scriptsNeedAttention)
     }
     static func scriptPicker() -> NSOpenPanel {
         let panel = NSOpenPanel()

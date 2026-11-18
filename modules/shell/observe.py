@@ -94,10 +94,14 @@ def _outer(raw, response, home):
             commands.append(('source', sources.reference(include[1], home), [start, start + len(text)]))
         elif location and sources.reference(location[1], home) is not None:
             commands.append(('zdotdir', sources.reference(location[1], home), [start, start + len(text)]))
-        elif base.declaration(statement, extended=True) is not None:
-            commands.append(('alias', base.declaration(statement, extended=True)[0]['name'], [start, start + len(text)]))
         else:
-            unsupported = True
+            # A trailing comment is outside the original declaration span.
+            match = base.TYPED_ALIAS.match(statement)
+            if (match and (match.end() == len(statement) or re.fullmatch(r'[ \t]+#.*', statement[match.end():]))
+                    and base.typed_declaration(match[0]) is not None):
+                commands.append(('alias', match[1], [start, start + len(match[0].encode())]))
+            else:
+                unsupported = True
     return units, names, commands, unsupported, len(value['definitions'])
 
 
@@ -124,20 +128,48 @@ def _independent(raw, response, home, units, commands):
     # CR in CRLF; bare CR remains rejected, never a new command boundary.
     projection = b''.join([*pieces, raw[end:]]).replace(b'\r\n', b'\n')
     try:
-        eligible, _ = base.classify(projection, extended=True)
-        outer, _ = sources.top_level(projection)
-    except ValueError:
-        return [], []  # Unsupported lexical context is not independence evidence.
-    eligible = {row['name'] for row in eligible}
+        outer, _ = sources.top_level(projection, typed=True)
+    except ValueError as exc:
+        return [], [], [], str(exc) == 'ambiguous_alias_command' or any(c[0] == 'alias' for c in commands)
+    eligible = {row['name'] for _, row in outer if row}
+    spanned = {name for kind, name, _ in commands if kind == 'alias'} | set(markers.values())
+    # Only name a literal binding at a proven outer position.
+    # Never export its body, source path or a name that resembles a secret.
+    excluded, accounted = [], set()
+    for statement, row in outer:
+        if row:
+            accounted.add(statement)
+            if row['name'] not in spanned:
+                # The lexer identified the name, but the line observer has no
+                # independent byte span (e.g. two declarations on one line).
+                excluded.append((row['name'], 'unsupported_position'))
+        elif (match := re.match(r'alias[ \t]+(?:(-[gs])[ \t]+)?(' + base.SOURCE_NAME + r')=', statement)):
+            if not base.SENSITIVE.search(match[2]) and base.typed_declaration(statement) is None:
+                if match[1]:
+                    reason = 'unsupported_mode'
+                elif base.SENSITIVE.search(statement):
+                    reason = 'restricted_content'
+                elif not base.TYPED_ALIAS.fullmatch(statement):
+                    reason = 'literal_required'
+                else:
+                    reason = 'unsupported_declaration'
+                excluded.append((match[2], reason))
+                accounted.add(statement)
     outer = {statement for statement, _ in outer}
     # Explicit binding mutation is evidence against the saved declarations.
     # Dynamic initialization remains outside scope, never resolved or executed.
-    binding_mutation = re.search(rb'\b(?:unfunction|autoload|disable|enable|functions|unset)\b', projection)
+    statements = base.statements(projection.decode())
+    binding_mutation = any(re.search(r'\b(?:unfunction|autoload|disable|enable|functions|unset)\b', statement)
+                           for statement in statements if not base.TYPED_ALIAS.fullmatch(statement))
     units = [unit for unit in units if markers.get(tuple(unit[2]['span'])) in eligible and not binding_mutation]
+    outer_alias_count = sum(c[0] == 'alias' for c in commands)
     commands = [command for command in commands
                 if state.utf8(raw[slice(*command[2])]) in outer and
                 (command[0] != 'alias' or command[1] in eligible)]
-    return units, commands
+    unresolved = (outer_alias_count != sum(c[0] == 'alias' for c in commands) or
+                  any(statement not in accounted and re.match(r'(?:(?:then|else|do|builtin)\s+)?alias\b', statement)
+                      for statement in statements))
+    return units, commands, excluded, unresolved
 
 
 def _equivalence_context(files, loads, issues, check):
@@ -165,7 +197,7 @@ def _equivalence_context(files, loads, issues, check):
                 for i in range(*details['span']):
                     if masked[i] not in (10, 13):
                         masked[i] = 32
-        commands = {tuple(bounds): kind for kind, _, bounds in record['commands']}
+        commands = {bounds[0]: (kind, bounds[1]) for kind, _, bounds in record['commands']}
         offset = 0
         for line in bytes(masked).split(b'\n'):
             text = line.strip(b' \t\r;')
@@ -173,7 +205,9 @@ def _equivalence_context(files, loads, issues, check):
             offset += len(line) + 1
             if not text or text.startswith(b'#'):
                 continue
-            kind = commands.get((start, start + len(text)))
+            kind, end = commands.get(start, (None, start))
+            if end != start + len(text) and not (kind == 'alias' and text[end-start:].lstrip().startswith(b'#')):
+                kind = None
             if kind in ('source', 'zdotdir'):
                 continue
             if kind != 'alias' and re.search(rb'\b(?:alias|function)\b|\(\s*\)', text):
@@ -241,8 +275,8 @@ def observe(home, parser, *, zdotdir=None, contexts=CONTEXTS, cancelled=lambda: 
             raise Invalid('cancelled')
         parser.preflight(cancelled=cancelled)
         with base.home_directory(home) as (_, stable):
-            result = _observe(home, parser, zdotdir, contexts, cancelled, _ignore_pending, aliases,
-                              independent, _additional_sources)
+            result = _observe(home, parser, zdotdir, contexts, cancelled, aliases, independent, _additional_sources,
+                              lambda path: sources.file_state(home, path, _ignore_pending, limit=state.MAX_SOURCE))
             stable()
             return result
     except (Invalid, client.Invalid):
@@ -251,7 +285,17 @@ def observe(home, parser, *, zdotdir=None, contexts=CONTEXTS, cancelled=lambda: 
         raise Invalid('source_changed' if str(exc) == 'target_changed' else 'observation_failed') from None
 
 
-def _observe(home, parser, zdotdir, contexts, cancelled, ignore_pending, aliases, independent, additional_sources):
+def project_appends(home, parser, observed, appends, cancelled, additional_sources):
+    """Reparse proposed original-source appends against the frozen, already observed startup graph."""
+    def read(path):
+        if path not in observed._files:
+            raise Invalid('source_changed')
+        file = observed._files[path]
+        return appends.get(path, file['raw']), file['stamp']
+    return _observe(home, parser, None, CONTEXTS, cancelled, True, True, additional_sources, read)
+
+
+def _observe(home, parser, zdotdir, contexts, cancelled, aliases, independent, additional_sources, read_state):
     contexts = [c for c in CONTEXTS if c in contexts]
     deadline = time.monotonic() + OBSERVATION_SECONDS
     files, issues, loads, occurrences = {}, [], [], []
@@ -276,7 +320,7 @@ def _observe(home, parser, zdotdir, contexts, cancelled, ignore_pending, aliases
         files[path] = record
         try:
             try:
-                raw, stamp = sources.file_state(home, path, ignore_pending, limit=state.MAX_SOURCE)
+                raw, stamp = read_state(path)
             except FileNotFoundError:
                 # A missing parent is absence too; verify it again at completion.
                 raw, stamp = None, None
@@ -295,7 +339,9 @@ def _observe(home, parser, zdotdir, contexts, cancelled, ignore_pending, aliases
             units, names, commands, opaque, count = _outer(raw, response, home)
             alias_names = [name for kind, name, _ in commands if kind == 'alias']
             if independent and opaque:
-                units, commands = _independent(raw, response, home, units, commands)
+                units, commands, excluded, unresolved = _independent(raw, response, home, units, commands)
+                record.update(excluded_aliases=excluded, unresolved_aliases=unresolved)
+                alias_names += [name for name, _ in excluded]
             if aliases:
                 units += [(name, raw[slice(*bounds)], dict(mode='ordinary', span=bounds))
                           for kind, name, bounds in commands if kind == 'alias']
@@ -403,7 +449,7 @@ def _observe(home, parser, zdotdir, contexts, cancelled, ignore_pending, aliases
             continue
         try:
             try:
-                current = sources.file_state(home, path, ignore_pending, limit=state.MAX_SOURCE)
+                current = read_state(path)
             except FileNotFoundError:
                 current = (None, None)
             if current != (record['raw'], record['stamp']):
@@ -428,11 +474,10 @@ def _observe(home, parser, zdotdir, contexts, cancelled, ignore_pending, aliases
     context_checked = False
     for name, candidates in sorted(bindings.items()):
         check()
-        if (independent and 'mode' not in candidates[0][1][2] and
-                any(code != 'unsupported_context' for _, code in source_issues)):
+        if independent and any(code != 'unsupported_context' for _, code in source_issues):
             # An unreadable/missing/malformed known source may contain a second
             # binding. Never salvage its readable peer as apparently unique.
-            issue(candidates[0][0], 'ambiguous_function')
+            issue(candidates[0][0], 'ambiguous_alias' if 'mode' in candidates[0][1][2] else 'ambiguous_function')
             continue
         definitions = {(path, tuple(unit[2]['span'])) for path, unit, _, _ in candidates}
         contexts_seen = [load['context'] for _, _, load, _ in candidates]

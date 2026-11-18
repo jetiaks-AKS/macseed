@@ -1,4 +1,24 @@
-# Unified Shell B4 — local integration evidence
+# Unified Shell B4 — qualification evidence
+
+## Real-Mac GUI acceptance (2026-11-18)
+
+The user completed this acceptance in Macseed.app on their Mac. The selected
+environment contained three complex Aliases, three Functions, one alias-linked
+Script and one independently selected Script.
+
+| Step | Observed result |
+| --- | --- |
+| Capture and source Check | The saved Bundle contained all eight requirements. Check reported **8 Match**. |
+| Controlled removal | The user removed only the six QA declarations and moved both Scripts out of their saved paths. Check reported **8 Missing**. |
+| Rebuild and Check | The actual Restore completed with **8 Verified**. The next Check reported **8 Match**. |
+| Independent checks | The user ran the restored commands successfully and confirmed the SHA-256 digests and permissions of both Scripts. |
+| Repeat and cleanup | Repeat Rebuild was a no-op. The original `.zshrc` was restored byte-for-byte and the QA directory, test Bundle and temporary publication evidence were removed. |
+
+The command executions qualify these restored examples on this Mac. Automated Check
+compares saved definitions and files. Dynamic startup, additional platform coverage
+and Stage 17 packaged-release qualification remain separate.
+
+## Earlier automated qualification
 
 Baseline: `develop` at `cd6c894955b221eb14989bba372cc22746c9c1f0`, with the
 uncommitted B4 implementation. This is local automated qualification, not hosted
@@ -6,7 +26,7 @@ CI, manual visual acceptance or signed-distribution qualification.
 Environment: macOS 27.2.1 (26B131), ARM64, system Xcode Python and Debug Swift build.
 
 Automated scenarios use disposable source/target HOME directories and guarded fixture
-tools. The explicit real-source case below reads the actual HOME but restores only
+tools. The explicit real-source case below read the actual HOME but restored only
 into a disposable target. User startup files are never executed. The genuine bundled parser uses
 the unchanged protected launch gate; active enforcement was established locally.
 
@@ -69,8 +89,8 @@ unchanged. Full local Core/Desktop regression, additional hosted jobs, physical 
 minimum-macOS runs, real-user-HOME Apply and Stage 17 signing/notarization were NOT RUN.
 Non-enforcing systems remain unavailable for typed definitions; this active-platform
 run does not newly qualify that platform branch. Broader dynamic/managed-source and
-dependency support, independent syntax/native robustness, representative real-Mac and
-manual visual qualification remain open in [TODO](../../TODO.md).
+dependency support, independent syntax/native robustness and platform qualification
+remain open in [TODO](../../TODO.md). The later real-Mac GUI run is recorded above.
 
 The [Shell contract](../toolkit/CONFIGURATION.md#unified-aliases--functions-b4) owns
 supported behavior. Match proves definition/source conformity, never execution.

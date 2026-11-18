@@ -479,6 +479,188 @@ _Task._launch = _fixture_ignored_constraint
         self.assertFalse((target_home / 'executed').exists())
         print('QUALIFICATION: active mixed Capture/Bundle/Restore/Verify/Check; 7-item all-selection and exact 4-item subset')
 
+    def test_b4_original_complex_aliases_functions_and_scripts(self):
+        self.b4_recovery(retain_startup=False)
+
+    def test_b4_restore_after_removing_only_selected_items(self):
+        self.b4_recovery(retain_startup=True)
+
+    def b4_recovery(self, *, retain_startup):
+        source, _, _, _ = self.functions_fixture()
+        if not self.functions_enforced:
+            self.skipTest('Active B4 E2E requires enforced parser launch')
+        (self.home / '.zshenv').unlink()
+        raw = rb"""alias msb4_echo='printf "B4_ALIAS_OK\n"'
+alias msb4_pipe='printf "one\ntwo\n" | grep -F two'
+alias msb4_script='"$HOME/MacseedB4QA/bin/msb4_echo.sh"'
+
+msb4_greet() {
+  printf 'B4_HELLO:%s\n' "${1:-guest}"
+}
+
+msb4_complex() {
+  local value="${1:-one}"
+  if [[ "$value" == "one" ]]; then
+    "$HOME/MacseedB4QA/bin/msb4_managed.py" "$value"
+  else
+    print -r -- "B4_OTHER:$value"
+  fi
+}
+
+msb4_loop() {
+  local i
+  for i in 1 2 3; do
+    print -r -- "B4_LOOP:$i"
+  done
+}
+"""
+        surrounding = b''
+        retained = {}
+        if retain_startup:
+            surrounding = (b'# retained complex startup\nexport PATH="$HOME/bin:$PATH"\n'
+                           b'eval "$(touch "$HOME/must-not-run")"\nsetopt AUTO_CD\n'
+                           b'source "$HOME/.dotfiles/first.zsh"\nsource "$HOME/.dotfiles/second.zsh"\n')
+            repository = self.home / '.dotfiles'
+            repository.mkdir(mode=0o700)
+            (repository / '.git').mkdir(mode=0o700)
+            retained = {repository / 'first.zsh': b'# static sourced file\n',
+                        repository / 'second.zsh': b'# another static source\n',
+                        self.home / '.zprofile': b'export PROFILE_FLAG=fixture\n'}
+            for path, initial in retained.items():
+                path.write_bytes(initial); path.chmod(0o600)
+        source.write_bytes(surrounding + raw)
+        aliases, *functions = raw.strip().split(b'\n\n')
+        definitions = aliases.splitlines() + functions
+        scripts = {
+            'msb4_echo.sh': '#!/bin/zsh\nset -eu\n\nname="${1:-default}"\nprintf \'B4_SCRIPT_OK:%s\\n\' "$name"\n',
+            'msb4_managed.py': '#!/usr/bin/env python3\n# managed by Macseed B4 QA — test provenance only\n\nimport sys\n\nname = sys.argv[1] if len(sys.argv) > 1 else "default"\nprint(f"B4_MANAGED_OK:{name.upper()}")\n',
+        }
+        folder = self.home / 'MacseedB4QA/bin'
+        folder.mkdir(parents=True, mode=0o700)
+        for name, content in scripts.items():
+            path = folder / name
+            path.write_bytes(content.encode())
+            path.chmod(0o755)
+        scan = self.prepare()
+        inventory = next(r for r in scan['inventory'] if r['domain'] == 'shell-zsh')
+        state = bundle.shell_state_contract()
+        names = ['msb4_echo', 'msb4_pipe', 'msb4_script', 'msb4_greet', 'msb4_complex', 'msb4_loop']
+        ids = sorted(state.identity('alias' if i < 3 else 'function', name) for i, name in enumerate(names))
+        self.assertEqual(sorted(r['item_id'] for r in inventory['items']), ids)
+        if not retain_startup:
+            self.assertEqual(scan['shell_functions']['codes'], [])
+        linked, = scan['shell_script_candidates']
+        self.assertEqual(linked['path'], 'MacseedB4QA/bin/msb4_echo.sh')
+        self.assertEqual(linked['alias_ids'], [state.identity('alias', 'msb4_script')])
+        policy = dict(shell_script_policy='opaque-file-v5', shell_script_paths=[str(folder / 'msb4_managed.py')])
+        def success(call):
+            result, events = call
+            self.assertEqual(result.returncode, 0, events)
+            return events[-2]['data']
+        inspected = success(self.invoke_capture('capture_script_inspect', extra=dict(policy, scripts={})))
+        manual, = [s for s in inspected['shell_script_candidates'] if s['path'].endswith('/msb4_managed.py')]
+        self.assertEqual(manual['alias_ids'], [])
+        script_ids = sorted([linked['id'], manual['id']])
+        policy['shell_script_selection'] = script_ids
+        chosen = dict(categories=[], items={'shell-zsh': ids}, secure_identities=[])
+        archive = self.root / 'b4.mbt'
+        def prepare_capture():
+            return success(self.invoke_capture(selection=chosen, extra=policy))['prepared_capture_id']
+        def save(prepared):
+            return self.invoke_capture('capture_execute', chosen, dict(policy, destination=str(archive),
+                expected_prepared_capture_id=prepared, shell_script_ids=script_ids))
+        prepared = prepare_capture()
+        source.write_bytes(surrounding + raw.replace(b'B4_ALIAS_OK', b'B4_CHANGED'))
+        result, events = save(prepared)
+        self.assertEqual((result.returncode, events[-1]['data']['code']), (2, 'stale_prepared_capture'))
+        self.assertFalse(archive.exists())
+        source.write_bytes(surrounding + raw)
+        success(save(prepare_capture()))
+        value = bundle.typed_shell(bundle.validate_archive(archive))
+        self.assertEqual([state.content(value, r) for r in state.declaration_order(value)], definitions)
+        bundled = state.script_value(value)['scripts']
+        self.assertEqual({r['path']: (r['text'], r['mode'], r['managed']) for r in bundled},
+                         {'MacseedB4QA/bin/' + name: (content, 0o755, name.endswith('.py')) for name, content in scripts.items()})
+        selected_ids = sorted(ids + ['shell-script:' + key for key in script_ids])
+        selected = dict(categories=[], items={'shell-zsh': selected_ids})
+        inspected = success(self.function_core('bundle_inspect', archive))
+        row = next(r for r in inspected['restore_selection']['inventory'] if r['domain'] == 'shell-zsh')
+        self.assertEqual(sorted(r['item_id'] for r in row['items']), selected_ids)
+        def check():
+            data = success(self.function_core('environment_compare', archive))
+            self.assertEqual(data['comparison']['verdict'], 'no_differences_detected')
+            self.assertEqual(sorted(r['item_id'] for r in data['comparison_records'] if r['comparison_kind'] == 'matching'), selected_ids)
+        check()
+        if retain_startup:
+            self.assertEqual(source.read_bytes(), surrounding + raw)
+            source.write_bytes(source.read_bytes()[:-len(raw)])
+            held = self.root / 'held'
+            held.mkdir(mode=0o700)
+            for name in scripts:
+                (folder / name).rename(held / name)
+            self.assertEqual(source.read_bytes(), surrounding)
+            data = success(self.function_core('environment_compare', archive))
+            self.assertEqual(sorted(r['item_id'] for r in data['comparison_records'] if r['comparison_kind'] == 'missing'), selected_ids)
+        else:
+            self.home = self.root / 'b4-target'
+            self.home.mkdir(mode=0o700)
+            self.environment['HOME'] = str(self.home)
+        (self.root / 'bin/sudo').write_text('#!/bin/bash\nexit 0\n')
+        (self.project / 'bin').mkdir()
+        shutil.copy2(ROOT / 'bin/bs', self.project / 'bin/bs')
+        shutil.copy2(ROOT / 'scripts/install-bs.sh', self.project / 'scripts/install-bs.sh')
+        (self.root / 'bin/bs').symlink_to(self.project / 'bin/bs')
+        self.environment['BS_INSTALL_DIR'] = str(self.root / 'bin')
+        def preview():
+            return success(self.function_core('restore_prepare', archive, selection=selected, scripts=script_ids))
+        def restore(plan, approvals=None):
+            return self.function_core('restore_execute', archive, selection=selected, scripts=script_ids,
+                                      prepared=plan['prepared_plan_id'], approvals=approvals)
+        plan = preview()
+        self.assertEqual(sorted(r['item_id'] for r in plan['plan'] if r['disposition'] == 'planned'), selected_ids)
+        self.assertTrue(plan['readiness']['ready'] and plan['has_executable_changes'])
+        self.assertFalse(any(r['disposition'] == 'blocked' for r in plan['plan']))
+        if retain_startup:
+            self.assertEqual({r['item_id']: r['action'] for r in plan['plan'] if r['disposition'] == 'planned'},
+                             {key: 'set_setting' if key in ids else 'create' for key in selected_ids})
+        result, events = restore(plan, [linked['id']])
+        self.assertEqual(result.returncode, 2)
+        self.assertFalse(events[-1]['data']['publication_started'])
+        if retain_startup:
+            self.assertEqual(source.read_bytes(), surrounding)
+            self.assertTrue(all(not (folder / name).exists() for name in scripts))
+        else:
+            self.assertFalse(list(self.home.iterdir()))
+        data = success(restore(plan, script_ids))
+        verified = data['verification']['details']['verification_records']
+        self.assertEqual(sorted(r['item_id'] for r in verified if r['conformity'] == 'verified'), selected_ids)
+        startup = self.home / '.zshrc'
+        self.assertEqual(startup.read_bytes(), surrounding + b'\n'.join(definitions) + b'\n')
+        files = [startup]
+        for name, content in scripts.items():
+            target = self.home / 'MacseedB4QA/bin' / name
+            self.assertEqual(target.read_bytes(), content.encode())
+            self.assertEqual(target.stat().st_mode & 0o777, 0o755)
+            self.assertNotIn('com.apple.quarantine', subprocess.check_output(['/usr/bin/xattr', target], text=True).splitlines())
+            files.append(target)
+        check()
+        def stamps():
+            return [(p.read_bytes(), p.stat().st_ino, p.stat().st_mode, p.stat().st_mtime_ns) for p in files]
+        before = stamps()
+        plan = preview()
+        self.assertFalse(plan['has_planned_changes'] or plan['has_executable_changes'])
+        self.assertEqual(sorted(r['item_id'] for r in plan['plan'] if r['disposition'] == 'satisfied'), selected_ids)
+        success(restore(plan))
+        self.assertEqual(stamps(), before)
+        if retain_startup:
+            self.assertEqual({p: p.read_bytes() for p in retained}, retained)
+            self.assertFalse((self.home / 'must-not-run').exists())
+            self.assertFalse((self.home / '.macseed-shell-definitions.zsh').exists())
+            self.assertTrue(all((held / name).read_bytes() == data.encode() for name, data in scripts.items()))
+        else:
+            self.assertEqual(source.read_bytes(), raw)
+        print('PASS: original B4 fixtures, eight source Matches, eight verified, eight target Matches, repeat no-op')
+
     def test_independent_fourteen_definitions_portable_restore_and_check(self):
         def assert_information(data, *, preview=False):
             if preview:

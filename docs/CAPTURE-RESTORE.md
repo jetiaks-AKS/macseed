@@ -89,9 +89,9 @@ prove a secret-free file; normal Bundle contents remain unencrypted.
 
 Capture counts Aliases & Functions and Scripts independently as functional domains
 in Selection, Confirmation and Result, while retaining one physical Shell Core
-module. Each selected alias and each unique selected script counts once; manual
+module. Each selected alias, function and unique script counts once; manual
 and alias-linked discovery of the same file is deduplicated. Check emits file-level
-bytes/mode evidence separately from aliases.
+bytes/mode evidence separately from definition matches.
 Scripts transfers explicitly selected files, not directories. It is not a script
 editor, launcher, dependency manager or general-purpose backup. Scan Folder and
 Automation/LaunchAgents are deferred in the [Roadmap](../ROADMAP.md#post-10--future-direction).
@@ -103,11 +103,12 @@ The existing partial Shell coverage warning remains outside that accepted scope.
 Legacy whole-file requirements use **Settings → Saved Zsh file** and retain absent-
 target-only restoration. [Unified Aliases & Functions](toolkit/CONFIGURATION.md#unified-aliases--functions-b4)
 supports mixed typed Capture/Restore/Verify/Check with explicit Native selection and
-independent Scripts consent; matching definitions do not prove runtime activation.
-**Variables & PATH**, broader **Settings** and conditional **Plugins & Themes** remain
-future Shell slices. Apart from the Scripts
-entry needed to add files, no empty future categories,
-source browser or background monitoring is introduced. The
+independent Scripts consent. The [real-Mac B4 acceptance](qualification/SHELL-UNIFIED-B4-2026-11-17.md#real-mac-gui-acceptance-2026-11-18)
+restored all eight selected requirements, verified the commands and Script files,
+and converged on a no-op Rebuild. Automated Check leaves runtime activation unverified.
+**Variables & PATH** is next, followed by broader **Settings** and conditional
+**Plugins & Themes**. Apart from the Scripts entry needed to add files, no empty
+future categories, source browser or background monitoring is introduced. The
 [Shell contract](toolkit/CONFIGURATION.md#shell--zsh-configuration) owns exact safety
 and compatibility limits. Functional fixtures do not qualify effective interactive
 startup or full Native Desktop/packaged clean-Mac E2E.

@@ -112,7 +112,8 @@ struct RestoreAreaSelectionView: View {
                 CaptureStatusText(title: "Needs Attention", state: .attention)
             }
             if area.selectable && area.selectionMode == "items" {
-                CaptureStatusText(title: CaptureStatusText.selectionCount(model.selectedItems[area.id]?.count ?? 0, total: area.items.count), secondary: true)
+                CaptureStatusText(title: CaptureStatusText.selectionCount(model.selectedItems[area.id]?.count ?? 0, total: area.items.count),
+                    secondary: area.id != "shell-zsh")
             }
         }
     }
@@ -553,6 +554,27 @@ struct RestorePrerequisiteView: View {
     }
 }
 
+struct RestoreConfirmationSheet: View {
+    let plan: CoreRestorePreparation?
+    let scriptConsentReady: Bool
+    let cancel: () -> Void
+    let rebuild: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Rebuild this Mac?").font(.title2).accessibilityAddTraits(.isHeader)
+            Text("Macseed will apply the changes shown in Preview.")
+            if plan?.hasBlockedSelectedWork == true {
+                Text("Some selected work is blocked and will remain unchanged.").foregroundStyle(.secondary)
+            }
+            HStack {
+                Button("Cancel", role: .cancel, action: cancel)
+                Button("Rebuild", action: rebuild).buttonStyle(.borderedProminent).disabled(!scriptConsentReady)
+            }
+        }.padding(24).frame(width: 420).interactiveDismissDisabled()
+    }
+}
+
 struct RestoreView: View {
     @ObservedObject var model: RestoreModel
     @ObservedObject var runtime: CoreRuntime
@@ -684,25 +706,8 @@ struct RestoreView: View {
             }.padding(24).frame(width: 460).interactiveDismissDisabled()
         }
         .sheet(isPresented: Binding(get: { model.state == .confirming }, set: { if !$0 { model.cancelRebuildConfirmation() } })) {
-            VStack(alignment: .leading, spacing: 16) {
-                Text("Rebuild this Mac?").font(.title2)
-                Text("Macseed will apply the changes shown in this Preview. Items that already match will not be changed.")
-                if model.preparation?.plan.contains(where: { $0.authorizationRequired == true }) == true {
-                    Text("Some changes may require administrator authorization.")
-                        .foregroundStyle(.secondary)
-                }
-                ForEach(model.confirmationMessages, id: \.self) { message in
-                    Text(message).foregroundStyle(.secondary)
-                }
-                if let scripts = model.preparation?.shellScripts, !scripts.isEmpty {
-                    Text("You selected \(scripts.count) executable \(scripts.count == 1 ? "file" : "files") for restoration. Rebuild will write these files without running them or replacing existing scripts.").foregroundStyle(.secondary)
-                    CaptureIncludedSettingsList(labels: scripts.map { "~/" + $0.path })
-                }
-                HStack {
-                    Button("Cancel", role: .cancel) { model.cancelRebuildConfirmation() }
-                    Button("Rebuild") { model.confirmRebuild() }.buttonStyle(.borderedProminent).disabled(!model.shellScriptConsentReady)
-                }
-            }.padding(24).frame(width: 420).interactiveDismissDisabled()
+            RestoreConfirmationSheet(plan: model.preparation, scriptConsentReady: model.shellScriptConsentReady,
+                cancel: model.cancelRebuildConfirmation, rebuild: model.confirmRebuild)
         }
         .sheet(isPresented: Binding(get: { model.stopConfirmation }, set: { if !$0 { model.dismissStopConfirmation() } })) {
             VStack(alignment: .leading, spacing: 16) {

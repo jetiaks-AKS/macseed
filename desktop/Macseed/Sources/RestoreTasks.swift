@@ -140,6 +140,14 @@ struct TaskDomainPresentation: Identifiable {
     }
 }
 
+extension CoreRestorePreparation {
+    var hasBlockedSelectedWork: Bool {
+        readiness.ready && sshDependenciesReady && errorCount == 0 && hasComparedExecutableChanges
+            && (plan.contains { ["blocked", "conflict"].contains($0.disposition) || isItemLocalSkip($0) }
+                || effectiveSSHHosts?.hosts.contains { $0.disposition == "blocked" } == true)
+    }
+}
+
 struct RestoreTaskPresentation {
     let domains: [TaskDomainPresentation]
     var automaticDomains: [TaskDomainPresentation] { domains.filter { $0.id != "app-store" } }
@@ -158,18 +166,42 @@ struct RestoreTaskPresentation {
             "Preview reported a category-level warning for \(CaptureCategory.title(for: $0)). Review its details before rebuilding."
         }
     }
-    func confirmationMessages(_ plan: CoreRestorePreparation) -> [String] {
-        var messages = Self.scopeWarningMessages(plan)
-        if plan.includeSecure {
-            messages.append("Secure Transfer will unlock the encrypted package and import the selected SSH keys without overwriting existing identities. A separate import confirmation is required during Rebuild.")
+    // A Preview scope warning can outlive the missing definitions that caused it.
+    // Only the final verification for this plan can supersede that row.
+    private static func resolvedShellPreviewRow(plan: CoreRestorePreparation, result: RestoreExecutionPresentation?,
+        verification: [[String: CoreJSON]], coverage: [[String: CoreJSON]], diagnostics: [[String: CoreJSON]]) -> String? {
+        guard let result, [.clean, .partial, .attention].contains(result.outcome),
+              let payload = result.structuredEvidence, payload["prepared_plan_id"]?.string == plan.preparedPlanID,
+              let final = payload["verification"]?.object, final["status"]?.string == "complete",
+              final["details"]?.object?["status"]?.string == "complete" else { return nil }
+
+        let warnings = plan.plan.indices.filter {
+            let row = plan.plan[$0]
+            return row.domain == "shell-zsh" && row.itemID == "scope" && row.action == "none"
+                && row.disposition == "warning" && row.reason == "partial_source_coverage"
         }
-        if automaticAttentionCount > 0 {
-            messages.append("\(automaticAttentionCount) automatic requirements need attention. Review the category details; blocked items will remain unchanged.")
-        }
-        if !appStore.pending.isEmpty {
-            messages.append("\(appStore.attentionCount) App Store requirements need manual review. Rebuild does not install App Store applications.")
-        }
-        return messages
+        let scope = coverage.filter { $0["domain"]?.string == "shell-zsh" && $0["item_id"]?.string == "scope" }
+        guard warnings.count == 1, scope.count == 1, let owner = scope.first,
+              owner["disposition"]?.string == "resolved", owner["source_status"]?.string == "partial",
+              let id = owner["record_id"]?.string else { return nil }
+        let linked = diagnostics.filter { $0["record_id"]?.string == id }
+        guard linked.count == 1, let diagnostic = linked.first, diagnostic["code"]?.string == "shell_activation_unknown",
+              diagnostic["severity"]?.string == "info", diagnostic["phase"]?.string == "scope" else { return nil }
+
+        // A concrete mismatch remains an item issue. Missing or ambiguous evidence
+        // cannot dismiss a warning about coverage of the selected definitions.
+        let selected = Set(plan.plan.filter { $0.domain == "shell-zsh" && $0.itemID != "scope" }.map(\.itemID))
+        let facts = verification.filter { $0["domain"]?.string == "shell-zsh" }
+        let predicates = ["shell-alias": "alias_definition", "shell-function": "function_definition", "shell-script": "script_file"]
+        guard !selected.isEmpty, selected.isSuperset(of: plan.selection.items["shell-zsh"] ?? []),
+              selected == Set(facts.compactMap { $0["item_id"]?.string }), facts.count == selected.count,
+              facts.allSatisfy({ fact in
+                  guard let kind = fact["item_id"]?.string?.split(separator: ":").first,
+                        let expected = predicates[String(kind)] else { return false }
+                  return fact["predicate"]?.string == expected && fact["support"]?.string == "supported"
+                      && ["verified", "mismatch"].contains(fact["conformity"]?.string ?? "")
+              }) else { return nil }
+        return "restore-" + String(warnings[0])
     }
     init(preview: RestorePreviewPresentation, plan: CoreRestorePreparation, events: [CoreEvent] = [],
          result: RestoreExecutionPresentation? = nil, executing: Bool = false, operationProgress: Bool = false) {
@@ -178,6 +210,8 @@ struct RestoreTaskPresentation {
             if case .array(let rows) = evidence?[key] { return rows.compactMap(\.object) }
             return []
         }
+        let resolvedScope = Self.resolvedShellPreviewRow(plan: plan, result: result,
+            verification: records("verification_records"), coverage: records("coverage_records"), diagnostics: records("diagnostics"))
         let operations = events.filter { $0.type == "operation_record" }.compactMap(\.data) + records("operation_records")
         let verification = events.filter { $0.type == "verification_record" }.compactMap(\.data) + records("verification_records")
         let lifecycle = events.filter { $0.type == "execution_event" }.compactMap(\.data) + records("module_outcomes")
@@ -213,7 +247,8 @@ struct RestoreTaskPresentation {
                 if $0.status == .working || $0.restoreActivity != nil { return domainActive && !verifying ? .working : nil }
                 return $0.status == .complete ? .completed : $0.status == .attention ? .attention : nil
             }
-            let items = category.items.filter { item in
+            let displayItems = category.items.filter { $0.id != resolvedScope }
+            let items = displayItems.filter { item in
                 guard executing, result == nil, !operationProgress else { return true }
                 guard let index = Int(item.id.replacingOccurrences(of: "restore-", with: "")), plan.plan.indices.contains(index) else { return false }
                 return progress.contains { $0.id == category.id } && plan.plan[index].disposition != "satisfied"
@@ -414,7 +449,7 @@ struct RestoreTaskPresentation {
                 continue
             }
             if operationProgress {
-                let entries = category.items.compactMap { item -> CoreRestorePreparation.Row? in
+                let entries = displayItems.compactMap { item -> CoreRestorePreparation.Row? in
                     guard let index = Int(item.id.replacingOccurrences(of: "restore-", with: "")), plan.plan.indices.contains(index) else { return nil }
                     return plan.plan[index]
                 }
@@ -484,7 +519,7 @@ struct RestoreTaskPresentation {
                     && result?.outcome != .interrupted
                 let problem = latest.values.contains { $0["conformity"]?.string != "verified" }
                     || coverage.contains { $0["disposition"]?.string == "unresolved" }
-                let allVerified = entries.count == category.items.count && Self.hasVerifiedRequirements(entries: entries, observations: Array(latest.values), operations: operations)
+                let allVerified = entries.count == displayItems.count && Self.hasVerifiedRequirements(entries: entries, observations: Array(latest.values), operations: operations)
                 let untouchedStalePlan = result?.outcome == .failedBeforeMutation
                     && result?.structuredEvidence?["code"]?.string == "stale_plan"
                     && result?.structuredEvidence?["execution_status"]?.string == "failed_before_mutation"
@@ -498,14 +533,14 @@ struct RestoreTaskPresentation {
                 } else if result != nil {
                     if problem { domain.confirmedFinalState = .attention }
                     else if result?.outcome == .clean || (finalComplete && allVerified) {
-                        domain.confirmedFinalState = category.items.allSatisfy { $0.status == .matching } ? .matching : .completed
+                        domain.confirmedFinalState = displayItems.allSatisfy { $0.status == .matching } ? .matching : .completed
                     } else {
                         domain.confirmedFinalState = .unverified
                     }
                 } else if problem {
                     domain.confirmedFinalState = .attention
                 } else if allVerified && !latest.isEmpty {
-                    domain.confirmedFinalState = category.items.allSatisfy { $0.status == .matching } ? .matching : .completed
+                    domain.confirmedFinalState = displayItems.allSatisfy { $0.status == .matching } ? .matching : .completed
                 } else if verifying || events.contains(where: { event in
                     domainScope.contains(event.data?["domain"]?.string ?? "") &&
                         ((event.type == "execution_event" && ["started", "applying", "verifying", "changed", "already_satisfied", "satisfied"].contains(event.data?["state"]?.string ?? "")) ||
@@ -514,7 +549,7 @@ struct RestoreTaskPresentation {
                     domain.confirmedFinalState = .awaitingVerification
                 }
             } else if result?.outcome == .clean {
-                domain.confirmedFinalState = category.items.allSatisfy { $0.status == .matching } ? .matching : .completed
+                domain.confirmedFinalState = displayItems.allSatisfy { $0.status == .matching } ? .matching : .completed
             }
             output.append(domain)
         }

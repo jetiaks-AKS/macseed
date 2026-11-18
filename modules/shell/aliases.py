@@ -243,7 +243,33 @@ def declaration(statement, extended=False):
     return {'name': name, 'statement': statement}, value, words[0]
 
 
-def classify(raw, extended=False):
+TYPED_ALIAS = re.compile(r'alias[ \t]+(' + SOURCE_NAME + r''')=(?:'([^']*)'|"((?:\\.|[^"\\$!`])*)")''')
+
+
+def typed_declaration(statement):
+    """One literal assignment word. Its contents are commands only at invocation."""
+    match = TYPED_ALIAS.fullmatch(statement)
+    if not match:
+        return None
+    name, single, double = match.groups()
+    # Only Zsh double-quote escapes change the stored value. Unescaped
+    # parameter, history and command expansions cannot enter this branch.
+    value = single if single is not None else re.sub(r'\\(["\\$`])', r'\1', double)
+    if (name in RESERVED or not value.strip() or len(value) > 2048
+            or any(not char.isprintable() and char != '\t' for char in statement)
+            or SENSITIVE.search(name + ' ' + value)
+            or re.search(r'/Users/|/opt/homebrew(?:/|\b)|/usr/local(?:/|\b)', value)):
+        return None
+    try:
+        words = shlex.split(value)
+    except ValueError:
+        return None
+    if not words:
+        return None
+    return {'name': name, 'statement': statement}, value, words[0]
+
+
+def classify(raw, extended=False, *, typed=False):
     if len(raw) > MAX_BYTES or b'\0' in raw:
         raise Invalid('unsupported_source')
     try:
@@ -256,7 +282,11 @@ def classify(raw, extended=False):
     name_pattern = SOURCE_NAME if extended else NAME
     candidates, rejected, blocks, partial = [], set(), [], False
     definitions = []
-    for line in '\n'.join(commands).replace('\\\n', '').splitlines():
+    # A whole literal assignment contributes just its binding. Invocation-time
+    # arguments such as "env key=value" contain no second Alias declaration.
+    mentions = [('alias ' + literal[1] + '=' if (literal := TYPED_ALIAS.fullmatch(s)) else s)
+                for s in commands] if typed else commands
+    for line in '\n'.join(mentions).replace('\\\n', '').splitlines():
         alias = re.search(r'\balias\s+(.*)', line)
         if alias:
             definitions.extend(re.findall(r'(?:^|\s)([A-Za-z0-9_.-]+)\s*=', alias[1]))
@@ -274,7 +304,9 @@ def classify(raw, extended=False):
                 raise Invalid('ambiguous_context')
             partial = True
             continue
-        parsed = declaration(statement, extended) if not blocks and not terminated else None
+        parsed = None
+        if not blocks and not terminated:
+            parsed = typed_declaration(statement) if typed else declaration(statement, extended)
         if not blocks and first in ('return', 'exit', 'exec'):
             terminated = True
         if parsed:
@@ -291,8 +323,14 @@ def classify(raw, extended=False):
             if any(not re.fullmatch(name_pattern, name) for name in removed):
                 raise Invalid('ambiguous_alias_command')
             rejected.update(removed)
-        if re.match(r'alias\s', statement) and parsed is None and not re.match(r'alias\s+[A-Za-z0-9_.-]+=', statement):
-            raise Invalid('ambiguous_alias_command')
+        if re.match(r'alias\s', statement) and parsed is None:
+            if typed:
+                words = shlex.split(statement)
+                assignment = words[2:] if words[1:2] in (['-g'], ['-s']) else words[1:]
+                if len(assignment) != 1 or not re.match(SOURCE_NAME + '=', assignment[0]):
+                    raise Invalid('ambiguous_alias_command')
+            elif not re.match(r'alias\s+[A-Za-z0-9_.-]+=', statement):
+                raise Invalid('ambiguous_alias_command')
     if blocks:
         raise Invalid('ambiguous_context')
     names = set(definitions)
@@ -300,7 +338,7 @@ def classify(raw, extended=False):
     functions = {name for pair in re.findall(r'(?:^|[;\n])\s*(?:function\s+)?(' + name_pattern
                  + r')\s*\(\s*\)|(?:^|[;\n])\s*function\s+(' + name_pattern + ')' + boundary, text) for name in pair if name}
     rows = [row for row, _, command in candidates if definitions.count(row['name']) == 1
-            and row['name'] not in rejected and command not in (names | functions)]
+            and row['name'] not in rejected and (typed or command not in (names | functions))]
     if len(rows) > MAX_ITEMS:
         raise Invalid('unsupported_source')
     return rows, partial or len(rows) != len(candidates)

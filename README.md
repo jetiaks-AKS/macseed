@@ -39,7 +39,7 @@ Supported state is grouped by how people use it:
   VS Code settings and extensions.
 - **For Experienced Users:** optional Git configuration, repositories and supported
   worktrees, Workspace folder structure, supported SSH host settings, encrypted SSH
-  identity migration, supported Zsh aliases and explicitly selected Shell/Python
+  identity migration, supported Zsh aliases and functions, explicitly selected Shell/Python
   scripts, legacy Zsh configuration and supported VS Code workspace
   relationships. Folders and workspace references do not transfer project files;
   repository restoration does not copy local changes.
@@ -53,8 +53,8 @@ Desktop Scripts v5 supports automatic alias-linked discovery and native multi-fi
 supported modes, bytes and quarantine in Bundle V1, safely creates missing parents during
 Rebuild and checks files independently. Limits and exclusions are in the
 [Scripts contract](docs/toolkit/CONFIGURATION.md#script-files-capability-5).
-Aliases & Scripts v5 is **Implemented / Real GUI E2E Accepted** within its
-[documented A/B/C scope](docs/qualification/SHELL-RECOVERABILITY-2026-11-12.md#real-gui-abc-acceptance--2026-11-15).
+Custom Commands passed [real-Mac GUI acceptance](docs/qualification/SHELL-UNIFIED-B4-2026-11-17.md#real-mac-gui-acceptance-2026-11-18)
+with three aliases, three functions and two scripts restored and verified.
 Partial Shell coverage remains a limitation. Scripts is not a directory backup,
 editor or launcher.
 

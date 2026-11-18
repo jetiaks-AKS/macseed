@@ -442,7 +442,8 @@ enum CaptureHierarchy {
     }
     static func attention(_ categories: [CaptureCategory], model: CaptureModel) -> String? {
         if categories.contains(where: { $0.row.status == "observation_error" }) { return "Scan Incomplete" }
-        if categories.contains(where: { model.selectionState($0) != .none && !$0.notices.isEmpty }) { return "Selected Requirements Need Attention" }
+        if model.scriptsNeedAttention && categories.contains(where: { $0.id == "shell-zsh" }) { return "Script inspection needs attention" }
+        if categories.contains(where: { $0.scanNeedsAttention || (model.selectionState($0) != .none && $0.selectionNeedsAttention) }) { return "Selected Requirements Need Attention" }
         return nil
     }
     static func summary(_ categories: [CaptureCategory], model: CaptureModel) -> String {
@@ -760,6 +761,15 @@ struct ShellScriptSelectionView: View {
     var inspectionError: String? = nil
     var collapsedSelection: ((Bool) -> Void)? = nil
     var addScript: (() -> Void)? = nil
+    private var hasInspectionIssue: Bool {
+        flow == .capture && (inspectionError != nil || inspections?.values.contains { $0.status != "qualified" } == true)
+    }
+    private var selectionStatus: String {
+        if inspecting { return "Checking…" }
+        if scripts.isEmpty { return "" }
+        if available.isEmpty { return hasInspectionIssue ? "" : "Unavailable" }
+        return CaptureStatusText.selectionCount(selected.intersection(available).count, total: available.count)
+    }
     var body: some View {
         if !scripts.isEmpty || addScript != nil {
             VStack(alignment: .leading, spacing: 0) {
@@ -776,10 +786,17 @@ struct ShellScriptSelectionView: View {
                     SelectionCategoryDisclosureStyle.header(expanded: expanded, toggle: { expanded.toggle() }) {
                         CaptureRowColumns(title: SelectionCategoryTitle(id: ShellCommandPresentation.scriptsID,
                             title: "Scripts", symbol: "applescript", flow: flow, toggle: { expanded.toggle() }),
-                            status: CaptureStatusText(title: inspecting ? "Checking…" : scripts.isEmpty ? "" : available.isEmpty ? "Unavailable" : CaptureStatusText.selectionCount(selected.intersection(available).count, total: available.count), secondary: inspecting || available.isEmpty))
+                            status: VStack(alignment: .leading, spacing: 3) {
+                                if hasInspectionIssue { CaptureStatusText(title: "Needs Attention", state: .attention) }
+                                CaptureStatusText(title: selectionStatus, secondary: inspecting || available.isEmpty)
+                            })
                     }
                 }
                 if expanded {
+                    if let inspectionError {
+                        Text(inspectionError).font(.callout).foregroundStyle(.primary)
+                            .fixedSize(horizontal: false, vertical: true).padding(.leading, 64).padding(.vertical, 6)
+                    }
                     Text(flow == .capture ? ShellCommandPresentation.captureConsent : ShellCommandPresentation.restoreConsent)
                         .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                         .padding(.leading, 64).padding(.vertical, 6)
@@ -787,10 +804,6 @@ struct ShellScriptSelectionView: View {
                         Button("Add Script…", action: addScript).disabled(!editable)
                             .controlSize(.small).accessibilityIdentifier("capture.addScript")
                             .padding(.leading, 64).padding(.bottom, 8)
-                    }
-                    if let inspectionError {
-                        Text(inspectionError).font(.callout).foregroundStyle(.orange)
-                            .fixedSize(horizontal: false, vertical: true).padding(.leading, 64).padding(.vertical, 6)
                     }
                     ForEach(scripts) { script in
                         CaptureItemSelectionRow(title: ShellScriptPresentation.title(script.path, paths: scripts.map(\.path)), included: Binding(
@@ -918,9 +931,9 @@ struct CaptureSummaryPresentation {
     }
     var scope: String { "\(domainCount) domains · \(itemCount) items " + (captured ? "captured" : "selected") }
     static func review(categories: [CaptureCategory], domainCount: Int, itemCount: Int, selectedDomains: Set<String>? = nil,
-                       secureIdentityCount: Int = 0) -> Self {
+                       secureIdentityCount: Int = 0, scriptsNeedAttention: Bool = false) -> Self {
         Self(domainCount: domainCount, itemCount: itemCount,
-             attentionCount: categories.filter { $0.row.status == "observation_error" || (!$0.notices.isEmpty && (selectedDomains?.contains($0.id) ?? true)) }.count,
+             attentionCount: categories.filter { $0.scanNeedsAttention || ($0.selectionNeedsAttention && (selectedDomains?.contains($0.id) ?? true)) }.count + (scriptsNeedAttention ? 1 : 0),
              unsupportedCount: categories.filter { $0.row.status == "unsupported" || !["category", "items"].contains($0.row.selectionMode) }.count,
              secureIdentityCount: secureIdentityCount)
     }
@@ -956,21 +969,29 @@ struct CaptureCategorySelectionView: View {
                 } else { header.padding(.trailing, 26).frame(minHeight: 48) }
             }
             if Self.hasDisclosure(category) && (expansion?.wrappedValue ?? expanded) {
-                if category.itemSelectable {
-                    ForEach(category.display.items) { item in
+                CaptureNoticeDetails(items: category.selectionNotices)
+                    .padding(.leading, hierarchyIndent)
+                ForEach(category.selectionItems) { item in
+                    if item.status == .attention {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(item.title).font(.body)
+                            CaptureNoticeDetails(items: [item], leadingInset: 0)
+                        }.padding(.leading, hierarchyIndent + CaptureReviewPresentation.hierarchyStep + 28)
+                    } else {
                         CaptureItemSelectionRow(title: item.title, included: Binding(
                             get: { model.selectedItems[category.id]?.contains(item.id) == true },
                             set: { model.selectItem(category.id, item: item.id, included: $0) }))
                             .padding(.leading, hierarchyIndent + CaptureReviewPresentation.hierarchyStep)
                     }
-                } else {
-                    CaptureNoticeDetails(items: category.display.items).padding(.leading, hierarchyIndent)
+                }
+                if !category.itemSelectable {
+                    if CaptureReviewDiagnostics.repeatedNoticeIDs(category).isDisjoint(with: category.selectionNotices.map(\.id)) {
+                        CaptureNoticeDetails(items: category.display.items).padding(.leading, hierarchyIndent)
+                    }
                     if let settings = category.row.includedSettings, !settings.isEmpty {
                         IncludedSettingsText(settings: settings).padding(.leading, hierarchyIndent + CaptureReviewPresentation.hierarchyStep)
                     }
                 }
-                CaptureNoticeDetails(items: category.notices, suppressedDiagnosticIDs: CaptureReviewDiagnostics.repeatedNoticeIDs(category))
-                    .padding(.leading, hierarchyIndent)
             }
         }.padding(.leading, 16 + leadingInset).padding(.trailing, 16)
     }
@@ -981,15 +1002,17 @@ struct CaptureCategorySelectionView: View {
     }
     private var status: some View {
         VStack(alignment: .leading, spacing: 3) {
-            if category.id == "shell-zsh", category.itemSelectable, model.shellObservation?.notice != nil {
+            if category.id == "shell-zsh", category.itemSelectable, model.shellObservation?.notice != nil && !category.selectionNotices.isEmpty {
                 CaptureStatusText(title: model.shellObservation?.title ?? "Functions excluded", state: .attention)
+            } else if category.scanNeedsAttention {
+                CaptureStatusText(title: "Needs Attention", state: .attention)
             } else if !category.selectable {
                 CaptureStatusText(title: category.headerSummary, state: category.row.status == "observation_error" ? .attention : .skipped)
-            } else if model.selectionState(category) != .none && !category.notices.isEmpty { CaptureStatusText(title: "Needs Attention", state: .attention) }
+            } else if model.selectionState(category) != .none && category.selectionNeedsAttention { CaptureStatusText(title: "Needs Attention", state: .attention) }
             else if category.itemSelectable && model.selectionState(category) != .none {
                 CaptureStatusText(title: CaptureReviewPresentation.selectionLabel(category, model: model))
             } else { Color.clear.frame(height: 1).accessibilityHidden(true) }
-            if category.itemSelectable && model.selectionState(category) != .none && !category.notices.isEmpty {
+            if category.itemSelectable && model.selectionState(category) != .none && category.selectionNeedsAttention {
                 Text(CaptureReviewPresentation.selectionLabel(category, model: model))
                     .font(.caption).foregroundStyle(.secondary).padding(.leading, CaptureStatusText.textInset)
             }
@@ -1023,12 +1046,17 @@ enum CaptureReviewDiagnostics {
 
 struct CaptureNoticeDetails: View {
     let items: [DisplayItem]
-    var suppressedDiagnosticIDs: Set<String> = []
+    var leadingInset: CGFloat = 40
     var body: some View {
         ForEach(items) { item in
-            VStack(alignment: .leading, spacing: 4) {
-                Text(item.action).font(.caption).foregroundStyle(.secondary)
-            }.padding(.leading, 40).padding(.vertical, 4)
+            HStack(alignment: .firstTextBaseline, spacing: 7) {
+                if item.status == .attention {
+                    Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange).accessibilityHidden(true)
+                }
+                Text(item.action).fixedSize(horizontal: false, vertical: true)
+            }.font(item.status == .attention ? .callout : .caption)
+                .foregroundStyle(item.status == .attention ? Color.primary : Color.secondary)
+                .padding(.leading, leadingInset).padding(.vertical, 4)
         }
     }
 }

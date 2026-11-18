@@ -129,7 +129,7 @@ class Plan:
         if any(r['condition'] == 'conditional' for r in self._value._value['loads']):
             self.rows = [(r, 'unverified', 'source_prerequisite') for r in definitions]
             return
-        existing = self._existing_definitions()
+        existing = self._existing_definitions(self.observed)
         if len(existing) == len(definitions):
             self.rows = [(r, *existing[r['id']]) for r in definitions]
             return
@@ -141,8 +141,8 @@ class Plan:
             self.rows = [(r, 'unverified', 'source_prerequisite') if s == 'missing' else (r, s, p)
                          for r, s, p in self.rows]
 
-    def _existing_definitions(self):
-        observed, value = self.observed, self._value
+    def _existing_definitions(self, observed):
+        value = self._value
         if any(code != 'unsupported_context' for code in observed.codes):
             return {}
         loads = {r['id']: r for r in observed._loads}
@@ -189,13 +189,18 @@ class Plan:
         actual_paths = {f['source']['id']: p for p, f in observed._files.items() if f['source']}
         actual = {row['key']: row for row in observed.snapshot._value['items']}
         selected_paths = {paths[r['source']] for r in value._value['items'] if r['kind'] != 'script'}
-        present_paths = {p for p in selected_paths if observed._files.get(p, {}).get('status') == 'observed'}
+        present_paths = {p for p in selected_paths if observed._files.get(p, {}).get('status') in ('observed', 'partial')}
         load_order_matches = all(
             [paths[r['source']] for r in value._value['loads'] if r['context'] == context and paths[r['source']] in present_paths] ==
             [actual_paths[r['source']] for r in observed._loads if r['context'] == context and actual_paths[r['source']] in present_paths]
             for context in observe.CONTEXTS)
-        managed = any(f['raw'] is not None and (sources.MANAGED.search(f['raw'].decode('utf-8', errors='replace')) or
-                      (f['stamp'] is not None and f['stamp'][1][1])) for f in observed._files.values())
+        managed_paths = {p for p, f in observed._files.items() if f['raw'] is not None
+                         and (f['stamp'][1][1] or sources.MANAGED.search(f['raw'].decode('utf-8', errors='replace')))}
+
+        # Unknown bindings or unresolved loads cannot establish absence. Earlier
+        # unrelated initialization can be admitted only after a prospective Check.
+        partial = bool(observed.codes) and observe._equivalence_context(observed._files,
+            {r['id']: r for r in observed._loads}, observed._issues, self._check) is not None
         try:
             ordered = state.declaration_order(value)
         except state.Invalid:
@@ -215,7 +220,9 @@ class Plan:
             selected = [r['id'] for r in observed._loads if actual_paths[r['source']] == path]
             return chains(observed._loads, actual_paths, selected) == expected
         if not all(original_route(item) for item in ordered):
-            self._inspect_managed(ordered, managed)
+            relevant = {p for item in ordered for _, chain in chains(value._value['loads'], paths, item['loads'])
+                        for p, _ in chain} | {MANAGED_PATH, '.zshrc'}
+            self._inspect_managed(ordered, not relevant.isdisjoint(managed_paths))
             return
         grouped = {}
         source_bytes = sum(len(f['raw'] or b'') for f in observed._files.values())
@@ -238,11 +245,11 @@ class Plan:
             competing = sum(f['names'].count(item['key']) + f['alias_names'].count(item['key']) for f in observed._files.values()) > 1
             if observe._shadows_source([item['key']], []):
                 reason = 'source_prerequisite'
-            elif managed:
+            elif any(p in managed_paths for _, chain in expected for p, _ in chain):
                 reason = 'managed_source_prerequisite'
             elif competing:
                 status, reason = 'differing', 'target_conflict'
-            elif observed.codes:
+            elif observed.codes and (not partial or item['key'] in actual):
                 reason = 'unsafe_destination' if 'unsafe_source' in observed.codes else 'source_prerequisite'
             elif not load_order_matches:
                 reason = 'source_prerequisite'
@@ -259,7 +266,7 @@ class Plan:
                         status = ('matching' if found['kind'] == item['kind'] and actual_paths[found['source']] == path and
                                   content(observed.snapshot, found) == saved else 'differing')
                         reason = 'preserve' if status == 'matching' else 'target_conflict'
-                    elif any(item['key'] in f['names'] for f in observed._files.values()):
+                    elif any(item['key'] in f['names'] + f['alias_names'] for f in observed._files.values()):
                         status, reason = 'differing', 'target_conflict'
                     else:
                         status, reason = 'missing', 'add' if target['raw'] is not None else 'create'
@@ -308,7 +315,7 @@ class Plan:
                 declarations = units + [(name, candidate[slice(*span)], dict(span=span))
                     for kind, name, span in commands if kind == 'alias']
                 count += sum(kind == 'alias' for kind, _, _ in commands)
-                if opaque or any(sum(k == r['key'] for k, _, _ in declarations) != 1 or
+                if (opaque and not partial) or any(sum(k == r['key'] for k, _, _ in declarations) != 1 or
                     not any(k == r['key'] and data == content(value, r) for k, data, _ in declarations) for r in items):
                     raise base.Invalid('candidate_invalid')
                 with sources.parent(home, path) as (fd, name, check):
@@ -334,7 +341,15 @@ class Plan:
         if (source_bytes > state.MAX_SOURCE_TOTAL or definitions > state.MAX_DECLARATIONS or
                 response_bytes > state.MAX_MANIFEST or load_count > state.MAX_LOADS):
             raise observe.Invalid('resource_limit')
-
+        if partial and self.writes:
+            # Use the same independent parser/lexer, load chains, relative order
+            # and later-override checks as post-Restore Check, before publication.
+            projected = observe.project_appends(home, self.helper, observed, self.writes, self._check, (MANAGED_PATH,))
+            qualified = self._existing_definitions(projected)
+            if any(qualified.get(r['id']) != ('matching', 'preserve') for r in value._value['items'] if r['kind'] != 'script'):
+                self.writes.clear()
+                self.rows = [(r, 'unverified', 'source_prerequisite') if s == 'missing' else (r, s, p)
+                             for r, s, p in self.rows]
 
     def _definition_valid(self, item, saved):
         response = self.helper.parse(saved, cancelled=self._check)

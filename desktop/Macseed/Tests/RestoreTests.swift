@@ -427,25 +427,86 @@ import CryptoKit
         print("PASS: targeted production Core -> native script-only scope, visible Check file category, exact counters and preserved alias coverage; no Restore execution repeated")
     }
 
-    @MainActor static func shellParentUIChecks(core: URL, source: URL, python: URL, root: URL) async throws {
+    @MainActor static func shellParentUIChecks(core: URL, source: URL, python: URL, root: URL, checkContrast: Bool = false) async throws {
         let path = core.appendingPathComponent("inspection.json"), original = try Data(contentsOf: core.appendingPathComponent("inspection.json"))
         defer { try! original.write(to: path) }
-        let aliases = (1...12).map { "shell-alias:" + String(format: "%064x", $0) }
+        let aliases = (1...(checkContrast ? 6 : 12)).map { index in
+            (checkContrast && index > 3 ? "shell-function:" : "shell-alias:") + String(format: "%064x", index)
+        }
         let scriptPath = ".local/bin/ui-fixture"
         let scriptID = SHA256.hash(data: Data(("shell-script:" + scriptPath).utf8)).map { String(format: "%02x", $0) }.joined()
+        let scripts = (checkContrast ? [scriptPath, ".local/bin/second"] : [scriptPath]).map { name -> [String: Any] in
+            ["id": SHA256.hash(data: Data(("shell-script:" + name).utf8)).map { String(format: "%02x", $0) }.joined(),
+             "path": name, "alias_ids": checkContrast ? [aliases[0]] : aliases, "observation_id": String(repeating: "e", count: 64), "independent": true]
+        }
         let rows: [[String: Any]] = [
             ["domain": "shell-zsh", "label": "Aliases & Functions", "selection_mode": "items", "availability": "available", "items": aliases.map { ["item_id": $0, "label": $0] }],
             ["domain": "homebrew-casks", "label": "Homebrew Applications", "selection_mode": "items", "availability": "available", "items": [["item_id": "fixture-app", "label": "Fixture App"]]],
             ["domain": "homebrew-packages", "label": "Homebrew Packages", "selection_mode": "items", "availability": "available", "items": [["item_id": "fixture-package", "label": "Fixture Package"]]]]
         try JSONSerialization.data(withJSONObject: ["format_version": 1, "selected_categories": [],
-            "selected_item_counts": ["shell-zsh": 12, "homebrew-casks": 1, "homebrew-packages": 1], "secure_component": false,
+            "selected_item_counts": ["shell-zsh": aliases.count, "homebrew-casks": 1, "homebrew-packages": 1], "secure_component": false,
             "restore_selection": ["groups": [["id": "Shell", "domains": ["shell-zsh"]], ["id": "Homebrew", "domains": ["homebrew-casks", "homebrew-packages"]]], "inventory": rows],
-            "shell_script_candidates": [["id": scriptID, "path": scriptPath, "alias_ids": aliases, "observation_id": String(repeating: "e", count: 64), "independent": true]]]).write(to: path)
+            "shell_script_candidates": scripts]).write(to: path)
         let runtime = CoreRuntime(operationLogs: nil)
         let model = RestoreModel(runtime: runtime, location: CoreLocation(root: core, python: python, home: root, temporaryBase: root, toolDirectories: []))
         model.choose(source); await model.waitForCompletion()
-        precondition(model.state == .review && model.shellScriptCandidates.count == 1)
+        precondition(model.state == .review && model.shellScriptCandidates.count == scripts.count)
         let tree = RestoreSelectionPresentation.disclosureIDs(model.selectionAreas, advanced: true).subtracting([ShellCommandPresentation.scriptsID])
+        if checkContrast {
+            let collapsed = tree.subtracting(["shell-zsh"])
+            for count in [0, 1, 6] {
+                model.selectArea("shell-zsh", included: false)
+                for id in aliases.prefix(count) { model.selectItem("shell-zsh", item: id, included: true) }
+                model.selectAllShellScripts(included: false)
+                for script in model.shellScriptCandidates.prefix(min(count, 2)) { model.selectShellScript(script.id, included: true) }
+                let state = count == 0 ? "Not Selected" : count == 1 ? "Partially Selected" : "All Selected"
+                let view = RestoreSelectionContent(model: model, expansion: .constant(collapsed))
+                    .padding(16).frame(width: 985).background(Color.white).environment(\.colorScheme, .light)
+                let host = NSHostingView(rootView: view)
+                let window = NSWindow(contentRect: .init(origin: .zero, size: host.fittingSize), styleMask: [.borderless], backing: .buffered, defer: false)
+                window.appearance = NSAppearance(named: .aqua)
+                window.isReleasedWhenClosed = false; window.contentView = host
+                defer { window.contentView = nil; window.close() }
+                host.layoutSubtreeIfNeeded()
+                let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds)!
+                host.cacheDisplay(in: host.bounds, to: bitmap)
+                let recognition = VNRecognizeTextRequest()
+                try VNImageRequestHandler(cgImage: bitmap.cgImage!, options: [:]).perform([recognition])
+                let observations = recognition.results ?? []
+                func boxes(_ label: String) -> [CGRect] {
+                    observations.compactMap { observation in
+                        guard let candidate = observation.topCandidates(1).first, let range = candidate.string.range(of: label, options: [.caseInsensitive, .anchored, .backwards]) else { return nil }
+                        return try? candidate.boundingBox(for: range)?.boundingBox
+                    }
+                }
+                let parents = boxes(state)
+                precondition(parents.count >= 2, "Shell and Custom Commands must retain their aggregate statuses: " + String(describing: observations.compactMap { $0.topCandidates(1).first?.string }))
+                let labels = ["\(count) of 6 selected", "\(min(count, 2)) of 2 selected"]
+                if count == 0 {
+                    precondition(labels.allSatisfy { boxes($0).isEmpty })
+                    continue
+                }
+                let counters = labels.map { boxes($0).first! }
+                let width = CGFloat(bitmap.pixelsWide), height = CGFloat(bitmap.pixelsHigh)
+                func darkest(_ box: CGRect) -> CGFloat {
+                    var luminance: CGFloat = 1
+                    for x in Int(box.minX * width)..<Int(box.maxX * width) {
+                        for y in Int((1 - box.maxY) * height)..<Int((1 - box.minY) * height) {
+                            if let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.sRGB) {
+                                luminance = min(luminance, (color.redComponent + color.greenComponent + color.blueComponent) / 3)
+                            }
+                        }
+                    }
+                    return luminance
+                }
+                let tones = counters.map(darkest)
+                precondition(abs(tones[0] - tones[1]) < 0.05 && parents.map(darkest).allSatisfy { $0 > tones.max()! + 0.12 },
+                    "Both counters must have primary contrast and both parent statuses must remain secondary: \(tones), \(parents.map(darkest))")
+                precondition(abs(counters[0].minX - counters[1].minX) * width < 6)
+            }
+            print("PASS: rendered Rebuild zero/partial/all, aligned 6 of 6 and 2 of 2 with primary foreground and secondary parent statuses")
+            return
+        }
         func click(_ label: String, state: NSControl.StateValue) {
             let host = NSHostingView(rootView: RestoreSelectionContent(model: model, expansion: .constant(tree)))
             let window = NSWindow(contentRect: .init(x: 0, y: 0, width: 985, height: 1100), styleMask: [.borderless], backing: .buffered, defer: false)
@@ -494,6 +555,7 @@ import CryptoKit
 
     @MainActor static func shellCustomChecks(core: URL, source: URL, python: URL, root: URL) async throws {
         try await shellParentUIChecks(core: core, source: source, python: python, root: root)
+        try await shellParentUIChecks(core: core, source: source, python: python, root: root, checkContrast: true)
         let inspectionPath = core.appendingPathComponent("inspection.json"), mode = core.appendingPathComponent("mode")
         let original = try Data(contentsOf: inspectionPath), originalMode = try? Data(contentsOf: mode)
         let requestsPath = core.appendingPathComponent("requests.jsonl"), originalRequests = try? Data(contentsOf: core.appendingPathComponent("requests.jsonl"))
@@ -1807,7 +1869,7 @@ import CryptoKit
         await prepare()
         precondition(!model.preparation!.includeSecure && model.preparation!.plan.allSatisfy { $0.domain != CoreRestorePreparation.secureDomain })
         await choose(secure: false, workspace: true); await prepare()
-        precondition(model.confirmationMessages.allSatisfy { !$0.contains("Secure") })
+        precondition(model.preparation?.hasBlockedSelectedWork == false)
         precondition(RestoreTaskPresentation(preview: model.preview!, plan: model.preparation!).domains.allSatisfy { $0.id != CoreRestorePreparation.secureDomain })
         print("PASS: No secure package and explicit OFF preserve ordinary preparation, confirmation and task scope")
 
@@ -2590,8 +2652,8 @@ import CryptoKit
         let sourceRoot = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Sources")
         let view = try String(contentsOf: sourceRoot.appendingPathComponent("RestoreView.swift"), encoding: .utf8)
         precondition(!view.contains("DisclosureGroup(\"Technical Details\")") && !view.contains("DisclosureGroup(\"View Details\")"))
-        precondition(view.contains("Macseed will apply the changes shown in this Preview. Items that already match will not be changed."))
-        precondition(view.contains("Some changes may require administrator authorization."))
+        precondition(view.contains("Macseed will apply the changes shown in Preview."))
+        precondition(!view.contains("Some changes may require administrator authorization."))
         precondition(!view.contains("Some Homebrew casks require administrator authorization") && !view.contains("A separate password prompt will appear."))
         // These are the actual production Preview, Rebuild and Result consumers.
         precondition(view.contains("RestoreTaskPresentation(preview: preview, plan: prepared)"))
@@ -3108,7 +3170,7 @@ import CryptoKit
         precondition(enabled.readiness.ready && enabled.hasExecutableChanges)
         precondition(enabledPresentation.categories[0].items[1].restoreReadyText == "Conditional")
         precondition(enabledPresentation.categories[0].items[1].action.contains("recheck"))
-        precondition(!RestoreTaskPresentation(preview: enabledPresentation, plan: enabled).confirmationMessages(enabled).isEmpty)
+        precondition(enabled.hasBlockedSelectedWork)
         for code in CoreRestorePreparation.workspacePreviewReasons.keys {
             precondition(OperationLogSanitizer.reasons.contains(code))
             precondition(DiagnosticReportPrivacy.reasons.contains(code))
@@ -3138,7 +3200,7 @@ import CryptoKit
         let presentation = RestorePreviewPresentation(matched, catalog: catalog)
         precondition(!matched.readiness.ready && !presentation.needsAttention(matched))
         precondition(presentation.categories.flatMap(\.items).allSatisfy { $0.status == .matching })
-        precondition(RestoreTaskPresentation(preview: presentation, plan: matched).confirmationMessages(matched).isEmpty)
+        precondition(!matched.hasBlockedSelectedWork)
         let prerequisites = RestorePrerequisiteSummaryPresentation(conditions: matched.readiness.conditions, ready: false)
         precondition(prerequisites.manualConditions.isEmpty && prerequisites.displayConditions.isEmpty)
         precondition(!prerequisites.isTerminalReady && !prerequisites.needsAttention)
@@ -3894,7 +3956,8 @@ import CryptoKit
         let developerOnly = CommandLine.arguments.contains("--developer-selection-only")
         let sshResolutionOnly = CommandLine.arguments.contains("--ssh-resolution-only")
         let sshHostOnly = CommandLine.arguments.contains("--ssh-host-selection-only") || sshResolutionOnly
-        let shellUIOnly = CommandLine.arguments.contains("--shell-ui-only")
+        let countUIOnly = CommandLine.arguments.contains("--selection-count-ui-only")
+        let shellUIOnly = CommandLine.arguments.contains("--shell-ui-only") || countUIOnly
         let shellCustomOnly = CommandLine.arguments.contains("--shell-custom-only") || shellUIOnly
         let selectionAccordionOnly = CommandLine.arguments.contains("--selection-accordion-only") || homebrewSetupOnly || secureUIOnly || sshHostOnly || developerOnly || shellCustomOnly
         let refreshCancellationOnly = CommandLine.arguments.contains("--appstore-refresh-cancel-only")
@@ -4403,6 +4466,9 @@ import CryptoKit
         let location = CoreLocation(root: core, python: python, home: root, temporaryBase: root, toolDirectories: [])
         let model = RestoreModel(runtime: runtime, location: location)
         let source = root.appendingPathComponent("sample.mbt")
+        if countUIOnly {
+            try await shellParentUIChecks(core: core, source: source, python: python, root: root, checkContrast: true); return
+        }
         if shellUIOnly {
             try await shellCustomChecks(core: core, source: source, python: python, root: root)
             return
@@ -4675,11 +4741,10 @@ import CryptoKit
                 precondition(RestorePreviewMetrics.counts(mixed.automaticDomains).changes == 4)
                 precondition(RestorePreviewMetrics.counts(mixed.automaticDomains).attention == 0)
                 precondition(mixed.automaticAttentionCount == 0)
-                precondition(model.confirmationMessages.count == (expected == .installed ? 0 : 1))
-                precondition(model.confirmationMessages.allSatisfy { $0.contains("App Store") && !$0.contains("automatic requirements need attention") })
+                precondition(model.preparation?.hasBlockedSelectedWork == false)
                 var scopePlan = model.preparation!
                 scopePlan.scopeWarnings = ["homebrew-packages"]
-                precondition(mixed.confirmationMessages(scopePlan).contains { $0.contains("category-level warning") })
+                precondition(!scopePlan.hasBlockedSelectedWork && !RestoreTaskPresentation.scopeWarningMessages(scopePlan).isEmpty)
                 model.selectArea("workspace-folders", included: false)
             }
             let requests = try String(contentsOf: core.appendingPathComponent("requests.jsonl"))

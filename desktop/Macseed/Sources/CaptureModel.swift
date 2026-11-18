@@ -120,6 +120,30 @@ struct CaptureCategory: Identifiable {
         return [DisplayItem(id: "category-warning:" + id, title: "Needs Attention", status: .attention,
                             action: id == "shell-zsh" && reason == "source_partial" ? shellCoverageMessage : "Some supported state may be unavailable in this category.", reason: reason)]
     }
+    var excludedAliases: [DisplayItem] {
+        guard id == "shell-zsh", let reasons = shellObservation?.excludedAliases else { return [] }
+        let available = Set(row.items.map(\.itemID))
+        return reasons.compactMap { name, reason in
+            let id = "shell-alias:" + SHA256.hash(data: Data(name.utf8)).map { String(format: "%02x", $0) }.joined()
+            guard !available.contains(id) else { return nil }
+            return DisplayItem(id: id, title: "Alias: " + name, status: .attention, action: reason.explanation)
+        }
+    }
+    var selectionItems: [DisplayItem] {
+        let excluded = excludedAliases
+        guard !excluded.isEmpty else { return itemSelectable ? display.items : [] }
+        return ShellDefinitionPresentation.ordered((itemSelectable ? display.items : []) + excluded,
+            domain: id, id: { $0.id }, name: { $0.title })
+    }
+    var selectionNotices: [DisplayItem] {
+        guard id == "shell-zsh", let observation = shellObservation else { return notices }
+        guard let issue = observation.selectionIssue else { return [] }
+        return [DisplayItem(id: "category-warning:" + id, title: "Needs Attention", status: .attention, action: issue)]
+    }
+    var selectionNeedsAttention: Bool { !selectionNotices.isEmpty || !excludedAliases.isEmpty }
+    var scanNeedsAttention: Bool {
+        row.status == "observation_error" || (id == "shell-zsh" && (shellObservation?.hasIncompleteScan == true || !excludedAliases.isEmpty))
+    }
     var informationalShellCoverage: Bool {
         id == "shell-zsh" && itemSelectable && row.reason == "source_partial"
             && shellObservation?.qualifiedScopeLimitation == true
@@ -341,6 +365,9 @@ enum CaptureSelectionScope: CaseIterable {
         shellScriptPolicy == nil && !standaloneShellScripts.isEmpty
             ? "This Core version needs a related alias. Select an alias or deselect the file." : nil
     }
+    var scriptsNeedAttention: Bool {
+        shellSelectionIssue != nil || shellInspectionError != nil || shellScriptInspections.values.contains { $0.status != "qualified" }
+    }
     var standaloneShellScripts: [CoreShellScript] {
         selectedShellScripts.filter { Set($0.aliasIDs ?? []).isDisjoint(with: selectedItems["shell-zsh"] ?? []) }
     }
@@ -430,10 +457,10 @@ enum CaptureSelectionScope: CaseIterable {
     }
     var manualIdentityIDs: Set<String> { Set(externalSources.keys) }
     private var selectedExternalPaths: [String] { selectedSecureIdentities.sorted().compactMap { externalSources[$0] } }
-    static func confirmationPrivacyMessage(includesSSHIdentities: Bool) -> String {
+    static func confirmationPrivacyMessage(includesSSHIdentities: Bool) -> String? {
         includesSSHIdentities
             ? "SSH identities are encrypted separately. Other saved settings are not encrypted. Keep the Bundle passphrase safe."
-            : "Saved settings are not encrypted."
+            : nil
     }
     func addSSHIdentity(_ url: URL) {
         guard state == .review, !busy, !runtime.isActive else { return }

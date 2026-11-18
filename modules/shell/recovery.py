@@ -292,14 +292,27 @@ def script_valid(text):
     return script_analysis(text)['qualified']
 
 
-def script_path(value, path):
+def script_path(value, path, *, typed=False):
     # An executable payload must never double as a startup/source file. This
     # boundary also applies to older v3 data; consent cannot waive activation.
     reserved = {*sources.STARTUP, '.zlogout', '.profile', '.bashrc', '.bash_profile', '.bash_login'}
     if Path(path).name.casefold() in reserved or path.casefold().endswith('.zwc') or path.casefold() in {root.casefold() for root in value['roots']}:
         return False
     for row in value['aliases']:
-        words = shlex.split(base.declaration(row['statement'], True)[1])
+        legacy = base.declaration(row['statement'], True)
+        if typed and legacy is None:
+            body = base.typed_declaration(row['statement'])[1]
+            lexer = shlex.shlex(body, posix=True, punctuation_chars=True)
+            lexer.whitespace_split = True
+            lexer.commenters = ''
+            words = list(lexer)
+            if not {'source', '.'}.isdisjoint(words):
+                # Only a single literal source operand can exclude an exact
+                # destination. Complex source expressions cannot authorize files.
+                if len(words) != 2 or words[0] not in ('source', '.') or not base.home_reference(words[1]):
+                    return False
+        else:
+            words = shlex.split(legacy[1])
         if words[0] in ('source', '.') and (base.home_reference(words[1]) or '').casefold() == path.casefold():
             return False
     return path.casefold() not in {item['path'].casefold() for item in value['layout']}
@@ -1301,7 +1314,7 @@ def publish(value, home, expected=None, approvals=(), *, source_files=None, vali
                          'verify': lambda fd: verify_quarantine(fd, script.get('quarantine'))} if script is not None else {})
             sources.publish_content(home, path, candidate, validate, mode,
                 limit=MAX_FILE_BYTES if script is not None else base.MAX_BYTES,
-                tracked=value['version'] == 5 and path in depth, **metadata)
+                tracked=value['version'] == 5 and path in depth, create_only=script is not None, **metadata)
             changed = True
             after = observation(value, home)
             if (before.get('documents') != after.get('documents') or before['tools'] != after['tools'] or any(after['dependencies'].get(key) != val for key, val in before['dependencies'].items() if key != path) or before['directories'] != after['directories'] or any(after['files'].get(key) != val for key, val in before['files'].items() if key != path)):

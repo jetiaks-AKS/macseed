@@ -14,8 +14,9 @@ contracts, [TODO](TODO.md) owns concrete unfinished actions, and
 - **Implemented — Qualification Open:** development-runtime execution, completion
   and integration, native Workspace E2E, Homebrew Setup Installer handoff and the
   remaining supported-domain, lifecycle, security and accessibility gates.
-- **Current functional priority:** Shell / Zsh Completion, with standalone Zsh
-  Functions next after the accepted Aliases & Scripts v5 checkpoint. The final functional taxonomy is Custom Commands
+- **Current functional priority:** Shell / Zsh Completion. Functional B4 Custom Commands passed real-Mac
+  GUI acceptance on 2026-11-18. **Variables & PATH** is the next Shell checkpoint.
+  The functional taxonomy is Custom Commands
   (Aliases & Functions / Scripts in Selection),
   Variables & PATH and Settings, with Plugins & Themes conditional on qualified
   support and relevant items; remaining capabilities stay open. Existing SSH Host
@@ -51,10 +52,10 @@ contracts, [TODO](TODO.md) owns concrete unfinished actions, and
   Independent declaration admission and a bounded portable Restore destination are
   implemented; qualified equivalent Function occurrences share one item. Real-source
   14-item Capture → disposable-target Restore/Verify/Check and no-op are locally qualified.
-  [Local integration evidence](docs/qualification/SHELL-UNIFIED-B4-2026-11-17.md) covers
-  disposable Core and real Native → Core mixed transfer.
-  Broader prerequisites, representative Native visual/real-Mac and release qualification
-  remain open; definition Match does not prove runtime activation.
+  The [real-Mac GUI acceptance](docs/qualification/SHELL-UNIFIED-B4-2026-11-17.md#real-mac-gui-acceptance-2026-11-18)
+  restored three Aliases, three Functions and two Scripts after controlled removal.
+  All eight verified and matched, the restored commands ran, and repeat Rebuild was a no-op.
+  Dynamic startup, broader prerequisites, other platforms and packaged-release qualification remain open.
 - **Before Macseed 1.0:** finish Shell, Stage 3C and remaining Stage 16 functionality;
   implement Stage 17 autonomous distribution; then complete comprehensive Native
   Desktop/packaged clean-Mac qualification and Early Access. No stage is closed by
@@ -253,8 +254,8 @@ by the approved Shell-first decision. Complete one bounded checkpoint at a time.
    [parser foundation](docs/core/SHELL-PARSER.md) and private
    [typed state codec](docs/toolkit/CONFIGURATION.md#typed-shell-state-foundation-b1) are implemented;
    explicit Functions Capture/Bundle and bounded Restore/Verify/Check are implemented.
-   Complete standalone Functions qualification and remaining prerequisites, then
-   Variables & PATH and Shell Settings, plus useful
+   With functional B4 Custom Commands accepted, proceed to **Variables & PATH**,
+   then Shell Settings, plus useful
    Plugins & Themes only when independently qualified. Startup/source relationships
    remain provenance and dependencies within these categories.
    Preserve legacy snapshots and existing approved capabilities. The

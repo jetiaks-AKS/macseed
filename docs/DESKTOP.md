@@ -433,10 +433,10 @@ summaries and separate independent warnings. There are **no selection checkboxes
 Every domain, including Secure Transfer, uses the same status/count column and
 trailing disclosure column. Secure Transfer shows the prepared SSH identity count
 and retains its expandable identity list.
-Confirmation shows one concise privacy statement. With selected SSH identities it
-states that identities are encrypted separately, other settings are not encrypted,
-and the Bundle passphrase must be kept safe. Without identities, only the settings
-encryption boundary is shown. Destination/path correction guidance stays in context.
+When SSH identities are selected, Confirmation explains their separate encryption,
+the plaintext settings boundary and how to safeguard the Bundle passphrase.
+Selected Scripts retain their plaintext disclosure inside the hierarchy.
+Destination/path correction guidance stays in context.
 Only groups included in the effective prepared selection appear. Ordinary categories
 share one container; included Git, SSH, Workspace and Shell groups share the second. Empty
 sections and their controls are omitted, including the ordinary section for a
@@ -512,7 +512,7 @@ not Selection controls. Secure Transfer remains the technical operation name.
 Native category help is optional: repositories/worktrees, SSH Configuration, SSH Keys,
 Workspace Folders, VS Code Workspace, Shell and App Store have specific text.
 Other categories, including macOS preferences and unknown IDs, have no info button.
-Shell help and Rebuild confirmation explain qualified definition writes and the
+Shell help explains qualified definition writes and the
 possible managed definitions file/startup connection before approval. Qualified
 declarations beside excluded initialization retain one coverage warning; they are
 not labeled Functions unavailable. Runtime dependencies and execution remain unverified.
@@ -1510,8 +1510,9 @@ display the filename, or the shortest unique parent-path suffix for duplicate
 filenames; hover and accessibility help retain the validated HOME-relative path.
 This display projection applies to Capture, Rebuild and Check without changing
 identities, destination paths, consent or payloads.
-Scripts Selection counts use the same primary callout style as definition counts,
-remaining hidden at zero. Compact Script chips show local path help after a 200 ms
+In Rebuild Selection, Aliases & Functions and Scripts use the same primary callout
+as Capture Selection for positive selected counts. A zero count stays blank.
+The aggregate Shell and Custom Commands statuses retain secondary contrast. Compact Script chips show local path help after a 200 ms
 hover delay, retain accessibility hints and cancel pending help on exit/disappearance;
 they do not change the system tooltip preference.
 Their parent selects/clears every eligible definition with None/Partial/All states.
@@ -1551,8 +1552,8 @@ Names are display metadata; Swift never decodes command bodies or resolves sourc
 paths. Check/Preview count each Alias/Function once, with independent **Shell coverage**
 evidence. Core's `shell_activation_unknown` informational record does not add an
 attention badge or requirement when all selected typed Shell items match. Check
-retains its explanation; Preview uses existing category scope help and keeps normal
-Already Matches counts. Runtime activation and dynamic startup remain unverified.
+shows the explanation in Aliases & Functions help, or Scripts help for a scripts-only
+selection. Preview uses existing category scope help and keeps normal Already Matches counts. Runtime activation and dynamic startup remain unverified.
 Other scope warnings and unresolved selected requirements retain Needs Attention.
 Matching rows remain suppressed in Preview. Coverage text
 explicitly distinguishes matching aliases from other unsupported/unincluded Shell
@@ -1644,12 +1645,15 @@ and unresolved opaque-body dependencies; Rebuild help also explains
 independent authorization, protected existing files and later startup execution.
 Opening help never changes consent or disclosure state; keyboard and accessibility
 actions use the same native control as other category help.
-Capture's partial-alias note is **Some Shell settings or dependencies are outside
-this capture.** The Aliases & Functions help retains the wider scope explanation.
+Capture Selection shows a shared inspection problem immediately below the category
+header, before the list. A safely identified excluded Alias appears in name order
+with its explanation directly beneath it. It has no checkbox and contributes
+nothing to the selectable total. The existing Aliases & Functions help explains
+runtime coverage. Collapsed parents retain the attention status for affected children.
 
-Confirmation remains read-only: the existing Shell content summarizes selected
-aliases and executable files with the ordinary unencrypted-Bundle disclosure. The
-old global script checkbox list is removed. Capture Result retains Save Complete,
+Capture Confirmation keeps counts and **Ready to Save** in **Included in this capture**.
+Selected Scripts carry their plaintext warning there. Selected SSH identities retain
+the separate encryption and passphrase guidance. Capture Result retains Save Complete,
 publication metrics, destination and attention. Affected categories reuse Rebuild
 Result's expandable category headers, counts and item rows. Shell warnings appear
 under Shell → Custom Commands → Aliases & Functions. For an observed, qualified
@@ -1685,15 +1689,20 @@ uncertainty never becomes an installation instruction or a planned change. Missi
 uncaptured scripts and declaration versus dependency conflicts are not distinguished
 unless Core evidence supports the distinction. Planned-file lists omit repeated
 non-execution explanations already available at selection.
-It has no Custom Commands tree or selection controls. Final Rebuild confirmation
-summarizes previously authorized writes without another checkbox list. Progress
-and Result stay execution-oriented, with flat category rows under **Standard Setup**
+Final confirmation uses **Rebuild this Mac?**, “Macseed will apply the changes shown in Preview.”
+and **Cancel** / **Rebuild** for every selection. One short warning appears when selected
+work will stay blocked while other work proceeds. Informational Shell coverage adds no warning.
+
+Progress and Result stay execution-oriented, with flat category rows under **Standard Setup**
 and **For Experienced Users** and unchanged receipt/Verification
 operation accounting. Result partitions physical `shell-zsh` rows by their existing
 requirement identities into **Aliases & Functions** and **Scripts**. Verified
-independent scripts remain visible when alias restoration fails; the presentation
-does not change results or summary totals. A pending Shell publication is shown as
-recovery evidence requiring review, with its concrete reason retained in View Log;
+independent scripts remain visible when alias restoration fails. A resolved Shell
+scope with the linked informational activation diagnostic and final per-item evidence
+can supersede Preview’s coverage warning. Eight verified requirements then show
+**8 Verified** with no coverage issue. Item mismatches and genuinely unresolved
+coverage retain **Needs Attention**. View Log retains the underlying evidence.
+A pending Shell publication is shown as recovery evidence requiring review, with its concrete reason in View Log;
 Refresh Preview does not clear that evidence or enable unsafe retries.
 Check uses Shell → Custom Commands with separate
 **Aliases & Functions** and **Scripts** children, retaining matching rows and
@@ -2221,7 +2230,7 @@ target before secure mutation, retaining no-clobber checks around explicit conse
 Preview presents SSH Keys under SSH in the experienced container. It exposes no
 decrypted identity inventory; authenticated per-key selection remains in Selection/Customize.
 
-Existing Rebuild confirmation explains no-clobber import. Execute handles
+Execute protects existing identity files and handles
 `bundle_unlock`, identity-bound `ssh_key_unlock`, and mandatory explicit
 `import_confirmation` through the existing secure dialog and FD. Core completes
 import before dependent Bootstrap work. Progress retains the existing flat list

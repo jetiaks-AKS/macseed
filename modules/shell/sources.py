@@ -122,9 +122,9 @@ def file_state(home, path, ignore_pending=(), *, limit=base.MAX_BYTES):
         return raw, (base.stamp(info), recheck())
 
 
-def top_level(raw):
+def top_level(raw, *, typed=False):
     """Return known unconditional outer statements; retain rejected scope."""
-    rows, partial = base.classify(raw, extended=True)
+    rows, partial = base.classify(raw, extended=True, typed=typed)
     eligible = {row['statement']: row for row in rows}
     commands, blocks, terminated = [], [], False
     for statement in base.statements(raw.decode('utf-8')):
@@ -530,10 +530,10 @@ def attributes(fd):
     return result
 
 
-def mutable_file(directory, name, *, limit=base.MAX_BYTES, tracked=False):
+def mutable_file(directory, name, *, limit=base.MAX_BYTES, tracked=False, created_content=None):
     before = os.stat(name, dir_fd=directory, follow_symlinks=False)
     raw = base.read_file(name, directory, limit=limit)
-    if MANAGED.search(raw.decode('utf-8', errors='replace')):
+    if raw != created_content and MANAGED.search(raw.decode('utf-8', errors='replace')):
         raise base.Invalid('external_owner')
     fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
     try:
@@ -618,13 +618,15 @@ def publish_file(home, path, additions, validate):
     return publish_content(home, path, candidate, validate)
 
 
-def publish_content(home, path, candidate, validate, mode=0o600, *, limit=base.MAX_BYTES, prepare=None, verify=None, tracked=False):
+def publish_content(home, path, candidate, validate, mode=0o600, *, limit=base.MAX_BYTES, prepare=None, verify=None, tracked=False, create_only=False):
     # Callers qualify the candidate; this publisher preserves metadata and races.
     with parent(home, path) as (directory, name, recheck):
         try:
             original, old, metadata = mutable_file(directory, name, limit=limit, tracked=tracked)
         except FileNotFoundError:
             original, old, metadata = b'', None, None
+        if create_only and old is not None:
+            raise base.Invalid('target_changed')
         if len(candidate) > limit or (old is not None and not candidate.startswith(original)):
             raise base.Invalid('candidate_invalid')
         document = document_id(directory, name, old) if old is not None and old.st_flags else None
@@ -682,7 +684,10 @@ def publish_content(home, path, candidate, validate, mode=0o600, *, limit=base.M
             phase = 'exchange'
             rename(recovery, 'swap', directory, name, 2 if old else 4)
             phase = 'verification'
-            actual, published, published_metadata = mutable_file(directory, name, limit=limit, tracked=tracked)
+            # In a no-clobber Script creation the exact staged bytes may carry
+            # source-manager comments. Directory ownership and inode checks still apply.
+            actual, published, published_metadata = mutable_file(directory, name, limit=limit, tracked=tracked,
+                created_content=candidate if create_only else None)
             if (actual != candidate or base.stamp(published)[:6] != base.stamp(staged)[:6]
                     or (old is not None and published_metadata != staged_metadata)):
                 raise base.Invalid('publication_uncertain')

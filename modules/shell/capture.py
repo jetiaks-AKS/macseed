@@ -1,4 +1,5 @@
 """Functions Capture adapter. Observation/codec/launch policy remain domain-owned."""
+from collections import Counter
 import importlib.util
 import json
 import os
@@ -45,12 +46,28 @@ class Observation:
             result = observe.observe(os.environ['HOME'], helper, aliases=True, independent=True)
             self.public.update(status='observed' if result.snapshot._value['items'] or not result.codes else 'unsupported',
                                codes=list(result.codes), uncertainties=list(result.uncertainties))
+            loaded = {row['source'] for row in result._loads}
+            exclusions = {}
+            unresolved = False
+            mentions = Counter(name for f in result._files.values() for name in f['alias_names'] + f['names'])
+            for record in result._files.values():
+                unresolved |= record.get('unresolved_aliases', False)
+                for name, reason in record.get('excluded_aliases', []):
+                    if (record['source']['id'] in loaded and record['status'] == 'partial' and
+                            mentions[name] == 1):
+                        exclusions[name] = reason
+                    else:
+                        unresolved = True
+            if exclusions and len(exclusions) <= observe.base.MAX_ITEMS:
+                self.public['excluded_aliases'] = exclusions
+            if unresolved or len(exclusions) > observe.base.MAX_ITEMS:
+                self.public['codes'] = sorted(set(result.codes) | {'alias_scope_unresolved'})
             # A bounded declaration recipe is distinct from a startup snapshot.
             # Rejected source relationships stay explicit outside its scope.
             try:
                 state.declaration_order(result.snapshot)  # Must have a portable Restore order.
             except state.Invalid:
-                self.public.update(status='unsupported', codes=sorted(set(result.codes) | {'ambiguous_function'}))
+                self.public.update(status='unsupported', codes=sorted(set(self.public['codes']) | {'ambiguous_function'}))
                 return
             raw, payloads = state.encode(result.snapshot)
             evidence = dict(parser=helper._manifest_sha256, snapshot=state.digest(raw),
@@ -83,10 +100,10 @@ class Observation:
         """Apply v5 source-file exclusions using actual selected typed aliases."""
         selected = state.select(self.snapshot, ids)
         context = dict(roots=list(self._source_paths),
-                       aliases=[observe.base.declaration(state.content(selected, row).decode('utf-8'), extended=True)[0]
+                       aliases=[observe.base.typed_declaration(state.content(selected, row).decode('utf-8'))[0]
                                 for row in selected._value['items'] if row['kind'] == 'alias'],
                        layout=[dict(path=p) for p in self._source_paths])
-        if any(not state.legacy().script_path(context, path) for path in paths):
+        if any(not state.legacy().script_path(context, path, typed=True) for path in paths):
             raise state.Invalid('content_invalid')
 
 

@@ -226,7 +226,7 @@ Exact record shapes and rules:
   separate selectable items. `loads` names that source's occurrences in load order;
   scripts have no load occurrences. Sources, loads and dependencies are not items.
 - **Alias details:** `{mode, span}`, with `mode: ordinary`, exact original byte
-  `span` and the existing source-aware static declaration validator. Global/suffix
+  `span` and the B4 literal assignment validator. Global/suffix
   bindings require future explicit contracts. Bytes are never reformatted.
 - **Function details:** `{span, body, name, parser_profile}`. All spans are
   half-open byte offsets in the original source; `parser_profile` is
@@ -503,7 +503,7 @@ separate gates. Aliases & Scripts v5 and historical whole-file workflows are unc
 ### Unified Aliases & Functions (B4)
 
 **Implemented for mixed Core and Native workflows.** The observer optionally admits
-ordinary aliases through the established declaration validator and exact parser-backed
+ordinary aliases through a literal assignment validator and exact parser-backed
 source envelope. Capture also admits independently qualified declarations beside
 unrelated `eval`/command substitutions, assignments/exports and option initialization.
 The native parser must accept the complete source. A private lexical projection
@@ -514,6 +514,22 @@ Conditional/pipeline/substitution positions, explicit binding mutations, conflic
 names, overlapping units and unsafe sources remain excluded. Dynamic/conditional source relationships are not
 invented; their exclusion remains explicit alongside eligible declarations. Legacy-only inventory/selection retains its
 existing path; no stored legacy snapshot is silently migrated.
+
+A typed Alias uses one ordinary name and one single-line quoted value (up to
+2,048 characters). Inside that literal value, escapes, quoted arguments, pipes,
+separators, redirections and deferred expansions can travel byte-exact. A
+double-quoted assignment must keep expansion inert at declaration time. The
+observer excludes computed names, concatenated or load-time-expanded values,
+sensitive content and ambiguous positions. Explicit Script selection still checks
+source-file exclusions. A complex source operand that cannot be resolved safely
+can block combining that declaration with a Script. Runtime command availability
+is outside the definition predicate.
+
+Capture can return an optional `shell_functions.excluded_aliases` map for
+unambiguous, safely displayable names with fixed reasons (`literal_required`,
+`restricted_content`, `unsupported_mode`, `unsupported_position`, `unsupported_declaration`). These records carry no selection
+IDs or payloads. `alias_scope_unresolved` reports unresolved declaration scope
+without estimating names or counts.
 
 Capture can coalesce equivalent physical Function definitions (including repeated
 loads of one file) into one logical `shell-function:` item. Every physical mention
@@ -545,6 +561,11 @@ The typed adapter constructs one candidate and one protected publication per sou
 for all selected aliases and functions. Original definition bytes and relative selected
 order are preserved; an append that would reverse retained definitions or cross a saved
 selected load site is blocked. The complete candidate is parsed before publication.
+For original-source appends, ownership checks cover the destination and its saved
+load chain. An independently managed sibling source remains read-only and contributes
+to conflict and freshness checks. When unrelated startup initialization is opaque,
+Core reparses the proposed append against the frozen observed sources and requires
+exact selected definitions, order and load chains before planning a write.
 Unselected bytes and competing definitions are preserved. Typed Alias and Function
 Match proves declarations, not availability of invoked tools, operands, services or
 environment. Explicit dependency records still block unresolved restoration; absence
@@ -576,12 +597,19 @@ Explicitly approved Scripts use the existing v5 validator/publisher, not the sou
 writer. The native observer's qualified file map supplies source safety for file-only
 v5 plans alongside complex Functions; legacy observation defaults remain unchanged.
 Observed source files cannot be transferred as Scripts. Restore requires separate exact
-Script approvals. Selecting definitions never selects or installs referenced dependencies.
+Script approvals. A Script carrying a source-manager marker may be created at a safe
+missing destination. Create-only publication rechecks the destination and verifies the
+staged bytes and metadata. Existing conflicting or manager-owned targets remain protected. Selecting definitions never selects or installs referenced dependencies.
 Verify/Check retain `alias_definition`, `function_definition` and `script_file` identities.
+When all selected typed Shell predicates match, Core emits resolved partial scope
+coverage with a linked `shell_activation_unknown` information diagnostic. Runtime
+activation and dynamic startup remain unverified. Incomplete coverage affecting
+selected requirements retains `partial_source_coverage` and its warning. Scope
+evidence is separate from the number of verified requirements.
 
 Native uses one Aliases & Functions parent with None/Partial/All states. All-selected
 item mode keeps explicit IDs; compact selection remains enabled for other domains and
-actual legacy whole-file Shell state. Confirmation counts both kinds. Unavailable or
+actual legacy whole-file Shell state. Capture Confirmation counts both kinds within the hierarchy. Unavailable or
 unsupported Functions are explained without source details. When declarations qualify
 alongside excluded initialization, one coverage message describes the excluded scope;
 it does not label qualified Functions unavailable. Scripts remain a separate

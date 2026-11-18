@@ -772,14 +772,7 @@ struct RestoreProgressRow {
         ready && !runtime.isActive && preparation?.sshDependenciesReady == true && preparation?.hasComparedExecutableChanges == true
             && preparation?.selection == canonicalSelection && preparation?.includeSecure == includeSecure
     }
-    var confirmationMessages: [String] {
-        guard let preview, let preparation else { return [] }
-        var messages = RestoreTaskPresentation(preview: preview, plan: preparation).confirmationMessages(preparation)
-        if preparation.plan.contains(where: { $0.domain == "shell-zsh" && $0.disposition == "planned" && ShellDefinitionPresentation.kind($0.itemID) != nil }) {
-            messages.append(ShellCommandPresentation.definitionRestoreNotice)
-        }
-        return messages
-    }
+
     var mutationPossible: Bool {
         runtime.mutationMayHaveStarted == true || runtime.events.contains { $0.phase == "bootstrap" || $0.type == "execution_event" }
     }
