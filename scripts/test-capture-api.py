@@ -88,7 +88,8 @@ _Task._launch = _fixture_ignored_constraint
             home_read.assert_not_called(); source_read.assert_not_called()
             self.assertEqual([(c.args[0], c.args[2]) for c in transport.call_args_list], [('/usr/bin/true', b'')] * 2)
         original = (self.home / '.zshrc').read_bytes()
-        scan = self.prepare()
+        # The initial inventory runs all Discovery collectors before Shell preflight.
+        scan = self.prepare(timeout=60)
         self.assertEqual(scan['shell_functions']['status'], 'unavailable')
         self.assertEqual(scan['shell_functions']['codes'], ['functions_unavailable'])
         row = next(r for r in scan['inventory'] if r['domain'] == 'shell-zsh')
@@ -1518,8 +1519,8 @@ esac
                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout, **kwargs)
         return result, [json.loads(line) for line in result.stdout.splitlines()]
 
-    def prepare(self, selection=None):
-        status, events = self.invoke_capture(selection=selection)
+    def prepare(self, selection=None, *, timeout=30):
+        status, events = self.invoke_capture(selection=selection, timeout=timeout)
         self.assertEqual(status.returncode, 0, events)
         self.assertEqual(sum(row['type'] in ('completed', 'failed') for row in events), 1)
         return events[-2]['data']
