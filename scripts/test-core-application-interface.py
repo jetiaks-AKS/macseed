@@ -42,6 +42,7 @@ class CoreInterfaceTests(unittest.TestCase):
                 "homebrew_graceful_stop": {"version": 1}, "restore_selection": {"version": 1, "inventory": "bundle_inspect", "selection_modes": ["category", "items"]},
                 "shell_script_transfer": {"version": 5, "policy": "opaque-file-v5", "legacy_policies": ["opaque-file-v4"], "inspection": "capture_script_inspect", "max_files": 128, "max_file_bytes": 1048576, "max_content_bytes": 16777216, "max_manifest_bytes": 262144, "request_manifest": "shell-scripts-request.json"},
                 "secure_check": {"version": 1, "inventory": "secure_check_inventory", "compare": "secure_check_compare", "selection_version": 2, "max_items": 32, "read_only": True},
+                "shell_environment_capture": {"version": 2, "restore_supported": True, "explicit_plaintext": True},
                 "shell_functions_capture": {"version": 1, "required_feature": {"shell-state": 1}, "minimum_macos": "14.4",
                     "explicit_items": True, "mixed_legacy_selection": True, "restore_supported": True},
                 "shell_functions_restore": {"version": 1, "predicate": "function_definition", "required_feature": {"shell-state": 1},

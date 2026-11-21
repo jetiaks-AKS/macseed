@@ -1107,6 +1107,7 @@ import Vision
         assert request['operation'] in ('capabilities', 'capture_prepare', 'capture_execute', 'capture_script_inspect')
         with open('requests.jsonl', 'a') as stream: stream.write(json.dumps(request) + '\\n')
         params = request.get('parameters', {}); selection = params.get('selection'); mode = pathlib.Path('mode').read_text()
+        prepared_id = hashlib.sha256(json.dumps(selection, sort_keys=True).encode()).hexdigest()
         secure_path = pathlib.Path('secure-inventory.json')
         secure = json.loads(secure_path.read_text()) if secure_path.exists() else dict(status='unavailable', items=[])
         assert selection is None or set(selection['secure_identities']) <= {item['item_id'] for item in secure['items']}
@@ -1160,7 +1161,7 @@ import Vision
                 summary['selected_domains'] = len(selection['categories']) + len(selection['items'])
                 summary['selected_items'] = sum(map(len, selection['items'].values())) + sum(len(row['items']) for row in rows if row['domain'] in selection['categories'])
                 summary['secure_identity_count'] = len(selection['secure_identities'])
-            result = dict(prepared_capture_id='a'*64, inventory=[] if mode == 'empty_inventory' else rows,
+            result = dict(prepared_capture_id=prepared_id, inventory=[] if mode == 'empty_inventory' else rows,
                  selection=selection, summary=summary, secure_identities=secure)
             if any('environment' in item for row in rows for item in row['items']):
                 result['shell_environment'] = dict(available=True, explanations=[])
@@ -1193,7 +1194,7 @@ import Vision
                     if matched: result['shell_scripts'] = matched
             emit('result', result)
             emit('completed'); sys.exit(0)
-        assert params['expected_prepared_capture_id'] == 'a'*64
+        assert params['expected_prepared_capture_id'] == prepared_id
         if mode == 'stale_prepared_capture': emit('failed', dict(code=mode, publication_occurred=False)); sys.exit(2)
         emit('phase_started', dict(phase='bundle_creation'))
         if mode == 'kill_save': os.kill(os.getpid(), signal.SIGKILL)
@@ -1225,7 +1226,7 @@ import Vision
         if mode == 'missing_item_counts': counts = {}
         if mode == 'wrong_item_counts': counts = {key:value+1 for key,value in counts.items()}
         emit('result', dict(publication_occurred=mode!='unpublished', destination=params['destination'],
-             prepared_capture_id='b'*64 if mode=='wrong_binding' else 'a'*64,
+             prepared_capture_id='b'*64 if mode=='wrong_binding' else prepared_id,
              bundle=dict(format_version=1, selected_categories=[row['domain'] for row in rows if row['domain'] in selection['categories'] and row['selection_mode']=='category'], selected_item_counts=counts, secure_component=False, shell_script_candidates=saved_scripts, **({'required_features': {'shell-state': 2}, 'restore_supported': mode == 'environment_recovery',
                  'shell_functional_counts': dict(variables_path=len(params['shell_plaintext_ids']), scripts=len(saved_scripts),
                                                 aliases_functions=len(selection['items']['shell-zsh'])-len(params['shell_plaintext_ids']))} if environment else {'required_features': {'shell-state': 1}} if typed else {}))))
@@ -1234,9 +1235,11 @@ import Vision
         let runtime = CoreRuntime(operationLogs: nil)
         let model = CaptureModel(runtime: runtime, location: CoreLocation(root: core, python: python, home: root, temporaryBase: root, toolDirectories: []))
         if CommandLine.arguments.dropFirst(3).allSatisfy({ $0 == "--no-renders" }) {
+            let environmentCore = root.appendingPathComponent("environment-core")
+            try FileManager.default.copyItem(at: core, to: environmentCore)
             let isolated = CaptureModel(runtime: CoreRuntime(operationLogs: nil),
-                location: CoreLocation(root: core, python: python, home: root, temporaryBase: root, toolDirectories: []))
-            try await environmentSelectionCheck(model: isolated, core: core, root: root)
+                location: CoreLocation(root: environmentCore, python: python, home: root, temporaryBase: root, toolDirectories: []))
+            try await environmentSelectionCheck(model: isolated, core: environmentCore, root: root)
         }
         if CommandLine.arguments.contains("--environment-only") {
             // A native popover can stop Swift's command-line async-main loop.
@@ -1504,7 +1507,11 @@ import Vision
         precondition(sent.map { $0["operation"] as! String } == ["capture_prepare", "capture_prepare", "capture_prepare", "capture_execute"])
         precondition((sent[0]["parameters"] as! Object)["selection"] is NSNull)
         let execution = sent.last!["parameters"] as! Object
-        precondition(execution["expected_prepared_capture_id"] as? String == String(repeating: "a", count: 64))
+        let firstSelection = (sent[1]["parameters"] as! Object)["selection"] as! Object
+        let finalSelection = (sent[2]["parameters"] as! Object)["selection"] as! NSDictionary
+        precondition(firstSelection["categories"] as? [String] == ["macos-finder"])
+        precondition(finalSelection.isEqual(execution["selection"] as! NSDictionary))
+        precondition(execution["expected_prepared_capture_id"] as? String == preparedScope.preparedCaptureID)
         precondition((execution["selection"] as! Object)["categories"] as? [String] == ["homebrew-packages", "macos-finder"])
         print("PASS: Destination → fresh selected preparation → inline confirmation → bound execution and published result/warnings")
         if CommandLine.arguments.contains("--result-actions-only") {

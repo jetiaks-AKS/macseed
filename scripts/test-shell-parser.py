@@ -255,9 +255,10 @@ class ShellStateTests(unittest.TestCase):
                 with self.subTest(coverage=coverage, command=command), patch.object(functions, 'load'), \
                         patch.object(functions, 'plan') as plan, patch.object(functions.sys, 'argv', ['functions', command, 'fixture']), \
                         patch('builtins.print') as output:
-                    plan.return_value.rows = [({'id': 'item'}, 'unverified', 'tool_observation_prerequisite')]
+                    plan.return_value.report_rows.return_value = [({'id': 'item'}, 'unverified', 'tool_observation_prerequisite')]
                     plan.return_value.coverage = coverage
                     self.assertEqual(functions.main(), 0)
+                    plan.return_value.report_rows.assert_called_once_with(compare=command == 'compare')
                     output.assert_any_call('item', 'unverified', 'tool_observation_prerequisite', sep='\t')
                     output.assert_called_with('scope', coverage, scope_reason, sep='\t')
 

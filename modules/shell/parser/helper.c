@@ -208,6 +208,7 @@ static void parse_worker(int output) {
     if (!whitespace(0, root_span.start) || !whitespace(root_span.end, source_length)) worker_fail(BOUNDARY);
     TSTreeCursor cursor = ts_tree_cursor_new(root);
     uint32_t depth = 0, syntax[TREE_DEPTH + 1] = {0};
+    int outer_list = 0;
     int32_t parents[TREE_DEPTH + 1];
     parents[0] = -1;
     for (;;) {
@@ -218,8 +219,10 @@ static void parse_worker(int output) {
         const char *kind = ts_node_type(node);
         /* Whole outer sublists only. Conditions, function bodies, pipelines
          * and substitutions never contribute independent inner statements. */
-        if (!strcmp(kind, "sublist") && depth == 2 &&
-            !strcmp(ts_node_type(ts_node_parent(node)), "list")) {
+        /* Remember the depth-one ancestor as the cursor visits it. Looking
+         * up each sublist's parent from the root rescans preceding siblings. */
+        if (depth == 1) outer_list = !strcmp(kind, "list");
+        if (depth == 2 && outer_list && !strcmp(kind, "sublist")) {
             if (result.statement_count < DEFINITION_COUNT)
                 result.statements[result.statement_count++] = span(node);
             else result.statement_count = DEFINITION_COUNT + 1;
